@@ -616,7 +616,7 @@ class PolicyRunner:
                 if not fast_mode:
                     time.sleep(action_sleep)
 
-            def _query_chunk(observation: dict[str, Any]) -> list[dict[str, Any]]:
+            def _query_chunk(observation: dict[str, Any], observed_delay: int = 0) -> list[dict[str, Any]]:
                 # Resolve ONE action chunk from the policy. Never truncate below
                 # the policy's own intended chunk size: a model trained for
                 # N-step open-loop replay (policy.actions_per_step == N) must
@@ -624,6 +624,18 @@ class PolicyRunner:
                 # action_horizon drops the tail of every chunk and forces an
                 # out-of-distribution re-query (see LerobotLocalPolicy
                 # auto-detect of config.n_action_steps).
+                #
+                # Tell the policy how many control steps elapse between this
+                # observation and the first application of the returned chunk so
+                # latency-sensitive providers (RTC) slice the chunk-seam by an
+                # EXACT integer instead of a non-reproducible wall-clock
+                # estimate. The synchronous loop pauses the world during
+                # inference (delay 0); the async pipeline supplies the count of
+                # still-pending steps of the chunk currently executing. The set
+                # and the get_actions call happen on the SAME thread (the worker
+                # for a prefetch, the main thread otherwise), and at most one
+                # inference is ever in flight, so this never races.
+                policy.set_rtc_observed_delay(observed_delay)
                 coro_or_result = policy.get_actions(observation, instruction, **_policy_kwargs)
                 actions = _resolve_coroutine(coro_or_result)
                 _chunk = resolve_chunk_length(policy, action_horizon)
@@ -685,7 +697,14 @@ class PolicyRunner:
                         # current chunk, on a fresh mid-chunk observation.
                         if prefetch is None and idx >= prefetch_trigger:
                             prefetch_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
-                            prefetch = executor.submit(_query_chunk, prefetch_obs)
+                            # The prefetched chunk first applies after the
+                            # remaining steps of the current chunk drain - a
+                            # known integer, independent of how long inference
+                            # actually takes in wall-clock time (a slow inference
+                            # just stalls the loop; the robot does not advance
+                            # past the chunk end while waiting).
+                            observed_delay = max(0, len(cur_chunk) - prefetch_trigger)
+                            prefetch = executor.submit(_query_chunk, prefetch_obs, observed_delay)
 
                         _apply(cur_obs, cur_chunk[idx])
                         idx += 1

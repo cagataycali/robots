@@ -80,6 +80,43 @@ class Policy(ABC):
             raise ValueError(f"control_frequency must be positive, got {hz}")
         self.control_frequency = float(hz)
 
+    #: Number of control steps the executing loop runs between issuing an
+    #: inference request and applying the FIRST action it returns. The runtime
+    #: (e.g. ``PolicyRunner``) sets this via :meth:`set_rtc_observed_delay`
+    #: immediately before each ``get_actions`` call so latency-sensitive
+    #: providers (Real-Time Chunking) can slice the leftover chunk by the EXACT
+    #: number of steps that elapsed rather than estimating it from wall-clock
+    #: latency. The estimate is non-reproducible (it warms up within an episode
+    #: and varies run-to-run), which silently perturbs otherwise-identical
+    #: seeded episodes; a counted integer is deterministic. ``None`` means the
+    #: runtime did not supply a count, so providers fall back to their
+    #: wall-clock estimate (appropriate for true-async hardware driven without a
+    #: runner, where the robot really does move during inference).
+    rtc_observed_delay_steps: int | None = None
+
+    def set_rtc_observed_delay(self, steps: int | None) -> None:
+        """Tell the policy how many control steps elapse during inference.
+
+        The runtime that drives the policy calls this before each
+        ``get_actions`` so Real-Time Chunking providers can compute the
+        chunk-seam offset deterministically instead of deriving it from
+        wall-clock latency. In a synchronous eval loop the world is paused
+        during inference, so exactly ``0`` steps elapse; in the async overlap
+        pipeline the count is the number of still-pending steps of the chunk
+        being executed. Either way it is a known integer, not a measurement.
+
+        Args:
+            steps: Non-negative control-step count, or ``None`` to clear the
+                override and let the provider fall back to its wall-clock
+                estimate.
+
+        Raises:
+            ValueError: If ``steps`` is negative.
+        """
+        if steps is not None and steps < 0:
+            raise ValueError(f"rtc_observed_delay_steps must be >= 0, got {steps}")
+        self.rtc_observed_delay_steps = None if steps is None else int(steps)
+
     @abstractmethod
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any

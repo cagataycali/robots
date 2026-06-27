@@ -1393,6 +1393,104 @@ class TestRTCDelayEstimation:
         assert delay < 5
 
 
+class TestRTCDeterministicDelay:
+    """RTC inference delay is the caller-supplied step count, not a wall-clock guess.
+
+    Regression for the fixed-seed trajectory drift reported in multi-episode
+    evals: when the inference delay was derived from wall-clock p95 latency it
+    warmed up within an episode and varied run-to-run, so two otherwise-identical
+    seeded episodes sliced the chunk seam differently. The runtime now supplies
+    the exact number of control steps that elapse during inference
+    (``set_rtc_observed_delay``); the policy must use that integer verbatim and
+    ignore the latency history entirely.
+    """
+
+    @staticmethod
+    def _chunk_policy():
+        policy = _make_policy()
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        policy._rtc_prev_chunk = None
+        policy.actions_per_step = 1
+        mock_policy = MagicMock()
+        policy._policy = mock_policy
+        return policy, mock_policy
+
+    def test_observed_delay_overrides_wallclock_estimate(self):
+        """A supplied step count wins even when latency history implies a big delay."""
+        policy, mock_policy = self._chunk_policy()
+        # Deterministic chunk so we can assert exactly which row is returned.
+        chunk = torch.arange(20 * 6, dtype=torch.float32).reshape(1, 20, 6)
+        mock_policy.predict_action_chunk.return_value = chunk
+        # Poison the wall-clock path: 5s latency * 50Hz -> ~250 steps (clamps to 19).
+        policy.set_control_frequency(50.0)
+        policy._rtc_latency_history.extend([5.0] * 10)
+        # Runtime says exactly 2 control steps elapsed during inference.
+        policy.set_rtc_observed_delay(2)
+
+        result = policy._predict_with_rtc({})
+
+        squeezed = chunk.squeeze(0)
+        # usable_start == observed delay (2), NOT the wall-clock-implied 19.
+        assert torch.equal(result[0], squeezed[2])
+
+    def test_observed_delay_zero_executes_chunk_from_start(self):
+        """Synchronous loop (delay 0): the chunk is used from row 0, no skip."""
+        policy, mock_policy = self._chunk_policy()
+        chunk = torch.arange(20 * 6, dtype=torch.float32).reshape(1, 20, 6)
+        mock_policy.predict_action_chunk.return_value = chunk
+        policy.set_control_frequency(50.0)
+        policy._rtc_latency_history.extend([5.0] * 10)  # would imply a huge skip
+        policy.set_rtc_observed_delay(0)
+
+        result = policy._predict_with_rtc({})
+
+        assert torch.equal(result[0], chunk.squeeze(0)[0])
+
+    def test_reproducible_across_episodes_with_same_observed_delay(self):
+        """Same observed delay -> identical first action despite differing latency.
+
+        This is the fixed-seed drift the issue describes: only the latency
+        history differs between the two episodes (warm-up bleed), yet with the
+        deterministic delay the returned action is bit-identical.
+        """
+        chunk = torch.arange(20 * 6, dtype=torch.float32).reshape(1, 20, 6)
+
+        def run_episode(latencies):
+            policy, mock_policy = self._chunk_policy()
+            mock_policy.predict_action_chunk.return_value = chunk.clone()
+            policy.set_control_frequency(50.0)
+            policy._rtc_latency_history.extend(latencies)
+            policy.set_rtc_observed_delay(3)
+            return policy._predict_with_rtc({})
+
+        ep1 = run_episode([0.01] * 2)  # cold: short, sparse history
+        ep2 = run_episode([0.4] * 100)  # warm: long, saturated history
+        assert torch.equal(ep1[0], ep2[0])
+
+    def test_falls_back_to_wallclock_when_no_observed_delay(self):
+        """None observed delay preserves the wall-clock estimate (async hardware)."""
+        policy, mock_policy = self._chunk_policy()
+        chunk = torch.arange(20 * 6, dtype=torch.float32).reshape(1, 20, 6)
+        mock_policy.predict_action_chunk.return_value = chunk
+        policy.set_control_frequency(50.0)
+        policy._rtc_latency_history.extend([0.04] * 10)  # 0.04 * 50 = 2 steps
+        assert policy.rtc_observed_delay_steps is None
+
+        result = policy._predict_with_rtc({})
+
+        # Wall-clock estimate: p95(0.04) * 50 = 2 -> usable_start 2.
+        assert torch.equal(result[0], chunk.squeeze(0)[2])
+
+    def test_reset_clears_observed_delay(self):
+        policy = _make_policy()
+        policy._policy = MagicMock()
+        policy._processor_bridge = None
+        policy.set_rtc_observed_delay(4)
+        policy.reset()
+        assert policy.rtc_observed_delay_steps is None
+
+
 class TestRTCReset:
     """Tests for RTC state clearing on reset."""
 

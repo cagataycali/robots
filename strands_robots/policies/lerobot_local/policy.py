@@ -292,6 +292,7 @@ class LerobotLocalPolicy(Policy):
         self._rtc_latency_history.clear()
         self._rtc_last_inference_time = 0.0
         self._rtc_last_log_time = 0.0
+        self.rtc_observed_delay_steps = None
         # Re-arm action diagnostics for the next episode.
         self._zero_action_monitor.reset()
         self._action_dim_warned = False
@@ -970,25 +971,39 @@ class LerobotLocalPolicy(Policy):
         if action_chunk.dim() == 3 and action_chunk.shape[0] == 1:
             action_chunk = action_chunk.squeeze(0)
 
-        # Estimate inference delay - how many steps were consumed while
-        # computing. The delay is (p95 latency * control_frequency), so it
-        # MUST use the loop's real control rate; assuming a fixed rate makes
-        # the chunk-seam blend wrong at every other frequency. The runtime
-        # (PolicyRunner) calls set_control_frequency() before the loop.
-        fps = self.control_frequency
-        if fps is None:
-            if not self._rtc_freq_warned:
-                logger.warning(
-                    "RTC: control_frequency unknown for '%s', falling back to "
-                    "%.0fHz - inference-delay estimation will be off at any other "
-                    "control rate. Call set_control_frequency(hz) before running "
-                    "(PolicyRunner does this automatically).",
-                    type(self._policy).__name__,
-                    _RTC_FALLBACK_FPS,
-                )
-                self._rtc_freq_warned = True
-            fps = _RTC_FALLBACK_FPS
-        inference_delay = self._estimate_inference_delay(fps=fps)
+        # Resolve how many control steps the executor ran while this inference
+        # was in flight - the offset that the chunk-seam blend slices by. Prefer
+        # the DETERMINISTIC count the runtime supplied (set_rtc_observed_delay):
+        # in a synchronous eval loop the world is paused during inference so
+        # exactly 0 steps elapse, and in the async overlap pipeline the count is
+        # a known integer. Deriving it from wall-clock p95 latency instead is
+        # non-reproducible - it warms up within an episode and varies run-to-run,
+        # so two otherwise-identical seeded episodes drift apart at the seam.
+        # Fall back to the wall-clock estimate only when no count was supplied
+        # (true-async hardware driven without a runner, where the arm really
+        # does keep moving during inference).
+        observed = self.rtc_observed_delay_steps
+        if observed is not None:
+            inference_delay = max(0, int(observed))
+        else:
+            # The delay is (p95 latency * control_frequency), so it MUST use the
+            # loop's real control rate; assuming a fixed rate makes the
+            # chunk-seam blend wrong at every other frequency. The runtime
+            # (PolicyRunner) calls set_control_frequency() before the loop.
+            fps = self.control_frequency
+            if fps is None:
+                if not self._rtc_freq_warned:
+                    logger.warning(
+                        "RTC: control_frequency unknown for '%s', falling back to "
+                        "%.0fHz - inference-delay estimation will be off at any other "
+                        "control rate. Call set_control_frequency(hz) before running "
+                        "(PolicyRunner does this automatically).",
+                        type(self._policy).__name__,
+                        _RTC_FALLBACK_FPS,
+                    )
+                    self._rtc_freq_warned = True
+                fps = _RTC_FALLBACK_FPS
+            inference_delay = self._estimate_inference_delay(fps=fps)
 
         # Store leftover for next RTC call (unconsumed portion of this chunk).
         # The consumer executes ``execution_horizon`` actions before re-querying

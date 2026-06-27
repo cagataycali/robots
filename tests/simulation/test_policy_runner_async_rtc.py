@@ -111,6 +111,7 @@ class _ChunkPolicy(Policy):
         self._infer_sleep = infer_sleep
         self.robot_state_keys: list[str] = []
         self.infer_starts: list[int] = []
+        self.observed_delays: list[int | None] = []
         self._lock = threading.Lock()
 
     @property
@@ -129,6 +130,9 @@ class _ChunkPolicy(Policy):
     ) -> list[dict[str, Any]]:
         with self._lock:
             self.infer_starts.append(self._sim.send_count)
+            # The runtime sets the deterministic inference-delay step count just
+            # before each call (see PolicyRunner._query_chunk).
+            self.observed_delays.append(self.rtc_observed_delay_steps)
         if self._infer_sleep:
             time.sleep(self._infer_sleep)
         keys = self.robot_state_keys or ["j0", "j1", "j2"]
@@ -209,3 +213,26 @@ def test_async_rtc_defaults_to_false() -> None:
     """Back-compat: async_rtc is opt-in on both PolicyRunner.run and run_policy."""
     assert inspect.signature(PolicyRunner.run).parameters["async_rtc"].default is False
     assert inspect.signature(SimEngine.run_policy).parameters["async_rtc"].default is False
+
+
+def test_sync_loop_supplies_zero_observed_delay() -> None:
+    """Synchronous loop: the world is paused during inference, so the runtime
+    tells the policy exactly 0 control steps elapsed (not a wall-clock guess)."""
+    _, policy, _ = _run(async_rtc=False)
+    assert policy.observed_delays, "policy was never queried"
+    assert all(d == 0 for d in policy.observed_delays), policy.observed_delays
+
+
+def test_async_rtc_supplies_deterministic_observed_delay() -> None:
+    """Async pipeline: prefetched chunks carry the EXACT count of still-pending
+    steps (len(chunk) - prefetch_trigger), a known integer independent of how
+    long inference actually took. The cold-start and short-chunk re-queries are
+    synchronous (delay 0)."""
+    _, policy, _ = _run(async_rtc=True)
+    assert policy.observed_delays, "policy was never queried"
+    # prefetch_trigger = max(1, _CHUNK // 2); pending = _CHUNK - prefetch_trigger.
+    expected_prefetch_delay = _CHUNK - max(1, _CHUNK // 2)
+    assert all(d in (0, expected_prefetch_delay) for d in policy.observed_delays), policy.observed_delays
+    # At least one prefetched (overlapped) query must carry the non-zero count -
+    # otherwise the async path silently degraded to synchronous re-queries.
+    assert any(d == expected_prefetch_delay for d in policy.observed_delays), policy.observed_delays

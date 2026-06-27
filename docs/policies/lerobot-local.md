@@ -283,6 +283,31 @@ behind, so the benefit is largest at real-time pacing (`fast_mode=False`) with
 multi-step chunks; with `fast_mode=True` and near-instant physics there is
 little execution window to overlap.
 
+### Deterministic inference delay
+
+RTC has to know how many control steps the robot executed *while inference was
+running* - that offset is where it slices the next chunk so the seam lines up.
+Estimating it from wall-clock latency is non-reproducible: the measured latency
+warms up over the first few inferences of an episode and jitters run-to-run, so
+two fixed-seed episodes drift apart at the seam (the "seeds fixed but trajectory
+varies" symptom in multi-episode evals).
+
+`PolicyRunner` instead tells the policy the **exact** step count via
+`policy.set_rtc_observed_delay(steps)` immediately before each query:
+
+- Synchronous loop (`async_rtc=False`): the world is paused during inference, so
+  exactly `0` steps elapse.
+- Async pipeline (`async_rtc=True`): the prefetched chunk first applies after the
+  remaining steps of the chunk currently executing drain - a known integer,
+  independent of how long inference actually takes (a slow inference just stalls
+  the loop; the arm does not advance past the chunk end while it waits).
+
+So an eval driven by the runner is bit-reproducible across episodes regardless of
+machine load. When a policy is driven directly without a runner (e.g. on async
+real hardware where the arm genuinely keeps moving during inference), leave the
+override unset (`None`) and the policy falls back to the wall-clock p95 estimate,
+which is the right proxy there.
+
 ## See also
 
 - [MolmoAct2 (SO-100/101)](molmoact2.md) - action contract, units, and motion diagnostics

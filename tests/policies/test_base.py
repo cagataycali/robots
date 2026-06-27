@@ -226,3 +226,50 @@ class TestControlFrequency:
         a.set_control_frequency(120.0)
         assert a.control_frequency == 120.0
         assert b.control_frequency is None
+
+
+class TestRTCObservedDelay:
+    """``Policy.set_rtc_observed_delay`` / ``rtc_observed_delay_steps`` contract.
+
+    The runtime supplies the EXACT number of control steps that elapse during
+    inference so latency-sensitive providers slice the chunk seam by a known
+    integer rather than a non-reproducible wall-clock estimate.
+    """
+
+    def test_default_observed_delay_is_none(self):
+        assert _IdentityPolicy().rtc_observed_delay_steps is None
+
+    def test_set_observed_delay_sets_attribute(self):
+        p = _IdentityPolicy()
+        p.set_rtc_observed_delay(3)
+        assert p.rtc_observed_delay_steps == 3
+
+    def test_set_observed_delay_zero_is_honoured_not_treated_as_none(self):
+        # 0 (synchronous loop: world paused during inference) is a real value,
+        # distinct from None (no count supplied -> wall-clock fallback).
+        p = _IdentityPolicy()
+        p.set_rtc_observed_delay(0)
+        assert p.rtc_observed_delay_steps == 0
+
+    def test_set_observed_delay_none_clears_override(self):
+        p = _IdentityPolicy()
+        p.set_rtc_observed_delay(5)
+        p.set_rtc_observed_delay(None)
+        assert p.rtc_observed_delay_steps is None
+
+    def test_set_observed_delay_coerces_to_int(self):
+        p = _IdentityPolicy()
+        p.set_rtc_observed_delay(True)  # bool is an int subclass
+        assert p.rtc_observed_delay_steps == 1
+        assert isinstance(p.rtc_observed_delay_steps, int)
+
+    def test_set_observed_delay_rejects_negative(self):
+        p = _IdentityPolicy()
+        with pytest.raises(ValueError, match="rtc_observed_delay_steps"):
+            p.set_rtc_observed_delay(-1)
+
+    def test_observed_delay_is_per_instance(self):
+        a, b = _IdentityPolicy(), _IdentityPolicy()
+        a.set_rtc_observed_delay(7)
+        assert a.rtc_observed_delay_steps == 7
+        assert b.rtc_observed_delay_steps is None
