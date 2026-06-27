@@ -147,7 +147,16 @@ def inject_robot_into_scene(
 
 
 def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
-    """Add a ``SimObject`` to the scene and recompile in place."""
+    """Add a ``SimObject`` to the scene and recompile in place.
+
+    ``SpecBuilder.add_object`` mutates the spec (adds the body + geom) before
+    the recompile that validates it. If that recompile is refused - e.g. the
+    object references a mesh asset that was never registered - the orphan body
+    is deleted again before returning ``False`` so the spec stays compilable.
+    Without the rollback the orphan lingers and every later scene mutation,
+    including a corrected retry under the same name, keeps failing to recompile
+    (``repeated name`` collisions), bricking the whole scene after one bad add.
+    """
     spec = _get_spec(world)
     if spec is None or world._model is None:
         logger.error("inject_object: no spec or model in world")
@@ -159,11 +168,22 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
         logger.error("Object add failed for '%s': %s", obj.name, e)
         return False
 
-    return _recompile_preserving_state(world, spec)
+    if not _recompile_preserving_state(world, spec):
+        # Roll the just-added body back out so the spec returns to its last
+        # good, compilable state (a worldbody body delete is safe - the
+        # attach/delete segfault only affects spec.attach() child specs).
+        SpecBuilder.remove_body(spec, obj.name)
+        return False
+    return True
 
 
 def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
-    """Add a camera to the scene and recompile in place."""
+    """Add a camera to the scene and recompile in place.
+
+    Mirrors :func:`inject_object_into_scene`: ``SpecBuilder.add_camera`` mutates
+    the spec before the validating recompile, so a refused recompile rolls the
+    just-added camera back out to keep the spec compilable for later edits.
+    """
     spec = _get_spec(world)
     if spec is None or world._model is None:
         logger.error("inject_camera: no spec or model in world")
@@ -175,7 +195,10 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
         logger.error("Camera add failed for '%s': %s", cam.name, e)
         return False
 
-    return _recompile_preserving_state(world, spec)
+    if not _recompile_preserving_state(world, spec):
+        SpecBuilder.remove_camera(spec, cam.name)
+        return False
+    return True
 
 
 # Eject
