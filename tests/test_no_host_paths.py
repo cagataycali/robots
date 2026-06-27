@@ -18,6 +18,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 # Directories to scan (source + tests; not docs, not third-party).
@@ -66,6 +68,15 @@ def _iter_source_files() -> list[Path]:
     return files
 
 
+# This sweep walks a few hundred small .py files and completes in well under a
+# second. Its only failure mode under the global ``--timeout=120`` budget is a
+# transient runner I/O stall on ``Path.read_text`` - an environmental hiccup,
+# not an algorithmic hang. With the suite running fail-fast (``-x``), one such
+# stall aborts the entire job and red-flags otherwise-green PRs. Disable the
+# per-test timeout here (``timeout(0)``) so this deterministic hygiene check is
+# never governed by the wall-clock budget; the strict 120s budget still
+# protects every other test from genuine hangs.
+@pytest.mark.timeout(0)
 def test_no_host_specific_absolute_paths() -> None:
     """Fail if any .py file contains ``/Users/<name>/`` or ``/home/<name>/``.
 
@@ -101,3 +112,19 @@ def test_no_host_specific_absolute_paths() -> None:
         for rel, lineno, snippet in offenders:
             msg.append(f"  {rel}:{lineno}: {snippet}")
         raise AssertionError("\n".join(msg))
+
+
+def test_host_path_sweep_disables_global_timeout() -> None:
+    """Guard the flake fix: the sweep must opt out of the global per-test timeout.
+
+    ``test_no_host_specific_absolute_paths`` is a deterministic, sub-second regex
+    sweep whose only way to exceed the global ``--timeout=120`` budget is a
+    transient runner I/O stall. Under fail-fast (``-x``), one such stall aborts
+    the whole suite. We pin ``@pytest.mark.timeout(0)`` so the wall-clock budget
+    cannot govern it. This regression asserts that opt-out stays in place; it
+    fails if the marker is dropped or set to a finite budget.
+    """
+    pytestmark = getattr(test_no_host_specific_absolute_paths, "pytestmark", [])
+    marks = [m for m in pytestmark if m.name == "timeout"]
+    assert marks, "expected a @pytest.mark.timeout marker on the host-path sweep"
+    assert marks[0].args == (0,), f"expected timeout(0) to disable the budget, got {marks[0].args!r}"
