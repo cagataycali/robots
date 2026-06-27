@@ -37,24 +37,70 @@
 </p>
 
 `strands-robots` gives a [Strands Agent](https://github.com/strands-agents/harness-sdk)
-hands. One `Robot()` call returns either a **MuJoCo simulation** (default, no GPU,
-no hardware) or a **real hardware robot** - both drivable in natural language,
-both auto-joined to a peer-to-peer **mesh** so fleets coordinate out of the box.
+hands. One `Robot()` call returns a **MuJoCo simulation** (default - no GPU, no
+hardware) or a **real robot** - same code, same natural-language control, both
+auto-joined to a peer-to-peer **mesh**.
 
 ```python
 from strands import Agent
 from strands_robots import Robot
 
-robot = Robot("so100") # MuJoCo sim by default - no hardware needed
-agent = Agent(tools=[robot])
-agent("Pick up the red cube")
+robot = Robot("so100")              # MuJoCo sim by default; mode="real" for hardware
+Agent(tools=[robot])("pick up the red cube")
 ```
 
-Swap to physical hardware with one kwarg - the agent code is identical:
+### One agent, the whole robotics loop
+
+Teleoperate a real arm to collect demos, fine-tune a policy on them, run it in
+sim **and** on hardware, hand work to a fleet peer, and expose it all on ROS 2 -
+one library, one mental model. Every line below is a distinct capability:
 
 ```python
-robot = Robot("so100", mode="real", port="/dev/ttyACM0")
+from strands import Agent
+from strands_robots import Robot
+from strands_robots.tools import train_policy
+
+# 1. TELEOPERATE a real SO-101 with its leader arm and RECORD demos as a
+#    LeRobotDataset (one prompt drives cameras + teleop + recording).
+follower = Robot("so101", mode="real", port="/dev/ttyACM0",
+                 cameras={"front": {"type": "opencv", "index_or_path": "/dev/video0"}})
+follower.attach_teleop("so101_leader", port="/dev/ttyACM1", id="leader")
+Agent(tools=[follower])(
+    "start_recording(repo_id='me/pick', root='/tmp/pick', fps=30, "
+    "task='pick up the cube'); teleoperate for 60s; stop_recording"
+)
+
+# 2. POST-TUNE a policy on those demos (LoRA fine-tune; GPU box).
+train_policy(action="train", provider="lerobot_local",
+             dataset_root="/tmp/pick", base_model="lerobot/smolvla_base",
+             output_dir="/tmp/pick_ckpt", method="lora", steps=20000)
+
+# 3. RUN the tuned checkpoint - same policy on a MuJoCo twin AND the real arm.
+twin = Robot("so101")                                              # sim twin, no hardware
+twin.run_policy(robot_name="so101", policy_provider="lerobot_local",
+                policy_config={"pretrained_name_or_path": "/tmp/pick_ckpt"}, duration=10.0)
+follower.start_task("pick up the cube", policy_provider="lerobot_local",
+                    policy_port=None, duration=10.0)               # real arm, in-process
+
+# 4. COORDINATE a fleet - tell a mesh peer to assist, in natural language.
+follower.mesh.tell(follower.mesh.peers[0]["peer_id"], "hold the tray steady")
+
+# 5. EXPOSE the running sim on ROS 2 - rviz / nav2 / any ros2 node can subscribe.
+from strands_robots.simulation import Simulation
+sim = Simulation(ros2_bridge=True); sim.create_world(); sim.add_robot("so101")
+sim.step(100)   # publishes /so101/joint_states + camera image_raw on the ROS 2 graph
 ```
+
+| Step | Capability | Surface |
+|------|------------|---------|
+| 1 | Teleop + dataset recording | `Robot(mode="real")`, `attach_teleop`, `start_recording` |
+| 2 | Policy post-tuning | `train_policy` (LeRobot / GR00T trainers) |
+| 3 | Sim + hardware policy rollout | `run_policy` (sim), `start_task` (hardware) |
+| 4 | Fleet coordination | `robot.mesh.tell` / `robot_mesh` tool |
+| 5 | ROS 2 interop | `Simulation(ros2_bridge=True)`, `use_ros` |
+
+> Steps 1 and 3-real need hardware; step 2 needs a GPU. Everything runs in sim
+> with no hardware (`Robot("so101")`), so you can exercise the whole loop today.
 
 ## Why strands-robots
 
@@ -66,8 +112,10 @@ robot = Robot("so100", mode="real", port="/dev/ttyACM0")
   plus classical motion planners, MPC, and scripted controllers behind one ABC.
 - **Mesh networking built in.** Every robot is a Zenoh peer. `tell()` another
   robot what to do; broadcast an E-STOP; bridge to AWS IoT Core for fleets.
-- **60+ action simulation tool.** World building, physics, rendering,
-  domain randomization, and LeRobotDataset recording - all agent-callable.
+- **64-action simulation tool.** World building, physics, rendering, domain
+  randomization, and LeRobotDataset recording - all agent-callable.
+- **ROS 2 interop.** Observe + command any ROS 2 graph (`use_ros`), act as a
+  robot with no rclpy (`use_rtps`), or expose a running sim as a ROS node.
 - **One mental model.** Sim and hardware share the same policy interface,
   the same mesh, and the same natural-language control surface.
 
@@ -364,16 +412,21 @@ AgentTool returning `{"status", "content"}`.
 
 | Tool | Purpose |
 |------|---------|
-| `Robot(...)` | Universal robot - sim or hardware, async control |
+| `Robot(...)` | Universal robot - sim or hardware, natural-language + async control |
+| `run_policy` | Multi-episode policy rollout with per-episode eval + dataset recording |
+| `train_policy` | Post-tune (fine-tune) a policy on a recorded dataset (LeRobot / GR00T trainers, full or LoRA) |
+| `use_lerobot` | Universal LeRobot bridge - call ANY lerobot module/class/config directly (like `use_aws` wraps boto3) |
+| `lerobot_train` | Thin local wrapper over the `lerobot-train` CLI (the engine behind `train_policy`) |
+| `robot_mesh` | Coordinate robots over the Zenoh mesh (`tell`, `broadcast`, E-STOP) |
+| `use_ros` | Bridge to any ROS 2 graph - list/echo/publish topics, call services (in-process rclpy) |
+| `use_rtps` | Join a ROS 2 graph as a DDS participant - publish/echo topics, act as a robot (pure cyclonedds, no rclpy, all ROS 2 distros) |
 | `gr00t_inference` | Manage NVIDIA GR00T inference services (Docker lifecycle) |
 | `lerobot_camera` | OpenCV / RealSense camera discovery, capture, record |
 | `lerobot_calibrate` | List, view, back up, restore LeRobot calibrations |
 | `lerobot_teleoperate` | Record demonstrations, replay episodes |
 | `pose_tool` | Store, recall, and execute named robot poses |
 | `serial_tool` | Low-level Feetech servo / raw serial communication |
-| `robot_mesh` | Coordinate robots over the Zenoh mesh (`tell`, `broadcast`, E-STOP) |
-| `use_ros` | Bridge to any ROS 2 graph - list/echo/publish topics, call services (in-process rclpy) |
-| `use_rtps` | Join a ROS 2 graph as a DDS participant - publish/echo topics, act as a robot (pure cyclonedds, no rclpy, all ROS 2 distros) |
+| `download_assets` | Pre-fetch robot MJCF + meshes into the asset cache |
 
 <details>
 <summary><b>Robot tool actions</b></summary>
@@ -500,6 +553,11 @@ Pick the config matching your robot's camera + state layout; pass it as
 
 ### Cosmos 3 (NVIDIA omnimodal VLA - service mode)
 
+[`nvidia/Cosmos3-Nano-Policy-DROID`](https://huggingface.co/nvidia/Cosmos3-Nano-Policy-DROID) via a self-contained WebSocket client (`cosmos3` / `c3` / `cosmos3://host:port`); no `openpi-client` dep, no `numpy<2` pin, so it composes with `lerobot` in one env.
+
+<details>
+<summary><b>Cosmos 3 server + client setup, embodiments, sim rollout</b></summary>
+
 [`nvidia/Cosmos3-Nano-Policy-DROID`](https://huggingface.co/nvidia/Cosmos3-Nano-Policy-DROID)
 served by the Cosmos Framework RoboLab WebSocket policy server. The policy
 client is **self-contained** - it speaks the server's msgpack+NumPy wire
@@ -566,6 +624,9 @@ Embodiments: `droid` (10D, chunk 32, 15 fps), `umi`, `av`, `bridge`. If the
 server is not running, the policy raises a `ConnectionError` with the exact
 command to start it.
 
+
+</details>
+
 ### Non-VLA policies (motion planners, MPC, scripted)
 
 The same interface fits cuRobo, MoveIt2, OMPL, MPC, and pure-IK / scripted
@@ -623,140 +684,42 @@ register_policy("reach", lambda: ReachPolicy, aliases=["lerp"])
 policy = create_policy("reach")
 ```
 
-#### `MoveIt2Policy` (reference implementation, ROS 2 sidecar)
+<details>
+<summary><b>Reference non-VLA providers: MoveIt2, cuRobo, WBC/SONIC</b></summary>
 
-`MoveIt2Policy` is a thin ZMQ + msgpack client that talks to a sidecar
-ROS 2 node running `moveit_py`. The ROS 2 stack lives entirely
-out-of-process, so users without ROS 2 sourced are unaffected — the only
-client-side dependency is the `[moveit2]` extra (`pyzmq`, `msgpack`).
+Three reference implementations of the goal-kwarg contract above. Each has a
+runnable example + full install/deploy notes in its linked doc:
 
-```bash
-pip install 'strands-robots[moveit2]'
-```
-
-Bring up the sidecar via the docker-compose recipe at
-[`strands_robots/policies/moveit2/server/`](./strands_robots/policies/moveit2/server/)
-or natively with `python -m strands_robots.policies.moveit2.server.zmq_node`,
-then:
+| Provider | Alias | Runs | Goal kwarg | Needs | Docs |
+|----------|-------|------|-----------|-------|------|
+| `moveit2` | `moveit` | ZMQ sidecar (ROS 2 / `moveit_py`, out-of-process) | `target_pose` / `target_joints` | `[moveit2]` extra (`pyzmq`, `msgpack`); a running sidecar | [MoveIt2 docs](https://strands-labs.github.io/robots/policies/moveit2/) |
+| `curobo` | `cumotion` | in-process CUDA | `target_pose` / `target_joints` (+ `world_update`) | NVIDIA GPU; cuRobo from source (not on PyPI) | [cuRobo source](https://github.com/NVlabs/curobo) |
+| `wbc` | `sonic` | in-process ONNX (CPU) | `target_velocity` `[vx, vy, omega]` | `[wbc]` extra (`onnxruntime`); a SONIC checkpoint | [WBC docs](https://strands-labs.github.io/robots/policies/wbc/) |
 
 ```python
 from strands_robots.policies import create_policy
 
-policy = create_policy(
-    "moveit2",                    # alias: "moveit"
-    host="127.0.0.1",
-    port=5556,
-    planning_group="arm",
-)
-
+# Collision-aware planning (GPU, in-process); plan is cached, streamed per tick.
+policy = create_policy("curobo", robot_config="franka.yml", action_horizon=16)
 actions = policy.get_actions_sync(
-    observation_dict={"observation.state": [0.0] * 6},
-    instruction="reach for the red block",   # ignored by planners
-    target_pose=[0.3, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
-)
-```
-
-See the [MoveIt2 policy docs](https://strands-labs.github.io/robots/policies/moveit2/)
-for the goal-kwarg vocabulary, trajectory chunking, and sidecar deployment.
-
-#### `CuroboPolicy` (in-process collision-aware planning, GPU)
-
-[`CuroboPolicy`](./strands_robots/policies/curobo/policy.py) wraps NVIDIA's
-[cuRobo](https://curobo.org/) `MotionPlanner`. Unlike sidecar-style
-providers, cuRobo runs **in the same process** as a CUDA library - there is
-no network round-trip, but a CUDA-capable GPU is required.
-
-> **Install note**: cuRobo is **not** published on PyPI (the
-> `nvidia-curobo` package on PyPI is an unrelated v0.1 squatter). Install
-> from source from the upstream repository, then install this package:
->
-> ```bash
-> git clone https://github.com/NVlabs/curobo.git
-> pip install -e ./curobo
-> pip install 'strands-robots[curobo]'   # extra is currently empty;
->                                        # reserved for when cuRobo
->                                        # publishes a real PyPI wheel
-> ```
->
-> This policy targets cuRobo's restructured `main` API (issue #421):
-> `MotionPlanner` / `MotionPlannerCfg` / `DeviceCfg` / `JointState` /
-> `GoalToolPose`. The on-device cuRobo APIs are still moving on `main`
-> until upstream cuts a stable release; if you hit a fresh API shift
-> pin to a known-good commit (or open an issue against this repo with
-> the cuRobo SHA you tested).
-
-```python
-from strands_robots.policies import create_policy
-
-policy = create_policy(
-    "curobo",                      # alias: "cumotion"
-    robot_config="franka.yml",     # any cuRobo built-in YAML, or a dict
-    action_horizon=16,
-)
-
-actions = policy.get_actions_sync(
-    observation_dict={"observation.state": [0.0, -0.7854, 0.0, -2.3562, 0.0, 1.5708, 0.7854]},
-    instruction="reach for the red block",   # ignored by planners
+    {"observation.state": [0.0, -0.79, 0.0, -2.36, 0.0, 1.57, 0.79]},
+    "reach for the red block",                  # ignored by planners
     target_pose=[0.5, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
 )
 ```
 
-The full collision-free trajectory is cached on the first call; each
-subsequent call yields up to `action_horizon` waypoints from the cache so
-the 50Hz execution loop in `Robot` can stream per-step joint targets without
-re-planning. Pass `replan=True` (or call `policy.reset()`) to force a fresh
-plan when the world has updated mid-rollout. `world_update` is forwarded to
-`MotionPlanner.update_scene` (or the legacy `update_world` shim) for
-per-call collision-scene refresh.
+Agents share one goal vocabulary across VLA and planner providers:
+`Robot.start_task(..., policy_provider="curobo", target_pose=[...])` and
+`mesh.tell(peer, "...", policy_provider="curobo", target_pose=[...])` flow the
+same `target_pose` / `target_joints` / `world_update` kwargs through.
 
-The LLM-agent demo path (`Robot.start_task(..., policy_provider="curobo",
-target_pose=[...])`) flows the same `target_pose` / `target_joints` kwargs
-through `start_task`'s `**policy_kwargs` so agents share one goal vocabulary
-across VLA and planner providers.
+</details>
 
-#### `WBCPolicy` (GR00T Whole-Body-Control / SONIC, in-process ONNX)
-
-[`WBCPolicy`](./strands_robots/policies/wbc/policy.py) wraps NVIDIA's
-[GR00T-WholeBodyControl](https://github.com/NVlabs/GR00T-WholeBodyControl)
-(SONIC) ONNX controllers for deploy-grade humanoid locomotion on the Unitree
-G1. Like cuRobo it runs **in-process** (ONNX Runtime), but needs no GPU - the
-sessions run on CPU. It is non-VLA (`requires_images = False`) and reads its
-goal from the locomotion kwarg `target_velocity = [vx, vy, omega]`. It drives
-the **15 leg+waist DOFs**; arm joints are held at their defaults (layering an
-upper-body policy is a future `CompositePolicy`).
-
-```bash
-pip install "strands-robots[wbc]"   # onnxruntime only - light, no torch/GPU
-```
-
-No weights are bundled; download a SONIC checkpoint under the NVIDIA Open Model
-License (e.g. `nvidia/GEAR-SONIC`) into a dir with `policy.onnx`.
-
-```python
-from strands_robots import Robot
-
-sim = Robot("unitree_g1")             # sim-by-default; CPU ONNX, no GPU
-sim.run_policy(
-    robot_name="unitree_g1",
-    policy_provider="wbc",            # shorthand: "sonic"
-    policy_config={"checkpoint": "/path/to/GEAR-SONIC", "walk": True},
-    policy_kwargs={"target_velocity": [0.5, 0.0, 0.0]},
-    duration=10.0,
-    control_frequency=50.0,
-    action_horizon=1,                 # WBC is closed-loop per tick
-)
-```
-
-The per-call locomotion command rides through `run_policy`'s `policy_kwargs`
-to `policy.get_actions(..., target_velocity=[...])`. WBC output index `i`
-drives an explicit `unitree_g1` leg+waist actuator (no positional guessing);
-a model whose joint order disagrees raises rather than actuating wrong joints.
-See the [WBC policy docs](https://strands-labs.github.io/robots/policies/wbc/).
 
 ## Simulation (MuJoCo)
 
 `Robot("so100")` (sim mode) returns a `Simulation` - a MuJoCo-backed AgentTool
-exposing **50+ actions** for world composition, physics, rendering, policy
+exposing **64 actions** for world composition, physics, rendering, policy
 execution, and dataset recording. Build it directly when you want full control:
 
 ```python
@@ -970,6 +933,11 @@ touches ROS 2.
 | `GROOT_API_TOKEN` | API token for the GR00T inference service | unset |
 | `STRANDS_MESH` | Set `false` to disable Zenoh mesh globally | `true` |
 | `STRANDS_MESH_LOCAL_DEV` | Set `1` for a one-var localhost preset (auth `none`, no second factor needed) | unset |
+<details>
+<summary><b>Mesh / IoT / GR00T-container env vars (advanced)</b></summary>
+
+| Variable | Description | Default |
+|----------|-------------|---------|
 | `STRANDS_MESH_AUTH_MODE` | Wire auth: `mtls` or `none` (`none` needs a second factor) | `mtls` |
 | `STRANDS_MESH_I_KNOW_THIS_IS_INSECURE` | Second factor required to bring up `AUTH_MODE=none` | unset |
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
@@ -995,6 +963,8 @@ touches ROS 2.
 | `STRANDS_MESH_BRIDGE_TOPICS_PREFIX` | Comma-separated topic suffixes the bridge matches as a path **prefix** (so `response` matches `response/<turn-id>`). Extend this (not `STRANDS_MESH_BRIDGE_TOPICS`) when adding an RPC-shape topic with a per-turn tail | `response` |
 | `STRANDS_GR00T_IMAGE` | Container image the `gr00t_inference` tool runs (must pass the image allowlist; agent cannot choose it) | `gr00t:latest` |
 | `STRANDS_GR00T_IMAGE_ALLOW` | Extra image-name patterns (trailing `*` = tag wildcard) added to the built-in allowlist (`gr00t:*`, `nvcr.io/nvidia/isaac-gr00t:*`) | built-in only |
+
+</details>
 
 <details>
 <summary><b>Benchmark / diagnostic env vars (LIBERO, GR00T bisection)</b></summary>
