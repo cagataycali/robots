@@ -86,6 +86,25 @@ use_ros(action="service_call", service="/spawn",
         fields={"x": 3.0, "y": 3.0, "name": "t2"})
 ```
 
+## Try it live
+
+A reproducible showcase drives a real `turtlesim` through every `use_ros` action
+(in-process rclpy, closed sense->act->sense loop) in one command:
+
+```bash
+cd examples/ros2/use_ros
+docker compose run --build --rm showcase   # exits 0 iff the turtle moved
+```
+
+A Bedrock-backed Strands agent can also drive the turtle from a natural-language
+prompt - it issues the `use_ros` calls itself, using closed-loop pose feedback
+to draw a clean square:
+
+![A Strands agent driving a closed-loop square in turtlesim via use_ros](assets/use_ros_agent_square.gif)
+
+See `examples/ros2/use_ros/` (`agent_drive.py`, and captured runs in
+`sample_output.txt` / `agent_sample_output.txt`).
+
 ## Safety
 
 Agent-supplied topic, service, and type names are validated against an

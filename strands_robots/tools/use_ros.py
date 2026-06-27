@@ -371,7 +371,10 @@ def use_ros(
             return _err(f"unknown action: {action}")
     except TimeoutError as exc:
         return _err(str(exc))
-    except (KeyError, AttributeError, ValueError, TypeError) as exc:
+    except (ImportError, KeyError, AttributeError, ValueError, TypeError) as exc:
         # Type resolution / field-set errors surface as a clean tool error
         # rather than a raised exception that bypasses the structured result.
+        # ImportError (incl. ModuleNotFoundError) is the real failure mode when a
+        # valid-shaped type names a package that is not installed: get_message ->
+        # import_message_from_namespaced_type -> importlib.import_module raises it.
         return _err(f"{action} failed: {exc}")
