@@ -1,4 +1,4 @@
-"""VERA policy provider — :class:`Policy` implementation for strands-robots.
+"""VERA policy provider - :class:`Policy` implementation for strands-robots.
 
 VERA (Video-to-Embodied Robot Action, MIT/CSAIL) is a two-stage closed-loop
 video-to-action policy: an embodiment-agnostic **video planner** (DFoT / WAN)
@@ -19,7 +19,7 @@ VERA is *video-first*: it consumes the camera frame(s) only (proprio is read
 server-side from its own sim/IDM where needed). The provider keeps a rolling
 **context window** of the last ``context_frames`` camera frames (width-concat
 across views, matching the server's ``view_keys`` order) and calls the server's
-chunked ``infer`` when its local action queue drains — exactly the
+chunked ``infer`` when its local action queue drains - exactly the
 ``RemotePolicy`` contract from VERA's own eval harness.
 
 Action flow
@@ -28,7 +28,7 @@ The server returns ``{"action": np.ndarray[H, D]}``. Actions are queued and
 popped one per :meth:`get_actions` chunk request; each ``D``-vector is mapped to
 robot actuator names via ``action_mapping`` (or the embodiment's default action
 column names). Values are coerced to python ``float`` / ``list[float]`` per the
-:class:`Policy` contract — never raw ``np.ndarray``.
+:class:`Policy` contract - never raw ``np.ndarray``.
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ class VeraPolicy(Policy):
         config: Pre-built :class:`VeraConfig` (overrides the kwargs above).
 
     Notes:
-        * Needs camera frames — ``requires_images`` is ``True``.
+        * Needs camera frames - ``requires_images`` is ``True``.
         * Latency is chunked (a diffusion video planner), not 500 Hz servo;
           one infer returns ``action_horizon`` steps.
     """
@@ -261,7 +261,7 @@ class VeraPolicy(Policy):
         already configured unless ``force``. Picks the rotation encoding from the
         server's ``action_space`` once the metadata handshake has happened
         (``cartesian_delta`` => axis-angle dim 3; ``eef_delta`` => axis-angle dim 3
-        by default — override via ``set_ik_target(rotation_dim=...)``).
+        by default - override via ``set_ik_target(rotation_dim=...)``).
 
         Returns:
             True when an ee-frame was resolved + configured, else False.
@@ -290,7 +290,7 @@ class VeraPolicy(Policy):
         world model + this robot's namespace. Triggers IK auto-config for
         eef/cartesian-delta embodiments; a no-op for joint_position / pos.
 
-        Safe to call before the server handshake — auto-config is also retried
+        Safe to call before the server handshake - auto-config is also retried
         lazily on first eef-delta infer if the action_space turns out to need it.
         """
         self._mj_model = mj_model
@@ -423,13 +423,13 @@ class VeraPolicy(Policy):
         """Convert a raw ``[H, D]`` VERA chunk into a list of robot-actuator dicts.
 
         Routes on the server's ``action_space`` so each provider output maps onto
-        the robot's REAL joint/actuator names (what ``send_action`` resolves) —
+        the robot's REAL joint/actuator names (what ``send_action`` resolves) -
         never bare ``action_i`` keys (which the sim drops as unresolved):
 
         * ``joint_position`` (allegro): columns map directly onto
           ``robot_state_keys`` (positional joint targets).
         * ``eef_delta`` / ``cartesian_delta`` (mimicgen / droid): the chunk is a
-          6-DoF end-effector delta — IK the whole chunk to joint targets keyed by
+          6-DoF end-effector delta - IK the whole chunk to joint targets keyed by
           ``robot_state_keys`` (needs ``set_ik_target`` / a ``mj_model`` kwarg).
         * ``pos`` / unknown: keep server column names (or ``action_mapping``).
         """
@@ -460,7 +460,7 @@ class VeraPolicy(Policy):
 
         Priority: explicit ``action_mapping`` > robot joint names
         (``robot_state_keys``, the names ``send_action`` resolves) > server
-        default ``action_{i}`` (last-resort; warned once — the sim would drop it).
+        default ``action_{i}`` (last-resort; warned once - the sim would drop it).
         """
         # 1) explicit caller-provided rename.
         if self.action_mapping:
@@ -570,7 +570,7 @@ class VeraPolicy(Policy):
         addr: dict[str, int] = {}
         # Real MjModel: map robot_state_keys -> qpos addresses by (namespaced)
         # joint name. Falls back to a positional identity map when the model
-        # lacks MuJoCo joint introspection (e.g. a test stub) — state_key i -> i.
+        # lacks MuJoCo joint introspection (e.g. a test stub) - state_key i -> i.
         try:
             import mujoco
 

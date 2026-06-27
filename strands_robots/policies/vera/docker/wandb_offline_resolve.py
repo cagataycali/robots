@@ -5,7 +5,7 @@ Why this exists
 VERA loads its Jacobian IDM by **wandb run id**: ``load_checkpoint`` builds a
 ``run_path = "{entity}/{project}/{run_id}"`` and calls
 ``vera.utils.ckpt_utils.download_checkpoint``, which does
-``wandb.Api().run(run_path)`` **unconditionally** — before it checks whether the
+``wandb.Api().run(run_path)`` **unconditionally** - before it checks whether the
 checkpoint already exists on disk. In an offline container (no wandb network /
 no API key) that call raises, so the server never comes up.
 
@@ -21,7 +21,7 @@ already imported into ``vera.policy.motion_policy_loading``) with a version that
 
 1. Scans ``$VERA_CKPT_ROOT`` for ``*/provenance.json`` whose ``wandb_run`` matches
    the requested ``run_path`` (full ``entity/project/run_id`` OR just the trailing
-   ``run_id`` — tolerant of the entity/project drift between code defaults and the
+   ``run_id`` - tolerant of the entity/project drift between code defaults and the
    released artifacts).
 2. If found, returns that dir's ``model.ckpt`` (+ the ``config.yaml`` sidecar as
    the run config when ``return_config=True``), exactly like the real function.

@@ -907,7 +907,7 @@ def _ensure_provisioning_role(account: BootstrappedAccount) -> str:
         RoleName=name,
         PolicyArn="arn:aws:iam::aws:policy/service-role/AWSIoTThingsRegistration",
     )
-    # IAM role propagation is eventually-consistent (typically 5–10s, but can
+    # IAM role propagation is eventually-consistent (typically 5-10s, but can
     # take up to 15s under load). The provisioning template creation hits IoT
     # which then tries to AssumeRole - without the propagation wait we get
     # InvalidRequestException("provisioning role cannot be assumed").

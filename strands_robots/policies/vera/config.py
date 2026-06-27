@@ -26,7 +26,7 @@ Embodiment = Literal["pusht", "mimicgen", "allegro", "droid"]
 # provider -> server -> action plumbing rather than producing a solving
 # rollout. "allegro"/"droid" are code-present but checkpoint-absent (Wave 2).
 
-# Per-embodiment default ports (policy, viz) — match the VERA examples
+# Per-embodiment default ports (policy, viz) - match the VERA examples
 # (PushT uses 8820/8821; everything else uses 8800/8801).
 # Per-embodiment per-view render width the VERA WAN/DFoT planner expects. The
 # server does NOT advertise this (image_resolution is None); it is the client's
@@ -86,7 +86,7 @@ class VeraConfig:
     the environment win for deploy-time knobs (ports, checkpoint roots).
 
     Args:
-        embodiment: VERA embodiment — selects the WAN/DFoT planner + Jacobian
+        embodiment: VERA embodiment - selects the WAN/DFoT planner + Jacobian
             IDM pair and the client-side action adapter.
         host: Policy-server hostname.
         server_port: Policy-server websocket port (per-embodiment default).
@@ -191,7 +191,7 @@ class VeraConfig:
         if self.docker_container_name is None:
             self.docker_container_name = _env("VERA_DOCKER_CONTAINER") or f"vera-server-{self.embodiment}"
 
-        # Coerce string paths to Path (defensive — callers may pass str).
+        # Coerce string paths to Path (defensive - callers may pass str).
         if self.algo_config is not None and not isinstance(self.algo_config, Path):
             self.algo_config = Path(self.algo_config)
         if self.ckpt_root is not None and not isinstance(self.ckpt_root, Path):

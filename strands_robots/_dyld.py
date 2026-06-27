@@ -26,12 +26,12 @@ The fix (zero-touch, idempotent)
 2. Set ``DYLD_FALLBACK_LIBRARY_PATH`` to include the ffmpeg lib dir. This makes
    child processes (DataLoader workers with ``num_workers>0``, subprocess
    training) inherit a correct environment immediately.
-3. For the CURRENT process, dyld already snapshotted its env — so if (and only
+3. For the CURRENT process, dyld already snapshotted its env - so if (and only
    if) the env var was not already correct, re-exec the interpreter ONCE with
    the augmented environment. A guard env var prevents an exec loop.
 
 Re-exec is gated tightly: it only fires when torchcodec is importable, ffmpeg is
-present, and the var was missing — i.e. exactly the case where video streaming
+present, and the var was missing - i.e. exactly the case where video streaming
 would otherwise crash. Headless/Linux/Jetson and torchcodec-less installs never
 re-exec. Opt out entirely with ``STRANDS_ROBOTS_NO_DYLD_SHIM=1``.
 """
@@ -80,7 +80,7 @@ def _torchcodec_installed() -> bool:
 def _is_safe_to_reexec() -> bool:
     """True only for plain ``python script.py`` / ``python -m`` execution.
 
-    Re-exec'ing replaces the process image — fine for a script, catastrophic
+    Re-exec'ing replaces the process image - fine for a script, catastrophic
     inside a Jupyter kernel, an IPython REPL, a pytest run, or an embedding
     host. Detect those and refuse to re-exec there (we still export the env var
     for child processes and warn the user how to fix the current one).
@@ -91,7 +91,7 @@ def _is_safe_to_reexec() -> bool:
     # Jupyter / IPython kernels.
     if "ipykernel" in sys.modules or "IPython" in sys.modules:
         return False
-    # Test runners — re-exec would detach from the collector.
+    # Test runners - re-exec would detach from the collector.
     if "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ:
         return False
     # ``python -c '...'`` sets argv[0] to '-c'; nothing safe to re-run.
@@ -136,7 +136,7 @@ def ensure_ffmpeg_on_dyld_path() -> bool:
         return True
 
     # The CURRENT process needs the var set at launch (dyld snapshot). Re-exec
-    # once — but ONLY when it's safe (plain script run, not Jupyter/REPL/pytest).
+    # once - but ONLY when it's safe (plain script run, not Jupyter/REPL/pytest).
     if _is_safe_to_reexec():
         os.environ[_GUARD_ENV] = "1"
         try:

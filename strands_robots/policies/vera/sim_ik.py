@@ -10,7 +10,7 @@ This module is **copied** from (and intentionally independent of) the cosmos3
 ``sim_ik.py``: the cosmos3 version decodes an *absolute* EE pose trajectory
 (translation + rot6d) for its in-process diffusers backend, whereas VERA emits
 *relative* deltas. Copying (rather than sharing) keeps the two providers'
-kinematics decoupled — a change to one model's action semantics can never
+kinematics decoupled - a change to one model's action semantics can never
 silently break the other. The shared piece is only the generic ``mink`` solver
 wrapper (:class:`MinkIKBridge`); the VERA-specific decode lives in
 :func:`decode_vera_delta_chunk_to_targets`.
@@ -41,7 +41,7 @@ def _install_hint() -> str:
         "  uv pip install 'strands-robots[sim-mujoco]' mink\n"
         "This turns VERA's end-effector delta chunk (mimicgen/droid) into joint "
         "targets the MuJoCo arm can track. For joint_position embodiments "
-        "(allegro) no IK is needed — the action maps directly to joints."
+        "(allegro) no IK is needed - the action maps directly to joints."
     )
 
 
@@ -214,14 +214,14 @@ def decode_vera_delta_chunk_to_targets(
 
     VERA emits, per step, ``[translation(3), rotation(rotation_dim), gripper?]``
     as a delta on the *current* end-effector pose. We re-anchor each delta on the
-    arm's **achieved** EE pose (closed loop — the FK of the previous IK solve),
+    arm's **achieved** EE pose (closed loop - the FK of the previous IK solve),
     mirroring how robot deploy servers anchor on the observed pose so per-step
     tracking error stays bounded instead of compounding down the chunk.
 
     Args:
         action_chunk: ``[T, D]`` VERA action chunk (per-step EE delta + gripper).
         ik_bridge: A :class:`MinkIKBridge` over the target arm's MuJoCo model.
-        q_init: Seed joint config (length ``model.nq``) — the robot's current pose.
+        q_init: Seed joint config (length ``model.nq``) - the robot's current pose.
         rotation_dim: 3 (axis-angle) or 6 (rot6d) rotation delta encoding.
         has_gripper: Whether the chunk carries a trailing gripper column.
         gripper_dim_index: Index of the gripper column (``-1`` => last when

@@ -1,10 +1,10 @@
-"""Vendored msgpack codec with NumPy support — wire-compatible with VERA's server.
+"""Vendored msgpack codec with NumPy support - wire-compatible with VERA's server.
 
 Mirrors ``vera/server/protocol/_msgpack_numpy.py`` (itself a port of
 DreamZero / openpi_client's ``msgpack_numpy``): ndarrays and numpy scalars are
 encoded as tagged maps so dicts-of-arrays pack/unpack directly over the
 websocket. Vendored (not imported from ``vera``) so the client has **zero**
-dependency on the heavy ``vera`` package — only ``msgpack`` + ``numpy`` — and
+dependency on the heavy ``vera`` package - only ``msgpack`` + ``numpy`` - and
 composes with any numpy version (matching the ``cosmos3`` client rationale).
 """
 

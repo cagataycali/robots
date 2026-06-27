@@ -26,7 +26,7 @@ service mode:
         target_pose=[0.3, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
     )
 
-The ROS 2 / ``moveit_py`` deps stay out of ``pyproject.toml`` — only the
+The ROS 2 / ``moveit_py`` deps stay out of ``pyproject.toml`` - only the
 client side (``pyzmq``, ``msgpack``) is installed via the ``[moveit2]`` extra.
 See :mod:`strands_robots.policies.moveit2.server` for the sidecar reference
 implementation and :mod:`strands_robots.policies.moveit2.server.docker-compose.yml`
@@ -57,12 +57,12 @@ _JOINT_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_-]*$"
 class MoveIt2Policy(Policy):
     """ZMQ + msgpack client for the MoveIt2 sidecar.
 
-    The policy is intentionally thin — all motion-planning state lives in
+    The policy is intentionally thin - all motion-planning state lives in
     the sidecar. This keeps the Python process free of ROS 2 deps and lets
     a single sidecar serve multiple agent processes.
 
     Args:
-        host: Sidecar hostname. Default ``"127.0.0.1"`` (loopback only —
+        host: Sidecar hostname. Default ``"127.0.0.1"`` (loopback only -
             users opt into network exposure).
         port: Sidecar port.
         planning_group: Default MoveIt2 planning-group name. Per-call
@@ -142,7 +142,7 @@ class MoveIt2Policy(Policy):
         """MoveIt2 plans from joint state + collision world, never images.
 
         Returning ``False`` lets the simulation skip camera rendering for
-        this provider — same throughput optimisation
+        this provider - same throughput optimisation
         :class:`~strands_robots.policies.mock.MockPolicy` exposes.
         """
         return False
@@ -166,7 +166,7 @@ class MoveIt2Policy(Policy):
         randomised samplers (RRT-Connect, KPIECE) that the sidecar may
         expose.
 
-        Best-effort — any failure (server doesn't expose ``reset``,
+        Best-effort - any failure (server doesn't expose ``reset``,
         endpoint raises, network timeout) is logged and swallowed. Eval
         correctness is preserved even when reset is a no-op (the next
         ``plan`` call re-derives state from ``joint_state``).
@@ -197,7 +197,7 @@ class MoveIt2Policy(Policy):
         or ``target_joints`` must be provided; if both are set,
         ``target_joints`` wins (matches the MoveIt2 ``setJointValueTarget``
         precedence). If neither is provided, raises ``ValueError`` rather
-        than returning a no-op trajectory — the issue #300 contract says
+        than returning a no-op trajectory - the issue #300 contract says
         unknown kwargs are silently ignored, but a missing goal is a
         caller bug, not an unknown extension.
 
@@ -224,7 +224,7 @@ class MoveIt2Policy(Policy):
 
         Returns:
             List of action dicts; one entry per trajectory waypoint (the
-            time column from the sidecar is dropped — :class:`Robot`
+            time column from the sidecar is dropped - :class:`Robot`
             consumes per-step joint targets, the runner schedules the
             timing).
 
@@ -313,7 +313,7 @@ class MoveIt2Policy(Policy):
     def _unpack_trajectory(self, trajectory: list[list[float]]) -> list[dict[str, Any]]:
         """Convert ``[[t, q0, q1, ...], ...]`` rows into per-step action dicts.
 
-        The leading time column is dropped — the runner schedules the
+        The leading time column is dropped - the runner schedules the
         timing. If ``set_robot_state_keys`` was called, joint names come
         from there; otherwise we emit ``"joint_<i>"`` keys derived from
         the row width.
@@ -391,7 +391,7 @@ class MoveIt2Policy(Policy):
 
         if not isinstance(planning_group, str):
             raise ValueError(f"planning_group must be a str, got {type(planning_group).__name__}")
-        # Same charset as joint names — matches the MoveIt2 group naming
+        # Same charset as joint names - matches the MoveIt2 group naming
         # conventions documented at https://moveit.picknik.ai/.
         if not re.match(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$", planning_group):
             raise ValueError(

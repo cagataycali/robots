@@ -1,12 +1,12 @@
 """Managed VERA policy-server subprocess.
 
 Launches ``python -m vera.server.start_vera_server`` with **list args** (never a
-shell string — see PR #621 feedback), health-checks the websocket before
+shell string - see PR #621 feedback), health-checks the websocket before
 returning, streams the server's stdout/stderr to the logger, and shuts the
 process down cleanly on :meth:`stop`.
 
 The server holds the GPU and the two-stage model; this provider talks to it over
-the websocket (see :mod:`client`). Auto-launch is optional — point the provider
+the websocket (see :mod:`client`). Auto-launch is optional - point the provider
 at an already-running server by setting ``auto_launch_server=False``.
 """
 
@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 
 def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
     """True if a TCP connection to ``host:port`` succeeds (server is listening)."""
-    # 0.0.0.0 is a bind address, not connectable — probe loopback instead.
+    # 0.0.0.0 is a bind address, not connectable - probe loopback instead.
     probe_host = "127.0.0.1" if host in ("0.0.0.0", "") else host
     try:
         with socket.create_connection((probe_host, port), timeout=timeout):
@@ -93,7 +93,7 @@ class VeraServerRunner:
         """Launch the server (idempotent) and block until its websocket is up."""
         cfg = self.config
 
-        # Already serving (ours or someone else's) — reuse it.
+        # Already serving (ours or someone else's) - reuse it.
         if _port_open(cfg.host, int(cfg.server_port or 0)):
             logger.info("VERA server already listening on %s:%s; reusing", cfg.host, cfg.server_port)
             return
@@ -146,7 +146,7 @@ class VeraServerRunner:
         self.stop()
         raise TimeoutError(
             f"VERA server did not become ready on {cfg.host}:{cfg.server_port} "
-            f"within {cfg.server_ready_timeout:.0f}s (WAN model load can be slow — "
+            f"within {cfg.server_ready_timeout:.0f}s (WAN model load can be slow - "
             f"raise server_ready_timeout / VERA_SERVER_READY_TIMEOUT if needed)."
         )
 
@@ -240,7 +240,7 @@ class DockerServerRunner:
             cmd += ["-p", f"{cfg.vis_port}:{cfg.vis_port}"]
         if cfg.ckpt_root is not None:
             cmd += ["-v", f"{cfg.ckpt_root}:/ckpts:ro"]
-        # WAN base (frozen Wan2.1-T2V-1.3B) — REQUIRED for mimicgen/omni, unused for
+        # WAN base (frozen Wan2.1-T2V-1.3B) - REQUIRED for mimicgen/omni, unused for
         # pusht. Mounted read-only at /wan; the container's algo_config reads it via
         # ${oc.env:VERA_WAN_CKPT_ROOT}. Falls back to the ckpt root (harmless no-op
         # bind) so pusht works without the separate download.
@@ -313,7 +313,7 @@ class DockerServerRunner:
         self.stop()
         raise TimeoutError(
             f"VERA container did not become ready on {cfg.host}:{cfg.server_port} "
-            f"within {cfg.server_ready_timeout:.0f}s (WAN model load can be slow — "
+            f"within {cfg.server_ready_timeout:.0f}s (WAN model load can be slow - "
             f"raise server_ready_timeout / VERA_SERVER_READY_TIMEOUT)."
         )
 

@@ -3,8 +3,8 @@
 Why it exists
 -------------
 Raw camera frames are too large for AWS IoT MQTT (128 KB hard cap, plus the
-cost model is brutal at 5–10 Hz × N robots). Even a 640×480 JPEG @ quality 80
-is 30–60 KB; base64-wrapping it inside JSON inflates that 33%. Multiple
+cost model is brutal at 5-10 Hz × N robots). Even a 640×480 JPEG @ quality 80
+is 30-60 KB; base64-wrapping it inside JSON inflates that 33%. Multiple
 cameras per robot at typical operational rates clears 100+ KB/s/robot
 trivially.
 

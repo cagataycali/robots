@@ -4,7 +4,7 @@ Mirrors the shape of :class:`~strands_robots.policies.groot.client.Gr00tInferenc
 so users familiar with the GR00T service-mode pattern can use the same mental
 model. The only wire types are JSON-equivalent values plus 1-D / 2-D float
 arrays (joint state and trajectory rows), so we keep msgpack handling
-deliberately minimal — no custom ``__class__`` markers, no numpy probing on
+deliberately minimal - no custom ``__class__`` markers, no numpy probing on
 the hot path.
 """
 
@@ -66,13 +66,13 @@ class MoveIt2InferenceClient:
     """ZMQ REQ client for the MoveIt2 sidecar.
 
     Args:
-        host: Server hostname or IP. Default ``"127.0.0.1"`` — bind to
+        host: Server hostname or IP. Default ``"127.0.0.1"`` - bind to
             loopback by default; users opt into network exposure.
         port: Server port.
         timeout_ms: Socket send/recv timeout in milliseconds.
         api_token: Optional token included in every request for
             authentication. When unset, no auth is sent. Sent in
-            plaintext over TCP — use a TLS tunnel or SSH port-forward
+            plaintext over TCP - use a TLS tunnel or SSH port-forward
             for non-localhost deployments (same caveat as
             :class:`~strands_robots.policies.groot.client.Gr00tInferenceClient`).
     """
@@ -197,7 +197,7 @@ class MoveIt2InferenceClient:
     def _teardown(self) -> None:
         """Best-effort ZMQ socket + context teardown.
 
-        Extracted from ``__del__`` so the destructor stays one line — CodeQL
+        Extracted from ``__del__`` so the destructor stays one line - CodeQL
         flags non-trivial logic in ``__del__`` because exceptions raised
         during interpreter shutdown are swallowed silently and can mask
         resource leaks.

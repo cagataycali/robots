@@ -708,7 +708,7 @@ def _cleanup_stale_certs(iot: Any, thing_name: str) -> int:
     Re-running :func:`provision_robot` on the same Thing has historically
     caused certs to accumulate (each run issues a fresh cert because
     AWS doesn't expose previously-generated private keys). That left
-    Things with 5–10 ACTIVE certs after a few dev iterations, which is
+    Things with 5-10 ACTIVE certs after a few dev iterations, which is
     a footgun: every old cert is a credential that *could* be used to
     impersonate the robot.
 

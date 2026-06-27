@@ -1,7 +1,7 @@
 """Self-contained WebSocket client for the VERA policy server.
 
 Speaks VERA's websocket wire protocol (``vera/server/protocol/``) directly using
-only ``websockets`` + ``msgpack`` + a vendored NumPy packer — **no dependency on
+only ``websockets`` + ``msgpack`` + a vendored NumPy packer - **no dependency on
 the ``vera`` package** at client time. This mirrors the ``cosmos3`` client: the
 heavy model stack lives in the server subprocess; the client is import-light and
 composes with any numpy version.
@@ -9,13 +9,13 @@ composes with any numpy version.
 Wire contract (verified against ``vera.server.protocol.websocket_policy_client``
 and ``vera.controller.run_mimicgen_eval.RemotePolicy``):
 
-* On connect the server sends one msgpack metadata blob — the
+* On connect the server sends one msgpack metadata blob - the
   ``VeraServerConfig`` (``view_keys``, ``context_frames``, ``action_space``,
   ``action_dim``, ``action_horizon``, ``control_dt``, ``gripper_dim_index`` …).
 * ``infer`` request = ``{"context_rgb": (T,H,W,3) uint8, "view_keys": [...],
   "view_widths": [...], "session_id": str, "prompt"?: str, "endpoint": "infer"}``.
 * ``infer`` response = ``{"action": np.ndarray[H, D], ...}``.
-* A *string* response is the error sentinel — raise.
+* A *string* response is the error sentinel - raise.
 """
 
 from __future__ import annotations
@@ -96,14 +96,14 @@ class VeraWebsocketClient:
         """Send one inference request; return the server response dict.
 
         Args:
-            observation: Wire dict — must carry ``context_rgb`` (the rolling
+            observation: Wire dict - must carry ``context_rgb`` (the rolling
                 context window), ``view_keys``, ``view_widths`` and
                 ``session_id``; ``prompt`` is optional (only when the server
                 was launched with text conditioning).
 
         Returns:
-            Response dict containing at least ``"action"`` — an ``[H, D]``
-            NumPy array — the chunk the controller plays before refilling.
+            Response dict containing at least ``"action"`` - an ``[H, D]``
+            NumPy array - the chunk the controller plays before refilling.
         """
         ws = self._ensure()
         msg = {**observation, "endpoint": "infer"}
@@ -118,7 +118,7 @@ class VeraWebsocketClient:
         try:
             ws = self._ensure()
         except ConnectionError:
-            # Reset is best-effort — never a correctness requirement (mirrors
+            # Reset is best-effort - never a correctness requirement (mirrors
             # Cosmos3WebsocketClient.reset / Gr00tPolicy.reset).
             return
         msg = {**(reset_info or {}), "endpoint": "reset"}

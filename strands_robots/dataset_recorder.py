@@ -764,7 +764,7 @@ class DatasetRecorder:
     ) -> dict[str, Any]:
         """Sync the on-disk LeRobotDataset into an HF Storage Bucket (Phase 1/2).
 
-        Mutable, Xet-deduplicated dump target for COLLECTION — avoids git-LFS
+        Mutable, Xet-deduplicated dump target for COLLECTION - avoids git-LFS
         history bloat of push_to_hub during recording. Daily re-sync uploads
         only changed chunks (content-defined chunking). Requires the ``hf`` CLI
         (huggingface_hub>=1.x) and ``hf auth login``.

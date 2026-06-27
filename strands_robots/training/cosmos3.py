@@ -1,19 +1,19 @@
-"""Cosmos3 trainer — wrapper over cosmos_framework's SFT pipeline.
+"""Cosmos3 trainer - wrapper over cosmos_framework's SFT pipeline.
 
 Cosmos3 has the most distinct pipeline of the three backends, and is the reason
 the :class:`Trainer` ABC has optional ``prepare``/``export`` hooks:
 
-* **prepare()** — the base HF checkpoint MUST be converted to PyTorch DCP
+* **prepare()** - the base HF checkpoint MUST be converted to PyTorch DCP
   (``cosmos_framework.scripts.convert_model_to_dcp``) before training.
   LeRobot/GR00T need no such step.
-* **train()** — builds the cosmos ``Config`` via
+* **train()** - builds the cosmos ``Config`` via
   ``cosmos_framework.configs.toml_config.sft_config.load_experiment_from_toml``
   (TOML recipe + a Hydra ``key.path=value`` override LIST) and calls
   ``cosmos_framework.scripts.train.launch(config, args)`` DIRECTLY. (train.py
-  has no reusable ``main()`` — only ``launch`` — verified against upstream.)
+  has no reusable ``main()`` - only ``launch`` - verified against upstream.)
   Multi-GPU uses torch's programmatic ``elastic_launch`` (the engine behind
-  ``torchrun``); each worker calls ``launch`` — no shell, no torchrun binary.
-* **export()** — the trained DCP is converted back to HF safetensors via
+  ``torchrun``); each worker calls ``launch`` - no shell, no torchrun binary.
+* **export()** - the trained DCP is converted back to HF safetensors via
   ``cosmos_framework.scripts.export_model`` so ``create_policy`` can consume
   it.
 
@@ -25,7 +25,7 @@ The cosmos_framework checkout is resolved from ``COSMOS_ROOT`` env var or
 ``extra['cosmos_root']``; the SFT recipe TOML from ``extra['sft_toml']``.
 
 Install cosmos-framework from source (per its README) and ensure
-``cosmos_framework`` is importable in the active Python — this trainer drives
+``cosmos_framework`` is importable in the active Python - this trainer drives
 it as a Python library, NOT as a subprocess invoking another interpreter.
 """
 
@@ -48,7 +48,7 @@ _INSTALL_HINT = (
     "cosmos-framework is not importable from this interpreter. "
     "Install it from source (see https://github.com/nvidia-cosmos/cosmos-framework "
     "or the path passed via cosmos_root / COSMOS_ROOT) into the *same* Python "
-    "that imports strands_robots — e.g. `pip install -e $COSMOS_ROOT`."
+    "that imports strands_robots - e.g. `pip install -e $COSMOS_ROOT`."
 )
 
 
@@ -57,7 +57,7 @@ def _import_cosmos_module(qualname: str) -> Any:
 
     ``qualname`` is e.g. ``scripts.convert_model_to_dcp`` /
     ``scripts.train`` / ``scripts.export_model``. We resolve as a Python
-    library so the trainer runs in-process — no nested ``python`` invocation.
+    library so the trainer runs in-process - no nested ``python`` invocation.
     """
     full = f"cosmos_framework.{qualname}"
     try:
@@ -75,7 +75,7 @@ class Cosmos3Trainer(Trainer):
             Falls back to the ``COSMOS_ROOT`` env var, then
             ``TrainSpec.extra['cosmos_root']``. The package itself is loaded
             as a Python library via :func:`importlib.import_module` from the
-            active interpreter — install from source per cosmos-framework's
+            active interpreter - install from source per cosmos-framework's
             README; ``COSMOS_ROOT`` is for runtime config resolution, not the
             interpreter path.
     """
@@ -168,7 +168,7 @@ class Cosmos3Trainer(Trainer):
 
         Skips if the DCP target already exists (idempotent). Calls
         ``cosmos_framework.scripts.convert_model_to_dcp.convert_model_to_dcp``
-        DIRECTLY with a typed ``Args`` object — no subprocess, no argv.
+        DIRECTLY with a typed ``Args`` object - no subprocess, no argv.
         Verified against github.com/NVIDIA/cosmos-framework:
         ``convert_model_to_dcp(Args(checkpoint=CheckpointOverrides(
         checkpoint_path=<hf>), output_path=<dcp>))``.
@@ -193,7 +193,7 @@ class Cosmos3Trainer(Trainer):
         call_callable(convert_mod.convert_model_to_dcp, args)
 
     def build_command(self, spec: TrainSpec) -> list[str]:
-        """PURE argv-parity helper — the torchrun CLI the library call maps to.
+        """PURE argv-parity helper - the torchrun CLI the library call maps to.
 
         NOT used to launch training (``train()`` builds the cosmos ``Config`` via
         ``load_experiment_from_toml`` and calls ``train.launch(config, args)``
@@ -312,7 +312,7 @@ class Cosmos3Trainer(Trainer):
         try:
             if nproc > 1 or spec.num_nodes > 1:
                 # Multi-GPU/-node: torch elastic agent spawns workers; each builds
-                # the cosmos Config and calls train.launch() — Python objects, no
+                # the cosmos Config and calls train.launch() - Python objects, no
                 # argv, no torchrun binary.
                 rdzv = str(spec.extra.get("rdzv_endpoint", "")) if spec.num_nodes > 1 else ""
                 elastic_launch_callable(
@@ -353,7 +353,7 @@ def _run_cosmos_launch(sft_toml: str, overrides: list[str], *, log_path: str | N
     and calls ``launch(config, args)``. We construct the same argparse-shaped
     ``args`` namespace with the non-deterministic, non-debug defaults the script
     uses for a real run, so calling ``launch`` is behaviourally identical to the
-    CLI — minus the process spawn and argv parse.
+    CLI - minus the process spawn and argv parse.
     """
     import argparse
 

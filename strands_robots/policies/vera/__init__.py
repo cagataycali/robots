@@ -1,6 +1,6 @@
-"""VERA policy provider — video-to-action (two-stage planner + Jacobian IDM).
+"""VERA policy provider - video-to-action (two-stage planner + Jacobian IDM).
 
-VERA (Video-to-Embodied Robot Action, MIT/CSAIL — https://github.com/sizhe-li/VERA)
+VERA (Video-to-Embodied Robot Action, MIT/CSAIL - https://github.com/sizhe-li/VERA)
 is a two-stage closed-loop video-to-action policy: an embodiment-agnostic video
 planner (DFoT / WAN) dreams future frames, and an embodiment-specific Jacobian
 IDM translates the dream into robot actions. *One video planner, many IDMs.*

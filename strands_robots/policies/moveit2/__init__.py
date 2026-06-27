@@ -2,7 +2,7 @@
 
 The :class:`MoveIt2Policy` is a thin ZMQ + msgpack client that talks to a
 sidecar ROS 2 node running ``moveit_py``. ROS 2 lives entirely out of
-process, so users without ROS 2 sourced are unaffected — the only
+process, so users without ROS 2 sourced are unaffected - the only
 client-side dependencies are ``pyzmq`` and ``msgpack`` (extra ``[moveit2]``).
 
 Wire protocol (mirrors :class:`~strands_robots.policies.groot.client.Gr00tInferenceClient`)::
@@ -21,7 +21,7 @@ Wire protocol (mirrors :class:`~strands_robots.policies.groot.client.Gr00tInfere
     }
 
 The reference sidecar implementation lives under
-:mod:`strands_robots.policies.moveit2.server` (import-only Python source —
+:mod:`strands_robots.policies.moveit2.server` (import-only Python source -
 the ROS 2 deps stay out of ``pyproject.toml``).
 
 Subtask 3 of issue #299. The :class:`Policy` ABC contract for non-VLA

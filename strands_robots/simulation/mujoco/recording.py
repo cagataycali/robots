@@ -306,7 +306,7 @@ class RecordingMixin:
                 artifact). Overrides the ``push_to_hub`` set at start_recording.
             bucket: If set (e.g. ``"my-org/robot-fave"``), sync the dataset into
                 a mutable HF Storage Bucket instead of/in addition to the dataset
-                repo — the Phase 1/2 collection target (Xet-deduped, overwrite in
+                repo - the Phase 1/2 collection target (Xet-deduped, overwrite in
                 place). See reports/STREAMING_DATA_LOOP_DEEP_DIVE.md §2.4 / App. A.
             run_id: Optional subpath inside the bucket (defaults to dataset name).
         """
@@ -382,7 +382,7 @@ class RecordingMixin:
         root = recorder.root
 
         # Finalize FIRST so meta/ (stats/info) is written before any bucket sync
-        # — streaming/training downstream needs it (App. F.2).
+        # - streaming/training downstream needs it (App. F.2).
         recorder.finalize()
 
         # #708 - parquet-truth gate. The recorder's ``episode_count`` is the
@@ -391,8 +391,8 @@ class RecordingMixin:
         # downstream consumers (HF hub, training loaders, audit tools) trust.
         # If they disagree, the on-disk dataset is the source of truth (Law-7
         # in AGENTS.md: parquet num_rows > meta/info.json > markdown). Surface
-        # the mismatch in the returned payload so the caller — and any CI that
-        # parses the status dict — can fail loudly instead of shipping a
+        # the mismatch in the returned payload so the caller - and any CI that
+        # parses the status dict - can fail loudly instead of shipping a
         # silent-collapse dataset.
         parquet_episode_count: int | None = None
         episode_count_mismatch: bool = False
@@ -573,7 +573,7 @@ class RecordingMixin:
         }
 
     def stream_dataset(self, repo_id: str, **kwargs):
-        """Open a streaming reader for a LeRobotDataset — read frames straight
+        """Open a streaming reader for a LeRobotDataset - read frames straight
         from the Hub (or a local root) with no full materialization.
 
         This is the in-process counterpart to ``start_recording`` /
@@ -587,7 +587,7 @@ class RecordingMixin:
             repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or
                 a local repo_id paired with ``root=``.
             **kwargs: Forwarded to
-                :meth:`StreamingDatasetReader.open` — e.g. ``root``,
+                :meth:`StreamingDatasetReader.open` - e.g. ``root``,
                 ``delta_timestamps``, ``episodes``, ``shuffle``, ``buffer_size``,
                 ``max_num_shards``, ``drop_videos`` (proprio-only, torchcodec-free).
 

@@ -2,7 +2,7 @@
 
 This is a **reference implementation** matching the wire protocol the
 client (:class:`strands_robots.policies.moveit2.MoveIt2Policy`) expects.
-It is intentionally minimal — production deployments should fork this
+It is intentionally minimal - production deployments should fork this
 file and harden it for their own collision world / planner pipeline /
 auth posture.
 
@@ -13,7 +13,7 @@ Run it with::
     python -m strands_robots.policies.moveit2.server.zmq_node \\
         --port 5556 --planning-group arm
 
-The sidecar is single-threaded REQ/REP — one in-flight plan request at a
+The sidecar is single-threaded REQ/REP - one in-flight plan request at a
 time. That matches the ``MoveItPy.plan()`` API which is itself
 single-threaded.
 
@@ -29,7 +29,7 @@ Wire protocol::
                 "success": bool,
                 "status": str}
 
-The trajectory rows are ``[time_from_start_seconds, q0, q1, ..., qN]`` —
+The trajectory rows are ``[time_from_start_seconds, q0, q1, ..., qN]`` -
 the time column lets the client / runner schedule waypoints precisely.
 
 Notes for forks:
@@ -38,7 +38,7 @@ Notes for forks:
   production sidecar should validate it against a known schema (e.g.
   expect ``{"depth_topic": str, "stamp": int, "frame_id": str}``) before
   pushing to the planning scene.
-* ``api_token`` validation is left as an exercise — the reference
+* ``api_token`` validation is left as an exercise - the reference
   implementation accepts any client. Enable it by checking
   ``request.get("api_token")`` against an env-var / file secret.
 """
@@ -73,7 +73,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--port",
         type=int,
         default=5556,
-        help="Bind port. Default 5556 — matches MoveIt2Policy's default.",
+        help="Bind port. Default 5556 - matches MoveIt2Policy's default.",
     )
     parser.add_argument(
         "--planning-group",

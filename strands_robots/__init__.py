@@ -168,7 +168,7 @@ if _importlib_util.find_spec("mujoco") is not None:
 
 
 # Auto-configure the macOS dyld search path so torchcodec can find Homebrew's
-# ffmpeg with zero user setup — making ``sim.stream_dataset(...)`` video decode
+# ffmpeg with zero user setup - making ``sim.stream_dataset(...)`` video decode
 # work out of the box. No-op off macOS, without torchcodec, or when already set.
 # May re-exec the interpreter ONCE on a plain script run (guarded; never in
 # Jupyter/REPL/pytest). Opt out with STRANDS_ROBOTS_NO_DYLD_SHIM=1. See _dyld.py.

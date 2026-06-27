@@ -11,7 +11,7 @@ torchmetrics (the version the NGC base ships):
 Rather than pin torchmetrics back to 0.11.x (which collides with lightning 2.6),
 we keep the modern torchmetrics and re-expose the names VERA expects. These are
 **eval-only metrics** not used on the inference rollout path, so the shim only
-needs to satisfy the import — exactness of the metric is irrelevant for serving.
+needs to satisfy the import - exactness of the metric is irrelevant for serving.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ def _apply() -> None:
         if priv is not None:
             _lpip.NoTrainLpips = priv
 
-    # _valid_img: removed from the public module in modern torchmetrics — provide
+    # _valid_img: removed from the public module in modern torchmetrics - provide
     # a faithful reimplementation (range/shape check used by the LPIPS metric).
     if not hasattr(_lpip, "_valid_img"):
 

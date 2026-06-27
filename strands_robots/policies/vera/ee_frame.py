@@ -4,17 +4,17 @@ VERA's ``eef_delta`` (mimicgen) and ``cartesian_delta`` (droid) embodiments emit
 end-effector pose *deltas*; driving a MuJoCo arm needs an IK target frame (the
 body/site the Cartesian task tracks). The robot registry does **not** record an
 ee-frame, so we discover it from the compiled ``mujoco.MjModel`` with a robust,
-namespace-aware heuristic — making eef-delta embodiments **zero-config**.
+namespace-aware heuristic - making eef-delta embodiments **zero-config**.
 
 Heuristic (first match wins), scoped to the robot's ``namespace`` (``<robot>/``):
   1. A **site** whose name hints at the tool point:
      ``attachment_site`` | ``grasp`` | ``ee`` | ``tcp`` | ``pinch`` | ``flange``
-     — these are the conventional MuJoCo IK targets (e.g. menagerie Panda ships
+     - these are the conventional MuJoCo IK targets (e.g. menagerie Panda ships
      ``attachment_site``). Sites are preferred: they are the intended TCP.
   2. A **body** whose name hints at the hand/tool:
      ``hand`` | ``gripper`` | ``tool`` | ``ee`` | ``tcp`` | ``wrist`` | ``flange``.
   3. The **leaf body** of the robot's kinematic chain (the descendant of the
-     robot's joints that has no child body) — the last link, where a tool mounts.
+     robot's joints that has no child body) - the last link, where a tool mounts.
 
 Returns ``(frame_name, frame_type)`` ready for ``mink.FrameTask`` /
 ``MinkIKBridge`` (frame_type ∈ {``"site"``, ``"body"``}); names keep the robot

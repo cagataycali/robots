@@ -1,13 +1,13 @@
-"""GR00T trainer — wrapper over Isaac-GR00T's ``launch_finetune``.
+"""GR00T trainer - wrapper over Isaac-GR00T's ``launch_finetune``.
 
 GR00T N1.7 ships its own post-training pipeline (NOT lerobot): a
 ``FinetuneConfig`` dataclass. ``launch_finetune.py`` is only a thin
 ``__main__`` shim (build ``FinetuneConfig`` via tyro → lower to a ``Config``
 → call ``experiment.run(config)``); it has NO reusable function. So we
 reproduce that translation here and call ``gr00t.experiment.experiment.run``
-DIRECTLY as a library — same interpreter, no argv, no nested ``python``.
+DIRECTLY as a library - same interpreter, no argv, no nested ``python``.
 Multi-GPU uses torch's programmatic ``elastic_launch`` (the engine behind
-``torchrun``); each worker builds the ``Config`` and calls ``run`` — no
+``torchrun``); each worker builds the ``Config`` and calls ``run`` - no
 ``torchrun`` binary, no shell.
 
 This adapter translates a provider-agnostic
@@ -29,7 +29,7 @@ argv. Mapping highlights:
 
 GR00T checkpoints are HF-native, so :meth:`export` is the default passthrough.
 The Isaac-GR00T checkout is resolved from the ``GR00T_ROOT`` env var or
-``extra['groot_root']`` — needed so we can ``chdir`` there for relative configs.
+``extra['groot_root']`` - needed so we can ``chdir`` there for relative configs.
 Install Isaac-GR00T from source (per its README) and ensure ``gr00t`` is
 importable from the active interpreter; this trainer drives it as a Python
 library, NOT by invoking another interpreter.
@@ -50,7 +50,7 @@ from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 
 logger = logging.getLogger(__name__)
 
-# GR00T's tune flags — the model-tuning surface lerobot does NOT have.
+# GR00T's tune flags - the model-tuning surface lerobot does NOT have.
 # Sensible default mirrors FinetuneConfig defaults (projector + diffusion on).
 _DEFAULT_TUNE = {"llm": False, "visual": False, "projector": True, "diffusion": True}
 
@@ -60,7 +60,7 @@ _INSTALL_HINT = (
     "Isaac-GR00T is not importable from this interpreter. Install it from source "
     "(see https://github.com/NVIDIA/Isaac-GR00T or the path passed via "
     "groot_root / GR00T_ROOT) into the *same* Python that imports strands_robots "
-    "— e.g. `pip install -e $GR00T_ROOT`."
+    "- e.g. `pip install -e $GR00T_ROOT`."
 )
 
 
@@ -69,7 +69,7 @@ def _import_groot_module(qualname: str) -> Any:
     full = f"gr00t.{qualname}"
     try:
         return importlib.import_module(full)
-    except ImportError as e:  # pragma: no cover — exercised in integration
+    except ImportError as e:  # pragma: no cover - exercised in integration
         raise ImportError(f"{_INSTALL_HINT} (failed to import {full})") from e
 
 
@@ -82,7 +82,7 @@ class Gr00tTrainer(Trainer):
             for ``launch_finetune.py``). Falls back to the ``GR00T_ROOT`` env
             var, then ``TrainSpec.extra['groot_root']``. The package itself
             is loaded via :func:`importlib.import_module` from the active
-            interpreter — install from source; ``GR00T_ROOT`` is for runtime
+            interpreter - install from source; ``GR00T_ROOT`` is for runtime
             config resolution, not the interpreter path.
     """
 
@@ -168,7 +168,7 @@ class Gr00tTrainer(Trainer):
         return problems
 
     def build_command(self, spec: TrainSpec) -> list[str]:
-        """PURE argv-parity helper — the launch_finetune CLI the config maps to.
+        """PURE argv-parity helper - the launch_finetune CLI the config maps to.
 
         NOT used to launch training (``train()`` builds a ``FinetuneConfig`` +
         ``Config`` and calls ``gr00t.experiment.experiment.run`` directly).
@@ -234,7 +234,7 @@ class Gr00tTrainer(Trainer):
         """Build GR00T's own ``FinetuneConfig`` object from a TrainSpec (pure).
 
         Returns an instance of ``gr00t.configs.finetune_config.FinetuneConfig``
-        — the SAME typed object ``launch_finetune.py`` builds via tyro, but
+        - the SAME typed object ``launch_finetune.py`` builds via tyro, but
         constructed directly from Python values (no argv). Requires the gr00t
         package importable.
         """
@@ -273,7 +273,7 @@ class Gr00tTrainer(Trainer):
             kwargs["modality_config_path"] = spec.extra["modality_config_path"]
 
         # Passthrough: any other extra.* that is a REAL FinetuneConfig field
-        # (typed allowlist — an unknown key can never set an attribute).
+        # (typed allowlist - an unknown key can never set an attribute).
         valid_fields = {f.name for f in dataclasses.fields(FinetuneConfig)}
         _consumed = {"groot_root", "master_port", "modality_config_path"}
         for key, value in spec.extra.items():
@@ -290,7 +290,7 @@ class Gr00tTrainer(Trainer):
 
         Mirrors the body of ``launch_finetune.py``'s ``__main__`` exactly
         (verified against the Isaac-GR00T checkout), so calling ``run(config)``
-        is behaviourally identical to launching the script — minus the process
+        is behaviourally identical to launching the script - minus the process
         spawn and the tyro argv parse.
         """
         get_default_config = _import_groot_module("configs.base_config").get_default_config
@@ -410,7 +410,7 @@ class Gr00tTrainer(Trainer):
         try:
             if spec.num_gpus and spec.num_gpus > 1:
                 # Multi-GPU: torch elastic agent spawns workers; each builds the
-                # FinetuneConfig + Config and calls experiment.run() — Python
+                # FinetuneConfig + Config and calls experiment.run() - Python
                 # objects, no argv, no torchrun binary.
                 groot_root = self._resolve_groot_root(spec)
                 elastic_launch_callable(
@@ -427,7 +427,7 @@ class Gr00tTrainer(Trainer):
                 call_callable(run, run_config, log_path=log_path)
         except ImportError as e:
             return TrainResult(status="error", job_id=job_id, message=str(e))
-        except Exception as e:  # noqa: BLE001 — convert ANY failure to a result
+        except Exception as e:  # noqa: BLE001 - convert ANY failure to a result
             train_error = e
             logger.error("Gr00tTrainer in-process run failed: %s", e)
 
@@ -473,7 +473,7 @@ def _groot_worker(groot_root: str | None, spec: TrainSpec, log_path: str) -> Non
 
     Runs in a torch-spawned worker (one per GPU). torch sets RANK / LOCAL_RANK /
     WORLD_SIZE; GR00T's experiment.run() + HF Trainer read those to shard. We do
-    NOT pin CUDA_VISIBLE_DEVICES here — each worker sees all devices and selects
+    NOT pin CUDA_VISIBLE_DEVICES here - each worker sees all devices and selects
     by LOCAL_RANK. Only local rank 0 tees to the shared log file.
     """
     import os as _os

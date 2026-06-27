@@ -288,7 +288,7 @@ class PolicyRunner:
     # ``evaluate`` / ``_evaluate_with_spec`` records ONE giant episode of
     # ``n_episodes * max_steps`` frames into the dataset. The agent sees
     # ``total_episodes=1`` in the parquet meta but a status=OK summary
-    # because the recorder did receive frames. (#708 — silent collapse.)
+    # because the recorder did receive frames. (#708 - silent collapse.)
     #
     # Calling this at the end of each policy-runner episode forces a per-
     # episode boundary in the recorded dataset. Skipped silently when no

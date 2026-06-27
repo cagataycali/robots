@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Streaming read-back for LeRobotDataset — read frames directly from the Hub.
+"""Streaming read-back for LeRobotDataset - read frames directly from the Hub.
 
 Primary use: in-process eval / replay / notebooks / agent loops (NOT a
-precondition for streamed *training* — ``python -m lerobot.scripts.train
+precondition for streamed *training* - ``python -m lerobot.scripts.train
 dataset.streaming=true`` already uses StreamingLeRobotDataset via
 ``lerobot.datasets.factory.make_dataset``; see
 reports/STREAMING_DATA_LOOP_DEEP_DIVE.md Appendix D).
@@ -12,7 +12,7 @@ Design mirrors ``dataset_recorder.py``:
     Jetson; see dataset_recorder.py header).
   * Constructor kwargs are forwarded via ``inspect.signature`` introspection so
     a lerobot version bump can't break us (lerobot's dataset API drifted across
-    0.5.0->0.5.2; streaming is newer and still changing — upstream has a
+    0.5.0->0.5.2; streaming is newer and still changing - upstream has a
     multi-thread prefetch TODO).
 """
 
@@ -55,7 +55,7 @@ def _get_streaming_cls() -> Any:
             f"StreamingLeRobotDataset unavailable ({exc}). "
             "Install with: pip install 'strands-robots[lerobot]' "
             "(needs torchcodec for video keys; on aarch64/Jetson that means "
-            "torch>=2.11 + torchcodec>=0.11 — see deep-dive Appendix C). "
+            "torch>=2.11 + torchcodec>=0.11 - see deep-dive Appendix C). "
             "For proprio-only streaming without torchcodec, use drop_videos=True."
         ) from exc
 
@@ -103,7 +103,7 @@ class StreamingDatasetReader:
         accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in init_sig.values())
 
         # Proprio-only: strip video keys from delta_timestamps so video decode
-        # (torchcodec) is never invoked — lets constrained edge devices stream
+        # (torchcodec) is never invoked - lets constrained edge devices stream
         # state/action without a torchcodec wheel (App. C.2).
         if drop_videos and delta_timestamps:
             delta_timestamps = {
@@ -140,7 +140,7 @@ class StreamingDatasetReader:
         )
         ds = StreamingCls(**kwargs)
 
-        # Tolerance grid-check — the streaming path skips check_delta_timestamps
+        # Tolerance grid-check - the streaming path skips check_delta_timestamps
         # (App. A.2); replicate it for parity with the materialized dataset.
         if delta_timestamps and validate_deltas:
             try:
@@ -158,9 +158,9 @@ class StreamingDatasetReader:
         WARNING (verified upstream): StreamingLeRobotDataset is an
         IterableDataset that shuffles INTERNALLY (reservoir buffer). Do NOT pass
         shuffle=True here. With num_workers>0, video decode parallelizes across
-        worker processes — the documented mitigation for the single-thread
+        worker processes - the documented mitigation for the single-thread
         bottleneck (streaming_dataset.py ~L312 TODO). Never decode video in the
-        main process while workers>0 (segfault — _query_videos docstring).
+        main process while workers>0 (segfault - _query_videos docstring).
 
         Note: lerobot's make_dataset couples max_num_shards = num_workers
         (factory.py). If you need that coupling, pass the same N to

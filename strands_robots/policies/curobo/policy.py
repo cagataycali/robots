@@ -276,7 +276,7 @@ class CuroboPolicy(Policy):
         """cuRobo plans from joint state + collision world, never images.
 
         Returning ``False`` lets the simulation skip camera rendering for
-        this provider — same throughput optimisation
+        this provider - same throughput optimisation
         :class:`~strands_robots.policies.moveit2.MoveIt2Policy` and
         :class:`~strands_robots.policies.mock.MockPolicy` expose.
         """
@@ -417,7 +417,7 @@ class CuroboPolicy(Policy):
         if target_joints is not None:
             self._validate_target_joints(target_joints)
 
-        # 3. Cache check — if the previous trajectory still has unyielded
+        # 3. Cache check - if the previous trajectory still has unyielded
         # rows AND no new goal forces a replan, just stream the next
         # chunk. Otherwise re-plan from the current state.
         if not self._cache_has_waypoints() or replan:
@@ -908,7 +908,7 @@ class CuroboPolicy(Policy):
         from such a payload so the LLM-agent demo path works without
         forcing the agent to learn a new kwargs API.
 
-        Returns ``(None, None)`` when no goal is found — the caller will
+        Returns ``(None, None)`` when no goal is found - the caller will
         then raise :class:`ValueError`.
         """
         if not instruction or not isinstance(instruction, str):
