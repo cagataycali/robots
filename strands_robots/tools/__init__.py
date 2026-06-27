@@ -24,6 +24,7 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "serial_tool": (".serial_tool", "serial_tool"),
     "train_policy": (".train_policy", "train_policy"),
     "use_lerobot": (".use_lerobot", "use_lerobot"),
+    "use_ros": (".use_ros", "use_ros"),
 }
 
 __all__ = list(_LAZY_IMPORTS.keys())

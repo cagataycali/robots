@@ -251,6 +251,21 @@ device-connect = [
     "device-connect-edge>=0.2.0",
     "device-connect-agent-tools>=0.1.0",
 ]
+# ROS 2 bridge for the use_ros tool (strands_robots/tools/use_ros.py). The
+# tool has two backends and BOTH work without anything in this extra:
+#   * docker  - forwards commands to a running ROS 2 container (ros:jazzy etc.)
+#               via `docker exec`; nothing is installed on the host. This is the
+#               default on macOS / Jetson dev loops (set ROS2_DOCKER_CONTAINER).
+#   * native  - uses an already-sourced system ROS 2 (rclpy + rosidl_runtime_py).
+# The core ROS 2 client libraries (rclpy, rosidl_runtime_py) are NOT distributed
+# on PyPI - they ship with a system ROS 2 install (apt / RoboStack / the docker
+# image) and cannot be `pip install`ed. So, like the [curobo] extra, this stays
+# minimal: it pulls only the pip-installable cyclonedds Python binding (a DDS
+# RMW the native backend can use). Installing this extra does NOT by itself
+# provision native mode - source a real ROS 2 distro, or use the docker backend.
+ros2 = [
+    "cyclonedds>=0.10.2,<1.0.0",
+]
 vera = [
     "vera @ git+https://github.com/sizhe-li/VERA.git",
     "websockets>=14",

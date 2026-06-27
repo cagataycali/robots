@@ -38,6 +38,7 @@ def test_all_lists_every_lazy_import_name() -> None:
         "serial_tool",
         "train_policy",
         "use_lerobot",
+        "use_ros",
     }
 
 

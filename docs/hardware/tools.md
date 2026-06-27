@@ -10,6 +10,7 @@ from strands_robots.tools import (
     pose_tool, serial_tool, download_assets,
     gr00t_inference,   # see GR00T page
     robot_mesh,        # see multi-robot page
+    use_ros,           # see ROS 2 integration page
 )
 # All return {"status": ..., "content": [{"text": "..."}]}
 ```
@@ -27,6 +28,7 @@ from strands_robots.tools import (
 | `download_assets` | - | Pre-fetch MJCF assets to `~/.strands_robots/assets/` |
 | `gr00t_inference` | `"start_container"`, … | GR00T container lifecycle - see [GR00T](../policies/groot.md) |
 | `robot_mesh` | `"tell"`, `"broadcast"`, `"emergency_stop"` | Agent-driven mesh ops - see [Multi-robot](../mesh.md) |
+| `use_ros` | `"list_topics"`, `"echo"`, `"publish"`, `"service_call"`, `"info"` | Bridge to any ROS 2 robot/sim - see [ROS 2 integration](../ros2-integration.md) |
 
 Parse results via `result["content"][0]["text"]`, not custom keys like `result["ports"]`.
 

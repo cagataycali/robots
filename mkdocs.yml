@@ -29,6 +29,7 @@ nav:
   - Newton Backend (GPU): simulation/newton.md
 - Device Connect: device-connect.md
 - Multi-robot Mesh: mesh.md
+- ROS 2 Integration: ros2-integration.md
 - Policy Providers:
   - Overview: policies/overview.md
   - GR00T: policies/groot.md
