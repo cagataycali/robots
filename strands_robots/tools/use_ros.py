@@ -84,6 +84,8 @@ def _detect_mode() -> str:
 
         return "native"
     except ImportError:
+        # rclpy absent: native backend unavailable, fall through to the
+        # docker-container probe below.
         pass
     try:
         out = subprocess.run(
@@ -95,6 +97,8 @@ def _detect_mode() -> str:
         if out.returncode == 0 and out.stdout.strip() == "true":
             return "docker"
     except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        # docker missing, not on PATH, or the inspect call timed out: treat as
+        # no docker backend and fall through to the "none" result.
         pass
     return "none"
 

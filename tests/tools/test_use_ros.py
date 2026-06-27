@@ -24,7 +24,12 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.use_ros as ros_mod
-from strands_robots.tools.use_ros import use_ros
+
+# Reference the tool via a module-local alias rather than a second `from`
+# import: the tests monkeypatch module internals through `ros_mod`, so the
+# module object is the single source of truth and a dual import of the same
+# module is avoided.
+use_ros = ros_mod.use_ros
 
 
 def _texts(result: dict[str, Any]) -> str:
