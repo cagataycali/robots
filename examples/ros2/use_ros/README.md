@@ -31,7 +31,7 @@ The script first resets the canvas and teleports the turtle to a known corner -
 both via `use_ros` `service_call` (note `teleport_absolute` is resolved
 dynamically and is not in any static type registry). Full transcript in
 [`agent_sample_output.txt`](./agent_sample_output.txt); the recording above is
-the live turtlesim canvas captured while the agent drove (3x speed).
+the live turtlesim canvas (static thinking-pauses between tool calls removed, so only the turtle's motion remains).
 
 ```bash
 # inside a sourced ROS 2 env with turtlesim running:
