@@ -26,6 +26,31 @@ import pytest
 
 from strands_robots.policies.lerobot_local import norm_stats as ns
 
+
+def _lerobot_pipeline_importable() -> bool:
+    """Return True if LeRobot's real processor pipeline can be imported.
+
+    Used to gate only the tests that build real LeRobot ``ProcessorStep`` /
+    ``DataProcessorPipeline`` objects. The pure-numpy ``FeatureNormalizer``
+    tests below must NOT depend on this: the normalizer math is the single
+    most safety-critical path (un-normalized actions reach the motors), so it
+    has to stay covered even on installs without the optional processor
+    framework. The import can fail with ImportError (framework absent) or, on
+    some torch/coverage ABI combinations, AttributeError while resolving the
+    lazy ``torch`` surface -- both mean "pipeline unavailable here".
+    """
+    try:
+        import lerobot.processor.pipeline  # noqa: F401
+    except (ImportError, AttributeError):
+        return False
+    return True
+
+
+_requires_lerobot_pipeline = pytest.mark.skipif(
+    not _lerobot_pipeline_importable(),
+    reason="requires LeRobot's processor pipeline (real ProcessorStep framework)",
+)
+
 FIXTURE = Path(__file__).parent / "fixtures" / "molmoact2_norm_stats.json"
 
 
@@ -169,10 +194,7 @@ class TestLoadNormStats:
         assert ns.load_norm_stats("") is None
 
 
-# Tests below need LeRobot's processor framework (real pipeline steps).
-pytest.importorskip("lerobot.processor.pipeline")
-
-
+@_requires_lerobot_pipeline
 class TestBuildProcessors:
     """build_norm_stats_processors against the real LeRobot pipeline."""
 
@@ -212,6 +234,7 @@ class TestBuildProcessors:
         assert ns.build_norm_stats_processors(payload) == (None, None)
 
 
+@_requires_lerobot_pipeline
 class TestProcessorBridgeFallback:
     """ProcessorBridge.from_pretrained wires the norm_stats fallback.
 
@@ -259,6 +282,7 @@ class TestProcessorBridgeFallback:
         assert migration_error in _missing_config_errors()
 
 
+@_requires_lerobot_pipeline
 class TestUpstreamLerobotParity:
     """Bit-equality audit vs the real upstream lerobot normalizer.
 
@@ -520,6 +544,7 @@ class TestSelectTagMalformedMetadata:
         assert ns.select_norm_tag({}) is None
 
 
+@_requires_lerobot_pipeline
 class TestProcessorStepEdgeCases:
     """Pre/post ProcessorStep helpers: identity transform_features + None action."""
 
