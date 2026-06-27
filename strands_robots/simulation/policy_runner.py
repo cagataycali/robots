@@ -1029,22 +1029,50 @@ class PolicyRunner:
             success = False
             steps = 0
 
-            for _ in range(max_steps):
+            while steps < max_steps:
                 observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
                 coro_or_result = policy.get_actions(observation, instruction)
                 actions = _resolve_coroutine(coro_or_result)
 
-                if actions:
-                    self.sim.send_action(actions[0], robot_name=robot_name, n_substeps=n_substeps)
-                else:
+                if not actions:
                     # Policy returned nothing - still advance one physics step
                     # so episodes don't hang on degenerate policies.
                     self.sim.step(n_steps=1)
+                    steps += 1
+                    # Check success on the live post-action sim state, same as
+                    # the spec path (see below).
+                    fresh_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                    if resolved_check is not None and resolved_check(fresh_obs):
+                        success = True
+                        break
+                    continue
 
-                steps += 1
-
-                if resolved_check is not None and resolved_check(observation):
-                    success = True
+                # Consume the full action chunk before re-querying, identical to
+                # run() and the spec eval path. ``resolve_chunk_length`` applies
+                # the single re-query rule (``execution_horizon`` vs
+                # ``action_horizon``, RTC-aware). The earlier code applied only
+                # ``actions[0]`` and re-queried every step: that silently ignored
+                # ``action_horizon`` and forced an out-of-distribution control
+                # regime for chunk-predicting VLA policies (SmolVLA, GR00T, ...),
+                # diverging from both ``run()`` and ``evaluate_benchmark``.
+                _chunk = resolve_chunk_length(policy, action_horizon)
+                stop_episode = False
+                for action_dict in actions[:_chunk]:
+                    if steps >= max_steps:
+                        break
+                    self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                    steps += 1
+                    # Check success against the FRESH post-action observation,
+                    # matching the spec path (``spec.is_success`` runs against
+                    # the live post-action sim state). Checking the stale
+                    # pre-action observation detected success one step late and
+                    # missed success that lands on the final step entirely.
+                    fresh_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                    if resolved_check is not None and resolved_check(fresh_obs):
+                        success = True
+                        stop_episode = True
+                        break
+                if stop_episode:
                     break
 
             results.append({"episode": ep, "steps": steps, "success": success})
