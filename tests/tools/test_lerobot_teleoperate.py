@@ -68,7 +68,14 @@ class _FakeProc:
 # ---------------------------------------------------------------------------
 # build_lerobot_command - argv mapping for each action
 # ---------------------------------------------------------------------------
-def test_build_replay_command_includes_episode_and_paths() -> None:
+def test_build_replay_command_uses_nested_dataset_and_robot_args() -> None:
+    """Replay must use lerobot 0.5's nested ``--dataset.* / --robot.*`` schema.
+
+    Pre-0.5 emitted ``--policy-path`` / ``--episode`` / ``--robot-port``; lerobot
+    0.5's ``lerobot_replay`` reads ``--dataset.repo_id`` / ``--dataset.episode``
+    and the robot's port from ``--robot.port``. ``ReplayConfig`` has no
+    ``display_data`` field, so the viewer flag must not be emitted.
+    """
     cmd = build_lerobot_command(
         action="replay",
         robot_type="so101_follower",
@@ -78,10 +85,16 @@ def test_build_replay_command_includes_episode_and_paths() -> None:
         display_data=True,
     )
     assert cmd[:3] == ["python", "-m", "lerobot.scripts.lerobot_replay"]
-    assert "--episode" in cmd and cmd[cmd.index("--episode") + 1] == "5"
-    assert "--policy-path" in cmd and "user/cubes" in cmd
-    assert "--robot-port" in cmd
-    assert "--display-data" in cmd
+    assert cmd[cmd.index("--dataset.episode") + 1] == "5"
+    assert cmd[cmd.index("--dataset.repo_id") + 1] == "user/cubes"
+    assert cmd[cmd.index("--robot.type") + 1] == "so101_follower"
+    assert cmd[cmd.index("--robot.port") + 1] == "/dev/ttyACM0"
+    # The stale flat flags must be gone.
+    assert "--policy-path" not in cmd
+    assert "--robot-port" not in cmd
+    assert "--episode" not in cmd
+    # ReplayConfig has no display_data field -> never emit it.
+    assert "--display_data" not in cmd and "--display-data" not in cmd
 
 
 def test_build_replay_command_requires_dataset_repo_id() -> None:
@@ -92,10 +105,10 @@ def test_build_replay_command_requires_dataset_repo_id() -> None:
 def test_build_replay_command_routes_bimanual_arm_ports() -> None:
     """Replay on a bimanual (ALOHA-class) robot must forward both arm ports.
 
-    Single-arm SO-100/SO-101 robots use ``--robot-port``; bimanual robots have
-    no single port and instead pass ``--robot-left-arm-port`` /
-    ``--robot-right-arm-port``. The replay builder must emit the per-arm flags
-    (and may omit ``--robot-port`` entirely) so the lerobot CLI binds each arm.
+    Single-arm SO-100/SO-101 robots use ``--robot.port``; bimanual robots have
+    no single port and instead pass ``--robot.left_arm_port`` /
+    ``--robot.right_arm_port``. The replay builder must emit the per-arm flags
+    (and may omit ``--robot.port`` entirely) so the lerobot CLI binds each arm.
     """
     cmd = build_lerobot_command(
         action="replay",
@@ -106,20 +119,20 @@ def test_build_replay_command_routes_bimanual_arm_ports() -> None:
         robot_right_arm_port="/dev/ttyACM1",
     )
     assert cmd[:3] == ["python", "-m", "lerobot.scripts.lerobot_replay"]
-    assert cmd[cmd.index("--robot-left-arm-port") + 1] == "/dev/ttyACM0"
-    assert cmd[cmd.index("--robot-right-arm-port") + 1] == "/dev/ttyACM1"
+    assert cmd[cmd.index("--robot.left_arm_port") + 1] == "/dev/ttyACM0"
+    assert cmd[cmd.index("--robot.right_arm_port") + 1] == "/dev/ttyACM1"
     # No single robot_port was given, so the single-arm flag must be absent.
-    assert "--robot-port" not in cmd
+    assert "--robot.port" not in cmd
 
 
-def test_build_start_teleop_command_routes_bimanual_ports_ids_and_root() -> None:
-    """A bimanual teleop start must forward per-arm ports, ids, root + display.
+def test_build_start_record_command_routes_bimanual_ports_ids_and_root() -> None:
+    """A bimanual record start must forward per-arm ports, ids, root + display.
 
     Exercises the option branches a leader->follower ALOHA recording session
     needs: robot/teleop ``--*.id`` namespacing, the left/right arm ports for
-    both the follower (robot) and leader (teleop), a dataset ``--root`` for the
-    on-disk recording location, and the ``--display_data`` viewer flag. Each
-    must map to its lerobot CLI argument with the supplied value.
+    both the follower (robot) and leader (teleop), a dataset ``--dataset.root``
+    for the on-disk recording location, and the ``--display_data`` viewer flag.
+    Each must map to its lerobot 0.5 CLI argument with the supplied value.
     """
     cmd = build_lerobot_command(
         action="start",
@@ -137,7 +150,7 @@ def test_build_start_teleop_command_routes_bimanual_ports_ids_and_root() -> None
     )
     # Recording mode (dataset given) -> lerobot_record entrypoint.
     assert "lerobot.scripts.lerobot_record" in cmd
-    assert cmd[cmd.index("--root") + 1] == "/data/lerobot/bimanual_pick"
+    assert cmd[cmd.index("--dataset.root") + 1] == "/data/lerobot/bimanual_pick"
     # Robot (follower) per-arm config.
     assert cmd[cmd.index("--robot.id") + 1] == "follower_arm"
     assert cmd[cmd.index("--robot.left_arm_port") + 1] == "/dev/ttyACM0"
@@ -150,11 +163,21 @@ def test_build_start_teleop_command_routes_bimanual_ports_ids_and_root() -> None
     assert cmd[cmd.index("--display_data") + 1] == "true"
 
 
-def test_build_start_record_command_when_dataset_given() -> None:
+def test_build_start_record_command_uses_nested_dataset_schema() -> None:
+    """Record mode must emit lerobot 0.5's nested ``--dataset.*`` flags.
+
+    The pre-0.5 record CLI used flat ``--repo-id`` / ``--num-episodes`` /
+    ``--single-task`` / ``--push-to-hub`` / ``--no-video``. lerobot 0.5's
+    ``lerobot_record`` nests these under ``--dataset.*`` and reads booleans as
+    explicit ``true``/``false`` values (``--dataset.video false``). The stale
+    flat flags must be gone or the script exits on an unrecognized argument.
+    """
     cmd = build_lerobot_command(
         action="start",
         robot_type="so101_follower",
         robot_port="/dev/ttyACM0",
+        teleop_type="so101_leader",
+        teleop_port="/dev/ttyACM1",
         dataset_repo_id="user/cubes",
         dataset_single_task="pick the cube",
         dataset_num_episodes=10,
@@ -162,11 +185,67 @@ def test_build_start_record_command_when_dataset_given() -> None:
         dataset_video=False,
     )
     assert "lerobot.scripts.lerobot_record" in cmd
-    assert "--repo-id" in cmd and "user/cubes" in cmd
-    assert cmd[cmd.index("--num-episodes") + 1] == "10"
-    assert "--single-task" in cmd
-    assert "--push-to-hub" in cmd
-    assert "--no-video" in cmd
+    assert cmd[cmd.index("--robot.type") + 1] == "so101_follower"
+    assert cmd[cmd.index("--teleop.type") + 1] == "so101_leader"
+    assert cmd[cmd.index("--dataset.repo_id") + 1] == "user/cubes"
+    assert cmd[cmd.index("--dataset.num_episodes") + 1] == "10"
+    assert cmd[cmd.index("--dataset.single_task") + 1] == "pick the cube"
+    assert cmd[cmd.index("--dataset.push_to_hub") + 1] == "true"
+    assert cmd[cmd.index("--dataset.video") + 1] == "false"
+    # No pre-0.5 flat flags survive.
+    for stale in ("--repo-id", "--num-episodes", "--single-task", "--push-to-hub", "--no-video", "--robot-path"):
+        assert stale not in cmd
+
+
+def test_build_start_record_argv_matches_lerobot_record_fields() -> None:
+    """Cross-check every emitted ``--robot/teleop/dataset.<field>`` against the
+    real lerobot ``RecordConfig`` dataclasses, so field drift is caught.
+
+    Skipped when lerobot is not importable (it is in the ``[all]`` test env).
+    """
+    pytest.importorskip("lerobot.scripts.lerobot_record")
+    import dataclasses
+
+    from lerobot.configs.dataset import DatasetRecordConfig
+    from lerobot.robots import RobotConfig
+    from lerobot.scripts.lerobot_record import RecordConfig
+
+    dataset_fields = {f.name for f in dataclasses.fields(DatasetRecordConfig)}
+    record_fields = {f.name for f in dataclasses.fields(RecordConfig)}
+
+    cmd = build_lerobot_command(
+        action="start",
+        robot_type="so101_follower",
+        robot_port="/dev/ttyACM0",
+        robot_id="follower",
+        teleop_type="so101_leader",
+        teleop_port="/dev/ttyACM1",
+        teleop_id="leader",
+        dataset_repo_id="user/cubes",
+        dataset_single_task="pick the cube",
+        robot_cameras={"front": {"type": "opencv", "index_or_path": 0}},
+        display_data=True,
+    )
+    # Collect the flag stems (strip a trailing "=value" for cameras-style flags).
+    flags = [tok[2:].split("=", 1)[0] for tok in cmd if tok.startswith("--")]
+    robot_config_fields = {f.name for f in dataclasses.fields(RobotConfig)} | {
+        "type",
+        "port",
+        "cameras",
+        "left_arm_port",
+        "right_arm_port",
+    }
+    for flag in flags:
+        if flag.startswith("dataset."):
+            assert flag.split(".", 1)[1] in dataset_fields, f"{flag} not a DatasetRecordConfig field"
+        elif flag.startswith("robot."):
+            assert flag.split(".", 1)[1] in robot_config_fields, f"{flag} not a robot config field"
+        elif flag.startswith("teleop."):
+            # teleop mirrors robot's id/port/type namespacing.
+            assert flag.split(".", 1)[1] in {"type", "port", "id", "left_arm_port", "right_arm_port"}
+        else:
+            # Top-level RecordConfig flags (display_data, ...).
+            assert flag in record_fields, f"{flag} not a RecordConfig field"
 
 
 def test_build_start_teleop_command_without_dataset() -> None:
@@ -185,14 +264,21 @@ def test_build_start_teleop_command_without_dataset() -> None:
     assert "--teleop_time_s" in cmd
 
 
-def test_build_start_command_emits_camera_config() -> None:
+def test_build_start_command_emits_nested_camera_config() -> None:
+    """Cameras must be emitted as lerobot 0.5's nested ``--robot.cameras`` dict.
+
+    The pre-0.5 ``--camera-config name=type:path:fps:WxH`` flat form was removed
+    upstream; lerobot 0.5 parses a nested dict string instead.
+    """
     cmd = build_lerobot_command(
         action="start",
         robot_type="so101_follower",
         robot_cameras={"front": {"type": "opencv", "index_or_path": 2, "width": 1280, "height": 720, "fps": 60}},
     )
-    cam_args = [a for a in cmd if a.startswith("front=")]
-    assert cam_args == ["front=opencv:2:60:1280x720"]
+    cam_args = [a for a in cmd if a.startswith("--robot.cameras=")]
+    assert cam_args == ["--robot.cameras={front: {type: opencv, index_or_path: 2, width: 1280, height: 720, fps: 60}}"]
+    # The stale flat camera flag must not appear.
+    assert not any(a.startswith("--camera-config") for a in cmd)
 
 
 def test_build_command_rejects_unknown_action() -> None:

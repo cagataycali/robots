@@ -98,6 +98,84 @@ class SessionManager:
         return self._load_sessions()
 
 
+def _build_camera_arg(robot_cameras: dict[str, Any]) -> str:
+    """Render a camera map as a lerobot 0.5 nested ``--robot.cameras`` value.
+
+    lerobot 0.5's draccus CLI parses ``--robot.cameras`` as a nested dict, e.g.
+    ``{front: {type: opencv, index_or_path: 0, width: 640, height: 480, fps: 30}}``.
+    The pre-0.5 ``--camera-config name=type:path:fps:WxH`` flat form no longer
+    exists. Each entry defaults to opencv/index 0/640x480/30fps when unset.
+
+    Args:
+        robot_cameras: Map of camera name to a config dict with optional keys
+            ``type``, ``index_or_path``, ``width``, ``height``, ``fps``.
+
+    Returns:
+        The nested dict string suitable for ``--robot.cameras=<value>``.
+    """
+    entries = []
+    for cam_name, cam_config in robot_cameras.items():
+        cam_type = cam_config.get("type", "opencv")
+        cam_path = cam_config.get("index_or_path", 0)
+        fps_val = cam_config.get("fps", 30)
+        width = cam_config.get("width", 640)
+        height = cam_config.get("height", 480)
+        entries.append(
+            f"{cam_name}: {{type: {cam_type}, index_or_path: {cam_path}, "
+            f"width: {width}, height: {height}, fps: {fps_val}}}"
+        )
+    return "{" + ", ".join(entries) + "}"
+
+
+def _robot_args(
+    robot_type: str,
+    robot_port: str | None,
+    robot_id: str | None,
+    robot_left_arm_port: str | None,
+    robot_right_arm_port: str | None,
+    robot_cameras: dict[str, Any] | None,
+) -> list[str]:
+    """Build the nested ``--robot.*`` argv for lerobot 0.5's draccus CLI.
+
+    Single-arm robots bind ``--robot.port``; bimanual robots have no single port
+    and instead pass ``--robot.left_arm_port`` / ``--robot.right_arm_port``.
+    """
+    args = ["--robot.type", robot_type]
+    if robot_port:
+        args.extend(["--robot.port", robot_port])
+    if robot_id:
+        args.extend(["--robot.id", robot_id])
+    if robot_left_arm_port:
+        args.extend(["--robot.left_arm_port", robot_left_arm_port])
+    if robot_right_arm_port:
+        args.extend(["--robot.right_arm_port", robot_right_arm_port])
+    if robot_cameras:
+        args.append(f"--robot.cameras={_build_camera_arg(robot_cameras)}")
+    return args
+
+
+def _teleop_args(
+    teleop_type: str | None,
+    teleop_port: str | None,
+    teleop_id: str | None,
+    teleop_left_arm_port: str | None,
+    teleop_right_arm_port: str | None,
+) -> list[str]:
+    """Build the nested ``--teleop.*`` argv for lerobot 0.5's draccus CLI."""
+    args: list[str] = []
+    if teleop_type:
+        args.extend(["--teleop.type", teleop_type])
+    if teleop_id:
+        args.extend(["--teleop.id", teleop_id])
+    if teleop_port:
+        args.extend(["--teleop.port", teleop_port])
+    if teleop_left_arm_port:
+        args.extend(["--teleop.left_arm_port", teleop_left_arm_port])
+    if teleop_right_arm_port:
+        args.extend(["--teleop.right_arm_port", teleop_right_arm_port])
+    return args
+
+
 def build_lerobot_command(
     action: str,
     robot_type: str,
@@ -127,116 +205,81 @@ def build_lerobot_command(
     play_sounds: bool = True,
     **kwargs,
 ) -> list[str]:
-    """Build the lerobot command based on action and parameters."""
+    """Build the lerobot CLI argv for a teleoperate/record/replay action.
 
+    Emits the lerobot 0.5 draccus-nested schema (``--robot.* / --teleop.* /
+    --dataset.*``). The pre-0.5 flat flags (``--robot-path``, ``--repo-id``,
+    ``--num-episodes``, ``--single-task``, ``--episode``, ``--no-video`` ...) were
+    removed upstream and are NOT emitted; passing them makes the lerobot scripts
+    exit with an unrecognized-argument error.
+
+    Args:
+        action: One of ``"start"`` (teleoperate or record) or ``"replay"``.
+            ``"start"`` records when ``dataset_repo_id`` is set, otherwise it
+            runs plain teleoperation.
+        robot_type: Follower robot type (e.g. ``"so101_follower"``).
+        dataset_repo_id: HuggingFace dataset id; presence enables record mode for
+            ``start`` and is required for ``replay``.
+        replay_episode: Episode index to replay (``--dataset.episode``).
+
+    Returns:
+        The argv list, beginning with ``["python", "-m", "lerobot.scripts...."]``.
+
+    Raises:
+        ValueError: If ``action`` is unknown, or ``replay`` is requested without
+            ``dataset_repo_id``.
+    """
     if action == "replay":
-        # Build replay command
         if not dataset_repo_id:
             raise ValueError("dataset_repo_id is required for replay action")
-        cmd = [
-            "python",
-            "-m",
-            "lerobot.scripts.lerobot_replay",
-            "--robot-path",
-            robot_type,
-            "--policy-path",
-            dataset_repo_id,
-            "--episode",
-            str(replay_episode),
-        ]
-
-        if robot_port:
-            cmd.extend(["--robot-port", robot_port])
-        if robot_left_arm_port:
-            cmd.extend(["--robot-left-arm-port", robot_left_arm_port])
-        if robot_right_arm_port:
-            cmd.extend(["--robot-right-arm-port", robot_right_arm_port])
-        if display_data:
-            cmd.append("--display-data")
-
+        cmd = ["python", "-m", "lerobot.scripts.lerobot_replay"]
+        cmd.extend(
+            _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
+        )
+        cmd.extend(["--dataset.repo_id", dataset_repo_id, "--dataset.episode", str(replay_episode)])
+        if dataset_root:
+            cmd.extend(["--dataset.root", dataset_root])
+        if dataset_fps:
+            cmd.extend(["--dataset.fps", str(dataset_fps)])
         return cmd
 
-    elif action == "start":
-        # Determine the base command based on whether we're recording
+    if action == "start":
         if dataset_repo_id:
-            # Recording mode
-            cmd = [
-                "python",
-                "-m",
-                "lerobot.scripts.lerobot_record",
-                "--robot-path",
-                robot_type,
-                "--robot-port",
-                robot_port or "/dev/ttyACM0",
-                "--fps",
-                str(fps),
-                "--repo-id",
-                dataset_repo_id,
-                "--num-episodes",
-                str(dataset_num_episodes),
-                "--episode-time-s",
-                str(dataset_episode_time_s),
-                "--reset-time-s",
-                str(dataset_reset_time_s),
-            ]
-
+            # Recording mode -> lerobot-record (pure data collection via teleop).
+            cmd = ["python", "-m", "lerobot.scripts.lerobot_record"]
+            cmd.extend(
+                _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
+            )
+            cmd.extend(_teleop_args(teleop_type, teleop_port, teleop_id, teleop_left_arm_port, teleop_right_arm_port))
+            cmd.extend(["--dataset.repo_id", dataset_repo_id])
+            cmd.extend(["--dataset.num_episodes", str(dataset_num_episodes)])
             if dataset_single_task:
-                cmd.extend(["--single-task", dataset_single_task])
+                cmd.extend(["--dataset.single_task", dataset_single_task])
+            cmd.extend(["--dataset.fps", str(dataset_fps)])
+            cmd.extend(["--dataset.episode_time_s", str(dataset_episode_time_s)])
+            cmd.extend(["--dataset.reset_time_s", str(dataset_reset_time_s)])
             if dataset_root:
-                cmd.extend(["--root", dataset_root])
-            if dataset_push_to_hub:
-                cmd.append("--push-to-hub")
-            if not dataset_video:
-                cmd.append("--no-video")
-        else:
-            # Simple teleoperation mode
-            cmd = ["python", "-m", "lerobot.scripts.lerobot_teleoperate", "--robot.type", robot_type, "--fps", str(fps)]
+                cmd.extend(["--dataset.root", dataset_root])
+            cmd.extend(["--dataset.push_to_hub", "true" if dataset_push_to_hub else "false"])
+            cmd.extend(["--dataset.video", "true" if dataset_video else "false"])
+            if display_data:
+                cmd.extend(["--display_data", "true"])
+            return cmd
 
-            if teleop_time_s:
-                cmd.extend(["--teleop_time_s", str(teleop_time_s)])
-
-        # Add robot configuration
-        if robot_port:
-            cmd.extend(["--robot.port", robot_port])
-        if robot_id:
-            cmd.extend(["--robot.id", robot_id])
-        if robot_left_arm_port:
-            cmd.extend(["--robot.left_arm_port", robot_left_arm_port])
-        if robot_right_arm_port:
-            cmd.extend(["--robot.right_arm_port", robot_right_arm_port])
-
-        # Add teleoperator configuration
-        if teleop_type:
-            cmd.extend(["--teleop.type", teleop_type])
-        if teleop_id:
-            cmd.extend(["--teleop.id", teleop_id])
-        if teleop_port:
-            cmd.extend(["--teleop.port", teleop_port])
-        if teleop_left_arm_port:
-            cmd.extend(["--teleop.left_arm_port", teleop_left_arm_port])
-        if teleop_right_arm_port:
-            cmd.extend(["--teleop.right_arm_port", teleop_right_arm_port])
-
-        # Add camera configuration
-        if robot_cameras:
-            for cam_name, cam_config in robot_cameras.items():
-                cam_type = cam_config.get("type", "opencv")
-                cam_path = str(cam_config.get("index_or_path", 0))
-                fps_val = cam_config.get("fps", 30)
-                width = cam_config.get("width", 640)
-                height = cam_config.get("height", 480)
-
-                cmd.extend(["--camera-config", f"{cam_name}={cam_type}:{cam_path}:{fps_val}:{width}x{height}"])
-
-        # Add common options
+        # Simple teleoperation mode -> lerobot-teleoperate.
+        cmd = ["python", "-m", "lerobot.scripts.lerobot_teleoperate"]
+        cmd.extend(
+            _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
+        )
+        cmd.extend(_teleop_args(teleop_type, teleop_port, teleop_id, teleop_left_arm_port, teleop_right_arm_port))
+        cmd.extend(["--fps", str(fps)])
+        if teleop_time_s:
+            cmd.extend(["--teleop_time_s", str(teleop_time_s)])
         if display_data:
             cmd.extend(["--display_data", "true"])
-        # Note: play_sounds option may not exist in lerobot_teleoperate
-
         return cmd
 
-    else:
-        raise ValueError(f"Unknown action: {action}")
+    raise ValueError(f"Unknown action: {action}")
 
 
 @tool
