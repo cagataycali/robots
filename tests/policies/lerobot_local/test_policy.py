@@ -770,6 +770,32 @@ class TestBuildBatchFromStrandsFormat:
         np.testing.assert_allclose(state[:2], [1.0, 2.0], atol=1e-5)
         np.testing.assert_allclose(state[2:], [0.0, 0.0], atol=1e-5)
 
+    def test_state_truncated_to_expected_dim(self):
+        """A robot exposing MORE joints than the model was trained on truncates
+        the leading values to the model's expected state dim (not raise).
+
+        Mirrors the documented aloha-16-joints / ACT-expects-14 case: the policy
+        adapts the observation rather than crashing the rollout.
+        """
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        policy.set_robot_state_keys(["a", "b", "c", "d"])
+        observation = {"a": 1.0, "b": 2.0, "c": 3.0, "d": 4.0}
+        batch = policy._build_batch_from_strands_format(observation, {})
+        state = batch["observation.state"][0].numpy()
+        assert len(state) == 2
+        np.testing.assert_allclose(state, [1.0, 2.0], atol=1e-5)
+
+    def test_zero_dim_ndarray_state_value(self):
+        """A joint value supplied as a 0-d numpy array is coerced to a scalar
+        float and packed into the state tensor (not silently dropped)."""
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        policy.set_robot_state_keys(["a", "b"])
+        observation = {"a": np.array(1.5), "b": np.array(2.5)}
+        batch = policy._build_batch_from_strands_format(observation, {})
+        state = batch["observation.state"][0].numpy()
+        assert len(state) == 2
+        np.testing.assert_allclose(state, [1.5, 2.5], atol=1e-5)
+
     def test_empty_state_keys_raises(self):
         """Empty robot_state_keys should raise ValueError."""
         policy = _make_loaded_policy()
