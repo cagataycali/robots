@@ -126,17 +126,30 @@ class SimEngine(ABC):
         if bridge is None:
             return
         for robot in self.list_robots():
-            obs = self.get_observation(robot, skip_images=skip_images)
-            names = self.robot_joint_names(robot)
-            positions = [obs[j] for j in names if j in obs and isinstance(obs[j], (int, float))]
-            bridge.publish_joint_states(robot, names, positions)
-            if skip_images:
-                continue
-            for key, value in obs.items():
-                if key in names:
+            # Per-robot guard: a transient render/observation failure on one
+            # robot (e.g. EGL/GL context loss, a camera that produced no frame)
+            # must not interrupt the loop or crash the caller's step(). Publish
+            # what succeeds, log-and-continue on the rest - this is the contract
+            # the docstring promises on the hot ros2_bridge=True path.
+            try:
+                obs = self.get_observation(robot, skip_images=skip_images)
+                names = self.robot_joint_names(robot)
+                positions = [obs[j] for j in names if j in obs and isinstance(obs[j], (int, float))]
+                bridge.publish_joint_states(robot, names, positions)
+                if skip_images:
                     continue
-                if hasattr(value, "ndim") and getattr(value, "ndim", 0) == 3:
-                    bridge.publish_image(robot, key, value)
+                for key, value in obs.items():
+                    if key in names:
+                        continue
+                    if hasattr(value, "ndim") and getattr(value, "ndim", 0) == 3:
+                        bridge.publish_image(robot, key, value)
+            except Exception:
+                logger.warning(
+                    "ROS 2 telemetry publish failed for robot %r; skipping this robot for this step",
+                    robot,
+                    exc_info=True,
+                )
+                continue
 
     def _shutdown_ros_bridge(self) -> None:
         """Tear down the ROS 2 bridge if one is active. Safe to call repeatedly."""

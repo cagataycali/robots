@@ -276,3 +276,83 @@ def test_publish_telemetry_safe_without_bridge_init(fake_ros: dict[str, Any]) ->
     engine._publish_ros_telemetry()  # must not raise
     engine._shutdown_ros_bridge()  # must not raise
     assert fake_ros["nodes"] == []
+
+
+class _TwoRobotEngine(SimEngine):
+    """Engine with two robots where one robot's observation always fails.
+
+    Models a transient per-robot render fault (EGL/GL context loss, a camera
+    that produced no frame) so we can assert the documented contract: a single
+    robot's failure must not interrupt the loop or escape ``step()``.
+    """
+
+    def __init__(self, *, ros2_bridge: bool = True, ros2_domain: int = 0) -> None:
+        self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
+
+    def list_robots(self) -> list[str]:
+        return ["broken", "healthy"]
+
+    def robot_joint_names(self, robot_name: str) -> list[str]:
+        return ["shoulder_pan", "elbow"]
+
+    def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:
+        if robot_name == "broken":
+            raise RuntimeError("camera render failed (EGL context lost)")
+        return {"shoulder_pan": 0.5, "elbow": -0.25}
+
+    # Unused abstract methods for this focused test (never called).
+    def create_world(self, *a: Any, **k: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def destroy(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def reset(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def step(self, n_steps: int = 1) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def get_state(self) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def add_robot(self, *a: Any, **k: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def remove_robot(self, name: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def add_object(self, *a: Any, **k: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def remove_object(self, name: str) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def render(self, *a: Any, **k: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def send_action(self, *a: Any, **k: Any) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def physics_timestep(self) -> float:
+        return 0.002
+
+
+def test_publish_telemetry_per_robot_failure_does_not_interrupt_loop(fake_ros: dict[str, Any]) -> None:
+    """A failing robot is skipped; healthy robots still publish; step() never crashes.
+
+    Pins the docstring contract on the hot ``ros2_bridge=True`` path: per-robot
+    failures (e.g. a camera that did not render) never interrupt the loop. The
+    "broken" robot raises in ``get_observation``; the "healthy" robot - listed
+    after it - must still publish its joint_states, and no exception escapes.
+    """
+    engine = _TwoRobotEngine(ros2_bridge=True, ros2_domain=5)
+
+    engine._publish_ros_telemetry()  # must not raise despite the broken robot
+
+    node = fake_ros["nodes"][0]
+    topics = {p.topic: p for p in node.publishers}
+    # Broken robot never published; healthy one published despite being second.
+    assert "/broken/joint_states" not in topics
+    assert "/healthy/joint_states" in topics
+    assert topics["/healthy/joint_states"].messages[0].position == [0.5, -0.25]
