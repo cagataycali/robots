@@ -82,6 +82,35 @@ single `episode_index=0` (1200 steps in one episode). To DISCARD a partial
 rollout instead of flushing it on the next `reset()`, call
 `clear_episode_buffer()` first.
 
+## Verifying episode count
+
+An LLM agent narrating "20 episodes recorded" is not proof: a single
+`run_policy(n_episodes=1)` (or 20 looped tool calls into one open buffer)
+produces one merged `episode_index=0` mega-episode while the agent believes it
+recorded 20. Never trust agent narration for dataset structure - verify against
+the on-disk metadata. After `stop_recording`, call `verify_dataset_episodes`:
+
+```python
+sim.stop_recording()
+result = sim.verify_dataset_episodes(expected=20)
+assert result["status"] == "success"   # else MISMATCH, fail loud
+```
+
+It checks two independent sources of truth and requires them to AGREE:
+
+* the parquet under `meta/episodes/**/*.parquet` (the distinct `episode_index`
+  set - the ground truth), and
+* the `total_episodes` header in `meta/info.json`.
+
+`status` is `"error"` when the parquet count differs from `expected` OR when the
+parquet disagrees with `info.json` (an internally inconsistent dataset, e.g. an
+interrupted finalize - `sources_agree` is then `False`), so a dataset that
+happens to match `expected` on one source but not the other still fails. The
+`{"json": {...}}` block carries `expected`, `actual`, `info_total_episodes`,
+`sources_agree`, `episode_indices`, and `total_frames` for programmatic CI
+gating. The pure-pyarrow `read_dataset_episode_indices(root)` exposes the same
+facts without instantiating a `LeRobotDataset`.
+
 ## Recording paths
 
 | Method | Extra needed | Output |

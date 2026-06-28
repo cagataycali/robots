@@ -21,6 +21,7 @@ Usage:
 """
 
 import functools
+import json
 import logging
 import re
 import sys
@@ -938,6 +939,11 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
           - ``total_frames``: sum of per-episode ``length`` (0 if unavailable).
           - ``frames_per_episode``: per-episode frame counts aligned to
             ``episode_indices`` (empty list if the ``length`` column is absent).
+          - ``info_total_episodes``: the ``total_episodes`` recorded in
+            ``meta/info.json`` (``None`` if that file is absent or unreadable).
+            Returned alongside the parquet truth so callers can cross-check the
+            two metadata sources for agreement - a healthy dataset has
+            ``info_total_episodes == total_episodes``.
 
     Raises:
         ImportError: If ``pyarrow`` is not installed.
@@ -979,9 +985,26 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
     episode_indices = [p[0] for p in pairs]
     frames_per_episode = [p[1] for p in pairs]
     has_lengths = any(f > 0 for f in frames_per_episode)
+
+    # Read meta/info.json total_episodes as a second, independent metadata
+    # source. A healthy LeRobot dataset has info.json.total_episodes equal to
+    # the distinct episode count in the parquet; a mismatch means the dataset
+    # is internally inconsistent (e.g. an interrupted finalize), which
+    # verify_dataset_episodes surfaces. Absent/corrupt info.json -> None (the
+    # parquet remains the ground truth and is still reported).
+    info_total_episodes: int | None = None
+    info_path = root_path / "meta" / "info.json"
+    if info_path.is_file():
+        try:
+            with info_path.open() as f:
+                info_total_episodes = int(json.load(f)["total_episodes"])
+        except (OSError, ValueError, KeyError, TypeError):
+            info_total_episodes = None
+
     return {
         "episode_indices": episode_indices,
         "total_episodes": len(episode_indices),
         "total_frames": sum(frames_per_episode) if has_lengths else 0,
         "frames_per_episode": frames_per_episode if has_lengths else [],
+        "info_total_episodes": info_total_episodes,
     }

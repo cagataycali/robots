@@ -880,7 +880,11 @@ class SimEngine(ABC):
         """Verify the recorded dataset holds exactly ``expected`` episodes.
 
         Reads the LeRobot dataset parquet (the ground truth) for the active or
-        most-recently-recorded session and reports the actual episode count.
+        most-recently-recorded session AND cross-checks it against the
+        ``meta/info.json`` ``total_episodes`` header. Both must agree with
+        ``expected``; a parquet that matches ``expected`` but disagrees with
+        info.json (an internally inconsistent dataset) still fails. Reports the
+        actual episode count.
         Call this AFTER :meth:`stop_recording` for a definitive check that a
         collection run produced N distinct episodes rather than one merged
         ``episode_index=0`` mega-episode.
@@ -898,8 +902,13 @@ class SimEngine(ABC):
             Standard status dict. ``status`` is ``"success"`` when the parquet
             holds exactly ``expected`` episodes, else ``"error"``. The
             ``{"json": {...}}`` block carries ``expected``, ``actual``,
-            ``episode_indices``, ``total_frames``, ``total_frames_per_ep`` and
-            ``root`` so a caller (or CI) can fail loudly programmatically.
+            ``info_total_episodes``, ``sources_agree``, ``episode_indices``,
+            ``total_frames``, ``total_frames_per_ep`` and ``root`` so a caller
+            (or CI) can fail loudly programmatically. ``status`` is ``"error"``
+            both when the parquet count differs from ``expected`` AND when the
+            parquet disagrees with ``meta/info.json``'s ``total_episodes``
+            (``sources_agree`` is then ``False``) - the two metadata sources
+            must agree, never just one.
         """
         if not isinstance(expected, int) or expected < 0:
             return {
@@ -936,6 +945,8 @@ class SimEngine(ABC):
                         "json": {
                             "expected": expected,
                             "actual": 0,
+                            "info_total_episodes": None,
+                            "sources_agree": False,
                             "episode_indices": [],
                             "total_frames": 0,
                             "total_frames_per_ep": [],
@@ -948,14 +959,33 @@ class SimEngine(ABC):
             return {"status": "error", "content": [{"text": f"verify_dataset_episodes: {e}"}]}
 
         actual = info["total_episodes"]
-        ok = actual == expected
+        info_total = info.get("info_total_episodes")
+
+        # Two independent truths must agree: the parquet episode count AND the
+        # meta/info.json total_episodes header. A dataset can report the right
+        # parquet count yet carry a stale/inconsistent info.json (interrupted
+        # finalize), so a parquet-only check is not sufficient. sources_agree is
+        # True when info.json is absent (parquet is then the sole truth) or when
+        # the header matches the parquet.
+        sources_agree = info_total is None or info_total == actual
+        ok = actual == expected and sources_agree
         status = "success" if ok else "error"
-        verdict = "matches" if ok else "MISMATCH"
-        text = (
-            f"verify_dataset_episodes: {verdict} - expected {expected}, "
-            f"found {actual} episode(s) in parquet "
-            f"({info['total_frames']} total frames). Root: {root}"
-        )
+
+        if not sources_agree:
+            verdict = "MISMATCH"
+            text = (
+                f"verify_dataset_episodes: {verdict} - meta/info.json reports "
+                f"{info_total} episode(s) but the parquet holds {actual}; the "
+                f"dataset metadata is inconsistent (expected {expected}). "
+                f"Root: {root}"
+            )
+        else:
+            verdict = "matches" if ok else "MISMATCH"
+            text = (
+                f"verify_dataset_episodes: {verdict} - expected {expected}, "
+                f"found {actual} episode(s) in parquet "
+                f"({info['total_frames']} total frames). Root: {root}"
+            )
         return {
             "status": status,
             "content": [
@@ -964,6 +994,8 @@ class SimEngine(ABC):
                     "json": {
                         "expected": expected,
                         "actual": actual,
+                        "info_total_episodes": info_total,
+                        "sources_agree": sources_agree,
                         "episode_indices": info["episode_indices"],
                         "total_frames": info["total_frames"],
                         "total_frames_per_ep": info["frames_per_episode"],

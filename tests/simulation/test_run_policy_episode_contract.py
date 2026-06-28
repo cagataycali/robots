@@ -21,6 +21,7 @@ the recording path; the structured fields are the machine-checkable surface.
 
 from __future__ import annotations
 
+import json
 import shutil
 
 import pytest
@@ -160,3 +161,62 @@ class TestVerifyDatasetEpisodes:
         _record(sim, str(tmp_path / "vneg"), n_episodes=1, n_steps=3)
         result = sim.verify_dataset_episodes(expected=-1)
         assert result["status"] == "error"
+
+
+class TestInfoParquetCrossCheck:
+    """verify_dataset_episodes requires meta/info.json AND parquet to agree.
+
+    A dataset can carry the right parquet episode count yet a stale/inconsistent
+    ``meta/info.json`` header (e.g. an interrupted finalize). A parquet-only
+    check would pass it; the two independent metadata sources must agree.
+    """
+
+    def test_read_helper_reports_info_total_episodes(self, sim, tmp_path):
+        root = str(tmp_path / "info")
+        _record(sim, root, n_episodes=3, n_steps=3)
+        info = read_dataset_episode_indices(root)
+        # info.json header agrees with the parquet on a healthy dataset.
+        assert info["info_total_episodes"] == 3
+        assert info["total_episodes"] == 3
+
+    def test_verify_reports_agreement_on_healthy_dataset(self, sim, tmp_path):
+        _record(sim, str(tmp_path / "agree"), n_episodes=2, n_steps=3)
+        result = sim.verify_dataset_episodes(expected=2)
+        assert result["status"] == "success"
+        vj = _json_block(result)
+        assert vj["info_total_episodes"] == 2
+        assert vj["sources_agree"] is True
+
+    def test_verify_errors_when_info_json_disagrees_with_parquet(self, sim, tmp_path):
+        """info.json claims a different count than the parquet -> MISMATCH.
+
+        The parquet holds exactly ``expected`` episodes, so a parquet-only check
+        would (wrongly) pass. Cross-checking info.json catches the inconsistent
+        dataset and fails loudly.
+        """
+        root = tmp_path / "skew"
+        _record(sim, str(root), n_episodes=2, n_steps=3)
+
+        info_path = root / "meta" / "info.json"
+        meta = json.loads(info_path.read_text())
+        meta["total_episodes"] = 99  # corrupt: header disagrees with 2 parquet episodes
+        info_path.write_text(json.dumps(meta))
+
+        result = sim.verify_dataset_episodes(expected=2)
+        assert result["status"] == "error", "parquet matches expected but info.json disagrees"
+        vj = _json_block(result)
+        assert vj["actual"] == 2
+        assert vj["info_total_episodes"] == 99
+        assert vj["sources_agree"] is False
+
+    def test_verify_treats_parquet_as_sole_truth_when_info_json_absent(self, sim, tmp_path):
+        """Missing info.json -> parquet is the sole truth; verify still passes."""
+        root = tmp_path / "noinfo"
+        _record(sim, str(root), n_episodes=2, n_steps=3)
+        (root / "meta" / "info.json").unlink()
+
+        result = sim.verify_dataset_episodes(expected=2)
+        assert result["status"] == "success"
+        vj = _json_block(result)
+        assert vj["info_total_episodes"] is None
+        assert vj["sources_agree"] is True
