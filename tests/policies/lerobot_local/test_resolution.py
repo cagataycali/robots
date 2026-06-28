@@ -1124,17 +1124,21 @@ def test_smart_resolution_does_not_shadow_real_lerobot_policies():
     code = textwrap.dedent(
         """
         import sys
-        from strands_robots.policies import create_policy
 
         assert "lerobot.policies" not in sys.modules, "precondition: must start clean"
 
-        # An org/model string routes through smart-string resolution, which
-        # calls _ensure_lerobot_policies_importable(). The lookup itself fails
-        # (no such repo); we only care about the sys.modules side effect.
-        try:
-            create_policy("unknownorg/some-nonexistent-model")
-        except Exception:
-            pass
+        # Directly exercise the resolution helper that create_policy triggers
+        # when it actually loads a model. create_policy itself is lazy (stores
+        # params without resolving the policy class), so calling it alone does
+        # NOT invoke _ensure_lerobot_policies_importable(). The production
+        # symptom requires the helper to have run, which happens on the first
+        # get_actions() call -- but that needs a real model. Instead we call
+        # the helper directly: this is the minimal reproduction of the bug
+        # (stub installed unconditionally on a healthy install).
+        from strands_robots.policies.lerobot_local.resolution import (
+            _ensure_lerobot_policies_importable,
+        )
+        _ensure_lerobot_policies_importable()
 
         mod = sys.modules.get("lerobot.policies")
         assert mod is not None, "lerobot.policies should be registered"
