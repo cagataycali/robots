@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import importlib.util
 import threading
-from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pytest
@@ -28,9 +27,6 @@ from strands_robots.simulation.newton.randomization import (
     DomainRandomizationMixin,
     _validate_range,
 )
-
-if TYPE_CHECKING:
-    from strands_robots.simulation.models import SimWorld
 
 _HAS_NEWTON = importlib.util.find_spec("newton") is not None and importlib.util.find_spec("warp") is not None
 
@@ -230,8 +226,9 @@ class _RebuildHost(DomainRandomizationMixin):
 def _active_host(builder: _FakeBuilder | None = None) -> _RebuildHost:
     """A _RebuildHost with a non-None world so randomize()'s guard passes."""
     host = _RebuildHost(builder)
-    # A non-None stand-in: randomize()'s guard only checks `_world is None`.
-    host._world = cast("SimWorld", object())
+    # A non-None stand-in is enough; randomize() only checks `_world is None`,
+    # so the concrete type is irrelevant to the code under test.
+    host._world = object()  # type: ignore[assignment]
     return host
 
 
