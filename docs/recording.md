@@ -202,4 +202,5 @@ python -m lerobot.scripts.train policy=act \
 ## See also
 
 - [Training](training/overview.md) - what to do with the data.
+- [LeRobot rollout subsystem - intentional divergence](policies/lerobot-local.md#relationship-to-lerobots-rollout-subsystem) - why strands does not adopt LeRobot's `sentry`/`highlight`/`episodic` recording strategies wholesale.
 - [LeRobot dataset docs](https://huggingface.co/docs/lerobot) - upstream spec.

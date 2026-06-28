@@ -102,6 +102,37 @@ hatch run format            # ruff check --fix, ruff format
   Enforced by `tests/test_registry_integrity.py`.
 
 
+## LeRobot rollout subsystem - intentional divergence
+
+LeRobot ships a `rollout/` deployment engine (`src/lerobot/rollout/`):
+`RolloutStrategyConfig` session managers (`base`, `sentry`, `highlight`,
+`dagger`, `episodic`) and `InferenceEngineConfig` action backends (`sync`,
+`rtc`). strands-robots does NOT mirror this engine wholesale. The boundary is
+deliberate; do not bridge LeRobot's rollout inference engine into the strands
+inference path. Pinned by `tests/policies/test_lerobot_rollout_divergence.py`.
+
+| LeRobot type | strands status | strands equivalent |
+|---|---|---|
+| strategy `dagger` | adopted | `lerobot_teleoperate` tool `action="dagger"` drives `lerobot-rollout --strategy.type=dagger` as a subprocess (HITL correction on hardware) |
+| strategy `base` | not adopted | autonomous no-record rollout = `run_policy()` without a recorder |
+| strategy `episodic` | not adopted | episode-oriented record = `run_policy(n_episodes=N)` + `DatasetRecorder` (or teleop tool driving `lerobot-record`) |
+| strategy `sentry` | not adopted | 24/7 size-rotated autonomous recording; an interactive hardware deployment-engine feature with no sim/agent home |
+| strategy `highlight` | not adopted | ring-buffer on-demand keypress save; interactive hardware-only |
+| engine `sync` | covered | synchronous `PolicyRunner` path (`async_rtc=False`): one policy call per control tick |
+| engine `rtc` | divergent loop driver | strands adopts LeRobot's RTC *algorithm* at the policy layer (`LerobotLocalPolicy` consumes LeRobot's `RTCConfig` + `predict_action_chunk`) but drives the re-query loop itself by integer step count |
+
+**Why the RTC loop driver diverges.** LeRobot's `RTCInferenceEngine` runs
+inference in a background thread and swaps chunks off a wall-clock
+`queue_threshold`, deriving the seam offset from measured latency - non-
+deterministic w.r.t. control-step count. strands re-queries at exactly
+`policy.execution_horizon` (`resolve_chunk_length`, the single re-query rule) and
+feeds the seam offset as a counted integer via `set_rtc_observed_delay` (0 in the
+paused-world sync loop; the still-pending step count in the async overlap). This
+keeps seeded eval reproducible (seed + step count -> identical trajectory). See
+`docs/policies/lerobot-local.md` -> "Relationship to LeRobot's rollout subsystem".
+
+
+
 ## Review Learnings (PR #85 - MuJoCo Backend)
 
 Corrections from code review that apply to all future contributions:

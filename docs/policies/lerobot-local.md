@@ -312,6 +312,41 @@ real hardware where the arm genuinely keeps moving during inference), leave the
 override unset (`None`) and the policy falls back to the wall-clock p95 estimate,
 which is the right proxy there.
 
+## Relationship to LeRobot's rollout subsystem
+
+LeRobot ships a `rollout/` deployment engine (`src/lerobot/rollout/`) with two
+polymorphic config families: `RolloutStrategyConfig` session managers (`base`,
+`sentry`, `highlight`, `dagger`, `episodic`) and `InferenceEngineConfig` action
+backends (`sync`, `rtc`). strands does not consume that engine in its inference
+path - the boundary is intentional, and a guard test
+(`tests/policies/test_lerobot_rollout_divergence.py`) pins it.
+
+**Inference engines.** LeRobot's `sync` engine (one policy call per control tick)
+maps to the synchronous `PolicyRunner` path (`async_rtc=False`). For `rtc`,
+strands adopts LeRobot's RTC *algorithm* - `LerobotLocalPolicy` loads LeRobot's
+own `RTCConfig` and calls `predict_action_chunk(..., execution_horizon=...)` for
+the seam blending - but **drives the re-query loop itself**. LeRobot's
+`RTCInferenceEngine` runs inference in a background thread and swaps chunks off a
+wall-clock `queue_threshold`, deriving the seam offset from measured latency;
+that is non-deterministic with respect to control-step count. strands re-queries
+at exactly `policy.execution_horizon` (the single rule in `resolve_chunk_length`)
+and supplies the seam offset as a counted integer through
+`set_rtc_observed_delay` (see [Deterministic inference delay](#deterministic-inference-delay)),
+so a runner-driven eval is bit-reproducible across fixed-seed episodes.
+Bridging LeRobot's wall-clock engine into the sim/eval loop would regress that
+determinism guarantee, so it is deliberately not done.
+
+**Rollout strategies.** `dagger` is adopted for hardware HITL correction: the
+`lerobot_teleoperate` tool with `action="dagger"` invokes
+`lerobot-rollout --strategy.type=dagger` as a subprocess. The remaining
+strategies are interactive hardware deployment-session managers (keyboard/foot-
+pedal input, Rerun display, video-file-size episode rotation) whose recording
+surface strands already covers without the engine: `base` is `run_policy()`
+without a recorder; `episodic` is `run_policy(n_episodes=N)` plus
+[`DatasetRecorder`](../recording.md) (or the teleop tool driving
+`lerobot-record`); `sentry` and `highlight` are 24/7 / on-demand interactive
+hardware recording with no sim or agent home.
+
 ## See also
 
 - [MolmoAct2 (SO-100/101)](molmoact2.md) - action contract, units, and motion diagnostics
