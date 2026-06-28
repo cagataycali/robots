@@ -82,6 +82,36 @@ For multi-episode evaluation, prefer a single `Simulation.eval_policy(...,
 n_episodes=N)` (or `run_policy(..., policy_object=loaded)`) call, which loads
 the policy once and reuses it across episodes regardless of this cache.
 
+### Load telemetry
+
+Every `LerobotLocalPolicy` records two attributes after construction so the
+saving from the cache is observable instead of guessed:
+
+- `load_cache_hit` (`bool`): `True` when the heavy `from_pretrained` weight
+  read was skipped because the process cache already held this checkpoint.
+- `load_time_s` (`float`): wall time the load took (near `0.0` on a cache hit).
+
+`Simulation.run_policy` and `Simulation.eval_policy` surface these in their
+`{"json": {...}}` result block as `policy_load_cache_hit` and
+`policy_load_time_s`. In a multi-episode loop, a `policy_load_cache_hit=False`
+on episode 2+ is a smell that the caller rebuilt the policy per episode instead
+of reusing one warm `policy_object=`; an agent can read that field and
+self-correct. Policies that expose no load telemetry (e.g. `MockPolicy`) report
+the honest defaults `0.0` / `False`.
+
+```python
+from strands_robots.policies.lerobot_local import list_cached_models
+
+# Inspect what is resident without touching private state.
+for entry in list_cached_models():
+    print(entry["namespace"], entry["pretrained_name_or_path"], entry["device"])
+```
+
+`list_cached_models()` returns one read-only dict per cached entry
+(`namespace`, `pretrained_name_or_path`, `device`, `policy_class`); pair it with
+`clear_model_cache()` to decide when to evict before loading a different
+checkpoint.
+
 ## Supported models
 
 | Model | Notes |

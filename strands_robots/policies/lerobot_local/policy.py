@@ -74,6 +74,45 @@ def clear_model_cache() -> int:
     return n
 
 
+def list_cached_models() -> list[dict[str, Any]]:
+    """Report the underlying models currently held in the process-level cache.
+
+    Complements :func:`clear_model_cache` with read-only introspection so a
+    caller (or an LLM harness deciding whether to evict before loading a
+    different checkpoint) can see what is resident without poking at the
+    private ``_MODEL_CACHE`` dict. The heavy model object itself is never
+    returned - only its identifying key fields and resolved class name.
+
+    Returns:
+        One dict per cached entry, each with:
+            ``namespace``: load path family (``"generic"`` or ``"molmoact2"``).
+            ``pretrained_name_or_path``: the checkpoint the entry was keyed on.
+            ``device``: the requested device string (or ``None`` if unset).
+            ``policy_class``: class name of the cached model (best-effort).
+        The list is ordered as the cache was populated.
+    """
+    with _MODEL_CACHE_LOCK:
+        items = list(_MODEL_CACHE.items())
+    out: list[dict[str, Any]] = []
+    for key, value in items:
+        # Keys are (namespace, pretrained_name_or_path, device, *extra). The
+        # generic path stores a (policy, policy_type) tuple; molmoact2 stores
+        # the bare policy. Resolve the underlying module for the class name.
+        model = value[0] if isinstance(value, tuple) else value
+        namespace = key[0] if len(key) > 0 else None
+        path = key[1] if len(key) > 1 else None
+        device = key[2] if len(key) > 2 else None
+        out.append(
+            {
+                "namespace": namespace,
+                "pretrained_name_or_path": path,
+                "device": device,
+                "policy_class": type(model).__name__,
+            }
+        )
+    return out
+
+
 class LerobotLocalPolicy(Policy):
     """Policy that loads and runs LeRobot models directly (no server).
 
@@ -191,6 +230,16 @@ class LerobotLocalPolicy(Policy):
         self._input_features: dict[str, Any] = {}
         self._output_features: dict[str, Any] = {}
         self._loaded = False
+        # Load telemetry, observable end-to-end (PolicyRunner surfaces these
+        # as ``policy_load_time_s`` / ``policy_load_cache_hit`` in its result
+        # JSON). ``load_cache_hit`` True means the heavy from_pretrained weight
+        # read was skipped because the process-level _MODEL_CACHE already held
+        # this checkpoint - an agent driving a multi-episode loop can read a
+        # False on episode 2+ as a smell that it rebuilt the policy instead of
+        # reusing policy_object=. ``load_time_s`` is the wall time the load
+        # actually took (near 0 on a cache hit).
+        self.load_time_s: float = 0.0
+        self.load_cache_hit: bool = False
         self._processor_bridge: ProcessorBridge | None = None
         self._tokenizer: Any = None
         self._tokenizer_max_length: int = tokenizer_max_length
@@ -543,6 +592,7 @@ class LerobotLocalPolicy(Policy):
         # policy_type is cached alongside the module so a hit needs no hub call.
         cache_key = self._model_cache_key("generic", self.policy_type)
         cached = self._cache_get(cache_key)
+        self.load_cache_hit = cached is not None
         if cached is not None:
             self._policy, self.policy_type = cached
             logger.info(
@@ -593,6 +643,7 @@ class LerobotLocalPolicy(Policy):
                 self._output_features = config.output_features
 
         elapsed = time.time() - start
+        self.load_time_s = elapsed
         logger.info(
             "Loaded %s (type='%s') in %.1fs on %s",
             type(self._policy).__name__,
@@ -778,6 +829,7 @@ class LerobotLocalPolicy(Policy):
             action_dim,
         )
         cached_model = self._cache_get(model_cache_key)
+        self.load_cache_hit = cached_model is not None
         policy, preprocessor, postprocessor, cfg = _molmoact2.build_policy(
             self.pretrained_name_or_path,
             device=self.requested_device,
@@ -801,6 +853,7 @@ class LerobotLocalPolicy(Policy):
         self.inference_kwargs.setdefault("inference_action_mode", self._molmoact2_inference_action_mode)
 
         elapsed = time.time() - start
+        self.load_time_s = elapsed
         logger.info(
             "Loaded MolmoAct2Policy (type='molmoact2') in %.1fs on %s",
             elapsed,

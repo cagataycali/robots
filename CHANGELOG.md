@@ -58,6 +58,32 @@ background `get_actions` for the trailing chunk. Tests that assert the exact
 synchronous re-query count should pass `async_rtc=False`.
 
 
+### Observability: `lerobot_local` model-load telemetry
+
+The process-level model cache already skips the expensive `from_pretrained`
+weight read when the same checkpoint is re-instantiated, but the saving was
+invisible: a warm reuse and a cold reload produced identical result text, so a
+caller paying a per-episode reload had no machine-checkable signal.
+
+- `LerobotLocalPolicy` now records `load_cache_hit` (bool) and `load_time_s`
+  (float) after each load, on both the generic and MolmoAct2 load paths.
+- `Simulation.run_policy` and `Simulation.eval_policy` surface these as
+  `policy_load_cache_hit` and `policy_load_time_s` in their `{"json": {...}}`
+  result block. A `policy_load_cache_hit=False` on episode 2+ of a loop is a
+  smell that the caller rebuilt the policy per episode instead of reusing one
+  warm `policy_object=`. Policies without load telemetry (e.g. `MockPolicy`)
+  report the honest defaults `0.0` / `False`.
+- New `list_cached_models()` read-only introspection helper (exported from
+  `strands_robots.policies.lerobot_local`) reports the resident cache entries
+  (`namespace`, `pretrained_name_or_path`, `device`, `policy_class`) without
+  exposing the private cache dict, complementing `clear_model_cache()`.
+
+Memory note: the cache is unchanged; this is observability only. The cached
+model is still one live module shared across instances with the same load key,
+so concurrent (not sequential) reuse should still opt out with
+`cache_model=False`.
+
+
 ### Correctness: `run_policy` episode-count contract + `verify_dataset_episodes`
 
 `run_policy` could silently record a single merged `episode_index=0`

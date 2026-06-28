@@ -896,6 +896,14 @@ class PolicyRunner:
             "action_errors": _action_errors,
             "video_path": None,
             "video_frames": 0,
+            # Load telemetry of the policy that drove this rollout. For
+            # LerobotLocalPolicy these reflect the process-level model cache:
+            # policy_load_cache_hit=False on episode 2+ of a loop is a smell
+            # that the caller rebuilt the policy instead of reusing
+            # policy_object=. Defaults (0.0 / False) cover policies that expose
+            # no load telemetry (e.g. MockPolicy).
+            "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
+            "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
         }
         if sim_time is not None:
             payload["sim_time_s"] = round(sim_time, 3)
@@ -1220,6 +1228,8 @@ class PolicyRunner:
                         "n_success": n_success,
                         "avg_steps": round(avg_steps, 1),
                         "max_steps": max_steps,
+                        "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
+                        "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
                         "episodes": results,
                     }
                 },
@@ -1544,6 +1554,8 @@ class PolicyRunner:
                         "max_steps": max_steps,
                         "seed": seed,
                         "benchmark_class": spec_name,
+                        "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
+                        "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
                         "episodes": results,
                     }
                 },
