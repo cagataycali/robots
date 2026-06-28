@@ -302,6 +302,23 @@ def _ensure_lerobot_policies_importable() -> None:
         # Already imported (successfully or via a previous stub) - nothing to do.
         return
 
+    # Prefer the real package. On a healthy install its ``__init__`` imports
+    # cleanly and leaves a fully-populated module in ``sys.modules``, so every
+    # later ``from lerobot.policies import PreTrainedPolicy`` / ``get_policy_class``
+    # (used by lerobot's own record/rollout scripts and training entry points)
+    # keeps working. Only when the heavy ``__init__`` genuinely fails to import
+    # -- e.g. a flash-attn ABI mismatch in the groot/transformers chain -- do we
+    # fall back to the lightweight ``__path__``-only stub below. Installing the
+    # stub unconditionally would leave a partially-initialised ``lerobot.policies``
+    # shadowing the real package for the rest of the process and break those
+    # downstream imports. (CPython removes a module from ``sys.modules`` when its
+    # import raises, so the stub install stays clean after this failure.)
+    try:
+        importlib.import_module(key)
+        return
+    except Exception as exc:
+        logger.debug("Real lerobot.policies import failed; falling back to stub: %s", exc)
+
     try:
         import lerobot
 

@@ -1095,3 +1095,64 @@ class TestResolvePolicyClassByNameFallbackLadder:
 
         with pytest.raises(ImportError, match="ghost-policy"):
             resolution.resolve_policy_class_by_name("ghost-policy")
+
+
+def test_smart_resolution_does_not_shadow_real_lerobot_policies():
+    """Smart-string resolution must not leave a partial ``lerobot.policies`` stub.
+
+    ``resolution._ensure_lerobot_policies_importable`` installs a lightweight
+    ``__path__``-only stub for ``lerobot.policies`` so a single policy
+    subpackage can be imported without executing the heavy ``__init__`` (which
+    pulls in the groot/transformers chain that can crash on a flash-attn ABI
+    mismatch). That stub is a *fallback* for broken environments only: on a
+    healthy install it must not replace the real package, or it shadows
+    ``lerobot.policies`` for the rest of the process and breaks every later
+    ``from lerobot.policies import PreTrainedPolicy`` / ``get_policy_class`` --
+    exactly the imports lerobot's own ``lerobot_record`` / ``lerobot_rollout``
+    scripts (and the teleoperate tool that wraps them) perform.
+
+    Runs in a subprocess so ``sys.modules`` starts without ``lerobot.policies``
+    already imported, reproducing the production order (an agent calling
+    ``create_policy`` on an unknown model id before anything touched
+    ``lerobot.policies``). Pre-fix this fails with
+    ``ImportError: cannot import name 'PreTrainedPolicy' from 'lerobot.policies'``.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent(
+        """
+        import sys
+        from strands_robots.policies import create_policy
+
+        assert "lerobot.policies" not in sys.modules, "precondition: must start clean"
+
+        # An org/model string routes through smart-string resolution, which
+        # calls _ensure_lerobot_policies_importable(). The lookup itself fails
+        # (no such repo); we only care about the sys.modules side effect.
+        try:
+            create_policy("unknownorg/some-nonexistent-model")
+        except Exception:
+            pass
+
+        mod = sys.modules.get("lerobot.policies")
+        assert mod is not None, "lerobot.policies should be registered"
+        assert hasattr(mod, "PreTrainedPolicy"), (
+            "real lerobot.policies was shadowed by a partial stub"
+        )
+
+        # The real downstream symptom: lerobot's record/rollout scripts import
+        # these names from lerobot.policies.
+        from lerobot.policies import PreTrainedPolicy, get_policy_class  # noqa: F401
+
+        print("RESOLUTION_DID_NOT_SHADOW")
+        """
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, f"subprocess failed:\n{result.stderr}"
+    assert "RESOLUTION_DID_NOT_SHADOW" in result.stdout

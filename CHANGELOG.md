@@ -5,6 +5,22 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: policy resolution no longer shadows `lerobot.policies` with a partial stub
+
+Smart-string resolution (`create_policy("org/model")`, `grpc://`, `ws://`, ...)
+calls an internal helper that registers `lerobot.policies` in `sys.modules`
+without executing its heavy `__init__` (which pulls in the groot/transformers
+chain that can crash on a flash-attn ABI mismatch). The helper installed a
+lightweight `__path__`-only stub *unconditionally* and never removed it, so on a
+healthy install the stub permanently shadowed the real package: any later
+`from lerobot.policies import PreTrainedPolicy` / `get_policy_class` -- including
+the imports lerobot's own `lerobot_record` / `lerobot_rollout` scripts (and the
+`lerobot_teleoperate` tool that wraps them) perform -- failed with
+`ImportError: cannot import name 'PreTrainedPolicy' from 'lerobot.policies'` for
+the rest of the process. The stub is now a fallback: the real package is imported
+first and only when its `__init__` genuinely fails do we install the stub.
+
+
 ### Added: `PersistentPolicy` + cache controls, `policy_resident_rss_mb` telemetry [major-perf]
 
 A synchronous persistent worker that eliminates per-episode model-reload
