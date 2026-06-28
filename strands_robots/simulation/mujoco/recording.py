@@ -53,6 +53,7 @@ class RecordingMixin(DatasetRecordingMixin):
         push_to_hub: bool = False,
         vcodec: str = "libsvtav1",
         overwrite: bool = False,
+        cameras: list[str] | None = None,
     ) -> dict[str, Any]:
         """Start recording to LeRobotDataset format (parquet + per-camera MP4).
 
@@ -60,6 +61,16 @@ class RecordingMixin(DatasetRecordingMixin):
         need plain MP4 video (no dataset schema, no policy-training metadata),
         use :meth:`start_cameras_recording` - it runs under the
         ``[sim-mujoco]`` extra alone (imageio-ffmpeg backend).
+
+        Args:
+            cameras: Camera names to record into the dataset. When ``None``
+                (default) every scene camera is recorded - which includes the
+                implicit ``default`` free camera. Pass an explicit subset to
+                record exactly the views a policy declares (e.g.
+                ``cameras=["camera1", "camera2", "camera3"]`` for a 3-camera
+                SmolVLA dataset) and keep the stray ``default`` view out of the
+                schema. Names may be raw (``arm0/wrist_cam``) or schema-safe
+                (``arm0__wrist_cam``); an unknown name fails loudly.
 
         Raises:
             Friendly error when ``lerobot`` is not installed, directing the
@@ -152,6 +163,10 @@ class RecordingMixin(DatasetRecordingMixin):
             # recording, abort the whole episode. We map each safe camera name
             # to its real (height, width) so _build_features sizes it correctly.
             camera_dims: dict[str, tuple[int, int]] = {}
+            # Raw MuJoCo camera name -> schema-safe name. Kept so the run_policy
+            # frame hook can map a caller-requested ``cameras`` subset (which may
+            # use either form) back to the RAW observation key it must keep.
+            raw_to_safe: dict[str, str] = {}
             for i in range(self._world._model.ncam):
                 cam_name = mj.mj_id2name(self._world._model, mj.mjtObj.mjOBJ_CAMERA, i)
                 if not cam_name:
@@ -161,12 +176,60 @@ class RecordingMixin(DatasetRecordingMixin):
                 # namespaced camera (e.g. ``arm0/wrist_cam``), collapse
                 # the separator to ``__`` for the dataset schema.
                 safe_name = cam_name.replace("/", "__")
+                raw_to_safe[cam_name] = safe_name
                 camera_keys.append(safe_name)
                 cam_info = self._world.cameras.get(cam_name) or self._world.cameras.get(safe_name)
                 if cam_info is not None:
                     camera_dims[safe_name] = (int(cam_info.height), int(cam_info.width))
                 else:
                     camera_dims[safe_name] = (int(self.default_height), int(self.default_width))
+
+            # Optional camera scoping. By default EVERY scene camera is recorded,
+            # which silently includes the implicit ``default`` free camera and any
+            # view the trained policy never declared - bloating the dataset and
+            # producing image features that do not match the policy's
+            # ``input_features``. When ``cameras`` is given, record exactly that
+            # subset. Names may be given in either the raw MuJoCo form
+            # (``arm0/wrist_cam``) or the schema-safe form (``arm0__wrist_cam``);
+            # an unknown name fails loudly (no silent drop) listing what exists.
+            record_raw_cameras: set[str] | None = None
+            if cameras is not None:
+                safe_to_raw = {safe: raw for raw, safe in raw_to_safe.items()}
+                selected_safe: list[str] = []
+                record_raw_cameras = set()
+                unknown: list[str] = []
+                for requested in cameras:
+                    if requested in raw_to_safe:  # raw name
+                        raw, safe = requested, raw_to_safe[requested]
+                    elif requested in safe_to_raw:  # already schema-safe
+                        raw, safe = safe_to_raw[requested], requested
+                    else:
+                        unknown.append(requested)
+                        continue
+                    if safe not in selected_safe:
+                        selected_safe.append(safe)
+                        record_raw_cameras.add(raw)
+                if unknown:
+                    self._world._backend_state["recording"] = False
+                    available = sorted(raw_to_safe)
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"start_recording: unknown camera(s) {unknown} in cameras=. "
+                                    f"Available scene cameras: {available}. Add them with "
+                                    "add_camera(...) before recording, or omit cameras= to "
+                                    "record all of them."
+                                )
+                            }
+                        ],
+                    }
+                camera_keys = selected_safe
+                camera_dims = {safe: camera_dims[safe] for safe in selected_safe}
+            # Stash the scoped RAW camera names so the run_policy frame hook drops
+            # un-recorded camera arrays before add_frame (None -> record all).
+            self._world._backend_state["recording_cameras"] = record_raw_cameras
 
             assert _DatasetRecorder is not None  # checked above
             if resume_existing:

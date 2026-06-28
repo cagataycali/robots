@@ -100,6 +100,33 @@ logger = logging.getLogger(__name__)
 # learns the string from one action recognises it from all of them.
 _NO_WORLD_MSG = "No world. Call create_world (or load_scene) first."
 
+
+def _drop_unrecorded_cameras(observation: dict[str, Any], recorded: set[str] | None) -> dict[str, Any]:
+    """Filter an observation down to the cameras the caller chose to record.
+
+    Drops image arrays (ndarray with ``ndim >= 2``) whose key is not in
+    ``recorded`` so the recorded frame matches a schema scoped via
+    ``start_recording(cameras=...)``. Scalar state values (joint positions /
+    velocities) and 1-D arrays are always kept.
+
+    Args:
+        observation: Raw observation dict (camera_name -> image, joint -> float).
+        recorded: Set of camera keys to keep, or ``None`` to record every
+            camera (the legacy default - the dict is returned unchanged).
+
+    Returns:
+        The observation unchanged when ``recorded`` is ``None``; otherwise a new
+        dict without the excluded camera arrays.
+    """
+    if recorded is None:
+        return observation
+    import numpy as np
+
+    return {
+        k: v for k, v in observation.items() if not (isinstance(v, np.ndarray) and v.ndim >= 2 and k not in recorded)
+    }
+
+
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
 # Tool schema is 357 lines of JSON. `tool_spec` property is on the LLM hot path
@@ -2255,6 +2282,12 @@ class MuJoCoSimEngine(
                     )
                     rec = world._backend_state.get("dataset_recorder")
                     if rec is not None:
+                        # Honor the start_recording(cameras=...) scope: drop image
+                        # arrays for cameras the caller chose not to record so the
+                        # frame matches the (already scoped) dataset schema. None
+                        # means record every camera (legacy default).
+                        rec_cams = world._backend_state.get("recording_cameras")
+                        observation = _drop_unrecorded_cameras(observation, rec_cams)
                         # In multi-robot scenes start_recording() declares
                         # the dataset schema with per-robot-prefixed joint ids
                         # (``alice__shoulder_pan``) so each agent has unique state/
@@ -2612,8 +2645,10 @@ class MuJoCoSimEngine(
                             merged_obs.update(per_robot_obs[rname])
                             merged_act.update(per_robot_action[rname])
                     # Cameras are scene-global (already namespaced if injected
-                    # per-robot); keep ndarray keys as-is.
-                    merged_obs.update(camera_imgs)
+                    # per-robot); keep ndarray keys as-is, minus any the caller
+                    # excluded via start_recording(cameras=...).
+                    rec_cams = self._world._backend_state.get("recording_cameras")
+                    merged_obs.update(_drop_unrecorded_cameras(camera_imgs, rec_cams))
                     task = instr_map[next(iter(policies))]
                     # add_frame writes to LeRobot's image-writer queue and parquet
                     # buffer; it does not touch MuJoCo model/data. The consistent

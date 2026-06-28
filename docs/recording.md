@@ -17,6 +17,33 @@ sim.stop_recording()
 
 `start_recording` requires `[lerobot]`. Without it, use `start_cameras_recording` for plain MP4.
 
+## Selecting which cameras to record
+
+By default every camera in the scene is recorded into the dataset - including
+the implicit `default` free camera that exists even before you call
+`add_camera`. A policy that declares a fixed set of image features (e.g. SmolVLA
+expects exactly `observation.images.camera1/camera2/camera3`) then trains
+against a dataset that carries a stray `observation.images.default` view it
+never asked for, and the extra MP4 stream bloats every episode.
+
+Pass `cameras=` to record exactly the views the policy expects:
+
+```python
+sim.add_camera(name="camera1", ...)
+sim.add_camera(name="camera2", ...)
+sim.add_camera(name="camera3", ...)
+sim.start_recording(
+    repo_id="user/my_dataset", task="pick up the cube", fps=30,
+    cameras=["camera1", "camera2", "camera3"],   # drops the implicit 'default'
+)
+```
+
+The dataset schema then declares only those three image features. Names may be
+given in raw MuJoCo form (`arm0/wrist_cam`) or schema-safe form
+(`arm0__wrist_cam`); an unknown name fails loudly and lists the available
+cameras rather than silently recording the wrong set. Omit `cameras=` to keep
+the legacy behavior of recording every camera.
+
 ## Multi-episode recording
 
 A recording session is one dataset. The simplest way to collect N episodes in
