@@ -18,7 +18,6 @@ Design mirrors ``dataset_recorder.py``:
 
 from __future__ import annotations
 
-import functools
 import inspect
 import logging
 import sys
@@ -28,16 +27,30 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-@functools.lru_cache(maxsize=1)
+# Only the POSITIVE result is cached. lerobot availability is a process
+# capability that can transiently fail to resolve (a slow/locked import, or - in
+# tests - a temporarily monkeypatched ``sys.modules``); caching a ``False``
+# would permanently disable streaming for the rest of the process even after the
+# condition clears. A failed probe is therefore re-attempted on the next call.
+_HAS_STREAMING_DATASET: bool = False
+
+
 def has_streaming_dataset() -> bool:
-    """True if lerobot's StreamingLeRobotDataset is importable. Cached."""
+    """Return True if lerobot's ``StreamingLeRobotDataset`` is importable.
+
+    A successful probe is cached; a failed probe is re-attempted on the next
+    call so a transient import failure does not permanently disable streaming.
+    """
+    global _HAS_STREAMING_DATASET
+    if _HAS_STREAMING_DATASET:
+        return True
     try:
         from lerobot.datasets import StreamingLeRobotDataset  # noqa: F401
-
-        return True
     except (ImportError, ValueError, RuntimeError) as exc:
         logger.debug("StreamingLeRobotDataset unavailable: %s", exc)
         return False
+    _HAS_STREAMING_DATASET = True
+    return True
 
 
 def _get_streaming_cls() -> Any:

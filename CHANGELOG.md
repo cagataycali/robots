@@ -5,6 +5,23 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: lerobot-availability probes no longer cache a transient failure
+
+`has_lerobot_dataset()` (dataset recording) and `has_streaming_dataset()`
+(streaming datasets) wrapped their `from lerobot... import ...` probe in
+`functools.lru_cache`, which froze the FIRST result -- including a `False` --
+for the life of the process. lerobot availability is a process capability that
+can transiently fail to resolve: the probe deliberately catches `ImportError`,
+`ValueError`, and `RuntimeError` precisely because a partially-installed env
+(e.g. the documented JetPack/Jetson numpy-ABI mismatch) or a temporarily
+shadowed `sys.modules` entry can raise mid-run. A single such failure
+permanently disabled recording/streaming -- `start_recording` would return
+`requires the lerobot extra` forever even after the condition cleared. Both
+probes now cache only the POSITIVE result (the expensive import is still done at
+most once) and re-attempt the import on the next call after a failure, restoring
+recording the moment lerobot resolves again.
+
+
 ### Fixed: Newton recording captures camera frames when the policy skips images
 
 `PolicyRunner` sets `skip_images = not policy.requires_images` to avoid rendering

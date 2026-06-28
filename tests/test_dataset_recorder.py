@@ -1230,3 +1230,37 @@ def test_add_frame_no_mismatch_warning_when_remap_resolves_it(caplog):
         rec.add_frame(observation={"front_camera": img}, action={}, task="t")
 
     assert not [r for r in caplog.records if "match the declared image features" in r.message]
+
+
+def test_has_lerobot_dataset_does_not_negatively_cache(monkeypatch):
+    """A failed lerobot-availability probe must NOT be cached.
+
+    lerobot availability is a process capability that can transiently fail to
+    resolve (a slow/locked import, or a temporarily monkeypatched
+    ``sys.modules``). Freezing the first ``False`` permanently disabled
+    recording for the rest of the process - ``start_recording`` would report
+    ``requires strands-robots[lerobot]`` forever even after the condition
+    cleared. The probe must re-attempt the import on the next call.
+    """
+    import importlib
+    import sys
+
+    import strands_robots.dataset_recorder as dr
+
+    # Capture the real module so we can swap it back in a fully reversible way
+    # (monkeypatch.setitem restores the original entry on teardown; no delitem
+    # that could leave the parent package attribute stale for later tests).
+    real_module = importlib.import_module("lerobot.datasets.lerobot_dataset")
+
+    # Start from a clean, un-probed state regardless of implementation.
+    monkeypatch.setattr(dr, "_HAS_LEROBOT_DATASET", False, raising=False)
+    if hasattr(dr.has_lerobot_dataset, "cache_clear"):
+        dr.has_lerobot_dataset.cache_clear()
+
+    # Transient failure: the lerobot dataset module does not resolve.
+    monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", None)
+    assert dr.has_lerobot_dataset() is False
+
+    # Failure clears: the very next call must re-probe and resolve True.
+    monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", real_module)
+    assert dr.has_lerobot_dataset() is True

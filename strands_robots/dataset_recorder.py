@@ -20,7 +20,6 @@ Usage:
     recorder.push_to_hub()
 """
 
-import functools
 import json
 import logging
 import re
@@ -43,23 +42,39 @@ logger = logging.getLogger(__name__)
 _BUCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]*)?$")
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
-# Lazy check for LeRobot availability
+# Lazy check for LeRobot availability.
 # We must NOT import lerobot at module level because it pulls in
-# `datasets` → `pandas`, which can crash with a numpy ABI mismatch on
+# `datasets` -> `pandas`, which can crash with a numpy ABI mismatch on
 # systems where the system pandas was compiled against an older numpy
 # (e.g. JetPack / Jetson with system pandas 2.1.4 + pip numpy 2.x).
+#
+# Only the POSITIVE result is cached: importing lerobot is expensive (it pulls
+# in `datasets` -> `pandas`) and worth doing once, but lerobot availability is
+# a process capability that can transiently fail to resolve (a slow/locked
+# import, or - in tests - a temporarily monkeypatched `sys.modules`). Caching a
+# `False` would permanently disable recording for the rest of the process even
+# after the condition clears, so a failed probe is re-attempted on the next
+# call.
+_HAS_LEROBOT_DATASET: bool = False
 
 
-@functools.lru_cache(maxsize=1)
 def has_lerobot_dataset() -> bool:
-    """Check if lerobot is available. Result is cached after first call."""
+    """Return True if lerobot's ``LeRobotDataset`` can be imported.
+
+    A successful probe is cached; a failed probe is intentionally re-attempted
+    on the next call so a transient import failure does not permanently disable
+    recording for the process.
+    """
+    global _HAS_LEROBOT_DATASET
+    if _HAS_LEROBOT_DATASET:
+        return True
     try:
         from lerobot.datasets.lerobot_dataset import LeRobotDataset  # noqa: F401
-
-        return True
     except (ImportError, ValueError, RuntimeError) as exc:
         logger.debug("lerobot not available: %s", exc)
         return False
+    _HAS_LEROBOT_DATASET = True
+    return True
 
 
 def _get_lerobot_dataset_class():
