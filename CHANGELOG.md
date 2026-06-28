@@ -5,6 +5,30 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: RTC inference now forwards `inference_delay` to lerobot's denoiser
+
+`LerobotLocalPolicy._predict_with_rtc` passed only `prev_chunk_left_over` and
+`execution_horizon` to lerobot's `predict_action_chunk`, omitting the
+`inference_delay` kwarg that the RTC denoiser (pi0, pi0.5, SmolVLA) requires. It
+is the `start` argument of `RTCProcessor.get_prefix_weights(start, end, total)`,
+which freezes the first `d` committed actions of the new chunk to the previous
+chunk's prefix and linearly blends `d..execution_horizon`. With it omitted the
+denoiser received `inference_delay=None`, and `min(None, end)` raised
+`TypeError: '<' not supported between instances of 'int' and 'NoneType'` the
+moment a previous-chunk prefix existed (the 2nd inference onward) - so a real
+flow-matching RTC policy crashed on its second chunk. The existing unit tests
+missed it because they mock `predict_action_chunk` with a static tensor that
+ignores its kwargs.
+
+The wrapper now resolves the delay (the deterministic count from
+`set_rtc_observed_delay`, else a wall-clock p95 estimate over PRIOR calls)
+BEFORE inference and forwards it as `inference_delay` on every call, so the
+prefix-attention guidance is computed with the correct freeze count and the
+chunk seam blends identically in sim and on hardware. A regression test routes
+the wrapper's exact kwargs through lerobot's real `RTCProcessor.denoise_step`
+and fails (TypeError) on the pre-fix code.
+
+
 ### Feature: full RewardModelConfig parity with lerobot (dynamic reward-type discovery)
 
 `LerobotTrainer` reward-model training (`TrainSpec.extra["reward_model"]`) now

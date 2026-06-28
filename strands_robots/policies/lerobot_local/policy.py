@@ -1002,9 +1002,14 @@ class LerobotLocalPolicy(Policy):
         """Run inference using predict_action_chunk with RTC kwargs.
 
         This replaces select_action() for RTC-enabled policies. It:
-        1. Calls predict_action_chunk with prev_chunk_left_over and execution_horizon
-        2. Tracks inference latency for delay estimation
-        3. Stores the new chunk's leftover for the next call
+        1. Resolves the inference delay (RTC ``d``) BEFORE inference so it can be
+           forwarded to the denoiser, not just used to slice the result.
+        2. Calls predict_action_chunk with inference_delay + prev_chunk_left_over
+           + execution_horizon (lerobot's RTC denoiser requires inference_delay
+           as the get_prefix_weights ``start`` arg; omitting it sends None and
+           raises TypeError once a previous-chunk prefix exists).
+        3. Tracks inference latency for the wall-clock delay-estimate fallback.
+        4. Stores the new chunk's leftover for the next call.
 
         Args:
             batch: Observation batch tensors ready for the policy.
@@ -1013,37 +1018,23 @@ class LerobotLocalPolicy(Policy):
             Action tensor - first action(s) from the chunk, accounting for
             inference delay.
         """
-        inference_start = time.time()
-
-        # Build RTC kwargs for flow-matching denoiser
-        rtc_kwargs: dict[str, Any] = {}
-        if self._rtc_prev_chunk is not None:
-            rtc_kwargs["prev_chunk_left_over"] = self._rtc_prev_chunk
-        if self._rtc_execution_horizon is not None:
-            rtc_kwargs["execution_horizon"] = self._rtc_execution_horizon
-
-        # predict_action_chunk returns (batch, chunk_size, action_dim)
-        assert self._policy is not None, "Policy not loaded"
-        action_chunk = self._policy.predict_action_chunk(batch, **rtc_kwargs)
-
-        inference_elapsed = time.time() - inference_start
-        self._rtc_latency_history.append(inference_elapsed)
-
-        # Remove batch dim if present: (1, T, A) → (T, A)
-        if action_chunk.dim() == 3 and action_chunk.shape[0] == 1:
-            action_chunk = action_chunk.squeeze(0)
-
-        # Resolve how many control steps the executor ran while this inference
-        # was in flight - the offset that the chunk-seam blend slices by. Prefer
-        # the DETERMINISTIC count the runtime supplied (set_rtc_observed_delay):
-        # in a synchronous eval loop the world is paused during inference so
-        # exactly 0 steps elapse, and in the async overlap pipeline the count is
-        # a known integer. Deriving it from wall-clock p95 latency instead is
-        # non-reproducible - it warms up within an episode and varies run-to-run,
-        # so two otherwise-identical seeded episodes drift apart at the seam.
-        # Fall back to the wall-clock estimate only when no count was supplied
-        # (true-async hardware driven without a runner, where the arm really
-        # does keep moving during inference).
+        # Resolve how many control steps the executor commits while THIS
+        # inference is in flight - the RTC paper's `d`. It must be known BEFORE
+        # inference because lerobot's RTC denoiser consumes it as a kwarg: it is
+        # the `start` argument of RTCProcessor.get_prefix_weights, which freezes
+        # the first `d` actions of the new chunk to the already-committed prefix
+        # and linearly blends steps d..execution_horizon. It is ALSO the offset
+        # the chunk-seam slice below skips. Prefer the DETERMINISTIC count the
+        # runtime supplied (set_rtc_observed_delay): in a synchronous eval loop
+        # the world is paused during inference so exactly 0 steps elapse, and in
+        # the async overlap pipeline the count is a known integer. Deriving it
+        # from wall-clock p95 latency instead is non-reproducible - it warms up
+        # within an episode and varies run-to-run, so two otherwise-identical
+        # seeded episodes drift apart at the seam. Fall back to the wall-clock
+        # estimate (over PRIOR calls; this inference's own latency is not yet
+        # known) only when no count was supplied (true-async hardware driven
+        # without a runner, where the arm really does keep moving during
+        # inference).
         observed = self.rtc_observed_delay_steps
         if observed is not None:
             inference_delay = max(0, int(observed))
@@ -1066,6 +1057,31 @@ class LerobotLocalPolicy(Policy):
                     self._rtc_freq_warned = True
                 fps = _RTC_FALLBACK_FPS
             inference_delay = self._estimate_inference_delay(fps=fps)
+
+        # Build RTC kwargs for the flow-matching denoiser. inference_delay is
+        # passed on EVERY call: lerobot's RTCProcessor.denoise_step computes
+        # get_prefix_weights(inference_delay, execution_horizon, T), and
+        # `min(inference_delay, execution_horizon)` raises TypeError the moment a
+        # prev_chunk_left_over prefix exists (2nd chunk onward) if it is None.
+        # On the first chunk prev_chunk_left_over is None and lerobot returns
+        # early, so the value is harmless there.
+        rtc_kwargs: dict[str, Any] = {"inference_delay": inference_delay}
+        if self._rtc_prev_chunk is not None:
+            rtc_kwargs["prev_chunk_left_over"] = self._rtc_prev_chunk
+        if self._rtc_execution_horizon is not None:
+            rtc_kwargs["execution_horizon"] = self._rtc_execution_horizon
+
+        # predict_action_chunk returns (batch, chunk_size, action_dim)
+        assert self._policy is not None, "Policy not loaded"
+        inference_start = time.time()
+        action_chunk = self._policy.predict_action_chunk(batch, **rtc_kwargs)
+
+        inference_elapsed = time.time() - inference_start
+        self._rtc_latency_history.append(inference_elapsed)
+
+        # Remove batch dim if present: (1, T, A) → (T, A)
+        if action_chunk.dim() == 3 and action_chunk.shape[0] == 1:
+            action_chunk = action_chunk.squeeze(0)
 
         # Store leftover for next RTC call (unconsumed portion of this chunk).
         # The consumer executes ``execution_horizon`` actions before re-querying
