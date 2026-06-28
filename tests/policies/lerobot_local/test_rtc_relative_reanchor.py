@@ -15,6 +15,7 @@ relative-action policies, and carries it verbatim for absolute-action policies
 (whose frame does not move). Skips cleanly when LeRobot is unavailable.
 """
 
+import importlib
 import logging
 import sys
 import types
@@ -37,17 +38,31 @@ from lerobot.utils.constants import OBS_STATE  # noqa: E402
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy  # noqa: E402
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge  # noqa: E402
 
-try:
-    from lerobot.policies.rtc import reanchor_relative_rtc_prefix  # noqa: E402, F401
 
-    _HAS_RTC_REANCHOR = True
-except ImportError:
-    _HAS_RTC_REANCHOR = False
+def _lerobot_has_reanchor_helper() -> bool:
+    """True when the installed lerobot ships ``reanchor_relative_rtc_prefix``.
+
+    The helper (and its ``lerobot.policies.rtc`` module) landed after lerobot
+    0.5.1. Detection imports the module by string and probes for the symbol
+    rather than ``from ... import`` (which CodeQL flags as an unused import and
+    which only narrows to ImportError). It tolerates TypeError because importing
+    ``lerobot.policies.rtc`` on lerobot 0.5.1 executes a module whose dataclass
+    fails to build, raising at load time - exactly the failure the policy's own
+    fallback guard must absorb.
+    """
+    try:
+        module = importlib.import_module("lerobot.policies.rtc")
+    except (ImportError, TypeError):
+        return False
+    return hasattr(module, "reanchor_relative_rtc_prefix")
+
+
+_HAS_RTC_REANCHOR = _lerobot_has_reanchor_helper()
 
 # The relative-action RTC re-anchoring path only engages when the installed
 # lerobot ships reanchor_relative_rtc_prefix (added after 0.5.1). On an older
 # lerobot the feature deliberately falls back to carrying the leftover verbatim
-# (see test_relative_action_falls_back_when_lerobot_lacks_reanchor_helper), so
+# (see test_relative_action_falls_back_when_reanchor_helper_unavailable), so
 # the re-anchoring assertions below are meaningful only when the helper exists.
 _requires_reanchor = pytest.mark.skipif(
     not _HAS_RTC_REANCHOR,
@@ -192,19 +207,46 @@ def test_resolve_rtc_rebase_steps_is_idempotent_and_detects_relative():
     assert policy2._rtc_relative_step is None
 
 
-def test_relative_action_falls_back_when_lerobot_lacks_reanchor_helper(monkeypatch, caplog):
-    # A lerobot that predates reanchor_relative_rtc_prefix (<= 0.5.1) cannot
-    # re-express the leftover against the moved state. The relative-action policy
-    # must then DISABLE re-anchoring, keep no absolute copy, warn once, and carry
-    # the model-space leftover verbatim - never crash or silently drop the prefix.
-    # Simulate a lerobot that predates reanchor_relative_rtc_prefix regardless
-    # of the installed version: the helper (and its lerobot.policies.rtc module)
-    # landed after 0.5.1, so a real `import lerobot.policies.rtc` raises
-    # ModuleNotFoundError on that release. Inject a stub module lacking the
-    # helper so the production `from lerobot.policies.rtc import
-    # reanchor_relative_rtc_prefix` raises ImportError exactly as on <= 0.5.1.
-    stub_rtc = types.ModuleType("lerobot.policies.rtc")
-    monkeypatch.setitem(sys.modules, "lerobot.policies.rtc", stub_rtc)
+def _stub_rtc_missing_helper() -> types.ModuleType:
+    """lerobot.policies.rtc present but without the helper symbol.
+
+    ``from lerobot.policies.rtc import reanchor_relative_rtc_prefix`` then raises
+    ImportError - the <= 0.5.1 case where the module ships no such symbol.
+    """
+    return types.ModuleType("lerobot.policies.rtc")
+
+
+def _stub_rtc_broken_import() -> types.ModuleType:
+    """lerobot.policies.rtc whose symbol access raises TypeError.
+
+    Mirrors lerobot 0.5.1, where importing lerobot.policies.rtc executes a
+    module that builds a broken dataclass, so the import raises TypeError at
+    load time instead of cleanly missing the symbol.
+    """
+
+    class _RaisingModule(types.ModuleType):
+        def __getattr__(self, name: str):
+            if name == "reanchor_relative_rtc_prefix":
+                raise TypeError("non-default argument 'backbone_cfg' follows default argument")
+            raise AttributeError(name)
+
+    return _RaisingModule("lerobot.policies.rtc")
+
+
+@pytest.mark.parametrize(
+    "make_stub",
+    [_stub_rtc_missing_helper, _stub_rtc_broken_import],
+    ids=["missing_helper", "broken_import"],
+)
+def test_relative_action_falls_back_when_reanchor_helper_unavailable(make_stub, monkeypatch, caplog):
+    # A lerobot without a usable reanchor_relative_rtc_prefix cannot re-express
+    # the leftover against the moved state. The relative-action policy must then
+    # DISABLE re-anchoring, keep no absolute copy, warn once, and carry the
+    # model-space leftover verbatim - never crash or silently drop the prefix.
+    # Both unavailability modes are covered: the symbol is simply absent
+    # (ImportError, <= 0.5.1) or importing lerobot.policies.rtc raises at load
+    # time (TypeError, lerobot 0.5.1's broken rtc import chain).
+    monkeypatch.setitem(sys.modules, "lerobot.policies.rtc", make_stub())
 
     names = [f"j{i}.pos" for i in range(_ACTION_DIM)]
     relative_step = RelativeActionsProcessorStep(enabled=True, action_names=names)
