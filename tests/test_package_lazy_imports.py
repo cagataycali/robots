@@ -145,3 +145,32 @@ class TestStaticExportContract:
             "Lazy symbols missing a TYPE_CHECKING import (CodeQL py/undefined-export "
             f"will flag these as exported-but-undefined): {missing}"
         )
+
+
+class TestToolsReexportedAtTopLevel:
+    """Every ``@tool`` in ``strands_robots.tools`` is re-exported at the package root.
+
+    Agents and tool loaders address tools as ``strands_robots:<tool>`` (the
+    top-level package), so a tool present in ``strands_robots.tools.__all__``
+    but absent from the package root fails to load with
+    ``module 'strands_robots' has no attribute '<tool>'``. This pins parity so
+    a newly added tool cannot drift out of the top-level surface.
+    """
+
+    def test_every_tool_is_in_top_level_all(self):
+        import strands_robots.tools as tools_pkg
+
+        missing = sorted(name for name in tools_pkg.__all__ if name not in strands_robots.__all__)
+        assert not missing, f"tools missing from top-level strands_robots.__all__: {missing}"
+
+    def test_every_tool_resolves_from_top_level(self):
+        import importlib
+
+        import strands_robots.tools as tools_pkg
+
+        # Each tool lives in a submodule named after it, defining an attribute
+        # of the same name. The top-level lazy export must resolve to that same
+        # object (not, for example, the submodule).
+        for name in tools_pkg.__all__:
+            submodule = importlib.import_module(f"strands_robots.tools.{name}")
+            assert getattr(strands_robots, name) is getattr(submodule, name), name
