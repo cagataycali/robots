@@ -45,6 +45,7 @@ from strands_robots.simulation.model_registry import (
 from strands_robots.simulation.models import SimObject, SimRobot, SimWorld
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
+from strands_robots.utils import require_optional
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -150,6 +151,9 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         self._joint_dof_index: dict[tuple[str, str], int] = {}
         # Ordered full body labels per robot (rebuilt with the model).
         self._robot_body_map: dict[str, list[str]] = {}
+        # Parsed mesh geometry keyed by resolved mesh_path, so rebuilds do not
+        # re-read mesh assets off disk on every scene mutation.
+        self._mesh_cache: dict[str, tuple[Any, Any]] = {}
 
         logger.info("Newton simulation engine initialised (solver=%s)", self._solver_name)
 
@@ -332,19 +336,25 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         mesh_path: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Add a primitive object (box/sphere/capsule/cylinder) to the scene.
+        """Add a primitive or mesh object to the scene.
 
         Args:
             name: Unique object name.
             shape: One of ``"box"``, ``"sphere"``, ``"capsule"``,
-                ``"cylinder"``.
+                ``"cylinder"``, or ``"mesh"``. ``"mesh"`` requires
+                ``mesh_path``.
             position: World position ``[x, y, z]`` (default origin).
             orientation: wxyz quaternion (default identity).
-            size: Half-extents (box) or ``[radius, ...]`` (others).
+            size: Half-extents (box) or ``[radius, ...]`` (others). For
+                ``shape="mesh"`` this is the per-axis scale applied to the
+                loaded geometry (default ``[1, 1, 1]`` -- the mesh's own units).
             color: RGBA in 0..1 (alpha currently ignored by Newton shapes).
             mass: Object mass; ``0`` or ``is_static`` makes it static.
             is_static: When True the object is fixed in the world.
-            mesh_path: Unused (mesh objects are not yet supported).
+            mesh_path: Path to a mesh asset (``.obj`` / ``.stl`` / ``.glb`` /
+                ``.usd`` -- anything ``trimesh.load`` accepts). Required and
+                only used when ``shape="mesh"``; the mesh is loaded via
+                ``trimesh`` and converted to a Newton collision/visual shape.
             **kwargs: Ignored.
 
         Returns:
@@ -354,17 +364,42 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' already exists."}]}
-        if shape not in ("box", "sphere", "capsule", "cylinder"):
-            return {"status": "error", "content": [{"text": f"Unsupported shape {shape!r} for Newton backend."}]}
+        if shape not in ("box", "sphere", "capsule", "cylinder", "mesh"):
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Unsupported shape {shape!r} for Newton backend. "
+                            "Supported: box, sphere, capsule, cylinder, mesh."
+                        )
+                    }
+                ],
+            }
+        if shape == "mesh":
+            if not mesh_path:
+                return {
+                    "status": "error",
+                    "content": [{"text": "add_object: shape='mesh' requires mesh_path=<path to .obj/.stl/.glb/.usd>."}],
+                }
+            resolved = Path(mesh_path).expanduser()
+            if not resolved.is_file():
+                return {
+                    "status": "error",
+                    "content": [{"text": f"add_object: mesh_path {mesh_path!r} does not exist or is not a file."}],
+                }
+            mesh_path = str(resolved)
+        default_size = [1.0, 1.0, 1.0] if shape == "mesh" else [0.05, 0.05, 0.05]
         with self._lock:
             obj = SimObject(
                 name=name,
                 shape=shape,
                 position=position or [0.0, 0.0, 0.0],
                 orientation=orientation or [1.0, 0.0, 0.0, 0.0],
-                size=size or [0.05, 0.05, 0.05],
+                size=size or default_size,
                 color=color or [0.5, 0.5, 0.5, 1.0],
                 mass=mass,
+                mesh_path=mesh_path,
                 is_static=is_static,
             )
             self._world.objects[name] = obj
@@ -428,7 +463,8 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         lines = ["Objects:\n"]
         for name, obj in self._world.objects.items():
             mass = "static" if obj.is_static or obj.mass <= 0 else f"{obj.mass}kg"
-            lines.append(f"  - {name}: {obj.shape} at {obj.position}, {mass}")
+            suffix = f", mesh={obj.mesh_path}" if obj.shape == "mesh" and obj.mesh_path else ""
+            lines.append(f"  - {name}: {obj.shape} at {obj.position}, {mass}{suffix}")
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     # Observation / action
@@ -1202,6 +1238,50 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
             radius = size[0]
             half_height = size[1] if len(size) > 1 else size[0]
             builder.add_shape_cylinder(body, xform=shape_xform, radius=radius, half_height=half_height, color=color)
+        elif obj.shape == "mesh":
+            vertices, indices = self._load_mesh_geometry(obj.mesh_path)
+            mesh = self._nt.Mesh(vertices, indices)
+            sx, sy, sz = (size + [1.0, 1.0, 1.0])[:3]
+            builder.add_shape_mesh(body, xform=shape_xform, mesh=mesh, scale=wp.vec3(sx, sy, sz), color=color)
+
+    def _load_mesh_geometry(self, mesh_path: str | None) -> tuple[Any, Any]:
+        """Load a mesh asset into ``(vertices, indices)`` arrays for Newton.
+
+        The mesh file is parsed once via ``trimesh`` and cached by path, so
+        rebuilds triggered by scene mutations (``move_object`` / ``add_object``)
+        do not re-read the asset off disk. ``trimesh.load(..., force="mesh")``
+        flattens any multi-geometry scene into a single triangle mesh; the
+        returned indices are flattened (3 per triangle) as ``newton.Mesh``
+        expects.
+
+        Args:
+            mesh_path: Absolute path to a mesh asset (resolved by
+                :meth:`add_object`).
+
+        Returns:
+            Tuple of ``(vertices, indices)`` -- an ``(N, 3)`` float32 array of
+            vertices and a flat int32 array of triangle indices.
+
+        Raises:
+            ValueError: If ``mesh_path`` is missing or the asset has no
+                triangle geometry.
+            ImportError: If ``trimesh`` (the ``sim-newton`` extra) is absent.
+        """
+        if not mesh_path:
+            raise ValueError("mesh object has no mesh_path; add it via add_object(shape='mesh', mesh_path=...).")
+        cached = self._mesh_cache.get(mesh_path)
+        if cached is not None:
+            return cached
+        trimesh = require_optional(
+            "trimesh", extra="sim-newton", purpose="loading mesh assets for the Newton add_object backend"
+        )
+        loaded = trimesh.load(mesh_path, force="mesh")  # type: ignore[attr-defined]
+        vertices = np.ascontiguousarray(loaded.vertices, dtype=np.float32)
+        indices = np.ascontiguousarray(loaded.faces, dtype=np.int32).reshape(-1)
+        if vertices.size == 0 or indices.size == 0:
+            raise ValueError(f"Mesh {mesh_path!r} has no triangle geometry (empty vertices/faces).")
+        self._mesh_cache[mesh_path] = (vertices, indices)
+        return vertices, indices
 
     def _wxyz_to_wp_quat(self, wxyz: list[float]) -> Any:
         """Convert a wxyz quaternion (SimRobot convention) to a warp xyzw quatf."""

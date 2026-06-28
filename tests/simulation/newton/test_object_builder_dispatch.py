@@ -180,7 +180,7 @@ class TestShapeDispatch:
     def test_unsupported_shape_adds_no_geometry(self):
         # An unknown shape falls through the dispatch with no add_shape_* call;
         # for a dynamic object only the (empty) body is created.
-        builder = _add(SimObject(name="mesh", shape="mesh", size=[0.1, 0.1, 0.1], mass=1.0))
+        builder = _add(SimObject(name="blob", shape="ellipsoid", size=[0.1, 0.1, 0.1], mass=1.0))
         kinds = [c[0] for c in builder.calls]
         assert kinds == ["add_body"]
 

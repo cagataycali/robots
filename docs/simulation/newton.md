@@ -166,9 +166,24 @@ When no named cameras are registered the dataset records joint state and action
 only (a valid proprio-only dataset); camera columns are added automatically once
 cameras are registered on the world.
 
+## Mesh objects
+
+`add_object` accepts triangle-mesh assets in addition to primitives, at parity
+with the MuJoCo backend:
+
+```python
+sim.add_object(name="tool", shape="mesh", mesh_path="/abs/path/widget.obj",
+               position=[0.3, 0.0, 0.05], mass=0.2)
+```
+
+`mesh_path` accepts anything `trimesh.load` reads (`.obj`, `.stl`, `.glb`,
+`.usd`, ...). The asset is parsed once (cached by path), converted to a
+`newton.Mesh`, and added as a collision/visual shape; `size` acts as a per-axis
+scale (default `[1, 1, 1]`, the mesh's own units). `move_object` and
+`remove_object` work on mesh objects, and `list_objects()` reports the mesh
+path. Mesh loading requires the `sim-newton` extra (which ships `trimesh`).
+
 ## Limitations
 
 - Only a single default camera view is provided by `render()`; named per-robot
   cameras are not yet supported.
-- Mesh objects in `add_object` are not yet supported (primitives box / sphere /
-  capsule / cylinder only).
