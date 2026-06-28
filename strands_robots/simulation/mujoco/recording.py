@@ -41,6 +41,36 @@ class RecordingMixin:
         """
         return self._world is not None and bool(self._world._backend_state.get("recording", False))
 
+    def _active_recorder(self) -> Any:
+        """Live dataset recorder, or ``None`` when no session is open.
+
+        Overrides :meth:`SimEngine._active_recorder` so the base ``run_policy``
+        episode-contract fields can read the recorder's in-memory episode count.
+        """
+        if self._world is None:
+            return None
+        return self._world._backend_state.get("dataset_recorder")
+
+    def _active_dataset_root(self) -> str | None:
+        """On-disk root of the active or most-recently-recorded dataset.
+
+        Overrides :meth:`SimEngine._active_dataset_root` so
+        :meth:`verify_dataset_episodes` can locate the parquet AFTER
+        ``stop_recording`` has finalized it and dropped the recorder. Prefers
+        the live recorder's root; falls back to the ``last_dataset_root`` stashed
+        at ``start_recording``.
+        """
+        recorder = self._active_recorder()
+        if recorder is not None:
+            try:
+                return str(recorder.root)
+            except (AttributeError, TypeError):
+                pass
+        if self._world is None:
+            return None
+        last = self._world._backend_state.get("last_dataset_root")
+        return str(last) if last else None
+
     def start_recording(
         self,
         repo_id: str = "local/sim_recording",
@@ -104,6 +134,9 @@ class RecordingMixin:
             dataset_dir = Path(repo_id)
         else:
             dataset_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
+        # Stash the resolved root so verify_dataset_episodes can read the parquet
+        # after stop_recording has finalized the dataset and dropped the recorder.
+        self._world._backend_state["last_dataset_root"] = str(dataset_dir)
 
         # Multi-episode append: when NOT overwriting and a dataset already
         # exists on disk, resume it (append new episodes) instead of calling

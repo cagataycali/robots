@@ -24,6 +24,7 @@ import functools
 import logging
 import re
 import sys
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -782,7 +783,6 @@ class DatasetRecorder:
         """
         import shutil
         import subprocess
-        from pathlib import Path
 
         if shutil.which("hf") is None:
             return {
@@ -913,3 +913,75 @@ def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None
         raise ValueError(f"Episode {episode} has no frames")
 
     return ds, episode_start, episode_length
+
+
+def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
+    """Read episode-level ground truth from a LeRobot v3 dataset on disk.
+
+    Parses every ``meta/episodes/**/*.parquet`` file under ``root`` and returns
+    the recorded episode index set plus per-episode frame counts. This is the
+    parquet source of truth used by :meth:`SimEngine.verify_dataset_episodes`
+    to confirm a recording session produced the number of distinct episodes the
+    caller intended (rather than one merged ``episode_index=0`` mega-episode).
+
+    Pure ``pyarrow`` read - it does NOT import ``lerobot`` or instantiate a
+    ``LeRobotDataset`` (which would re-validate/scan the whole dataset). Reads
+    only the lightweight episode metadata parquet.
+
+    Args:
+        root: Dataset root directory (the dir that contains ``meta/``).
+
+    Returns:
+        Dict with:
+          - ``episode_indices``: sorted list of distinct ``episode_index`` values.
+          - ``total_episodes``: number of distinct episodes (``len`` of above).
+          - ``total_frames``: sum of per-episode ``length`` (0 if unavailable).
+          - ``frames_per_episode``: per-episode frame counts aligned to
+            ``episode_indices`` (empty list if the ``length`` column is absent).
+
+    Raises:
+        ImportError: If ``pyarrow`` is not installed.
+        FileNotFoundError: If no ``meta/episodes`` parquet exists under ``root``
+            (no episode was ever flushed - the dataset is empty/unfinalized).
+    """
+    try:
+        import pyarrow.parquet as pq
+    except ImportError as e:  # pragma: no cover - pyarrow ships with lerobot
+        raise ImportError("read_dataset_episode_indices requires pyarrow (installed with the lerobot extra).") from e
+
+    root_path = Path(root)
+    parquet_files = sorted((root_path / "meta" / "episodes").glob("**/*.parquet"))
+    if not parquet_files:
+        raise FileNotFoundError(
+            f"No meta/episodes parquet under {root_path}. The dataset is empty or was "
+            "never finalized (episodes are flushed to parquet at stop_recording/finalize)."
+        )
+
+    pairs: list[tuple[int, int]] = []
+    seen: set[int] = set()
+    for pf in parquet_files:
+        table = pq.read_table(pf)
+        cols = table.column_names
+        if "episode_index" not in cols:
+            continue
+        data = table.to_pydict()
+        ep_indices = data["episode_index"]
+        lengths = data.get("length")
+        for i, ep in enumerate(ep_indices):
+            ep_int = int(ep)
+            if ep_int in seen:
+                continue
+            seen.add(ep_int)
+            length = int(lengths[i]) if lengths is not None and lengths[i] is not None else 0
+            pairs.append((ep_int, length))
+
+    pairs.sort(key=lambda p: p[0])
+    episode_indices = [p[0] for p in pairs]
+    frames_per_episode = [p[1] for p in pairs]
+    has_lengths = any(f > 0 for f in frames_per_episode)
+    return {
+        "episode_indices": episode_indices,
+        "total_episodes": len(episode_indices),
+        "total_frames": sum(frames_per_episode) if has_lengths else 0,
+        "frames_per_episode": frames_per_episode if has_lengths else [],
+    }

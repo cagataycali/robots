@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import os
 import tempfile
+import threading
+import time
 
 import pytest
 
@@ -329,3 +331,48 @@ def test_run_multi_policy_honors_policy_chunk_length_over_smaller_horizon(sim_tw
     assert r["status"] == "success", r
     assert pa.calls == 2
     assert pb.calls == 2
+
+
+def test_run_multi_policy_rejects_robot_with_running_async_policy(sim_two_robots):
+    """A robot already driven by a ``start_policy`` thread is refused.
+
+    ``run_multi_policy`` and ``start_policy`` both advance physics: letting the
+    synchronized loop also drive a robot that a background ``start_policy``
+    thread is already stepping would double-step that robot's ctrl/physics. The
+    loop therefore rejects the call up front and names the busy robot, leaving
+    the other robots untouched. This pins that guard so it cannot silently
+    regress into a concurrent double-driver.
+    """
+    sim = sim_two_robots
+    release = threading.Event()
+
+    class _Blocking(Policy):
+        requires_images = False
+
+        def set_robot_state_keys(self, keys):
+            pass
+
+        @property
+        def provider_name(self) -> str:
+            return "blocking"
+
+        async def get_actions(self, obs, instruction=""):
+            # Park the worker mid-episode so its Future is guaranteed live
+            # (not done) when run_multi_policy inspects it below.
+            release.wait(timeout=5.0)
+            return [{k: 0.0 for k in ["shoulder_pan", "shoulder_lift", "elbow"]}]
+
+    started = sim.start_policy(robot_name="alpha", policy_object=_Blocking(), n_steps=3, control_frequency=50.0)
+    assert started["status"] == "success", started
+    try:
+        # Let the executor pick up and enter the blocking inference call.
+        time.sleep(0.1)
+        r = sim.run_multi_policy(policies={"alpha": MockPolicy(), "beta": MockPolicy()}, n_steps=2)
+        assert r["status"] == "error", r
+        msg = r["content"][0]["text"]
+        assert "already running" in msg
+        assert "alpha" in msg
+    finally:
+        # Unblock the worker, then cooperatively stop it so teardown joins fast.
+        release.set()
+        sim.stop_policy("alpha")
