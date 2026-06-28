@@ -166,3 +166,30 @@ def test_robot_descriptions_module_names_are_import_safe(registry: dict) -> None
         if mod and not pattern.match(mod):
             offenders.append((name, mod))
     assert not offenders, f"robot_descriptions_module names not import-safe: {offenders}"
+
+
+def test_rebot_b601_family_is_drivable_real(registry: dict) -> None:
+    """The Seeed reBot B601-DM family (single + bimanual) must be reachable via
+    ``Robot(name, mode="real")``.
+
+    LeRobot registers ``rebot_b601_follower`` and ``bi_rebot_b601_follower``
+    (the latter only when the optional ``motorbridge`` SDK is present). Without
+    a strands registry entry mapping a canonical name to those LeRobot types,
+    ``Robot("rebot_b601", mode="real")`` raises ``ValueError: Unsupported robot
+    type`` even though the policy embodiment configs already ship for it. This
+    pins the registry mapping so the hardware stays reachable. Deterministic:
+    it reads only robots.json, so it guards CI hosts without LeRobot installed.
+    """
+    from strands_robots.registry.robots import get_hardware_type, resolve_name
+
+    expected = {
+        "rebot_b601": "rebot_b601_follower",
+        "bi_rebot_b601": "bi_rebot_b601_follower",
+    }
+    for canonical, lerobot_type in expected.items():
+        assert canonical in registry, f"{canonical!r} missing from registry"
+        assert registry[canonical]["hardware"]["lerobot_type"] == lerobot_type
+        # The lerobot_type itself and the canonical name both resolve home.
+        assert resolve_name(canonical) == canonical
+        assert resolve_name(lerobot_type) == canonical
+        assert get_hardware_type(canonical) == lerobot_type

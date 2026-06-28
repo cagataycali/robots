@@ -139,6 +139,19 @@
         "robotis_omx"
       ]
     },
+    "rebot_b601": {
+      "description": "Seeed Studio reBot B601-DM (6-DOF + gripper, Damiao CAN motors)",
+      "category": "arm",
+      "joints": 7,
+      "hardware": {
+        "lerobot_type": "rebot_b601_follower"
+      },
+      "aliases": [
+        "rebot_b601_follower",
+        "seeed_rebot_b601",
+        "b601_dm"
+      ]
+    },
     "openarm": {
       "description": "Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus)",
       "category": "arm",
@@ -379,6 +392,17 @@
         "bi_openarm_follower",
         "dual_openarm",
         "openarm_bimanual"
+      ]
+    },
+    "bi_rebot_b601": {
+      "description": "Bi-manual reBot B601-DM (dual 6-DOF + gripper, Damiao CAN motors)",
+      "category": "bimanual",
+      "hardware": {
+        "lerobot_type": "bi_rebot_b601_follower"
+      },
+      "aliases": [
+        "bi_rebot_b601_follower",
+        "dual_rebot_b601"
       ]
     },
     "trossen_wxai": {
