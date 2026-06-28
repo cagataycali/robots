@@ -500,7 +500,14 @@ class SimEngine(ABC):
                 kwargs per the #300 contract, so forwarding is always safe.
             n_episodes: Number of sequential episode rollouts to run in this
                 single call (default ``1`` - the historical single-rollout
-                behaviour, unchanged). When ``> 1``, each episode runs one
+                behaviour, unchanged). IMPORTANT: calling with the default
+                ``n_episodes=1`` produces exactly ONE dataset episode, no matter
+                how many "episodes" you intend in natural language. To record N
+                DISTINCT dataset episodes pass ``n_episodes=N`` in a single call
+                - do NOT loop this call N times narrating "N episodes" (that
+                buffers all frames into one merged ``episode_index=0``
+                mega-episode). After ``stop_recording``, confirm the count with
+                :meth:`verify_dataset_episodes`. When ``> 1``, each episode runs one
                 rollout for the configured horizon, then a dataset episode
                 boundary is flushed via :meth:`save_episode` (only when a
                 recording is active) so the dataset ends up with N correctly
@@ -574,8 +581,17 @@ class SimEngine(ABC):
         # (no reset, no episode-boundary flush). n_episodes defaults to 1 so
         # existing callers are completely unaffected.
         if n_episodes == 1:
+            recording = self._is_recording()
+            if recording:
+                logger.info(
+                    "run_policy: n_episodes=1, will produce 1 dataset episode of ~%d frames "
+                    "(frames buffer into the current episode and flush at save_episode/"
+                    "stop_recording). To record N DISTINCT dataset episodes pass n_episodes=N "
+                    "- do NOT loop the tool call.",
+                    int(duration * control_frequency),
+                )
             on_frame = self._make_run_policy_hook(robot_name, instruction)
-            return runner.run(
+            result = runner.run(
                 robot_name,
                 policy,
                 instruction=instruction,
@@ -591,6 +607,12 @@ class SimEngine(ABC):
                 seed=seed,
                 async_rtc=async_rtc,
             )
+            completed = 1 if result.get("status") == "success" else 0
+            contract = self._episode_contract_fields(
+                requested=1, completed=completed, saved=0, flush_deferred=recording
+            )
+            self._merge_json_fields(result, contract)
+            return result
 
         # Multi-episode path: one rollout per episode, flushing a dataset
         # episode boundary (save_episode) when recording and resetting between
@@ -741,6 +763,20 @@ class SimEngine(ABC):
         return {}
 
     @staticmethod
+    def _merge_json_fields(result: dict[str, Any], fields: dict[str, Any]) -> None:
+        """Merge ``fields`` into the result's ``{"json": {...}}`` block in place.
+
+        Augments the first existing json content block, or appends a new one if
+        the result has none. Lets :meth:`run_policy` attach the episode-contract
+        fields onto a ``PolicyRunner.run`` result without rebuilding it.
+        """
+        for blk in result.get("content", []) or []:
+            if isinstance(blk, dict) and isinstance(blk.get("json"), dict):
+                blk["json"].update(fields)
+                return
+        result.setdefault("content", []).append({"json": dict(fields)})
+
+    @staticmethod
     def _episode_video_config(video: dict[str, Any] | None, episode: int) -> VideoConfig | None:
         """Per-episode :class:`VideoConfig` with ``_ep{i}`` in the filename.
 
@@ -781,10 +817,17 @@ class SimEngine(ABC):
         )
         if extra:
             text += f"\n{extra}"
+        dataset_episode_indices: list[int] = []
+        if self._is_recording():
+            recorder = self._active_recorder()
+            meta = getattr(getattr(recorder, "dataset", None), "meta", None)
+            total_episodes = int(getattr(meta, "total_episodes", 0) or 0) if meta is not None else 0
+            dataset_episode_indices = list(range(total_episodes))
         payload: dict[str, Any] = {
             "n_episodes_requested": n_episodes,
             "n_episodes_completed": completed,
             "episodes_saved": episodes_saved,
+            "dataset_episode_indices": dataset_episode_indices,
             "total_steps": total_steps,
             "episodes": episodes,
             "video_paths": video_paths,
@@ -799,6 +842,156 @@ class SimEngine(ABC):
         flushes episode boundaries on backends that actually record.
         """
         return False
+
+    def _active_recorder(self) -> Any:
+        """Return the active dataset recorder object, or ``None``.
+
+        Backends that support LeRobot dataset recording override this to expose
+        the live recorder (see the MuJoCo ``RecordingMixin``). The base has no
+        recorder, so it returns ``None``. Used by :meth:`run_policy` to read the
+        in-memory episode count for the episode-contract fields.
+        """
+        return None
+
+    def _active_dataset_root(self) -> str | None:
+        """On-disk root of the active (or most recent) recording, or ``None``.
+
+        Backends that record override this so :meth:`verify_dataset_episodes`
+        can locate the dataset parquet AFTER ``stop_recording`` has finalized it
+        (the recorder object is gone by then). The base has no recorder, so it
+        returns ``None``.
+        """
+        return None
+
+    def verify_dataset_episodes(self, expected: int) -> dict[str, Any]:
+        """Verify the recorded dataset holds exactly ``expected`` episodes.
+
+        Reads the LeRobot dataset parquet (the ground truth) for the active or
+        most-recently-recorded session and reports the actual episode count.
+        Call this AFTER :meth:`stop_recording` for a definitive check that a
+        collection run produced N distinct episodes rather than one merged
+        ``episode_index=0`` mega-episode.
+
+        Episodes are flushed to ``meta/episodes/**/*.parquet`` only at
+        ``save_episode`` / ``stop_recording`` (``finalize``) time, so this reads
+        the canonical on-disk truth - it does not trust the recorder's in-memory
+        bookkeeping (which is what :meth:`run_policy` reports while a session is
+        still open).
+
+        Args:
+            expected: The episode count the caller intended to record.
+
+        Returns:
+            Standard status dict. ``status`` is ``"success"`` when the parquet
+            holds exactly ``expected`` episodes, else ``"error"``. The
+            ``{"json": {...}}`` block carries ``expected``, ``actual``,
+            ``episode_indices``, ``total_frames``, ``total_frames_per_ep`` and
+            ``root`` so a caller (or CI) can fail loudly programmatically.
+        """
+        if not isinstance(expected, int) or expected < 0:
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"verify_dataset_episodes: expected must be a non-negative int, got {expected!r}."}
+                ],
+            }
+
+        root = self._active_dataset_root()
+        if not root:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "verify_dataset_episodes: no active or recently-recorded dataset to verify. "
+                            "Record one first (start_recording -> run_policy -> stop_recording)."
+                        )
+                    }
+                ],
+            }
+
+        from strands_robots.dataset_recorder import read_dataset_episode_indices
+
+        try:
+            info = read_dataset_episode_indices(root)
+        except FileNotFoundError as e:
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"verify_dataset_episodes: {e}"},
+                    {
+                        "json": {
+                            "expected": expected,
+                            "actual": 0,
+                            "episode_indices": [],
+                            "total_frames": 0,
+                            "total_frames_per_ep": [],
+                            "root": str(root),
+                        }
+                    },
+                ],
+            }
+        except ImportError as e:
+            return {"status": "error", "content": [{"text": f"verify_dataset_episodes: {e}"}]}
+
+        actual = info["total_episodes"]
+        ok = actual == expected
+        status = "success" if ok else "error"
+        verdict = "matches" if ok else "MISMATCH"
+        text = (
+            f"verify_dataset_episodes: {verdict} - expected {expected}, "
+            f"found {actual} episode(s) in parquet "
+            f"({info['total_frames']} total frames). Root: {root}"
+        )
+        return {
+            "status": status,
+            "content": [
+                {"text": text},
+                {
+                    "json": {
+                        "expected": expected,
+                        "actual": actual,
+                        "episode_indices": info["episode_indices"],
+                        "total_frames": info["total_frames"],
+                        "total_frames_per_ep": info["frames_per_episode"],
+                        "root": str(root),
+                    }
+                },
+            ],
+        }
+
+    def _episode_contract_fields(
+        self, *, requested: int, completed: int, saved: int, flush_deferred: bool = False
+    ) -> dict[str, Any]:
+        """Build the episode-count truth fields for a ``run_policy`` json block.
+
+        Returns ``n_episodes_requested`` / ``n_episodes_completed`` /
+        ``episodes_saved`` plus ``dataset_episode_indices`` - the episode indices
+        the active recorder reports so far (derived from the recorder's in-memory
+        ``meta.total_episodes``; ``[]`` when not recording). Episodes are flushed
+        to parquet only at ``stop_recording``/``finalize``, so this reflects the
+        recorder bookkeeping; call :meth:`verify_dataset_episodes` after
+        ``stop_recording`` for the definitive on-disk parquet count.
+
+        ``flush_deferred`` marks the single-episode fast path while recording:
+        the rollout's frames are buffered into the CURRENT episode and become one
+        dataset episode at the next ``save_episode`` / ``stop_recording`` - they
+        are not yet a distinct flushed episode, so ``episodes_saved`` is ``0``.
+        """
+        fields: dict[str, Any] = {
+            "n_episodes_requested": requested,
+            "n_episodes_completed": completed,
+            "episodes_saved": saved,
+            "dataset_episode_indices": [],
+        }
+        if flush_deferred:
+            fields["episode_flush_deferred"] = True
+        if self._is_recording():
+            recorder = self._active_recorder()
+            total = getattr(getattr(recorder, "dataset", None), "meta", None)
+            total_episodes = int(getattr(total, "total_episodes", 0) or 0) if total is not None else 0
+            fields["dataset_episode_indices"] = list(range(total_episodes))
+        return fields
 
     def save_episode(self) -> dict[str, Any]:
         """Flush the current recording episode and begin a fresh one.

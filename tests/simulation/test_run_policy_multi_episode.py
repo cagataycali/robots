@@ -139,13 +139,20 @@ class TestMultiEpisodeRollout:
 
     def test_single_episode_keeps_historical_result_shape(self, sim):
         # Default n_episodes=1 must NOT wrap the result in the multi-episode
-        # aggregate; it stays the single-rollout payload existing callers parse.
+        # aggregate (the per-episode ``episodes`` list); it stays the
+        # single-rollout payload existing callers parse. It DOES, however, carry
+        # the episode-count contract fields so an agent can read the truth
+        # without parsing text (both run_policy paths expose them).
         result = sim.run_policy("arm1", n_steps=5)
         assert result["status"] == "success"
         payload = _json(result)
         assert payload["n_steps"] == 5
-        assert "n_episodes_requested" not in payload
-        assert "episodes" not in payload
+        assert "episodes" not in payload  # no multi-episode aggregate wrapper
+        # Episode-count contract fields present on the fast path too.
+        assert payload["n_episodes_requested"] == 1
+        assert payload["n_episodes_completed"] == 1
+        assert payload["episodes_saved"] == 0
+        assert payload["dataset_episode_indices"] == []
 
     def test_explicit_n_episodes_one_matches_single(self, sim):
         result = sim.run_policy("arm1", n_steps=4, n_episodes=1)

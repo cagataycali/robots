@@ -5,6 +5,44 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Correctness: `run_policy` episode-count contract + `verify_dataset_episodes`
+
+`run_policy` could silently record a single merged `episode_index=0`
+mega-episode while a caller believed it had collected N distinct episodes. The
+single-episode fast path returned none of the episode-count bookkeeping the
+multi-episode path did, and a `status="success"` rollout was no proof of
+episode-count correctness - frames buffer into the current episode and only
+flush to parquet at `save_episode`/`stop_recording`. An agent that calls
+`run_policy(n_episodes=1)` (the default) once but narrates "20 episodes" got a
+1-episode dataset and no signal that anything was wrong.
+
+- Both `run_policy` paths (single-episode fast path and the multi-episode
+  driver) now return the episode-count truth fields in their `{"json": {...}}`
+  block: `n_episodes_requested`, `n_episodes_completed`, `episodes_saved`, and
+  `dataset_episode_indices` (the episode indices the active recorder reports so
+  far). The fast path additionally sets `episode_flush_deferred=True` while
+  recording, making explicit that its rollout buffers into one episode that is
+  flushed at `stop_recording` rather than saved as a distinct boundary.
+- The fast path logs a single `INFO` line at run start when a recording is
+  active (`n_episodes=1, will produce 1 dataset episode ...`) so an agent driving
+  the tool sees the truth in its output and self-corrects on the next call.
+- New `SimEngine.verify_dataset_episodes(expected)` reads the on-disk LeRobot
+  parquet (the ground truth) after `stop_recording` and returns `status="error"`
+  when the recorded episode count differs from `expected`, with
+  `{expected, actual, episode_indices, total_frames, total_frames_per_ep, root}`
+  in the json block. Backed by the new pure-`pyarrow`
+  `strands_robots.dataset_recorder.read_dataset_episode_indices(root)` helper,
+  which parses `meta/episodes/**/*.parquet` without importing `lerobot`.
+- The `run_policy` `n_episodes` docstring and the MuJoCo `describe()` recording
+  surface now spell out the contract: pass `n_episodes=N` for N distinct
+  episodes, do not loop the call, and confirm with `verify_dataset_episodes`.
+
+No change to recorded trajectory content, video output, or the
+single-rollout payload shape (the per-episode `episodes` aggregate list is still
+absent on the fast path); only additive `{"json": {...}}` fields and a new
+verification method.
+
+
 ### Refactor: unify the rclpy + RTPS hardware ROS 2 bridges under `RosTelemetryBase`
 
 The two hardware ROS 2 transports now share a single source of truth for the

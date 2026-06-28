@@ -1145,6 +1145,11 @@ class MuJoCoSimEngine(
         )
         base["methods"]["stop_recording"] = "(push_to_hub=False, bucket=None, run_id=None) -> dict"
         base["methods"]["get_recording_status"] = "() -> dict"
+        base["methods"]["verify_dataset_episodes"] = (
+            "(expected: int) -> dict  (after stop_recording, read the parquet "
+            "and confirm the dataset holds exactly `expected` episodes; "
+            "status=error on mismatch)"
+        )
 
         if self._world is not None:
             base["sim_time"] = self._world.sim_time
