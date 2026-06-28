@@ -834,3 +834,42 @@ def test_reset_empty_buffer_during_recording_does_not_create_episode(sim_with_on
     ds = LeRobotDataset(repo_id="local/reset_empty", root=root)
     assert ds.meta.total_episodes == 1, f"expected 1 episode, got {ds.meta.total_episodes}"
     assert ds.meta.total_frames == 5
+
+
+def test_start_recording_existing_empty_root_records(sim_with_two_robots, tmp_path):
+    """An EXISTING empty ``root`` (e.g. from tempfile.mkdtemp()) must record.
+
+    Pre-fix, start_recording(overwrite=False) on an existing empty directory
+    dead-ended with ``Dataset init failed: [Errno 17] File exists`` because it
+    called LeRobotDataset.create() (mkdir exist_ok=False) on a dir that already
+    existed. The natural caller pattern is to mkdtemp() a root and pass it in;
+    that must produce a valid dataset, not a cryptic errno.
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    sim = sim_with_two_robots
+    # tmp_path is an EXISTING empty directory - the repro condition.
+    root = str(tmp_path)
+    assert os.path.isdir(root) and not os.listdir(root)
+
+    r = sim.start_recording(repo_id="local/empty_root_probe", fps=20, root=root, overwrite=False)
+    assert r["status"] == "success", f"empty-root start_recording failed: {r}"
+    sim.run_policy(
+        robot_name="alpha",
+        policy_provider="mock",
+        instruction="ep0",
+        duration=0.3,
+        control_frequency=20.0,
+        fast_mode=True,
+    )
+    r = sim.stop_recording()
+    assert r["status"] == "success", r
+
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    ds = LeRobotDataset(repo_id="local/empty_root_probe", root=root)
+    assert ds.meta.total_episodes == 1, f"expected 1 episode, got {ds.meta.total_episodes}"
+    assert ds.meta.total_frames > 0

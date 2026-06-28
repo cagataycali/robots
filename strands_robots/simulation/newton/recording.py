@@ -24,7 +24,6 @@ per-camera MP4).
 from __future__ import annotations
 
 import logging
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -136,14 +135,12 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             dataset_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
         world._backend_state["last_dataset_root"] = str(dataset_dir)
 
-        resume_existing = (
-            not overwrite and dataset_dir.exists() and dataset_dir.is_dir() and (dataset_dir / "meta").exists()
-        )
-
         try:
-            if overwrite and dataset_dir.exists() and dataset_dir.is_dir():
-                shutil.rmtree(dataset_dir)
-                logger.info("Removed existing dataset dir: %s", dataset_dir)
+            # Resolve create-vs-resume and make the target safe for create():
+            # resume an existing dataset, clear a pre-existing EMPTY root (e.g.
+            # tempfile.mkdtemp()) so create() does not dead-end on FileExistsError,
+            # and wipe on overwrite. See DatasetRecordingMixin._prepare_dataset_target.
+            resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
             joint_names, camera_keys, camera_dims, robot_type, recording_cameras = self._collect_recording_schema()
             world._backend_state["recording_cameras"] = recording_cameras

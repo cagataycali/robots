@@ -44,6 +44,24 @@ given in raw MuJoCo form (`arm0/wrist_cam`) or schema-safe form
 cameras rather than silently recording the wrong set. Omit `cameras=` to keep
 the legacy behavior of recording every camera.
 
+### Where the dataset is written (`root` / `overwrite`)
+
+`root` is the on-disk directory for the dataset (defaults to the LeRobot cache
+under `repo_id` when omitted). Passing an existing **empty** directory - for
+example one returned by `tempfile.mkdtemp()` - is accepted and recorded into:
+
+```python
+import tempfile
+root = tempfile.mkdtemp()                       # existing empty dir
+sim.start_recording(repo_id="user/my_dataset", root=root, fps=30)   # records here
+```
+
+When `root` already contains a LeRobotDataset (a `meta/` directory),
+`start_recording` **resumes** it and appends new episodes unless
+`overwrite=True`, which wipes and recreates it. A `root` that exists, is not a
+LeRobotDataset, and is **not empty** is left untouched and reported as an error
+rather than clobbered - pass `overwrite=True` or choose a new/empty `root`.
+
 ## Multi-episode recording
 
 A recording session is one dataset. The simplest way to collect N episodes in

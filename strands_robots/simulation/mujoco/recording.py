@@ -9,7 +9,6 @@ resume-schema guard.
 """
 
 import logging
-import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -72,6 +71,14 @@ class RecordingMixin(DatasetRecordingMixin):
         rather than freezing on the chunk-start observation.
 
         Args:
+            root: On-disk dataset directory (defaults to the LeRobot cache under
+                ``repo_id``). An existing EMPTY directory (e.g. from
+                ``tempfile.mkdtemp()``) is accepted and recorded into; an
+                existing dataset is resumed/appended (see ``overwrite``).
+            overwrite: When True, wipe any existing dataset at ``root`` and
+                record from scratch. When False (default) an existing dataset is
+                appended to; a non-empty, non-dataset ``root`` is reported as an
+                error rather than clobbered.
             cameras: Camera names to record into the dataset. When ``None``
                 (default) every scene camera is recorded - which includes the
                 implicit ``default`` free camera. Pass an explicit subset to
@@ -133,18 +140,14 @@ class RecordingMixin(DatasetRecordingMixin):
 
         # Multi-episode append: when NOT overwriting and a dataset already
         # exists on disk, resume it (append new episodes) instead of calling
-        # create() - which hard-fails with FileExistsError (B12). resume() is
-        # the only correct append path in LeRobot 0.5.2+ (the plain constructor
-        # is read-only). When overwrite=True, wipe and recreate from scratch.
-        resume_existing = (
-            not overwrite and dataset_dir.exists() and dataset_dir.is_dir() and (dataset_dir / "meta").exists()
-        )
-
+        # create() - which hard-fails with FileExistsError. resume() is the
+        # only correct append path in LeRobot 0.5.2+ (the plain constructor is
+        # read-only). A pre-existing EMPTY root (e.g. tempfile.mkdtemp()) is
+        # cleared so create() does not dead-end on its own existence guard;
+        # overwrite=True wipes and recreates from scratch. See
+        # DatasetRecordingMixin._prepare_dataset_target.
         try:
-            if overwrite:
-                if dataset_dir.exists() and dataset_dir.is_dir():
-                    shutil.rmtree(dataset_dir)
-                    logger.info("Removed existing dataset dir: %s", dataset_dir)
+            resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
             # Collect joint names from every robot. When the scene contains
             # more than one robot (e.g. multi-agent dual-task recording), prefix

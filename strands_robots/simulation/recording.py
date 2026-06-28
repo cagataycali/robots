@@ -22,6 +22,8 @@ enforceable protocol.
 """
 
 import logging
+import shutil
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,64 @@ class DatasetRecordingMixin:
         _world: "SimWorld | None"
         default_width: int
         default_height: int
+
+    @staticmethod
+    def _prepare_dataset_target(dataset_dir: Path, overwrite: bool) -> bool:
+        """Resolve create-vs-resume and make ``dataset_dir`` safe for create().
+
+        ``LeRobotDataset.create()`` raises ``FileExistsError`` when its target
+        directory already exists - even when that directory is empty. Callers
+        very commonly pass an existing empty directory as ``root`` (for example
+        one returned by ``tempfile.mkdtemp()``), which would otherwise dead-end
+        recording with a cryptic ``[Errno 17] File exists``. This resolves the
+        situation up front:
+
+        * ``overwrite``: remove any existing target, then create() fresh.
+        * existing dataset (has a ``meta/`` dir): resume (append episodes).
+        * existing EMPTY dir: remove it so create() can recreate it cleanly.
+        * existing NON-empty, non-dataset dir: raise ``ValueError`` with an
+          actionable message instead of clobbering unrelated files.
+
+        Args:
+            dataset_dir: Resolved on-disk dataset root.
+            overwrite: When True, replace any existing target.
+
+        Returns:
+            True if an existing dataset should be resumed (append), False if a
+            fresh ``create()`` should run.
+
+        Raises:
+            ValueError: When the target exists, is not a LeRobotDataset, is not
+                empty, and ``overwrite`` is False - so create() would fail with
+                a cryptic ``FileExistsError``.
+        """
+        if not dataset_dir.exists():
+            return False
+        if overwrite:
+            if dataset_dir.is_dir():
+                shutil.rmtree(dataset_dir)
+            else:
+                dataset_dir.unlink()
+            logger.info("Removed existing dataset target: %s", dataset_dir)
+            return False
+        if not dataset_dir.is_dir():
+            raise ValueError(
+                f"Recording target {dataset_dir} exists and is not a directory. "
+                "Pass a directory path as root=, or overwrite=True to replace it."
+            )
+        if (dataset_dir / "meta").exists():
+            return True  # real dataset on disk -> resume/append
+        if not any(dataset_dir.iterdir()):
+            # Empty dir (e.g. from tempfile.mkdtemp()): clear it so create()
+            # does not trip over its own pre-existing-directory guard.
+            shutil.rmtree(dataset_dir)
+            logger.info("Cleared empty recording target for fresh dataset: %s", dataset_dir)
+            return False
+        raise ValueError(
+            f"Recording target {dataset_dir} already exists, is not a LeRobotDataset "
+            "(no meta/ directory), and is not empty. Refusing to overwrite unrelated "
+            "files. Pass overwrite=True to replace it, or choose a new/empty root=."
+        )
 
     def _is_recording(self) -> bool:
         """True when a dataset-recording session is active.
