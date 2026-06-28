@@ -43,7 +43,7 @@ import numpy as np
 
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.policies.base import resolve_chunk_length
-from strands_robots.utils import require_optional
+from strands_robots.utils import process_rss_mb, require_optional
 
 if TYPE_CHECKING:
     from strands_robots.policies.base import Policy
@@ -904,6 +904,10 @@ class PolicyRunner:
             # no load telemetry (e.g. MockPolicy).
             "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
             "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
+            # Process RSS (MB) at result time: confirms a heavy model is resident
+            # and, across a loop, that it stays resident instead of oscillating
+            # as it would on a per-episode reload. None when unmeasurable.
+            "policy_resident_rss_mb": process_rss_mb(),
         }
         if sim_time is not None:
             payload["sim_time_s"] = round(sim_time, 3)
@@ -1230,6 +1234,7 @@ class PolicyRunner:
                         "max_steps": max_steps,
                         "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
                         "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
+                        "policy_resident_rss_mb": process_rss_mb(),
                         "episodes": results,
                     }
                 },
@@ -1556,6 +1561,7 @@ class PolicyRunner:
                         "benchmark_class": spec_name,
                         "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
                         "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
+                        "policy_resident_rss_mb": process_rss_mb(),
                         "episodes": results,
                     }
                 },
