@@ -6,12 +6,24 @@ Covers :mod:`strands_robots.training.reward`:
   over a dataset and emits the ``sarm_progress.parquet`` RA-BC consumes. lerobot
   is mocked at the seam (``_require_sarm_progress``) so the test asserts argument
   forwarding + input validation without GPU, a real model, or a real dataset.
-* :func:`reward_progress` - tensor/list/scalar return normalization to floats.
-* :func:`load_reward_model` - reward-config build + load delegation to lerobot.
+* :func:`_require_sarm_progress` - the matplotlib gate, the success import, and
+  the too-old-lerobot ImportError, all driven deterministically by swapping the
+  ``require_optional`` seam and ``sys.modules`` entries so the behavior is the
+  same whether or not the optional deps are installed in the test environment.
+* :func:`reward_progress` - tensor / ndarray / list / scalar return
+  normalization to plain floats.
+* :func:`load_reward_model` - reward-config build + load delegation to lerobot,
+  plus the too-old-lerobot ImportError, both mocked at ``sys.modules`` so the
+  test never silently skips on environments lacking ``lerobot.rewards``.
 """
 
 from __future__ import annotations
 
+import importlib.machinery
+import sys
+import types
+
+import numpy as np
 import pytest
 
 from strands_robots.training import reward as reward_mod
@@ -20,6 +32,23 @@ from strands_robots.training.reward import (
     load_reward_model,
     reward_progress,
 )
+
+# Submodule path lerobot exposes SARM's in-process progress function under.
+_SARM_MOD = "lerobot.rewards.sarm.compute_rabc_weights"
+
+
+def _fake_module(name: str, **attrs: object) -> types.ModuleType:
+    """Build an importable stand-in module with a real ``__spec__``.
+
+    A bare ``types.ModuleType`` has ``__spec__ = None``, which makes
+    ``importlib.util.find_spec`` raise ``ValueError`` instead of resolving the
+    module, so we attach a minimal loader-less spec to keep it discoverable.
+    """
+    mod = types.ModuleType(name)
+    mod.__spec__ = importlib.machinery.ModuleSpec(name, loader=None)
+    for key, value in attrs.items():
+        setattr(mod, key, value)
+    return mod
 
 
 class TestComputeRabcWeights:
@@ -77,6 +106,33 @@ class TestComputeRabcWeights:
             compute_rabc_weights("-x", dataset_root="/d")
 
 
+class TestRequireSarmProgress:
+    """_require_sarm_progress() gates on matplotlib then imports lerobot's SARM."""
+
+    def test_returns_lerobot_compute_function(self, monkeypatch):
+        # Pass the matplotlib gate, then resolve to an injected SARM module so
+        # the success path is exercised without a real matplotlib/lerobot build.
+        monkeypatch.setattr(reward_mod, "require_optional", lambda *a, **k: None)
+        sentinel = object()
+        monkeypatch.setitem(sys.modules, _SARM_MOD, _fake_module(_SARM_MOD, compute_sarm_progress=sentinel))
+        assert reward_mod._require_sarm_progress() is sentinel
+
+    def test_requires_matplotlib(self, monkeypatch):
+        def boom(name, **kwargs):
+            raise ImportError(f"matplotlib missing for {name}")
+
+        monkeypatch.setattr(reward_mod, "require_optional", boom)
+        with pytest.raises(ImportError, match="matplotlib"):
+            reward_mod._require_sarm_progress()
+
+    def test_old_lerobot_raises_clear_error(self, monkeypatch):
+        # matplotlib present, but the SARM module is absent (pre-0.5.2 lerobot).
+        monkeypatch.setattr(reward_mod, "require_optional", lambda *a, **k: None)
+        monkeypatch.setitem(sys.modules, _SARM_MOD, None)
+        with pytest.raises(ImportError, match="lerobot >= 0.5.2"):
+            reward_mod._require_sarm_progress()
+
+
 class TestRewardProgress:
     """reward_progress() normalizes the model's compute_reward() return to floats."""
 
@@ -88,6 +144,14 @@ class TestRewardProgress:
                 return torch.tensor([[0.1], [0.9]])
 
         assert reward_progress(Model(), {}) == pytest.approx([0.1, 0.9], abs=1e-6)
+
+    def test_normalizes_ndarray(self):
+        # ndarray has .flatten() but no .detach(): exercises the elif branch.
+        class Model:
+            def compute_reward(self, batch):
+                return np.array([[0.25], [0.75]])
+
+        assert reward_progress(Model(), {}) == pytest.approx([0.25, 0.75], abs=1e-6)
 
     def test_passes_through_plain_list(self):
         class Model:
@@ -108,7 +172,6 @@ class TestLoadRewardModel:
     """load_reward_model() builds the reward config and delegates the load to lerobot."""
 
     def test_builds_config_and_loads(self, monkeypatch):
-        lr = pytest.importorskip("lerobot.rewards")
         captured: dict = {}
 
         def fake_make_cfg(reward_type, **kw):
@@ -120,8 +183,14 @@ class TestLoadRewardModel:
             captured["model_cfg"] = cfg
             return "MODEL"
 
-        monkeypatch.setattr(lr, "make_reward_model_config", fake_make_cfg)
-        monkeypatch.setattr(lr, "make_reward_model", fake_make_model)
+        # Inject a fully-formed lerobot.rewards so both find_spec and the inner
+        # import resolve to the fakes regardless of the real lerobot install.
+        fake_rewards = _fake_module(
+            "lerobot.rewards",
+            make_reward_model_config=fake_make_cfg,
+            make_reward_model=fake_make_model,
+        )
+        monkeypatch.setitem(sys.modules, "lerobot.rewards", fake_rewards)
 
         model = load_reward_model("/ckpt/sarm", device="cpu")
         assert model == "MODEL"
@@ -129,3 +198,8 @@ class TestLoadRewardModel:
         assert captured["pretrained_path"] == "/ckpt/sarm"
         assert captured["device"] == "cpu"
         assert captured["model_cfg"] == "CFG"
+
+    def test_old_lerobot_raises_clear_error(self, monkeypatch):
+        monkeypatch.setattr(reward_mod.importlib.util, "find_spec", lambda name: None)
+        with pytest.raises(ImportError, match="lerobot >= 0.5.2"):
+            load_reward_model("/ckpt/sarm", device="cpu")
