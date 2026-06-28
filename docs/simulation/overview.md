@@ -64,10 +64,16 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 |--------|-------|
 | `render(camera_name="default", width=None, height=None)` | PNG in `content[...]["image"]["source"]["bytes"]`; no `frame` key |
 | `render_depth(camera_name="default", width=None, height=None)` | Depth float32 in content; no `depth` key |
+| `render_all(cameras=None, width=None, height=None)` | One `image` block per camera (multi-view snapshot) |
 | `open_viewer` / `close_viewer` | Interactive MuJoCo passive viewer |
 
 !!! note "Get a numpy frame"
     `sim.get_observation(robot_name)[camera_name]` → `np.uint8 (H, W, 3)`
+
+!!! tip "Discover the render surface"
+    `render`, `render_depth`, and `render_all` are all listed in
+    `sim.describe()["methods"]`, so an agent can enumerate the full rendering
+    surface in one call instead of guessing method names.
 
 ## Physics
 

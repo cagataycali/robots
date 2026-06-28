@@ -1156,6 +1156,14 @@ class MuJoCoSimEngine(
                     bodies.append(body_name)
         base["bodies"] = bodies
         base["methods"]["list_bodies"] = "(robot_name: str | None = None) -> dict (camera mount points)"
+        # Rendering siblings of "render" (advertised in tool_spec.json + the
+        # action dispatcher) that the base discovery surface omits. Listing
+        # them here lets an agent enumerate the full render surface from
+        # describe() rather than discovering depth / multi-view by guessing.
+        base["methods"]["render_depth"] = (
+            "(camera_name='default', width=None, height=None) -> dict (metric depth map stats)"
+        )
+        base["methods"]["render_all"] = "(cameras=None, width=None, height=None) -> dict (one image block per camera)"
         # Recording / dataset-collection surface (LeRobotDataset, [lerobot] extra).
         # Exposed here so agents discover the explicit episode-boundary workflow
         # (start_recording -> run_policy + save_episode per episode -> stop_recording)

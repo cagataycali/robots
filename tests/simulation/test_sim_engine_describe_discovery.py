@@ -197,6 +197,33 @@ class TestDescribeMuJoCo:
         assert desc["robots"] == []
         assert desc["world_created"] is False
 
+    def test_describe_lists_render_siblings(self):
+        """describe() must advertise the full render surface, not just render().
+
+        ``render_depth`` and ``render_all`` are public MuJoCo methods that the
+        tool spec and action dispatcher already expose, but the programmatic
+        discovery surface previously listed only ``render`` - so a caller
+        enumerating ``describe()["methods"]`` could not learn that depth and
+        multi-view rendering exist without guessing the names. They belong
+        alongside ``render`` so one describe() call reveals the whole surface.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in ("render", "render_depth", "render_all"):
+                assert name in methods, f"describe() omits public render method {name!r}"
+            # The advertised signatures name the real first parameters so a
+            # caller can invoke them without reading the source.
+            assert "camera_name" in methods["render_depth"]
+            assert "cameras" in methods["render_all"]
+        finally:
+            sim.destroy()
+
 
 class TestNoAlias:
     """Code is the single source of truth: no duplicate-name aliases.
