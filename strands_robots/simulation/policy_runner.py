@@ -731,6 +731,23 @@ class PolicyRunner:
         stopped_early = False
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
+        # Open-loop chunk replay consumes H actions from ONE observation. That
+        # observation is the correct PRE-action state for the FIRST action only;
+        # the sim advances as the chunk drains. When a dataset recording is
+        # active the on_frame hook writes (observation, action) per step, so
+        # re-using the chunk-start observation for every action records H
+        # identical (frozen image + frozen proprioceptive state) frames paired
+        # with H DIFFERENT actions - a temporally-misaligned behavioural-cloning
+        # dataset (the recorded image never matches the action taken from it).
+        # Detect an active recording via the engine's own contract and, when
+        # set, refresh the observation handed to on_frame per step so each
+        # recorded frame pairs the action with the state it actually acts on.
+        # Inference still consumes the chunk-start observation (correct
+        # open-loop replay); only the RECORDED frame is refreshed. The default
+        # (no recording / duck-typed sim without the hook) keeps the historical
+        # single-fetch-per-chunk behaviour, so eval/inference are unaffected.
+        _is_rec = getattr(self.sim, "_is_recording", None)
+        _record_per_step_obs = bool(_is_rec()) if callable(_is_rec) else False
         # Normalise the per-call goal payload once. Forwarded verbatim to every
         # get_actions() call; an empty dict is the historical (no-kwargs) path.
         _policy_kwargs = policy_kwargs or {}
@@ -980,7 +997,18 @@ class PolicyRunner:
                             observed_delay = max(0, len(cur_chunk) - prefetch_trigger)
                             prefetch = executor.submit(_query_chunk, prefetch_obs, observed_delay)
 
-                        _apply(cur_obs, cur_chunk[idx])
+                        # When recording, the chunk observation (the initial
+                        # query obs, or a horizon-shifted prefetch obs after a
+                        # swap) is stale for the step being applied; refresh it
+                        # so the recorded frame is time-aligned (see the
+                        # _record_per_step_obs note above). Inference is
+                        # unaffected - it already consumed cur_obs to produce
+                        # this chunk.
+                        if _record_per_step_obs:
+                            step_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                        else:
+                            step_obs = cur_obs
+                        _apply(step_obs, cur_chunk[idx])
                         idx += 1
                 finally:
                     # Wait for any in-flight inference so no background thread
@@ -991,10 +1019,21 @@ class PolicyRunner:
                 while step_count < total_steps:
                     observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
                     chunk = _query_chunk(observation)
-                    for action_dict in chunk:
+                    for chunk_idx, action_dict in enumerate(chunk):
                         if step_count >= total_steps:
                             break
-                        _apply(observation, action_dict)
+                        # The chunk-start observation is the correct pre-action
+                        # state for the first action only. When recording,
+                        # refresh it before each SUBSEQUENT action so the
+                        # recorded frame is time-aligned (see the
+                        # _record_per_step_obs note above). chunk_idx == 0 reuses
+                        # the freshly-queried observation (no re-render, sim has
+                        # not stepped yet). Inference is unaffected.
+                        if _record_per_step_obs and chunk_idx > 0:
+                            step_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                        else:
+                            step_obs = observation
+                        _apply(step_obs, action_dict)
 
         except CooperativeStop:
             stopped_early = True

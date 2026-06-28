@@ -62,6 +62,15 @@ class RecordingMixin(DatasetRecordingMixin):
         use :meth:`start_cameras_recording` - it runs under the
         ``[sim-mujoco]`` extra alone (imageio-ffmpeg backend).
 
+        Frame/action alignment: while this session is open, :meth:`run_policy`
+        records one ``(observation, action)`` frame per control step with the
+        observation re-sampled at that step, so each recorded image + state
+        pairs with the action actually taken from it. This holds even for
+        chunk-emitting policies (ACT, diffusion, pi0/pi0.5, SmolVLA, MolmoAct2),
+        whose open-loop action chunk drains across many steps from a single
+        ``get_actions`` call - the recorded frames advance with the robot
+        rather than freezing on the chunk-start observation.
+
         Args:
             cameras: Camera names to record into the dataset. When ``None``
                 (default) every scene camera is recorded - which includes the
