@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.assets import resolve_model_path, resolve_robot_name
+from strands_robots.registry.discovery import discover_urdf_path, list_urdf_discoverable
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.model_registry import (
     list_available_models,
@@ -55,6 +56,15 @@ logger = logging.getLogger(__name__)
 # hundred substeps; 60 Hz frames with 10 substeps each matches the Newton
 # example cadence and keeps position-servo arms tracking their targets.
 _DEFAULT_TIMESTEP = 1.0 / 600.0
+
+# Valid ``add_robot(source=...)`` selectors. ``None``/``"registry"`` resolve
+# the curated registry + MJCF asset manager (the same path the MuJoCo backend
+# uses); ``"robot_descriptions"`` resolves a URDF directly from the
+# ``robot_descriptions`` package and loads it through Newton's native URDF
+# importer. ``None`` additionally falls back to ``robot_descriptions`` when the
+# registry has no asset, so the URDF-only long tail resolves without an
+# explicit selector.
+_ROBOT_SOURCES = (None, "registry", "robot_descriptions")
 
 
 def _short_joint_name(label: str) -> str:
@@ -226,6 +236,52 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
 
     # Robot management
 
+    def _resolve_asset(self, name: str, source: str | None) -> tuple[str | None, str | None]:
+        """Resolve a robot name to an MJCF/URDF model path for the given source.
+
+        Args:
+            name: Robot name or alias to resolve.
+            source: One of :data:`_ROBOT_SOURCES`. ``"robot_descriptions"``
+                resolves a URDF directly; ``"registry"`` restricts to the
+                curated registry / MJCF asset manager; ``None`` tries the
+                registry first then falls back to a ``robot_descriptions`` URDF.
+
+        Returns:
+            ``(model_path, None)`` on success, or ``(None, error_text)`` with a
+            human-readable reason on failure.
+        """
+        if source == "robot_descriptions":
+            urdf = discover_urdf_path(name)
+            if urdf:
+                return urdf, None
+            return None, (
+                f"Could not resolve a URDF for '{name}' via robot_descriptions. "
+                "See list_urdfs() for URDF-discoverable robots."
+            )
+
+        # source is None or "registry": curated registry / MJCF asset manager.
+        try:
+            resolved = resolve_robot_name(name)
+            asset_path = resolve_model_path(resolved)
+        except (ValueError, FileNotFoundError, KeyError) as exc:
+            asset_path = None
+            resolve_error: Exception | None = exc
+        else:
+            resolve_error = None
+        if asset_path:
+            return str(asset_path), None
+
+        # Default selector: fall back to a robot_descriptions URDF before failing
+        # so the URDF-only long tail resolves without an explicit source.
+        if source is None:
+            urdf = discover_urdf_path(name)
+            if urdf:
+                return urdf, None
+
+        detail = f": {resolve_error}" if resolve_error else ""
+        hint = "See list_robots() / list_urdfs()." if source is None else "See list_robots()."
+        return None, f"Could not resolve a sim asset for robot '{name}'{detail}. {hint}"
+
     def add_robot(
         self,
         name: str,
@@ -233,18 +289,31 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         data_config: str | None = None,
         position: list[float] | None = None,
         orientation: list[float] | None = None,
+        source: str | None = None,
     ) -> dict[str, Any]:
-        """Add a robot to the world from a registered name or an MJCF path.
+        """Add a robot to the world from a registered name, MJCF, or URDF.
+
+        Newton ingests both MJCF and URDF models natively, so a robot can be
+        resolved three ways (see ``source``). The asset format is detected from
+        the resolved path's extension - ``.urdf`` files load through Newton's
+        URDF importer, everything else through the MJCF importer.
 
         Args:
-            name: Robot name in the registry, or an arbitrary instance name
-                when ``urdf_path`` points at an explicit MJCF/URDF.
-            urdf_path: Optional explicit MJCF/URDF path. When omitted, the
-                asset is resolved from the registry by ``name``.
+            name: Robot name in the registry / ``robot_descriptions``, or an
+                arbitrary instance name when ``urdf_path`` points at an explicit
+                MJCF/URDF file.
+            urdf_path: Optional explicit MJCF/URDF path. When given it wins
+                outright and ``source`` is ignored.
             data_config: Accepted for ABC parity; unused by Newton.
             position: World position ``[x, y, z]`` (default origin).
             orientation: World orientation as a wxyz quaternion
                 (default identity).
+            source: Asset-resolution selector. ``None`` (default) tries the
+                curated registry / MJCF asset manager first and falls back to a
+                ``robot_descriptions`` URDF lookup; ``"registry"`` restricts to
+                the registry; ``"robot_descriptions"`` resolves the URDF directly
+                via ``robot_descriptions.<name>_description.URDF_PATH``. See
+                :func:`~strands_robots.registry.discovery.list_urdf_discoverable`.
 
         Returns:
             Status dict including the resolved joint names.
@@ -253,27 +322,26 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
         if name in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{name}' already exists."}]}
+        if source not in _ROBOT_SOURCES:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Unknown source {source!r}. "
+                            f"Valid: {[s for s in _ROBOT_SOURCES if s is not None]} or None (default)."
+                        )
+                    }
+                ],
+            }
 
-        if urdf_path is None:
-            try:
-                resolved = resolve_robot_name(name)
-                asset_path = resolve_model_path(resolved)
-            except (ValueError, FileNotFoundError, KeyError) as exc:
-                asset_path = None
-                _resolve_error: Exception | None = exc
-            else:
-                _resolve_error = None
-            if not asset_path:
-                detail = f": {_resolve_error}" if _resolve_error else ""
-                return {
-                    "status": "error",
-                    "content": [
-                        {"text": f"Could not resolve a sim asset for robot '{name}'{detail}. See list_robots()."}
-                    ],
-                }
-            model_path = str(asset_path)
-        else:
+        if urdf_path is not None:
             model_path = urdf_path
+        else:
+            resolved_path, error = self._resolve_asset(name, source)
+            if resolved_path is None:
+                return {"status": "error", "content": [{"text": error}]}
+            model_path = resolved_path
 
         with self._lock:
             robot = SimRobot(
@@ -1105,13 +1173,33 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         return {"status": "success", "content": [{"text": "\n".join(lines)}, {"json": {"features": features}}]}
 
     def list_urdfs(self) -> dict[str, Any]:
-        """List registry-resolvable robot assets (shared registry).
+        """List robot assets resolvable by this backend.
+
+        Returns the union of the curated registry / MJCF asset manager listing
+        and the URDF long tail discoverable through ``robot_descriptions``.
+        Because Newton loads URDF natively, the URDF-only descriptions (which the
+        MuJoCo backend cannot use) are first-class here.
 
         Returns:
             Agent-tool dict whose ``text`` block is the formatted registry
-            listing from :func:`list_available_models`.
+            listing plus the ``robot_descriptions`` URDF names, and whose
+            ``json`` block exposes ``robot_descriptions_urdf`` (the sorted URDF
+            long tail) for programmatic use.
         """
-        return {"status": "success", "content": [{"text": list_available_models()}]}
+        urdf_robots = list_urdf_discoverable()
+        text = list_available_models()
+        if urdf_robots:
+            text += (
+                "\n\nURDF-native via robot_descriptions "
+                f"(Newton loads through add_urdf, {len(urdf_robots)} robots):\n  " + ", ".join(urdf_robots)
+            )
+        return {
+            "status": "success",
+            "content": [
+                {"text": text},
+                {"json": {"robot_descriptions_urdf": urdf_robots}},
+            ],
+        }
 
     def register_urdf(self, data_config: str, urdf_path: str) -> dict[str, Any]:
         """Register an MJCF/URDF asset under ``data_config`` in the registry.
@@ -1171,6 +1259,12 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
             "gravity": list(self._world.gravity) if self._world else [0.0, 0.0, -9.81],
             "world_created": self._world is not None and self._model is not None,
             "methods": {
+                "add_robot": (
+                    "(name: str, urdf_path=None, position=None, orientation=None, source=None) -> dict  "
+                    "(source: None=registry then robot_descriptions URDF fallback, "
+                    "'registry'=registry only, 'robot_descriptions'=URDF via "
+                    "robot_descriptions.<name>_description.URDF_PATH; see list_urdfs)"
+                ),
                 "get_robot_state": "(robot_name: str | None = None) -> dict (per-joint position + velocity)",
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
                 "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
@@ -1180,7 +1274,7 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                 "list_objects": "() -> dict",
                 "move_object": "(name: str, position=None, orientation=None) -> dict",
                 "get_features": "(robot_name: str | None = None) -> dict (joints/bodies/robots schema)",
-                "list_urdfs": "() -> dict",
+                "list_urdfs": "() -> dict (registry + robot_descriptions URDF long tail; json.robot_descriptions_urdf)",
                 "register_urdf": "(data_config: str, urdf_path: str) -> dict",
                 "set_gravity": "(gravity: list[float] | float) -> dict",
                 "set_timestep": "(dt: float) -> dict",
@@ -1384,7 +1478,13 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                 wp.vec3(*robot.position),
                 self._wxyz_to_wp_quat(robot.orientation),
             )
-            builder.add_mjcf(str(robot.urdf_path), xform=xform, collapse_fixed_joints=True)
+            model_path = str(robot.urdf_path)
+            if model_path.lower().endswith(".urdf"):
+                # Newton ingests URDF natively; floating=None leaves the root
+                # fixed to the world (correct for table-mounted arms like panda).
+                builder.add_urdf(model_path, xform=xform, collapse_fixed_joints=True)
+            else:
+                builder.add_mjcf(model_path, xform=xform, collapse_fixed_joints=True)
             new_labels = builder.joint_label[label_before:]
             short_names: list[str] = []
             for offset, label in enumerate(new_labels):

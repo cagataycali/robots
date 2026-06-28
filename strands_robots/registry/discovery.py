@@ -11,8 +11,13 @@ Resolution rules:
     - A curated ``robots.json`` entry always wins. Discovery is consulted only
       for names unknown to the curated registry (see
       :func:`strands_robots.registry.get_robot`).
-    - Only MJCF-capable descriptions are discoverable: the MuJoCo backend needs
-      an ``.xml`` model, so URDF-only descriptions are skipped.
+    - Curated-registry / MJCF discovery (``descriptions_module``,
+      ``list_discoverable``, ``discover_robot``) is MJCF-only: the MuJoCo backend
+      and the curated registry need an ``.xml`` model.
+    - URDF discovery (``urdf_descriptions_module``, ``list_urdf_discoverable``,
+      ``discover_urdf_path``) is a parallel surface for URDF-native backends
+      (Newton via ``ModelBuilder.add_urdf``). It covers the large URDF-only long
+      tail that MJCF discovery cannot (humanoids, quadrupeds, hands).
     - :func:`descriptions_module`, :func:`is_discoverable`, and
       :func:`list_discoverable` are cheap - a static dict lookup with no module
       import and no network. :func:`discover_robot` is heavy: importing a
@@ -40,6 +45,13 @@ _NAME_RE = re.compile(r"^[a-z0-9_]+$")
 # ``robot_descriptions`` names every MuJoCo (MJCF) description module with this
 # suffix, e.g. ``go2_mj_description`` -> canonical robot name ``go2``.
 _MJCF_SUFFIX = "_mj_description"
+
+# URDF description modules use the bare ``_description`` suffix (e.g.
+# ``panda_description``). MJCF modules use ``_mj_description``; the URDF table
+# below excludes those. URDF descriptions are consumable only by URDF-native
+# backends (Newton via ``ModelBuilder.add_urdf``); the MuJoCo backend ignores
+# them because it needs an MJCF ``.xml`` model.
+_URDF_SUFFIX = "_description"
 
 # Candidate scene files (ground plane + lights) a Menagerie description may ship
 # alongside the bare robot model, in preference order.
@@ -185,11 +197,121 @@ def discover_robot(name: str) -> dict[str, Any] | None:
     return entry
 
 
+@lru_cache(maxsize=1)
+def _urdf_modules() -> dict[str, str]:
+    """Map canonical robot name -> URDF ``robot_descriptions`` module name.
+
+    The complement of :func:`_mjcf_modules`: every description that ships a URDF
+    model (and is not the MJCF ``_mj_description`` variant). URDF-native backends
+    such as Newton can ingest these directly via ``ModelBuilder.add_urdf`` even
+    when no MJCF model exists, which unlocks the large URDF-only long tail
+    (humanoids, quadrupeds, hands) absent from MJCF discovery. Reads
+    ``robot_descriptions``' static description table - no module import and no
+    network. Returns an empty mapping when ``robot_descriptions`` is not
+    installed.
+    """
+    try:
+        from robot_descriptions._descriptions import (  # type: ignore[import-not-found]
+            DESCRIPTIONS,
+            Format,
+        )
+    except ImportError:
+        return {}
+
+    mapping: dict[str, str] = {}
+    for module_name, desc in DESCRIPTIONS.items():
+        if Format.URDF not in desc.formats:
+            continue
+        if not module_name.endswith(_URDF_SUFFIX):
+            continue
+        # ``_mj_description`` also ends with ``_description`` but is the MJCF
+        # variant; it is handled by :func:`_mjcf_modules`, not here.
+        if module_name.endswith(_MJCF_SUFFIX):
+            continue
+        short = module_name[: -len(_URDF_SUFFIX)]
+        mapping[short] = module_name
+    return mapping
+
+
+def urdf_descriptions_module(name: str) -> str | None:
+    """Return the URDF ``robot_descriptions`` module for *name*, or ``None``.
+
+    Cheap: a dict lookup against the static description table, with no module
+    import and no network. Returns ``None`` when *name* is not a URDF-capable
+    ``robot_descriptions`` robot or when the package is missing.
+
+    Examples::
+
+        urdf_descriptions_module("panda")    # -> "panda_description"
+        urdf_descriptions_module("atlas_v4") # -> "atlas_v4_description"
+        urdf_descriptions_module("so100")    # -> None (curated, not a description)
+    """
+    norm = _normalize(name)
+    if not _NAME_RE.match(norm):
+        return None
+    return _urdf_modules().get(norm)
+
+
+def is_urdf_discoverable(name: str) -> bool:
+    """Return ``True`` if *name* resolves to a URDF ``robot_descriptions`` model."""
+    return urdf_descriptions_module(name) is not None
+
+
+def list_urdf_discoverable() -> list[str]:
+    """Return sorted canonical names resolvable to a URDF from ``robot_descriptions``.
+
+    This is the URDF long tail consumable by URDF-native backends (Newton). It
+    includes robots with no MJCF model at all (e.g. ``atlas_v4``, ``baxter``,
+    ``b1``), which is why it is disjoint from :func:`list_discoverable` for those
+    entries. Cheap: no import, no network.
+    """
+    return sorted(_urdf_modules())
+
+
+def discover_urdf_path(name: str) -> str | None:
+    """Resolve the on-disk URDF path for *name* via ``robot_descriptions``.
+
+    Heavy: imports the description module, which makes ``robot_descriptions``
+    clone the upstream asset repository on first use. Call only from
+    asset-resolution paths that are allowed to download.
+
+    Args:
+        name: Robot name or alias (e.g. ``"panda"``).
+
+    Returns:
+        Absolute path to the URDF file, or ``None`` when *name* is not a
+        URDF-capable ``robot_descriptions`` robot, the module cannot be
+        imported, or it exposes no readable ``URDF_PATH``.
+    """
+    norm = _normalize(name)
+    module_name = urdf_descriptions_module(norm)
+    if module_name is None:
+        return None
+
+    try:
+        mod = importlib.import_module(f"robot_descriptions.{module_name}")
+    except ImportError as exc:
+        logger.debug("URDF discovery import failed for %r (%s): %s", norm, module_name, exc)
+        return None
+
+    urdf_path = getattr(mod, "URDF_PATH", None)
+    if not urdf_path or not os.path.exists(str(urdf_path)):
+        logger.warning(
+            "robot_descriptions module %r lacks a readable URDF_PATH; cannot discover %r",
+            module_name,
+            norm,
+        )
+        return None
+    return str(urdf_path)
+
+
 def invalidate_cache() -> None:
     """Clear the discovery caches (synthesized entries + module table)."""
     _DISCOVER_CACHE.clear()
-    # ``_mjcf_modules`` is normally an ``lru_cache``; guard ``cache_clear`` so a
-    # test (or future refactor) that swaps in a plain callable cannot break this.
-    clear = getattr(_mjcf_modules, "cache_clear", None)
-    if clear is not None:
-        clear()
+    # ``_mjcf_modules`` / ``_urdf_modules`` are normally ``lru_cache``-wrapped;
+    # guard ``cache_clear`` so a test (or future refactor) that swaps in a plain
+    # callable cannot break this.
+    for cached in (_mjcf_modules, _urdf_modules):
+        clear = getattr(cached, "cache_clear", None)
+        if clear is not None:
+            clear()

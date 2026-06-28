@@ -75,9 +75,11 @@ no-op until then.
 ## Capabilities and parity
 
 - `add_robot` ingests the same MJCF assets as the MuJoCo backend (resolved via
-  `strands_robots.assets`). Joint names use the short trailing segment
-  (`Rotation`, `Pitch`, ...), matching the MuJoCo backend exactly so policies
-  and observation mappings transfer unchanged.
+  `strands_robots.assets`) and, because Newton parses URDF natively, also loads
+  URDF models directly (see "URDF robots via robot_descriptions" below). Joint
+  names use the short trailing segment (`Rotation`, `Pitch`, ...), matching the
+  MuJoCo backend exactly so policies and observation mappings transfer
+  unchanged.
 - `render()` returns the same agent-tool image block (`{"image": {"format":
   "png", ...}}`) as MuJoCo, so the shared `PolicyRunner` video pipeline works
   without modification.
@@ -100,6 +102,47 @@ no-op until then.
   either a scalar (the z-component) or a 3-element `[x, y, z]` list and rebuilds
   the model, which re-initialises the world to its rest pose. `set_timestep`
   takes effect on the next `step()` without a rebuild.
+
+## URDF robots via robot_descriptions
+
+Newton loads URDF natively, so `add_robot` can pull robots straight from the
+[`robot_descriptions`](https://github.com/robot-descriptions/robot_descriptions.py)
+package - including the large URDF-only long tail (humanoids, quadrupeds, hands,
+dual-arm rigs) that has no MJCF model and is therefore unavailable to the MuJoCo
+backend.
+
+The `source` selector on `add_robot` controls resolution:
+
+| `source` | Resolution |
+|----------|------------|
+| `None` (default) | Curated registry / MJCF asset manager first, then a `robot_descriptions` URDF fallback. |
+| `"registry"` | Curated registry / MJCF asset manager only (no URDF fallback). |
+| `"robot_descriptions"` | URDF directly via `robot_descriptions.<name>_description.URDF_PATH`. |
+
+```python
+sim = create_simulation("newton", solver="mujoco")
+sim.create_world()
+
+# Load the Franka Panda from its robot_descriptions URDF (no curated entry needed).
+sim.add_robot("panda", source="robot_descriptions")
+print(sim.robot_joint_names("panda"))
+# ['panda_joint1', ..., 'panda_joint7', 'panda_finger_joint1', 'panda_finger_joint2']
+
+sim.step(10)   # real GPU model build + step
+```
+
+The asset format is detected from the resolved path: `.urdf` files load through
+Newton's URDF importer, everything else through the MJCF importer. An explicit
+`urdf_path=` argument always wins and bypasses `source`.
+
+`list_urdfs()` returns the union of the registry listing and the
+`robot_descriptions` URDF long tail; its `json` block exposes
+`robot_descriptions_urdf` (the sorted list of URDF-discoverable names) for
+programmatic use. The cheap name lookups behind this
+(`urdf_descriptions_module`, `is_urdf_discoverable`, `list_urdf_discoverable`)
+live in `strands_robots.registry.discovery` and read a static table with no
+import and no network; resolving an actual URDF path clones the upstream asset
+repository on first use.
 
 ## Scene discovery and state queries
 
