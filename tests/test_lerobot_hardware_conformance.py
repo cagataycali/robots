@@ -82,6 +82,27 @@ def strands_hw_types() -> dict[str, str]:
 
 
 @pytest.fixture(scope="module")
+def strands_hw_types_all() -> dict[str, str]:
+    """Map strands robot name -> declared lerobot_type for ALL hardware entries.
+
+    Unlike ``strands_hw_types`` this keeps entries flagged
+    ``requires_lerobot_from_source``. Those entries deliberately reference
+    LeRobot types that only exist in a lerobot-from-source install (not in a
+    PyPI release within the pinned range). When the test runs against such a
+    source tree, ``lerobot_types`` includes those types, so the strands entries
+    that cover them must count as reachable - otherwise the coverage direction
+    reports a false ``missing`` for a robot that is, in fact, drivable.
+    """
+    data = json.loads(REGISTRY_PATH.read_text())
+    robots = data.get("robots", data)
+    return {
+        name: info["hardware"]["lerobot_type"]
+        for name, info in robots.items()
+        if isinstance(info.get("hardware"), dict) and info["hardware"].get("lerobot_type")
+    }
+
+
+@pytest.fixture(scope="module")
 def lerobot_types() -> set[str]:
     robots_dir = _find_lerobot_robots_dir()
     if robots_dir is None:
@@ -106,13 +127,18 @@ def test_every_strands_lerobot_type_is_real(strands_hw_types: dict[str, str], le
     )
 
 
-def test_full_lerobot_hardware_coverage(strands_hw_types: dict[str, str], lerobot_types: set[str]) -> None:
+def test_full_lerobot_hardware_coverage(strands_hw_types_all: dict[str, str], lerobot_types: set[str]) -> None:
     """Every LeRobot robot type is reachable through at least one strands entry.
 
     This is the 'conform to all the toys' invariant: if LeRobot ships a robot,
     a user can drive it with ``Robot(name, mode='real')`` via some strands name.
+
+    Uses ``strands_hw_types_all`` (not the reality-check subset) so that
+    from-source-only LeRobot types - which appear in ``lerobot_types`` when the
+    test runs against a source checkout - are matched by the strands entries
+    that carry ``requires_lerobot_from_source``.
     """
-    reachable = set(strands_hw_types.values())
+    reachable = set(strands_hw_types_all.values())
     missing = lerobot_types - reachable
     assert not missing, (
         "LeRobot robot types not reachable from any strands registry entry "
