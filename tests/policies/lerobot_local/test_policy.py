@@ -1953,6 +1953,83 @@ class TestToLerobotObservation:
 
 
 # (section)
+# Tests: _to_lerobot_observation camera_key_map / strict_keys on the remap path
+# (section)
+
+
+class TestToLerobotObservationCameraKeyMap:
+    """camera_key_map and strict_keys on the preprocessor remap path.
+
+    ``_to_lerobot_observation`` is the bridge a preprocessor-backed VLA (e.g.
+    MolmoAct2) uses inside ``get_actions``. It must honor an explicit
+    ``camera_key_map`` with the same precedence as the batch path
+    (``_resolve_camera_targets``): explicit map first, then exact name match,
+    then positional fill. Otherwise a camera-name mismatch fixed via
+    ``camera_key_map`` is silently ignored here, and the strict_keys remedy
+    message ("Provide an explicit mapping (camera_key_map)") points at a fix
+    that does not work on this path.
+    """
+
+    @staticmethod
+    def _policy(slots, *, strict=False, camera_key_map=None):
+        policy = _make_loaded_policy(state_dim=2, include_images=False)
+        for slot in slots:
+            policy._input_features[f"observation.images.{slot}"] = MagicMock(shape=(3, 480, 640))
+        policy.strict_keys = strict
+        policy.camera_key_map = camera_key_map
+        return policy
+
+    def test_camera_key_map_routes_mismatched_name_to_declared_slot(self):
+        """A bare cam whose name does not match is routed by camera_key_map."""
+        policy = self._policy(["top"], camera_key_map={"front": "observation.images.top"})
+        img = np.ones((480, 640, 3), dtype=np.uint8)
+        out = policy._to_lerobot_observation({"front": img})
+        assert out["observation.images.top"] is img
+
+    def test_strict_keys_with_camera_key_map_does_not_raise(self):
+        """Under strict_keys, a name mismatch covered by camera_key_map resolves.
+
+        Pre-fix this raised the "cannot resolve camera keys" ValueError even
+        though camera_key_map fully bound the camera - the strict remedy
+        message advertised a fix that the remap path ignored.
+        """
+        policy = self._policy(["top"], strict=True, camera_key_map={"front": "observation.images.top"})
+        img = np.ones((480, 640, 3), dtype=np.uint8)
+        out = policy._to_lerobot_observation({"front": img})
+        assert out["observation.images.top"] is img
+
+    def test_camera_key_map_prevents_positional_misrouting(self):
+        """With two cameras the map binds each to its intended slot, not by order.
+
+        Positional fill would route cameras by declaration order; an explicit
+        map must override that so 'a' lands in wrist and 'b' in base.
+        """
+        policy = self._policy(
+            ["base", "wrist"],
+            camera_key_map={"a": "observation.images.wrist", "b": "observation.images.base"},
+        )
+        img_a = np.full((480, 640, 3), 10, dtype=np.uint8)
+        img_b = np.full((480, 640, 3), 20, dtype=np.uint8)
+        out = policy._to_lerobot_observation({"a": img_a, "b": img_b})
+        assert out["observation.images.wrist"] is img_a
+        assert out["observation.images.base"] is img_b
+
+    def test_camera_key_map_to_undeclared_image_key_raises(self):
+        """A map target the policy does not declare fails loudly (not silently)."""
+        policy = self._policy(["base"], camera_key_map={"a": "observation.images.nope"})
+        img = np.zeros((480, 640, 3), dtype=np.uint8)
+        with pytest.raises(ValueError, match="does not declare it"):
+            policy._to_lerobot_observation({"a": img})
+
+    def test_no_camera_key_map_keeps_positional_fallback(self):
+        """Without a map, a mismatched name still fills a free slot positionally."""
+        policy = self._policy(["top"])
+        img = np.full((480, 640, 3), 5, dtype=np.uint8)
+        out = policy._to_lerobot_observation({"front": img})
+        assert out["observation.images.top"] is img
+
+
+# (section)
 # Tests: _fixup_preprocessed_batch (raw arrays/tensors -> batched device tensors)
 # (section)
 

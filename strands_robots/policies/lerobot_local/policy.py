@@ -1585,11 +1585,30 @@ class LerobotLocalPolicy(Policy):
 
         declared_img_feats = [f for f, feat in self._input_features.items() if _declared_feature_is_image(f, feat)]
 
-        # 1) Map images. Prefer exact short-name match against declared features.
+        # 1) Map images. An explicit camera_key_map wins (mirroring the routing
+        #    precedence in _resolve_camera_targets), then an exact short-name
+        #    match against declared features, then positional fill. Honoring the
+        #    map here - not only on the batch path - means a camera-name mismatch
+        #    bound via camera_key_map is resolved on this preprocessor/VLA path
+        #    (MolmoAct2 etc.) too, so the strict_keys remedy advertised below
+        #    ("Provide an explicit mapping (camera_key_map)") actually fixes the
+        #    failure it points at instead of being silently ignored.
         image_items = [(k, v) for k, v in observation_dict.items() if isinstance(v, np.ndarray) and v.ndim >= 2]
         used_feats: set[str] = set()
         unmatched_imgs = []
         for k, v in image_items:
+            mapped = self.camera_key_map.get(k) if self.camera_key_map else None
+            if mapped is not None:
+                if mapped not in declared_img_feats:
+                    raise ValueError(
+                        f"camera_key_map routes camera '{k}' to image key '{mapped}', "
+                        "but the policy does not declare it. Declared image keys: "
+                        f"{sorted(declared_img_feats)}."
+                    )
+                if mapped not in used_feats:
+                    out[mapped] = v
+                    used_feats.add(mapped)
+                continue
             target = f"observation.images.{k}"
             if target in self._input_features and target not in used_feats:
                 out[target] = v
