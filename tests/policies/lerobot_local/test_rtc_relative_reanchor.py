@@ -15,6 +15,7 @@ relative-action policies, and carries it verbatim for absolute-action policies
 (whose frame does not move). Skips cleanly when LeRobot is unavailable.
 """
 
+import logging
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -33,6 +34,23 @@ from lerobot.utils.constants import OBS_STATE  # noqa: E402
 
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy  # noqa: E402
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge  # noqa: E402
+
+try:
+    from lerobot.policies.rtc import reanchor_relative_rtc_prefix  # noqa: E402, F401
+
+    _HAS_RTC_REANCHOR = True
+except ImportError:
+    _HAS_RTC_REANCHOR = False
+
+# The relative-action RTC re-anchoring path only engages when the installed
+# lerobot ships reanchor_relative_rtc_prefix (added after 0.5.1). On an older
+# lerobot the feature deliberately falls back to carrying the leftover verbatim
+# (see test_relative_action_falls_back_when_lerobot_lacks_reanchor_helper), so
+# the re-anchoring assertions below are meaningful only when the helper exists.
+_requires_reanchor = pytest.mark.skipif(
+    not _HAS_RTC_REANCHOR,
+    reason="lerobot.policies.rtc.reanchor_relative_rtc_prefix unavailable (added after lerobot 0.5.1)",
+)
 
 _ACTION_DIM = 4
 _CHUNK_LEN = 6
@@ -89,6 +107,7 @@ def _prime_state(relative_step: RelativeActionsProcessorStep, state: torch.Tenso
     relative_step(create_transition(observation={OBS_STATE: state}))
 
 
+@_requires_reanchor
 def test_relative_action_rtc_prefix_is_reanchored_to_current_state():
     names = [f"j{i}.pos" for i in range(_ACTION_DIM)]
     relative_step = RelativeActionsProcessorStep(enabled=True, action_names=names)
@@ -147,6 +166,7 @@ def test_absolute_action_policy_carries_leftover_verbatim():
     assert torch.allclose(prev, leftover_model)
 
 
+@_requires_reanchor
 def test_resolve_rtc_rebase_steps_is_idempotent_and_detects_relative():
     names = [f"j{i}.pos" for i in range(_ACTION_DIM)]
     relative_step = RelativeActionsProcessorStep(enabled=True, action_names=names)
@@ -168,3 +188,44 @@ def test_resolve_rtc_rebase_steps_is_idempotent_and_detects_relative():
     )
     policy2._resolve_rtc_rebase_steps()
     assert policy2._rtc_relative_step is None
+
+
+def test_relative_action_falls_back_when_lerobot_lacks_reanchor_helper(monkeypatch, caplog):
+    # A lerobot that predates reanchor_relative_rtc_prefix (<= 0.5.1) cannot
+    # re-express the leftover against the moved state. The relative-action policy
+    # must then DISABLE re-anchoring, keep no absolute copy, warn once, and carry
+    # the model-space leftover verbatim - never crash or silently drop the prefix.
+    import lerobot.policies.rtc as _rtc
+
+    monkeypatch.delattr(_rtc, "reanchor_relative_rtc_prefix", raising=False)
+
+    names = [f"j{i}.pos" for i in range(_ACTION_DIM)]
+    relative_step = RelativeActionsProcessorStep(enabled=True, action_names=names)
+    absolute_step = AbsoluteActionsProcessorStep(enabled=True, relative_step=relative_step)
+    policy, captured = _make_rtc_policy(
+        preprocessor=DataProcessorPipeline(steps=[relative_step]),
+        postprocessor=DataProcessorPipeline(steps=[absolute_step]),
+    )
+
+    state1 = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
+    _prime_state(relative_step, state1)
+    with caplog.at_level(logging.WARNING):
+        with torch.inference_mode():
+            policy._predict_with_rtc({})
+
+    # Helper absent -> re-anchoring disabled, no absolute leftover retained.
+    assert policy._rtc_relative_step is None
+    assert policy._rtc_reanchor_fn is None
+    assert policy._rtc_prev_chunk_abs is None
+    leftover_model = _model_leftover()
+    assert torch.allclose(policy._rtc_prev_chunk, leftover_model)
+    assert any("reanchor_relative_rtc_prefix" in record.message for record in caplog.records)
+
+    # State moves, but with no helper the leftover is fed back unchanged.
+    state2 = torch.tensor([[10.0, 20.0, 30.0, 40.0]])
+    _prime_state(relative_step, state2)
+    with torch.inference_mode():
+        policy._predict_with_rtc({})
+    prev = captured[1]
+    assert prev is not None
+    assert torch.allclose(prev, leftover_model)
