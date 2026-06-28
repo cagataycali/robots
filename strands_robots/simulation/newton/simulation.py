@@ -42,7 +42,7 @@ from strands_robots.simulation.model_registry import (
 from strands_robots.simulation.model_registry import (
     register_urdf as _register_urdf,
 )
-from strands_robots.simulation.models import SimObject, SimRobot, SimWorld
+from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
 
@@ -434,17 +434,26 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
     # Observation / action
 
     def get_observation(self, robot_name: str | None = None, *, skip_images: bool = False) -> dict[str, Any]:
-        """Return joint positions for a robot keyed by short joint name.
+        """Return joint positions plus any registered camera frames.
+
+        The proprioceptive part maps each short joint name to its position
+        (radians). When cameras have been registered via :meth:`add_camera`
+        and ``skip_images`` is False, each camera is rendered and added to the
+        observation keyed by camera name (an ``(H, W, 3)`` uint8 RGB ndarray),
+        mirroring the MuJoCo backend so multi-camera policies see the same
+        observation shape on either engine.
 
         Args:
             robot_name: Robot to observe. ``None`` resolves to the single
                 robot when exactly one exists.
-            skip_images: Newton does not attach per-robot cameras here, so this
-                flag is a no-op; the observation is joint state only.
+            skip_images: When True, skip camera rendering and return joint
+                state only (used by control loops that do not need pixels).
 
         Returns:
-            Mapping of short joint name to joint position (float). Empty when
-            no world exists or the robot is unknown.
+            Mapping of short joint name to joint position (float), plus one
+            entry per registered camera (name -> RGB ndarray) when
+            ``skip_images`` is False. Empty when no world exists or the robot
+            is unknown.
         """
         if self._world is None or self._model is None:
             return {}
@@ -462,6 +471,14 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                 idx = self._joint_coord_index.get((robot_name, jname))
                 if idx is not None and idx < len(joint_q):
                     obs[jname] = float(joint_q[idx])
+        if not skip_images:
+            from strands_robots.simulation.policy_runner import _extract_frame_ndarray
+
+            for cam_name in list(self._world.cameras):
+                render_result = self.render(camera_name=cam_name)
+                img = _extract_frame_ndarray(render_result)
+                if img is not None:
+                    obs[cam_name] = img
         return obs
 
     def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
@@ -599,19 +616,167 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
 
     # Rendering
 
+    def add_camera(
+        self,
+        name: str,
+        position: list[float] | None = None,
+        target: list[float] | None = None,
+        fov: float = 60.0,
+        width: int = 640,
+        height: int = 480,
+        parent_body: str | None = None,
+    ) -> dict[str, Any]:
+        """Register a named camera for :meth:`render` and recording.
+
+        Mirrors the MuJoCo backend so the same call site works on either
+        engine. Newton cameras are ray-traced on demand by :meth:`render`
+        (no model rebuild), so adding a camera never disturbs physics state.
+
+        Orientation: the camera looks from ``position`` towards ``target``
+        (an OpenGL-style look-at, see :meth:`_look_at_quat`). Degenerate
+        cases (``position == target``) are rejected.
+
+        Mounting (``parent_body``): when set to a body label (e.g. a robot's
+        wrist such as the gripper body returned by :meth:`list_bodies`), the
+        camera is mounted ON that body and rides along with it -- this models a
+        realistic wrist/gripper camera for SO101/SO100-style data collection.
+        In this mode ``position`` and ``target`` are interpreted in the body's
+        LOCAL frame and resolved to world coordinates each render from the live
+        body transform. Empty/``None`` = a world-fixed camera. Call
+        :meth:`list_bodies` to discover valid mount points.
+
+        Args:
+            name: Unique camera name. Duplicate names are rejected; remove the
+                existing camera with :meth:`remove_camera` first.
+            position: Camera eye ``[x, y, z]`` (world frame, or the parent
+                body's local frame when ``parent_body`` is set).
+            target: Look-at point ``[x, y, z]`` (same frame as ``position``).
+            fov: Vertical field of view in degrees.
+            width: Render width in pixels for this camera.
+            height: Render height in pixels for this camera.
+            parent_body: Optional body label to mount the camera on. ``None``
+                or empty leaves the camera world-fixed.
+
+        Returns:
+            Status dict confirming the registration, or an error dict when no
+            world exists, the pose is invalid, the name is taken, or the mount
+            body is unknown.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+
+        pos = list(position) if position is not None else [1.0, 1.0, 1.0]
+        tgt = list(target) if target is not None else [0.0, 0.0, 0.0]
+        for _lbl, _vec in (("position", pos), ("target", tgt)):
+            try:
+                if len(_vec) != 3:
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"add_camera: '{_lbl}' must be 3 elements [x,y,z], got {len(_vec)}"}],
+                    }
+                _vec[:] = [float(v) for v in _vec]
+            except (TypeError, ValueError):
+                return {
+                    "status": "error",
+                    "content": [{"text": f"add_camera: '{_lbl}' must be a list of 3 numbers"}],
+                }
+        if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"add_camera: 'position' and 'target' are identical ({pos}); camera has no look direction."
+                    }
+                ],
+            }
+        if name in (None, "", "default", "free"):
+            return {
+                "status": "error",
+                "content": [{"text": f"add_camera: '{name}' is reserved; pick a distinct camera name."}],
+            }
+        if name in self._world.cameras:
+            return {
+                "status": "error",
+                "content": [{"text": f"add_camera: camera '{name}' already exists. Remove it first."}],
+            }
+
+        mount = parent_body or ""
+        if mount:
+            body_labels = list(self._model.body_label)
+            if mount not in body_labels:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"add_camera: parent_body '{mount}' not found. Call list_bodies to "
+                                f"discover mount points. Available bodies: {body_labels}"
+                            )
+                        }
+                    ],
+                }
+
+        with self._lock:
+            self._world.cameras[name] = SimCamera(
+                name=name,
+                position=pos,
+                target=tgt,
+                fov=float(fov),
+                width=int(width),
+                height=int(height),
+                parent_body=mount,
+            )
+        where = f" mounted on '{mount}'" if mount else ""
+        return {
+            "status": "success",
+            "content": [{"text": f"Camera '{name}' added ({width}x{height}, fov={fov}){where}."}],
+        }
+
+    def remove_camera(self, name: str) -> dict[str, Any]:
+        """Remove a previously registered named camera.
+
+        Args:
+            name: Name of a camera added via :meth:`add_camera`.
+
+        Returns:
+            Status dict confirming removal, or an error dict when no world
+            exists or the camera is unknown.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        if name not in self._world.cameras:
+            return {
+                "status": "error",
+                "content": [{"text": f"Camera '{name}' not found. Registered: {list(self._world.cameras)}"}],
+            }
+        with self._lock:
+            del self._world.cameras[name]
+        return {"status": "success", "content": [{"text": f"Camera '{name}' removed."}]}
+
+    def list_cameras(self) -> list[str]:
+        """Return all renderable camera names (the built-in ``'default'`` plus user cameras)."""
+        return ["default", *(self._world.cameras if self._world else {})]
+
     def render(
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
     ) -> dict[str, Any]:
         """Render the scene headlessly with Newton's ray-traced tiled camera.
 
-        A default three-quarter camera framing the world origin is used. The
-        ``camera_name`` argument is accepted for ABC parity; only the default
-        view is currently provided.
+        ``camera_name`` selects either the built-in three-quarter ``"default"``
+        view (also ``None`` / ``""`` / ``"free"``) framing the world origin, or
+        a named camera previously registered with :meth:`add_camera`. Named
+        cameras render from their own eye/target/fov; world-fixed cameras use
+        the stored pose directly, body-mounted cameras (``parent_body``) resolve
+        their pose from the live body transform each call so a wrist camera
+        tracks the arm.
 
         Args:
-            camera_name: Accepted for ABC parity (only ``"default"`` exists).
-            width: Render width in pixels (defaults to ``default_width``).
-            height: Render height in pixels (defaults to ``default_height``).
+            camera_name: ``"default"`` (or ``None``/``""``/``"free"``) for the
+                built-in view, or the name of a registered camera.
+            width: Render width in pixels (defaults to the camera's width, or
+                ``default_width`` for the built-in view).
+            height: Render height in pixels (defaults to the camera's height, or
+                ``default_height`` for the built-in view).
 
         Returns:
             Agent-tool dict with ``status`` and a ``content`` list. On success
@@ -622,15 +787,33 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
-        if camera_name not in (None, "", "default", "free"):
-            return {
-                "status": "error",
-                "content": [{"text": f"Camera '{camera_name}' not found. Newton backend only provides 'default'."}],
-            }
-        w = width or self.default_width
-        h = height or self.default_height
+
+        is_default = camera_name in (None, "", "default", "free")
+        if is_default:
+            label = "default"
+            eye = (0.6, 0.6, 0.5)
+            target = (0.0, 0.0, 0.15)
+            fov_deg = 50.0
+            w = width or self.default_width
+            h = height or self.default_height
+        else:
+            cam = self._world.cameras.get(camera_name)
+            if cam is None:
+                return {
+                    "status": "error",
+                    "content": [{"text": f"Camera '{camera_name}' not found. Available: {self.list_cameras()}"}],
+                }
+            label = camera_name
+            try:
+                eye, target = self._resolve_camera_pose(cam)
+            except ValueError as exc:
+                return {"status": "error", "content": [{"text": f"Render failed: {exc}"}]}
+            fov_deg = cam.fov
+            w = width or cam.width
+            h = height or cam.height
+
         try:
-            img = self._render_rgb(w, h)
+            img = self._render_rgb(w, h, eye=eye, target=target, fov_deg=fov_deg)
         except Exception as exc:  # noqa: BLE001 - surface any render failure as a tool error
             return {"status": "error", "content": [{"text": f"Render failed: {exc}"}]}
 
@@ -644,20 +827,77 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         return {
             "status": "success",
             "content": [
-                {"text": f"{w}x{h} from 'default' at t={self._world.sim_time:.3f}s"},
+                {"text": f"{w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"},
                 {"image": {"format": "png", "source": {"bytes": png_bytes}}},
                 {
                     "json": {
                         "pixel_variance": float(np.var(img)),
                         "pixel_mean": float(np.mean(img)),
-                        "camera": "default",
+                        "camera": label,
                     }
                 },
             ],
         }
 
-    def _render_rgb(self, w: int, h: int) -> np.ndarray:
-        """Render the default view to an ``(H, W, 3)`` uint8 RGB ndarray.
+    def _resolve_camera_pose(self, cam: SimCamera) -> tuple[tuple, tuple]:
+        """Resolve a camera's world-frame ``(eye, target)`` from its :class:`SimCamera`.
+
+        World-fixed cameras return their stored pose unchanged. Body-mounted
+        cameras (``parent_body`` set) interpret ``position`` / ``target`` in the
+        parent body's local frame and compose them with the live body transform
+        so the camera tracks the body as it moves.
+
+        Args:
+            cam: The camera whose pose to resolve.
+
+        Returns:
+            Tuple of ``(eye, target)`` 3-tuples in world coordinates.
+
+        Raises:
+            ValueError: If the camera's mount body is no longer in the model.
+        """
+        if not cam.parent_body:
+            return tuple(cam.position), tuple(cam.target)
+        body_labels = list(self._model.body_label)
+        if cam.parent_body not in body_labels:
+            raise ValueError(f"camera '{cam.name}' mount body '{cam.parent_body}' is no longer in the model")
+        idx = body_labels.index(cam.parent_body)
+        with self._lock:
+            tf = self._state_0.body_q.numpy()[idx]
+        body_pos = np.asarray(tf[:3], dtype=np.float64)
+        body_quat = np.asarray(tf[3:7], dtype=np.float64)  # warp xyzw
+        eye = body_pos + self._rotate_vec_by_quat(body_quat, cam.position)
+        target = body_pos + self._rotate_vec_by_quat(body_quat, cam.target)
+        return tuple(eye.tolist()), tuple(target.tolist())
+
+    @staticmethod
+    def _rotate_vec_by_quat(q_xyzw: np.ndarray, v: Sequence[float]) -> np.ndarray:
+        """Rotate a 3-vector by an ``(x, y, z, w)`` quaternion (Hamilton convention)."""
+        x, y, z, w = (float(c) for c in q_xyzw)
+        vv = np.asarray(v, dtype=np.float64)
+        u = np.array([x, y, z], dtype=np.float64)
+        rotated: np.ndarray = 2.0 * np.dot(u, vv) * u + (w * w - np.dot(u, u)) * vv + 2.0 * w * np.cross(u, vv)
+        return rotated
+
+    def _render_rgb(
+        self,
+        w: int,
+        h: int,
+        eye: Sequence[float] = (0.6, 0.6, 0.5),
+        target: Sequence[float] = (0.0, 0.0, 0.15),
+        fov_deg: float = 50.0,
+    ) -> np.ndarray:
+        """Render a view to an ``(H, W, 3)`` uint8 RGB ndarray.
+
+        Args:
+            w: Render width in pixels.
+            h: Render height in pixels.
+            eye: Camera position in world coordinates.
+            target: Look-at point in world coordinates.
+            fov_deg: Vertical field of view in degrees.
+
+        Returns:
+            Contiguous ``(H, W, 3)`` uint8 RGB array.
 
         Must be safe to call without holding ``self._lock`` from the caller;
         it acquires the lock internally.
@@ -666,11 +906,9 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
             sensors = self._nt.sensors
             cam = sensors.SensorTiledCamera(model=self._model)
             cam.utils.create_default_light(enable_shadows=False)
-            rays = cam.utils.compute_pinhole_camera_rays(w, h, math.radians(50.0))
+            rays = cam.utils.compute_pinhole_camera_rays(w, h, math.radians(fov_deg))
             color = cam.utils.create_color_image_output(w, h, 1)
-            eye = (0.6, 0.6, 0.5)
-            target = (0.0, 0.0, 0.15)
-            q = self._look_at_quat(eye, target)
+            q = self._look_at_quat(tuple(eye), tuple(target))
             wp = self._wp
             cam_tf = wp.array([[wp.transformf(wp.vec3f(*eye), wp.quatf(*q))]], dtype=wp.transformf)
             self._model.bvh_refit_shapes(self._state_0)
@@ -928,7 +1166,7 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
             "robots": self.list_robots(),
             "objects": list(self._world.objects) if self._world else [],
             "bodies": bodies,
-            "cameras": ["default"],
+            "cameras": self.list_cameras(),
             "timestep": self._world.timestep if self._world else self.default_timestep,
             "gravity": list(self._world.gravity) if self._world else [0.0, 0.0, -9.81],
             "world_created": self._world is not None and self._model is not None,
@@ -946,7 +1184,14 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                 "register_urdf": "(data_config: str, urdf_path: str) -> dict",
                 "set_gravity": "(gravity: list[float] | float) -> dict",
                 "set_timestep": "(dt: float) -> dict",
-                "render": "(camera_name='default', width=None, height=None) -> dict",
+                "render": "(camera_name='default', width=None, height=None) -> dict (named camera or 'default')",
+                "add_camera": (
+                    "(name: str, position=None, target=None, fov=60.0, width=640, height=480, "
+                    "parent_body=None) -> dict  (register a named camera; parent_body mounts it "
+                    "on a body for a wrist cam -- see list_bodies)"
+                ),
+                "remove_camera": "(name: str) -> dict  (remove a registered named camera)",
+                "list_cameras": "() -> list[str]  (renderable camera names incl. 'default')",
                 "reset": "() -> dict (restore baseline joint configuration)",
                 "step": "(n_steps: int = 1) -> dict",
                 "start_recording": (

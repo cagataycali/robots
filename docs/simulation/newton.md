@@ -81,6 +81,13 @@ no-op until then.
 - `render()` returns the same agent-tool image block (`{"image": {"format":
   "png", ...}}`) as MuJoCo, so the shared `PolicyRunner` video pipeline works
   without modification.
+- `add_camera(name, position, target, fov=60, width, height, parent_body=None)`
+  registers named cameras, matching the MuJoCo signature. `render(camera_name=...)`
+  returns the named view; multiple cameras coexist and `get_observation()`
+  returns one RGB frame per camera keyed by name. A `parent_body` (a body label
+  from `list_bodies`) mounts the camera ON that body so a wrist camera tracks
+  the arm. `remove_camera(name)` / `list_cameras()` round out the API and
+  `describe()["cameras"]` lists every registered camera.
 - `run_policy` / `eval_policy` / `replay_episode` are inherited from the
   `SimEngine` ABC - no backend-specific re-implementation.
 - `describe()` reports the active solver, available solvers, device, and
@@ -168,7 +175,5 @@ cameras are registered on the world.
 
 ## Limitations
 
-- Only a single default camera view is provided by `render()`; named per-robot
-  cameras are not yet supported.
 - Mesh objects in `add_object` are not yet supported (primitives box / sphere /
   capsule / cylinder only).
