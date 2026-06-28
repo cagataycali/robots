@@ -978,31 +978,6 @@
         "hope_junior_hand"
       ]
     },
-    "rebot_b601": {
-      "description": "Seeed Studio reBot B601-DM (6-DOF arm + gripper, Damiao CAN)",
-      "category": "arm",
-      "joints": 7,
-      "hardware": {
-        "lerobot_type": "rebot_b601_follower"
-      },
-      "aliases": [
-        "rebot_b601_follower",
-        "seeed_rebot_b601",
-        "b601"
-      ]
-    },
-    "bi_rebot_b601": {
-      "description": "Bimanual Seeed reBot B601-DM (dual 6-DOF arms, Damiao CAN)",
-      "category": "bimanual",
-      "joints": 14,
-      "hardware": {
-        "lerobot_type": "bi_rebot_b601_follower"
-      },
-      "aliases": [
-        "bi_rebot_b601_follower",
-        "dual_rebot_b601"
-      ]
-    },
     "lekiwi_client": {
       "description": "LeKiwi networked client (drives a remote LeKiwi host over ZMQ)",
       "category": "mobile_manip",
