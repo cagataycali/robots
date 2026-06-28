@@ -212,3 +212,38 @@ def test_resolve_chunk_length_nonrtc_unaffected_by_execution_horizon() -> None:
     pol = MockChunkedPolicy(actions_per_step=50)
     assert resolve_chunk_length(pol, action_horizon=8) == 50
     assert resolve_chunk_length(pol, action_horizon=80) == 80
+
+
+# --- Floor invariant: the re-query interval is never < 1 -------------------
+# The chunk consumer executes ``resolve_chunk_length`` actions before it
+# re-queries the policy. If that count were ever 0 or negative the consumer
+# would execute an EMPTY slice every cycle - a silent no-op that scores
+# success_rate=0 with no error surfaced. Both the ``execution_horizon``
+# property and ``resolve_chunk_length`` floor the value at 1 so a misconfigured
+# or buggy policy degrades to single-step instead of stalling. These pin that
+# floor for the degenerate inputs the happy-path tests above never reach.
+
+
+@pytest.mark.parametrize("bad_chunk", [None, "auto", 0, -5, object()])
+def test_execution_horizon_floors_degenerate_chunk_to_single(bad_chunk: Any) -> None:
+    """A non-positive or non-integer ``actions_per_step`` yields a horizon of 1.
+
+    A policy that declares a bad trained-chunk length (a config typo leaving it
+    ``None``/a string, or a zero/negative value) must not propagate a horizon
+    the consumer cannot act on; it degrades to a single-step policy.
+    """
+    pol = MockChunkedPolicy(actions_per_step=bad_chunk)  # type: ignore[arg-type]
+    assert pol.execution_horizon == 1
+
+
+@pytest.mark.parametrize("bad_horizon", [0, -1, -7])
+def test_resolve_chunk_length_floors_subunit_execution_horizon(bad_horizon: int) -> None:
+    """A policy reporting a zero/negative ``execution_horizon`` is floored to 1.
+
+    ``resolve_chunk_length`` reads the interval straight off the policy, so a
+    custom (e.g. RTC) policy that miscomputes its re-query interval as <= 0 must
+    still drive at least one action per cycle rather than an empty chunk.
+    """
+    pol = MockRtcPolicy(actions_per_step=50, execution_horizon=bad_horizon)
+    assert pol.execution_horizon == bad_horizon  # property reports it verbatim
+    assert resolve_chunk_length(pol, action_horizon=8) == 1
