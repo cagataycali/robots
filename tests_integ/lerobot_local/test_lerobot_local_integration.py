@@ -325,3 +325,92 @@ class TestErrorHandling:
 
         # Restore
         act_policy._policy.select_action = original_select_action
+
+
+class TestAsyncRtcLatencyMasking:
+    """End-to-end async-RTC latency masking with a real chunk-emitting VLA.
+
+    ``run_policy(async_rtc=None)`` (the default) auto-enables the overlap
+    pipeline for a chunk-emitting policy, hiding inference for chunk N+1 behind
+    the execution of chunk N. For MolmoAct2 - whose per-chunk inference is the
+    dominant per-step cost - this should materially cut the rollout wall time
+    versus the synchronous chunk-then-drain loop, and the saving must be visible
+    in the run-result telemetry rather than only in the logs.
+
+    Gated behind ``STRANDS_TEST_MOLMOACT2`` because it downloads a multi-GB
+    checkpoint and needs a GPU; it is skipped in the default integ run.
+    """
+
+    MOLMOACT2_MODEL = os.getenv("LEROBOT_MOLMOACT2_MODEL", "allenai/MolmoAct2-SO100_101")
+    # Steps per rollout. Several chunk seams are needed for the overlap to pay
+    # off; keep it modest so the test stays within the integ timeout on a GPU.
+    N_STEPS = int(os.getenv("MOLMOACT2_RTC_STEPS", "60"))
+    CONTROL_HZ = float(os.getenv("MOLMOACT2_RTC_HZ", "30"))
+
+    @pytest.mark.skipif(
+        not os.getenv("STRANDS_TEST_MOLMOACT2"),
+        reason="Set STRANDS_TEST_MOLMOACT2=1 (GPU + multi-GB MolmoAct2 download) to run.",
+    )
+    def test_molmoact2_async_rtc_cuts_wall_time(self):
+        """async_rtc=True is >=30% faster wall-clock than async_rtc=False."""
+        os.environ.setdefault("STRANDS_TRUST_REMOTE_CODE", "1")
+        from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
+        from strands_robots.simulation import Simulation
+
+        logger.info("Loading MolmoAct2 model: %s", self.MOLMOACT2_MODEL)
+        policy = LerobotLocalPolicy(
+            pretrained_name_or_path=self.MOLMOACT2_MODEL,
+            trust_remote_code=True,
+        )
+        assert policy._loaded is True
+        # The auto-enable signal: MolmoAct2 must self-report as chunk-emitting so
+        # run_policy(async_rtc=None) turns the overlap on without an explicit flag.
+        assert policy.is_chunk_emitting() is True
+
+        sim = Simulation()
+        try:
+            sim.create_world(timestep=0.002, gravity=[0, 0, -9.81])
+            sim.add_robot("arm", data_config="so100", position=[0.0, 0.0, 0.0])
+            sim.step(n_steps=10)  # settle
+
+            def _rollout(async_rtc: bool) -> dict:
+                sim.reset()
+                policy.reset()
+                return sim.run_policy(
+                    robot_name="arm",
+                    policy_object=policy,
+                    instruction="pick up the cube",
+                    n_steps=self.N_STEPS,
+                    control_frequency=self.CONTROL_HZ,
+                    fast_mode=True,
+                    async_rtc=async_rtc,
+                )
+
+            sync = _rollout(async_rtc=False)
+            asyncr = _rollout(async_rtc=True)
+            assert sync["status"] == "success", sync
+            assert asyncr["status"] == "success", asyncr
+
+            sync_json = sync["content"][1]["json"]
+            async_json = asyncr["content"][1]["json"]
+            assert sync_json["rtc_async_enabled"] is False
+            assert async_json["rtc_async_enabled"] is True
+            # The overlap actually fired and at least one seam was hidden.
+            assert async_json["rtc_prefetch_hits"] > 0, async_json
+
+            sync_t = float(sync_json["elapsed_s"])
+            async_t = float(async_json["elapsed_s"])
+            reduction = (sync_t - async_t) / sync_t
+            logger.info(
+                "MolmoAct2 wall time: sync=%.2fs async=%.2fs reduction=%.1f%% (telemetry=%s)",
+                sync_t,
+                async_t,
+                reduction * 100.0,
+                async_json,
+            )
+            assert reduction > 0.30, (
+                f"async-RTC reduced wall time by only {reduction * 100:.1f}% "
+                f"(sync={sync_t:.2f}s async={async_t:.2f}s); expected >30%."
+            )
+        finally:
+            sim.destroy()

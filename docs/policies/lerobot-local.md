@@ -258,20 +258,24 @@ of those two RTC benefits the sim reproduces:
 
 | `async_rtc` | Behaviour | Use when |
 | --- | --- | --- |
-| `False` (default) | Query the policy, drain `execution_horizon` actions (the full chunk for non-RTC; `rtc_execution_horizon` for RTC), then re-query. Seam blending works because the RTC policy is re-queried mid-chunk, but inference and execution do **not** overlap. | Single-step policies, deterministic regression runs, or any policy whose `get_actions` reads live sim state. |
+| `None` (default) | Auto-resolve from `policy.is_chunk_emitting()`: chunk-emitting policies get the async overlap, single-step policies stay synchronous. An explicit `True`/`False` always wins. | The common case - let the policy decide. |
+| `False` | Query the policy, drain `execution_horizon` actions (the full chunk for non-RTC; `rtc_execution_horizon` for RTC), then re-query. Seam blending works because the RTC policy is re-queried mid-chunk, but inference and execution do **not** overlap. | Single-step policies, deterministic regression runs, or any policy whose `get_actions` reads live sim state. |
 | `True` | While the current chunk drains, fire the next `get_actions` on a single background worker once the chunk is ~50% consumed (using a fresh mid-execution observation), then atomically swap it in. A policy whose inference latency is at most the chunk's execution window pays (almost) zero visible stall at the seam. | Chunk-emitting VLA / flow-matching policies (pi0, pi0.5, pi0-FAST, SmolVLA, MolmoAct2) where you want sim per-step timing to track real-hardware behaviour, or to benchmark a streaming controller. |
 
+Because MolmoAct2, pi0, pi0.5, pi0-FAST and SmolVLA all self-report as chunk-emitting, the default `async_rtc=None` enables latency masking for them automatically - no flag needed. Each `run_policy` result carries `rtc_*` telemetry (`rtc_async_enabled`, `rtc_prefetch_hits`, `rtc_prefetch_blocks`, `rtc_avg_inference_ms`, ...) so you can confirm the masking worked; see [Simulation -> Async-RTC chunk pipeline](../simulation/overview.md#async-rtc-chunk-pipeline-latency-masking). Pass `rtc_inference_timeout_s=` to abort cleanly on a stuck inference instead of stalling the whole rollout.
+
 ```python
-# Default sync loop - inference shows up as a per-seam stall in sim.
+# Default (async_rtc=None): pi0 self-reports as chunk-emitting, so the async
+# overlap is enabled automatically - inference latency is masked.
 sim.run_policy(robot_name="so101", policy_provider="lerobot_local",
                policy_config={"pretrained_name_or_path": "lerobot/pi0_so100", "rtc_enabled": True},
                action_horizon=8)
 
-# Async pipeline - the next chunk is computed in the background while the
-# current one executes, so inference latency is masked (same as real hardware).
+# Force the synchronous chunk-then-drain loop (inference shows up as a per-seam
+# stall in sim) - e.g. for a deterministic regression run.
 sim.run_policy(robot_name="so101", policy_provider="lerobot_local",
                policy_config={"pretrained_name_or_path": "lerobot/pi0_so100", "rtc_enabled": True},
-               action_horizon=8, async_rtc=True)
+               action_horizon=8, async_rtc=False)
 ```
 
 `async_rtc` is provider-agnostic: it only schedules the inference/execution

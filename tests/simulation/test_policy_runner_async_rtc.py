@@ -209,10 +209,14 @@ def test_async_rtc_matches_sync_step_accounting() -> None:
     assert async_json["action_errors"] == 0
 
 
-def test_async_rtc_defaults_to_false() -> None:
-    """Back-compat: async_rtc is opt-in on both PolicyRunner.run and run_policy."""
-    assert inspect.signature(PolicyRunner.run).parameters["async_rtc"].default is False
-    assert inspect.signature(SimEngine.run_policy).parameters["async_rtc"].default is False
+def test_async_rtc_defaults_to_none_and_auto_resolves() -> None:
+    """The default is ``None`` (auto-resolve), not a hardcoded ``False``.
+
+    ``None`` means "let the policy decide" - chunk-emitting VLAs opt into
+    latency masking automatically while single-step policies stay synchronous.
+    """
+    assert inspect.signature(PolicyRunner.run).parameters["async_rtc"].default is None
+    assert inspect.signature(SimEngine.run_policy).parameters["async_rtc"].default is None
 
 
 def test_sync_loop_supplies_zero_observed_delay() -> None:
@@ -236,3 +240,246 @@ def test_async_rtc_supplies_deterministic_observed_delay() -> None:
     # At least one prefetched (overlapped) query must carry the non-zero count -
     # otherwise the async path silently degraded to synchronous re-queries.
     assert any(d == expected_prefetch_delay for d in policy.observed_delays), policy.observed_delays
+
+
+# --- is_chunk_emitting + auto-enable contract -----------------------------
+
+
+class _SingleStepPolicy(Policy):
+    """One action per ``get_actions`` (``MockPolicy`` shape) -> not chunk-emitting."""
+
+    def __init__(self) -> None:
+        self.actions_per_step = 1
+        self.robot_state_keys: list[str] = []
+
+    @property
+    def provider_name(self) -> str:
+        return "single-step-test"
+
+    @property
+    def requires_images(self) -> bool:
+        return False
+
+    def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        self.robot_state_keys = robot_state_keys
+
+    async def get_actions(
+        self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        keys = self.robot_state_keys or ["j0", "j1", "j2"]
+        return [{k: 0.0 for k in keys}]
+
+
+def test_is_chunk_emitting_true_for_multistep_policy() -> None:
+    """A policy whose execution horizon is > 1 reports itself chunk-emitting."""
+    sim = _CountingSim()
+    assert _ChunkPolicy(sim, chunk=4).is_chunk_emitting() is True
+
+
+def test_is_chunk_emitting_false_for_single_step_policy() -> None:
+    """A single-action policy is NOT chunk-emitting (overlap would not help)."""
+    assert _SingleStepPolicy().is_chunk_emitting() is False
+
+
+def test_async_rtc_auto_enabled_for_chunk_policy() -> None:
+    """``async_rtc=None`` (default) auto-enables overlap for a chunk policy."""
+    sim = _CountingSim(exec_sleep=_EXEC_SLEEP)
+    policy = _ChunkPolicy(sim)
+    policy.set_robot_state_keys(sim.robot_joint_names("arm"))
+    # No async_rtc kwarg at all -> uses the None default -> resolves via the
+    # policy. A chunk-emitting policy must enable the overlap.
+    result = PolicyRunner(sim).run(
+        "arm", policy, duration=16 / 50.0, control_frequency=50.0, action_horizon=_CHUNK, fast_mode=True
+    )
+    assert result["status"] == "success"
+    telem = result["content"][1]["json"]
+    assert telem["rtc_async_enabled"] is True
+    # Prefetch fired mid-chunk (the overlap actually ran).
+    assert any(c % _CHUNK != 0 for c in policy.infer_starts), policy.infer_starts
+
+
+def test_async_rtc_auto_disabled_for_single_step_policy() -> None:
+    """``async_rtc=None`` keeps a single-step policy on the synchronous loop."""
+    sim = _CountingSim()
+    policy = _SingleStepPolicy()
+    policy.set_robot_state_keys(sim.robot_joint_names("arm"))
+    result = PolicyRunner(sim).run("arm", policy, duration=8 / 50.0, control_frequency=50.0, fast_mode=True)
+    assert result["status"] == "success"
+    assert result["content"][1]["json"]["rtc_async_enabled"] is False
+
+
+# --- telemetry block ------------------------------------------------------
+
+_RTC_KEYS = {
+    "rtc_async_enabled",
+    "rtc_chunks_acquired",
+    "rtc_prefetch_hits",
+    "rtc_prefetch_blocks",
+    "rtc_avg_inference_ms",
+    "rtc_max_inference_ms",
+}
+
+
+def test_telemetry_fields_present_on_both_paths() -> None:
+    """All six RTC telemetry fields appear in the json on sync AND async runs."""
+    for async_rtc in (False, True):
+        result, _, _ = _run(async_rtc=async_rtc, exec_sleep=0.0)
+        telem = result["content"][1]["json"]
+        assert _RTC_KEYS <= set(telem), (async_rtc, telem)
+        assert telem["rtc_async_enabled"] is async_rtc
+
+
+def test_async_rtc_prefetch_blocks_when_inference_slow() -> None:
+    """Fake-slow policy: inference > chunk exec -> prefetch blocks at every seam,
+    and total wall time tracks inference x n_chunks (not x 2 - no double pay)."""
+    # chunk exec ~0.04s (4 x 0.01) << infer 0.10s -> inference cannot be hidden,
+    # so every swap blocks. Keep exec tiny so wall time is dominated by inference.
+    n_steps = 16
+    n_chunks = n_steps // _CHUNK
+    infer = 0.10
+    sim = _CountingSim(exec_sleep=0.01)
+    policy = _ChunkPolicy(sim, infer_sleep=infer)
+    policy.set_robot_state_keys(sim.robot_joint_names("arm"))
+    t0 = time.perf_counter()
+    result = PolicyRunner(sim).run(
+        "arm",
+        policy,
+        duration=n_steps / 50.0,
+        control_frequency=50.0,
+        action_horizon=_CHUNK,
+        fast_mode=True,
+        async_rtc=True,
+    )
+    elapsed = time.perf_counter() - t0
+    assert result["status"] == "success"
+    telem = result["content"][1]["json"]
+    assert telem["rtc_prefetch_blocks"] > 0, telem
+    # Each chunk's inference is paid ONCE (serialized behind the next), never
+    # twice: wall time stays under the 2x-per-chunk ceiling the issue calls out.
+    assert elapsed < 2 * infer * n_chunks, (elapsed, infer, n_chunks)
+
+
+def test_async_rtc_prefetch_hits_when_inference_fast() -> None:
+    """Fake-fast policy: inference << chunk exec -> every seam is a hit, no blocks."""
+    n_steps = 16
+    n_chunks = n_steps // _CHUNK
+    # infer 0.005s << exec 0.08s/chunk -> the prefetch is always ready at swap.
+    sim = _CountingSim(exec_sleep=0.02)
+    policy = _ChunkPolicy(sim, infer_sleep=0.005)
+    policy.set_robot_state_keys(sim.robot_joint_names("arm"))
+    result = PolicyRunner(sim).run(
+        "arm",
+        policy,
+        duration=n_steps / 50.0,
+        control_frequency=50.0,
+        action_horizon=_CHUNK,
+        fast_mode=True,
+        async_rtc=True,
+    )
+    assert result["status"] == "success"
+    telem = result["content"][1]["json"]
+    assert telem["rtc_prefetch_blocks"] == 0, telem
+    assert telem["rtc_prefetch_hits"] == n_chunks - 1, telem
+
+
+# --- empty-chunk drop-and-requery fallback --------------------------------
+
+
+class _EmptyOnCallsPolicy(_ChunkPolicy):
+    """Emits an EMPTY chunk on the configured (1-indexed) inference calls.
+
+    Lets a test force a prefetched chunk to arrive empty and assert the runner
+    degrades to one synchronous re-query rather than killing the rollout.
+    """
+
+    def __init__(self, sim: _CountingSim, empty_calls: set[int], **kw: Any) -> None:
+        super().__init__(sim, **kw)
+        self._empty_calls = empty_calls
+        self._calls = 0
+
+    async def get_actions(
+        self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        with self._lock:
+            self._calls += 1
+            call_no = self._calls
+            self.infer_starts.append(self._sim.send_count)
+            self.observed_delays.append(self.rtc_observed_delay_steps)
+        if self._infer_sleep:
+            time.sleep(self._infer_sleep)
+        if call_no in self._empty_calls:
+            return []
+        keys = self.robot_state_keys or ["j0", "j1", "j2"]
+        return [{k: 0.0 for k in keys} for _ in range(self._chunk)]
+
+
+def test_async_rtc_empty_prefetch_degrades_to_resync() -> None:
+    """An empty prefetched chunk triggers ONE synchronous re-query, not an error."""
+    sim = _CountingSim(exec_sleep=0.0)
+    # Call 1 = cold start (non-empty), call 2 = first prefetch (empty -> resync).
+    policy = _EmptyOnCallsPolicy(sim, empty_calls={2}, infer_sleep=0.005)
+    policy.set_robot_state_keys(sim.robot_joint_names("arm"))
+    result = PolicyRunner(sim).run(
+        "arm",
+        policy,
+        duration=16 / 50.0,
+        control_frequency=50.0,
+        action_horizon=_CHUNK,
+        fast_mode=True,
+        async_rtc=True,
+    )
+    assert result["status"] == "success", result
+    assert result["content"][1]["json"]["n_steps"] == 16
+
+
+def test_async_rtc_empty_twice_errors() -> None:
+    """Empty prefetch AND empty re-query is fatal (structured error, no hang)."""
+    sim = _CountingSim(exec_sleep=0.0)
+    # Every inference after the cold start returns empty -> resync also empty.
+    policy = _EmptyOnCallsPolicy(sim, empty_calls={2, 3, 4, 5, 6}, infer_sleep=0.005)
+    policy.set_robot_state_keys(sim.robot_joint_names("arm"))
+    result = PolicyRunner(sim).run(
+        "arm",
+        policy,
+        duration=16 / 50.0,
+        control_frequency=50.0,
+        action_horizon=_CHUNK,
+        fast_mode=True,
+        async_rtc=True,
+    )
+    assert result["status"] == "error", result
+    assert "empty action chunk" in result["content"][0]["text"]
+    # The error result still carries the telemetry block.
+    assert _RTC_KEYS <= set(result["content"][1]["json"])
+
+
+# --- hard inference timeout -----------------------------------------------
+
+
+def test_async_rtc_prefetch_timeout_errors_cleanly() -> None:
+    """A stuck prefetch hits the hard timeout and returns a structured error
+    instead of hanging the sim indefinitely."""
+    infer = 0.15
+    n_steps = 64  # many chunks remain; the timeout must NOT wait for all of them
+    sim = _CountingSim(exec_sleep=0.0)
+    policy = _ChunkPolicy(sim, infer_sleep=infer)
+    policy.set_robot_state_keys(sim.robot_joint_names("arm"))
+    t0 = time.perf_counter()
+    result = PolicyRunner(sim).run(
+        "arm",
+        policy,
+        duration=n_steps / 50.0,
+        control_frequency=50.0,
+        action_horizon=_CHUNK,
+        fast_mode=True,
+        async_rtc=True,
+        rtc_inference_timeout_s=0.02,
+    )
+    elapsed = time.perf_counter() - t0
+    assert result["status"] == "error", result
+    assert "rtc_inference_timeout_s" in result["content"][0]["text"]
+    # The rollout aborts after the cold-start query plus the single in-flight
+    # inference the executor joins on shutdown - bounded by ~2 inferences, NOT
+    # the full 16-chunk rollout it would otherwise run.
+    assert elapsed < 4 * infer, elapsed
+    assert _RTC_KEYS <= set(result["content"][1]["json"])

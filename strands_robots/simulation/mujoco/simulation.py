@@ -2291,7 +2291,8 @@ class MuJoCoSimEngine(
         seed: int | None = None,
         n_episodes: int = 1,
         reset_between: bool = True,
-        async_rtc: bool = False,
+        async_rtc: bool | None = None,
+        rtc_inference_timeout_s: float | None = None,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -2338,6 +2339,7 @@ class MuJoCoSimEngine(
                 n_episodes=n_episodes,
                 reset_between=reset_between,
                 async_rtc=async_rtc,
+                rtc_inference_timeout_s=rtc_inference_timeout_s,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:

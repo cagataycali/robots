@@ -5,6 +5,37 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Feature: async-RTC latency masking is the default for chunk-emitting policies
+
+`run_policy` / `PolicyRunner.run` previously defaulted to `async_rtc=False`, so
+every chunk-emitting VLA (pi0, pi0.5, pi0-FAST, SmolVLA, MolmoAct2) paid the full
+inference latency at every chunk seam in sim even though the overlap pipeline
+already existed - it was invisible to callers who did not know to pass the flag.
+
+- `async_rtc` now defaults to `None` (auto-resolve). `None` reads the new
+  `Policy.is_chunk_emitting()` to enable the inference/execution overlap for
+  chunk-emitting policies and keep single-step policies (MockPolicy, classical
+  planners) on the synchronous loop. An explicit `async_rtc=True`/`False` still
+  wins. `Policy.is_chunk_emitting()` defaults to `execution_horizon > 1`;
+  `LerobotLocalPolicy` also reports `True` for an RTC model or a checkpoint that
+  must be driven via `predict_action_chunk` (MolmoAct2).
+- The run-result `{"json": {...}}` block now carries six async-RTC telemetry
+  fields - `rtc_async_enabled`, `rtc_chunks_acquired`, `rtc_prefetch_hits`,
+  `rtc_prefetch_blocks`, `rtc_avg_inference_ms`, `rtc_max_inference_ms` - so
+  latency masking is provable from the payload instead of from logs.
+- Seam hardening: an empty prefetched chunk degrades to one synchronous
+  re-query before erroring (a transient hiccup no longer kills the rollout); a
+  blocking prefetch logs a starvation warning; and the new
+  `rtc_inference_timeout_s` argument bounds a stuck inference, returning a
+  structured `status="error"` result (with telemetry) instead of waiting for
+  every remaining chunk.
+
+Behaviour change: a chunk-emitting policy run through `run_policy` without an
+explicit `async_rtc` now uses the overlap pipeline, which fires one extra
+background `get_actions` for the trailing chunk. Tests that assert the exact
+synchronous re-query count should pass `async_rtc=False`.
+
+
 ### Refactor: unify the rclpy + RTPS hardware ROS 2 bridges under `RosTelemetryBase`
 
 The two hardware ROS 2 transports now share a single source of truth for the

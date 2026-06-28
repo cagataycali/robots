@@ -126,6 +126,12 @@ def _run(policy: _RtcChunkPolicy, *, n_steps: int, action_horizon: int) -> dict:
         control_frequency=50.0,
         action_horizon=action_horizon,
         fast_mode=True,
+        # Pin the SYNCHRONOUS path: these tests assert the re-query interval of
+        # the chunk-then-drain loop. async_rtc defaults to None (auto-enabled
+        # for chunk-emitting/RTC policies), whose mid-chunk prefetch fires an
+        # extra background query and is covered separately in
+        # test_policy_runner_async_rtc.py.
+        async_rtc=False,
     )
 
 

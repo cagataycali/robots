@@ -90,7 +90,7 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 
 | Action | Key params |
 |--------|-----------|
-| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None`, `seed=None`, `async_rtc=False` |
+| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None`, `seed=None`, `async_rtc=None`, `rtc_inference_timeout_s=None` |
 | `start_policy` | same args, async/non-blocking |
 | `stop_policy` | `robot_name` (optional, defaults to `""`) |
 | `list_policies_running` | - |
@@ -101,9 +101,42 @@ The step horizon is given either as `duration` (seconds) or as `n_steps` (`durat
 
 Pass `seed=` to `run_policy` / `start_policy` for a reproducible single rollout: it reseeds Python / NumPy / torch / cuDNN and forwards `policy.reset(seed=...)`, so a stochastic policy (VLA action-chunk sampling, diffusion noise) produces the same trajectory on re-run of the same scene. Without a seed the rollout draws from the process-global RNG and can differ run to run. `eval_policy` already seeds per episode via the same mechanism.
 
-Pass `async_rtc=True` to `run_policy` to overlap policy inference with action execution: while the current action chunk drains, the next `get_actions` is computed on a background worker and atomically swapped in when the chunk runs out (latency masking). The default `False` keeps the synchronous chunk-then-drain loop. This is most useful for chunk-emitting VLA / flow-matching policies (pi0, SmolVLA, MolmoAct2) where it makes sim per-step timing track real-hardware behaviour; see [LeRobot Local -> RTC](../policies/lerobot-local.md#synchronous-vs-async-chunk-execution-in-sim).
+### Async-RTC chunk pipeline (latency masking)
 
-`run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`, `stopped_early`, `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames` and `sim_time_s` (when the backend reports it) - so an agent can read the outcome programmatically (did it move? how many steps? where is the video?) without regex-parsing the prose.
+`async_rtc` overlaps policy inference with action execution: while the current action chunk drains, the *next* `get_actions` runs on a single background worker (using a fresh mid-chunk observation) and is atomically swapped in when the current chunk runs out. A policy whose inference latency is at most one chunk's execution time then pays (almost) zero visible stall at the chunk seam - the same way an async real-time controller hides inference latency on real hardware.
+
+```
+async_rtc=True (inference <= chunk execution):
+
+chunk N exec   |####============|
+prefetch N+1            |~~~~~~~|              <- fires at ~50% of chunk N
+chunk N+1 exec                  |####========|   <- ready at the seam: HIT, no stall
+
+async_rtc=False (synchronous chunk-then-drain):
+
+chunk N exec   |####|
+infer N+1            |~~~~~~~|                 <- the loop stalls here every seam
+chunk N+1 exec               |####|
+```
+
+**Auto-enable rule.** `async_rtc=None` (the default) resolves the flag from `policy.is_chunk_emitting()`: chunk-emitting VLA / flow-matching policies (pi0, pi0.5, pi0-FAST, SmolVLA, MolmoAct2) get the overlap automatically, while single-step policies (MockPolicy, classical planners) stay on the synchronous loop, where overlap would gain nothing. An explicit `async_rtc=True` / `async_rtc=False` always wins over the auto-resolution. `Policy.is_chunk_emitting()` defaults to `execution_horizon > 1`; `LerobotLocalPolicy` additionally reports `True` for an RTC model or a checkpoint that must be driven via `predict_action_chunk` (MolmoAct2). See [LeRobot Local -> RTC](../policies/lerobot-local.md#synchronous-vs-async-chunk-execution-in-sim).
+
+**Hardening.** If a prefetched chunk arrives empty, the runner degrades to one synchronous re-query before erroring (a transient hiccup does not kill an otherwise-healthy rollout). When a prefetch blocks at the seam (inference slower than chunk execution) the runner logs a starvation warning so you can shorten the chunk or fire the prefetch earlier. Set `rtc_inference_timeout_s` to bound a stuck inference: the swap then returns a structured `status="error"` result (carrying the telemetry below) instead of waiting for every remaining chunk - bounded by the single in-flight inference the executor joins on shutdown (Python cannot forcibly kill a running worker thread).
+
+**Telemetry.** Every `run_policy` result `{"json": {...}}` block carries six RTC fields so latency masking is provable from the payload, not the logs:
+
+| Field | Meaning |
+|-------|---------|
+| `rtc_async_enabled` | Whether the overlap pipeline ran (the resolved `async_rtc`) |
+| `rtc_chunks_acquired` | Chunks the rollout acquired (cold start + swaps + re-queries) |
+| `rtc_prefetch_hits` | Seams where the next chunk was already computed (stall hidden) |
+| `rtc_prefetch_blocks` | Seams where the runner had to wait for inference (seam starved) |
+| `rtc_avg_inference_ms` | Mean `get_actions` wall time across the rollout |
+| `rtc_max_inference_ms` | Slowest `get_actions` wall time |
+
+A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and `rtc_prefetch_blocks == 0`; persistent blocks mean inference is slower than chunk execution and the seam cannot be fully hidden.
+
+`run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`, `stopped_early`, `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames`, `sim_time_s` (when the backend reports it) and the six `rtc_*` async-RTC telemetry fields above - so an agent can read the outcome programmatically (did it move? how many steps? was inference masked?) without regex-parsing the prose.
 | `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |
 
 ## Recording

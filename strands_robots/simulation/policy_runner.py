@@ -343,7 +343,8 @@ class PolicyRunner:
         control_substeps: int | None = None,
         policy_kwargs: dict[str, Any] | None = None,
         seed: int | None = None,
-        async_rtc: bool = False,
+        async_rtc: bool | None = None,
+        rtc_inference_timeout_s: float | None = None,
     ) -> dict[str, Any]:
         """Run ``policy`` on ``robot_name`` for ``duration`` seconds.
 
@@ -409,13 +410,30 @@ class PolicyRunner:
                 blend the seam internally through their own prev-chunk state
                 (``rtc_config.execution_horizon``); this flag only schedules the
                 overlap and never touches the policy's RTC machinery, so it is
-                provider-agnostic. ``False`` (default) keeps the historical
+                provider-agnostic. ``False`` keeps the historical
                 synchronous chunk-then-drain loop, which is correct for
                 single-step policies and any policy whose ``get_actions`` reads
-                live sim state. The policy object is only ever invoked from the
+                live sim state. ``None`` (default) auto-resolves the flag from
+                ``policy.is_chunk_emitting()``: chunk-emitting VLAs (pi0, pi0.5,
+                pi0-FAST, SmolVLA, MolmoAct2) enable the overlap and single-step
+                policies stay synchronous, so the latency-masking default is
+                correct without the caller having to know the policy's shape. An
+                explicit ``True``/``False`` always wins over the auto-resolution.
+                The policy object is only ever invoked from the
                 single background worker (never concurrently), and the runner
                 blocks on any in-flight inference before returning so no thread
                 touches the policy or sim after :meth:`run` exits.
+            rtc_inference_timeout_s: Hard per-chunk timeout (seconds) for the
+                async-RTC prefetch. When set and a prefetched inference has not
+                returned by the time its chunk must be swapped in, the swap
+                raises and :meth:`run` returns a structured ``status=error``
+                result (with the RTC telemetry block) rather than waiting for
+                every remaining chunk of a slow model. The runner still joins the
+                single in-flight worker on shutdown (Python cannot forcibly kill a
+                running thread, and a leaked worker would touch the policy after
+                :meth:`run` returns), so the abort is bounded by ONE inference,
+                not the whole rollout. ``None`` (default) waits without a deadline
+                (historical behaviour). Ignored on the synchronous path.
 
         Returns:
             ``{"status": "success"|"error", "content": [{"text": ...},
@@ -425,7 +443,11 @@ class PolicyRunner:
             ``stopped_early``, ``action_errors``, ``video_path`` (``None`` when
             no MP4 was written), ``video_frames`` and ``sim_time_s`` (when the
             backend reports sim time) - so callers can self-correct without
-            regex-parsing the human-readable ``text``.
+            regex-parsing the human-readable ``text``. The block also carries the
+            async-RTC telemetry (``rtc_async_enabled``, ``rtc_chunks_acquired``,
+            ``rtc_prefetch_hits``, ``rtc_prefetch_blocks``, ``rtc_avg_inference_ms``,
+            ``rtc_max_inference_ms``) so latency masking is provable from the
+            payload instead of from logs.
         """
         # A single rollout draws the policy's stochastic ops (VLA action-
         # chunk sampling, diffusion noise) from the unmanaged global RNG, so the
@@ -443,6 +465,49 @@ class PolicyRunner:
                     seed,
                     e,
                 )
+
+        # Auto-resolve the async-RTC overlap from the policy's own shape when the
+        # caller did not pin it. Chunk-emitting VLAs (pi0/pi0.5/pi0-FAST/SmolVLA/
+        # MolmoAct2) benefit from hiding inference behind chunk execution, while a
+        # single-step policy gains nothing - so the latency-masking default is
+        # correct without the caller knowing the policy's internals. An explicit
+        # True/False always wins. Use getattr so a duck-typed policy_object that
+        # predates is_chunk_emitting() simply stays on the synchronous path.
+        if async_rtc is None:
+            _emit = getattr(policy, "is_chunk_emitting", None)
+            async_rtc = bool(_emit()) if callable(_emit) else False
+            logger.info(
+                "async_rtc auto-resolved to %s from %s.is_chunk_emitting()",
+                async_rtc,
+                type(policy).__name__,
+            )
+
+        # RTC telemetry, reported in the result json so latency masking is
+        # provable without grepping logs. inference_ms collects every
+        # get_actions wall-time (both paths); the prefetch hit/block counters and
+        # chunks_acquired are async-only (0 on the synchronous path). list.append
+        # is atomic under the GIL, so the worker thread appending an inference
+        # time never races the main thread reading the list after shutdown(wait).
+        inference_ms: list[float] = []
+        rtc_chunks_acquired = 0
+        rtc_prefetch_hits = 0
+        rtc_prefetch_blocks = 0
+
+        def _rtc_telemetry() -> dict[str, Any]:
+            # The async-RTC telemetry block, merged into every result json
+            # (success and error) so latency masking is provable from the
+            # structured payload without grepping logs. On the synchronous path
+            # the prefetch counters stay 0 and only the inference timings carry
+            # information.
+            _n = len(inference_ms)
+            return {
+                "rtc_async_enabled": bool(async_rtc),
+                "rtc_chunks_acquired": rtc_chunks_acquired,
+                "rtc_prefetch_hits": rtc_prefetch_hits,
+                "rtc_prefetch_blocks": rtc_prefetch_blocks,
+                "rtc_avg_inference_ms": round(sum(inference_ms) / _n, 3) if _n else 0.0,
+                "rtc_max_inference_ms": round(max(inference_ms), 3) if _n else 0.0,
+            }
 
         # Lazy optional import - only imageio is optional.
         writer = None
@@ -636,8 +701,14 @@ class PolicyRunner:
                 # for a prefetch, the main thread otherwise), and at most one
                 # inference is ever in flight, so this never races.
                 policy.set_rtc_observed_delay(observed_delay)
+                _t_infer = time.perf_counter()
                 coro_or_result = policy.get_actions(observation, instruction, **_policy_kwargs)
                 actions = _resolve_coroutine(coro_or_result)
+                # Record inference wall-time (ms) for both the sync and async
+                # paths. Under async this runs on the prefetch worker; list
+                # append is atomic under the GIL so the read after
+                # shutdown(wait=True) sees every entry.
+                inference_ms.append((time.perf_counter() - _t_infer) * 1000.0)
                 _chunk = resolve_chunk_length(policy, action_horizon)
                 return list(actions[:_chunk])
 
@@ -657,11 +728,41 @@ class PolicyRunner:
                 # after the previous one has been consumed), and the sim is only
                 # ever touched from THIS thread, so there is no MuJoCo data race.
                 from concurrent.futures import Future, ThreadPoolExecutor
+                from concurrent.futures import TimeoutError as FuturesTimeout
+
+                def _swap_in(fut: Future[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+                    # Block on the prefetched chunk at the seam. A prefetch HIT
+                    # means inference already finished (the seam is invisible); a
+                    # BLOCK means we still have to wait because inference ran
+                    # slower than the chunk's execution - the seam was starved,
+                    # which is the actionable "tune prefetch_trigger / shorten
+                    # the chunk" signal, so log it. A hard timeout turns a stuck
+                    # model into a structured error instead of an unbounded sim
+                    # hang.
+                    nonlocal rtc_prefetch_hits, rtc_prefetch_blocks
+                    if fut.done():
+                        rtc_prefetch_hits += 1
+                    else:
+                        rtc_prefetch_blocks += 1
+                        logger.warning(
+                            "async-RTC seam starvation: prefetched chunk was not ready at the "
+                            "swap point (inference slower than chunk execution). Blocking on it; "
+                            "consider a shorter chunk or an earlier prefetch_trigger."
+                        )
+                    try:
+                        return fut.result(timeout=rtc_inference_timeout_s)
+                    except FuturesTimeout as e:
+                        raise RuntimeError(
+                            f"async-RTC prefetch exceeded rtc_inference_timeout_s="
+                            f"{rtc_inference_timeout_s}s; policy inference is stuck. Raise the "
+                            f"timeout or check the policy/server."
+                        ) from e
 
                 executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rtc-prefetch")
                 try:
                     cur_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
                     cur_chunk = _query_chunk(cur_obs)
+                    rtc_chunks_acquired += 1
                     if not cur_chunk:
                         raise RuntimeError("policy returned an empty action chunk; cannot run rollout")
                     idx = 0
@@ -673,11 +774,7 @@ class PolicyRunner:
                         if idx >= len(cur_chunk):
                             # Current chunk drained -> swap in the next chunk.
                             if prefetch is not None:
-                                # Atomic swap. Blocks ONLY if inference is still
-                                # in flight (it ran slower than chunk execution);
-                                # otherwise the result is already waiting and the
-                                # seam is invisible.
-                                cur_chunk = prefetch.result()
+                                cur_chunk = _swap_in(prefetch)
                                 if prefetch_obs is not None:
                                     cur_obs = prefetch_obs
                                 prefetch = None
@@ -687,8 +784,25 @@ class PolicyRunner:
                                 # fall back to a synchronous re-query.
                                 cur_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
                                 cur_chunk = _query_chunk(cur_obs)
+                            rtc_chunks_acquired += 1
                             if not cur_chunk:
-                                raise RuntimeError("policy returned an empty action chunk; cannot continue rollout")
+                                # Drop-and-requery: a prefetched chunk arriving
+                                # empty (a transient policy hiccup) degrades to
+                                # ONE synchronous re-query before we give up,
+                                # rather than killing an otherwise-healthy
+                                # rollout on a single empty result.
+                                logger.warning(
+                                    "async-RTC chunk arrived empty; falling back to one "
+                                    "synchronous re-query before erroring."
+                                )
+                                cur_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                                cur_chunk = _query_chunk(cur_obs)
+                                rtc_chunks_acquired += 1
+                                if not cur_chunk:
+                                    raise RuntimeError(
+                                        "policy returned an empty action chunk twice (prefetch + "
+                                        "synchronous re-query); cannot continue rollout"
+                                    )
                             idx = 0
                             prefetch_trigger = max(1, len(cur_chunk) // 2)
                             continue
@@ -728,7 +842,10 @@ class PolicyRunner:
             if writer is not None:
                 writer.close()
             logger.exception("PolicyRunner.run failed")
-            return {"status": "error", "content": [{"text": f"Policy failed: {e}"}]}
+            return {
+                "status": "error",
+                "content": [{"text": f"Policy failed: {e}"}, {"json": _rtc_telemetry()}],
+            }
 
         # Either finished all steps or was cooperatively stopped
         elapsed = time.time() - start_time
@@ -786,6 +903,7 @@ class PolicyRunner:
             wrote_video = frame_count > 0 and os.path.exists(video_path)
             payload["video_path"] = video_path if wrote_video else None
             payload["video_frames"] = frame_count
+        payload.update(_rtc_telemetry())
 
         # If every send_action call failed (all keys unresolved), the robot
         # never moved -- report this as an error rather than a false success.

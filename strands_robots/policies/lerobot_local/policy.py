@@ -261,6 +261,30 @@ class LerobotLocalPolicy(Policy):
             return max(1, int(self._rtc_execution_horizon))
         return max(1, int(self.actions_per_step))
 
+    def is_chunk_emitting(self) -> bool:
+        """Whether this LeRobot policy returns multi-action chunks per inference.
+
+        Extends :meth:`Policy.is_chunk_emitting` so the async-RTC pipeline
+        auto-enables latency masking for every chunk-emitting LeRobot model, not
+        only those whose chunk shape is visible through ``execution_horizon``:
+
+        * ``execution_horizon > 1`` covers ACT, diffusion, pi0, pi0.5, pi0-FAST
+          and SmolVLA, whose trained chunk (or RTC horizon) is more than one
+          action (the base-class check).
+        * :attr:`supports_rtc` covers a flow-matching model that blends chunk
+          seams internally - it is chunk-emitting by construction.
+        * :meth:`_requires_action_chunk` covers MolmoAct2, which MUST be driven
+          via ``predict_action_chunk`` (its ``select_action`` raises under an
+          enabled ``rtc_config``); its trained chunk is not always reflected in
+          ``actions_per_step``, so detect it through the same path that already
+          routes it to chunked inference.
+
+        Returns:
+            ``True`` when the loaded policy emits multi-action chunks; ``False``
+            for single-step checkpoints or before a model is loaded.
+        """
+        return super().is_chunk_emitting() or self.supports_rtc or self._requires_action_chunk()
+
     def reset(self, seed: int | None = None) -> None:
         """Reset policy state between episodes.
 

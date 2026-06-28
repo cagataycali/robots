@@ -269,6 +269,33 @@ class Policy(ABC):
             intended_int = 1
         return max(1, intended_int)
 
+    def is_chunk_emitting(self) -> bool:
+        """Whether this policy returns multi-action chunks per ``get_actions``.
+
+        A chunk-emitting policy (ACT, diffusion, pi0, pi0.5, pi0-FAST, SmolVLA,
+        MolmoAct2) returns more than one action per inference, so its inference
+        latency can be hidden behind the EXECUTION of the current chunk while the
+        next chunk is computed in the background. The async-RTC pipeline in
+        :meth:`PolicyRunner.run` uses this signal to auto-enable latency masking
+        for exactly the policies that benefit (``run_policy(async_rtc=None)``);
+        single-step policies (``MockPolicy``, classical planners) gain nothing
+        from overlap and stay on the synchronous loop.
+
+        The default derives the answer from the re-query interval the consumer
+        actually drives - :attr:`execution_horizon` - so ANY policy that emits a
+        chunk longer than one action is detected without enumerating provider
+        names: a model under RTC reports its RTC horizon (> 1), a chunked
+        open-loop model reports its trained chunk length (> 1), and a single-step
+        policy reports ``1``. Providers whose chunk shape is not visible through
+        ``execution_horizon`` (e.g. a model that must be driven via
+        ``predict_action_chunk``) override this.
+
+        Returns:
+            ``True`` when the policy emits multi-action chunks; ``False`` for
+            single-step policies.
+        """
+        return self.execution_horizon > 1
+
     @property
     @abstractmethod
     def provider_name(self) -> str:

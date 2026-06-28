@@ -695,6 +695,12 @@ class TestChunkNotTruncatedBelowActionsPerStep:
             control_frequency=50.0,  # -> 30 total steps
             action_horizon=8,
             fast_mode=True,
+            # Pin the synchronous path: this regression is about the sync loop
+            # consuming the FULL trained chunk before re-querying. async_rtc now
+            # defaults to None (auto-enabled for chunk policies); its mid-chunk
+            # prefetch would fire a second background query, which is exercised
+            # in test_policy_runner_async_rtc.py rather than here.
+            async_rtc=False,
         )
 
         assert result["status"] == "success"
