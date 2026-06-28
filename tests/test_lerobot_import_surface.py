@@ -36,6 +36,24 @@ pytest.importorskip("lerobot", reason="lerobot not installed - pip install 'stra
 
 _PACKAGE_DIR = Path(strands_robots.__file__).resolve().parent
 
+# Symbols strands imports for FORWARD compatibility with a future lerobot:
+# they exist on lerobot main but not in any wheel within the currently pinned
+# range (lerobot>=0.5.0,<0.6.0 resolves 0.5.x), and EVERY use is gated behind a
+# try/except (ImportError, TypeError) fallback that degrades gracefully when the
+# symbol is absent. Their absence on the pinned wheel is therefore expected, not
+# a rename/removal, so the drift guard must not flag them. Remove an entry once
+# the pinned lerobot range ships the symbol (it then resolves like any other).
+_FORWARD_COMPAT_SYMBOLS: frozenset[tuple[str, str]] = frozenset(
+    {
+        # reanchor_relative_rtc_prefix landed in lerobot after 0.5.1 (it lives in
+        # lerobot/policies/rtc/relative.py on main). LerobotLocalPolicy consumes
+        # it to re-anchor the RTC chunk-seam prefix for relative-action policies,
+        # falling back to a stale-frame prefix with a one-time warning when it is
+        # missing - so a 0.5.x install degrades rather than failing to import.
+        ("lerobot.policies.rtc", "reanchor_relative_rtc_prefix"),
+    }
+)
+
 
 def _python_sources() -> list[Path]:
     return sorted(p for p in _PACKAGE_DIR.rglob("*.py") if "__pycache__" not in p.parts)
@@ -99,6 +117,8 @@ def test_imported_lerobot_symbols_resolve() -> None:
     module_cache: dict[str, object | None] = {}
 
     for module, symbol, f, lineno in _collect_lerobot_imports():
+        if symbol is not None and (module, symbol) in _FORWARD_COMPAT_SYMBOLS:
+            continue  # intentionally forward-compat, gated behind a fallback
         if module not in module_cache:
             try:
                 module_cache[module] = importlib.import_module(module)
@@ -133,3 +153,20 @@ def test_lerobot_scan_disables_global_timeout() -> None:
     marks = [m for m in pytestmark if m.name == "timeout"]
     assert marks, "expected a @pytest.mark.timeout marker on the lerobot import scan"
     assert marks[0].args == (0,), f"expected timeout(0) to disable the budget, got {marks[0].args!r}"
+
+
+def test_forward_compat_allowlist_entries_are_actually_imported() -> None:
+    """Keep the forward-compat allowlist honest - no stale entries.
+
+    Every ``_FORWARD_COMPAT_SYMBOLS`` pair must correspond to a real
+    ``from lerobot... import NAME`` the scanner finds in ``strands_robots``.
+    A drifted/removed import would otherwise leave a dead allowlist entry that
+    silently widens the drift guard's blind spot; this fails so the entry is
+    removed alongside the import.
+    """
+    found_pairs = {(module, symbol) for module, symbol, _f, _lineno in _collect_lerobot_imports() if symbol}
+    stale = sorted(pair for pair in _FORWARD_COMPAT_SYMBOLS if pair not in found_pairs)
+    assert not stale, (
+        "stale forward-compat allowlist entries (no matching lerobot import in "
+        f"strands_robots): {stale} - remove them from _FORWARD_COMPAT_SYMBOLS"
+    )
