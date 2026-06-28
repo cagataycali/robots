@@ -35,6 +35,30 @@ Memory note: the cache shares the SAME live `nn.Module` across instances of one
 per-episode state between episodes); `PersistentPolicy`'s lock makes concurrent
 reuse safe too. Opt out with `create_policy(..., cache_model=False)` for an
 independent live copy.
+### Added: Newton backend domain randomization + sensor-noise hooks
+
+The Newton (GPU) backend gained `randomize()` and `set_obs_noise()`, the
+sim2real pieces it was missing so datasets collected on it do not overfit to
+the default physics constants. `randomize()` mirrors the MuJoCo backend's
+contract (same keyword names and `randomize_physics=False` default) for the
+axes Newton supports: per-shape colors (`shape_color`), directional-light
+orientation, and physics - per-body mass + inertia (`body_mass` /
+`body_inertia`, scaled together so Newton recomputes the inverse mass/inertia
+at finalisation) and per-shape friction (`shape_material_mu`). Multipliers are
+applied to the `ModelBuilder` before the immutable model is finalised and the
+model is rebuilt. A fixed `seed` yields an identical multiplier sequence for a
+given scene (the builder visits bodies/shapes deterministically); the applied
+`mass_scales` / `friction_scales` / `light_direction` are returned in the
+`json` block so callers can log or assert per-episode physics.
+`randomize_positions` is not supported yet and returns an explicit error rather
+than a silent no-op.
+
+`set_obs_noise(joint_pos_std=, joint_vel_std=, camera_jitter_px=, seed=)` adds
+reproducible additive Gaussian noise to `get_observation` joint positions,
+`get_robot_state` positions/velocities, and rendered camera frames (integer
+pixel jitter). `SimEngine` gained a `set_obs_noise` optional override (default
+`NotImplementedError`) alongside `randomize`, and the Newton `describe()`
+advertises both methods.
 
 ### Fixed: RTC inference now forwards `inference_delay` to lerobot's denoiser
 

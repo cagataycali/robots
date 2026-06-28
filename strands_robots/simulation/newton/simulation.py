@@ -47,6 +47,7 @@ from strands_robots.simulation.model_registry import (
 )
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
+from strands_robots.simulation.newton.randomization import DomainRandomizationMixin
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
 from strands_robots.utils import require_optional
 
@@ -88,7 +89,7 @@ def _short_joint_name(label: str) -> str:
     return label.rsplit("/", 1)[-1]
 
 
-class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
+class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine):
     """GPU-native simulation backend built on Newton (Warp / MuJoCo-Warp).
 
     One Newton model per instance. The world is rebuilt whenever robots or
@@ -172,6 +173,15 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         # Parsed mesh geometry keyed by resolved mesh_path, so rebuilds do not
         # re-read mesh assets off disk on every scene mutation.
         self._mesh_cache: dict[str, tuple[Any, Any]] = {}
+        # Domain-randomization spec + applied multipliers (see
+        # strands_robots.simulation.newton.randomization). None until
+        # randomize() is called; applied during _rebuild.
+        self._dr: dict[str, Any] | None = None
+        self._dr_applied: dict[str, Any] | None = None
+        self._dr_light_dir: tuple[float, float, float] | None = None
+        # Additive sensor-noise config + reproducible RNG (set_obs_noise).
+        self._obs_noise: dict[str, float] | None = None
+        self._obs_noise_rng: np.random.Generator | None = None
 
         logger.info("Newton simulation engine initialised (solver=%s)", self._solver_name)
 
@@ -213,6 +223,11 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
             self._state_0 = self._state_1 = self._control = None
             self._joint_order = []
             self._targets = {}
+            self._dr = None
+            self._dr_applied = None
+            self._dr_light_dir = None
+            self._obs_noise = None
+            self._obs_noise_rng = None
         return {"status": "success", "content": [{"text": "Newton world destroyed."}]}
 
     def reset(self) -> dict[str, Any]:
@@ -584,6 +599,10 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                 idx = self._joint_coord_index.get((robot_name, jname))
                 if idx is not None and idx < len(joint_q):
                     obs[jname] = float(joint_q[idx])
+        # Joint-position sensor noise applies only to the float joint entries;
+        # camera frames are added afterwards (and carry their own jitter via the
+        # render path), so the result holds mixed float/ndarray values.
+        obs_out: dict[str, Any] = dict(self._apply_joint_pos_noise(obs))
         if not skip_images:
             from strands_robots.simulation.policy_runner import _extract_frame_ndarray
 
@@ -591,8 +610,8 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                 render_result = self.render(camera_name=cam_name)
                 img = _extract_frame_ndarray(render_result)
                 if img is not None:
-                    obs[cam_name] = img
-        return obs
+                    obs_out[cam_name] = img
+        return obs_out
 
     def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
         """Apply position targets and advance physics by ``n_substeps``.
@@ -1018,7 +1037,8 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         with self._lock:
             sensors = self._nt.sensors
             cam = sensors.SensorTiledCamera(model=self._model)
-            cam.utils.create_default_light(enable_shadows=False)
+            light_dir = self._wp.vec3f(*self._dr_light_dir) if self._dr_light_dir is not None else None
+            cam.utils.create_default_light(enable_shadows=False, direction=light_dir)
             rays = cam.utils.compute_pinhole_camera_rays(w, h, math.radians(fov_deg))
             color = cam.utils.create_color_image_output(w, h, 1)
             q = self._look_at_quat(tuple(eye), tuple(target))
@@ -1034,7 +1054,8 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
             )
             rgba = cam.utils.to_rgba_from_color(color).numpy()
         frame = rgba[0, 0] if rgba.ndim == 5 else rgba[0]
-        return np.ascontiguousarray(frame[..., :3])
+        frame = np.ascontiguousarray(frame[..., :3])
+        return self._maybe_jitter_frame(frame)
 
     # Interactive viewer
 
@@ -1222,6 +1243,7 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                 pos = float(joint_q[q_idx]) if q_idx is not None and q_idx < len(joint_q) else 0.0
                 vel = float(joint_qd[d_idx]) if d_idx is not None and d_idx < len(joint_qd) else 0.0
                 state[jname] = {"position": pos, "velocity": vel}
+        state = self._apply_state_noise(state)
 
         text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
         for jnt, vals in state.items():
@@ -1484,6 +1506,15 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                     "streams a browser dashboard at localhost:port headless)"
                 ),
                 "close_viewer": "() -> dict  (close the interactive viewer)",
+                "randomize": (
+                    "(randomize_colors=True, randomize_lighting=True, randomize_physics=False, "
+                    "mass_range=(0.5, 2.0), friction_range=(0.5, 1.5), color_range=(0.1, 1.0), "
+                    "seed=None) -> dict (domain randomization; json block carries applied multipliers)"
+                ),
+                "set_obs_noise": (
+                    "(joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0, seed=None) -> dict "
+                    "(additive Gaussian sensor noise on observations + rendered frames)"
+                ),
                 "reset": "() -> dict (restore baseline joint configuration)",
                 "step": "(n_steps: int = 1) -> dict",
                 "start_recording": (
@@ -1700,6 +1731,10 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
 
         if self._world.ground_plane:
             builder.add_ground_plane()
+
+        # Apply active domain randomization (mass/friction/colors) to the
+        # builder arrays before the immutable model is finalized.
+        self._apply_domain_randomization(builder)
 
         self._model = builder.finalize(device=self.device)
         # Newton solvers snapshot gravity at construction, and ModelBuilder only

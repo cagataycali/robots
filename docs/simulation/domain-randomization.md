@@ -42,6 +42,12 @@ for episode in range(N):
                              success_fn=my_fn)
 ```
 
+## Newton backend
+
+The Newton (GPU) backend mirrors this `randomize` contract for the axes it
+supports (colors, lighting, physics) and adds `set_obs_noise` for additive
+sensor noise. See [Newton backend](newton.md#domain-randomization-and-sensor-noise).
+
 ## See also
 
 - [Simulation overview](overview.md)

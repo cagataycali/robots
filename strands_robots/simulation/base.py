@@ -1456,6 +1456,15 @@ class SimEngine(ABC):
         """
         raise NotImplementedError("randomize not implemented by this backend")
 
+    def set_obs_noise(self, **kwargs: Any) -> dict[str, Any]:
+        """Configure additive sensor noise on observations.
+
+        Models real-sensor measurement noise (joint encoders, camera frames)
+        so policies are not trained on noise-free observations. Concrete
+        backends define their own parameter signatures. Override per backend.
+        """
+        raise NotImplementedError("set_obs_noise not implemented by this backend")
+
     def get_contacts(self) -> dict[str, Any]:
         """Get contact information. Override per backend."""
         raise NotImplementedError("get_contacts not implemented by this backend")

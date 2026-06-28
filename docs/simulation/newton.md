@@ -267,6 +267,73 @@ When no named cameras are registered the dataset records joint state and action
 only (a valid proprio-only dataset); camera columns are added automatically once
 cameras are registered on the world.
 
+
+## Domain randomization and sensor noise
+
+Sim2real workflows need per-episode variation so policies do not overfit to the
+default physics constants. The Newton backend mirrors the MuJoCo
+`randomize` contract (same keyword names and defaults for the axes it supports)
+and adds `set_obs_noise` for additive Gaussian sensor noise.
+
+```python
+sim = create_simulation("newton", solver="mujoco")
+sim.create_world()
+sim.add_robot("so100")
+
+# Per-episode domain randomization. Physics is opt-in (matches MuJoCo's
+# randomize_physics=False default); colors and lighting are on by default.
+for episode in range(10):
+    sim.reset()
+    result = sim.randomize(
+        randomize_colors=True,
+        randomize_lighting=True,
+        randomize_physics=True,
+        mass_range=(0.8, 1.2),       # multiplicative scale on per-body mass
+        friction_range=(0.5, 1.5),   # multiplicative scale on per-shape friction
+        seed=episode,                # deterministic per episode
+    )
+    scales = result["content"][1]["json"]
+    # scales["mass_scales"], scales["friction_scales"], scales["light_direction"]
+    sim.run_policy(robot_name="so100", policy_provider="mock", n_steps=60)
+```
+
+What each axis changes (applied to the Newton `ModelBuilder` before the
+immutable model is finalised, then rebuilt):
+
+| Axis | What changes | Range param |
+|------|--------------|-------------|
+| `randomize_colors` | Per-shape RGB (`builder.shape_color`) | `color_range` |
+| `randomize_lighting` | Directional-light orientation (re-steered each render) | - |
+| `randomize_physics` | Per-body mass + inertia (`body_mass` / `body_inertia`) and per-shape friction (`shape_material_mu`) | `mass_range`, `friction_range` |
+
+Physics randomization scales mass and inertia together (inertia tracks mass for
+fixed geometry); Newton recomputes the inverse mass/inertia at finalisation.
+**Reproducibility**: a fixed `seed` yields an identical multiplier sequence for a
+given scene, because the builder visits bodies and shapes in a deterministic
+order. The applied multipliers are returned in the `json` block so callers can
+log or assert the per-episode physics. Object-position randomization
+(`randomize_positions`) is not supported by the Newton backend yet; requesting
+it returns an explicit error rather than silently doing nothing.
+
+### Sensor noise
+
+`set_obs_noise` adds additive Gaussian noise so observations carry realistic
+measurement error. It applies to every `get_observation` / `get_robot_state`
+and every rendered camera frame until reconfigured (pass all-zero to disable):
+
+```python
+sim.set_obs_noise(
+    joint_pos_std=0.01,     # radians, added to joint positions
+    joint_vel_std=0.05,     # rad/s, added to joint velocities (get_robot_state)
+    camera_jitter_px=2,     # max integer pixel shift on rendered frames
+    seed=0,                 # reproducible noise stream
+)
+obs = sim.get_observation("so100")   # joint positions now carry +/- noise
+```
+
+`describe()` advertises both `randomize` and `set_obs_noise` so a single call
+surfaces their signatures.
+
 ## Mesh objects
 
 `add_object` accepts triangle-mesh assets in addition to primitives, at parity
