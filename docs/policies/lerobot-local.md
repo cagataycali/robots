@@ -244,6 +244,13 @@ The declared order follows the model config's `image_keys` list when present
 the robot supplies fewer cameras than the policy requires, a `ValueError` is
 raised instead of feeding the model a missing or wrong view.
 
+Image input slots are identified by their declared `FeatureType.VISUAL`, not
+by a substring match on the feature name. A policy may declare image keys that
+do not follow the `observation.images.*` convention (for example MolmoAct2's
+bare `base`/`wrist` keys); such cameras are still routed to their VISUAL slots
+rather than dropped, so the preprocessor never fails with a misleading
+"image_keys missing from observation".
+
 ```python
 policy = create_policy(
     "lerobot_local",

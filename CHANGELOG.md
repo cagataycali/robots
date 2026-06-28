@@ -5,6 +5,37 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `PersistentPolicy` + cache controls, `policy_resident_rss_mb` telemetry [major-perf]
+
+A synchronous persistent worker that eliminates per-episode model-reload
+overhead for multi-rollout loops. Loading a VLA / LeRobot checkpoint (a
+MolmoAct2 SO-100/101 build reads ~1300 weight files into GPU memory) costs a
+minute or two; a loop that rebuilds the policy per episode pays it every time
+and its resident memory oscillates as the model is loaded and dropped.
+
+- `strands_robots.policies.PersistentPolicy(provider, **config)` - a thin,
+  thread-safe wrapper that builds the underlying policy ONCE and is passed to
+  every `run_policy`/`eval_policy` via `policy_object=` for zero-reload reuse.
+  It delegates the full `Policy` contract (chunk-shape introspection, RTC /
+  control-frequency hooks, `reset`, load telemetry) so the runtime drives it
+  exactly as the bare policy. Concurrent inference on one shared handle is
+  serialised behind a per-call lock.
+- `policies.preload(provider, **config)` warms the process-level model cache and
+  reports `load_time_s`, `load_cache_hit`, `resident_rss_mb`, `rss_delta_mb`,
+  plus the ready `PersistentPolicy`. `policies.list_cached()` introspects what is
+  resident; `policies.evict(pretrained_name_or_path=None)` frees one checkpoint
+  (or all) - `clear_model_cache` now accepts an optional checkpoint filter.
+- `run_policy`/`eval_policy` JSON now also carries `policy_resident_rss_mb`
+  (process RSS in MB at result time; `None` when unmeasurable). A flat value
+  across episodes confirms the model stays resident rather than oscillating - the
+  per-episode-reload smell, complementing the existing `policy_load_cache_hit`.
+
+Memory note: the cache shares the SAME live `nn.Module` across instances of one
+`(checkpoint, device)` key. Sequential reuse is safe (`Policy.reset()` clears
+per-episode state between episodes); `PersistentPolicy`'s lock makes concurrent
+reuse safe too. Opt out with `create_policy(..., cache_model=False)` for an
+independent live copy.
+
 ### Fixed: RTC inference now forwards `inference_delay` to lerobot's denoiser
 
 `LerobotLocalPolicy._predict_with_rtc` passed only `prev_chunk_left_over` and

@@ -51,6 +51,13 @@ def test_run_policy_payload_has_telemetry_keys(sim):
     # MockPolicy exposes no load telemetry -> honest defaults.
     assert payload["policy_load_time_s"] == 0.0
     assert payload["policy_load_cache_hit"] is False
+    # Resident RSS is reported so an agent can confirm the model is loaded and,
+    # across a loop, that it is not oscillating (per-episode reload smell). It
+    # is a positive float when measurable; None only on a platform with neither
+    # psutil nor resource.getrusage.
+    assert "policy_resident_rss_mb" in payload
+    rss = payload["policy_resident_rss_mb"]
+    assert rss is None or (isinstance(rss, float) and rss > 0.0)
 
 
 def test_run_policy_echoes_policy_object_telemetry(sim):
@@ -82,3 +89,4 @@ def test_eval_policy_payload_has_telemetry_keys(sim):
     payload = _json_block(ev)
     assert "policy_load_time_s" in payload
     assert "policy_load_cache_hit" in payload
+    assert "policy_resident_rss_mb" in payload

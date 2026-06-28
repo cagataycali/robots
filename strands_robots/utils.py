@@ -233,3 +233,41 @@ def get_search_paths() -> list[Path]:
     if cwd_assets not in paths:
         paths.append(cwd_assets)
     return paths
+
+
+def process_rss_mb() -> float | None:
+    """Current resident set size (RSS) of this process, in megabytes.
+
+    Used to surface ``policy_resident_rss_mb`` telemetry so a caller can see
+    whether a heavy model (e.g. a multi-GB VLA checkpoint) is actually resident
+    after a load - and, across a multi-episode loop, that it stays resident
+    rather than oscillating as it would if the policy were rebuilt per episode.
+
+    Prefers :mod:`psutil` (true *current* RSS, the meaningful "is it resident
+    now" number). Falls back to :func:`resource.getrusage`, which reports peak
+    RSS for the process (``ru_maxrss``) - an over-estimate of current usage, but
+    still a useful floor when psutil is absent. ``ru_maxrss`` is in kilobytes on
+    Linux and bytes on macOS; both are normalised to MB.
+
+    Returns:
+        Resident memory in MB as a float, or ``None`` when neither source is
+        available (e.g. a platform without ``resource``), so callers can omit
+        the field rather than report a misleading zero.
+    """
+    try:
+        import psutil
+
+        return float(psutil.Process().memory_info().rss) / (1024.0 * 1024.0)
+    except (ImportError, OSError):
+        # psutil missing or the /proc read failed; fall back to stdlib resource.
+        pass
+    try:
+        import resource
+        import sys
+
+        maxrss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        # ru_maxrss units differ by platform: bytes on macOS, kilobytes on Linux.
+        divisor = 1024.0 * 1024.0 if sys.platform == "darwin" else 1024.0
+        return float(maxrss) / divisor
+    except (ImportError, ValueError, OSError):
+        return None

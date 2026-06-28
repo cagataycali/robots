@@ -27,6 +27,35 @@ from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_
 
 logger = logging.getLogger(__name__)
 
+
+def _declared_feature_is_image(name: str, feature: Any = None) -> bool:
+    """Return True if a declared input feature is a camera/image (VISUAL) feature.
+
+    Prefers the authoritative ``FeatureType.VISUAL`` carried by the declared
+    ``PolicyFeature`` (a real enum whose ``name`` is a string); falls back to
+    the ``observation.image*`` key-name convention only when no usable type
+    metadata is available. A plain ``"image" in name`` substring test silently
+    misclassifies VISUAL features whose key does not contain the literal
+    ``"image"`` (e.g. MolmoAct2 declares image feature keys such as
+    ``base``/``wrist``), which drops their camera frames from the remapped
+    observation and surfaces later as a confusing "image_keys missing from
+    observation" failure inside the preprocessor.
+
+    Args:
+        name: The declared feature key (e.g. ``observation.images.top``).
+        feature: The declared ``PolicyFeature`` (or any object exposing a
+            ``type`` whose ``name`` is ``"VISUAL"``). ``None`` forces the
+            name-based fallback.
+
+    Returns:
+        True when the feature is an image/visual input feature.
+    """
+    type_name = getattr(getattr(feature, "type", None), "name", None)
+    if isinstance(type_name, str):
+        return type_name == "VISUAL"
+    return "image" in name
+
+
 # Fallback control rate used ONLY when RTC runs without the runtime having
 # called set_control_frequency(). Used to keep a standalone (no-runner) RTC
 # call functional; the runner always plumbs the real rate. A loud one-time
@@ -53,16 +82,29 @@ _MODEL_CACHE: dict[tuple[Any, ...], Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
 
-def clear_model_cache() -> int:
-    """Evict all cached lerobot_local models, freeing their held memory.
+def clear_model_cache(pretrained_name_or_path: str | None = None) -> int:
+    """Evict cached lerobot_local models, freeing their held memory.
+
+    Args:
+        pretrained_name_or_path: When ``None`` (default), evict every entry.
+            When set, evict only the entries loaded from that checkpoint
+            (matched against the second field of each cache key) - lets a caller
+            free one model before loading a different one without dropping other
+            resident checkpoints.
 
     Returns:
         Number of cache entries evicted. Best-effort releases the CUDA caching
         allocator afterwards so freed GPU memory is returned to the driver.
     """
     with _MODEL_CACHE_LOCK:
-        n = len(_MODEL_CACHE)
-        _MODEL_CACHE.clear()
+        if pretrained_name_or_path is None:
+            n = len(_MODEL_CACHE)
+            _MODEL_CACHE.clear()
+        else:
+            doomed = [k for k in _MODEL_CACHE if len(k) > 1 and k[1] == pretrained_name_or_path]
+            for k in doomed:
+                del _MODEL_CACHE[k]
+            n = len(doomed)
     try:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
@@ -1541,7 +1583,7 @@ class LerobotLocalPolicy(Policy):
 
         out: dict[str, Any] = {}
 
-        declared_img_feats = [f for f in self._input_features if "image" in f]
+        declared_img_feats = [f for f, feat in self._input_features.items() if _declared_feature_is_image(f, feat)]
 
         # 1) Map images. Prefer exact short-name match against declared features.
         image_items = [(k, v) for k, v in observation_dict.items() if isinstance(v, np.ndarray) and v.ndim >= 2]
@@ -1785,7 +1827,7 @@ class LerobotLocalPolicy(Policy):
         declared = getattr(cfg, "image_keys", None) if cfg is not None else None
         if isinstance(declared, (list, tuple)) and declared:
             return [str(k) for k in declared]
-        return [feat for feat in self._input_features if "image" in feat]
+        return [feat for feat, feature in self._input_features.items() if _declared_feature_is_image(feat, feature)]
 
     def _resolve_camera_targets(self, cam_names: list[str]) -> dict[str, str]:
         """Map robot/sim camera names to the policy's declared image feature keys.

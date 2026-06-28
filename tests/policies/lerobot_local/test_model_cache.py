@@ -19,6 +19,7 @@ from strands_robots.policies.lerobot_local import molmoact2
 from strands_robots.policies.lerobot_local.policy import (
     LerobotLocalPolicy,
     clear_model_cache,
+    list_cached_models,
 )
 
 
@@ -184,3 +185,40 @@ class TestMolmoAct2ModelCache:
         # cleared between them.
         assert calls[0] is None
         assert calls[1] is None
+
+
+class TestSelectiveEviction:
+    """clear_model_cache(path) evicts one checkpoint, leaving others resident.
+
+    The agent-facing ``policies.evict(path)`` control frees a single model
+    before switching to a different one without dropping every other resident
+    checkpoint - the filter matches the checkpoint field of each cache key.
+    """
+
+    def setup_method(self):
+        clear_model_cache()
+
+    def teardown_method(self):
+        clear_model_cache()
+
+    def test_evict_by_path_removes_only_matching_entry(self):
+        from strands_robots.policies.lerobot_local import policy as policy_mod
+
+        sentinel_a = object()
+        sentinel_b = object()
+        with policy_mod._MODEL_CACHE_LOCK:
+            policy_mod._MODEL_CACHE[("generic", "owner/model-a", "cpu")] = sentinel_a
+            policy_mod._MODEL_CACHE[("generic", "owner/model-b", "cpu")] = sentinel_b
+
+        evicted = clear_model_cache("owner/model-a")
+        assert evicted == 1
+        remaining = {entry["pretrained_name_or_path"] for entry in list_cached_models()}
+        assert remaining == {"owner/model-b"}
+
+    def test_evict_unknown_path_is_a_noop(self):
+        from strands_robots.policies.lerobot_local import policy as policy_mod
+
+        with policy_mod._MODEL_CACHE_LOCK:
+            policy_mod._MODEL_CACHE[("generic", "owner/model-a", "cpu")] = object()
+        assert clear_model_cache("owner/not-loaded") == 0
+        assert len(list_cached_models()) == 1
