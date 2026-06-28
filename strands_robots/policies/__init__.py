@@ -47,6 +47,12 @@ from strands_robots.policies.factory import (
     register_policy,
 )
 from strands_robots.policies.mock import MockPolicy
+from strands_robots.policies.persistent import (
+    PersistentPolicy,
+    evict,
+    list_cached,
+    preload,
+)
 
 __all__ = [
     "Policy",
@@ -58,4 +64,8 @@ __all__ = [
     "register_policy",
     "list_providers",
     "UntrustedRemoteCodeError",
+    "PersistentPolicy",
+    "preload",
+    "list_cached",
+    "evict",
 ]

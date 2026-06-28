@@ -53,16 +53,29 @@ _MODEL_CACHE: dict[tuple[Any, ...], Any] = {}
 _MODEL_CACHE_LOCK = threading.Lock()
 
 
-def clear_model_cache() -> int:
-    """Evict all cached lerobot_local models, freeing their held memory.
+def clear_model_cache(pretrained_name_or_path: str | None = None) -> int:
+    """Evict cached lerobot_local models, freeing their held memory.
+
+    Args:
+        pretrained_name_or_path: When ``None`` (default), evict every entry.
+            When set, evict only the entries loaded from that checkpoint
+            (matched against the second field of each cache key) - lets a caller
+            free one model before loading a different one without dropping other
+            resident checkpoints.
 
     Returns:
         Number of cache entries evicted. Best-effort releases the CUDA caching
         allocator afterwards so freed GPU memory is returned to the driver.
     """
     with _MODEL_CACHE_LOCK:
-        n = len(_MODEL_CACHE)
-        _MODEL_CACHE.clear()
+        if pretrained_name_or_path is None:
+            n = len(_MODEL_CACHE)
+            _MODEL_CACHE.clear()
+        else:
+            doomed = [k for k in _MODEL_CACHE if len(k) > 1 and k[1] == pretrained_name_or_path]
+            for k in doomed:
+                del _MODEL_CACHE[k]
+            n = len(doomed)
     try:
         if torch.cuda.is_available():
             torch.cuda.empty_cache()

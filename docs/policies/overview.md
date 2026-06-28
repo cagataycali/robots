@@ -78,6 +78,7 @@ sim.run_policy(robot_name="so100", instruction="pick up the cube",
 
 - [GR00T](groot.md) - ZMQ server, 27 embodiments, container lifecycle.
 - [LeRobot Local](lerobot-local.md) - in-process HF models, RTC.
+- [Persistent worker](persistent-worker.md) - load once, reuse across rollouts; cache controls + telemetry.
 - [Cosmos 3](cosmos3.md) - NVIDIA Cosmos 3 omnimodal VLA.
 - [cuRobo](curobo.md) - in-process collision-aware motion planning (non-VLA, GPU).
 - [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA, no in-venv ROS 2).
