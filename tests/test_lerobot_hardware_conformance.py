@@ -64,13 +64,20 @@ def _lerobot_registered_types(robots_dir: Path) -> set[str]:
 
 @pytest.fixture(scope="module")
 def strands_hw_types() -> dict[str, str]:
-    """Map strands robot name -> declared lerobot_type (hardware entries only)."""
+    """Map strands robot name -> declared lerobot_type (hardware entries only).
+
+    Excludes entries with ``requires_lerobot_from_source: true`` since those
+    reference LeRobot types not yet available in any PyPI release within the
+    pinned version range. They are valid on a lerobot-from-source install.
+    """
     data = json.loads(REGISTRY_PATH.read_text())
     robots = data.get("robots", data)
     return {
         name: info["hardware"]["lerobot_type"]
         for name, info in robots.items()
-        if isinstance(info.get("hardware"), dict) and info["hardware"].get("lerobot_type")
+        if isinstance(info.get("hardware"), dict)
+        and info["hardware"].get("lerobot_type")
+        and not info["hardware"].get("requires_lerobot_from_source")
     }
 
 
@@ -111,3 +118,28 @@ def test_full_lerobot_hardware_coverage(strands_hw_types: dict[str, str], lerobo
         "LeRobot robot types not reachable from any strands registry entry "
         f"(add a hardware entry with this lerobot_type): {sorted(missing)}"
     )
+
+
+def test_from_source_entries_are_documented() -> None:
+    """Entries with ``requires_lerobot_from_source`` must declare the expected type.
+
+    This guards against adding a from-source entry without documenting which
+    unreleased lerobot_type it maps to. When the relevant LeRobot release lands
+    on PyPI, remove the flag and the entries rejoin the standard conformance check.
+    """
+    data = json.loads(REGISTRY_PATH.read_text())
+    robots = data.get("robots", data)
+    from_source = {
+        name: info["hardware"].get("lerobot_type")
+        for name, info in robots.items()
+        if isinstance(info.get("hardware"), dict) and info["hardware"].get("requires_lerobot_from_source")
+    }
+    # Each from-source entry must still declare a lerobot_type
+    missing_type = {name for name, lt in from_source.items() if not lt}
+    assert not missing_type, (
+        "Entries with requires_lerobot_from_source=true must still declare "
+        f"hardware.lerobot_type: {sorted(missing_type)}"
+    )
+    # Sanity: at least verify the expected entries are present
+    assert "rebot_b601" in from_source
+    assert "bi_rebot_b601" in from_source
