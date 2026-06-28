@@ -77,10 +77,10 @@
       ]
     },
     "hope_jr": {
-      "description": "Hope Junior arm",
+      "description": "HopeJR Arm (high-DOF anthropomorphic arm, Feetech)",
       "category": "arm",
       "hardware": {
-        "lerobot_type": "hope_jr"
+        "lerobot_type": "hope_jr_arm"
       }
     },
     "kinova_gen3": {
@@ -131,7 +131,7 @@
       "description": "OMX Robot Arm (ROBOTIS, CAN bus motors)",
       "category": "arm",
       "hardware": {
-        "lerobot_type": "omx"
+        "lerobot_type": "omx_follower"
       },
       "aliases": [
         "omx_follower",
@@ -153,7 +153,10 @@
         "enactic_openarm",
         "open_arm",
         "openarm_v10"
-      ]
+      ],
+      "hardware": {
+        "lerobot_type": "openarm_follower"
+      }
     },
     "panda": {
       "description": "Franka Emika Panda (7-DOF + gripper)",
@@ -370,7 +373,7 @@
       "description": "Bi-manual OpenArm (dual-arm coordination)",
       "category": "bimanual",
       "hardware": {
-        "lerobot_type": "bi_openarm"
+        "lerobot_type": "bi_openarm_follower"
       },
       "aliases": [
         "bi_openarm_follower",
@@ -821,7 +824,7 @@
       "description": "EarthRover Mini Plus (mobile outdoor navigation)",
       "category": "mobile",
       "hardware": {
-        "lerobot_type": "earthrover"
+        "lerobot_type": "earthrover_mini_plus"
       },
       "aliases": [
         "earth_rover",
@@ -962,6 +965,53 @@
       },
       "aliases": [
         "oxe_google"
+      ]
+    },
+    "hope_jr_hand": {
+      "description": "HopeJR Hand (dexterous anthropomorphic hand, Feetech)",
+      "category": "hand",
+      "hardware": {
+        "lerobot_type": "hope_jr_hand"
+      },
+      "aliases": [
+        "hopejr_hand",
+        "hope_junior_hand"
+      ]
+    },
+    "rebot_b601": {
+      "description": "Seeed Studio reBot B601-DM (6-DOF arm + gripper, Damiao CAN)",
+      "category": "arm",
+      "joints": 7,
+      "hardware": {
+        "lerobot_type": "rebot_b601_follower"
+      },
+      "aliases": [
+        "rebot_b601_follower",
+        "seeed_rebot_b601",
+        "b601"
+      ]
+    },
+    "bi_rebot_b601": {
+      "description": "Bimanual Seeed reBot B601-DM (dual 6-DOF arms, Damiao CAN)",
+      "category": "bimanual",
+      "joints": 14,
+      "hardware": {
+        "lerobot_type": "bi_rebot_b601_follower"
+      },
+      "aliases": [
+        "bi_rebot_b601_follower",
+        "dual_rebot_b601"
+      ]
+    },
+    "lekiwi_client": {
+      "description": "LeKiwi networked client (drives a remote LeKiwi host over ZMQ)",
+      "category": "mobile_manip",
+      "hardware": {
+        "lerobot_type": "lekiwi_client"
+      },
+      "aliases": [
+        "lekiwi_remote",
+        "lekiwi_net"
       ]
     }
   }

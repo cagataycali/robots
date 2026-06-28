@@ -24,6 +24,7 @@ MUJOCO_GL=egl python examples/01_sim_hello_world.py
 | 07 | [`07_post_tune_any_policy.py`](07_post_tune_any_policy.py) | `create_trainer` + `TrainSpec` (record→train→load) | No | No |
 | -- | [`vla_g1_workflow.py`](vla_g1_workflow.py) | VLA-on-G1: record -> GR00T fine-tune -> WBC deploy | No | Optional (tune) |
 | — | [`vera_mimicgen_panda/`](vera_mimicgen_panda/) | VERA MimicGen → Panda (eef-delta + IK bridge) | No | **Yes** (server) |
+| -- | [`lerobot_hardware_catalog.py`](lerobot_hardware_catalog.py) | `Robot()` covers the whole LeRobot hardware catalog (name -> lerobot_type) | No | No |
 
 ## What each example shows vs raw lerobot
 
