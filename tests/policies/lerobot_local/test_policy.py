@@ -1396,6 +1396,89 @@ class TestRTCInference:
         assert "prev_chunk_left_over" in call_kwargs
         assert call_kwargs["prev_chunk_left_over"].shape == (15, 6)
 
+    def test_predict_with_rtc_forwards_inference_delay(self):
+        """RTC inference must forward inference_delay to predict_action_chunk.
+
+        Regression: lerobot's RTC denoiser (pi0/pi0.5/SmolVLA) reads
+        ``inference_delay`` from the predict_action_chunk kwargs and uses it as
+        the ``start`` argument of ``get_prefix_weights`` to freeze the committed
+        action prefix. The wrapper previously passed only prev_chunk_left_over +
+        execution_horizon, so the denoiser received ``inference_delay=None`` and
+        ``min(None, end)`` raised TypeError once a prefix existed. The kwarg must
+        be present on the first call (delay==0 in the synchronous loop) too.
+        """
+        policy = _make_policy()
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        policy._rtc_prev_chunk = None
+        policy.actions_per_step = 1
+        # Synchronous loop: world paused during inference -> deterministic 0.
+        policy.set_rtc_observed_delay(0)
+
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk.return_value = torch.randn(1, 20, 6)
+        policy._policy = mock_policy
+
+        policy._predict_with_rtc({})
+        call_kwargs = mock_policy.predict_action_chunk.call_args[1]
+        assert "inference_delay" in call_kwargs
+        assert call_kwargs["inference_delay"] == 0
+        # Forward the counted delay verbatim on subsequent (prefixed) calls.
+        policy._rtc_prev_chunk = torch.randn(15, 6)
+        policy.set_rtc_observed_delay(3)
+        policy._predict_with_rtc({})
+        call_kwargs = mock_policy.predict_action_chunk.call_args[1]
+        assert call_kwargs["inference_delay"] == 3
+        assert "prev_chunk_left_over" in call_kwargs
+
+    def test_predict_with_rtc_kwargs_satisfy_lerobot_rtc_denoiser(self):
+        """The exact kwargs the wrapper sends must not crash lerobot's RTC.
+
+        Faithful end-to-end guard against drift: route the wrapper's
+        predict_action_chunk kwargs through lerobot's REAL
+        ``RTCProcessor.denoise_step`` (the path pi0/pi0.5/SmolVLA take). Before
+        the fix this raised ``TypeError: '<' not supported between instances of
+        'int' and 'NoneType'`` from ``get_prefix_weights`` the moment a
+        prev_chunk_left_over prefix was present. Self-skips when lerobot is
+        absent so the file's no-lerobot invariant holds.
+        """
+        rtc_mod = pytest.importorskip("lerobot.policies.rtc.modeling_rtc")
+        rtc_cfg_mod = pytest.importorskip("lerobot.policies.rtc.configuration_rtc")
+        processor = rtc_mod.RTCProcessor(rtc_cfg_mod.RTCConfig())
+
+        captured = {}
+
+        def fake_predict_action_chunk(_batch, **kwargs):
+            # Mirror lerobot pi0/SmolVLA sample_actions: when a prefix exists the
+            # denoiser runs with the supplied inference_delay. None -> TypeError.
+            captured.update(kwargs)
+            prev = kwargs.get("prev_chunk_left_over")
+            if prev is not None:
+                processor.denoise_step(
+                    x_t=torch.zeros(20, 6),
+                    prev_chunk_left_over=prev,
+                    inference_delay=kwargs.get("inference_delay"),
+                    time=0.5,
+                    original_denoise_step_partial=lambda xt: torch.zeros_like(xt),
+                    execution_horizon=kwargs.get("execution_horizon"),
+                )
+            return torch.randn(1, 20, 6)
+
+        policy = _make_policy()
+        policy._rtc_enabled = True
+        policy._rtc_execution_horizon = 10
+        policy._rtc_prev_chunk = torch.randn(15, 6)  # prefix present -> guidance runs
+        policy.actions_per_step = 1
+        policy.set_rtc_observed_delay(0)
+
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk.side_effect = fake_predict_action_chunk
+        policy._policy = mock_policy
+
+        # Must not raise: inference_delay is now an int, not None.
+        policy._predict_with_rtc({})
+        assert captured["inference_delay"] == 0
+
     def test_predict_with_rtc_stores_leftover(self):
         """After RTC inference, leftover should be stored for next call."""
         policy = _make_policy()

@@ -901,6 +901,10 @@ class Robot(TeleopMixin, AgentTool):
         duration: float = 30.0,
     ) -> None:
         """Execute robot task in background thread (internal method)."""
+        # resolve_chunk_length lives in the light policies.base module (no torch);
+        # imported lazily to match this file's policy-import convention.
+        from .policies.base import resolve_chunk_length
+
         try:
             # Update task state
             self._task_state.status = TaskStatus.CONNECTING
@@ -928,6 +932,15 @@ class Robot(TeleopMixin, AgentTool):
             logger.info(f"Starting task: '{instruction}' on {self.tool_name_str}")
             logger.info(f"Using policy: {policy_provider} on {policy_host}:{policy_port}")
 
+            # Real-Time Chunking contract (mirror PolicyRunner._run_policy_rollout
+            # in strands_robots/simulation/policy_runner.py): tell the policy the
+            # control rate ONCE before the rollout so RTC-capable providers
+            # (pi0/pi0.5/SmolVLA/MolmoAct2) convert their inference latency into a
+            # correct count of action steps and blend chunk seams identically to
+            # sim. Without it a wrong assumed rate corrupts RTC blending at every
+            # frequency except the assumed one. No-op for non-RTC policies.
+            policy_instance.set_control_frequency(self.control_frequency)
+
             self._task_state.status = TaskStatus.RUNNING
             start_time = time.time()
 
@@ -943,12 +956,29 @@ class Robot(TeleopMixin, AgentTool):
                 # is enabled). Best-effort: never blocks or breaks the loop.
                 self._publish_ros_telemetry(observation)
 
+                # Synchronous control loop: observe -> infer -> apply. The arm
+                # holds its last commanded position during inference (we issue no
+                # servo motion mid-inference), so exactly 0 control steps elapse
+                # between issuing the query and applying its first action. A
+                # counted 0 (not a wall-clock estimate) is the deterministic RTC
+                # seam offset for this loop, matching the synchronous sim runner.
+                # No-op for non-RTC policies. Drivers that coast servos during
+                # inference would need a non-zero counted delay here instead.
+                policy_instance.set_rtc_observed_delay(0)
+
                 # Get actions from policy
                 robot_actions = await policy_instance.get_actions(observation, instruction)
 
-                # Execute actions from chunk with proper timing control
-                # Wait between actions for smooth execution
-                for action_dict in robot_actions[: self.action_horizon]:
+                # Consume the chunk by the policy's own re-query interval rather
+                # than a raw action_horizon slice. resolve_chunk_length ignores
+                # action_horizon for RTC policies (they own execution_horizon;
+                # stretching/shrinking it silently degrades cross-chunk blending
+                # to open-loop replay) and returns max(action_horizon,
+                # execution_horizon) for non-RTC policies, so the prior
+                # robot_actions[:self.action_horizon] behaviour is preserved for
+                # single-step and open-loop chunked providers.
+                chunk_len = resolve_chunk_length(policy_instance, self.action_horizon)
+                for action_dict in robot_actions[:chunk_len]:
                     if self._task_state.status != TaskStatus.RUNNING:
                         break
                     await asyncio.to_thread(self.robot.send_action, action_dict)

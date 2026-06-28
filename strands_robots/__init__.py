@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     )
     from strands_robots.streaming_dataset import StreamingDatasetReader
     from strands_robots.teleoperator import Teleoperator
+    from strands_robots.tools.download_assets import download_assets
     from strands_robots.tools.gr00t_inference import gr00t_inference
     from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
     from strands_robots.tools.lerobot_camera import lerobot_camera
@@ -66,7 +67,12 @@ if TYPE_CHECKING:
     from strands_robots.tools.lerobot_train import lerobot_train
     from strands_robots.tools.pose_tool import pose_tool
     from strands_robots.tools.robot_mesh import robot_mesh
+    from strands_robots.tools.run_policy import run_policy
     from strands_robots.tools.serial_tool import serial_tool
+    from strands_robots.tools.train_policy import train_policy
+    from strands_robots.tools.use_lerobot import use_lerobot
+    from strands_robots.tools.use_ros import use_ros
+    from strands_robots.tools.use_rtps import use_rtps
 
 # ------------------------------------------------------------------
 # Light-weight imports - no torch / lerobot / mujoco dependency
@@ -99,13 +105,19 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "SimObject": ("strands_robots.simulation", "SimObject"),
     "SimCamera": ("strands_robots.simulation", "SimCamera"),
     # Tools
+    "download_assets": ("strands_robots.tools.download_assets", "download_assets"),
     "gr00t_inference": ("strands_robots.tools.gr00t_inference", "gr00t_inference"),
     "lerobot_calibrate": ("strands_robots.tools.lerobot_calibrate", "lerobot_calibrate"),
     "lerobot_camera": ("strands_robots.tools.lerobot_camera", "lerobot_camera"),
     "lerobot_teleoperate": ("strands_robots.tools.lerobot_teleoperate", "lerobot_teleoperate"),
     "lerobot_train": ("strands_robots.tools.lerobot_train", "lerobot_train"),
     "pose_tool": ("strands_robots.tools.pose_tool", "pose_tool"),
+    "run_policy": ("strands_robots.tools.run_policy", "run_policy"),
     "serial_tool": ("strands_robots.tools.serial_tool", "serial_tool"),
+    "train_policy": ("strands_robots.tools.train_policy", "train_policy"),
+    "use_lerobot": ("strands_robots.tools.use_lerobot", "use_lerobot"),
+    "use_ros": ("strands_robots.tools.use_ros", "use_ros"),
+    "use_rtps": ("strands_robots.tools.use_rtps", "use_rtps"),
     # Robot mesh coordination tool (Device Connect dispatch + mesh fallback)
     "robot_mesh": ("strands_robots.tools.robot_mesh", "robot_mesh"),
     # Device Connect integration - wraps robots as Device Connect devices
@@ -140,12 +152,18 @@ __all__ = [
     "create_simulation",
     "list_backends",
     "register_backend",
+    "download_assets",
     "gr00t_inference",
     "lerobot_camera",
     "lerobot_teleoperate",
     "lerobot_train",
     "lerobot_calibrate",
+    "run_policy",
     "serial_tool",
+    "train_policy",
+    "use_lerobot",
+    "use_ros",
+    "use_rtps",
     "pose_tool",
     "robot_mesh",
     "init_device_connect",

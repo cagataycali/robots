@@ -264,3 +264,47 @@ def test_tool_spec_schema_has_expected_shape() -> None:
     assert "type" in _TOOL_SPEC_SCHEMA
     assert "properties" in _TOOL_SPEC_SCHEMA
     assert "required" in _TOOL_SPEC_SCHEMA
+
+
+# Description vs. enum drift contract
+#
+# The ``tool_spec`` description string is on the LLM hot path: an agent
+# discovers the available actions from this text, so an action that is in the
+# enum (and therefore dispatchable) but absent from the description is
+# effectively invisible. This is exactly how the three [Benchmark] actions went
+# undiscoverable while the "Actions (N total)" count drifted. These two checks
+# pin the description to the enum so the next added action fails CI until it is
+# documented.
+
+
+def test_tool_spec_description_mentions_every_enum_action(sim: Simulation) -> None:
+    """Every action in the enum must appear by name in the tool_spec description.
+
+    Catches the drift where a dispatchable action (e.g. the [Benchmark] trio) is
+    added to tool_spec.json + a handler but never surfaced in the human/LLM
+    description, leaving it undiscoverable.
+    """
+    description = sim.tool_spec["description"]
+    enum = sim.tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"]
+
+    # Longest-name-first so a substring action (e.g. "render") does not mask a
+    # genuinely-missing longer action (e.g. "render_all") during the membership
+    # scan. We assert exact whole-token presence via word boundaries.
+    missing = [a for a in enum if not re.search(rf"\b{re.escape(a)}\b", description)]
+    assert not missing, (
+        f"tool_spec description must name every dispatchable enum action; undocumented: {sorted(missing)}"
+    )
+
+
+def test_tool_spec_description_action_count_matches_enum(sim: Simulation) -> None:
+    """The "Actions (N total)" count in the description must equal len(enum)."""
+    description = sim.tool_spec["description"]
+    enum = sim.tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"]
+
+    m = re.search(r"Actions \((\d+) total\)", description)
+    assert m is not None, "tool_spec description must state 'Actions (N total)'"
+    stated = int(m.group(1))
+    assert stated == len(enum), (
+        f"tool_spec description says {stated} actions but the enum has {len(enum)}; "
+        "update the count when adding/removing an action."
+    )

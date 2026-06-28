@@ -5,6 +5,55 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: RTC inference now forwards `inference_delay` to lerobot's denoiser
+
+`LerobotLocalPolicy._predict_with_rtc` passed only `prev_chunk_left_over` and
+`execution_horizon` to lerobot's `predict_action_chunk`, omitting the
+`inference_delay` kwarg that the RTC denoiser (pi0, pi0.5, SmolVLA) requires. It
+is the `start` argument of `RTCProcessor.get_prefix_weights(start, end, total)`,
+which freezes the first `d` committed actions of the new chunk to the previous
+chunk's prefix and linearly blends `d..execution_horizon`. With it omitted the
+denoiser received `inference_delay=None`, and `min(None, end)` raised
+`TypeError: '<' not supported between instances of 'int' and 'NoneType'` the
+moment a previous-chunk prefix existed (the 2nd inference onward) - so a real
+flow-matching RTC policy crashed on its second chunk. The existing unit tests
+missed it because they mock `predict_action_chunk` with a static tensor that
+ignores its kwargs.
+
+The wrapper now resolves the delay (the deterministic count from
+`set_rtc_observed_delay`, else a wall-clock p95 estimate over PRIOR calls)
+BEFORE inference and forwards it as `inference_delay` on every call, so the
+prefix-attention guidance is computed with the correct freeze count and the
+chunk seam blends identically in sim and on hardware. A regression test routes
+the wrapper's exact kwargs through lerobot's real `RTCProcessor.denoise_step`
+and fails (TypeError) on the pre-fix code.
+
+
+### Feature: full RewardModelConfig parity with lerobot (dynamic reward-type discovery)
+
+`LerobotTrainer` reward-model training (`TrainSpec.extra["reward_model"]`) now
+reaches EVERY reward model lerobot registers on its `RewardModelConfig` choice
+registry, not just SARM. The valid type set and each type's configurable fields
+are read live from `RewardModelConfig.get_known_choices()` and the resolved
+config dataclass (the same zero-maintenance discovery Robot / Teleop / Camera /
+Policy already use), so `robometer`, `topreward`, and `reward_classifier` - plus
+any future or plugin-registered reward type - validate and build with no strands
+change:
+
+- The previously hardcoded reward-type list and SARM-biased friendly-key set are
+  gone. Friendly `extra["reward_model"]` keys are now the chosen type's OWN
+  config fields, so each type is configurable with its own knobs (e.g.
+  robometer's `default_task` / `success_threshold`, the classifier's
+  `num_classes`). Cross-type fields (e.g. SARM's `annotation_mode` on
+  `robometer`) are rejected with the list of that type's configurable fields.
+- A static fallback (SARM keys, the four known types) keeps `validate()`
+  informative when `lerobot.rewards` is absent (lerobot < 0.5.2), where
+  reward-model training cannot run anyway.
+- Added a source-AST parity guard that scans the installed lerobot's reward
+  sources for `register_subclass` sites and asserts strands' discovery matches
+  exactly; it self-skips when `lerobot.rewards` is unavailable.
+
+
 ### Feature: Newton backend scene-discovery and per-joint state parity
 
 The Newton GPU backend gained the discovery and state-introspection methods the
@@ -83,6 +132,30 @@ model is still one live module shared across instances with the same load key,
 so concurrent (not sequential) reuse should still opt out with
 `cache_model=False`.
 
+### Fixed: hardware control loop honours the RTC contract (sim/real parity)
+
+`HardwareRobot._execute_task_async` (the real-robot rollout loop) drove the arm
+with a raw `robot_actions[:action_horizon]` slice and never told the policy its
+control clock, so RTC-capable providers (pi0, pi0.5, SmolVLA, MolmoAct2) fell
+back to a hardcoded assumed rate and mis-blended every chunk seam at any control
+frequency except the assumed one - a policy validated in sim behaved differently
+on the physical arm. The loop now mirrors the synchronous sim runner contract:
+
+- `policy.set_control_frequency(control_frequency)` is called once before the
+  rollout so latency-sensitive providers convert inference latency into the
+  correct count of action steps.
+- `policy.set_rtc_observed_delay(0)` is set before each inference. The hardware
+  loop is synchronous (observe -> infer -> apply) and issues no servo motion
+  during inference, so exactly 0 control steps elapse - a counted, deterministic
+  seam offset, not a wall-clock estimate. Drivers that coast servos during
+  inference would supply a non-zero counted delay here instead.
+- Chunk consumption now goes through `resolve_chunk_length(policy,
+  action_horizon)` instead of the raw slice: RTC policies are re-queried at
+  exactly their `execution_horizon` (so cross-chunk blending engages) while
+  single-step and open-loop chunked providers keep their prior
+  `max(action_horizon, execution_horizon)` behaviour (a no-op for them).
+
+Sim and hardware now share one RTC contract.
 
 ### Correctness: `run_policy` episode-count contract + `verify_dataset_episodes`
 

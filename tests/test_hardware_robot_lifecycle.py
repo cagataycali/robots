@@ -26,6 +26,7 @@ import pytest
 
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState, TaskStatus
+from strands_robots.policies.base import Policy
 
 
 class _FakeLeRobot:
@@ -62,13 +63,26 @@ class _FakeLeRobot:
 
 
 class _StubPolicy:
-    """Deterministic policy: returns a fixed action chunk each step."""
+    """Deterministic policy: returns a fixed action chunk each step.
+
+    Records the Real-Time Chunking contract calls (``set_control_frequency`` /
+    ``set_rtc_observed_delay``) the control loop now issues, mirroring the
+    no-op base ``Policy`` hooks real providers inherit.
+    """
 
     def __init__(self) -> None:
         self.state_keys: list[str] | None = None
+        self.control_frequency_calls: list[float] = []
+        self.observed_delays: list[int | None] = []
 
     def set_robot_state_keys(self, keys: list[str]) -> None:
         self.state_keys = keys
+
+    def set_control_frequency(self, hz: float) -> None:
+        self.control_frequency_calls.append(hz)
+
+    def set_rtc_observed_delay(self, steps: int | None) -> None:
+        self.observed_delays.append(steps)
 
     async def get_actions(self, observation: dict[str, Any], instruction: str) -> list[dict[str, Any]]:
         return [{"j0.pos": 0.1}, {"j1.pos": 0.2}]
@@ -355,6 +369,118 @@ class TestExecuteTaskAsync:
         asyncio.run(hw._execute_task_async("pick", policy_port=5555, duration=0.01))
         assert hw._task_state.status == TaskStatus.ERROR
         assert "Failed to initialize policy" in hw._task_state.error_message
+        hw.cleanup()
+
+
+class _RtcChunkPolicy(Policy):
+    """RTC-capable policy: emits a 5-action chunk but owns a 2-step re-query.
+
+    ``supports_rtc`` + ``execution_horizon == 2`` mean a correct consumer
+    (``resolve_chunk_length``) executes exactly 2 actions before re-querying,
+    regardless of the caller's ``action_horizon`` (the RTC policy owns the
+    interval). It records the control rate and observed-delay the control loop
+    supplies via the base ``Policy`` RTC hooks.
+    """
+
+    supports_rtc = True
+    actions_per_step = 5  # trained chunk length emitted by get_actions
+
+    def __init__(self) -> None:
+        self.state_keys: list[str] | None = None
+        self.control_frequency_calls: list[float] = []
+        self.observed_delays: list[int | None] = []
+
+    @property
+    def provider_name(self) -> str:
+        return "rtc-test"
+
+    @property
+    def requires_images(self) -> bool:
+        return False
+
+    @property
+    def execution_horizon(self) -> int:
+        # RTC re-query interval, deliberately shorter than the 5-action chunk.
+        return 2
+
+    def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        self.state_keys = robot_state_keys
+
+    def set_control_frequency(self, hz: float) -> None:
+        self.control_frequency_calls.append(hz)
+
+    def set_rtc_observed_delay(self, steps: int | None) -> None:
+        self.observed_delays.append(steps)
+
+    async def get_actions(self, observation_dict, instruction, **kwargs):
+        return [{f"j{i}.pos": 0.1 * i} for i in range(self.actions_per_step)]
+
+
+@pytest.mark.timeout(30)
+class TestExecuteTaskAsyncRtcContract:
+    """Hardware control loop honours the same RTC contract as the sim runner.
+
+    Mirrors ``tests/simulation/test_policy_runner_async_rtc.py`` for the real-
+    robot path: the loop must set the control frequency once before the rollout,
+    supply a counted (zero) observed-delay per inference, and size each chunk by
+    the policy's RTC ``execution_horizon`` rather than the raw ``action_horizon``
+    slice. Pre-fix this consumed the full 5-action chunk (``[:action_horizon]``
+    with ``action_horizon == 8``); the fix consumes exactly ``execution_horizon``
+    (2) per query.
+    """
+
+    def _run_one_iteration(self, monkeypatch, policy: Policy, *, control_frequency: float = 100.0):
+        fake = _FakeLeRobot(connected=False)
+        hw = _make_robot(fake, control_frequency=control_frequency)
+
+        clock = {"now": 0.0}
+        monkeypatch.setattr(
+            "strands_robots.hardware_robot.time.time",
+            lambda: clock["now"],
+        )
+
+        # Advance the clock past the duration once the chunk is fetched so the
+        # loop runs exactly one observe->infer->apply iteration.
+        orig_get_actions = policy.get_actions
+
+        async def _advancing_get_actions(observation_dict, instruction, **kwargs):
+            actions = await orig_get_actions(observation_dict, instruction, **kwargs)
+            clock["now"] += 100.0
+            return actions
+
+        policy.get_actions = _advancing_get_actions  # type: ignore[method-assign]
+
+        async def _fake_get_policy(*a, **k):
+            return policy
+
+        hw._get_policy = _fake_get_policy  # type: ignore[assignment]
+        asyncio.run(hw._execute_task_async("pick", policy_port=5555, duration=0.05))
+        return hw, fake
+
+    def test_sets_control_frequency_once_before_loop(self, monkeypatch):
+        policy = _RtcChunkPolicy()
+        hw, _ = self._run_one_iteration(monkeypatch, policy, control_frequency=100.0)
+        assert hw._task_state.status == TaskStatus.COMPLETED
+        # Set exactly once, before the rollout, with the loop's control rate.
+        assert policy.control_frequency_calls == [100.0]
+        hw.cleanup()
+
+    def test_supplies_zero_observed_delay_per_inference(self, monkeypatch):
+        policy = _RtcChunkPolicy()
+        hw, _ = self._run_one_iteration(monkeypatch, policy)
+        # Synchronous loop: exactly 0 control steps elapse during inference.
+        assert policy.observed_delays, "policy was never queried"
+        assert all(d == 0 for d in policy.observed_delays), policy.observed_delays
+        hw.cleanup()
+
+    def test_consumes_rtc_execution_horizon_not_action_horizon(self, monkeypatch):
+        policy = _RtcChunkPolicy()
+        hw, fake = self._run_one_iteration(monkeypatch, policy)
+        # action_horizon defaults to 8 and the chunk is 5 actions, so the old
+        # robot_actions[:self.action_horizon] slice would have applied all 5.
+        # The RTC contract caps consumption at execution_horizon (2).
+        assert len(fake.sent_actions) == 2
+        assert hw._task_state.step_count == 2
         hw.cleanup()
 
 

@@ -101,7 +101,7 @@ supports and **ignores the rest** (the same tolerance rule as
 | `extra["sft_toml"]` / `extra["cosmos_root"]` | recipe + checkout | Cosmos |
 | `extra["relative_actions"]` | train pi0-family with delta actions | lerobot `--policy.use_relative_actions=true` (pi0/pi05/pi0_fast) |
 | `extra["sample_weighting"]` | RA-BC per-sample loss weighting dict | lerobot `cfg.sample_weighting` (`--sample_weighting.*`) |
-| `extra["reward_model"]` | train a reward model (SARM) instead of a policy | lerobot `cfg.reward_model` (`--reward_model.*`); requires lerobot >= 0.5.2 |
+| `extra["reward_model"]` | train a reward model (`sarm` / `robometer` / `topreward` / `reward_classifier`) instead of a policy | lerobot `cfg.reward_model` (`--reward_model.*`); requires lerobot >= 0.5.2 |
 
 ## From an agent (natural language)
 
@@ -210,10 +210,18 @@ trainer.train(TrainSpec(
 ))
 ```
 
-`extra["reward_model"]` accepts `type` (default `sarm`), `annotation_mode`
-(`single_stage` / `dense_only` / `dual`), `image_key`, and `state_key`. The
-policy-only knobs (`sample_weighting`, `relative_actions`, non-`full` `method`)
-are rejected on a reward-model run rather than silently ignored.
+`extra["reward_model"]` works for every reward model lerobot registers on its
+`RewardModelConfig` choice registry - `sarm` (default), `robometer`, `topreward`,
+and `reward_classifier` today, plus any new type a future lerobot or a plugin
+adds, with no strands change needed. Besides `type`, the dict accepts that
+type's OWN config fields: e.g. SARM's `annotation_mode`
+(`single_stage` / `dense_only` / `dual`), `image_key`, `state_key`; robometer /
+topreward's `default_task`, `success_threshold`, `max_frames`; the classifier's
+`num_classes`, `hidden_dim`. Fields that do not belong to the chosen type (e.g.
+SARM's `annotation_mode` on `robometer`) are rejected with the list of that
+type's configurable fields. The policy-only knobs (`sample_weighting`,
+`relative_actions`, non-`full` `method`) are rejected on a reward-model run
+rather than silently ignored.
 
 A trained SARM can also be queried for a dense task-progress score in `[0, 1]`
 (e.g. as an eval-time signal):
