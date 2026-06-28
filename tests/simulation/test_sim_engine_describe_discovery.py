@@ -158,6 +158,26 @@ class TestDescribeABC:
         }
         assert expected_methods.issubset(set(desc["methods"].keys()))
 
+    def test_describe_lists_rollout_family_siblings(self):
+        """describe() advertises the whole rollout family, not just run_policy.
+
+        ``run_policy`` and ``start_policy`` were discoverable, but their
+        siblings ``eval_policy`` (multi-episode success-rate evaluation) and
+        ``replay_episode`` (replay a recorded LeRobotDataset episode) were not
+        - so a caller enumerating ``describe()["methods"]`` could not learn the
+        evaluation or replay entry points without guessing the names. They are
+        concrete backend-agnostic facades on the base engine and belong on the
+        discovery surface alongside ``run_policy``.
+        """
+        engine = _make_minimal_engine()
+        methods = engine.describe()["methods"]
+        for name in ("run_policy", "start_policy", "eval_policy", "replay_episode"):
+            assert name in methods, f"describe() omits rollout-family method {name!r}"
+        # Advertised signatures name the real first parameters so a caller can
+        # invoke them without reading the source.
+        assert "n_episodes" in methods["eval_policy"]
+        assert "repo_id" in methods["replay_episode"]
+
 
 @pytest.mark.skipif(
     not pytest.importorskip("mujoco", reason="MuJoCo not installed"),
@@ -183,6 +203,8 @@ class TestDescribeMuJoCo:
             assert desc["world_created"] is True
             assert isinstance(desc["cameras"], list)
             assert "get_robot_state" in desc["methods"]
+            for name in ("eval_policy", "replay_episode"):
+                assert name in desc["methods"], f"describe() omits {name!r}"
         finally:
             sim.destroy()
 

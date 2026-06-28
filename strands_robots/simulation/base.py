@@ -1494,6 +1494,16 @@ class SimEngine(ABC):
                 "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
                 "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, reset_between=True, ...) -> dict",
                 "start_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
+                "eval_policy": (
+                    "(robot_name: str, policy_provider='mock', n_episodes=1, "
+                    "max_steps=300, success_fn=None, ...) -> dict  # multi-episode "
+                    "success-rate evaluation (the rollout sibling of run_policy)"
+                ),
+                "replay_episode": (
+                    "(repo_id: str, robot_name=None, episode=0, root=None, "
+                    "speed=1.0, action_key_map=None) -> dict  # replay a recorded "
+                    "LeRobotDataset episode through the sim"
+                ),
                 "list_robots": "() -> list[str]",
                 "render": "(camera_name='default', width=None, height=None) -> dict",
                 "reset": "() -> dict  # during recording, flushes the buffered rollout as one episode before resetting",
