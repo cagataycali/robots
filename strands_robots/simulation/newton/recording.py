@@ -51,9 +51,8 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         default_width: int
         default_height: int
 
-        def render(
-            self, camera_name: str = ..., width: int | None = ..., height: int | None = ...
-        ) -> dict[str, Any]: ...
+        def render(self, camera_name: str = ..., width: int | None = ..., height: int | None = ...) -> dict[str, Any]:
+            """Type-only stub for the engine-provided render method."""
 
     def start_recording(
         self,
@@ -106,6 +105,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
 
             _has_lerobot = _check_lerobot()
         except ImportError:
+            # lerobot extra not installed; handled by the _has_lerobot guard below.
             pass
 
         if not _has_lerobot or _DatasetRecorder is None:
