@@ -36,6 +36,31 @@ background `get_actions` for the trailing chunk. Tests that assert the exact
 synchronous re-query count should pass `async_rtc=False`.
 
 
+### Fixed: hardware control loop honours the RTC contract (sim/real parity)
+
+`HardwareRobot._execute_task_async` (the real-robot rollout loop) drove the arm
+with a raw `robot_actions[:action_horizon]` slice and never told the policy its
+control clock, so RTC-capable providers (pi0, pi0.5, SmolVLA, MolmoAct2) fell
+back to a hardcoded assumed rate and mis-blended every chunk seam at any control
+frequency except the assumed one - a policy validated in sim behaved differently
+on the physical arm. The loop now mirrors the synchronous sim runner contract:
+
+- `policy.set_control_frequency(control_frequency)` is called once before the
+  rollout so latency-sensitive providers convert inference latency into the
+  correct count of action steps.
+- `policy.set_rtc_observed_delay(0)` is set before each inference. The hardware
+  loop is synchronous (observe -> infer -> apply) and issues no servo motion
+  during inference, so exactly 0 control steps elapse - a counted, deterministic
+  seam offset, not a wall-clock estimate. Drivers that coast servos during
+  inference would supply a non-zero counted delay here instead.
+- Chunk consumption now goes through `resolve_chunk_length(policy,
+  action_horizon)` instead of the raw slice: RTC policies are re-queried at
+  exactly their `execution_horizon` (so cross-chunk blending engages) while
+  single-step and open-loop chunked providers keep their prior
+  `max(action_horizon, execution_horizon)` behaviour (a no-op for them).
+
+Sim and hardware now share one RTC contract.
+
 ### Correctness: `run_policy` episode-count contract + `verify_dataset_episodes`
 
 `run_policy` could silently record a single merged `episode_index=0`
