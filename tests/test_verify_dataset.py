@@ -312,3 +312,130 @@ class TestVideoFileIntegrity:
         assert verify_main([str(tmp_path)]) == 1  # missing MP4 fails by default
         capsys.readouterr()
         assert verify_main([str(tmp_path), "--no-check-videos"]) == 0  # opt out passes
+
+
+class TestMetadataEdgeCases:
+    """Metadata-side validation paths beyond count/drift on a healthy dataset.
+
+    These pin the verifier's behaviour on empties, frame-total drift, an
+    unreadable ``meta/info.json``, a non-video feature set, and the missing
+    optional dependency - the report's ``status`` / ``problems`` contract that
+    drops the tool into CI as an integrity gate.
+    """
+
+    def test_empty_parquet_flagged_as_no_episodes(self, tmp_path: Path) -> None:
+        # A finalized-but-empty dataset: the episodes parquet exists (so it is
+        # not a FileNotFound) yet holds zero distinct episodes.
+        _write_dataset(tmp_path, episode_indices=[])
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "error"
+        assert report["total_episodes"] == 0
+        assert any("dataset is empty" in p for p in report["problems"])
+
+    def test_info_json_frame_total_drift_flagged(self, tmp_path: Path) -> None:
+        # Episode count agrees but the declared frame total does not - isolates
+        # the total_frames drift check from the total_episodes one.
+        _write_dataset(
+            tmp_path,
+            episode_indices=[0, 1],
+            frames_per_episode=[3, 3],
+            info={"total_episodes": 2, "total_frames": 99},
+        )
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "error"
+        assert any("total_frames=99" in p and "6 frame(s)" in p for p in report["problems"])
+
+    def test_unreadable_info_json_reported_once(self, tmp_path: Path) -> None:
+        # A corrupt info.json is surfaced by the drift check; the video check
+        # silently degrades on the same unreadable file rather than double-
+        # reporting it.
+        _write_dataset(tmp_path, episode_indices=[0, 1], frames_per_episode=[3, 3])
+        (tmp_path / "meta" / "info.json").write_text("{not valid json", encoding="utf-8")
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "error"
+        assert sum("could not read meta/info.json" in p for p in report["problems"]) == 1
+        assert report["video_files_checked"] == 0
+
+    def test_non_video_features_check_nothing(self, tmp_path: Path) -> None:
+        # info.json declares features but none are videos (state-only dataset):
+        # the video check resolves zero files without complaint.
+        _write_dataset(
+            tmp_path,
+            episode_indices=[0, 1],
+            frames_per_episode=[4, 4],
+            info={
+                "total_episodes": 2,
+                "total_frames": 8,
+                "features": {"observation.state": {"dtype": "float32", "shape": [6]}},
+            },
+        )
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "success", report["problems"]
+        assert report["video_files_checked"] == 0
+
+    def test_missing_pyarrow_reported_as_problem(self, tmp_path: Path, monkeypatch) -> None:
+        # The lerobot extra (pyarrow) is absent: the ground-truth read raises
+        # ImportError, which the verifier turns into a problem rather than a
+        # traceback.
+        import strands_robots.dataset_recorder as dr
+
+        def _raise(_root):
+            raise ImportError("read_dataset_episode_indices requires pyarrow (installed with the lerobot extra).")
+
+        monkeypatch.setattr(dr, "read_dataset_episode_indices", _raise)
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "error"
+        assert any("pyarrow" in p for p in report["problems"])
+
+
+class TestVideoIndexColumnEdgeCases:
+    """Video-reference resolution when the parquet index columns are absent or null."""
+
+    def test_video_feature_without_index_columns_flagged(self, tmp_path: Path) -> None:
+        # The feature is declared but the parquet carries no
+        # videos/<key>/chunk_index|file_index columns, so no episode references
+        # a file for it - the verifier flags the dangling declaration.
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0, 1],
+            video_keys=["observation.images.cam1"],
+            frames_per_episode=[3, 3],
+            include_index_columns=False,
+        )
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "error"
+        assert report["video_files_checked"] == 0
+        assert any("no episode references a video file" in p for p in report["problems"])
+
+    def test_null_video_index_rows_skipped(self, tmp_path: Path) -> None:
+        # A row whose chunk_index/file_index is null references no file and is
+        # skipped, not resolved into a phantom missing-file problem.
+        vk = "observation.images.cam1"
+        ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+        ep_dir.mkdir(parents=True)
+        pq.write_table(
+            pa.table(
+                {
+                    "episode_index": [0],
+                    "length": [3],
+                    f"videos/{vk}/chunk_index": pa.array([None], type=pa.int64()),
+                    f"videos/{vk}/file_index": pa.array([None], type=pa.int64()),
+                }
+            ),
+            ep_dir / "episodes_000.parquet",
+        )
+        (tmp_path / "meta" / "info.json").write_text(
+            json.dumps(
+                {
+                    "total_episodes": 1,
+                    "total_frames": 3,
+                    "features": {vk: {"dtype": "video", "shape": [3, 64, 64]}},
+                    "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+                }
+            ),
+            encoding="utf-8",
+        )
+        report = verify_dataset(tmp_path)
+        # No file resolved (the only row is null) and no missing-file problem.
+        assert report["video_files_checked"] == 0
+        assert not any("video file" in p for p in report["problems"])
