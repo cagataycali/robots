@@ -496,3 +496,43 @@ class TestCorruptParquetTruth:
         assert any("info.json missing" in w for w in payload["warnings"])
         # Cannot confirm the count -> status must not be a false OK.
         assert result["status"] == "error"
+
+
+class TestDatasetCameraScoping:
+    """Pins that ``run_policy`` can scope which cameras land in the dataset.
+
+    The MuJoCo backend's ``start_recording`` accepts a ``cameras`` subset so a
+    policy-specific dataset only carries the views the policy declares (e.g.
+    SmolVLA's ``camera1/2/3``) and excludes the implicit ``default`` free
+    camera every scene ships. Before this contract, ``run_policy`` - the
+    recording entry point that owns the ``start_recording`` -> ``stop_recording``
+    cycle - had no way to forward that subset, so every recorded dataset was
+    forced to include the stray ``default`` view in ``observation.images.*``.
+    """
+
+    def test_forwards_dataset_cameras_to_start_recording(self, tmp_path: Path) -> None:
+        sim = _FakeSim()
+        ds = tmp_path / "ds"
+        _write_info_json(ds, total_episodes=1, total_frames=12)
+        result = run_policy(
+            sim,
+            policy_provider="mock",
+            n_episodes=1,
+            n_steps=12,
+            dataset_root=str(ds),
+            dataset_cameras=["camera1", "camera2", "camera3"],
+        )
+        assert result["status"] == "success"
+        assert len(sim.start_recording_calls) == 1
+        assert sim.start_recording_calls[0]["cameras"] == ["camera1", "camera2", "camera3"]
+
+    def test_dataset_cameras_defaults_to_none(self, tmp_path: Path) -> None:
+        """Default (no scoping) forwards ``cameras=None`` so the backend keeps
+        its record-every-camera behaviour - the opt-in subset never changes
+        the default."""
+        sim = _FakeSim()
+        ds = tmp_path / "ds"
+        _write_info_json(ds, total_episodes=1, total_frames=6)
+        run_policy(sim, n_episodes=1, n_steps=6, dataset_root=str(ds))
+        assert len(sim.start_recording_calls) == 1
+        assert sim.start_recording_calls[0]["cameras"] is None

@@ -119,6 +119,7 @@ def run_policy(
     dataset_repo_id: str = "local/run_policy_rollout",
     dataset_task: str = "",
     dataset_fps: int = 30,
+    dataset_cameras: list[str] | None = None,
     seed: int | None = None,
     policy_kwargs: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -169,6 +170,15 @@ def run_policy(
         dataset_repo_id: Forwarded to ``start_recording``.
         dataset_task: Task label forwarded to ``start_recording``.
         dataset_fps: Dataset FPS forwarded to ``start_recording``.
+        dataset_cameras: Camera names to record into the dataset,
+            forwarded to ``start_recording(cameras=...)``. When
+            ``None`` (default) every scene camera is recorded -
+            including the implicit ``default`` free camera the
+            MuJoCo backend ships. Pass an explicit subset (e.g.
+            ``["camera1", "camera2", "camera3"]``) to scope a
+            policy-specific dataset to exactly the views the policy
+            declares and keep the stray ``default`` view out of
+            ``observation.images.*``.
         seed: Master RNG seed. Each episode derives a deterministic
             offset so rollouts are reproducible within a process.
         policy_kwargs: Optional per-call goal payload forwarded to
@@ -230,6 +240,7 @@ def run_policy(
             fps=dataset_fps,
             root=dataset_root,
             overwrite=True,
+            cameras=dataset_cameras,
         )
         if start_result.get("status") != "success":
             # Surface the engine's own error verbatim - it already explains
