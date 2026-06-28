@@ -251,6 +251,26 @@ RTC policies (it cannot stretch the interval and break blending). For non-RTC
 policies `execution_horizon == actions_per_step` and the consumer still takes
 `max(action_horizon, actions_per_step)` so the trained chunk is never truncated.
 
+### Relative-action policies: prefix re-anchoring
+
+Some flow-matching checkpoints (pi0 / pi0.5 / pi0-FAST trained with a
+`RelativeActionsProcessorStep`) predict actions as offsets from the current
+robot state rather than absolute joint targets. The unexecuted tail carried into
+the next chunk (`prev_chunk_left_over`) is therefore only valid in the
+coordinate frame of the observation that produced it. Because the robot state
+moves between chunks, feeding that tail back verbatim would blend a STALE-frame
+prefix into the next chunk and corrupt the seam.
+
+For these policies the provider keeps the leftover in absolute coordinates and
+re-expresses it against the live robot state every query via LeRobot's
+`reanchor_relative_rtc_prefix` (reading the cached state from the preprocessor's
+`RelativeActionsProcessorStep`), so the model always receives a correctly
+anchored prefix. This is detected automatically from the loaded preprocessor
+pipeline - no flag is needed - and only engages when an enabled relative-action
+step is present. Absolute-action policies carry the model-space leftover
+verbatim (their frame does not move). The deterministic step-count delay below
+is untouched, so re-anchoring preserves bit-reproducibility.
+
 ### Synchronous vs async chunk execution in sim
 
 `run_policy` / `PolicyRunner.run` accept an `async_rtc` flag controlling which

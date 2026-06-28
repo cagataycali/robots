@@ -27,6 +27,36 @@ prefix-attention guidance is computed with the correct freeze count and the
 chunk seam blends identically in sim and on hardware. A regression test routes
 the wrapper's exact kwargs through lerobot's real `RTCProcessor.denoise_step`
 and fails (TypeError) on the pre-fix code.
+### Fix: re-anchor the RTC chunk-seam prefix for relative-action policies
+
+Real-Time Chunking for relative-action flow checkpoints (pi0 / pi0.5 / pi0-FAST
+trained with a `RelativeActionsProcessorStep`) carried the previous chunk's
+unexecuted tail (`prev_chunk_left_over`) in the coordinate frame of the
+observation that produced it. Because these policies predict actions as offsets
+from the current robot state, and the state moves between chunks, the stale-frame
+prefix was blended into the next chunk in the wrong frame - off by the full state
+drift at the seam.
+
+`LerobotLocalPolicy` now keeps the leftover in absolute coordinates and
+re-expresses it against the live robot state on every query via LeRobot's own
+`reanchor_relative_rtc_prefix` helper (reading the cached state from the
+preprocessor's `RelativeActionsProcessorStep`), instead of re-implementing the
+rebase. Behaviour:
+
+- Detected automatically from the loaded preprocessor pipeline - engages only
+  when an enabled relative-action step is present; no flag needed.
+- Absolute-action policies are unchanged: they carry the model-space leftover
+  verbatim (their frame does not move).
+- The deterministic step-count inference delay is untouched, so RTC stays
+  bit-reproducible across fixed-seed episodes.
+- Falls back to the prior behaviour with a one-time warning when the installed
+  lerobot lacks a usable `reanchor_relative_rtc_prefix` - whether the symbol is
+  absent (ImportError, <= 0.5.1) or `import lerobot.policies.rtc` raises at load
+  time (TypeError on lerobot 0.5.1, whose rtc import chain builds a broken
+  dataclass). The guard tolerates both so a relative-action policy on 0.5.1
+  degrades gracefully instead of crashing.
+- `ProcessorBridge.preprocessor_steps` exposes the pipeline steps so the RTC
+  consumer can introspect for the relative/normalizer steps.
 
 
 ### Feature: full RewardModelConfig parity with lerobot (dynamic reward-type discovery)

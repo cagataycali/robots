@@ -202,6 +202,18 @@ class LerobotLocalPolicy(Policy):
         self._rtc_execution_horizon = rtc_execution_horizon
         self._rtc_max_guidance_weight = rtc_max_guidance_weight
         self._rtc_prev_chunk: torch.Tensor | None = None
+        # Absolute-coordinate copy of the leftover tail, populated ONLY for
+        # relative-action flow policies so the next chunk can re-express it
+        # against the current robot state (see _predict_with_rtc). Stays None
+        # for absolute-action policies, whose frame does not move.
+        self._rtc_prev_chunk_abs: torch.Tensor | None = None
+        # Lazily-resolved (once) preprocessor steps + helper used to re-anchor a
+        # relative-action RTC prefix to LeRobot parity. All stay None unless an
+        # enabled RelativeActionsProcessorStep is present in the pipeline.
+        self._rtc_relative_step: Any = None
+        self._rtc_normalizer_step: Any = None
+        self._rtc_reanchor_fn: Any = None
+        self._rtc_rebase_resolved: bool = False
         self._rtc_action_queue: deque = deque()
         self._rtc_latency_history: deque = deque(maxlen=100)
         self._rtc_last_inference_time: float = 0.0
@@ -312,6 +324,7 @@ class LerobotLocalPolicy(Policy):
             self._processor_bridge.reset()
         # Clear RTC state
         self._rtc_prev_chunk = None
+        self._rtc_prev_chunk_abs = None
         self._rtc_action_queue.clear()
         self._rtc_latency_history.clear()
         self._rtc_last_inference_time = 0.0
@@ -998,6 +1011,110 @@ class LerobotLocalPolicy(Policy):
         delay = int(p95_latency * fps)
         return max(0, delay)
 
+    def _resolve_rtc_rebase_steps(self) -> None:
+        """Resolve the preprocessor steps needed to re-anchor a relative-action RTC prefix.
+
+        Relative-action flow policies (pi0 / pi0.5 / pi0-FAST with an enabled
+        ``RelativeActionsProcessorStep``) train on actions expressed as offsets
+        from the current robot state. The unexecuted tail of the previous chunk
+        (``prev_chunk_left_over``) is therefore only valid in the coordinate frame
+        of the observation that produced it; feeding it back verbatim after the
+        state has moved injects a STALE-frame prefix and corrupts the chunk-seam
+        blend. LeRobot solves this by keeping the leftover in ABSOLUTE coordinates
+        and re-expressing it against the live state every call via
+        :func:`reanchor_relative_rtc_prefix` (reading the cached state from the
+        paired ``RelativeActionsProcessorStep.get_cached_state``).
+
+        This resolves, once, the enabled ``RelativeActionsProcessorStep``, the
+        paired ``NormalizerProcessorStep`` (if any), and the LeRobot helper from
+        the loaded preprocessor pipeline. All stay ``None`` for absolute-action
+        policies, which keep the model-space leftover verbatim (correct - their
+        frame does not move). The deterministic step-count delay is untouched.
+        """
+        self._rtc_rebase_resolved = True
+        bridge = self._processor_bridge
+        if bridge is None or not bridge.has_preprocessor:
+            return
+        try:
+            from lerobot.processor import NormalizerProcessorStep, RelativeActionsProcessorStep
+        except ImportError:
+            return
+
+        relative_step = next(
+            (
+                step
+                for step in bridge.preprocessor_steps
+                if isinstance(step, RelativeActionsProcessorStep) and getattr(step, "enabled", False)
+            ),
+            None,
+        )
+        if relative_step is None:
+            return
+
+        try:
+            from lerobot.policies.rtc import reanchor_relative_rtc_prefix
+        except (ImportError, TypeError):
+            # ImportError: lerobot predates the helper (<= 0.5.1 ships no
+            # lerobot.policies.rtc.reanchor_relative_rtc_prefix). TypeError:
+            # importing lerobot.policies.rtc on some releases (e.g. 0.5.1)
+            # executes a module whose dataclass fails to build, so the import
+            # raises at load time rather than cleanly missing the symbol.
+            # Either way the helper is unavailable - degrade gracefully.
+            logger.warning(
+                "Relative-action RTC policy '%s' detected but the installed lerobot lacks "
+                "a usable reanchor_relative_rtc_prefix; the chunk-seam prefix will be carried "
+                "in a STALE coordinate frame. Upgrade lerobot to re-anchor the leftover against "
+                "the current state.",
+                type(self._policy).__name__,
+            )
+            return
+
+        normalizer_step = next(
+            (step for step in bridge.preprocessor_steps if isinstance(step, NormalizerProcessorStep)),
+            None,
+        )
+        # Backfill the action layout the same way LeRobot's RTCInferenceEngine does:
+        # a relative step that never learned its action names cannot build the
+        # joint mask, so the re-anchor would convert the wrong dimensions.
+        if relative_step.action_names is None:
+            config = getattr(self._policy, "config", None)
+            cfg_names = getattr(config, "action_feature_names", None) if config else None
+            if cfg_names:
+                relative_step.action_names = list(cfg_names)
+
+        self._rtc_relative_step = relative_step
+        self._rtc_normalizer_step = normalizer_step
+        self._rtc_reanchor_fn = reanchor_relative_rtc_prefix
+        logger.info(
+            "RTC relative-action re-anchoring enabled for '%s' (LeRobot reanchor_relative_rtc_prefix)",
+            type(self._policy).__name__,
+        )
+
+    def _absolute_rtc_leftover(self, leftover_model: torch.Tensor) -> torch.Tensor | None:
+        """Convert a model-space leftover tail to absolute robot coordinates for re-anchoring.
+
+        The leftover comes out of ``predict_action_chunk`` in the model's
+        normalized relative space (anchored to the current observation). Running
+        it through the postprocessor unnormalizes it and adds the cached state
+        (``AbsoluteActionsProcessorStep``), yielding the same absolute coordinates
+        LeRobot stores as the processed leftover. The conversion is element-wise
+        per action, so postprocessing only the tail equals postprocessing the
+        full chunk then slicing.
+
+        Returns ``None`` (disabling re-anchoring this step, falling back to the
+        model-space leftover) when the policy is not relative-action or the
+        postprocessor does not yield a plain action tensor.
+        """
+        if self._rtc_relative_step is None:
+            return None
+        bridge = self._processor_bridge
+        if bridge is None or not bridge.has_postprocessor:
+            return None
+        absolute = bridge.postprocess(leftover_model.clone())
+        if not isinstance(absolute, torch.Tensor):
+            return None
+        return absolute.detach()
+
     def _predict_with_rtc(self, batch: dict[str, Any]) -> torch.Tensor:
         """Run inference using predict_action_chunk with RTC kwargs.
 
@@ -1018,6 +1135,11 @@ class LerobotLocalPolicy(Policy):
             Action tensor - first action(s) from the chunk, accounting for
             inference delay.
         """
+        # Re-anchor the relative-action chunk-seam leftover against the CURRENT
+        # robot state BEFORE inference (resolve the pipeline steps once).
+        if not self._rtc_rebase_resolved:
+            self._resolve_rtc_rebase_steps()
+
         # Resolve how many control steps the executor commits while THIS
         # inference is in flight - the RTC paper's `d`. It must be known BEFORE
         # inference because lerobot's RTC denoiser consumes it as a kwarg: it is
@@ -1066,8 +1188,30 @@ class LerobotLocalPolicy(Policy):
         # On the first chunk prev_chunk_left_over is None and lerobot returns
         # early, so the value is harmless there.
         rtc_kwargs: dict[str, Any] = {"inference_delay": inference_delay}
-        if self._rtc_prev_chunk is not None:
-            rtc_kwargs["prev_chunk_left_over"] = self._rtc_prev_chunk
+        # Relative-action policies: re-express the leftover tail against the
+        # CURRENT robot state instead of carrying a stale-frame prefix. The
+        # leftover is kept in absolute coordinates (_rtc_prev_chunk_abs);
+        # LeRobot's reanchor helper subtracts the live cached state and
+        # re-normalizes so the model receives a correctly anchored prefix.
+        # Absolute-action policies fall through to the verbatim leftover.
+        prev_chunk = self._rtc_prev_chunk
+        if (
+            self._rtc_relative_step is not None
+            and self._rtc_reanchor_fn is not None
+            and self._rtc_prev_chunk_abs is not None
+            and self._rtc_prev_chunk_abs.numel() > 0
+        ):
+            current_state = self._rtc_relative_step.get_cached_state()
+            if current_state is not None:
+                prev_chunk = self._rtc_reanchor_fn(
+                    prev_actions_absolute=self._rtc_prev_chunk_abs,
+                    current_state=current_state,
+                    relative_step=self._rtc_relative_step,
+                    normalizer_step=self._rtc_normalizer_step,
+                    policy_device=self._device or "cpu",
+                )
+        if prev_chunk is not None:
+            rtc_kwargs["prev_chunk_left_over"] = prev_chunk
         if self._rtc_execution_horizon is not None:
             rtc_kwargs["execution_horizon"] = self._rtc_execution_horizon
 
@@ -1094,9 +1238,15 @@ class LerobotLocalPolicy(Policy):
         exec_horizon = self._rtc_execution_horizon or self.actions_per_step
         steps_to_consume = min(inference_delay + max(1, int(exec_horizon)), action_chunk.shape[0])
         if steps_to_consume < action_chunk.shape[0]:
-            self._rtc_prev_chunk = action_chunk[steps_to_consume:].detach()
+            leftover_model = action_chunk[steps_to_consume:].detach()
+            self._rtc_prev_chunk = leftover_model
+            # For relative-action policies, also stash the leftover in absolute
+            # robot coordinates so the NEXT call can re-anchor it against the new
+            # state. None for absolute-action policies (no frame shift to undo).
+            self._rtc_prev_chunk_abs = self._absolute_rtc_leftover(leftover_model)
         else:
             self._rtc_prev_chunk = None
+            self._rtc_prev_chunk_abs = None
 
         # Skip delay steps - they correspond to time spent during inference
         usable_start = min(inference_delay, action_chunk.shape[0] - 1)

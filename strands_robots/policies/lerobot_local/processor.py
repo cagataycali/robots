@@ -369,6 +369,21 @@ class ProcessorBridge:
         return self._preprocessor is not None
 
     @property
+    def preprocessor_steps(self) -> list[Any]:
+        """Ordered preprocessor pipeline steps (empty when no preprocessor is loaded).
+
+        Exposes the underlying LeRobot ``DataProcessorPipeline.steps`` so callers
+        can introspect the pipeline for specific steps - e.g. an enabled
+        ``RelativeActionsProcessorStep`` and the paired ``NormalizerProcessorStep``
+        a Real-Time-Chunking consumer needs to re-anchor the leftover chunk prefix
+        against the current robot state (LeRobot's ``reanchor_relative_rtc_prefix``).
+        Returns a shallow copy so callers cannot reorder the live pipeline.
+        """
+        if self._preprocessor is None:
+            return []
+        return list(self._preprocessor.steps)
+
+    @property
     def has_postprocessor(self) -> bool:
         """Whether a postprocessor pipeline is loaded."""
         return self._postprocessor is not None
