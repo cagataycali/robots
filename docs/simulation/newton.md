@@ -83,7 +83,16 @@ no-op until then.
   without modification.
 - `run_policy` / `eval_policy` / `replay_episode` are inherited from the
   `SimEngine` ABC - no backend-specific re-implementation.
-- `describe()` reports the active solver, available solvers, and device.
+- `describe()` reports the active solver, available solvers, device, and
+  the current gravity vector and timestep.
+- Gravity configured via `create_world(gravity=[x, y, z])` or `set_gravity`
+  drives the dynamics. Newton's solvers snapshot gravity at construction and
+  its builder only expresses gravity as a scalar along the up-axis, so the
+  full vector is written onto the finalised model before the solver is built;
+  off-axis components are honoured rather than dropped. `set_gravity` accepts
+  either a scalar (the z-component) or a 3-element `[x, y, z]` list and rebuilds
+  the model, which re-initialises the world to its rest pose. `set_timestep`
+  takes effect on the next `step()` without a rebuild.
 
 ## Limitations
 
