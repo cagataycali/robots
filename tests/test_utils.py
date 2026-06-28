@@ -2,7 +2,7 @@
 
 import pytest
 
-from strands_robots.utils import require_optional, require_optionals
+from strands_robots.utils import process_rss_mb, require_optional, require_optionals
 
 
 class TestRequireOptional:
@@ -266,3 +266,55 @@ class TestPathResolution:
         # joined under the assets dir.
         assert result == tmp_path / "home" / "models" / "policy.pt"
         assert not str(result).startswith(str(tmp_path / "assets"))
+
+
+class TestProcessRssMb:
+    """Tests for process_rss_mb resident-memory telemetry helper.
+
+    Covers all three resolution paths: psutil (preferred), the
+    resource.getrusage fallback (with Linux/macOS unit normalisation), and the
+    None result when neither source is available.
+    """
+
+    def test_psutil_path_returns_positive_float(self):
+        """With psutil available, returns this process's current RSS in MB."""
+        rss = process_rss_mb()
+        assert isinstance(rss, float)
+        assert rss > 0.0
+
+    def test_resource_fallback_linux_normalises_kilobytes(self, monkeypatch):
+        """psutil absent + Linux: ru_maxrss is kilobytes, divided by 1024 -> MB."""
+        import sys
+        import types
+
+        monkeypatch.setitem(sys.modules, "psutil", None)
+        fake_resource = types.ModuleType("resource")
+        fake_resource.RUSAGE_SELF = 0
+        fake_resource.getrusage = lambda _who: types.SimpleNamespace(ru_maxrss=2048)
+        monkeypatch.setitem(sys.modules, "resource", fake_resource)
+        monkeypatch.setattr(sys, "platform", "linux")
+
+        assert process_rss_mb() == pytest.approx(2.0)
+
+    def test_resource_fallback_macos_normalises_bytes(self, monkeypatch):
+        """psutil absent + macOS: ru_maxrss is bytes, divided by 1024**2 -> MB."""
+        import sys
+        import types
+
+        monkeypatch.setitem(sys.modules, "psutil", None)
+        fake_resource = types.ModuleType("resource")
+        fake_resource.RUSAGE_SELF = 0
+        fake_resource.getrusage = lambda _who: types.SimpleNamespace(ru_maxrss=2 * 1024 * 1024)
+        monkeypatch.setitem(sys.modules, "resource", fake_resource)
+        monkeypatch.setattr(sys, "platform", "darwin")
+
+        assert process_rss_mb() == pytest.approx(2.0)
+
+    def test_returns_none_when_no_source_available(self, monkeypatch):
+        """Neither psutil nor resource importable: returns None, not a misleading 0."""
+        import sys
+
+        monkeypatch.setitem(sys.modules, "psutil", None)
+        monkeypatch.setitem(sys.modules, "resource", None)
+
+        assert process_rss_mb() is None
