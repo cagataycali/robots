@@ -15,6 +15,13 @@ Checks performed against a dataset root (the dir containing ``meta/``):
      agree with the parquet ground truth - flags metadata/parquet drift;
   4. when ``--expected N`` is given, the parquet holds exactly N episodes -
      flags the "wanted N, got M" mismatch.
+  5. every per-episode video file referenced by the dataset (one MP4 per
+     camera per episode, resolved from ``meta/info.json``'s ``video_path``
+     template and the episode parquet's ``videos/<key>/chunk_index`` /
+     ``file_index`` columns) exists on disk and is non-empty - flags the
+     video-modality sibling of mega-episode corruption, where the episode
+     count is correct but the pixels are missing/unwritten (disable with
+     ``--no-check-videos``).
 
 Usage:
     strands-robots verify-dataset /path/to/dataset
@@ -41,6 +48,7 @@ def verify_dataset(
     root: str | Path,
     expected: int | None = None,
     min_frames: int = 1,
+    check_videos: bool = True,
 ) -> dict[str, Any]:
     """Verify the episode integrity of a LeRobot dataset on disk.
 
@@ -53,6 +61,8 @@ def verify_dataset(
         root: Dataset root directory (the dir that contains ``meta/``).
         expected: If given, require exactly this many distinct episodes.
         min_frames: Minimum frames every episode must contain (default 1).
+        check_videos: When True (default), verify that every per-episode
+            video file referenced by the dataset exists and is non-empty.
 
     Returns:
         A report dict with:
@@ -65,6 +75,9 @@ def verify_dataset(
           - ``expected``: the requested count (or ``None``).
           - ``info_total_episodes`` / ``info_total_frames``: values declared in
             ``meta/info.json`` (``None`` when the file is absent or lacks them).
+          - ``video_files_checked``: number of distinct per-episode video
+            files resolved and checked (``0`` when ``check_videos`` is False
+            or the dataset declares no video features).
           - ``problems``: list of human-readable failure strings (empty on pass).
     """
     from strands_robots.dataset_recorder import read_dataset_episode_indices
@@ -81,6 +94,7 @@ def verify_dataset(
         "expected": expected,
         "info_total_episodes": None,
         "info_total_frames": None,
+        "video_files_checked": 0,
         "problems": [],
     }
     problems: list[str] = report["problems"]
@@ -150,9 +164,110 @@ def verify_dataset(
             "- the recording did not produce the intended number of distinct episodes"
         )
 
+    # Check 5: per-episode video files exist on disk and are non-empty. A
+    # dataset can pass every count check yet carry missing/empty MP4 streams
+    # (the recorder's video encoder failed, the files were partially synced, or
+    # frames were never captured) - correct episode counts, no pixels. This is
+    # the video-modality sibling of the mega-episode class above.
+    if check_videos:
+        checked, video_problems = _verify_video_files(root_path)
+        report["video_files_checked"] = checked
+        problems.extend(video_problems)
+
     report["ok"] = not problems
     report["status"] = "success" if report["ok"] else "error"
     return report
+
+
+def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
+    """Resolve and integrity-check every per-episode video file in a dataset.
+
+    For each video feature declared in ``meta/info.json`` (``dtype == "video"``)
+    and each episode, the on-disk MP4 path is resolved from the ``video_path``
+    template and the episode parquet's ``videos/<key>/chunk_index`` /
+    ``file_index`` columns, then checked for existence and non-zero size. This
+    catches datasets whose episode counts are correct but whose pixels are
+    missing or were never written.
+
+    Args:
+        root_path: Dataset root directory (the dir that contains ``meta/``).
+
+    Returns:
+        A ``(checked, problems)`` tuple where ``checked`` is the number of
+        distinct video files resolved and ``problems`` lists missing/empty
+        files (empty when the dataset declares no video features or all files
+        are present and non-empty).
+    """
+    info_path = root_path / "meta" / "info.json"
+    if not info_path.is_file():
+        return 0, []
+    try:
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        # An unreadable info.json is already surfaced by the info.json drift
+        # check; do not double-report it here.
+        return 0, []
+
+    features = info.get("features")
+    if not isinstance(features, dict):
+        return 0, []
+    video_keys = [key for key, feat in features.items() if isinstance(feat, dict) and feat.get("dtype") == "video"]
+    if not video_keys:
+        return 0, []
+
+    template = info.get("video_path")
+    if not isinstance(template, str) or not template:
+        return 0, [
+            f"meta/info.json declares {len(video_keys)} video feature(s) but no 'video_path' "
+            "template - cannot locate the per-episode MP4 files"
+        ]
+
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:  # pragma: no cover - pyarrow ships with the lerobot extra
+        return 0, []
+
+    parquet_files = sorted((root_path / "meta" / "episodes").glob("**/*.parquet"))
+    # (video_key, chunk_index, file_index) -> set of referencing episode_index.
+    referenced: dict[tuple[str, int, int], int] = {}
+    keys_with_refs: set[str] = set()
+    for pf in parquet_files:
+        table = pq.read_table(pf)
+        cols = set(table.column_names)
+        data = table.to_pydict()
+        episodes = data.get("episode_index", [])
+        for vk in video_keys:
+            ci_col = f"videos/{vk}/chunk_index"
+            fi_col = f"videos/{vk}/file_index"
+            if ci_col not in cols or fi_col not in cols:
+                continue
+            keys_with_refs.add(vk)
+            chunk_idx = data[ci_col]
+            file_idx = data[fi_col]
+            for i in range(len(chunk_idx)):
+                ci, fi = chunk_idx[i], file_idx[i]
+                if ci is None or fi is None:
+                    continue
+                ep = int(episodes[i]) if i < len(episodes) and episodes[i] is not None else -1
+                referenced.setdefault((vk, int(ci), int(fi)), ep)
+
+    problems: list[str] = []
+    for vk in video_keys:
+        if vk not in keys_with_refs:
+            problems.append(
+                f"video feature '{vk}' is declared but no episode references a video file for it "
+                "(missing videos/<key>/chunk_index|file_index columns)"
+            )
+
+    for (vk, ci, fi), ep in sorted(referenced.items()):
+        rel = template.format(video_key=vk, chunk_index=ci, file_index=fi)
+        path = root_path / rel
+        if not path.is_file():
+            problems.append(f"missing video file for '{vk}' (episode {ep}): {rel}")
+        elif path.stat().st_size == 0:
+            problems.append(f"empty video file for '{vk}' (episode {ep}): {rel}")
+
+    return len(referenced), problems
 
 
 def _format_report(report: dict[str, Any]) -> str:
@@ -161,6 +276,8 @@ def _format_report(report: dict[str, Any]) -> str:
     verdict = "PASS" if report["ok"] else "FAIL"
     lines.append(f"[{verdict}] {report['root']}")
     lines.append(f"  episodes (parquet): {report['total_episodes']}")
+    if report.get("video_files_checked"):
+        lines.append(f"  video files checked: {report['video_files_checked']}")
     if report["total_frames"]:
         lines.append(f"  frames   (parquet): {report['total_frames']}")
     if report["expected"] is not None:
@@ -197,9 +314,17 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Emit the report as JSON instead of the human-readable summary.",
     )
+    parser.add_argument(
+        "--no-check-videos",
+        dest="check_videos",
+        action="store_false",
+        help="Skip per-episode video-file existence/non-empty checks.",
+    )
     args = parser.parse_args(argv)
 
-    report = verify_dataset(args.root, expected=args.expected, min_frames=args.min_frames)
+    report = verify_dataset(
+        args.root, expected=args.expected, min_frames=args.min_frames, check_videos=args.check_videos
+    )
     if args.json:
         print(json.dumps(report, indent=2))
     else:

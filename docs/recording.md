@@ -144,15 +144,23 @@ exit code suitable for CI:
 ```bash
 strands-robots verify-dataset /path/to/dataset --expected 20   # exit 0 pass, 1 fail
 strands-robots verify-dataset /path/to/dataset --json          # machine-readable report
+strands-robots verify-dataset /path/to/dataset --no-check-videos  # skip the per-episode MP4 checks
 ```
 
 `verify-dataset` reuses the same pure-pyarrow `read_dataset_episode_indices`
-helper (no `lerobot` import) and flags three failure modes: the mega-episode
+helper (no `lerobot` import) and flags four failure modes: the mega-episode
 (fewer distinct episodes than `--expected`), `meta/info.json` `total_episodes` /
 `total_frames` drifting from the parquet ground truth (caught even without
-`--expected`), and any episode below `--min-frames` (default 1). The
-programmatic form is
-`strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1)`,
+`--expected`), any episode below `--min-frames` (default 1), and - unless
+`--no-check-videos` is passed - any per-episode video file that is missing or
+empty on disk. The last check is the video-modality sibling of the
+mega-episode class: a dataset can carry the right episode count yet have no
+pixels because the recorder's video encoder failed or the MP4 streams were
+never written. It resolves each camera's MP4 from `meta/info.json`'s
+`video_path` template and the episode parquet's `videos/<key>/chunk_index` /
+`file_index` columns, and reports the count it checked in
+`video_files_checked`. The programmatic form is
+`strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1, check_videos=True)`,
 which returns the same report dict.
 
 ## Recording paths
