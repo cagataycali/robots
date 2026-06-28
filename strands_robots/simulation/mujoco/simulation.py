@@ -193,7 +193,7 @@ class MuJoCoSimEngine(
         # mj_step can produce torn/stale values). The lock is acquired:
         #
         #   * In ``_dispatch_action`` - so every agent-dispatched action
-        #     (all 37 handlers) is automatically serialized.
+        #     is automatically serialized.
         #   * In ``send_action`` / ``get_observation`` - so the
         #     PolicyRunner worker thread is also serialized against the
         #     agent's dispatch thread.
@@ -2082,7 +2082,7 @@ class MuJoCoSimEngine(
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
                 "Same Policy ABC as real robot control - sim and real with zero code changes. "
-                "Actions (62 total): "
+                "Actions (65 total): "
                 "[World] create_world, load_scene, reset, get_state, destroy, export_xml; "
                 "[Robots] add_robot, remove_robot, list_robots, get_robot_state, list_bodies; "
                 "[Objects] add_object, remove_object, move_object, list_objects; "
@@ -2097,6 +2097,7 @@ class MuJoCoSimEngine(
                 "[Recording] start_recording, save_episode, stop_recording, get_recording_status, "
                 "start_cameras_recording, stop_cameras_recording, get_cameras_recording_status; "
                 "[Randomize] randomize; "
+                "[Benchmark] list_benchmarks, register_benchmark_from_file, evaluate_benchmark; "
                 "[Registry] list_urdfs, register_urdf, get_features. "
                 "Call destroy() at session end to release resources."
             ),
