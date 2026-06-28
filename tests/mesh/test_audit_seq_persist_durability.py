@@ -160,3 +160,71 @@ def test_persist_durability_failures_still_reload(monkeypatch) -> None:
 
     assert audit._SEQ_COUNTERS.get("peerX") == 30
     assert audit._SEQ_COUNTERS.get("peerY") == 31
+
+
+def test_persist_fails_soft_when_data_write_raises(monkeypatch, caplog) -> None:
+    """A write error mid-``json.dump`` (e.g. ENOSPC) fails soft, leaves no sidecar.
+
+    The sidecar is written to a temp file under a ``with os.fdopen(...)`` block
+    and only atomically renamed into place once the bytes are down. If the
+    write itself raises (disk full, quota exceeded), the inner handler must
+    close the orphaned descriptor and re-raise so the outer fail-soft guard
+    logs and returns -- WITHOUT renaming a half-formed temp into the real
+    sidecar. A leftover empty/partial sidecar would otherwise be loaded as
+    authoritative on the next boot and roll every peer's seq counter back to
+    zero, defeating replay-adjacency in ``verify_audit_integrity``.
+
+    Pre-fix (i.e. if the ``raise`` after the descriptor-close were dropped),
+    control would fall through to ``os.replace`` and rename the empty temp
+    over the sidecar, so ``sidecar.exists()`` would flip True and this fails.
+    """
+
+    def _dump_boom(*_args, **_kwargs):
+        raise OSError("ENOSPC: no space left on device")
+
+    monkeypatch.setattr(audit.json, "dump", _dump_boom)
+
+    audit._SEQ_COUNTERS["peerE"] = 9
+    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+        audit._persist_seq_counters()  # must not raise
+
+    sidecar = audit._seq_sidecar_path()
+    assert not sidecar.exists(), "a failed write must not leave a sidecar that could roll counters back"
+    assert any("could not persist seq sidecar" in rec.getMessage() for rec in caplog.records), (
+        "a write failure must surface via the fail-soft persistence warning"
+    )
+
+
+def test_persist_closes_orphaned_fd_when_fdopen_raises(monkeypatch, caplog) -> None:
+    """``os.fdopen`` raising before adopting the fd must not leak the descriptor.
+
+    On the rare path where ``os.fdopen`` raises (e.g. EMFILE while building the
+    buffered wrapper) the raw fd from ``os.open`` was never handed to a file
+    object, so the context manager cannot close it. The defence-in-depth
+    handler must close that orphaned fd explicitly and re-raise into the outer
+    fail-soft guard. Pre-fix (no explicit ``os.close``), the descriptor would
+    leak on every persist failure under fd pressure.
+    """
+    real_close = audit.os.close
+    closed_fds: list[int] = []
+
+    def _fdopen_boom(*_args, **_kwargs):
+        raise OSError("EMFILE: too many open files")
+
+    def _tracking_close(fd: int) -> None:
+        closed_fds.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(audit.os, "fdopen", _fdopen_boom)
+    monkeypatch.setattr(audit.os, "close", _tracking_close)
+
+    audit._SEQ_COUNTERS["peerF"] = 11
+    with caplog.at_level("WARNING", logger="strands_robots.mesh.audit"):
+        audit._persist_seq_counters()  # must not raise
+
+    sidecar = audit._seq_sidecar_path()
+    assert not sidecar.exists(), "a failed fdopen must not leave a sidecar in place"
+    assert closed_fds, "the orphaned fd from a failed fdopen must be closed (no descriptor leak)"
+    assert any("could not persist seq sidecar" in rec.getMessage() for rec in caplog.records), (
+        "an fdopen failure must surface via the fail-soft persistence warning"
+    )
