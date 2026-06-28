@@ -16,6 +16,8 @@ relative-action policies, and carries it verbatim for absolute-action policies
 """
 
 import logging
+import sys
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -195,9 +197,14 @@ def test_relative_action_falls_back_when_lerobot_lacks_reanchor_helper(monkeypat
     # re-express the leftover against the moved state. The relative-action policy
     # must then DISABLE re-anchoring, keep no absolute copy, warn once, and carry
     # the model-space leftover verbatim - never crash or silently drop the prefix.
-    import lerobot.policies.rtc as _rtc
-
-    monkeypatch.delattr(_rtc, "reanchor_relative_rtc_prefix", raising=False)
+    # Simulate a lerobot that predates reanchor_relative_rtc_prefix regardless
+    # of the installed version: the helper (and its lerobot.policies.rtc module)
+    # landed after 0.5.1, so a real `import lerobot.policies.rtc` raises
+    # ModuleNotFoundError on that release. Inject a stub module lacking the
+    # helper so the production `from lerobot.policies.rtc import
+    # reanchor_relative_rtc_prefix` raises ImportError exactly as on <= 0.5.1.
+    stub_rtc = types.ModuleType("lerobot.policies.rtc")
+    monkeypatch.setitem(sys.modules, "lerobot.policies.rtc", stub_rtc)
 
     names = [f"j{i}.pos" for i in range(_ACTION_DIM)]
     relative_step = RelativeActionsProcessorStep(enabled=True, action_names=names)
