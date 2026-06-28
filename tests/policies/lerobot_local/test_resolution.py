@@ -4,6 +4,8 @@ HuggingFace Hub repo id into a concrete ``PreTrainedPolicy`` subclass."""
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 # pytest.importorskip raises Skipped at collection time if lerobot is not
@@ -1097,47 +1099,74 @@ class TestResolvePolicyClassByNameFallbackLadder:
             resolution.resolve_policy_class_by_name("ghost-policy")
 
 
-def test_smart_resolution_does_not_shadow_real_lerobot_policies():
-    """Smart-string resolution must not leave a partial ``lerobot.policies`` stub.
+def _run_resolution_subprocess(body: str) -> subprocess.CompletedProcess[str]:
+    """Run ``body`` in a fresh interpreter and return the completed process.
 
-    ``resolution._ensure_lerobot_policies_importable`` installs a lightweight
-    ``__path__``-only stub for ``lerobot.policies`` so a single policy
-    subpackage can be imported without executing the heavy ``__init__`` (which
-    pulls in the groot/transformers chain that can crash on a flash-attn ABI
-    mismatch). That stub is a *fallback* for broken environments only: on a
-    healthy install it must not replace the real package, or it shadows
-    ``lerobot.policies`` for the rest of the process and breaks every later
-    ``from lerobot.policies import PreTrainedPolicy`` / ``get_policy_class`` --
-    exactly the imports lerobot's own ``lerobot_record`` / ``lerobot_rollout``
-    scripts (and the teleoperate tool that wraps them) perform.
-
-    Runs in a subprocess so ``sys.modules`` starts without ``lerobot.policies``
-    already imported, reproducing the production order (an agent calling
-    ``create_policy`` on an unknown model id before anything touched
-    ``lerobot.policies``). Pre-fix this fails with
-    ``ImportError: cannot import name 'PreTrainedPolicy' from 'lerobot.policies'``.
+    A subprocess gives each case a pristine ``sys.modules`` so the
+    ``lerobot.policies`` import state is fully controlled and cannot leak
+    between cases or be polluted by an earlier test in the same process.
     """
-    import subprocess
     import sys
     import textwrap
 
-    code = textwrap.dedent(
+    return subprocess.run(
+        [sys.executable, "-c", textwrap.dedent(body)],
+        capture_output=True,
+        text=True,
+    )
+
+
+def test_ensure_lerobot_policies_importable_keeps_real_package_when_import_succeeds():
+    """The healthy path must not shadow a real, importable ``lerobot.policies``.
+
+    ``_ensure_lerobot_policies_importable`` exists to register
+    ``lerobot.policies`` in ``sys.modules`` so a single policy subpackage can be
+    imported without executing the heavy ``__init__`` (the groot/transformers
+    chain can crash on a flash-attn ABI mismatch). The ``__path__``-only stub is
+    a *fallback for broken environments only*: when the real package imports
+    cleanly it must be left in place, or it shadows ``lerobot.policies`` for the
+    rest of the process and breaks every later
+    ``from lerobot.policies import PreTrainedPolicy`` / ``get_policy_class`` --
+    exactly the imports lerobot's own ``lerobot_record`` / ``lerobot_rollout``
+    scripts (and the teleoperate tool wrapping them) perform.
+
+    The outcome of the real import is forced via a patched
+    ``importlib.import_module`` so the assertion holds regardless of whether the
+    ambient ``lerobot`` install happens to import its policies package cleanly.
+    Pre-fix the helper installed the stub unconditionally and never invoked the
+    real import, so ``PreTrainedPolicy`` was absent and this fails.
+    """
+    result = _run_resolution_subprocess(
         """
+        import importlib
         import sys
+        import types
 
-        assert "lerobot.policies" not in sys.modules, "precondition: must start clean"
+        # Make the real lerobot.policies import succeed deterministically:
+        # the patched import_module registers a fully-populated module, mirroring
+        # a healthy install whose __init__ ran cleanly.
+        _real_import_module = importlib.import_module
 
-        # Directly exercise the resolution helper that create_policy triggers
-        # when it actually loads a model. create_policy itself is lazy (stores
-        # params without resolving the policy class), so calling it alone does
-        # NOT invoke _ensure_lerobot_policies_importable(). The production
-        # symptom requires the helper to have run, which happens on the first
-        # get_actions() call -- but that needs a real model. Instead we call
-        # the helper directly: this is the minimal reproduction of the bug
-        # (stub installed unconditionally on a healthy install).
+        def _fake_import_module(name, package=None):
+            if name == "lerobot.policies":
+                mod = types.ModuleType(name)
+                mod.__path__ = []  # marks it as a package
+                mod.PreTrainedPolicy = type("PreTrainedPolicy", (), {})
+                mod.get_policy_class = lambda *a, **k: None
+                sys.modules[name] = mod
+                return mod
+            return _real_import_module(name, package)
+
+        importlib.import_module = _fake_import_module
+
         from strands_robots.policies.lerobot_local.resolution import (
             _ensure_lerobot_policies_importable,
         )
+
+        # Reproduce the production order: nothing has touched lerobot.policies yet.
+        for _name in [m for m in list(sys.modules) if m == "lerobot.policies"]:
+            del sys.modules[_name]
+
         _ensure_lerobot_policies_importable()
 
         mod = sys.modules.get("lerobot.policies")
@@ -1145,18 +1174,71 @@ def test_smart_resolution_does_not_shadow_real_lerobot_policies():
         assert hasattr(mod, "PreTrainedPolicy"), (
             "real lerobot.policies was shadowed by a partial stub"
         )
-
-        # The real downstream symptom: lerobot's record/rollout scripts import
-        # these names from lerobot.policies.
-        from lerobot.policies import PreTrainedPolicy, get_policy_class  # noqa: F401
-
-        print("RESOLUTION_DID_NOT_SHADOW")
+        assert hasattr(mod, "get_policy_class"), (
+            "real lerobot.policies was shadowed by a partial stub"
+        )
+        print("REAL_PACKAGE_KEPT")
         """
     )
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
+    assert result.returncode == 0, f"subprocess failed:\n{result.stderr}"
+    assert "REAL_PACKAGE_KEPT" in result.stdout
+
+
+def test_ensure_lerobot_policies_importable_falls_back_to_stub_when_init_fails():
+    """When the real ``__init__`` fails, install the ``__path__``-only stub.
+
+    This guards the fallback path the helper exists for: an environment where
+    importing ``lerobot.policies`` raises (e.g. a flash-attn ABI mismatch in the
+    groot/transformers chain). The helper must then register a lightweight stub
+    that only carries ``__path__`` so individual policy subpackages can still be
+    imported in isolation, rather than leaving ``lerobot.policies`` unregistered.
+    """
+    result = _run_resolution_subprocess(
+        """
+        import importlib
+        import sys
+        import tempfile
+        import types
+        from pathlib import Path
+
+        from strands_robots.policies.lerobot_local.resolution import (
+            _ensure_lerobot_policies_importable,
+        )
+
+        # A fake lerobot whose policies/ dir exists on disk, so the stub has a
+        # real __path__ to point at.
+        _tmp = tempfile.mkdtemp()
+        _pol = Path(_tmp) / "policies"
+        _pol.mkdir()
+        (_pol / "__init__.py").write_text("")
+        _fake_lerobot = types.ModuleType("lerobot")
+        _fake_lerobot.__path__ = [_tmp]
+        sys.modules["lerobot"] = _fake_lerobot
+
+        for _name in [m for m in list(sys.modules) if m == "lerobot.policies"]:
+            del sys.modules[_name]
+
+        _real_import_module = importlib.import_module
+
+        def _fake_import_module(name, package=None):
+            if name == "lerobot.policies":
+                raise ImportError("simulated heavy __init__ failure (flash-attn ABI)")
+            return _real_import_module(name, package)
+
+        importlib.import_module = _fake_import_module
+
+        _ensure_lerobot_policies_importable()
+
+        mod = sys.modules.get("lerobot.policies")
+        assert mod is not None, "a stub should be installed on the degraded path"
+        assert not hasattr(mod, "PreTrainedPolicy"), (
+            "degraded path must install the lightweight __path__-only stub"
+        )
+        assert list(getattr(mod, "__path__", [])) == [str(_pol)], (
+            "stub __path__ should point at lerobot's policies directory"
+        )
+        print("STUB_FALLBACK_INSTALLED")
+        """
     )
     assert result.returncode == 0, f"subprocess failed:\n{result.stderr}"
-    assert "RESOLUTION_DID_NOT_SHADOW" in result.stdout
+    assert "STUB_FALLBACK_INSTALLED" in result.stdout
