@@ -32,7 +32,12 @@ logger = logging.getLogger(__name__)
 # tests - a temporarily monkeypatched ``sys.modules``); caching a ``False``
 # would permanently disable streaming for the rest of the process even after the
 # condition clears. A failed probe is therefore re-attempted on the next call.
-_HAS_STREAMING_DATASET: bool = False
+#
+# The cache is a single-cell list rather than a module-level bool: a non-empty
+# cell means "probed True". Mutating the cell (append/clear) records the result
+# without rebinding a module global, so the memoization needs no ``global``
+# statement.
+_HAS_STREAMING_DATASET: list[bool] = []
 
 
 def has_streaming_dataset() -> bool:
@@ -41,7 +46,6 @@ def has_streaming_dataset() -> bool:
     A successful probe is cached; a failed probe is re-attempted on the next
     call so a transient import failure does not permanently disable streaming.
     """
-    global _HAS_STREAMING_DATASET
     if _HAS_STREAMING_DATASET:
         return True
     try:
@@ -49,7 +53,7 @@ def has_streaming_dataset() -> bool:
     except (ImportError, ValueError, RuntimeError) as exc:
         logger.debug("StreamingLeRobotDataset unavailable: %s", exc)
         return False
-    _HAS_STREAMING_DATASET = True
+    _HAS_STREAMING_DATASET.append(True)
     return True
 
 

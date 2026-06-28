@@ -360,7 +360,7 @@ def test_has_streaming_dataset_true_when_importable(monkeypatch):
     """The probe reports True when the streaming symbol resolves
     (exercises the real import branch, not the fakes-only path)."""
     _install_fake_lerobot_datasets(monkeypatch, with_streaming=True)
-    monkeypatch.setattr(sd, "_HAS_STREAMING_DATASET", False)
+    monkeypatch.setattr(sd, "_HAS_STREAMING_DATASET", [])
     assert sd.has_streaming_dataset() is True
 
 
@@ -368,7 +368,7 @@ def test_has_streaming_dataset_false_when_import_breaks(monkeypatch):
     """If the streaming class cannot be imported, the probe returns False and
     swallows the error (offline / partial-install resilience)."""
     _install_fake_lerobot_datasets(monkeypatch, with_streaming=False)
-    monkeypatch.setattr(sd, "_HAS_STREAMING_DATASET", False)
+    monkeypatch.setattr(sd, "_HAS_STREAMING_DATASET", [])
     assert sd.has_streaming_dataset() is False
 
 
@@ -376,9 +376,7 @@ def test_has_streaming_dataset_does_not_negatively_cache(monkeypatch):
     """A failed availability probe must NOT be cached: once a transient import
     failure clears, the probe must report True again. A frozen first ``False``
     would permanently disable streaming for the rest of the process."""
-    monkeypatch.setattr(sd, "_HAS_STREAMING_DATASET", False, raising=False)
-    if hasattr(sd.has_streaming_dataset, "cache_clear"):
-        sd.has_streaming_dataset.cache_clear()
+    monkeypatch.setattr(sd, "_HAS_STREAMING_DATASET", [], raising=False)
     # Transient failure: the streaming symbol does not resolve.
     _install_fake_lerobot_datasets(monkeypatch, with_streaming=False)
     assert sd.has_streaming_dataset() is False

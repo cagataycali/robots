@@ -55,7 +55,12 @@ _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # `False` would permanently disable recording for the rest of the process even
 # after the condition clears, so a failed probe is re-attempted on the next
 # call.
-_HAS_LEROBOT_DATASET: bool = False
+#
+# The cache is a single-cell list rather than a module-level bool: a non-empty
+# cell means "probed True". Mutating the cell (append/clear) records the result
+# without rebinding a module global, so the memoization needs no ``global``
+# statement.
+_HAS_LEROBOT_DATASET: list[bool] = []
 
 
 def has_lerobot_dataset() -> bool:
@@ -65,7 +70,6 @@ def has_lerobot_dataset() -> bool:
     on the next call so a transient import failure does not permanently disable
     recording for the process.
     """
-    global _HAS_LEROBOT_DATASET
     if _HAS_LEROBOT_DATASET:
         return True
     try:
@@ -73,7 +77,7 @@ def has_lerobot_dataset() -> bool:
     except (ImportError, ValueError, RuntimeError) as exc:
         logger.debug("lerobot not available: %s", exc)
         return False
-    _HAS_LEROBOT_DATASET = True
+    _HAS_LEROBOT_DATASET.append(True)
     return True
 
 

@@ -1245,7 +1245,7 @@ def test_has_lerobot_dataset_does_not_negatively_cache(monkeypatch):
     import importlib
     import sys
 
-    import strands_robots.dataset_recorder as dr
+    from strands_robots import dataset_recorder as dr
 
     # Capture the real module so we can swap it back in a fully reversible way
     # (monkeypatch.setitem restores the original entry on teardown; no delitem
@@ -1253,9 +1253,7 @@ def test_has_lerobot_dataset_does_not_negatively_cache(monkeypatch):
     real_module = importlib.import_module("lerobot.datasets.lerobot_dataset")
 
     # Start from a clean, un-probed state regardless of implementation.
-    monkeypatch.setattr(dr, "_HAS_LEROBOT_DATASET", False, raising=False)
-    if hasattr(dr.has_lerobot_dataset, "cache_clear"):
-        dr.has_lerobot_dataset.cache_clear()
+    monkeypatch.setattr(dr, "_HAS_LEROBOT_DATASET", [], raising=False)
 
     # Transient failure: the lerobot dataset module does not resolve.
     monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", None)
