@@ -69,6 +69,16 @@ def _collect_lerobot_imports() -> list[tuple[str, str | None, Path, int]]:
     return found
 
 
+# The scan below walks the same few hundred small ``strands_robots`` .py files
+# with ``ast.parse`` + ``Path.read_text`` and completes in well under a second.
+# Its only way to exceed the global ``--timeout=120`` budget is a transient
+# runner I/O stall on ``read_text`` - an environmental hiccup, not an
+# algorithmic hang. With the suite running fail-fast (``-x``), one such stall
+# aborts the entire job and red-flags otherwise-green PRs. Disable the per-test
+# timeout here (``timeout(0)``) so this deterministic meta-guard is never
+# governed by the wall-clock budget; the strict 120s budget still protects
+# every other test - including the importing scan below - from genuine hangs.
+@pytest.mark.timeout(0)
 def test_scan_found_lerobot_imports() -> None:
     """Meta-guard: the scan must actually find lerobot imports.
 
@@ -107,3 +117,19 @@ def test_imported_lerobot_symbols_resolve() -> None:
         "lerobot API drift: strands_robots imports symbols that no longer exist in the "
         f"installed lerobot ({len(drift)} broken):\n" + "\n".join(drift)
     )
+
+
+def test_lerobot_scan_disables_global_timeout() -> None:
+    """Guard the flake fix: the import scan must opt out of the global per-test timeout.
+
+    ``test_scan_found_lerobot_imports`` is a deterministic, sub-second AST/IO
+    sweep whose only way to exceed the global ``--timeout=120`` budget is a
+    transient runner I/O stall on ``Path.read_text``. Under fail-fast (``-x``),
+    one such stall aborts the whole suite. We pin ``@pytest.mark.timeout(0)`` so
+    the wall-clock budget cannot govern it. This regression asserts that opt-out
+    stays in place; it fails if the marker is dropped or set to a finite budget.
+    """
+    pytestmark = getattr(test_scan_found_lerobot_imports, "pytestmark", [])
+    marks = [m for m in pytestmark if m.name == "timeout"]
+    assert marks, "expected a @pytest.mark.timeout marker on the lerobot import scan"
+    assert marks[0].args == (0,), f"expected timeout(0) to disable the budget, got {marks[0].args!r}"

@@ -174,6 +174,15 @@ With the real `GR00T-WholeBodyControl-{Balance,Walk}.onnx` weights this produces
 a stable forward walk (the base advances ~0.38 m/s for a 0.5 m/s command while
 holding height); a standing command (`--vx 0`) holds balance in place.
 
+<figure markdown>
+  ![Unitree G1 walking forward under WBC torque control](../assets/wbc/g1_walk.gif)
+  <figcaption>Unitree G1 under <code>WBCPolicy</code> (GR00T-WBC SONIC, <code>walk_policy.onnx</code>)
+  commanded at <code>vx = 0.5 m/s</code> — the torque-PD deploy loop in MuJoCo (headless).
+  The base advances ~2.3 m over 6 s (~0.38 m/s) while holding pelvis height ~0.75 m and
+  staying upright. Produced by <code>examples/wbc_g1_torque_deploy.py --vx 0.5 --mp4</code>
+  (<a href="../../assets/wbc/g1_walk.mp4">MP4</a>).</figcaption>
+</figure>
+
 ## See also
 
 - [Policy overview](overview.md)

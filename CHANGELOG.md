@@ -5,6 +5,56 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Refactor: unify the rclpy + RTPS hardware ROS 2 bridges under `RosTelemetryBase`
+
+The two hardware ROS 2 transports now share a single source of truth for the
+wire contract. Previously `HardwareRosBridge` (rclpy) subclassed
+`RosTelemetryBridge` while the pure-RTPS bridge was a parallel implementation
+that re-derived the topic names, name sanitization, and inbound `joint_command`
+parsing independently - so the "byte-identical topics" guarantee depended on two
+codepaths staying in sync by hand.
+
+- New `strands_robots.ros_telemetry.RosTelemetryBase` owns the transport-agnostic
+  contract: topic names (`joint_states_topic` / `image_topic` /
+  `joint_command_topic`), the `_safe` segment sanitizer, robot-name resolution,
+  and `joint_command` -> `send_action` dispatch. `RosTelemetryBridge` (and its
+  `SimRosBridge` / `HardwareRosBridge` subclasses) and the RTPS bridge now all
+  derive from it, so the rclpy and cyclonedds transports are identical on the
+  ROS 2 graph by construction rather than by convention.
+- The pure-RTPS bridge class is renamed `RtpsHardwareBridge` -> `HardwareRtpsBridge`
+  to match its rclpy sibling `HardwareRosBridge` (both `Hardware*Bridge`). The
+  module path (`strands_robots.hardware_rtps_bridge`) and the public
+  top-level export are unchanged except for the class name; `Robot(...,
+  ros2_transport="rtps")` selection is unaffected.
+
+No wire behavior changes: published topics, message layouts, and the
+`joint_command` contract are identical before and after.
+
+
+### Feature: zero-config robot discovery from `robot_descriptions` (`registry`)
+
+`Robot("iiwa14", mode="sim")` (and every other MJCF robot shipped by
+`robot_descriptions`) now resolves without a hand-written `robots.json` entry.
+Previously a standard Menagerie robot had to be re-declared in the curated
+registry before the MuJoCo backend could load it, even though `robot_descriptions`
+already resolves its assets canonically - so the long tail (`iiwa14`, `gen3`,
+`viper`, `widow`, `so_arm101`, ...) was unreachable without a registry edit.
+
+- New `strands_robots.registry.discovery` module. `discover_robot(name)`
+  synthesizes a registry-shaped entry for any MJCF-capable `robot_descriptions`
+  robot by reading the module's `MJCF_PATH` / `PACKAGE_PATH`, so the existing
+  asset-download + resolution pipeline handles it unchanged. `descriptions_module`,
+  `is_discoverable`, and `list_discoverable` are cheap lookups (no import, no
+  network) for probing the long tail; `discover_robot` is consulted only by the
+  download-capable asset resolver.
+- The curated `robots.json` always wins: discovery fills the gap only for names
+  unknown to the curated registry, so existing robots, joint maps, hardware
+  ports, and aliases are unaffected. `robots.json` stays the place for any robot
+  that needs project-specific metadata.
+- `is_discoverable` / `list_discoverable` are re-exported from the top-level
+  `strands_robots` package and from `strands_robots.registry`. The `Robot()`
+  factory accepts a discoverable name instead of raising "Unknown robot".
+
 ### Feature: SARM reward-model training + the RA-BC production loop (`training`)
 
 Closes the *producing* half of Reward-Aligned Behavior Cloning: `strands-robots`

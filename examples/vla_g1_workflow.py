@@ -51,12 +51,19 @@ os.environ.setdefault("MUJOCO_GL", "cgl")
 # ---------------------------------------------------------------------------
 
 
-def stage_record(dataset_root: str, n_episodes: int, steps_per_episode: int) -> str:
-    """Drive the G1 in sim with a mock policy, capturing a LeRobotDataset.
+def stage_record(dataset_root: str, n_episodes: int, steps_per_episode: int, checkpoint: str | None = None) -> str:
+    """Drive the G1 in sim, capturing a LeRobotDataset.
 
-    In a real workflow this would be teleop data (LeRobot's teleop recorder with
-    a real G1 or a VR controller). Here we use a MockPolicy to generate
-    synthetic data that exercises the recording pipeline without hardware.
+    Data source, in order of preference:
+    - A real SONIC checkpoint (``checkpoint=...``): drive the G1 with WBCPolicy
+      so the recorded data is actual locomotion (the realistic workflow). This
+      is what you want when collecting demonstrations to fine-tune on.
+    - Otherwise: a MockPolicy generates synthetic data that exercises the
+      recording pipeline without hardware or weights (the quick-demo path).
+
+    In a true workflow this would be teleop data (LeRobot's teleop recorder with
+    a real G1 or a VR controller); WBC-driven locomotion is the autonomous
+    stand-in.
 
     Returns the dataset root path.
     """
@@ -67,6 +74,31 @@ def stage_record(dataset_root: str, n_episodes: int, steps_per_episode: int) -> 
     print(f"  Dataset root: {dataset_root}")
 
     sim = Robot("unitree_g1", mesh=False)
+
+    # Prefer WBC-driven locomotion when a real checkpoint is available, so the
+    # recorded dataset contains genuine walking motion rather than random poses.
+    record_kwargs: dict = {}
+    if checkpoint and os.path.isdir(checkpoint):
+        from strands_robots.policies import create_policy
+        from strands_robots.policies.wbc import install_wbc_torque_control
+
+        policy = create_policy("wbc", checkpoint=checkpoint, walk=True)
+        # WBC emits joint-POSITION targets; the G1 scene's position-servo
+        # actuators (uniform kp=500) override SONIC's tuned PD and the robot
+        # falls. Installing the torque controller flips those actuators to
+        # torque mode and applies the SONIC PD law at the right decimation, so
+        # the G1 actually WALKS through run_policy. Pair with control_frequency
+        # =50 Hz (the controller's dt=0.005 x decimation 4).
+        install_wbc_torque_control(sim, policy, "unitree_g1")
+        record_kwargs = {
+            "policy_kwargs": {"target_velocity": [0.5, 0.0, 0.0]},
+            "action_horizon": 1,
+            "control_frequency": 50.0,
+        }
+        print(f"  Data source: WBCPolicy (real locomotion) from {checkpoint}")
+    else:
+        policy = MockPolicy()
+        print("  Data source: MockPolicy (synthetic - pass --record-checkpoint for real locomotion data)")
 
     for ep in range(n_episodes):
         start = sim.start_recording(
@@ -84,9 +116,10 @@ def stage_record(dataset_root: str, n_episodes: int, steps_per_episode: int) -> 
 
         sim.run_policy(
             robot_name="unitree_g1",
-            policy_object=MockPolicy(),
+            policy_object=policy,
             instruction="walk forward",
             n_steps=steps_per_episode,
+            **record_kwargs,
         )
         sim.stop_recording()
         print(f"  Episode {ep + 1}/{n_episodes} recorded.")
@@ -235,6 +268,12 @@ def main() -> None:
         default="",
         help="Skip record+tune; deploy this existing SONIC checkpoint directly.",
     )
+    p.add_argument(
+        "--record-checkpoint",
+        default="",
+        help="Drive the RECORD stage with WBC from this SONIC checkpoint "
+        "(real locomotion data) instead of a MockPolicy.",
+    )
     p.add_argument("--dataset-root", default="/tmp/strands_vla_g1_dataset")
     p.add_argument("--output-dir", default="/tmp/strands_vla_g1_ft")
     p.add_argument("--tune-steps", type=int, default=1000)
@@ -248,8 +287,13 @@ def main() -> None:
         # Deploy-only shortcut: skip record + tune.
         stage_deploy(args.checkpoint, args.deploy_duration, args.vx)
     else:
-        # Stage 1: Record
-        dataset_root = stage_record(args.dataset_root, args.episodes, args.steps_per_episode)
+        # Stage 1: Record (WBC-driven if --record-checkpoint given, else mock)
+        dataset_root = stage_record(
+            args.dataset_root,
+            args.episodes,
+            args.steps_per_episode,
+            checkpoint=args.record_checkpoint or None,
+        )
 
         # Stage 2: Fine-tune (optional, gated behind --tune)
         checkpoint = None

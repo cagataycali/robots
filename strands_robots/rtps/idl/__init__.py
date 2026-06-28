@@ -19,8 +19,6 @@ and register it in ``REGISTRY`` under its ROS 2 type string. The wire layout
 nodes will reject the sample.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
 # cyclonedds is an optional dep (the [ros2] extra). Importing this module
@@ -31,7 +29,7 @@ try:
 
     from cyclonedds.idl import IdlStruct
     from cyclonedds.idl.annotations import keylist  # noqa: F401  (re-exported for msg defs)
-    from cyclonedds.idl.types import float64, sequence, uint32  # noqa: F401
+    from cyclonedds.idl.types import float64, int32, sequence, uint8, uint32  # noqa: F401
 
     _HAVE_CYCLONEDDS = True
 except ImportError:  # pragma: no cover - exercised only without the extra
@@ -103,6 +101,66 @@ if _HAVE_CYCLONEDDS:
             "geometry_msgs/msg/Point": Point,
             "geometry_msgs/msg/Quaternion": Quaternion,
             "geometry_msgs/msg/Pose": Pose,
+        }
+    )
+
+    # --- std_msgs / builtin_interfaces (Header chain) ----------------------
+    # sensor_msgs messages are stamped, so the bundle needs the Header chain.
+    # Layouts mirror the upstream .msg exactly:
+    #   builtin_interfaces/msg/Time:  int32 sec; uint32 nanosec
+    #   std_msgs/msg/Header:          builtin_interfaces/Time stamp; string frame_id
+
+    @dataclass
+    class Time(IdlStruct, typename="builtin_interfaces::msg::dds_::Time_"):
+        sec: int32 = 0
+        nanosec: uint32 = 0
+
+    @dataclass
+    class Header(IdlStruct, typename="std_msgs::msg::dds_::Header_"):
+        stamp: Time = field(default_factory=Time)
+        frame_id: str = ""
+
+    # --- sensor_msgs -------------------------------------------------------
+    # sensor_msgs/msg/JointState:
+    #   std_msgs/Header header
+    #   string[] name
+    #   float64[] position
+    #   float64[] velocity
+    #   float64[] effort
+
+    @dataclass
+    class JointState(IdlStruct, typename="sensor_msgs::msg::dds_::JointState_"):
+        header: Header = field(default_factory=Header)
+        name: sequence[str] = field(default_factory=list)  # type: ignore[type-arg, assignment]
+        position: sequence[float64] = field(default_factory=list)  # type: ignore[type-arg, assignment]
+        velocity: sequence[float64] = field(default_factory=list)  # type: ignore[type-arg, assignment]
+        effort: sequence[float64] = field(default_factory=list)  # type: ignore[type-arg, assignment]
+
+    # sensor_msgs/msg/Image:
+    #   std_msgs/Header header
+    #   uint32 height
+    #   uint32 width
+    #   string encoding
+    #   uint8 is_bigendian
+    #   uint32 step
+    #   uint8[] data
+
+    @dataclass
+    class Image(IdlStruct, typename="sensor_msgs::msg::dds_::Image_"):
+        header: Header = field(default_factory=Header)
+        height: uint32 = 0
+        width: uint32 = 0
+        encoding: str = ""
+        is_bigendian: uint8 = 0
+        step: uint32 = 0
+        data: sequence[uint8] = field(default_factory=list)  # type: ignore[type-arg, assignment]
+
+    REGISTRY.update(
+        {
+            "builtin_interfaces/msg/Time": Time,
+            "std_msgs/msg/Header": Header,
+            "sensor_msgs/msg/JointState": JointState,
+            "sensor_msgs/msg/Image": Image,
         }
     )
 

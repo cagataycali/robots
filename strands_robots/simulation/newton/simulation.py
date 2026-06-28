@@ -452,6 +452,85 @@ class NewtonSimEngine(SimEngine):
             return None
         return float(self._world.timestep)
 
+    def set_gravity(self, gravity: list[float] | float | int) -> dict[str, Any]:
+        """Set the world gravity vector and rebuild so the solver applies it.
+
+        Mirrors the MuJoCo backend: a scalar is interpreted as the z-component
+        ``[0, 0, g]``; a 3-element list sets the full ``[x, y, z]`` vector in
+        m/s^2. Newton's solver snapshots gravity at construction time, so the
+        model is rebuilt; this re-initialises the world to its rest pose, so
+        prefer setting gravity before stepping. Live joint targets are
+        preserved across the rebuild.
+
+        Args:
+            gravity: Scalar z-gravity, or a 3-element ``[x, y, z]`` vector.
+
+        Returns:
+            Status dict echoing the applied gravity, or an error dict when no
+            world exists or the argument is not a finite 3-vector / scalar.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        if isinstance(gravity, (int, float)):
+            gravity = [0.0, 0.0, float(gravity)]
+        try:
+            if len(gravity) != 3:
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": f"set_gravity: 'gravity' must be a 3-element list [x,y,z], got {len(gravity)}"}
+                    ],
+                }
+            gravity = [float(g) for g in gravity]
+        except (TypeError, ValueError) as exc:
+            return {
+                "status": "error",
+                "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list of numbers ({exc})"}],
+            }
+        if not all(math.isfinite(g) for g in gravity):
+            return {
+                "status": "error",
+                "content": [{"text": f"set_gravity: all components must be finite, got {gravity}"}],
+            }
+        with self._lock:
+            self._world.gravity = gravity
+            self._rebuild()
+        return {"status": "success", "content": [{"text": f"Gravity: {gravity}"}]}
+
+    def set_timestep(self, timestep: float) -> dict[str, Any]:
+        """Set the physics integration timestep in seconds.
+
+        Mirrors the MuJoCo backend. Newton reads the timestep live on each
+        :meth:`step` (``dt = timestep / substeps``), so no model rebuild is
+        required and the change takes effect on the next step.
+
+        Args:
+            timestep: Positive integration timestep in seconds.
+
+        Returns:
+            Status dict reporting the timestep and equivalent control rate, or
+            an error dict when no world exists or the value is not finite and
+            positive.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        try:
+            timestep = float(timestep)
+        except (TypeError, ValueError):
+            return {
+                "status": "error",
+                "content": [{"text": f"set_timestep: must be a positive number, got {timestep!r}"}],
+            }
+        if not math.isfinite(timestep) or timestep <= 0:
+            return {
+                "status": "error",
+                "content": [{"text": f"set_timestep: must be a finite positive number, got {timestep}"}],
+            }
+        warn = " Warning: unusually large timestep (>0.1s); physics may be unstable" if timestep > 0.1 else ""
+        with self._lock:
+            self._world.timestep = timestep
+        return {"status": "success", "content": [{"text": f"Timestep: {timestep}s ({1 / timestep:.0f}Hz){warn}"}]}
+
     # Rendering
 
     def render(
@@ -558,6 +637,7 @@ class NewtonSimEngine(SimEngine):
             "robots": self.list_robots(),
             "objects": list(self._world.objects) if self._world else [],
             "timestep": self._world.timestep if self._world else self.default_timestep,
+            "gravity": list(self._world.gravity) if self._world else [0.0, 0.0, -9.81],
         }
 
     def cleanup(self, policy_stop_timeout: float | None = None) -> None:
@@ -666,6 +746,23 @@ class NewtonSimEngine(SimEngine):
             self._world.sim_time += self._world.timestep
             self._world.step_count += 1
 
+    def _apply_gravity(self) -> None:
+        """Write the world's gravity vec3 onto the finalized model.
+
+        Must be called with ``self._lock`` held, after ``builder.finalize`` and
+        before the solver is constructed (Newton solvers snapshot gravity at
+        construction). Newton stores one gravity vec3 per parallel world; the
+        same world-gravity vector is broadcast to each of them. A no-op when no
+        model or gravity buffer exists yet.
+        """
+        assert self._world is not None and self._model is not None
+        grav = self._model.gravity
+        if grav is None:
+            return
+        n_worlds = grav.shape[0]
+        vec = np.tile(np.asarray(self._world.gravity, dtype=np.float32), (n_worlds, 1))
+        self._model.gravity = self._wp.array(vec, dtype=self._wp.vec3, device=self._model.device)
+
     def _write_targets(self) -> None:
         """Push pending position targets into the Newton control buffer.
 
@@ -721,6 +818,13 @@ class NewtonSimEngine(SimEngine):
             builder.add_ground_plane()
 
         self._model = builder.finalize(device=self.device)
+        # Newton solvers snapshot gravity at construction, and ModelBuilder only
+        # expresses gravity as a scalar magnitude along its up-axis (silently
+        # dropping any non-axis-aligned component). Write the world's full
+        # gravity vec3 onto the finalized model BEFORE building the solver so an
+        # arbitrary gravity vector configured via create_world / set_gravity is
+        # honoured instead of being ignored.
+        self._apply_gravity()
         # Rigid-body solvers (notably SolverMuJoCo) require at least one joint.
         # An empty world (ground plane only) has none, so defer solver creation
         # until a robot is added; stepping is a no-op until then.

@@ -39,3 +39,23 @@ def test_bundle_typenames_match_ros_dds_mapping() -> None:
 def test_unknown_type_lists_known() -> None:
     with pytest.raises(KeyError, match="not in the RTPS IDL bundle"):
         idl.get_type("custom_msgs/msg/Nope")
+
+
+@pytest.mark.skipif(not idl.have_cyclonedds(), reason="requires the [ros2] extra (cyclonedds)")
+def test_sensor_msgs_chain_present() -> None:
+    """The hardware RTPS bridge needs the JointState/Image + Header chain.
+
+    These were added so the hardware bridge can run rclpy-free; the wire
+    layouts are validated against a live ROS 2 node separately. Here we only
+    pin that the types resolve and carry the correct DDS typenames.
+    """
+    from strands_robots.rtps.mangling import dds_type_name
+
+    for ros_type in (
+        "builtin_interfaces/msg/Time",
+        "std_msgs/msg/Header",
+        "sensor_msgs/msg/JointState",
+        "sensor_msgs/msg/Image",
+    ):
+        cls = idl.get_type(ros_type)
+        assert cls.__idl_typename__ == dds_type_name(ros_type), ros_type
