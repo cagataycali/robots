@@ -5,6 +5,25 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: Newton recording captures camera frames when the policy skips images
+
+`PolicyRunner` sets `skip_images = not policy.requires_images` to avoid rendering
+when the policy does not consume pixels. The default `mock` policy (and any
+non-VLA, proprioceptive-only policy) reports `requires_images=False`, so during a
+rollout the runner asks the backend for a pixel-free observation. While a dataset
+recording is active that hint must be overridden, because the recording `on_frame`
+hook writes the observation's camera ndarrays into the dataset's declared video
+features -- a pixel-free observation yields a dataset with correct episode counts
+but no pixels (the video-modality sibling of the mega-episode corruption class).
+The MuJoCo backend guards this in `get_observation`; the Newton backend wired the
+recorder later (named cameras + `DatasetRecorder`) and honored `skip_images`
+literally, so recording on Newton with a non-image policy silently dropped every
+frame's images. `NewtonSimEngine.get_observation` now applies the same guard:
+when an active recording is attached it renders cameras regardless of the
+`skip_images` hint, restoring MuJoCo parity. Inference still skips rendering when
+nothing is recording.
+
+
 ### Fixed: policy resolution no longer shadows `lerobot.policies` with a partial stub
 
 Smart-string resolution (`create_policy("org/model")`, `grpc://`, `ws://`, ...)

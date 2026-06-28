@@ -591,6 +591,13 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             return {}
         if robot_name not in self._world.robots:
             return {}
+        if skip_images and self._world._backend_state.get("recording"):
+            # T26: dataset recording needs every frame's image obs. Override
+            # the policy's skip hint when an active recorder is attached so a
+            # non-image policy (e.g. the default mock, requires_images=False)
+            # does not silently record pixel-less frames for declared camera
+            # features. Mirrors the MuJoCo backend's get_observation guard.
+            skip_images = False
         with self._lock:
             joint_q = self._state_0.joint_q.numpy()
             robot_joints = self._world.robots[robot_name].joint_names
