@@ -131,6 +131,41 @@ mount = sim.list_bodies("so100")["content"][1]["json"]["gripper_body"]
 # "so_arm100/.../Fixed_Jaw"
 ```
 
+## Dataset recording
+
+The Newton backend records to the same LeRobotDataset format as the MuJoCo
+backend, so it drives the full dataset-collection workflow:
+
+```python
+sim = create_simulation("newton", solver="mujoco")
+sim.create_world()
+sim.add_robot("so100")
+
+sim.start_recording(repo_id="local/newton_demo", task="pick the cube", fps=30)
+for _ in range(n_episodes):
+    sim.run_policy(robot_name="so100", policy_provider="mock", n_steps=200)
+    sim.save_episode()          # flush this rollout as one episode
+result = sim.stop_recording()   # finalize parquet + video
+sim.verify_dataset_episodes(n_episodes)   # parquet-truth check
+```
+
+`start_recording` declares the dataset schema from the live scene - joint names
+from every robot (namespaced `robot__joint` in multi-robot scenes) plus any
+named cameras registered on the world, each at its real render resolution. The
+`on_frame` hook the shared `run_policy` loop invokes feeds joint state, action,
+and rendered camera frames to the recorder every control step. Episode
+boundaries (`save_episode`), finalization (`stop_recording`), and the
+parquet-correctness gate (`verify_dataset_episodes`) are inherited from the
+backend-agnostic recording lifecycle, so a Newton recording satisfies the same
+contract as MuJoCo: `total_episodes == N`, episode parquet `num_rows == N`, and
+`len(unique(episode_index)) == N`. Prefer `run_policy(n_episodes=N)`, which
+flushes an episode boundary automatically after each rollout.
+
+Recording requires the `lerobot` extra (`pip install "strands-robots[lerobot]"`).
+When no named cameras are registered the dataset records joint state and action
+only (a valid proprio-only dataset); camera columns are added automatically once
+cameras are registered on the world.
+
 ## Limitations
 
 - Only a single default camera view is provided by `render()`; named per-robot

@@ -1,0 +1,277 @@
+"""Newton recording mixin - LeRobotDataset schema declaration + per-step capture.
+
+The engine-independent recording lifecycle (``stop_recording`` /
+``save_episode`` / ``get_recording_status`` / ``stream_dataset`` and the
+``_is_recording`` / ``_active_recorder`` / ``_active_dataset_root`` overrides)
+lives in :class:`~strands_robots.simulation.recording.DatasetRecordingMixin`,
+which is backend-agnostic. This subclass adds the two Newton-specific halves:
+
+* :meth:`start_recording` declares the dataset schema from the live Newton
+  scene - joint names from every robot (namespaced for multi-robot scenes) and
+  the named cameras registered on the world.
+* :meth:`_make_run_policy_hook` returns the ``on_frame`` closure the shared
+  :class:`~strands_robots.simulation.base.SimEngine` run-policy loop calls every
+  control step. It feeds joint state + action + rendered camera frames to the
+  active :class:`~strands_robots.dataset_recorder.DatasetRecorder`.
+
+The recorder, episode-boundary flushing (``save_episode``), and the canonical
+parquet-correctness contract are identical to the MuJoCo backend - the
+``DatasetRecorder`` is engine-independent, so a Newton recording produces the
+same LeRobot v3 dataset layout (``meta/info.json`` + per-episode parquet +
+per-camera MP4).
+"""
+
+from __future__ import annotations
+
+import logging
+import shutil
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from strands_robots.simulation.recording import DatasetRecordingMixin
+
+if TYPE_CHECKING:
+    from strands_robots.simulation.models import SimWorld
+
+logger = logging.getLogger(__name__)
+
+
+class NewtonRecordingMixin(DatasetRecordingMixin):
+    """Newton dataset recording mixed into :class:`NewtonSimEngine`.
+
+    Inherits the engine-independent lifecycle from
+    :class:`DatasetRecordingMixin` and supplies the Newton-specific schema
+    declaration (:meth:`start_recording`) and per-step capture hook
+    (:meth:`_make_run_policy_hook`).
+    """
+
+    if TYPE_CHECKING:
+        _world: SimWorld | None
+        _model: Any
+        default_width: int
+        default_height: int
+
+        def render(
+            self, camera_name: str = ..., width: int | None = ..., height: int | None = ...
+        ) -> dict[str, Any]: ...
+
+    def start_recording(
+        self,
+        repo_id: str = "local/sim_recording",
+        task: str = "",
+        fps: int = 30,
+        root: str | None = None,
+        push_to_hub: bool = False,
+        vcodec: str = "libsvtav1",
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        """Start recording the Newton scene to LeRobotDataset format.
+
+        Declares the dataset schema from the live scene - joint names from every
+        robot (namespaced ``robot__joint`` when more than one robot is present,
+        matching the MuJoCo backend) and the named cameras registered on
+        ``world.cameras`` (with their real render resolutions). Per-step frames
+        are then captured by the ``on_frame`` hook
+        (:meth:`_make_run_policy_hook`) during ``run_policy``.
+
+        When no named cameras are registered the dataset records joint state and
+        action only (a valid proprio-only LeRobot dataset); camera columns are
+        added automatically once cameras are registered on the world.
+
+        Requires the ``lerobot`` extra for the dataset schema.
+
+        Args:
+            repo_id: HuggingFace dataset id (``owner/name``) or a local path.
+            task: Default task description recorded with every frame.
+            fps: Recording frame rate.
+            root: Explicit on-disk dataset directory (overrides the repo_id
+                cache-path resolution).
+            push_to_hub: Publish to the Hub at ``stop_recording``.
+            vcodec: Video codec for camera MP4 encoding.
+            overwrite: Wipe and recreate an existing dataset dir instead of
+                appending to it.
+
+        Returns:
+            Standard status dict. ``status="error"`` when no world exists, the
+            ``lerobot`` extra is missing, or recorder init fails.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+
+        _DatasetRecorder: Any = None
+        _has_lerobot = False
+        try:
+            from strands_robots.dataset_recorder import DatasetRecorder as _DatasetRecorder
+            from strands_robots.dataset_recorder import has_lerobot_dataset as _check_lerobot
+
+            _has_lerobot = _check_lerobot()
+        except ImportError:
+            pass
+
+        if not _has_lerobot or _DatasetRecorder is None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "start_recording produces a LeRobotDataset (parquet + video) and "
+                            "requires the lerobot extra: pip install 'strands-robots[lerobot]'.\n"
+                            "For plain MP4 video, pass video={'path': ...} to run_policy instead."
+                        )
+                    }
+                ],
+            }
+
+        world = self._world
+        world._backend_state["recording"] = True
+        world._backend_state["trajectory"] = []
+        world._backend_state["push_to_hub"] = push_to_hub
+
+        # Resolve the on-disk dataset dir (shared by overwrite + resume logic).
+        if root:
+            dataset_dir = Path(root)
+        elif "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
+            dataset_dir = Path(repo_id)
+        else:
+            dataset_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
+        world._backend_state["last_dataset_root"] = str(dataset_dir)
+
+        resume_existing = (
+            not overwrite and dataset_dir.exists() and dataset_dir.is_dir() and (dataset_dir / "meta").exists()
+        )
+
+        try:
+            if overwrite and dataset_dir.exists() and dataset_dir.is_dir():
+                shutil.rmtree(dataset_dir)
+                logger.info("Removed existing dataset dir: %s", dataset_dir)
+
+            joint_names, camera_keys, camera_dims, robot_type, recording_cameras = self._collect_recording_schema()
+            world._backend_state["recording_cameras"] = recording_cameras
+
+            if resume_existing:
+                logger.info("Resuming existing dataset for append: %s", dataset_dir)
+                resumed = _DatasetRecorder.resume(repo_id=repo_id, root=root, task=task, vcodec=vcodec)
+                self._verify_resume_schema(resumed, joint_names, camera_keys, camera_dims)
+                world._backend_state["dataset_recorder"] = resumed
+            else:
+                world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
+                    repo_id=repo_id,
+                    fps=fps,
+                    robot_type=robot_type,
+                    joint_names=joint_names,
+                    camera_keys=camera_keys,
+                    camera_dims=camera_dims,
+                    task=task,
+                    root=root,
+                    vcodec=vcodec,
+                    video_width=self.default_width,
+                    video_height=self.default_height,
+                )
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            f"Recording Newton scene to LeRobotDataset: {repo_id}\n"
+                            f"{len(joint_names)} joints, {len(camera_keys)} cameras @ {fps}fps\n"
+                            f"Codec: {vcodec} | Task: {task or '(set per policy)'}\n"
+                            f"Run policies to capture frames, then stop_recording to save the episode"
+                        )
+                    }
+                ],
+            }
+        except Exception as e:
+            world._backend_state["recording"] = False
+            logger.error("Dataset recorder init failed: %s", e)
+            return {"status": "error", "content": [{"text": f"Dataset init failed: {e}"}]}
+
+    def _collect_recording_schema(
+        self,
+    ) -> tuple[list[str], list[str], dict[str, tuple[int, int]], str, list[tuple[str, str, int, int]]]:
+        """Build the dataset schema from the live Newton scene.
+
+        Returns:
+            A 5-tuple of:
+              * ``joint_names``: ordered state/action joint ids (namespaced
+                ``robot__joint`` when more than one robot exists).
+              * ``camera_keys``: sanitized camera feature names (``/`` -> ``__``).
+              * ``camera_dims``: map of camera feature name -> ``(height, width)``.
+              * ``robot_type``: the dataset ``robot_type`` string.
+              * ``recording_cameras``: per-camera ``(source_name, safe_name,
+                width, height)`` tuples the on_frame hook renders each step.
+        """
+        world = self._world
+        assert world is not None  # guarded by start_recording
+        joint_names: list[str] = []
+        robot_type = "unknown"
+        multi_robot = len(world.robots) > 1
+        for rname, robot in world.robots.items():
+            if multi_robot:
+                joint_names.extend(f"{rname}__{jn}" for jn in robot.joint_names)
+            else:
+                joint_names.extend(robot.joint_names)
+            robot_type = robot.data_config or rname
+
+        camera_keys: list[str] = []
+        camera_dims: dict[str, tuple[int, int]] = {}
+        recording_cameras: list[tuple[str, str, int, int]] = []
+        for cam_name, cam in world.cameras.items():
+            safe_name = cam_name.replace("/", "__")
+            width = int(getattr(cam, "width", self.default_width))
+            height = int(getattr(cam, "height", self.default_height))
+            camera_keys.append(safe_name)
+            camera_dims[safe_name] = (height, width)
+            recording_cameras.append((cam_name, safe_name, width, height))
+        return joint_names, camera_keys, camera_dims, robot_type, recording_cameras
+
+    def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
+        """Build the per-step ``on_frame`` recording hook for Newton.
+
+        Returns an ``on_frame(step, observation, action)`` closure that, while a
+        recording session is active, augments the joint-state observation with a
+        rendered frame for each declared camera and forwards the frame to the
+        active :class:`DatasetRecorder`. In multi-robot scenes scalar
+        observation/action keys are namespaced (``robot__joint``) to match the
+        schema declared in :meth:`start_recording`; camera ndarrays keep their
+        sanitized names.
+
+        Returns ``None`` when there is no world or the robot is unknown, so the
+        base run-policy loop runs without recording.
+        """
+        from strands_robots.simulation.policy_runner import _extract_frame_ndarray
+
+        world = self._world
+        if world is None or robot_name not in world.robots:
+            return None
+
+        robot = world.robots[robot_name]
+        robot.policy_running = True
+        robot.policy_instruction = instruction
+        robot.policy_steps = 0
+        multi_robot = len(world.robots) > 1
+
+        def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
+            robot.policy_steps = step + 1
+            if not world._backend_state.get("recording", False):
+                return
+            rec = world._backend_state.get("dataset_recorder")
+            if rec is None:
+                return
+
+            obs: dict[str, Any] = dict(observation)
+            for source_name, safe_name, width, height in world._backend_state.get("recording_cameras", []):
+                render_result = self.render(camera_name=source_name, width=width, height=height)
+                img = _extract_frame_ndarray(render_result)
+                if img is not None:
+                    obs[safe_name] = img
+
+            if multi_robot:
+                import numpy as np
+
+                obs = {(k if isinstance(v, np.ndarray) else f"{robot_name}__{k}"): v for k, v in obs.items()}
+                act = {f"{robot_name}__{k}": v for k, v in action.items()}
+                rec.add_frame(observation=obs, action=act, task=instruction)
+            else:
+                rec.add_frame(observation=obs, action=action, task=instruction)
+
+        return _hook

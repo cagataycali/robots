@@ -44,6 +44,7 @@ from strands_robots.simulation.model_registry import (
 )
 from strands_robots.simulation.models import SimObject, SimRobot, SimWorld
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
+from strands_robots.simulation.newton.recording import NewtonRecordingMixin
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -74,7 +75,7 @@ def _short_joint_name(label: str) -> str:
     return label.rsplit("/", 1)[-1]
 
 
-class NewtonSimEngine(SimEngine):
+class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
     """GPU-native simulation backend built on Newton (Warp / MuJoCo-Warp).
 
     One Newton model per instance. The world is rebuilt whenever robots or
@@ -948,6 +949,22 @@ class NewtonSimEngine(SimEngine):
                 "render": "(camera_name='default', width=None, height=None) -> dict",
                 "reset": "() -> dict (restore baseline joint configuration)",
                 "step": "(n_steps: int = 1) -> dict",
+                "start_recording": (
+                    "(repo_id='local/sim_recording', task='', fps=30, root=None, "
+                    "push_to_hub=False, vcodec='libsvtav1', overwrite=False) -> dict  "
+                    "(record joint state + action + named cameras to a LeRobotDataset)"
+                ),
+                "save_episode": (
+                    "() -> dict  (flush the current rollout as one episode; call once per "
+                    "run_policy to get N episodes instead of one merged episode. Prefer "
+                    "run_policy(n_episodes=N) which flushes a boundary per episode)"
+                ),
+                "stop_recording": "(push_to_hub=False, bucket=None, run_id=None) -> dict",
+                "get_recording_status": "() -> dict",
+                "verify_dataset_episodes": (
+                    "(expected: int) -> dict  (after stop_recording, read the parquet and "
+                    "confirm the dataset holds exactly `expected` episodes; status=error on mismatch)"
+                ),
             },
             "note": (
                 "robot_name defaults to the sole robot when only one exists for "
