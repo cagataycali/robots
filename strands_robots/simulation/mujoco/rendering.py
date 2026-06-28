@@ -568,15 +568,32 @@ class RenderingMixin:
     def render(
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
     ) -> dict[str, Any]:
-        """Render a camera view as base64 PNG image."""
+        """Render a camera view to a PNG image.
+
+        Returns an agent-tool dict with ``status`` and a ``content`` list; on
+        success the content holds an ``image`` block carrying PNG bytes
+        (``{"image": {"format": "png", "source": {"bytes": ...}}}``) plus a
+        ``json`` block with ``pixel_variance``/``pixel_mean``/``camera``.
+
+        Resolution: when ``width``/``height`` are omitted, the named camera's
+        configured resolution (from ``add_camera``) is used; the free camera and
+        model-only cameras fall back to the engine default. Explicit
+        ``width``/``height`` override the camera config.
+        """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
         mj = _ensure_mujoco()
         # treat `None` as "use default", but `0` / negative values must
         # still hit the validator (bool coercion would swallow them silently).
-        w = self.default_width if width is None else width
-        h = self.default_height if height is None else height
+        # When the caller omits a dimension, honor the named camera's CONFIGURED
+        # resolution (set via add_camera(width=, height=)) so render() agrees
+        # with get_observation, which already keys off the per-camera config.
+        # The free camera ("default"/"free") and model-only cameras that have no
+        # SimCamera entry fall back to the engine default.
+        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
+        h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
             return err
 

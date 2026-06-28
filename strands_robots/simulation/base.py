@@ -366,9 +366,13 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Render a camera view.
 
-        Returns dict with ``"image"`` key (numpy array, RGB uint8) and
-        optional ``"depth"`` key (float32 depth map). Resolution comes
-        from camera config unless ``width``/``height`` are given.
+        Returns an agent-tool dict with ``status`` and a ``content`` list. On
+        success the content holds an ``image`` block carrying PNG bytes
+        (``{"image": {"format": "png", "source": {"bytes": ...}}}``); the raw
+        RGB ``numpy`` arrays are available per-camera via :meth:`get_observation`.
+        Resolution comes from the named camera's configuration (set via
+        ``add_camera``) unless ``width``/``height`` are given; the free camera
+        and model-only cameras fall back to the engine default.
         """
         ...
 
