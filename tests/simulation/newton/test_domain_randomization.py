@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import importlib.util
 import threading
+from typing import TYPE_CHECKING, cast
 
 import numpy as np
 import pytest
@@ -27,6 +28,9 @@ from strands_robots.simulation.newton.randomization import (
     DomainRandomizationMixin,
     _validate_range,
 )
+
+if TYPE_CHECKING:
+    from strands_robots.simulation.models import SimWorld
 
 _HAS_NEWTON = importlib.util.find_spec("newton") is not None and importlib.util.find_spec("warp") is not None
 
@@ -78,6 +82,12 @@ class TestSetObsNoiseValidation:
     def test_non_finite_is_error(self):
         host = _NoiseHost()
         assert host.set_obs_noise(camera_jitter_px=float("nan"))["status"] == "error"
+
+    def test_non_numeric_is_error(self):
+        host = _NoiseHost()
+        result = host.set_obs_noise(joint_pos_std="fast")
+        assert result["status"] == "error"
+        assert host._obs_noise is None
 
     def test_valid_config_is_stored(self):
         host = _NoiseHost()
@@ -131,6 +141,12 @@ class TestFrameJitter:
         frame = np.zeros((8, 8, 3), dtype=np.uint8)
         assert host._maybe_jitter_frame(frame) is frame
 
+    def test_subpixel_jitter_is_noop(self):
+        host = _NoiseHost()
+        host.set_obs_noise(camera_jitter_px=0.5, seed=0)  # int(0.5) == 0 -> no shift
+        frame = np.arange(8 * 8 * 3, dtype=np.uint8).reshape(8, 8, 3)
+        assert host._maybe_jitter_frame(frame) is frame
+
     def test_jitter_shifts_pixels_without_changing_shape(self):
         host = _NoiseHost()
         host.set_obs_noise(camera_jitter_px=3, seed=2)
@@ -158,6 +174,162 @@ class TestRandomizeGuards:
         host = _NoiseHost()
         host._world = object()
         assert host.randomize(mass_range=(2.0, 0.5))["status"] == "error"
+
+
+class _FakeWarp:
+    """Minimal Warp stand-in: ``mat33f`` passes the inertia matrix through.
+
+    The real Newton backend wraps the scaled inertia in a ``warp.mat33f`` so the
+    finalized model can ingest it. The randomization logic only needs the call
+    to succeed and round-trip the value, so identity passthrough is faithful.
+    """
+
+    @staticmethod
+    def mat33f(value):
+        return value
+
+
+class _FakeBuilder:
+    """Mimics the slice of a Newton ``ModelBuilder`` that randomization mutates.
+
+    Body 0 is fixed (mass 0) so tests can assert it is skipped by mass scaling,
+    matching the real engine where the world/base body has zero mass.
+    """
+
+    def __init__(self) -> None:
+        self.shape_color = [(0.5, 0.5, 0.5) for _ in range(4)]
+        self.body_mass = [0.0, 1.0, 2.0, 3.0]
+        self.body_inertia = [np.eye(3, dtype=np.float32) for _ in range(4)]
+        self.shape_material_mu = [0.8, 0.8, 0.8, 0.8]
+
+
+class _RebuildHost(DomainRandomizationMixin):
+    """Host that drives the full ``randomize`` -> ``_rebuild`` path off-GPU.
+
+    Mirrors how ``NewtonSimEngine._rebuild`` invokes
+    ``_apply_domain_randomization`` on a freshly-assembled builder under the
+    instance lock, so the deterministic sampling and array mutation run without
+    Newton or Warp installed.
+    """
+
+    def __init__(self, builder: _FakeBuilder | None = None) -> None:
+        self._lock = threading.RLock()
+        self._world = None
+        self._dr = None
+        self._dr_applied = None
+        self._dr_light_dir = None
+        self._obs_noise = None
+        self._obs_noise_rng = None
+        self._wp = _FakeWarp()
+        self.builder = builder or _FakeBuilder()
+
+    def _rebuild(self) -> None:
+        self._apply_domain_randomization(self.builder)
+
+
+def _active_host(builder: _FakeBuilder | None = None) -> _RebuildHost:
+    """A _RebuildHost with a non-None world so randomize()'s guard passes."""
+    host = _RebuildHost(builder)
+    # A non-None stand-in: randomize()'s guard only checks `_world is None`.
+    host._world = cast("SimWorld", object())
+    return host
+
+
+class TestApplyDomainRandomizationNoSpec:
+    def test_no_active_spec_leaves_builder_untouched(self):
+        host = _RebuildHost()  # _dr is None until randomize() runs
+        before = list(host.builder.body_mass)
+        host._apply_domain_randomization(host.builder)
+        assert host.builder.body_mass == before
+        assert host._dr_applied is None
+
+
+class TestRandomizePhysicsApplied:
+    def test_mass_scales_within_range_and_skip_zero_mass_body(self):
+        host = _active_host()
+        base_mass = list(host.builder.body_mass)
+        result = host.randomize(
+            randomize_physics=True,
+            randomize_colors=False,
+            randomize_lighting=False,
+            mass_range=(0.8, 1.2),
+            friction_range=(0.5, 1.5),
+            seed=42,
+        )
+        assert result["status"] == "success"
+        applied = result["content"][1]["json"]
+        # The fixed (mass-0) body is skipped; the three positive bodies scale.
+        assert len(applied["mass_scales"]) == 3
+        assert all(0.8 <= s <= 1.2 for s in applied["mass_scales"])
+        assert host.builder.body_mass[0] == 0.0
+        for i in range(1, 4):
+            assert host.builder.body_mass[i] != base_mass[i]
+        # Every shape's friction is scaled within range.
+        assert len(applied["friction_scales"]) == 4
+        assert all(0.5 <= f <= 1.5 for f in applied["friction_scales"])
+        assert "bodies mass-scaled" in result["content"][0]["text"]
+
+    def test_inertia_tracks_mass_scale(self):
+        host = _active_host()
+        host.randomize(
+            randomize_physics=True,
+            randomize_colors=False,
+            randomize_lighting=False,
+            mass_range=(0.8, 1.2),
+            seed=7,
+        )
+        scales = host._dr_applied["mass_scales"]
+        # body_inertia[1] started as identity; it must now equal identity * scale.
+        np.testing.assert_allclose(np.asarray(host.builder.body_inertia[1]), np.eye(3) * scales[0], rtol=1e-5)
+
+
+class TestRandomizeColorsApplied:
+    def test_every_shape_color_resampled_within_range(self):
+        host = _active_host()
+        result = host.randomize(
+            randomize_colors=True,
+            randomize_lighting=False,
+            randomize_physics=False,
+            color_range=(0.1, 0.9),
+            seed=3,
+        )
+        assert result["status"] == "success"
+        assert result["content"][1]["json"]["n_colors"] == 4
+        for color in host.builder.shape_color:
+            assert len(color) == 3
+            assert all(0.1 <= c <= 0.9 for c in color)
+        assert "shapes randomized" in result["content"][0]["text"]
+
+
+class TestRandomizeLightingApplied:
+    def test_light_direction_is_unit_vector_and_recorded(self):
+        host = _active_host()
+        result = host.randomize(randomize_lighting=True, randomize_colors=False, randomize_physics=False, seed=2)
+        light = result["content"][1]["json"]["light_direction"]
+        assert len(light) == 3
+        assert abs(float(np.linalg.norm(light)) - 1.0) < 1e-6
+        assert host._dr_light_dir == light
+        assert "light direction" in result["content"][0]["text"]
+
+    def test_lighting_disabled_clears_light_direction(self):
+        host = _active_host()
+        result = host.randomize(randomize_lighting=False, randomize_colors=False, randomize_physics=False)
+        assert host._dr_light_dir is None
+        assert "No axes enabled" in result["content"][0]["text"]
+
+
+class TestRandomizeReproducibility:
+    def test_same_seed_identical_multipliers(self):
+        a = _active_host().randomize(randomize_physics=True, mass_range=(0.8, 1.2), seed=99)["content"][1]["json"]
+        b = _active_host().randomize(randomize_physics=True, mass_range=(0.8, 1.2), seed=99)["content"][1]["json"]
+        assert a["mass_scales"] == b["mass_scales"]
+        assert a["friction_scales"] == b["friction_scales"]
+        assert a["light_direction"] == b["light_direction"]
+
+    def test_different_seed_differs(self):
+        a = _active_host().randomize(randomize_physics=True, seed=1)["content"][1]["json"]
+        b = _active_host().randomize(randomize_physics=True, seed=2)["content"][1]["json"]
+        assert a["mass_scales"] != b["mass_scales"]
 
 
 # --------------------------------------------------------------------------- #
