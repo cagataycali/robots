@@ -35,7 +35,7 @@ import logging
 import os
 import random
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -236,6 +236,166 @@ class CooperativeStop(BaseException):
     by ``PolicyRunner.run`` and caught at the top of the loop to return
     a normal stopped-early success result.
     """
+
+
+class _ChunkPipeline:
+    """Yield ``(observation, action)`` pairs for a policy rollout.
+
+    Two acquisition strategies behind one iterator:
+
+    * **synchronous** (``async_rtc=False``): query the policy, fully drain the
+      returned chunk, then re-query - inference never overlaps execution.
+    * **async-RTC** (``async_rtc=True``): while the current chunk drains, fire
+      the next ``get_actions`` on a single background worker once the chunk is
+      ~50% consumed, then atomically swap it in at the seam. A chunk-emitting
+      policy whose inference latency is <= the chunk's execution time pays
+      (almost) zero visible stall - exactly how an async real-time controller
+      hides inference latency on real hardware.
+
+    Backend-agnostic and free of sim data races: the worker only ever calls the
+    supplied ``query_chunk`` (pure policy inference). The sim observation for a
+    prefetch is captured on the CONSUMING thread via ``observation_fn`` before
+    the worker is submitted, and the sim is only ever stepped by the consumer,
+    so no MuJoCo/Warp array is touched from two threads at once.
+
+    The pipeline is an unbounded iterator - the consumer controls termination
+    (success / failure / max-steps) by breaking out of the loop. Use it as a
+    context manager so the inference worker is always joined on exit, even when
+    the consumer breaks mid-chunk::
+
+        with _ChunkPipeline(query_chunk, obs_fn, async_rtc=True,
+                            rtc_inference_timeout_s=None) as chunks:
+            for observation, action in chunks:
+                sim.send_action(action, ...)
+                if done:
+                    break
+
+    ``chunks_acquired`` / ``prefetch_hits`` / ``prefetch_blocks`` and the
+    inference timings collected by ``query_chunk`` make latency masking provable
+    from the result payload without grepping logs.
+    """
+
+    def __init__(
+        self,
+        query_chunk: Callable[[dict[str, Any], int], list[dict[str, Any]]],
+        observation_fn: Callable[[], dict[str, Any]],
+        *,
+        async_rtc: bool,
+        rtc_inference_timeout_s: float | None,
+    ) -> None:
+        self._query_chunk = query_chunk
+        self._observation_fn = observation_fn
+        self._async_rtc = async_rtc
+        self._timeout = rtc_inference_timeout_s
+        self.chunks_acquired = 0
+        self.prefetch_hits = 0
+        self.prefetch_blocks = 0
+        self._executor: Any = None
+
+    def __enter__(self) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+        return self._iter_async() if self._async_rtc else self._iter_sync()
+
+    def __exit__(self, *exc: object) -> None:
+        # Join any in-flight inference so no background thread touches the
+        # policy/sim after the rollout returns (the caller may immediately
+        # reset() or destroy() the world). Returns None so an exception raised
+        # inside the ``with`` block (e.g. a prefetch timeout) propagates.
+        if self._executor is not None:
+            self._executor.shutdown(wait=True)
+
+    def _iter_sync(self) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+        while True:
+            observation = self._observation_fn()
+            # The world is paused during inference on the synchronous path, so
+            # the policy observed exactly 0 control steps of delay.
+            chunk = self._query_chunk(observation, 0)
+            self.chunks_acquired += 1
+            if not chunk:
+                raise RuntimeError("policy returned an empty action chunk; cannot run rollout")
+            for action in chunk:
+                yield observation, action
+
+    def _iter_async(self) -> Iterator[tuple[dict[str, Any], dict[str, Any]]]:
+        from concurrent.futures import Future, ThreadPoolExecutor
+        from concurrent.futures import TimeoutError as FuturesTimeout
+
+        def _swap_in(fut: Future[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+            # A prefetch HIT means inference already finished (the seam is
+            # invisible); a BLOCK means inference ran slower than the chunk's
+            # execution - the actionable "shorten the chunk / earlier trigger"
+            # signal, so log it. A hard timeout turns a stuck model into a
+            # structured error instead of an unbounded sim hang.
+            if fut.done():
+                self.prefetch_hits += 1
+            else:
+                self.prefetch_blocks += 1
+                logger.warning(
+                    "async-RTC seam starvation: prefetched chunk was not ready at the swap "
+                    "point (inference slower than chunk execution). Blocking on it; consider a "
+                    "shorter chunk or an earlier prefetch trigger."
+                )
+            try:
+                return fut.result(timeout=self._timeout)
+            except FuturesTimeout as e:
+                raise RuntimeError(
+                    f"async-RTC prefetch exceeded rtc_inference_timeout_s={self._timeout}s; "
+                    f"policy inference is stuck. Raise the timeout or check the policy/server."
+                ) from e
+
+        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="rtc-prefetch-eval")
+        cur_obs = self._observation_fn()
+        cur_chunk = self._query_chunk(cur_obs, 0)
+        self.chunks_acquired += 1
+        if not cur_chunk:
+            raise RuntimeError("policy returned an empty action chunk; cannot run rollout")
+        idx = 0
+        prefetch_trigger = max(1, len(cur_chunk) // 2)
+        prefetch: Future[list[dict[str, Any]]] | None = None
+        prefetch_obs: dict[str, Any] | None = None
+
+        while True:
+            if idx >= len(cur_chunk):
+                if prefetch is not None:
+                    cur_chunk = _swap_in(prefetch)
+                    if prefetch_obs is not None:
+                        cur_obs = prefetch_obs
+                    prefetch = None
+                    prefetch_obs = None
+                    self.chunks_acquired += 1
+                else:
+                    # Chunk too short to have triggered a prefetch -> one
+                    # synchronous re-query.
+                    cur_obs = self._observation_fn()
+                    cur_chunk = self._query_chunk(cur_obs, 0)
+                    self.chunks_acquired += 1
+                if not cur_chunk:
+                    # Drop-and-requery: a prefetched chunk arriving empty (a
+                    # transient policy hiccup) degrades to ONE synchronous
+                    # re-query before erroring, rather than killing an
+                    # otherwise-healthy rollout on a single empty result.
+                    logger.warning("async-RTC chunk arrived empty; falling back to one synchronous re-query.")
+                    cur_obs = self._observation_fn()
+                    cur_chunk = self._query_chunk(cur_obs, 0)
+                    self.chunks_acquired += 1
+                    if not cur_chunk:
+                        raise RuntimeError(
+                            "policy returned an empty action chunk twice (prefetch + synchronous "
+                            "re-query); cannot continue rollout"
+                        )
+                idx = 0
+                prefetch_trigger = max(1, len(cur_chunk) // 2)
+                continue
+
+            if prefetch is None and idx >= prefetch_trigger:
+                prefetch_obs = self._observation_fn()
+                # The prefetched chunk first applies after the remaining steps of
+                # the current chunk drain - a known integer independent of how
+                # long inference actually takes in wall-clock time.
+                observed_delay = max(0, len(cur_chunk) - prefetch_trigger)
+                prefetch = self._executor.submit(self._query_chunk, prefetch_obs, observed_delay)
+
+            yield cur_obs, cur_chunk[idx]
+            idx += 1
 
 
 class PolicyRunner:
@@ -1066,6 +1226,8 @@ class PolicyRunner:
         on_frame: OnFrame | None = None,
         control_frequency: float = 50.0,
         control_substeps: int | None = None,
+        async_rtc: bool = False,
+        rtc_inference_timeout_s: float | None = None,
     ) -> dict[str, Any]:
         """Evaluate ``policy`` for ``n_episodes`` episodes.
 
@@ -1105,11 +1267,32 @@ class PolicyRunner:
                 the script main (e.g. Strands ``Agent`` tool dispatch
                 under asyncio) - see #191 and
                 :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`.
+            async_rtc: Opt-in overlap of policy inference with action-chunk
+                execution on the legacy ``success_fn`` path, mirroring
+                :meth:`run`. Defaults to ``False`` (synchronous): the world is
+                paused during inference, so the success-rate is bit-stable and
+                reproducible. Set ``True`` to evaluate a chunk-emitting policy
+                under the realistic control latency it faces in deployment - a
+                background worker computes chunk N+1 while chunk N drains, which
+                feeds the policy a slightly staler (mid-chunk) observation at
+                the seam and therefore can shift the measured success-rate (that
+                is the point: it measures robustness to inference latency).
+                ``True`` is rejected on the ``spec=`` benchmark path, which
+                stays synchronous for bit-stable reproducibility; use
+                :meth:`run` (``run_policy``) for benchmark-style latency masking.
+            rtc_inference_timeout_s: Hard per-chunk timeout (seconds) for the
+                async prefetch. When inference does not finish within the
+                timeout the eval fails with a structured error instead of
+                hanging the rollout. ``None`` waits indefinitely.
 
         Returns:
-            Standard status dict. When ``spec`` is used, the JSON payload
-            also contains ``cumulative_reward`` and ``avg_reward`` fields
-            per episode and aggregate.
+            Standard status dict. The JSON payload carries an RTC telemetry
+            block (``rtc_async_enabled``, ``rtc_chunks_acquired``,
+            ``rtc_prefetch_hits``, ``rtc_prefetch_blocks``,
+            ``rtc_avg_inference_ms``, ``rtc_max_inference_ms``) so inference
+            cost and latency masking are provable from the payload. When
+            ``spec`` is used, it also contains ``cumulative_reward`` and
+            ``avg_reward`` fields per episode and aggregate.
         """
         if spec is not None and success_fn is not None:
             return {
@@ -1119,6 +1302,21 @@ class PolicyRunner:
                         "text": (
                             "evaluate() accepts either 'spec' or 'success_fn', not both. "
                             "'spec' defines its own success predicate."
+                        )
+                    }
+                ],
+            }
+
+        if async_rtc and spec is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "async_rtc is only supported on the success_fn eval path. "
+                            "The spec/benchmark path stays synchronous for bit-stable "
+                            "reproducibility; use run_policy(async_rtc=...) for "
+                            "benchmark-style latency masking."
                         )
                     }
                 ],
@@ -1149,56 +1347,105 @@ class PolicyRunner:
         # as run(). The default n_substeps=1 made eval rollouts under-step.
         n_substeps = self._control_substeps(control_frequency, control_substeps)
         policy.set_control_frequency(control_frequency)
+
+        # RTC telemetry, reported in the result json so inference cost (and,
+        # under async_rtc, latency masking) is provable without grepping logs.
+        # inference_ms collects every get_actions wall-time on both paths; the
+        # prefetch hit/block counters are async-only (0 on the synchronous path).
+        inference_ms: list[float] = []
+        rtc_chunks_acquired = 0
+        rtc_prefetch_hits = 0
+        rtc_prefetch_blocks = 0
+
+        def _observation_fn() -> dict[str, Any]:
+            return self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+
+        def _query_chunk(observation: dict[str, Any], observed_delay: int = 0) -> list[dict[str, Any]]:
+            # Tell latency-sensitive (RTC) policies how many control steps
+            # elapse between this observation and the first application of the
+            # returned chunk so they slice the chunk-seam by an EXACT integer
+            # instead of a wall-clock estimate. The synchronous path pauses the
+            # world during inference (delay 0); the async pipeline supplies the
+            # count of still-pending steps of the chunk currently executing.
+            policy.set_rtc_observed_delay(observed_delay)
+            _t_infer = time.perf_counter()
+            actions = _resolve_coroutine(policy.get_actions(observation, instruction))
+            inference_ms.append((time.perf_counter() - _t_infer) * 1000.0)
+            # resolve_chunk_length is the single source of truth for the
+            # re-query interval (respects RTC + execution_horizon). Consuming the
+            # FULL chunk before re-querying matches run() and _evaluate_with_spec
+            # (#168); truncating to a smaller horizon would force an
+            # out-of-distribution re-query of chunk-predicting VLAs.
+            return list(actions[: resolve_chunk_length(policy, action_horizon)])
+
         results: list[dict[str, Any]] = []
         for ep in range(n_episodes):
             self.sim.reset()
             success = False
             steps = 0
 
-            while steps < max_steps:
-                observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
-                coro_or_result = policy.get_actions(observation, instruction)
-                actions = _resolve_coroutine(coro_or_result)
-
-                if not actions:
-                    # Policy returned nothing - still advance one physics step
-                    # so episodes don't hang on degenerate policies, then check
-                    # the post-step observation (same post-action semantics as
-                    # the chunk branch below).
-                    self.sim.step(n_steps=1)
-                    steps += 1
-                    if resolved_check is not None:
-                        fresh_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
-                        if resolved_check(fresh_obs):
+            if async_rtc:
+                # Opt-in async overlap: a single background worker computes the
+                # next chunk while the current one drains, so a chunk-emitting
+                # policy is evaluated under the realistic inference latency it
+                # faces in deployment. The pipeline only ever calls the policy
+                # off-thread; the sim is stepped solely here, so there is no
+                # data race. The context manager joins the worker on exit even
+                # when we break mid-chunk on success.
+                pipeline = _ChunkPipeline(
+                    _query_chunk,
+                    _observation_fn,
+                    async_rtc=True,
+                    rtc_inference_timeout_s=rtc_inference_timeout_s,
+                )
+                with pipeline as chunks:
+                    for _observation, action_dict in chunks:
+                        if steps >= max_steps:
+                            break
+                        self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                        steps += 1
+                        # Check success against the LIVE post-action observation
+                        # (mirrors the synchronous path / _evaluate_with_spec).
+                        if resolved_check is not None and resolved_check(_observation_fn()):
                             success = True
                             break
-                    continue
+                rtc_chunks_acquired += pipeline.chunks_acquired
+                rtc_prefetch_hits += pipeline.prefetch_hits
+                rtc_prefetch_blocks += pipeline.prefetch_blocks
+            else:
+                while steps < max_steps:
+                    observation = _observation_fn()
+                    chunk = _query_chunk(observation, 0)
+                    rtc_chunks_acquired += 1
 
-                # Consume the FULL action chunk before re-querying, identical to
-                # run() and _evaluate_with_spec (#168). Re-querying a chunk-
-                # predicting VLA every step and using only actions[0] forces an
-                # out-of-distribution control regime (re-sampled diffusion noise,
-                # ignored action_horizon) and made legacy eval disagree with the
-                # benchmark path. resolve_chunk_length is the single source of
-                # truth for the re-query interval (respects RTC + execution_horizon).
-                _chunk = resolve_chunk_length(policy, action_horizon)
-                for action_dict in actions[:_chunk]:
-                    if steps >= max_steps:
+                    if not chunk:
+                        # Policy returned nothing - still advance one physics
+                        # step so episodes don't hang on degenerate policies,
+                        # then check the post-step observation (same post-action
+                        # semantics as the chunk branch below).
+                        self.sim.step(n_steps=1)
+                        steps += 1
+                        if resolved_check is not None and resolved_check(_observation_fn()):
+                            success = True
+                            break
+                        continue
+
+                    for action_dict in chunk:
+                        if steps >= max_steps:
+                            break
+                        self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                        steps += 1
+                        # Check success against the LIVE post-action observation,
+                        # not the stale pre-action obs. Checking the pre-action
+                        # obs detects success one step late and never records a
+                        # task that completes on the final step -> under-reported
+                        # success_rate / inflated avg_steps. Mirrors
+                        # _evaluate_with_spec's post-send is_success.
+                        if resolved_check is not None and resolved_check(_observation_fn()):
+                            success = True
+                            break
+                    if success:
                         break
-                    self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
-                    steps += 1
-                    # Check success against the LIVE post-action observation, not
-                    # the stale pre-action obs. Checking the pre-action obs detects
-                    # success one step late and never records a task that completes
-                    # on the final step -> under-reported success_rate / inflated
-                    # avg_steps. Mirrors _evaluate_with_spec's post-send is_success.
-                    if resolved_check is not None:
-                        fresh_obs = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
-                        if resolved_check(fresh_obs):
-                            success = True
-                            break
-                if success:
-                    break
 
             results.append({"episode": ep, "steps": steps, "success": success})
             # #708 - roll the attached recorder over to a new episode so the
@@ -1209,6 +1456,15 @@ class PolicyRunner:
         n_success = sum(1 for r in results if r["success"])
         success_rate = n_success / max(n_episodes, 1)
         avg_steps = sum(r["steps"] for r in results) / max(n_episodes, 1)
+        _n_infer = len(inference_ms)
+        rtc_telemetry = {
+            "rtc_async_enabled": bool(async_rtc),
+            "rtc_chunks_acquired": rtc_chunks_acquired,
+            "rtc_prefetch_hits": rtc_prefetch_hits,
+            "rtc_prefetch_blocks": rtc_prefetch_blocks,
+            "rtc_avg_inference_ms": round(sum(inference_ms) / _n_infer, 3) if _n_infer else 0.0,
+            "rtc_max_inference_ms": round(max(inference_ms), 3) if _n_infer else 0.0,
+        }
 
         return {
             "status": "success",
@@ -1230,6 +1486,7 @@ class PolicyRunner:
                         "max_steps": max_steps,
                         "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
                         "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
+                        **rtc_telemetry,
                         "episodes": results,
                     }
                 },

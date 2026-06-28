@@ -1102,6 +1102,8 @@ class SimEngine(ABC):
         control_substeps: int | None = None,
         action_horizon: int = 8,
         seed: int | None = None,
+        async_rtc: bool = False,
+        rtc_inference_timeout_s: float | None = None,
     ) -> dict[str, Any]:
         """Multi-episode policy evaluation via ``PolicyRunner.evaluate``.
 
@@ -1121,6 +1123,15 @@ class SimEngine(ABC):
         full control period per action (same servo-tracking semantics as
         :meth:`run_policy`). Without these the arm under-steps and the policy
         looks like a no-op (the arm under-steps each control period).
+
+        ``async_rtc`` (default ``False``) opts into overlapping policy
+        inference with action-chunk execution, evaluating a chunk-emitting
+        policy under the realistic control latency it faces in deployment.
+        It is forwarded to :meth:`PolicyRunner.evaluate`; the default keeps
+        the success-rate synchronous and bit-stable. ``rtc_inference_timeout_s``
+        bounds each async inference (structured error instead of a hung
+        rollout). For benchmark-style latency masking use
+        :meth:`run_policy` (``async_rtc=...``).
         """
         if not robot_name:
             return {
@@ -1160,6 +1171,8 @@ class SimEngine(ABC):
             control_substeps=control_substeps,
             action_horizon=action_horizon,
             seed=seed,
+            async_rtc=async_rtc,
+            rtc_inference_timeout_s=rtc_inference_timeout_s,
         )
 
     # Benchmark protocol facades
