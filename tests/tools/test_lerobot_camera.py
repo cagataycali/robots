@@ -44,7 +44,7 @@ class FakeCamera:
         self.height = height
         self.fps = fps
         self.color_mode = SimpleNamespace(value="RGB")
-        self.rotation = None
+        self.rotation: Any = None
         self.connected = False
         self.disconnect_calls = 0
 
@@ -509,3 +509,179 @@ def test_list_realsense_available_reports_capabilities(monkeypatch: pytest.Monke
     assert "Depth Support" in body
     assert "Color, Depth, Infrared" in body
     _assert_ascii(body)
+
+
+# --- error-dict contract: hardware failures must degrade, never raise -------
+
+
+class _ExplodingCamera:
+    """A camera whose construction succeeds but whose ``connect`` fails.
+
+    Models a device that vanishes between enumeration and use (cable yanked,
+    busy handle, driver fault) - the failure mode the per-action error wrappers
+    exist to absorb.
+    """
+
+    def connect(self, warmup: bool = True) -> None:
+        raise RuntimeError("device disappeared")
+
+
+@pytest.mark.parametrize(
+    "action,expected_phrase",
+    [
+        ("capture", "Image capture failed"),
+        ("record", "Video recording failed"),
+        ("preview", "Preview failed"),
+        ("test", "Performance test failed"),
+        ("configure", "Configuration failed"),
+    ],
+)
+def test_single_camera_actions_return_error_dict_on_hardware_failure(
+    monkeypatch: pytest.MonkeyPatch, tmp_path, action: str, expected_phrase: str
+) -> None:
+    """Every single-camera action must catch a mid-operation hardware fault and
+    return a structured ``{"status": "error"}`` dict - the agent-tool contract
+    forbids raising past the dispatcher."""
+    monkeypatch.setattr(cam_mod, "_create_camera", lambda *a, **k: _ExplodingCamera())
+    result = lerobot_camera(action=action, camera_id=0, save_path=str(tmp_path))
+    assert result["status"] == "error"
+    body = _texts(result)
+    assert expected_phrase in body
+    assert "device disappeared" in body
+    _assert_ascii(body)
+
+
+def test_capture_batch_aggregates_per_camera_failures(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """When each camera in a batch fails, the per-camera errors are aggregated
+    into a single error-status result rather than propagating an exception."""
+    monkeypatch.setattr(cam_mod, "_create_camera", lambda *a, **k: _ExplodingCamera())
+    result = lerobot_camera(
+        action="capture_batch",
+        camera_ids=[0, 1],
+        save_path=str(tmp_path),
+    )
+    assert result["status"] == "error"
+    body = _texts(result)
+    assert "Success: 0/2 cameras" in body
+    _assert_ascii(body)
+
+
+def test_capture_batch_rejects_path_traversal(fake_camera: FakeCamera) -> None:
+    """A traversal ``save_path`` is rejected by validation and surfaces as a
+    batch-level error dict, never an unhandled ValueError."""
+    result = lerobot_camera(
+        action="capture_batch",
+        camera_ids=[0],
+        save_path="../../etc/sneaky",
+    )
+    assert result["status"] == "error"
+    body = _texts(result)
+    assert "Batch capture failed" in body
+    _assert_ascii(body)
+
+
+# --- record / preview loop branches (async reads, periodic progress) --------
+
+
+def test_record_async_mode_drives_progress_branch(
+    fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Recording in async mode reads via ``async_read`` and emits a periodic
+    progress line once a full second of frames is captured."""
+    writer = SimpleNamespace(write=lambda f: None, release=lambda: None)
+    monkeypatch.setattr(cam_mod.cv2, "VideoWriter", lambda *a, **k: writer)
+    monkeypatch.setattr(cam_mod.cv2, "VideoWriter_fourcc", lambda *a, **k: 0, raising=False)
+    monkeypatch.setattr(cam_mod.os.path, "getsize", lambda p: 4096)
+    # fps=2, duration=1.0 -> target_frames=2 -> frame 2 hits the (n % fps == 0)
+    # progress branch and async_read is exercised on every iteration.
+    result = lerobot_camera(
+        action="record",
+        camera_id=0,
+        save_path=str(tmp_path),
+        fps=2,
+        capture_duration=1.0,
+        async_mode=True,
+    )
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Frames: 2 @ 2 FPS" in body
+    assert "Async mode: on" in body
+    _assert_ascii(body)
+
+
+def test_preview_async_fps_report_and_quit_key(fake_camera: FakeCamera, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Async preview reads via ``async_read``, reports a live-FPS line after a
+    second elapses, and honours the 'q' quit key to break the loop early."""
+    for name in ("imshow", "putText", "destroyAllWindows"):
+        monkeypatch.setattr(cam_mod.cv2, name, lambda *a, **k: None, raising=False)
+    # waitKey returns ord('q') so the loop breaks after the first frame.
+    monkeypatch.setattr(cam_mod.cv2, "waitKey", lambda *a, **k: ord("q"), raising=False)
+    monkeypatch.setattr(cam_mod.time, "sleep", lambda *a, **k: None)
+    # Monotonic clock advancing 1s per call so the >=1.0s live-FPS branch fires
+    # on the first iteration regardless of exact call count.
+    ticks = iter(range(0, 10_000))
+    monkeypatch.setattr(cam_mod.time, "time", lambda: float(next(ticks)))
+    result = lerobot_camera(
+        action="preview",
+        camera_id=0,
+        fps=2,
+        preview_duration=100.0,
+        async_mode=True,
+    )
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Live Preview Complete" in body
+    assert "Async mode: on" in body
+    _assert_ascii(body)
+
+
+# --- smaller branch coverage: batch filename, rotation config, grayscale -----
+
+
+def test_capture_batch_uses_custom_filename_prefix(
+    fake_camera: FakeCamera, tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A caller-supplied ``filename`` becomes the per-camera file prefix instead
+    of the default ``batch_<type>_...`` naming."""
+    written: list[str] = []
+
+    def _record_write(path: str, frame: Any) -> bool:
+        written.append(path)
+        return True
+
+    monkeypatch.setattr(cam_mod.cv2, "imwrite", _record_write)
+    monkeypatch.setattr(cam_mod.os.path, "getsize", lambda p: 256)
+    result = lerobot_camera(
+        action="capture_batch",
+        camera_ids=[0],
+        save_path=str(tmp_path),
+        filename="mission",
+    )
+    assert result["status"] == "success"
+    assert written and "mission_0_" in written[0]
+
+
+def test_configure_emits_rotation_when_camera_exposes_it(fake_camera: FakeCamera, tmp_path) -> None:
+    """A camera that reports a non-null ``rotation`` has that rotation surfaced
+    in the configuration summary."""
+    fake_camera.rotation = SimpleNamespace(value="ROTATE_90")
+    result = lerobot_camera(
+        action="configure",
+        camera_id=0,
+        save_path=str(tmp_path),
+        rotation="ROTATE_90",
+    )
+    assert result["status"] == "success"
+    body = _texts(result)
+    assert "Rotation: ROTATE_90" in body
+    _assert_ascii(body)
+
+
+def test_frame_to_image_content_passes_through_non_rgb_frame() -> None:
+    """A single-channel (grayscale) frame skips the RGB->BGR conversion and is
+    still encoded to a valid image payload."""
+    gray = np.zeros((6, 8), dtype=np.uint8)
+    content = cam_mod._frame_to_image_content(gray, format="png")
+    assert "image" in content
+    assert content["image"]["format"] == "png"
+    assert content["image"]["source"]["bytes"]
