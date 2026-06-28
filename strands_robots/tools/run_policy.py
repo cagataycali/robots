@@ -170,15 +170,16 @@ def run_policy(
         dataset_repo_id: Forwarded to ``start_recording``.
         dataset_task: Task label forwarded to ``start_recording``.
         dataset_fps: Dataset FPS forwarded to ``start_recording``.
-        dataset_cameras: Camera names to record into the dataset,
-            forwarded to ``start_recording(cameras=...)``. When
-            ``None`` (default) every scene camera is recorded -
-            including the implicit ``default`` free camera the
-            MuJoCo backend ships. Pass an explicit subset (e.g.
-            ``["camera1", "camera2", "camera3"]``) to scope a
-            policy-specific dataset to exactly the views the policy
-            declares and keep the stray ``default`` view out of
-            ``observation.images.*``.
+        dataset_cameras: Camera names to record into the dataset.
+            When set, forwarded as ``start_recording(cameras=...)``
+            (a MuJoCo-backend feature) to scope a policy-specific
+            dataset to exactly the views the policy declares (e.g.
+            ``["camera1", "camera2", "camera3"]``) and keep the
+            implicit ``default`` free camera out of
+            ``observation.images.*``. When ``None`` (default) no
+            ``cameras`` kwarg is forwarded at all, so every scene
+            camera is recorded and the call stays backend-agnostic
+            across the MuJoCo and Newton engines.
         seed: Master RNG seed. Each episode derives a deterministic
             offset so rollouts are reproducible within a process.
         policy_kwargs: Optional per-call goal payload forwarded to
@@ -234,14 +235,24 @@ def run_policy(
                 "expose .start_recording(). Install the [lerobot] extra or pass "
                 "dataset_root=None for a recording-less rollout."
             )
-        start_result = simulation.start_recording(
+        # Only forward ``cameras`` when the caller asked for a subset. The
+        # kwarg is MuJoCo-only (``simulation/mujoco/recording.py``); the Newton
+        # backend's ``start_recording`` takes no ``cameras`` and no ``**kwargs``
+        # catch-all, so an unconditional ``cameras=`` would raise an uncaught
+        # ``TypeError`` out of this backend-agnostic tool - a regression even
+        # when ``dataset_cameras`` is omitted (it would still forward
+        # ``cameras=None``). Gating on ``is not None`` keeps the default path
+        # byte-for-byte identical to pre-feature behaviour on every backend.
+        start_kwargs: dict[str, Any] = dict(
             repo_id=dataset_repo_id,
             task=dataset_task,
             fps=dataset_fps,
             root=dataset_root,
             overwrite=True,
-            cameras=dataset_cameras,
         )
+        if dataset_cameras is not None:
+            start_kwargs["cameras"] = dataset_cameras
+        start_result = simulation.start_recording(**start_kwargs)
         if start_result.get("status") != "success":
             # Surface the engine's own error verbatim - it already explains
             # missing extras, world not loaded, etc.

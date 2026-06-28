@@ -80,8 +80,10 @@ run_policy(
 )
 ```
 
-`dataset_cameras` is forwarded verbatim to `start_recording(cameras=...)`;
-omit it (the default `None`) to record every scene camera.
+When set, `dataset_cameras` is forwarded as `start_recording(cameras=...)`
+(the camera subset is a MuJoCo-backend feature). Omit it (the default `None`)
+to record every scene camera - the default path forwards no `cameras` kwarg at
+all, so it stays backend-agnostic across the MuJoCo and Newton engines.
 
 ## Multi-episode recording
 

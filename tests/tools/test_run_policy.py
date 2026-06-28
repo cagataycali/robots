@@ -83,6 +83,41 @@ class _FakeSim:
         return _ok_rollout("recording stopped")
 
 
+class _CameraslessSim:
+    """Simulation stand-in whose ``start_recording`` has NO ``cameras``
+    parameter and NO ``**kwargs`` catch-all - mirroring the Newton backend
+    (``strands_robots/simulation/newton/recording.py``). Forwarding an
+    unexpected ``cameras=`` kwarg here raises ``TypeError``, which is exactly
+    the crash this fake exists to pin against.
+    """
+
+    def __init__(self) -> None:
+        self.run_policy_calls: list[dict[str, Any]] = []
+        self.start_recording_calls: int = 0
+        self.stop_recording_calls: int = 0
+
+    def run_policy(self, **kwargs: Any) -> dict[str, Any]:
+        self.run_policy_calls.append(kwargs)
+        return _ok_rollout(f"rollout {len(self.run_policy_calls)}")
+
+    def start_recording(
+        self,
+        repo_id: str = "local/sim_recording",
+        task: str = "",
+        fps: int = 30,
+        root: str | None = None,
+        push_to_hub: bool = False,
+        vcodec: str = "libsvtav1",
+        overwrite: bool = False,
+    ) -> dict[str, Any]:
+        self.start_recording_calls += 1
+        return _ok_rollout("recording started")
+
+    def stop_recording(self, **kwargs: Any) -> dict[str, Any]:
+        self.stop_recording_calls += 1
+        return _ok_rollout("recording stopped")
+
+
 class _NoRecordingSim:
     """Simulation stand-in WITHOUT recording surface - exercises the
     ``hasattr`` guard in run_policy."""
@@ -526,13 +561,31 @@ class TestDatasetCameraScoping:
         assert len(sim.start_recording_calls) == 1
         assert sim.start_recording_calls[0]["cameras"] == ["camera1", "camera2", "camera3"]
 
-    def test_dataset_cameras_defaults_to_none(self, tmp_path: Path) -> None:
-        """Default (no scoping) forwards ``cameras=None`` so the backend keeps
-        its record-every-camera behaviour - the opt-in subset never changes
-        the default."""
+    def test_dataset_cameras_omitted_forwards_no_cameras_kwarg(self, tmp_path: Path) -> None:
+        """Default (no scoping) forwards NO ``cameras`` kwarg at all so the
+        backend keeps its record-every-camera behaviour - the opt-in subset
+        never touches the default path. Forwarding ``cameras=None`` would crash
+        any backend (e.g. Newton) whose ``start_recording`` has no ``cameras``
+        parameter, so the kwarg must be entirely absent when unset."""
         sim = _FakeSim()
         ds = tmp_path / "ds"
         _write_info_json(ds, total_episodes=1, total_frames=6)
         run_policy(sim, n_episodes=1, n_steps=6, dataset_root=str(ds))
         assert len(sim.start_recording_calls) == 1
-        assert sim.start_recording_calls[0]["cameras"] is None
+        assert "cameras" not in sim.start_recording_calls[0]
+
+    def test_omitted_dataset_cameras_does_not_crash_camerasless_backend(self, tmp_path: Path) -> None:
+        """Regression: a backend whose ``start_recording`` has no ``cameras``
+        parameter and no ``**kwargs`` catch-all (mirroring the Newton backend,
+        ``simulation/newton/recording.py``) must record cleanly when
+        ``dataset_cameras`` is omitted. The pre-fix code forwarded
+        ``cameras=None`` unconditionally - before the ``try:`` block - so the
+        resulting ``TypeError`` propagated uncaught out of this backend-agnostic
+        tool, violating the 'return error dicts, never raise' handler contract.
+        """
+        sim = _CameraslessSim()
+        ds = tmp_path / "ds"
+        _write_info_json(ds, total_episodes=1, total_frames=6)
+        result = run_policy(sim, n_episodes=1, n_steps=6, dataset_root=str(ds))
+        assert result["status"] == "success"
+        assert sim.start_recording_calls == 1
