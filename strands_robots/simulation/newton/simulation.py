@@ -27,6 +27,8 @@ from __future__ import annotations
 
 import logging
 import math
+import os
+import sys
 import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -128,6 +130,12 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         self._world: SimWorld | None = None
         self._lock = threading.RLock()
 
+        # Interactive viewer handle (newton.viewer.ViewerGL/ViewerViser/
+        # ViewerNull). None until open_viewer() is called; synced once per
+        # control step from _advance() on the stepping thread.
+        self._viewer: Any = None
+        self._viewer_kind: str | None = None
+
         # Newton handles (rebuilt on every scene mutation via _rebuild).
         self._model: Any = None
         self._solver: Any = None
@@ -184,6 +192,7 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
     def destroy(self) -> dict[str, Any]:
         """Destroy the world and release Newton/Warp handles."""
         with self._lock:
+            self._close_viewer()
             self._world = None
             self._model = None
             self._solver = None
@@ -685,6 +694,153 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         frame = rgba[0, 0] if rgba.ndim == 5 else rgba[0]
         return np.ascontiguousarray(frame[..., :3])
 
+    # Interactive viewer
+
+    _VIEWER_KINDS = ("auto", "gl", "viser", "null")
+
+    @staticmethod
+    def _display_available() -> bool:
+        """Return True when a windowing display server is reachable.
+
+        Mirrors the MuJoCo backend's headless check: on Linux an interactive
+        OpenGL window needs ``DISPLAY`` (X11) or ``WAYLAND_DISPLAY`` (Wayland);
+        macOS and Windows always have a native window server.
+        """
+        if sys.platform != "linux":
+            return True
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+    def open_viewer(
+        self,
+        viewer: str = "auto",
+        *,
+        port: int = 8080,
+        width: int = 1280,
+        height: int = 720,
+    ) -> dict[str, Any]:
+        """Open a live interactive viewer bound to the running Newton model.
+
+        Brings the Newton backend to viewer parity with the MuJoCo backend's
+        :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.open_viewer`.
+        The viewer is fed one frame per control step from :meth:`_advance`, so
+        it tracks the simulation live while ``step``, ``send_action``, or
+        ``run_policy`` drive it from the calling thread.
+
+        Args:
+            viewer: Which Newton viewer to launch:
+
+                * ``"gl"`` -- ``newton.viewer.ViewerGL`` interactive OpenGL
+                  window; requires a display server.
+                * ``"viser"`` -- ``newton.viewer.ViewerViser`` browser
+                  dashboard served at ``http://localhost:<port>``; works
+                  headless (no display required).
+                * ``"null"`` -- ``newton.viewer.ViewerNull`` no-op sink (for
+                  tests / benchmarks).
+                * ``"auto"`` (default) -- ``"gl"`` when a display is present,
+                  otherwise ``"viser"`` so headless hosts still get a live view.
+            port: TCP port for the ``"viser"`` browser dashboard.
+            width: Window width in pixels for the ``"gl"`` viewer.
+            height: Window height in pixels for the ``"gl"`` viewer.
+
+        Returns:
+            Agent-tool ``status``/``content`` dict. On success the ``content``
+            text reports the viewer kind and, for ``"viser"``, the dashboard
+            URL.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        kind = viewer.lower().strip()
+        if kind not in self._VIEWER_KINDS:
+            return {
+                "status": "error",
+                "content": [{"text": f"Unknown viewer {viewer!r}. Available: {list(self._VIEWER_KINDS)}"}],
+            }
+        if self._viewer is not None:
+            return {
+                "status": "success",
+                "content": [{"text": f"Viewer already open ({self._viewer_kind})."}],
+            }
+        has_display = self._display_available()
+        if kind == "auto":
+            kind = "gl" if has_display else "viser"
+        if kind == "gl" and not has_display:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "Cannot open a 'gl' window: no display server (DISPLAY / "
+                            "WAYLAND_DISPLAY unset). Use viewer='viser' for a headless "
+                            "browser dashboard, or render(...) for offscreen frames."
+                        )
+                    }
+                ],
+            }
+        with self._lock:
+            try:
+                vmod = self._nt.viewer
+                if kind == "gl":
+                    handle = vmod.ViewerGL(width=width, height=height)
+                elif kind == "viser":
+                    handle = vmod.ViewerViser(port=port)
+                else:
+                    handle = vmod.ViewerNull()
+                handle.set_model(self._model)
+                self._viewer = handle
+                self._viewer_kind = kind
+                # Prime one frame so the initial pose is visible immediately.
+                self._sync_viewer()
+            except Exception as exc:  # noqa: BLE001 - surface any viewer launch failure as a tool error
+                self._viewer = None
+                self._viewer_kind = None
+                return {"status": "error", "content": [{"text": f"Viewer launch failed: {exc}"}]}
+        text = f"Newton '{kind}' viewer opened."
+        if kind == "viser":
+            url = getattr(self._viewer, "url", None) or f"http://localhost:{port}"
+            text = f"Newton 'viser' viewer streaming at {url}"
+        return {"status": "success", "content": [{"text": text}]}
+
+    def _sync_viewer(self) -> None:
+        """Push the current state to the open viewer (one frame).
+
+        Must be called with ``self._lock`` held. A no-op when no viewer is
+        open. If the viewer window has been closed by the user, or logging a
+        frame raises, the handle is released so stepping continues unimpeded.
+        """
+        if self._viewer is None or self._world is None or self._state_0 is None:
+            return
+        try:
+            if not self._viewer.is_running():
+                self._close_viewer()
+                return
+            self._viewer.begin_frame(self._world.sim_time)
+            self._viewer.log_state(self._state_0)
+            self._viewer.end_frame()
+        except Exception as exc:  # noqa: BLE001 - a dead viewer must never break stepping
+            logger.warning("Newton viewer sync failed, closing viewer: %s", exc)
+            self._close_viewer()
+
+    def _close_viewer(self) -> None:
+        """Close and release the viewer handle if one is open (lock-agnostic)."""
+        if self._viewer is not None:
+            try:
+                self._viewer.close()
+            except Exception as exc:  # noqa: BLE001 - best-effort teardown
+                logger.warning("Newton viewer close raised (ignored): %s", exc)
+            self._viewer = None
+            self._viewer_kind = None
+
+    def close_viewer(self) -> dict[str, Any]:
+        """Close the interactive viewer if one is open.
+
+        Returns:
+            Always a success status dict; closing when no viewer is open is a
+            no-op.
+        """
+        with self._lock:
+            self._close_viewer()
+        return {"status": "success", "content": [{"text": "Viewer closed."}]}
+
     # Robot / scene discovery
 
     def get_robot_state(self, robot_name: str | None = None) -> dict[str, Any]:
@@ -947,6 +1103,12 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                 "set_gravity": "(gravity: list[float] | float) -> dict",
                 "set_timestep": "(dt: float) -> dict",
                 "render": "(camera_name='default', width=None, height=None) -> dict",
+                "open_viewer": (
+                    "(viewer='auto'|'gl'|'viser'|'null', *, port=8080, width=1280, height=720) -> dict  "
+                    "(open a live interactive viewer; 'gl' window needs a display, 'viser' "
+                    "streams a browser dashboard at localhost:port headless)"
+                ),
+                "close_viewer": "() -> dict  (close the interactive viewer)",
                 "reset": "() -> dict (restore baseline joint configuration)",
                 "step": "(n_steps: int = 1) -> dict",
                 "start_recording": (
@@ -1069,6 +1231,7 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         if self._solver is None:
             self._world.step_count += max(1, n_steps)
             self._world.sim_time += self._world.timestep * max(1, n_steps)
+            self._sync_viewer()
             return
         dt = self._world.timestep / self.substeps
         for _ in range(max(1, n_steps)):
@@ -1078,6 +1241,7 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
                 self._state_0, self._state_1 = self._state_1, self._state_0
             self._world.sim_time += self._world.timestep
             self._world.step_count += 1
+        self._sync_viewer()
 
     def _apply_gravity(self) -> None:
         """Write the world's gravity vec3 onto the finalized model.
@@ -1177,6 +1341,15 @@ class NewtonSimEngine(NewtonRecordingMixin, SimEngine):
         # Re-apply targets that still reference live joints.
         self._targets = {k: v for k, v in self._targets.items() if k in self._joint_coord_index}
         self._write_targets()
+
+        # An open viewer holds the previous (now stale) model; rebind it to
+        # the freshly finalized model so it keeps tracking the live scene.
+        if self._viewer is not None:
+            try:
+                self._viewer.set_model(self._model)
+            except Exception as exc:  # noqa: BLE001 - never let a dead viewer break a rebuild
+                logger.warning("Newton viewer rebind failed, closing viewer: %s", exc)
+                self._close_viewer()
 
     def _add_object_to_builder(self, builder: Any, obj: SimObject) -> None:
         """Add one :class:`SimObject` primitive to a Newton builder."""

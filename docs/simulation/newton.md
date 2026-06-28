@@ -131,6 +131,57 @@ mount = sim.list_bodies("so100")["content"][1]["json"]["gripper_body"]
 # "so_arm100/.../Fixed_Jaw"
 ```
 
+## Live viewer
+
+Bring an interactive view up on the running model with `open_viewer()`,
+mirroring the MuJoCo backend's viewer entry point. Newton ships several
+first-class viewers; `open_viewer` wraps them and feeds one frame per control
+step, so the view tracks the simulation live while `step`, `send_action`, or
+`run_policy` drive it from the calling thread.
+
+![so100 stepping in the Newton backend, the live scene the viewer streams](../assets/newton_viewer_demo.gif)
+
+```python
+sim = create_simulation("newton", solver="mujoco")
+sim.create_world()
+sim.add_robot("so100")
+
+sim.open_viewer()                 # "auto": GL window if a display is present
+# ... or pick a viewer explicitly:
+sim.open_viewer("viser", port=8080)   # browser dashboard at http://localhost:8080
+sim.open_viewer("gl")                 # native OpenGL window (needs a display)
+
+sim.run_policy(robot_name="so100", policy_provider="mock", n_steps=200)
+sim.close_viewer()
+```
+
+Viewer kinds (the `viewer` argument):
+
+- `"auto"` (default) - opens the `"gl"` window when a display server is
+  present (`DISPLAY` / `WAYLAND_DISPLAY` set), otherwise falls back to
+  `"viser"` so headless hosts still get a live view.
+- `"gl"` - `newton.viewer.ViewerGL` native OpenGL window. Requires a display;
+  on a headless host `open_viewer("gl")` returns a structured error pointing at
+  `"viser"` or `render(...)` instead of crashing.
+- `"viser"` - `newton.viewer.ViewerViser` browser dashboard served at
+  `http://localhost:<port>` (default `8080`). Works headless - no display
+  required - which makes it the right choice for live inspection on a remote
+  GPU box. The success message reports the dashboard URL.
+- `"null"` - `newton.viewer.ViewerNull` no-op sink (useful for tests and
+  benchmarks).
+
+The viewer renders Newton's own free 3D camera (orbit / pan / zoom in the
+window or browser), independent of the single fixed `render()` view, so camera
+framing is adjusted interactively rather than by name. The handle is released
+automatically when the window is closed, on `close_viewer()`, and on
+`destroy()`; a dead viewer never interrupts stepping. Adding or removing robots
+rebinds the viewer to the rebuilt model so it keeps tracking the live scene.
+
+The interactive viewer is driven on the thread that steps the simulation, so
+open it and then call the blocking `run_policy` / `step` on the same thread.
+For a fully headless, non-interactive artifact, keep using
+`run_policy(video={...})` to emit an MP4.
+
 ## Dataset recording
 
 The Newton backend records to the same LeRobotDataset format as the MuJoCo
