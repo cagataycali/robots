@@ -5,6 +5,31 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Feature: full RewardModelConfig parity with lerobot (dynamic reward-type discovery)
+
+`LerobotTrainer` reward-model training (`TrainSpec.extra["reward_model"]`) now
+reaches EVERY reward model lerobot registers on its `RewardModelConfig` choice
+registry, not just SARM. The valid type set and each type's configurable fields
+are read live from `RewardModelConfig.get_known_choices()` and the resolved
+config dataclass (the same zero-maintenance discovery Robot / Teleop / Camera /
+Policy already use), so `robometer`, `topreward`, and `reward_classifier` - plus
+any future or plugin-registered reward type - validate and build with no strands
+change:
+
+- The previously hardcoded reward-type list and SARM-biased friendly-key set are
+  gone. Friendly `extra["reward_model"]` keys are now the chosen type's OWN
+  config fields, so each type is configurable with its own knobs (e.g.
+  robometer's `default_task` / `success_threshold`, the classifier's
+  `num_classes`). Cross-type fields (e.g. SARM's `annotation_mode` on
+  `robometer`) are rejected with the list of that type's configurable fields.
+- A static fallback (SARM keys, the four known types) keeps `validate()`
+  informative when `lerobot.rewards` is absent (lerobot < 0.5.2), where
+  reward-model training cannot run anyway.
+- Added a source-AST parity guard that scans the installed lerobot's reward
+  sources for `register_subclass` sites and asserts strands' discovery matches
+  exactly; it self-skips when `lerobot.rewards` is unavailable.
+
+
 ### Feature: Newton backend scene-discovery and per-joint state parity
 
 The Newton GPU backend gained the discovery and state-introspection methods the

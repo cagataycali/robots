@@ -46,6 +46,7 @@ Grounded against lerobot 0.5.x ``TrainPipelineConfig`` / ``DatasetConfig`` /
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import json
 import logging
 import os
@@ -102,14 +103,81 @@ _SAMPLE_WEIGHTING_TYPES = {"rabc", "uniform"}
 # policy, but populates ``cfg.reward_model`` instead of ``cfg.policy``
 # (``TrainPipelineConfig.is_reward_model_training``). Requires lerobot >= 0.5.2
 # (the ``lerobot.rewards`` package).
-_LEROBOT_REWARD_MODEL_TYPES = {"sarm", "reward_classifier", "robometer", "topreward"}
+#
+# Parity with lerobot is DYNAMIC, not a hardcoded list: both the set of reward
+# types and each type's configurable fields are read live from lerobot's
+# ``RewardModelConfig`` draccus ChoiceRegistry (see :func:`_reward_registry`) -
+# the same zero-maintenance discovery Robot / Teleop / Camera / Policy already
+# use. Any reward model lerobot ships (sarm, robometer, topreward,
+# reward_classifier, ...) or a third-party plugin registers is reachable with no
+# change here. The static fallbacks below are used ONLY when ``lerobot.rewards``
+# is absent (lerobot < 0.5.2), where reward-model training cannot run anyway but
+# ``validate()`` should still produce a useful message offline.
+_REWARD_MODEL_TYPES_FALLBACK = frozenset({"sarm", "reward_classifier", "robometer", "topreward"})
+
+# Friendly ``extra['reward_model']`` field names to fall back on when the live
+# registry is unavailable. These are SARM's (the offline default type)
+# configurable keys; ``type`` is the registry selector, handled separately.
+_REWARD_MODEL_FIELDS_FALLBACK = frozenset({"annotation_mode", "image_key", "state_key"})
 
 # SARM annotation modes (configuration_sarm.SARMConfig.annotation_mode):
 # ``single_stage`` needs NO annotations (linear progress over the episode).
 _SARM_ANNOTATION_MODES = {"single_stage", "dense_only", "dual"}
 
-# Friendly keys accepted in ``extra['reward_model']``.
-_REWARD_MODEL_KEYS = {"type", "annotation_mode", "image_key", "state_key"}
+
+def _reward_registry() -> dict[str, type] | None:
+    """Live ``RewardModelConfig`` ChoiceRegistry, or ``None`` when unavailable.
+
+    Importing ``lerobot.rewards`` runs each config module's
+    ``@RewardModelConfig.register_subclass`` decorator, which is what populates
+    the draccus ChoiceRegistry - querying it before that import yields an empty
+    mapping, so the import is the load-bearing step. Returns ``None`` when the
+    installed lerobot has no ``lerobot.rewards`` (lerobot < 0.5.2).
+    """
+    try:
+        import lerobot.rewards  # noqa: F401  (import for register_subclass side effect)
+        from lerobot.configs.rewards import RewardModelConfig
+    except ImportError:
+        return None
+    return dict(RewardModelConfig.get_known_choices())
+
+
+def _reward_model_types() -> set[str]:
+    """LeRobot-native reward-model type names (live registry, else fallback)."""
+    reg = _reward_registry()
+    if reg is None:
+        return set(_REWARD_MODEL_TYPES_FALLBACK)
+    return set(reg)
+
+
+def _reward_friendly_fields(rtype: str) -> set[str]:
+    """Configurable ``extra['reward_model']`` keys for a reward type.
+
+    Dynamic when ``lerobot.rewards`` is importable: the resolved config
+    dataclass's OWN (subclass-declared) constructor fields - the per-type
+    training knobs. The shared ``RewardModelConfig`` base fields are excluded:
+    ``device`` is auto-selected, ``push_to_hub`` is forced off, and
+    ``pretrained_path`` is set from ``TrainSpec.base_model``, while the rest
+    (Hub metadata, feature specs) are plumbing lerobot derives - none belong in
+    the friendly surface. This gives every reward type - not just SARM - full
+    knob reach with zero per-type maintenance. Falls back to SARM's documented
+    friendly keys when the registry is unavailable (offline / lerobot < 0.5.2),
+    where reward-model training cannot run anyway.
+
+    ``type`` (the registry selector) is never a config field and is handled by
+    the caller, so it is not part of the returned set.
+    """
+    reg = _reward_registry()
+    if reg is None or rtype not in reg:
+        return set(_REWARD_MODEL_FIELDS_FALLBACK)
+    from lerobot.configs.rewards import RewardModelConfig
+
+    # Only constructor (init=True) fields are valid make_reward_model_config
+    # kwargs; subtracting the base class's fields leaves the per-type knobs.
+    base = {f.name for f in dataclasses.fields(RewardModelConfig)}
+    own = {f.name for f in dataclasses.fields(reg[rtype]) if f.init}
+    return own - base
+
 
 # Hugging Face Hub dataset id: ``org/name`` (each segment alnum plus ._-). Used
 # to gate the agent-supplied ``dataset_repo_id`` before it becomes lerobot's
@@ -415,16 +483,21 @@ class LerobotTrainer(Trainer):
         """
         problems: list[str] = []
         rtype = self._reward_model_type(rm)
-        if rtype not in _LEROBOT_REWARD_MODEL_TYPES:
+        valid_types = _reward_model_types()
+        if rtype not in valid_types:
             problems.append(
-                f"reward_model type '{rtype}' is not LeRobot-native "
-                f"(expected one of {sorted(_LEROBOT_REWARD_MODEL_TYPES)})"
+                f"reward_model type '{rtype}' is not LeRobot-native (expected one of {sorted(valid_types)})"
             )
-        unknown = sorted(k for k in rm if k not in _REWARD_MODEL_KEYS)
+        # Validate friendly keys against the resolved config's OWN fields (live
+        # registry), so each reward type is configurable with its own knobs and
+        # cross-type fields (e.g. SARM's annotation_mode on robometer) are
+        # rejected with a clear message. Falls back to SARM's keys offline.
+        friendly = _reward_friendly_fields(rtype)
+        unknown = sorted(k for k in rm if k != "type" and k not in friendly)
         if unknown:
             problems.append(
-                f"extra['reward_model'] does not support field(s) {unknown}; "
-                f"accepted keys are {sorted(_REWARD_MODEL_KEYS)}."
+                f"reward_model type '{rtype}' does not support field(s) {unknown}; "
+                f"its configurable fields are {sorted(friendly)}."
             )
         if rtype == "sarm":
             am = rm.get("annotation_mode")
@@ -528,10 +601,11 @@ class LerobotTrainer(Trainer):
     def _reward_model_command_flags(self, rm: dict[str, Any]) -> list[str]:
         """argv-parity flags for a reward-model run (``--reward_model.*``)."""
         rtype = self._reward_model_type(rm)
+        friendly = _reward_friendly_fields(rtype)
         flags = [f"--reward_model.type={rtype}", f"--reward_model.device={self.device}"]
-        for key in ("annotation_mode", "image_key", "state_key"):
-            if key in rm:
-                flags.append(f"--reward_model.{key}={rm[key]}")
+        for key, value in rm.items():
+            if key != "type" and key in friendly:
+                flags.append(f"--reward_model.{key}={value}")
         return flags
 
     def build_config(self, spec: TrainSpec) -> TrainPipelineConfig:
@@ -603,10 +677,15 @@ class LerobotTrainer(Trainer):
         from lerobot.rewards import make_reward_model_config
 
         rtype = self._reward_model_type(rm)
+        # Forward every friendly key that is a real field of the resolved config
+        # dataclass (read supported fields, ignore the rest) - the dynamic
+        # passthrough that reaches all reward types, not just SARM. ``device``
+        # and the other managed base fields are set by the trainer below.
+        friendly = _reward_friendly_fields(rtype)
         reward_kwargs: dict[str, Any] = {"device": self.device}
-        for key in ("annotation_mode", "image_key", "state_key"):
-            if key in rm:
-                reward_kwargs[key] = rm[key]
+        for key, value in rm.items():
+            if key != "type" and key in friendly:
+                reward_kwargs[key] = value
         try:
             reward_cfg = make_reward_model_config(rtype, **reward_kwargs)
         except TypeError as e:
