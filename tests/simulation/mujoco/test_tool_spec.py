@@ -292,8 +292,7 @@ def test_tool_spec_description_mentions_every_enum_action(sim: Simulation) -> No
     # scan. We assert exact whole-token presence via word boundaries.
     missing = [a for a in enum if not re.search(rf"\b{re.escape(a)}\b", description)]
     assert not missing, (
-        "tool_spec description must name every dispatchable enum action; "
-        f"undocumented: {sorted(missing)}"
+        f"tool_spec description must name every dispatchable enum action; undocumented: {sorted(missing)}"
     )
 
 
