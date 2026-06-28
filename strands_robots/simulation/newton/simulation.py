@@ -28,12 +28,20 @@ from __future__ import annotations
 import logging
 import math
 import threading
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from strands_robots.assets import resolve_model_path, resolve_robot_name
 from strands_robots.simulation.base import SimEngine
+from strands_robots.simulation.model_registry import (
+    list_available_models,
+    resolve_model,
+)
+from strands_robots.simulation.model_registry import (
+    register_urdf as _register_urdf,
+)
 from strands_robots.simulation.models import SimObject, SimRobot, SimWorld
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
 
@@ -135,6 +143,12 @@ class NewtonSimEngine(SimEngine):
         self._joint_coord_index: dict[tuple[str, str], int] = {}
         # Short joint names per robot (rebuilt with the model).
         self._robot_joint_map: dict[str, list[str]] = {}
+        # Coordinate-to-DOF index of each (robot, joint) in joint_qd (velocity).
+        # Distinct from _joint_coord_index because free joints have more
+        # coordinates (quaternion) than DOFs; arm joints are 1:1.
+        self._joint_dof_index: dict[tuple[str, str], int] = {}
+        # Ordered full body labels per robot (rebuilt with the model).
+        self._robot_body_map: dict[str, list[str]] = {}
 
         logger.info("Newton simulation engine initialised (solver=%s)", self._solver_name)
 
@@ -364,6 +378,57 @@ class NewtonSimEngine(SimEngine):
             del self._world.objects[name]
             self._rebuild()
         return {"status": "success", "content": [{"text": f"Removed object '{name}'."}]}
+
+    def move_object(
+        self, name: str, position: list[float] | None = None, orientation: list[float] | None = None
+    ) -> dict[str, Any]:
+        """Move an existing object to a new pose and rebuild the world.
+
+        Mirrors the MuJoCo backend contract. Newton finalises an immutable
+        model from a builder, so the object's stored pose is updated on its
+        :class:`SimObject` and the model is rebuilt; live joint targets are
+        preserved across the rebuild (see :meth:`_rebuild`).
+
+        Args:
+            name: Name of an object previously added via :meth:`add_object`.
+            position: New world position ``[x, y, z]``. ``None`` keeps the
+                current position.
+            orientation: New wxyz quaternion. ``None`` keeps the current
+                orientation.
+
+        Returns:
+            Status dict echoing the new position, or an error dict when no
+            world exists or the object is unknown.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        if name not in self._world.objects:
+            return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
+        with self._lock:
+            obj = self._world.objects[name]
+            if position is not None:
+                obj.position = position
+            if orientation is not None:
+                obj.orientation = orientation
+            self._rebuild()
+        return {"status": "success", "content": [{"text": f"'{name}' moved to {position or 'same'}"}]}
+
+    def list_objects(self) -> dict[str, Any]:
+        """List objects in the world with their shape, pose, and mass.
+
+        Returns:
+            Agent-tool dict whose ``text`` block mirrors the MuJoCo backend's
+            human-readable object listing.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        if not self._world.objects:
+            return {"status": "success", "content": [{"text": "No objects."}]}
+        lines = ["Objects:\n"]
+        for name, obj in self._world.objects.items():
+            mass = "static" if obj.is_static or obj.mass <= 0 else f"{obj.mass}kg"
+            lines.append(f"  - {name}: {obj.shape} at {obj.position}, {mass}")
+        return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     # Observation / action
 
@@ -619,6 +684,230 @@ class NewtonSimEngine(SimEngine):
         frame = rgba[0, 0] if rgba.ndim == 5 else rgba[0]
         return np.ascontiguousarray(frame[..., :3])
 
+    # Robot / scene discovery
+
+    def get_robot_state(self, robot_name: str | None = None) -> dict[str, Any]:
+        """Return per-joint position and velocity for a robot.
+
+        Mirrors the MuJoCo backend: the ``json`` block carries a ``state``
+        mapping of short joint name to ``{"position", "velocity"}`` (radians
+        and radians/second for revolute joints). Positions are read from
+        ``joint_q`` via the per-joint coordinate index and velocities from
+        ``joint_qd`` via the per-joint DOF index (the two indices differ once
+        a free-floating object adds a quaternion coordinate).
+
+        Args:
+            robot_name: Robot to query. ``None`` resolves to the sole robot
+                when exactly one exists.
+
+        Returns:
+            Agent-tool dict with a human-readable ``text`` block and a
+            ``json`` block ``{"state": {joint: {"position", "velocity"}}}``.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        try:
+            robot_name = self._resolve_single_robot(robot_name)
+        except ValueError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
+        if robot_name not in self._world.robots:
+            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+
+        with self._lock:
+            joint_q = self._state_0.joint_q.numpy()
+            joint_qd = self._state_0.joint_qd.numpy()
+            state: dict[str, dict[str, float]] = {}
+            for jname in self._world.robots[robot_name].joint_names:
+                q_idx = self._joint_coord_index.get((robot_name, jname))
+                d_idx = self._joint_dof_index.get((robot_name, jname))
+                pos = float(joint_q[q_idx]) if q_idx is not None and q_idx < len(joint_q) else 0.0
+                vel = float(joint_qd[d_idx]) if d_idx is not None and d_idx < len(joint_qd) else 0.0
+                state[jname] = {"position": pos, "velocity": vel}
+
+        text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
+        for jnt, vals in state.items():
+            text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
+        return {"status": "success", "content": [{"text": text}, {"json": {"state": state}}]}
+
+    def list_robots_info(self) -> dict[str, Any]:
+        """Pretty-printed robot listing (dict-shaped, for agent display).
+
+        Distinct from :meth:`list_robots` (which returns ``list[str]`` for the
+        SimEngine ABC). Mirrors the MuJoCo backend's per-robot summary.
+
+        Returns:
+            Agent-tool dict whose ``text`` block lists each robot's asset,
+            world position, joint count, and config.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        if not self._world.robots:
+            return {"status": "success", "content": [{"text": "No robots. Use add_robot."}]}
+        lines = ["Robots in simulation:\n"]
+        for name, robot in self._world.robots.items():
+            lines.append(
+                f"  - {name} ({Path(robot.urdf_path).name})\n"
+                f"    Position: {robot.position}, Joints: {len(robot.joint_names)}, "
+                f"Config: {robot.data_config or 'direct'}"
+            )
+        return {"status": "success", "content": [{"text": "\n".join(lines)}]}
+
+    def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
+        """List Newton body labels, optionally scoped to one robot.
+
+        This is the discovery surface for resolving a robot's end-effector /
+        mount body without guessing. Newton labels bodies by their full MJCF
+        path (``so_arm100/.../Moving_Jaw``); the ``json`` block returns the
+        full labels and, when ``robot_name`` is given, a best-guess
+        ``gripper_body`` whose trailing path segment contains ``gripper``,
+        ``hand``, ``jaw``, ``ee``, or ``tool``.
+
+        Args:
+            robot_name: When set, return only that robot's bodies. When
+                omitted, return every body label in the world.
+
+        Returns:
+            Agent-tool dict with a ``text`` block and a ``json`` block
+            ``{"bodies": [...]}`` (plus ``"gripper_body"`` when scoped).
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+
+        if robot_name is not None:
+            if robot_name not in self._world.robots:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"list_bodies: robot '{robot_name}' not found. "
+                                f"Known robots: {list(self._world.robots.keys())}"
+                            )
+                        }
+                    ],
+                }
+            bodies = list(self._robot_body_map.get(robot_name, []))
+        else:
+            bodies = list(self._model.body_label)
+
+        json_payload: dict[str, Any] = {"bodies": bodies}
+        if robot_name is not None:
+            gripper_body: str | None = None
+            for name in bodies:
+                short = _short_joint_name(name).lower()
+                if any(tok in short for tok in ("gripper", "hand", "jaw", "ee", "tool")):
+                    gripper_body = name
+                    break
+            json_payload["gripper_body"] = gripper_body
+
+        text = "Bodies:\n" + "\n".join(f"  - {b}" for b in bodies) if bodies else "No bodies."
+        return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
+
+    def get_features(self, robot_name: str | None = None) -> dict[str, Any]:
+        """Describe the model's joints / bodies / robots for the agent.
+
+        Mirrors the MuJoCo backend's ``features`` json schema with values
+        sourced from the finalized Newton model. Newton drives joints through
+        position targets rather than named MuJoCo actuators, so
+        ``actuator_names`` echoes the robot's joint names and ``camera_names``
+        is the single headless ``"default"`` view.
+
+        Args:
+            robot_name: When set, scope joint / robot listings to that robot.
+
+        Returns:
+            Agent-tool dict with a ``text`` summary and a ``json`` block
+            ``{"features": {...}}``.
+        """
+        if self._world is None or self._model is None:
+            return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+
+        m = self._model
+        if robot_name is not None:
+            if robot_name not in self._world.robots:
+                return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+            joint_names = list(self._world.robots[robot_name].joint_names)
+            scoped = {robot_name: self._world.robots[robot_name]}
+        else:
+            joint_names = list(self._joint_order)
+            scoped = dict(self._world.robots)
+
+        robots_info = {
+            rname: {
+                "joint_names": list(robot.joint_names),
+                "n_joints": len(robot.joint_names),
+                "data_config": robot.data_config,
+                "source": Path(robot.urdf_path).name,
+            }
+            for rname, robot in scoped.items()
+        }
+        actuator_names = list(joint_names)
+        camera_names = ["default"]
+        features = {
+            "n_bodies": int(m.body_count),
+            "n_joints": int(m.joint_count),
+            "n_dofs": int(m.joint_dof_count),
+            "timestep": float(self._world.timestep),
+            "solver": self._solver_name,
+            "joint_names": joint_names,
+            "actuator_names": actuator_names,
+            "camera_names": camera_names,
+            "robots": robots_info,
+        }
+        lines = [
+            "Simulation Features (Newton)",
+            f"Joints ({m.joint_count}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
+            f"DOFs: {m.joint_dof_count} | Bodies: {m.body_count}",
+            f"Solver: {self._solver_name} | Cameras: default",
+            f"Timestep: {self._world.timestep}s ({1 / self._world.timestep:.0f}Hz)",
+        ]
+        for rname, rinfo in robots_info.items():
+            lines.append(f"{rname}: {rinfo['n_joints']} joints ({rinfo['source']})")
+        return {"status": "success", "content": [{"text": "\n".join(lines)}, {"json": {"features": features}}]}
+
+    def list_urdfs(self) -> dict[str, Any]:
+        """List registry-resolvable robot assets (shared registry).
+
+        Returns:
+            Agent-tool dict whose ``text`` block is the formatted registry
+            listing from :func:`list_available_models`.
+        """
+        return {"status": "success", "content": [{"text": list_available_models()}]}
+
+    def register_urdf(self, data_config: str, urdf_path: str) -> dict[str, Any]:
+        """Register an MJCF/URDF asset under ``data_config`` in the registry.
+
+        Validates ``urdf_path`` before handing it to the shared registry so a
+        missing or unreadable file surfaces a clear error here rather than
+        deep inside the Newton MJCF importer.
+
+        Args:
+            data_config: Registry name to bind the asset to.
+            urdf_path: Filesystem path to the MJCF/URDF asset.
+
+        Returns:
+            Status dict reporting the resolved path, or an error dict when the
+            file is missing / unreadable.
+        """
+        if not urdf_path:
+            return {"status": "error", "content": [{"text": "register_urdf: 'urdf_path' must be a non-empty string."}]}
+        path = Path(urdf_path)
+        if not path.exists():
+            return {"status": "error", "content": [{"text": f"register_urdf: file not found: {urdf_path}"}]}
+        if not path.is_file():
+            return {"status": "error", "content": [{"text": f"register_urdf: not a file: {urdf_path}"}]}
+        try:
+            with path.open("rb"):
+                pass
+        except OSError as exc:
+            return {"status": "error", "content": [{"text": f"register_urdf: cannot read {urdf_path}: {exc}"}]}
+        _register_urdf(data_config, urdf_path)
+        resolved = resolve_model(data_config)
+        return {
+            "status": "success",
+            "content": [{"text": f"Registered '{data_config}' -> {urdf_path}\nResolved: {resolved or 'NOT FOUND'}"}],
+        }
+
     # Introspection
 
     def describe(self) -> dict[str, Any]:
@@ -629,6 +918,7 @@ class NewtonSimEngine(SimEngine):
             device, and current robot / object counts.
         """
         device = str(self._wp.get_device(self.device)) if self.device else str(self._wp.get_device())
+        bodies = list(self._model.body_label) if self._model is not None else []
         return {
             "backend": "newton",
             "solver": self._solver_name,
@@ -636,8 +926,34 @@ class NewtonSimEngine(SimEngine):
             "device": device,
             "robots": self.list_robots(),
             "objects": list(self._world.objects) if self._world else [],
+            "bodies": bodies,
+            "cameras": ["default"],
             "timestep": self._world.timestep if self._world else self.default_timestep,
             "gravity": list(self._world.gravity) if self._world else [0.0, 0.0, -9.81],
+            "world_created": self._world is not None and self._model is not None,
+            "methods": {
+                "get_robot_state": "(robot_name: str | None = None) -> dict (per-joint position + velocity)",
+                "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
+                "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
+                "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, ...) -> dict",
+                "list_robots_info": "() -> dict (pretty robot listing)",
+                "list_bodies": "(robot_name: str | None = None) -> dict (body labels + gripper_body)",
+                "list_objects": "() -> dict",
+                "move_object": "(name: str, position=None, orientation=None) -> dict",
+                "get_features": "(robot_name: str | None = None) -> dict (joints/bodies/robots schema)",
+                "list_urdfs": "() -> dict",
+                "register_urdf": "(data_config: str, urdf_path: str) -> dict",
+                "set_gravity": "(gravity: list[float] | float) -> dict",
+                "set_timestep": "(dt: float) -> dict",
+                "render": "(camera_name='default', width=None, height=None) -> dict",
+                "reset": "() -> dict (restore baseline joint configuration)",
+                "step": "(n_steps: int = 1) -> dict",
+            },
+            "note": (
+                "robot_name defaults to the sole robot when only one exists for "
+                "get_observation, send_action, get_robot_state, get_features, run_policy. "
+                "With multiple robots, pass robot_name explicitly (from 'robots')."
+            ),
         }
 
     def cleanup(self, policy_stop_timeout: float | None = None) -> None:
@@ -793,11 +1109,15 @@ class NewtonSimEngine(SimEngine):
 
         # Track coordinate index of each robot's joints in the global joint_q.
         self._joint_coord_index = {}
+        self._joint_dof_index = {}
         self._robot_joint_map = {}
+        self._robot_body_map = {}
 
         for robot_name, robot in self._world.robots.items():
             coord_before = builder.joint_coord_count
+            dof_before = builder.joint_dof_count
             label_before = len(builder.joint_label)
+            body_before = builder.body_count
             xform = wp.transform(
                 wp.vec3(*robot.position),
                 self._wxyz_to_wp_quat(robot.orientation),
@@ -809,7 +1129,9 @@ class NewtonSimEngine(SimEngine):
                 short = _short_joint_name(label)
                 short_names.append(short)
                 self._joint_coord_index[(robot_name, short)] = coord_before + offset
+                self._joint_dof_index[(robot_name, short)] = dof_before + offset
             self._robot_joint_map[robot_name] = short_names
+            self._robot_body_map[robot_name] = list(builder.body_label[body_before:])
 
         for obj in self._world.objects.values():
             self._add_object_to_builder(builder, obj)

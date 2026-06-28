@@ -94,6 +94,43 @@ no-op until then.
   the model, which re-initialises the world to its rest pose. `set_timestep`
   takes effect on the next `step()` without a rebuild.
 
+## Scene discovery and state queries
+
+The backend exposes the same discovery and per-joint state surface as the
+MuJoCo backend, so agents can introspect a Newton world without guessing
+method names:
+
+- `get_robot_state(robot_name=None)` returns each joint's `position` and
+  `velocity` (read from `joint_q` / `joint_qd` respectively) in a `json`
+  block, plus a human-readable summary.
+- `list_robots_info()` and `list_objects()` return pretty-printed listings of
+  the robots and primitive objects in the world.
+- `list_bodies(robot_name=None)` lists Newton body labels and, when scoped to
+  a robot, resolves a best-guess `gripper_body` mount (a body whose trailing
+  path segment contains `gripper`, `hand`, `jaw`, `ee`, or `tool`).
+- `move_object(name, position=None, orientation=None)` repositions an existing
+  object and rebuilds the model, preserving live joint targets.
+- `get_features(robot_name=None)` reports the model's joint / body / DOF counts,
+  timestep, solver, and per-robot joint listings (matching the MuJoCo
+  `features` schema).
+- `list_urdfs()` / `register_urdf(data_config, urdf_path)` read from and write
+  to the shared model registry, so assets registered for one backend resolve
+  for the other.
+
+`describe()` also advertises these methods (and the available cameras / bodies)
+so a single call surfaces the full contract.
+
+```python
+sim.add_robot("so100")
+sim.send_action({"Rotation": 0.6, "Elbow": -0.4}, robot_name="so100", n_substeps=10)
+
+state = sim.get_robot_state("so100")["content"][1]["json"]["state"]
+# {"Rotation": {"position": 0.03, "velocity": 3.72}, ...}
+
+mount = sim.list_bodies("so100")["content"][1]["json"]["gripper_body"]
+# "so_arm100/.../Fixed_Jaw"
+```
+
 ## Limitations
 
 - Only a single default camera view is provided by `render()`; named per-robot

@@ -5,6 +5,28 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Feature: Newton backend scene-discovery and per-joint state parity
+
+The Newton GPU backend gained the discovery and state-introspection methods the
+MuJoCo backend already exposes, so agents can introspect a Newton world without
+guessing method names and `Robot(..., backend="newton")` reaches parity for
+scene queries:
+
+- `get_robot_state(robot_name=None)` returns per-joint `position` (from
+  `joint_q`) and `velocity` (from `joint_qd`). A dedicated DOF index is now
+  tracked alongside the coordinate index so velocities stay correct even when a
+  free-floating object adds a quaternion coordinate (coord count != DOF count).
+- `list_robots_info()`, `list_objects()`, `list_bodies(robot_name=None)` (with
+  best-guess `gripper_body` resolution), and `get_features(robot_name=None)`
+  return the same agent-tool dict shapes as the MuJoCo backend.
+- `move_object(name, position=None, orientation=None)` repositions an object and
+  rebuilds the model, preserving live joint targets.
+- `list_urdfs()` / `register_urdf(data_config, urdf_path)` read/write the shared
+  model registry (with path validation on register).
+- `describe()` now advertises these methods plus the body labels and the single
+  `default` camera so one call surfaces the full contract.
+
+
 ### Feature: async-RTC latency masking is the default for chunk-emitting policies
 
 `run_policy` / `PolicyRunner.run` previously defaulted to `async_rtc=False`, so
