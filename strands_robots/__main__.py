@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import sys
 
+_COMMANDS = ("doctor", "verify-dataset")
+
 
 def main() -> None:
     if len(sys.argv) < 2:
         print("Usage: python -m strands_robots <command>")
-        print("Commands: doctor")
+        print(f"Commands: {', '.join(_COMMANDS)}")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -19,9 +21,13 @@ def main() -> None:
         from strands_robots.doctor import main as doctor_main
 
         doctor_main()
+    elif cmd == "verify-dataset":
+        from strands_robots.verify_dataset import main as verify_main
+
+        sys.exit(verify_main())
     else:
         print(f"Unknown command: {cmd}")
-        print("Available commands: doctor")
+        print(f"Available commands: {', '.join(_COMMANDS)}")
         sys.exit(1)
 
 

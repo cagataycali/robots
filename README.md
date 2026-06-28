@@ -324,6 +324,26 @@ for frame in reader:
 `start_recording`/`stop_recording`. For full training, the upstream trainer uses
 the same engine — `python -m lerobot.scripts.train dataset.repo_id=... dataset.streaming=true`.
 
+**Verify episode integrity.** A recording's ground truth is the parquet under
+`meta/episodes/`, not the count a model narrates while collecting. Collect
+episodes with a deterministic Python loop (one `run_policy(..., n_episodes=1)`
+plus `save_episode()` per episode) rather than trusting a model to count its own
+tool calls, then confirm the dataset holds the episodes you intended - in-process
+or from the shell:
+
+```python
+sim.verify_dataset_episodes(expected=20)   # reads parquet; status="error" on a mega-episode
+```
+
+```bash
+# exit 0 = pass, 1 = fail, so it drops straight into CI as a dataset gate
+strands-robots verify-dataset /tmp/demo --expected 20
+```
+
+This catches the "mega-episode" corruption class - a run that buffered every
+frame into one `episode_index=0` episode while reporting `20/20` - plus
+`meta/info.json` vs parquet drift and zero-length episodes.
+
 **Dump to a Storage Bucket** during collection (mutable, Xet-deduplicated — the
 Phase 1/2 collection target that avoids git-LFS history bloat) with one kwarg:
 

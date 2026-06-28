@@ -73,3 +73,22 @@ class TestMainDispatch:
         main()
 
         assert seen_argv == [["strands_robots", "--verbose", "extra"]]
+
+    def test_verify_dataset_command_dispatches_and_propagates_exit_code(self, monkeypatch) -> None:
+        """``verify-dataset`` should call verify_dataset.main() and exit with its code."""
+        seen_argv: list[list[str]] = []
+
+        def fake_verify_main() -> int:
+            import sys
+
+            seen_argv.append(list(sys.argv))
+            return 1
+
+        monkeypatch.setattr("strands_robots.verify_dataset.main", fake_verify_main)
+        monkeypatch.setattr("sys.argv", ["strands_robots", "verify-dataset", "/data/ds", "--expected", "20"])
+
+        with pytest.raises(SystemExit) as exc:
+            main()
+
+        assert exc.value.code == 1
+        assert seen_argv == [["strands_robots", "/data/ds", "--expected", "20"]]

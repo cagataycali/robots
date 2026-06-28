@@ -111,6 +111,23 @@ happens to match `expected` on one source but not the other still fails. The
 gating. The pure-pyarrow `read_dataset_episode_indices(root)` exposes the same
 facts without instantiating a `LeRobotDataset`.
 
+The same check runs from the shell against any LeRobot dataset on disk, with an
+exit code suitable for CI:
+
+```bash
+strands-robots verify-dataset /path/to/dataset --expected 20   # exit 0 pass, 1 fail
+strands-robots verify-dataset /path/to/dataset --json          # machine-readable report
+```
+
+`verify-dataset` reuses the same pure-pyarrow `read_dataset_episode_indices`
+helper (no `lerobot` import) and flags three failure modes: the mega-episode
+(fewer distinct episodes than `--expected`), `meta/info.json` `total_episodes` /
+`total_frames` drifting from the parquet ground truth (caught even without
+`--expected`), and any episode below `--min-frames` (default 1). The
+programmatic form is
+`strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1)`,
+which returns the same report dict.
+
 ## Recording paths
 
 | Method | Extra needed | Output |
