@@ -266,6 +266,21 @@ class SimEngine(ABC):
         """
         return None
 
+    def _maybe_install_wbc_torque_control(self, policy: Any, robot_name: str) -> Callable[[], None] | None:
+        """Hook: auto-install an action controller a policy needs to run correctly.
+
+        Default no-op (returns ``None``). The MuJoCo engine overrides this so a
+        :class:`~strands_robots.policies.wbc.WBCPolicy` driven through
+        :meth:`run_policy` on a position-servo scene gets the torque shim
+        (:func:`~strands_robots.policies.wbc.install_wbc_torque_control`) wired
+        up automatically - otherwise WBC's position targets fight the stiff
+        servo gain and the documented quickstart silently falls over.
+
+        Returns an optional zero-arg cleanup callable that :meth:`run_policy`
+        invokes in a ``finally`` block to restore the scene after the rollout.
+        """
+        return None
+
     def _preflight_policy_config(
         self,
         robot_name: str,
@@ -641,6 +656,7 @@ class SimEngine(ABC):
         reset_between: bool = True,
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
+        wbc_install_torque_control: bool = True,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -734,6 +750,16 @@ class SimEngine(ABC):
                 telemetry) instead of hanging the sim. ``None`` (default) waits
                 without a deadline. Forwarded verbatim to
                 :meth:`PolicyRunner.run`; ignored on the synchronous path.
+            wbc_install_torque_control: When ``True`` (default), a
+                :class:`~strands_robots.policies.wbc.WBCPolicy` run on a
+                position-servo scene (the stock ``Robot("unitree_g1")``) gets the
+                torque shim auto-installed for the duration of this call, then
+                uninstalled. WBC emits joint-position targets; the stock G1's
+                uniform ``kp=500`` servo would override SONIC's tuned per-joint
+                PD and the gait diverges, so the documented quickstart silently
+                falls over without it. Set ``False`` to manage the controller
+                yourself or to drive a torque-actuated scene directly. No-op for
+                non-WBC policies and on backends without the hook.
 
         Returns:
             Standard status dict with an agent-consumable ``{"json": {...}}``
@@ -782,23 +808,62 @@ class SimEngine(ABC):
         policy.set_robot_state_keys(self.robot_joint_names(robot_name))
         self.bind_policy_sim_context(policy, robot_name)
 
-        runner = PolicyRunner(self)
+        # Auto-install any action controller this policy needs to run correctly
+        # on this scene (e.g. the WBC torque shim on a position-servo G1). The
+        # cleanup callable restores the scene in the finally below. Opt out with
+        # wbc_install_torque_control=False (e.g. when you manage the controller
+        # yourself or drive a torque-actuated scene directly).
+        controller_cleanup = (
+            self._maybe_install_wbc_torque_control(policy, robot_name) if wbc_install_torque_control else None
+        )
 
-        # Single-episode fast path: byte-for-byte the historical behaviour
-        # (no reset, no episode-boundary flush). n_episodes defaults to 1 so
-        # existing callers are completely unaffected.
-        if n_episodes == 1:
-            recording = self._is_recording()
-            if recording:
-                logger.info(
-                    "run_policy: n_episodes=1, will produce 1 dataset episode of ~%d frames "
-                    "(frames buffer into the current episode and flush at save_episode/"
-                    "stop_recording). To record N DISTINCT dataset episodes pass n_episodes=N "
-                    "- do NOT loop the tool call.",
-                    int(duration * control_frequency),
+        try:
+            runner = PolicyRunner(self)
+
+            # Single-episode fast path: byte-for-byte the historical behaviour
+            # (no reset, no episode-boundary flush). n_episodes defaults to 1 so
+            # existing callers are completely unaffected.
+            if n_episodes == 1:
+                recording = self._is_recording()
+                if recording:
+                    logger.info(
+                        "run_policy: n_episodes=1, will produce 1 dataset episode of ~%d frames "
+                        "(frames buffer into the current episode and flush at save_episode/"
+                        "stop_recording). To record N DISTINCT dataset episodes pass n_episodes=N "
+                        "- do NOT loop the tool call.",
+                        int(duration * control_frequency),
+                    )
+                on_frame = self._make_run_policy_hook(robot_name, instruction)
+                result = runner.run(
+                    robot_name,
+                    policy,
+                    instruction=instruction,
+                    duration=duration,
+                    control_frequency=control_frequency,
+                    action_horizon=action_horizon,
+                    fast_mode=fast_mode,
+                    video=VideoConfig.from_dict(video),
+                    on_frame=on_frame,
+                    max_onframe_failures=max_onframe_failures,
+                    control_substeps=control_substeps,
+                    policy_kwargs=policy_kwargs,
+                    seed=seed,
+                    async_rtc=async_rtc,
+                    rtc_inference_timeout_s=rtc_inference_timeout_s,
                 )
-            on_frame = self._make_run_policy_hook(robot_name, instruction)
-            result = runner.run(
+                completed = 1 if result.get("status") == "success" else 0
+                contract = self._episode_contract_fields(
+                    requested=1, completed=completed, saved=0, flush_deferred=recording
+                )
+                self._merge_json_fields(result, contract)
+                return result
+
+            # Multi-episode path: one rollout per episode, flushing a dataset
+            # episode boundary (save_episode) when recording and resetting between
+            # episodes. Replaces the brittle manual
+            # ``for _ in range(n): run_policy(); save_episode(); reset()`` loop.
+            return self._run_episodes(
+                runner,
                 robot_name,
                 policy,
                 instruction=instruction,
@@ -806,45 +871,19 @@ class SimEngine(ABC):
                 control_frequency=control_frequency,
                 action_horizon=action_horizon,
                 fast_mode=fast_mode,
-                video=VideoConfig.from_dict(video),
-                on_frame=on_frame,
+                video=video,
                 max_onframe_failures=max_onframe_failures,
                 control_substeps=control_substeps,
                 policy_kwargs=policy_kwargs,
                 seed=seed,
+                n_episodes=n_episodes,
+                reset_between=reset_between,
                 async_rtc=async_rtc,
                 rtc_inference_timeout_s=rtc_inference_timeout_s,
             )
-            completed = 1 if result.get("status") == "success" else 0
-            contract = self._episode_contract_fields(
-                requested=1, completed=completed, saved=0, flush_deferred=recording
-            )
-            self._merge_json_fields(result, contract)
-            return result
-
-        # Multi-episode path: one rollout per episode, flushing a dataset
-        # episode boundary (save_episode) when recording and resetting between
-        # episodes. Replaces the brittle manual
-        # ``for _ in range(n): run_policy(); save_episode(); reset()`` loop.
-        return self._run_episodes(
-            runner,
-            robot_name,
-            policy,
-            instruction=instruction,
-            duration=duration,
-            control_frequency=control_frequency,
-            action_horizon=action_horizon,
-            fast_mode=fast_mode,
-            video=video,
-            max_onframe_failures=max_onframe_failures,
-            control_substeps=control_substeps,
-            policy_kwargs=policy_kwargs,
-            seed=seed,
-            n_episodes=n_episodes,
-            reset_between=reset_between,
-            async_rtc=async_rtc,
-            rtc_inference_timeout_s=rtc_inference_timeout_s,
-        )
+        finally:
+            if controller_cleanup is not None:
+                controller_cleanup()
 
     def _run_episodes(
         self,

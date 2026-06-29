@@ -139,6 +139,23 @@ sim.run_policy(
 )
 ```
 
+`run_policy` writes a policy's joint-position **targets** straight to the sim's
+actuators, but the stock Menagerie G1 ships *position-servo* actuators with a
+uniform `kp=500` gain that overrides SONIC's tuned per-joint PD - so driving
+those servos directly diverges and the robot falls. To make this quickstart
+just work, `run_policy` auto-detects a `WBCPolicy` on a position-servo scene and
+installs the torque shim (the `WBCTorqueController` PD->torque loop) for the
+duration of the call, then restores the actuators afterwards. With the real
+`GR00T-WholeBodyControl-{Balance,Walk}.onnx` weights and `target_velocity =
+[0.5, 0, 0]` the base advances ~1.9 m over 5 s while holding pelvis height
+~0.75 m and staying upright. Pass `wbc_install_torque_control=False` to opt out
+(e.g. to drive a torque-actuated scene directly or manage the controller
+yourself):
+
+```python
+sim.run_policy(..., policy_provider="wbc", wbc_install_torque_control=False)
+```
+
 The per-call command rides through `run_policy`'s `policy_kwargs` to
 `policy.get_actions(..., target_velocity=[...])`. A *static* walk can also be
 set once at construction via `policy_config={"checkpoint": ..., "target_velocity":
@@ -154,14 +171,15 @@ command reaches the policy over the mesh `tell()` path.
 
 ## Watching it walk (torque-control deploy)
 
-`sim.run_policy` writes the policy's joint-position **targets** to the sim's
-actuators. The default MuJoCo Menagerie G1 has *position-servo* actuators with
-their own gains, so a stable gait is not expected through that path. The real
-deploy loop (and the upstream reference) converts the targets to **torque** via
-the PD law on a *torque-actuated* model.
+The `sim.run_policy` path above already produces a stable gait: it auto-installs
+the torque shim that converts the policy's joint-position **targets** to
+**torque** via SONIC's per-joint PD law (the stock position-servo actuators
+alone diverge - see the note in [In simulation](#in-simulation)).
 
+For a self-contained, low-level reference - building the torque-actuated G1,
+running `policy.compute_torques(...)` at `control_decimation=4`, and rendering -
 [`examples/wbc_g1_torque_deploy.py`](https://github.com/strands-labs/robots/blob/main/examples/wbc_g1_torque_deploy.py)
-reproduces that loop - torque motors, `policy.compute_torques(...)` at
+reproduces the upstream deploy loop directly - torque motors, `policy.compute_torques(...)` at
 `control_decimation=4`, whole-body observation with real joint velocities + base
 IMU - and is the right way to see the G1 actually locomote:
 

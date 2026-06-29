@@ -49,7 +49,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1121,6 +1121,54 @@ class MuJoCoSimEngine(
             ctx(self._world._model, namespace)
         except Exception as exc:  # noqa: BLE001 - non-fatal (mirrors set_robot_state_keys)
             logger.debug("bind_policy_sim_context(%s) failed: %s", robot_name, exc)
+
+    def _maybe_install_wbc_torque_control(self, policy: Any, robot_name: str) -> Callable[[], None] | None:
+        """Auto-install the WBC torque shim when a WBCPolicy drives a servo scene.
+
+        Overrides :meth:`SimEngine._maybe_install_wbc_torque_control`. WBC emits
+        joint-position targets; on the stock position-servo Unitree G1 those
+        targets fight the uniform ``kp=500`` servo gain and override SONIC's
+        tuned per-joint PD, so ``sim.run_policy(policy_provider="wbc")`` would
+        otherwise fall over within a fraction of a second. When the driven
+        actuators are position-servo (see
+        :func:`~strands_robots.policies.wbc.wbc_uses_position_servo`) and no
+        action controller is already installed, this wires up
+        :func:`~strands_robots.policies.wbc.install_wbc_torque_control` and
+        returns its :meth:`uninstall` so the scene is restored after the run.
+
+        Returns ``None`` (no-op) when ``[wbc]`` is not installed, ``policy`` is
+        not a ``WBCPolicy``, the actuators are already torque mode, or a
+        controller is already registered (a manual install always wins).
+        """
+        try:
+            from strands_robots.policies.wbc import (
+                WBCPolicy,
+                install_wbc_torque_control,
+                wbc_uses_position_servo,
+            )
+        except ImportError:
+            return None
+
+        if not isinstance(policy, WBCPolicy):
+            return None
+        world = self._world
+        if world is None or world._model is None:
+            return None
+        backend_state = getattr(world, "_backend_state", None)
+        if isinstance(backend_state, dict) and backend_state.get("action_controller") is not None:
+            return None  # a manually-installed controller wins
+        if not wbc_uses_position_servo(self, policy, robot_name):
+            return None
+
+        controller = install_wbc_torque_control(self, policy, robot_name)
+        logger.info(
+            "run_policy: auto-installed WBC torque control on %r (position-servo "
+            "actuators detected). WBC emits joint-position targets the stock servo "
+            "gain would override; the torque shim applies SONIC's per-joint PD law "
+            "so the gait is stable. Pass wbc_install_torque_control=False to opt out.",
+            robot_name,
+        )
+        return controller.uninstall
 
     def list_robots_info(self) -> dict[str, Any]:
         """Agent-tool action: pretty-printed robot listing.
@@ -2400,6 +2448,7 @@ class MuJoCoSimEngine(
         reset_between: bool = True,
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
+        wbc_install_torque_control: bool = True,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -2447,6 +2496,7 @@ class MuJoCoSimEngine(
                 reset_between=reset_between,
                 async_rtc=async_rtc,
                 rtc_inference_timeout_s=rtc_inference_timeout_s,
+                wbc_install_torque_control=wbc_install_torque_control,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:

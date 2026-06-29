@@ -310,6 +310,47 @@ class WBCTorqueController:
             mj.mj_step(model, data)
 
 
+def wbc_uses_position_servo(sim: SimEngine, policy: WBCPolicy, robot_name: str) -> bool:
+    """Return True if the WBC-driven actuators on ``robot_name`` are position-servo.
+
+    :class:`WBCPolicy` emits joint-**position** targets. On a position-servo
+    scene (the stock Menagerie Unitree G1 ships a uniform ``kp=500`` servo) those
+    targets fight the servo gain and override SONIC's tuned per-joint PD, so the
+    gait diverges and the robot falls. This predicate lets ``run_policy`` decide
+    whether the torque shim (:func:`install_wbc_torque_control`) is needed.
+
+    A MuJoCo *position* actuator has ``biastype == mjBIAS_AFFINE`` (the ``-kp``
+    bias term); a *motor* (pure torque) actuator has ``biastype == mjBIAS_NONE``.
+    Returns ``True`` as soon as one driven actuator is position-servo, ``False``
+    when they are already torque actuators or cannot be resolved (no world,
+    unknown joints) - the conservative answer that leaves an already-correct or
+    unrecognised scene untouched.
+    """
+    import mujoco as mj
+
+    world = getattr(sim, "_world", None)
+    if world is None or getattr(world, "_model", None) is None:
+        return False
+    model = world._model
+    robot = world.robots.get(robot_name) if getattr(world, "robots", None) else None
+    pfx = robot.namespace if robot is not None else ""
+
+    n_act = policy.config.num_actions
+    driven_names = list(WBC_G1_ALL_JOINTS[:n_act])
+    for name in driven_names:
+        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, (pfx or "") + name)
+        if jid < 0:
+            jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, name)
+        if jid < 0:
+            continue
+        for ai in range(model.nu):
+            if int(model.actuator_trnid[ai, 0]) == jid:
+                if int(model.actuator_biastype[ai]) == int(mj.mjtBias.mjBIAS_AFFINE):
+                    return True
+                break
+    return False
+
+
 def install_wbc_torque_control(sim: SimEngine, policy: WBCPolicy, robot_name: str) -> WBCTorqueController:
     """Install a :class:`WBCTorqueController` on ``sim`` for ``robot_name``.
 
@@ -338,4 +379,4 @@ def install_wbc_torque_control(sim: SimEngine, policy: WBCPolicy, robot_name: st
     return controller
 
 
-__all__ = ["WBCTorqueController", "install_wbc_torque_control"]
+__all__ = ["WBCTorqueController", "install_wbc_torque_control", "wbc_uses_position_servo"]
