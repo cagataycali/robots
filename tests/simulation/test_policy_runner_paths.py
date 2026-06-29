@@ -3,6 +3,8 @@
 Covers:
 * ``replay()`` when no robots exist (``_require_default_robot`` ValueError)
 * ``replay()`` when the dataset loader raises (opaque upstream error)
+* ``replay()`` rejects a non-positive / non-numeric ``speed`` before the
+  dataset loader (no ZeroDivisionError, no silent full-speed playback)
 * ``replay()`` when lerobot is not installed (ImportError → graceful)
 * ``replay()`` with actions that have ``.numpy()`` and ``.tolist()`` methods
   (tensor-backed dataset frames)
@@ -95,6 +97,64 @@ def test_replay_dataset_loader_raises_is_handled(monkeypatch):
     r = PolicyRunner(sim).replay(repo_id="bad/dataset")
     assert r["status"] == "error"
     assert "simulated HF download failure" in r["content"][0]["text"]
+
+
+def test_replay_speed_zero_rejected_before_loading(monkeypatch):
+    """``speed=0`` must fail fast with a structured error, not ZeroDivisionError.
+
+    ``frame_interval = 1 / (dataset_fps * speed)`` divided by zero, raising a
+    bare ``ZeroDivisionError`` that escaped replay()'s documented "returns a
+    status dict" contract. The guard must run BEFORE the dataset loader so an
+    invalid speed does not trigger a wasted dataset download; the loader is
+    monkeypatched to fail loudly if it is ever reached.
+    """
+    sim = _MinimalSim(robots=["r0"])
+
+    import strands_robots.dataset_recorder as dr
+
+    def _must_not_load(*args, **kwargs):
+        raise AssertionError("load_lerobot_episode reached despite invalid speed")
+
+    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+
+    r = PolicyRunner(sim).replay(repo_id="some/dataset", robot_name="r0", speed=0.0)
+    assert r["status"] == "error"
+    assert "positive" in r["content"][0]["text"]
+
+
+def test_replay_negative_speed_rejected_before_loading(monkeypatch):
+    """A negative ``speed`` previously played the episode forward at full speed
+    and reported success with a meaningless "Speed: -1.0x". It must be rejected
+    with a structured error before the dataset loader runs.
+    """
+    sim = _MinimalSim(robots=["r0"])
+
+    import strands_robots.dataset_recorder as dr
+
+    def _must_not_load(*args, **kwargs):
+        raise AssertionError("load_lerobot_episode reached despite invalid speed")
+
+    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+
+    r = PolicyRunner(sim).replay(repo_id="some/dataset", robot_name="r0", speed=-1.0)
+    assert r["status"] == "error"
+    assert "positive" in r["content"][0]["text"]
+
+
+def test_replay_bool_speed_rejected(monkeypatch):
+    """``bool`` is an ``int`` subclass; ``True`` must not slip through as 1.0x."""
+    sim = _MinimalSim(robots=["r0"])
+
+    import strands_robots.dataset_recorder as dr
+
+    def _must_not_load(*args, **kwargs):
+        raise AssertionError("load_lerobot_episode reached despite bool speed")
+
+    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+
+    r = PolicyRunner(sim).replay(repo_id="some/dataset", robot_name="r0", speed=True)
+    assert r["status"] == "error"
+    assert "positive" in r["content"][0]["text"]
 
 
 def test_replay_with_tensor_like_actions(monkeypatch):

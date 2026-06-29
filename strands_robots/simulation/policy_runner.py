@@ -1167,7 +1167,9 @@ class PolicyRunner:
                 non-existent robot).
             episode: Episode index in the dataset (non-negative).
             root: Optional local dataset root override.
-            speed: Playback speed multiplier (1.0 = real time).
+            speed: Playback speed multiplier (1.0 = real time). Must be a
+                positive number; a non-positive or non-numeric value is
+                rejected with a structured error.
             action_key_map: Optional list of joint names, one per action
                 vector index. Required when dataset joint ordering differs
                 from ``robot_joint_names(robot_name)``. If ``None``, positional
@@ -1176,6 +1178,21 @@ class PolicyRunner:
         Returns:
             Standard status dict with per-frame stats.
         """
+        # ``speed`` is a playback-rate multiplier used as the divisor in
+        # ``frame_interval = 1 / (dataset_fps * speed)``. A value of 0 raised a
+        # bare ZeroDivisionError (breaking the documented "returns a status
+        # dict" contract) and a negative value silently played the episode
+        # forward at full speed while reporting success with a meaningless
+        # "Speed: -1.0x". Reject a non-positive or non-numeric speed up front,
+        # before the (potentially multi-minute) dataset download. ``bool`` is
+        # an ``int`` subclass, so ``True`` is rejected explicitly rather than
+        # acting as a silent 1.0x.
+        if isinstance(speed, bool) or not isinstance(speed, (int, float)) or speed <= 0:
+            return {
+                "status": "error",
+                "content": [{"text": f"replay: speed must be a positive number (got {speed!r})."}],
+            }
+
         try:
             from strands_robots.dataset_recorder import load_lerobot_episode
         except ImportError:
