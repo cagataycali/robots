@@ -402,7 +402,7 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
         from lerobot.policies.factory import get_policy_class
 
         return get_policy_class(policy_type)
-    except (ImportError, AttributeError, RuntimeError, TypeError):
+    except (ImportError, AttributeError, RuntimeError, TypeError, ValueError):
         # ``lerobot.policies.factory`` eagerly imports every optional policy
         # config module (groot, ...).  A config that is malformed under the
         # installed transformers - e.g. GR00TN15Config declares a
@@ -410,9 +410,17 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
         # (where PretrainedConfig is itself a dataclass) rejects with
         # "non-default argument 'backbone_cfg' follows default argument
         # 'problem_type'" - raises TypeError at import time, not ImportError.
-        # That is still just "this resolution strategy is unavailable", so
-        # fall through to the remaining strategies and the clean ImportError
-        # below rather than leaking an unrelated TypeError to the caller.
+        #
+        # ``ValueError`` is the factory's signal for an unknown/unregistered
+        # name: ``get_policy_class`` ends in ``raise ValueError(f"Policy type
+        # '{name}' is not available.")``. That fires both for genuinely unknown
+        # types AND for lerobot internal modules that live under
+        # ``lerobot.policies`` but are not registered policies (e.g.
+        # ``pi_gemma`` is a PaliGemma building-block module for pi0/pi05, not a
+        # ``PreTrainedPolicy``). All of these are "this resolution strategy is
+        # unavailable", so fall through to the remaining strategies and the
+        # clean, actionable ImportError below rather than leaking lerobot's
+        # internal ValueError to the caller.
         pass
 
     # Strategy 4: PreTrainedPolicy - only if it's NOT abstract

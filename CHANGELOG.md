@@ -5,6 +5,23 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: unknown LeRobot policy types raise a clean ImportError instead of leaking lerobot's internal ValueError
+
+`resolve_policy_class_by_name()` documents that it raises `ImportError` (naming
+the type and the strategies it tried) when no policy class can be resolved. Its
+legacy-factory rung (`lerobot.policies.factory.get_policy_class`) caught
+`ImportError`, `AttributeError`, `RuntimeError`, and `TypeError` so a strategy
+that is merely unavailable falls through to the clean `ImportError` -- but it
+did NOT catch `ValueError`. Current lerobot ends `get_policy_class` with
+`raise ValueError(f"Policy type '{name}' is not available.")` for every name it
+does not recognise, so resolving an unknown type -- or one of lerobot's internal
+building-block modules that live under `lerobot.policies` but are not registered
+policies (e.g. `pi_gemma`, the PaliGemma layers used by pi0/pi05) -- leaked that
+bare `ValueError` to the caller and broke the documented contract. `ValueError`
+is now included in the rung's caught set, so resolution falls through to the
+actionable `ImportError` as documented.
+
+
 ### Fixed: lerobot-availability probes no longer cache a transient failure
 
 `has_lerobot_dataset()` (dataset recording) and `has_streaming_dataset()`

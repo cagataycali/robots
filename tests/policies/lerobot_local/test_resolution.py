@@ -251,6 +251,23 @@ class TestPolicyConfigDiscovery:
         assert cls.__name__ == "MolmoAct2Policy"
         assert cls.__module__.endswith("molmoact2.modeling_molmoact2")
 
+    def test_unregistered_internal_module_raises_importerror_not_valueerror(self):
+        """``lerobot.policies`` ships building-block modules that are NOT
+        registered policies -- e.g. ``pi_gemma`` is a PaliGemma layer module
+        used by pi0/pi05, with no ``PreTrainedPolicy`` subclass. Resolving such
+        a name (or any unknown type) against the real installed lerobot must
+        raise the documented ``ImportError`` from ``resolve_policy_class_by_name``,
+        NOT lerobot's internal ``ValueError("Policy type '<name>' is not
+        available.")`` (which the legacy-factory rung now raises for every
+        unknown name). This locks the cross-package contract end to end."""
+        from strands_robots.policies.lerobot_local.resolution import (
+            resolve_policy_class_by_name,
+        )
+
+        for name in ("pi_gemma", "strands_no_such_policy_xyz"):
+            with pytest.raises(ImportError, match=name):
+                resolve_policy_class_by_name(name)
+
     def test_walk_continues_after_subpackage_decorator_failure(self, tmp_path, monkeypatch, caplog):
         """A subpackage whose ``configuration_*`` raises a non-ImportError
         (e.g. ``RuntimeError`` from a re-registration collision, or
@@ -1039,6 +1056,49 @@ class TestResolvePolicyClassByNameFallbackLadder:
         monkeypatch.setitem(sys.modules, "lerobot.policies.factory", factory_mod)
 
         assert resolution.resolve_policy_class_by_name("tdmpc") is LegacyTDMPCPolicy
+
+    def test_strategy3_factory_value_error_falls_through_to_importerror(self, _isolate_resolution, monkeypatch):
+        """lerobot's ``get_policy_class`` raises ``ValueError("Policy type
+        '<name>' is not available.")`` for any name it does not recognise (its
+        ``else`` branch wraps the failed dynamic import in a ``ValueError``).
+
+        Strategy 3 must treat that as "this resolution strategy is unavailable"
+        and fall through to the clean, actionable ``ImportError`` that names the
+        type and the strategies tried -- NOT leak lerobot's internal
+        ``ValueError`` to the caller. Pre-fix the except tuple omitted
+        ``ValueError``, so the factory's error escaped ``resolve_policy_class_by_name``
+        and broke its documented "raises ImportError if no class found" contract.
+        """
+        import abc
+        import sys
+        import types
+
+        resolution = _isolate_resolution
+
+        def fake_import(name):
+            raise ImportError(name)  # Strategy 1 + 2 both miss
+
+        monkeypatch.setattr(resolution.importlib, "import_module", fake_import)
+
+        def raising_get_policy_class(policy_type):
+            raise ValueError(f"Policy type '{policy_type}' is not available.")
+
+        factory_mod = types.ModuleType("lerobot.policies.factory")
+        factory_mod.get_policy_class = raising_get_policy_class
+        monkeypatch.setitem(sys.modules, "lerobot.policies.factory", factory_mod)
+
+        # Abstract PreTrainedPolicy so Strategy 4 rejects it and the ladder is
+        # genuinely exhausted -> the only acceptable outcome is ImportError.
+        class AbstractPreTrainedPolicy(abc.ABC):
+            @abc.abstractmethod
+            def forward(self): ...
+
+        pretrained_mod = types.ModuleType("lerobot.policies.pretrained")
+        pretrained_mod.PreTrainedPolicy = AbstractPreTrainedPolicy
+        monkeypatch.setitem(sys.modules, "lerobot.policies.pretrained", pretrained_mod)
+
+        with pytest.raises(ImportError, match="pi_gemma"):
+            resolution.resolve_policy_class_by_name("pi_gemma")
 
     def test_strategy4_concrete_pretrained_policy_is_last_resort(self, _isolate_resolution, monkeypatch):
         """When every type-specific path misses and the legacy factory is gone,
