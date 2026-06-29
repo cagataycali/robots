@@ -552,6 +552,27 @@ class TestDirectJointControlListForm:
         assert result["status"] == "error"
         assert "does not match" in result["content"][0]["text"]
 
+    def test_velocities_list_form_namespace_fallback_sets_qvel(self, sim):
+        # A robot registered with no explicit ``joint_names`` resolves its
+        # positional velocity list against the model joints under its namespace
+        # (empty namespace matches every joint in the scene). This mirrors the
+        # positions fallback (``test_list_form_namespace_fallback``) and pins the
+        # velocity write contract: the list is one entry *per joint* (not per
+        # DOF, even when a free joint is present), and each scalar lands on that
+        # joint's first qvel slot, in model joint id order.
+        self._add_robot(sim, "arm", [], namespace="")
+        model, data = sim._world._model, sim._world._data
+
+        joint_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid) for jid in range(model.njnt)]
+        # One distinct velocity per joint so a mis-ordered write is caught.
+        velocities = [0.1 * (i + 1) for i in range(model.njnt)]
+
+        result = sim.set_joint_velocities(velocities=velocities, robot_name="arm")
+        assert result["status"] == "success"
+
+        for jid, expected in enumerate(velocities):
+            assert data.qvel[model.jnt_dofadr[jid]] == pytest.approx(expected), joint_names[jid]
+
 
 class TestMultiRaycast:
     """Batch raycasting: origin validation plus per-ray fail-soft contract.
