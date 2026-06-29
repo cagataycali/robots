@@ -432,11 +432,20 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
     except ImportError:
         pass
 
+    # Turn the dead end into an actionable error: enumerate the policy types
+    # this lerobot install can actually resolve (a typo'd ``policy_type`` is the
+    # common cause). When lerobot is absent the list is empty and we keep the
+    # install hint instead.
+    known = list_policy_types()
+    tail = (
+        f"Available policy types in this lerobot install: {known}."
+        if known
+        else "Ensure lerobot is installed (pip install lerobot)."
+    )
     raise ImportError(
         f"Could not resolve LeRobot policy class for type '{policy_type}'. "
         f"Tried: lerobot.policies.{policy_type}.modeling_{policy_type}, "
-        f"lerobot.policies.{policy_type}, factory, PreTrainedPolicy. "
-        f"Ensure lerobot is installed (pip install lerobot)."
+        f"lerobot.policies.{policy_type}, factory, PreTrainedPolicy. " + tail
     )
 
 
@@ -447,6 +456,43 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
 # lerobot ``type`` field unset (``None``); this table bridges that gap.
 # Keyed by lowercase token so both ``model_type`` values and ``auto_map``
 # class-name stems resolve through the same lookup. Grows as new
+def list_policy_types() -> list[str]:
+    """List the LeRobot policy type strings resolvable in this environment.
+
+    These are exactly the values accepted as the ``policy_type`` argument to
+    :func:`resolve_policy_class_by_name` -- and therefore as
+    ``create_policy("lerobot_local", policy_type=...)``. The list reflects the
+    *installed* lerobot: it is sourced from lerobot's own draccus choice
+    registry (``PreTrainedConfig.get_known_choices()``) after every policy
+    config module has been imported via
+    :func:`_ensure_policy_configs_registered`, so a brand-new policy a newer
+    lerobot ships appears automatically and a slimmer install reports fewer.
+
+    This is the discovery surface for the ``lerobot_local`` provider: rather
+    than reading lerobot internals to learn which ``policy_type`` strings are
+    valid, a caller (or an agent) can enumerate them here.
+
+    Returns:
+        Sorted list of policy type strings (e.g. ``["act", "diffusion",
+        "smolvla", ...]``). Empty when lerobot is not installed -- a discovery
+        surface yields an empty list on a missing dependency rather than
+        raising.
+    """
+    _ensure_policy_configs_registered()
+    try:
+        from lerobot.configs.policies import PreTrainedConfig
+    except ImportError:
+        logger.debug("lerobot not installed; no policy types to list")
+        return []
+    try:
+        choices = PreTrainedConfig.get_known_choices()
+    except AttributeError:
+        # Older draccus without the public accessor: fall back to the private
+        # registry dict the accessor wraps.
+        choices = getattr(PreTrainedConfig, "_choice_registry", {})
+    return sorted(choices)
+
+
 # third-party policies land.
 _KNOWN_MODEL_TYPE_MAP: dict[str, str] = {
     "molmoact2": "molmoact2",

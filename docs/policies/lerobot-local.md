@@ -115,14 +115,48 @@ checkpoint.
 
 ## Supported models
 
-| Model | Notes |
-|-------|-------|
-| ACT | Action Chunking Transformer |
-| Pi0 / Pi0.5 | Physical Intelligence VLA |
-| SmolVLA | HuggingFace small VLA |
-| Diffusion Policy | flow-matching |
-| VQ-BeT | discrete action tokenisation |
-| MolmoAct2 | transformers-native SO100/SO101; **requires lerobot from source** (see below) |
+`policy_type` accepts any type the installed lerobot can resolve - the strings
+below mirror lerobot's own policy registry. It is auto-detected from a
+checkpoint's config when omitted; pass `policy_type=` to override. The set
+tracks the installed lerobot, so enumerate it at runtime rather than trusting a
+static list (see [Discovering supported policy types](#discovering-supported-policy-types)).
+
+| `policy_type` | Model |
+|---------------|-------|
+| `act` | Action Chunking Transformer |
+| `diffusion` | Diffusion Policy (visuomotor) |
+| `vqbet` | VQ-BeT - discrete action tokenisation |
+| `tdmpc` | TD-MPC model-based control |
+| `smolvla` | SmolVLA - HuggingFace small VLA |
+| `pi0` / `pi05` / `pi0_fast` | Physical Intelligence VLA family |
+| `groot` | NVIDIA GR00T |
+| `molmoact2` | transformers-native SO100/SO101 VLA; **requires lerobot from source** (see below) |
+| `eo1` | EO-1 VLA |
+| `xvla` | X-VLA |
+| `wall_x` | Wall-X VLA |
+| `vla_jepa` | VLA-JEPA |
+| `multi_task_dit` | Multi-task Diffusion Transformer |
+| `gaussian_actor` | Gaussian actor |
+
+### Discovering supported policy types
+
+Enumerate the resolvable `policy_type` strings programmatically instead of
+guessing:
+
+```python
+from strands_robots.policies.lerobot_local import list_policy_types
+
+list_policy_types()
+# ['act', 'diffusion', 'eo1', 'gaussian_actor', 'groot', 'molmoact2',
+#  'multi_task_dit', 'pi0', 'pi05', 'pi0_fast', 'smolvla', 'tdmpc',
+#  'vla_jepa', 'vqbet', 'wall_x', 'xvla']
+```
+
+The list reflects the *installed* lerobot (sourced from its policy registry),
+so a newer lerobot reports more entries and a slimmer one fewer; it returns
+`[]` when lerobot is not installed. Passing an unknown `policy_type` to
+inference now raises an error that names these valid choices, so a typo is a
+one-line fix instead of a dead end.
 
 ## MolmoAct2
 
