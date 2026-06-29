@@ -85,6 +85,35 @@ When set, `dataset_cameras` is forwarded as `start_recording(cameras=...)`
 to record every scene camera - the default path forwards no `cameras` kwarg at
 all, so it stays backend-agnostic across the MuJoCo and Newton engines.
 
+To also capture a rollout MP4 (the visual artifact for review or VLM
+defect-checking), pass the same `video={...}` config the
+`Simulation.run_policy` facade accepts - the tool forwards it per episode:
+
+```python
+run_policy(
+    simulation=sim,
+    robot_name="so101",
+    policy_provider="lerobot_local",
+    instruction="pick up the cube",
+    n_episodes=3,
+    dataset_root="/tmp/my_dataset",
+    video={"path": "/tmp/rollout.mp4", "fps": 30, "camera": "camera1",
+           "width": 640, "height": 480},
+)
+```
+
+`video["path"]` is required to enable recording; a falsy/absent path disables
+it. For `n_episodes > 1` an `_ep{i}` suffix is inserted before the extension
+(`/tmp/rollout_ep0.mp4`, `_ep1`, ...) so episodes do not overwrite one another -
+matching the facade's own multi-episode naming. The returned `{"json": {...}}`
+block carries `video_paths`, the list of MP4s that actually landed on disk
+(only existing files are reported, never the requested paths).
+
+![run_policy tool rollout video (SmolVLA on a simulated SO-101, MuJoCo headless)](assets/run_policy_video_demo.gif)
+
+*A SmolVLA-on-SO-101 rollout recorded through the `run_policy` tool's `video=`
+config (MuJoCo headless, `MUJOCO_GL=egl`).*
+
 ## Multi-episode recording
 
 A recording session is one dataset. The simplest way to collect N episodes in

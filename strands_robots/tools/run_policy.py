@@ -55,6 +55,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -122,6 +123,7 @@ def run_policy(
     dataset_cameras: list[str] | None = None,
     seed: int | None = None,
     policy_kwargs: dict[str, Any] | None = None,
+    video: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Roll out a policy for ``n_episodes`` x ``n_steps`` with per-episode parquet boundaries.
 
@@ -184,6 +186,14 @@ def run_policy(
             offset so rollouts are reproducible within a process.
         policy_kwargs: Optional per-call goal payload forwarded to
             every ``policy.get_actions`` call (the #300 goal keys).
+        video: Optional rollout-video config forwarded to
+            :meth:`Simulation.run_policy` (e.g.
+            ``{"path": "/tmp/rollout.mp4", "fps": 30, "camera": "camera1",
+            "width": 640, "height": 480}``). ``path`` is required to enable
+            recording; a falsy/absent path disables it. For ``n_episodes > 1``
+            an ``_ep<i>`` suffix is inserted into the path stem so each
+            episode writes its own MP4 instead of overwriting. The returned
+            payload carries ``video_paths`` (the MP4s that landed on disk).
 
     Returns:
         Standard ``{status, content}`` payload. On success the payload
@@ -226,6 +236,13 @@ def run_policy(
     if not isinstance(n_steps, int) or isinstance(n_steps, bool) or n_steps < 1:
         return _err(f"run_policy: n_steps must be a positive int, got {n_steps!r}.")
 
+    if video is not None and not isinstance(video, dict):
+        return _err(
+            "run_policy: video must be a dict (VideoConfig kwargs) or None, "
+            f"got {type(video).__name__!r}. Example: "
+            "video={'path': '/tmp/rollout.mp4', 'fps': 30, 'camera': 'camera1'}."
+        )
+
     # ---- 2. Optional: start recording -----------------------------------
     recording_started = False
     if dataset_root is not None:
@@ -261,10 +278,14 @@ def run_policy(
 
     # ---- 3. Episode loop ------------------------------------------------
     episodes: list[dict[str, Any]] = []
+    requested_video_paths: list[str] = []
     try:
         for ep in range(n_episodes):
             ep_seed = None if seed is None else seed + ep
             try:
+                ep_video, ep_video_path = _episode_video_config(video, ep, n_episodes)
+                if ep_video_path:
+                    requested_video_paths.append(ep_video_path)
                 rollout = simulation.run_policy(
                     robot_name=robot_name,
                     policy_provider=policy_provider,
@@ -277,6 +298,7 @@ def run_policy(
                     max_steps=n_steps,
                     policy_kwargs=policy_kwargs,
                     seed=ep_seed,
+                    video=ep_video,
                 )
             except Exception as e:  # noqa: BLE001 - per-episode resilience
                 logger.exception("Episode %d/%d raised: %s", ep + 1, n_episodes, e)
@@ -364,6 +386,10 @@ def run_policy(
         "warnings": warnings_,
         "episodes": episodes,
     }
+    if video is not None:
+        # Honest reporting: surface only the rollout MP4s that actually
+        # landed on disk, not the paths we asked the facade to write.
+        payload["video_paths"] = [pth for pth in requested_video_paths if Path(pth).exists()]
     if truth.get("info_path"):
         payload["info_path"] = truth["info_path"]
 
@@ -372,6 +398,45 @@ def run_policy(
         "status": out_status,
         "content": [{"text": summary_line}, {"json": payload}],
     }
+
+
+def _episode_video_config(
+    video: dict[str, Any] | None, ep: int, n_episodes: int
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Derive a per-episode ``video`` config for ``Simulation.run_policy``.
+
+    The facade records exactly one MP4 per ``run_policy`` call (at
+    ``video["path"]``). This tool drives the episode loop itself, so for a
+    multi-episode rollout every call would otherwise overwrite the same file.
+    To keep one artifact per episode we insert an ``_ep<i>`` suffix into the
+    path stem when ``n_episodes > 1``; a single-episode rollout uses the path
+    verbatim so the common case writes exactly the file the caller named.
+
+    Args:
+        video: The caller's ``video`` dict (VideoConfig kwargs) or ``None``.
+        ep: Zero-based episode index.
+        n_episodes: Total episodes in this rollout.
+
+    Returns:
+        ``(config, path)`` where ``config`` is the per-episode dict to forward
+        and ``path`` is its resolved MP4 path. ``(None, None)`` when video is
+        disabled, and ``(config, None)`` when a dict was given without a usable
+        ``path`` (the facade treats a falsy path as "recording off").
+    """
+    if not isinstance(video, dict):
+        return None, None
+    path = video.get("path")
+    if not path:
+        # Falsy path -> facade disables recording; forward as-is, track nothing.
+        return dict(video), None
+    cfg = dict(video)
+    if n_episodes > 1:
+        # Mirror Simulation._episode_video_config exactly: insert ``_ep{i}``
+        # (no zero-padding) before the extension so the tool's per-episode
+        # filenames match the facade's own multi-episode naming.
+        root, ext = os.path.splitext(str(path))
+        cfg["path"] = f"{root}_ep{ep}{ext or '.mp4'}"
+    return cfg, cfg["path"]
 
 
 def _finalize_episode(simulation: Any) -> None:

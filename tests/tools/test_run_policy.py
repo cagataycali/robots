@@ -589,3 +589,75 @@ class TestDatasetCameraScoping:
         result = run_policy(sim, n_episodes=1, n_steps=6, dataset_root=str(ds))
         assert result["status"] == "success"
         assert sim.start_recording_calls == 1
+
+
+class TestVideoPassthrough:
+    """The tool MUST forward a ``video`` config to ``Simulation.run_policy``.
+
+    The facade (``Simulation.run_policy``) records a rollout MP4 when given a
+    ``video={...}`` dict, but the multi-episode tool wrapper historically had no
+    ``video`` parameter at all - so an agent driving rollouts through the tool
+    could record a LeRobotDataset yet had no way to capture the rollout video
+    that downstream review (and visual defect-checking) needs. These tests pin
+    the passthrough, the per-episode path derivation, and the validation.
+    """
+
+    def test_forwards_video_verbatim_single_episode(self) -> None:
+        sim = _FakeSim()
+        video = {"path": "/tmp/rollout.mp4", "fps": 30, "camera": "camera1"}
+        run_policy(sim, n_episodes=1, n_steps=4, video=video)
+        assert len(sim.run_policy_calls) == 1
+        # Single episode uses the path verbatim (the common artifact case).
+        assert sim.run_policy_calls[0]["video"] == video
+
+    def test_default_video_is_none(self) -> None:
+        sim = _FakeSim()
+        run_policy(sim, n_episodes=2, n_steps=4)
+        assert sim.run_policy_calls, "expected at least one rollout call"
+        for call in sim.run_policy_calls:
+            assert call["video"] is None
+
+    def test_per_episode_video_paths_are_distinct(self) -> None:
+        sim = _FakeSim()
+        run_policy(
+            sim,
+            n_episodes=3,
+            n_steps=4,
+            video={"path": "/tmp/rollout.mp4", "fps": 30},
+        )
+        paths = [c["video"]["path"] for c in sim.run_policy_calls]
+        assert paths == [
+            "/tmp/rollout_ep0.mp4",
+            "/tmp/rollout_ep1.mp4",
+            "/tmp/rollout_ep2.mp4",
+        ]
+        # Non-path keys are preserved per episode.
+        assert all(c["video"]["fps"] == 30 for c in sim.run_policy_calls)
+
+    def test_rejects_non_dict_video(self) -> None:
+        sim = _FakeSim()
+        result = run_policy(sim, n_episodes=1, n_steps=4, video="rollout.mp4")  # type: ignore[arg-type]
+        assert result["status"] == "error"
+        assert "video must be a dict" in result["content"][0]["text"]
+        assert sim.run_policy_calls == []
+
+    def test_video_paths_reports_only_existing_files(self, tmp_path: Path) -> None:
+        sim = _FakeSim()
+        # _FakeSim never actually writes an MP4, so video_paths must be empty
+        # (honest reporting: only files that landed on disk are listed).
+        result = run_policy(
+            sim,
+            n_episodes=1,
+            n_steps=4,
+            video={"path": str(tmp_path / "rollout.mp4"), "fps": 30},
+        )
+        payload = result["content"][1]["json"]
+        assert payload["video_paths"] == []
+
+    def test_falsy_video_path_disables_recording(self) -> None:
+        sim = _FakeSim()
+        result = run_policy(sim, n_episodes=1, n_steps=4, video={"fps": 30})
+        assert result["status"] == "success"
+        # Dict without a usable path is forwarded (facade treats it as "off").
+        assert sim.run_policy_calls[0]["video"] == {"fps": 30}
+        assert result["content"][1]["json"]["video_paths"] == []
