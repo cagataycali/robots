@@ -141,8 +141,19 @@ class TestDescribeSurface:
     def test_describe_exposes_new_methods(self, engine_so100):
         described = engine_so100.describe()
         methods = described["methods"]
-        for name in ("get_robot_state", "list_bodies", "move_object", "get_features", "list_urdfs"):
+        for name in (
+            "get_robot_state",
+            "list_bodies",
+            "move_object",
+            "get_features",
+            "list_urdfs",
+            "add_object",
+            "remove_object",
+        ):
             assert name in methods
+        # add_object advertises its real distinguishing parameter so a
+        # caller can place a manipulable object without reading source.
+        assert "shape" in methods["add_object"]
         assert described["cameras"] == ["default"]
         assert described["bodies"]
         assert described["world_created"] is True

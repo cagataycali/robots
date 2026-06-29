@@ -1156,6 +1156,15 @@ class MuJoCoSimEngine(
                     bodies.append(body_name)
         base["bodies"] = bodies
         base["methods"]["list_bodies"] = "(robot_name: str | None = None) -> dict (camera mount points)"
+        # Scene-construction cameras: the SO-101 rollout rig is built with
+        # add_camera before run_policy, so the discovery surface must name it
+        # (and its inverse) rather than leave a caller to guess.
+        base["methods"]["add_camera"] = (
+            "(name: str, position=None, target=None, fov=60.0, width=640, "
+            "height=480, parent_body=None) -> dict  # attach a camera to the "
+            "scene; parent_body mounts it on a moving link (e.g. a wrist cam)"
+        )
+        base["methods"]["remove_camera"] = "(name: str) -> dict  # remove a camera added via add_camera"
         # Rendering siblings of "render" (advertised in tool_spec.json + the
         # action dispatcher) that the base discovery surface omits. Listing
         # them here lets an agent enumerate the full render surface from

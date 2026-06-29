@@ -1486,6 +1486,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     "'registry'=registry only, 'robot_descriptions'=URDF via "
                     "robot_descriptions.<name>_description.URDF_PATH; see list_urdfs)"
                 ),
+                "add_object": (
+                    "(name: str, shape='box', position=None, orientation=None, size=None, "
+                    "color=None, mass=0.1, is_static=False, mesh_path=None) -> dict  "
+                    "(add a manipulable object -- box/sphere/.../mesh -- to the scene)"
+                ),
+                "remove_object": "(name: str) -> dict  (remove a previously added object)",
                 "get_robot_state": "(robot_name: str | None = None) -> dict (per-joint position + velocity)",
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
                 "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",

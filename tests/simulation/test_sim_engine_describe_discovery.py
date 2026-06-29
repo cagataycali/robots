@@ -178,6 +178,26 @@ class TestDescribeABC:
         assert "n_episodes" in methods["eval_policy"]
         assert "repo_id" in methods["replay_episode"]
 
+    def test_describe_lists_scene_construction_methods(self):
+        """describe() advertises how to build a scene, not just run one.
+
+        Every rollout begins by constructing a scene -- add_robot, then
+        add_object for manipulanda. These are concrete/abstract methods on the
+        base contract, but describe() previously listed only the runtime
+        (observe/act/rollout) surface, so a caller enumerating
+        ``describe()["methods"]`` could not learn how to populate the world
+        without guessing the names. They belong on the discovery surface as the
+        first step a caller takes.
+        """
+        engine = _make_minimal_engine()
+        methods = engine.describe()["methods"]
+        for name in ("add_robot", "add_object", "remove_object"):
+            assert name in methods, f"describe() omits scene-construction method {name!r}"
+        # Advertised signatures name real parameters so a caller can invoke
+        # them without reading the source.
+        assert "urdf_path" in methods["add_robot"]
+        assert "shape" in methods["add_object"]
+
 
 @pytest.mark.skipif(
     not pytest.importorskip("mujoco", reason="MuJoCo not installed"),
@@ -243,6 +263,54 @@ class TestDescribeMuJoCo:
             # caller can invoke them without reading the source.
             assert "camera_name" in methods["render_depth"]
             assert "cameras" in methods["render_all"]
+        finally:
+            sim.destroy()
+
+    def test_describe_lists_scene_construction_methods(self):
+        """describe() advertises the full scene-construction surface on MuJoCo.
+
+        The documented rollout workflow is create_world -> add_robot ->
+        add_object -> add_camera -> run_policy. add_camera/remove_camera are
+        MuJoCo methods the tool spec already exposes, but the programmatic
+        discovery surface omitted them (and add_object/remove_object), so a
+        caller could not learn how to build the camera rig or place a cube from
+        one describe() call.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in ("add_robot", "add_object", "remove_object", "add_camera", "remove_camera"):
+                assert name in methods, f"describe() omits scene-construction method {name!r}"
+            # Advertised signatures name the real distinguishing parameters.
+            assert "parent_body" in methods["add_camera"]
+            assert "shape" in methods["add_object"]
+        finally:
+            sim.destroy()
+
+    def test_describe_methods_resolve_to_real_attributes(self):
+        """Every method MuJoCo describe() advertises must be a real callable.
+
+        Pins the discovery-surface-is-a-contract invariant on the live engine:
+        an advertised name that is not callable would dead-end a caller in an
+        AttributeError instead of a working call.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in methods:
+                assert callable(getattr(sim, name, None)), (
+                    f"describe() advertises {name!r} but it is not a callable on the engine"
+                )
         finally:
             sim.destroy()
 

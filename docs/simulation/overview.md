@@ -58,6 +58,12 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 
 Robot-URDF cameras are auto-discovered on `add_robot`.
 
+!!! tip "Discover the scene-construction surface"
+    `add_robot`, `add_object`, `remove_object`, `add_camera`, and
+    `remove_camera` are all listed in `sim.describe()["methods"]`, so an agent
+    can learn how to build a scene (robot, manipulanda, camera rig) before a
+    rollout from one `describe()` call instead of guessing method names.
+
 ## Rendering
 
 | Action | Notes |

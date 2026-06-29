@@ -1492,6 +1492,17 @@ class SimEngine(ABC):
                 "get_robot_state": "(robot_name: str) -> dict",
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
                 "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
+                "add_robot": (
+                    "(name: str, urdf_path=None, data_config=None, position=None, "
+                    "orientation=None) -> dict  # add a robot to the scene by "
+                    "registry name (or urdf_path); the first scene-construction step"
+                ),
+                "add_object": (
+                    "(name: str, shape='box', position=None, orientation=None, "
+                    "size=None, color=None, mass=0.1, is_static=None, mesh_path=None) "
+                    "-> dict  # add a manipulable object (cube/sphere/.../mesh) to the scene"
+                ),
+                "remove_object": "(name: str) -> dict  # remove a previously added object",
                 "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, reset_between=True, ...) -> dict",
                 "start_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
                 "eval_policy": (
