@@ -51,6 +51,7 @@ nav:
   - Overview: training/overview.md
   - VLA-on-G1 Workflow: training/vla_workflow.md
 - Recording & Datasets: recording.md
+- Locomotion Planning: planning/kinematic_planner.md
 - Examples:
   - Overview: examples/overview.md
 - Architecture: architecture.md

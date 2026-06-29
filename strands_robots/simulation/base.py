@@ -25,6 +25,7 @@ from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from strands_robots.planning.base import Planner
     from strands_robots.policies import Policy
 
 # PolicyRunner and VideoConfig are used by run_policy / replay / eval_policy.
@@ -668,6 +669,7 @@ class SimEngine(ABC):
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
         wbc_install_torque_control: bool = True,
+        planner: Planner | None = None,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -773,6 +775,15 @@ class SimEngine(ABC):
                 falls over without it. Set ``False`` to manage the controller
                 yourself or to drive a torque-actuated scene directly. No-op for
                 non-WBC policies and on backends without the hook.
+            planner: Optional locomotion-intent
+                :class:`~strands_robots.planning.base.Planner`. When set, the
+                runner samples ``planner.poll().to_policy_kwargs()`` each policy
+                query and merges the result over ``policy_kwargs`` (planner
+                wins), so the locomotion goal (``target_velocity`` /
+                ``target_height`` / ``locomotion_style``) varies over time under
+                keyboard / gamepad / agent / scripted control. The planner's
+                input thread is started before the rollout and stopped after.
+                ``None`` (default) preserves the static-goal behaviour.
 
         Returns:
             Standard status dict with an agent-consumable ``{"json": {...}}``
@@ -833,6 +844,14 @@ class SimEngine(ABC):
             self._maybe_install_wbc_torque_control(policy, robot_name) if wbc_install_torque_control else None
         )
 
+        # Own the planner lifecycle here (not in the runner loop): tell it the
+        # control rate and start its input thread before the rollout, stop it in
+        # the finally below. The runner only reads planner.poll() per query. The
+        # planner stays started across multi-episode rollouts and is stopped once.
+        if planner is not None:
+            planner.set_control_frequency(control_frequency)
+            planner.start()
+
         try:
             runner = PolicyRunner(self)
 
@@ -866,6 +885,7 @@ class SimEngine(ABC):
                     seed=seed,
                     async_rtc=async_rtc,
                     rtc_inference_timeout_s=rtc_inference_timeout_s,
+                    planner=planner,
                 )
                 completed = 1 if result.get("status") == "success" else 0
                 contract = self._episode_contract_fields(
@@ -896,8 +916,11 @@ class SimEngine(ABC):
                 reset_between=reset_between,
                 async_rtc=async_rtc,
                 rtc_inference_timeout_s=rtc_inference_timeout_s,
+                planner=planner,
             )
         finally:
+            if planner is not None:
+                planner.stop()
             if controller_cleanup is not None:
                 controller_cleanup()
 
@@ -921,6 +944,7 @@ class SimEngine(ABC):
         reset_between: bool,
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
+        planner: Planner | None = None,
     ) -> dict[str, Any]:
         """Run ``n_episodes`` sequential rollouts; shared multi-episode driver.
 
@@ -956,6 +980,7 @@ class SimEngine(ABC):
                 seed=ep_seed,
                 async_rtc=async_rtc,
                 rtc_inference_timeout_s=rtc_inference_timeout_s,
+                planner=planner,
             )
             ep_json = self._extract_json_payload(result)
             ep_record: dict[str, Any] = {"episode": ep, **ep_json}

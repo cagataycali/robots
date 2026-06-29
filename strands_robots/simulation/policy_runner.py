@@ -46,6 +46,7 @@ from strands_robots.policies.base import resolve_chunk_length
 from strands_robots.utils import process_rss_mb, require_optional
 
 if TYPE_CHECKING:
+    from strands_robots.planning.base import Planner
     from strands_robots.policies.base import Policy
     from strands_robots.simulation.base import SimEngine
     from strands_robots.simulation.benchmark import BenchmarkProtocol
@@ -505,6 +506,7 @@ class PolicyRunner:
         seed: int | None = None,
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
+        planner: Planner | None = None,
     ) -> dict[str, Any]:
         """Run ``policy`` on ``robot_name`` for ``duration`` seconds.
 
@@ -751,6 +753,20 @@ class PolicyRunner:
         # Normalise the per-call goal payload once. Forwarded verbatim to every
         # get_actions() call; an empty dict is the historical (no-kwargs) path.
         _policy_kwargs = policy_kwargs or {}
+
+        # When a planner is attached, the locomotion goal varies over time: each
+        # policy query samples the planner's current command and merges its
+        # goal kwargs (target_velocity / target_height / locomotion_style) over
+        # the static payload (planner wins). The planner's own lifecycle
+        # (start/stop of its input thread) is owned by the caller
+        # (SimEngine.run_policy), not this loop.
+        def _effective_kwargs() -> dict[str, Any]:
+            if planner is None:
+                return _policy_kwargs
+            merged = dict(_policy_kwargs)
+            merged.update(planner.poll().to_policy_kwargs())
+            return merged
+
         # Tell the policy the loop's control rate BEFORE the rollout so
         # latency-sensitive providers (RTC) convert wall-clock inference
         # latency into the correct number of consumed action steps. Without
@@ -879,7 +895,7 @@ class PolicyRunner:
                 # inference is ever in flight, so this never races.
                 policy.set_rtc_observed_delay(observed_delay)
                 _t_infer = time.perf_counter()
-                coro_or_result = policy.get_actions(observation, instruction, **_policy_kwargs)
+                coro_or_result = policy.get_actions(observation, instruction, **_effective_kwargs())
                 actions = _resolve_coroutine(coro_or_result)
                 # Record inference wall-time (ms) for both the sync and async
                 # paths. Under async this runs on the prefetch worker; list

@@ -278,6 +278,14 @@ vera-sim = [
     "mujoco>=3.5.0",
     "imageio",
 ]
+# Locomotion intent planning (strands_robots.planning). The core package
+# (Planner ABC, PlannerCommand, KinematicPlanner, keyboard / agent / scripted
+# input) is dependency-free; only the gamepad input source needs pygame, gated
+# behind require_optional("pygame"). Cap the MAJOR only (>=2.0): pygame 2.x is
+# the maintained line.
+planning = [
+    "pygame>=2.0,<3.0",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[moveit2]",
@@ -288,6 +296,7 @@ all = [
     "strands-robots[device-connect]",
     "strands-robots[wbc]",
     "strands-robots[molmoact2]",
+    "strands-robots[planning]",
 ]
 dev = [
     "pytest>=6.0,<10.0.0",
