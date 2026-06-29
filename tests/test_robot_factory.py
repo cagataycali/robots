@@ -134,13 +134,44 @@ class TestRobotFactory:
         sig = inspect.signature(Robot)
         assert sig.parameters["mode"].default == "sim"
 
-    def test_unknown_backend_raises(self):
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
+    def test_isaac_backend_routes_to_factory_install_hint(self):
+        """A non-mujoco backend resolves through ``create_simulation`` rather
+        than a blanket ``NotImplementedError``. ``isaac`` ships in the
+        out-of-tree ``strands-robots-sim`` plugin, so when it is absent the
+        factory's actionable install hint surfaces (a ``ValueError`` listing
+        available backends + a ``pip install`` pointer), not a dead-end
+        "on the roadmap" message."""
+        with pytest.raises(ValueError, match="strands-robots-sim") as exc_info:
             Robot("so100", mode="sim", backend="isaac")
+        msg = str(exc_info.value)
+        assert "pip install" in msg
+        # The misleading legacy framing must be gone.
+        assert "not yet implemented" not in msg
+        assert "roadmap" not in msg
 
-    def test_newton_not_implemented(self):
-        with pytest.raises(NotImplementedError, match="not yet implemented"):
+    def test_newton_backend_surfaces_dependency_install_hint(self):
+        """``newton`` is a built-in (warp-lang GPU) backend. With ``warp``
+        absent, ``Robot(backend="newton")`` now surfaces the backend's own
+        ``ImportError`` naming the ``sim-newton`` pip extra - the same error
+        ``create_simulation("newton")`` raises - instead of masking it behind
+        a generic NotImplementedError."""
+        with pytest.raises(ImportError, match="sim-newton"):
             Robot("so100", mode="sim", backend="newton")
+
+    def test_unknown_backend_lists_available(self):
+        """A genuinely unknown backend name yields the factory's ``ValueError``
+        that lists the available backends so the caller can self-correct."""
+        with pytest.raises(ValueError, match="Unknown simulation backend"):
+            Robot("so100", mode="sim", backend="totally_not_a_backend")
+
+    def test_mjwarp_backend_gives_plugin_install_hint(self):
+        """The GPU-parallel warp/MuJoCo path is the built-in ``newton`` backend;
+        ``mjwarp`` is a name users reach for. ``Robot(backend="mjwarp")`` must
+        point them at the warp/newton plugin rather than dead-ending on an
+        unhelpful unknown-backend error with no remedy."""
+        with pytest.raises(ValueError, match="strands-robots-sim") as exc_info:
+            Robot("so100", mode="sim", backend="mjwarp", num_envs=128)
+        assert "pip install" in str(exc_info.value)
 
     def test_invalid_mode_raises(self):
         with pytest.raises(ValueError, match="Invalid mode"):
@@ -344,9 +375,11 @@ class TestUnknownNameRejected:
 
 
 class TestCleanupOnDispatchRaise:
-    """If sim._dispatch_action itself raises (vs returns status=error), the
-    Simulation must still be destroyed. Pins the cleanup path that the original
-    review caught only for the status=error variant."""
+    """If a backend world/robot-population call itself raises (vs returns
+    status=error), the Simulation must still be destroyed. ``Robot()`` populates
+    the world through the backend-agnostic ``SimEngine`` ABC methods
+    (``create_world`` / ``add_robot``), so the cleanup path is pinned against
+    those."""
 
     def test_destroy_called_when_create_world_raises(self):
         """OSError (or any exception) from create_world must trigger destroy()."""
@@ -362,15 +395,11 @@ class TestCleanupOnDispatchRaise:
             destroyed.append(self)
             return real_destroy(self)
 
-        original_dispatch = SimImpl._dispatch_action
-
-        def raising_dispatch(self, action, params):
-            if action == "create_world":
-                raise OSError("simulated disk full")
-            return original_dispatch(self, action, params)
+        def raising_create_world(self, *args, **kwargs):
+            raise OSError("simulated disk full")
 
         with (
-            patch.object(SimImpl, "_dispatch_action", raising_dispatch),
+            patch.object(SimImpl, "create_world", raising_create_world),
             patch.object(SimImpl, "destroy", track),
         ):
             with pytest.raises(OSError, match="simulated disk full"):
@@ -392,15 +421,11 @@ class TestCleanupOnDispatchRaise:
             destroyed.append(self)
             return real_destroy(self)
 
-        original_dispatch = SimImpl._dispatch_action
-
-        def raising_dispatch(self, action, params):
-            if action == "add_robot":
-                raise RuntimeError("simulated MJCF compile error")
-            return original_dispatch(self, action, params)
+        def raising_add_robot(self, *args, **kwargs):
+            raise RuntimeError("simulated MJCF compile error")
 
         with (
-            patch.object(SimImpl, "_dispatch_action", raising_dispatch),
+            patch.object(SimImpl, "add_robot", raising_add_robot),
             patch.object(SimImpl, "destroy", track),
         ):
             with pytest.raises(RuntimeError, match="simulated MJCF compile error"):
@@ -1442,14 +1467,10 @@ class TestRobotFactoryErrorBranches:
 
         from strands_robots.simulation.mujoco.simulation import Simulation as SimImpl
 
-        original = SimImpl._dispatch_action
+        def fake_create_world(self, *args, **kwargs):
+            return {"status": "error", "content": [{"text": "mjcf compile failed"}]}
 
-        def fake_dispatch(self, action, params):
-            if action == "create_world":
-                return {"status": "error", "content": [{"text": "mjcf compile failed"}]}
-            return original(self, action, params)
-
-        with patch.object(SimImpl, "_dispatch_action", fake_dispatch):
+        with patch.object(SimImpl, "create_world", fake_create_world):
             with pytest.raises(RuntimeError, match="Failed to create sim world.*mjcf compile failed"):
                 Robot("so100")
 
@@ -1461,14 +1482,10 @@ class TestRobotFactoryErrorBranches:
 
         from strands_robots.simulation.mujoco.simulation import Simulation as SimImpl
 
-        original = SimImpl._dispatch_action
+        def fake_create_world(self, *args, **kwargs):
+            return {"status": "error", "content": []}
 
-        def fake_dispatch(self, action, params):
-            if action == "create_world":
-                return {"status": "error", "content": []}
-            return original(self, action, params)
-
-        with patch.object(SimImpl, "_dispatch_action", fake_dispatch):
+        with patch.object(SimImpl, "create_world", fake_create_world):
             with pytest.raises(RuntimeError, match="Failed to create sim world"):
                 Robot("so100")
 

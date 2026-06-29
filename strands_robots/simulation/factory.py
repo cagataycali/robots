@@ -76,7 +76,12 @@ DEFAULT_BACKEND = "mujoco"
 _PLUGIN_INSTALL_HINTS: dict[str, str] = {
     "isaac": "pip install 'strands-robots-sim[isaac]'",
     "newton": "pip install 'strands-robots-sim[newton]'",
+    # The warp-lang based GPU-parallel MuJoCo path is the built-in ``newton``
+    # backend; ``warp`` and ``mjwarp`` are common names users reach for, so map
+    # both to the same actionable install hint instead of a bare "unknown
+    # backend" dead end.
     "warp": "pip install 'strands-robots-sim[newton]'",
+    "mjwarp": "pip install 'strands-robots-sim[newton]'",
 }
 
 # Plugin backends discovered via importlib.metadata entry points. Populated

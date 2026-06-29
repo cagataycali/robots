@@ -25,10 +25,11 @@ Examples::
     # With custom URDF/MJCF path
     sim = Robot("my_arm", urdf_path="/path/to/robot.xml")
 
-Future (not yet implemented)::
+GPU backends (resolved through ``create_simulation``; require the backend's
+optional dependency or the ``strands-robots-sim`` plugin to be installed)::
 
     sim = Robot("unitree_go2", backend="isaac", num_envs=4096)
-    sim = Robot("so100", backend="newton", num_envs=4096)
+    sim = Robot("so100", backend="newton", num_envs=4096, device="cuda:0")
 """
 
 from __future__ import annotations
@@ -36,7 +37,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Literal, overload
+from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from strands_robots.registry import (
     get_hardware_type,
@@ -204,9 +205,17 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         mode: "sim" (default - safe), "real" (explicit hardware), or
               "auto" (probes USB for servo controllers, falls back to sim).
               Case-insensitive; surrounding whitespace ignored.
-        backend: Simulation backend - currently only "mujoco" (CPU).
-                 Future: "isaac" (GPU), "newton" (GPU).
-                 Only applies to ``mode="sim"``; ignored for ``mode="real"``.
+        backend: Simulation backend name or alias, resolved through
+                 ``strands_robots.simulation.create_simulation`` - the same
+                 registry that powers ``create_simulation()`` directly. Built-in:
+                 ``"mujoco"`` (CPU, default; aliases ``"mj"``/``"mjc"``/``"mjx"``)
+                 and ``"newton"`` (GPU, warp-lang based; alias ``"nt"``). Heavy
+                 out-of-tree backends (``"isaac"``) ship in the ``strands-robots-sim``
+                 plugin package and resolve once installed. An unavailable backend
+                 surfaces the factory's actionable install hint. Backend-specific
+                 kwargs (e.g. ``num_envs``, ``device``) are forwarded to the
+                 backend constructor. Only applies to ``mode="sim"``; ignored for
+                 ``mode="real"``.
         urdf_path: Explicit path to URDF/MJCF file. If not provided,
                    resolved via ``strands_robots.simulation.model_registry``
                    (asset manager or ``STRANDS_ASSETS_DIR`` search paths).
@@ -236,9 +245,13 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
 
     Raises:
         ValueError: If ``mode`` is not 'sim'/'real'/'auto', if ``cameras=``
-                    is passed in sim mode, or if the robot name is empty
-                    or not in the registry (and no ``urdf_path=`` given).
-        NotImplementedError: If an unimplemented sim backend is requested.
+                    is passed in sim mode, if the robot name is empty
+                    or not in the registry (and no ``urdf_path=`` given), or if
+                    ``backend`` is not a known backend (the message lists the
+                    available backends and any install hint).
+        ImportError: If a known backend's optional dependency is missing
+                     (e.g. ``newton`` without ``warp``); the message names the
+                     pip extra to install.
         RuntimeError: If the sim world or robot fails to initialize.
 
     Examples::
@@ -282,13 +295,6 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
 
     # --- Simulation ---
     if mode == "sim":
-        if backend != "mujoco":
-            raise NotImplementedError(
-                f"Backend {backend!r} is not yet implemented. "
-                f"Currently supported: 'mujoco'. "
-                f"Isaac and Newton backends are on the roadmap."
-            )
-
         if cameras is not None:
             raise ValueError(
                 "cameras= is only supported in mode='real'. "
@@ -296,29 +302,34 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                 "'add_camera' action after creation."
             )
 
-        from strands_robots.simulation import Simulation
+        from strands_robots.simulation import create_simulation
 
-        sim = Simulation(
-            tool_name=f"{name}_sim",
-            **kwargs,
-        )
+        # Resolve the backend through create_simulation - the single source of
+        # truth for backend selection (built-in registry + entry-point plugins +
+        # runtime registrations). The MuJoCo path is unchanged (returns the same
+        # MuJoCoSimEngine); ``newton`` and plugin backends (``isaac``) construct
+        # with the forwarded kwargs (``num_envs``, ``device``, ...), and an
+        # unavailable backend surfaces the factory's actionable install hint
+        # (e.g. ``pip install strands-robots[sim-newton]``) instead of a blanket
+        # NotImplementedError. World/robot population goes through the backend-
+        # agnostic SimEngine ABC methods, so it works for every backend.
+        # The sim-mode overloads contract a ``Simulation`` return; create_simulation
+        # is typed to the SimEngine ABC, so cast to keep that public contract.
+        sim = cast("Simulation", create_simulation(backend, tool_name=f"{name}_sim", **kwargs))
 
         try:
-            result = sim._dispatch_action("create_world", {})
+            result = sim.create_world()
             if result.get("status") == "error":
                 content = result.get("content", [])
                 msg = content[0].get("text", str(result)) if content else str(result)
                 raise RuntimeError(f"Failed to create sim world for {canonical!r}: {msg}")
 
-            add_robot_params: dict[str, Any] = {
-                "robot_name": name,
-                "data_config": data_config or canonical,
-                "position": position or [0.0, 0.0, 0.0],
-            }
-            if urdf_path:
-                add_robot_params["urdf_path"] = urdf_path
-
-            result = sim._dispatch_action("add_robot", add_robot_params)
+            result = sim.add_robot(
+                name=name,
+                urdf_path=urdf_path,
+                data_config=data_config or canonical,
+                position=position or [0.0, 0.0, 0.0],
+            )
             if result.get("status") == "error":
                 content = result.get("content", [])
                 msg = content[0].get("text", str(result)) if content else str(result)

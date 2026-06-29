@@ -291,6 +291,17 @@ class TestEntryPointDiscovery:
             create_simulation("isaac")
         assert "pip install" in str(exc_info.value)
 
+    def test_mjwarp_and_warp_names_suggest_newton_plugin(self, monkeypatch):
+        """The GPU-parallel warp/MuJoCo path is the built-in ``newton`` backend.
+        ``warp`` and ``mjwarp`` are common names users reach for; both must
+        surface the ``strands-robots-sim[newton]`` install hint instead of a
+        bare unknown-backend dead end."""
+        _patch_entry_points(monkeypatch, [])
+        for name in ("warp", "mjwarp"):
+            with pytest.raises(ValueError, match="strands-robots-sim") as exc_info:
+                create_simulation(name)
+            assert "newton" in str(exc_info.value)
+
 
 class TestEntryPointLazyImport:
     def test_no_eager_plugin_scan_on_import(self):
