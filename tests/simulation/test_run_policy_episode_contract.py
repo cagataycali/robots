@@ -162,6 +162,40 @@ class TestVerifyDatasetEpisodes:
         result = sim.verify_dataset_episodes(expected=-1)
         assert result["status"] == "error"
 
+    def test_verify_missing_episode_parquet_returns_full_contract(self, sim, tmp_path):
+        """A finalized dataset whose episode parquet later goes missing must
+        fail loudly with the full json contract, not crash.
+
+        An interrupted finalize or a partially-deleted dataset leaves the
+        recorded root in place but with no ``meta/episodes/**/*.parquet``. The
+        parquet read then raises FileNotFoundError; verify must convert that
+        into a structured ``status="error"`` carrying the complete machine-
+        checkable block (actual 0, no info header, sources disagree) so CI can
+        fail programmatically instead of hitting an unhandled exception.
+        """
+        root = str(tmp_path / "vmissing")
+        _record(sim, root, n_episodes=2, n_steps=3)
+        # Confirm it verifies before we corrupt it (guards against a no-op test).
+        assert sim.verify_dataset_episodes(expected=2)["status"] == "success"
+
+        removed = list((tmp_path / "vmissing" / "meta" / "episodes").glob("**/*.parquet"))
+        assert removed, "expected at least one episode parquet to remove"
+        for pf in removed:
+            pf.unlink()
+
+        result = sim.verify_dataset_episodes(expected=2)
+        assert result["status"] == "error"
+        assert "never finalized" in result["content"][0]["text"]
+        vj = _json_block(result)
+        assert vj["expected"] == 2
+        assert vj["actual"] == 0
+        assert vj["info_total_episodes"] is None
+        assert vj["sources_agree"] is False
+        assert vj["episode_indices"] == []
+        assert vj["total_frames"] == 0
+        assert vj["total_frames_per_ep"] == []
+        assert vj["root"] == root
+
 
 class TestInfoParquetCrossCheck:
     """verify_dataset_episodes requires meta/info.json AND parquet to agree.
