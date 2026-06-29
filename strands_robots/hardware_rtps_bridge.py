@@ -59,6 +59,36 @@ _JOINT_STATE_TYPE = "sensor_msgs/msg/JointState"
 _IMAGE_TYPE = "sensor_msgs/msg/Image"
 
 
+# Map the operator-facing dds_security_config keys to the DDS Security
+# participant property names cyclonedds reads (OMG DDS-Security v1.1, table 8.20
+# "dds.sec.*"). Values are passed through verbatim so the operator controls the
+# scheme (``file:/path`` or ``data:`` per the spec). ``permissions_ca`` is
+# optional; the rest are required (validated by RosTelemetryBase).
+_DDS_SECURITY_PROPERTY = {
+    "identity_ca": "dds.sec.auth.identity_ca",
+    "certificate": "dds.sec.auth.identity_certificate",
+    "private_key": "dds.sec.auth.private_key",
+    "permissions_ca": "dds.sec.access.permissions_ca",
+    "governance": "dds.sec.access.governance",
+    "permissions": "dds.sec.access.permissions",
+}
+
+# The OMG DDS-Security builtin plugins cyclonedds ships. Set unconditionally
+# alongside the credentials so an operator only supplies cert/CA/governance/
+# permissions, not the plugin wiring.
+_DDS_SECURITY_PLUGINS = {
+    "dds.sec.auth.library.path": "dds_security_auth",
+    "dds.sec.auth.library.init": "init_authentication",
+    "dds.sec.auth.library.finalize": "finalize_authentication",
+    "dds.sec.crypto.library.path": "dds_security_crypto",
+    "dds.sec.crypto.library.init": "init_crypto",
+    "dds.sec.crypto.library.finalize": "finalize_crypto",
+    "dds.sec.access.library.path": "dds_security_ac",
+    "dds.sec.access.library.init": "init_access_control",
+    "dds.sec.access.library.finalize": "finalize_access_control",
+}
+
+
 class HardwareRtpsBridge(RosTelemetryBase):
     """Full-duplex hardware ROS 2 bridge over pure RTPS (cyclonedds, no rclpy).
 
@@ -80,9 +110,24 @@ class HardwareRtpsBridge(RosTelemetryBase):
             the bound robot's name (the namespace we publish ``joint_states``
             under).
         poll_period: Seconds between inbound command reads on the poll thread.
+        joint_limits: Optional ``{motor: (min, max)}`` clamp ranges. When set,
+            an inbound ``joint_command`` whose ANY commanded joint falls outside
+            its declared range is rejected whole (no partial application), so a
+            single out-of-range joint can never drive part of the arm.
+        dds_security_config: Optional DDS Security credentials. Required keys
+            (``identity_ca``, ``certificate``, ``private_key``, ``governance``,
+            ``permissions``; ``permissions_ca`` optional) wire the participant's
+            DDS Security plugins so the whole graph is authenticated and
+            access-controlled. When ``enable_commands`` is in effect this (or
+            the ``STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1`` opt-out) is
+            REQUIRED - the bridge refuses to expose an arm-driving command
+            surface on an unsecured DDS graph.
 
     Raises:
         ImportError: If ``cyclonedds`` (the ``[ros2]`` extra) is not installed.
+        ValueError: If ``joint_limits`` / ``dds_security_config`` is malformed,
+            or commands are enabled with neither a security config nor the
+            explicit insecure opt-out.
     """
 
     def __init__(
@@ -93,6 +138,8 @@ class HardwareRtpsBridge(RosTelemetryBase):
         enable_commands: bool = True,
         command_robot_name: str | None = None,
         poll_period: float = 0.02,
+        joint_limits: dict[str, tuple[float, float]] | None = None,
+        dds_security_config: dict[str, str] | None = None,
     ) -> None:
         # cyclonedds is the only dependency - no rclpy, no sourced ROS 2 distro.
         require_optional(
@@ -110,7 +157,36 @@ class HardwareRtpsBridge(RosTelemetryBase):
 
         self._robot = robot
         self._domain_id = int(domain_id)
-        self._participant: Any = DomainParticipant(self._domain_id)
+
+        # Whether this bridge exposes an inbound (arm-driving) command surface.
+        # Resolved BEFORE the participant is built so the DDS Security gate and
+        # the participant's security QoS are decided together.
+        self._enable_commands = bool(enable_commands) and robot is not None
+
+        # Validate the optional clamp ranges up front (fail fast at construction).
+        self._joint_limits = self._validate_joint_limits(joint_limits)
+
+        # DDS Security gate: an enabled inbound command surface lets any DDS
+        # participant drive the physical arm, so refuse to start one on an
+        # unsecured graph unless given a dds_security_config or an explicit
+        # operator opt-out (STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1).
+        if dds_security_config is not None:
+            dds_security_config = self._validate_dds_security_config(dds_security_config)
+        self._require_secure_command_surface(
+            enable_commands=self._enable_commands,
+            dds_security_config=dds_security_config,
+        )
+        self._dds_security_config = dds_security_config
+
+        # Build the participant with DDS Security QoS when a config is supplied,
+        # so BOTH the outbound telemetry and the inbound command surface ride a
+        # secured (authenticated + access-controlled) DDS graph.
+        if dds_security_config is not None:
+            self._participant: Any = DomainParticipant(
+                self._domain_id, qos=self._build_security_qos(dds_security_config)
+            )
+        else:
+            self._participant = DomainParticipant(self._domain_id)
 
         self._robot_name = self._safe(self._resolve_robot_name(robot) if robot is not None else "robot")
         self._joint_writer: Any = None
@@ -121,7 +197,6 @@ class HardwareRtpsBridge(RosTelemetryBase):
         self._JointState = get_type(_JOINT_STATE_TYPE)
         self._Image = get_type(_IMAGE_TYPE)
 
-        self._enable_commands = bool(enable_commands) and robot is not None
         self._poll_period = float(poll_period)
         self._command_reader: Any = None
         self._stop = threading.Event()
@@ -132,6 +207,23 @@ class HardwareRtpsBridge(RosTelemetryBase):
             self._command_robot_name = self._safe(name)
             self._command_reader = self._make_reader(self.joint_command_topic(name), self._JointState)
             self._start_poll()
+
+    def _build_security_qos(self, config: dict[str, str]) -> Any:
+        """Build a cyclonedds ``Qos`` carrying the DDS Security participant properties.
+
+        Combines the builtin DDS-Security plugin wiring (:data:`_DDS_SECURITY_PLUGINS`)
+        with the operator-supplied credentials, mapped to their ``dds.sec.*``
+        property names (:data:`_DDS_SECURITY_PROPERTY`). Optional keys absent
+        from ``config`` (e.g. ``permissions_ca``) are simply not set.
+        """
+        from cyclonedds.qos import Policy, Qos
+
+        properties = dict(_DDS_SECURITY_PLUGINS)
+        for key, prop in _DDS_SECURITY_PROPERTY.items():
+            value = config.get(key)
+            if value:
+                properties[prop] = str(value)
+        return Qos(*[Policy.Property(name, value) for name, value in properties.items()])
 
     # -- helpers ----------------------------------------------------------
 

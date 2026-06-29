@@ -226,6 +226,8 @@ class Robot(TeleopMixin, AgentTool):
         ros2_domain: int = 0,
         ros2_commands: bool = True,
         ros2_transport: str = "rclpy",
+        joint_limits: dict[str, tuple[float, float]] | None = None,
+        dds_security_config: dict[str, str] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize Robot with async capabilities.
@@ -259,6 +261,21 @@ class Robot(TeleopMixin, AgentTool):
                 pip wheel, no rclpy / no sourced distro), type coverage bounded
                 by the local IDL bundle (joint_states + image_raw). Both emit
                 byte-identical topics. Ignored unless ``ros2_bridge=True``.
+            joint_limits: Optional ``{motor: (min, max)}`` clamp ranges threaded
+                into the ROS 2 bridge. When set, an inbound ``joint_command``
+                whose ANY joint is outside its declared range is rejected whole
+                (no partial application). Requires ``ros2_bridge=True``.
+            dds_security_config: Optional DDS Security credentials
+                (``identity_ca``, ``certificate``, ``private_key``,
+                ``governance``, ``permissions``; ``permissions_ca`` optional)
+                for the pure-RTPS bridge. When ``ros2_commands=True`` on the
+                ``"rtps"`` transport this (or the
+                ``STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1`` opt-out) is
+                REQUIRED - the bridge refuses to drive the arm over an unsecured
+                DDS graph. Only the ``"rtps"`` transport consumes it (rclpy DDS
+                Security is configured via the ROS 2 RMW keystore/env); passing
+                it with ``ros2_transport="rclpy"`` raises. Requires
+                ``ros2_bridge=True``.
             **kwargs: Robot-specific parameters (port, etc.)
         """
         super().__init__()
@@ -327,6 +344,8 @@ class Robot(TeleopMixin, AgentTool):
             ros2_domain=ros2_domain,
             ros2_commands=ros2_commands,
             ros2_transport=ros2_transport,
+            joint_limits=joint_limits,
+            dds_security_config=dds_security_config,
         )
 
     # ------------------------------------------------------------------
@@ -370,6 +389,8 @@ class Robot(TeleopMixin, AgentTool):
         ros2_domain: int = 0,
         ros2_commands: bool = True,
         ros2_transport: str = "rclpy",
+        joint_limits: dict[str, tuple[float, float]] | None = None,
+        dds_security_config: dict[str, str] | None = None,
     ) -> None:
         """Initialize the optional ROS 2 telemetry bridge state.
 
@@ -396,19 +417,45 @@ class Robot(TeleopMixin, AgentTool):
             ros2_commands: When True (default), also subscribe to
                 ``joint_command`` and drive the arm; False for read-only.
             ros2_transport: ``"rclpy"`` or ``"rtps"`` (see above).
+            joint_limits: Optional ``{motor: (min, max)}`` clamp ranges threaded
+                into whichever bridge is built (both enforce them on inbound
+                commands via the shared base).
+            dds_security_config: Optional DDS Security credentials, consumed
+                only by the ``"rtps"`` bridge. Passing it with the ``"rclpy"``
+                transport raises (rclpy DDS Security is configured at the RMW
+                layer, not by a config dict).
 
         Raises:
-            ValueError: If ``ros2_transport`` is not ``"rclpy"`` or ``"rtps"``.
+            ValueError: If ``ros2_transport`` is not ``"rclpy"`` or ``"rtps"``;
+                if ``joint_limits`` / ``dds_security_config`` are supplied with
+                ``ros2_bridge=False``; or if ``dds_security_config`` is supplied
+                with ``ros2_transport="rclpy"``.
         """
         self._ros2_bridge_enabled = bool(ros2_bridge)
         self._ros2_domain = int(ros2_domain)
         self._ros2_transport = ros2_transport
         self._ros_bridge: Any = None
         if not self._ros2_bridge_enabled:
+            # No silent no-op: a security/safety config that never reaches a
+            # bridge is almost certainly an operator mistake.
+            if joint_limits is not None or dds_security_config is not None:
+                raise ValueError(
+                    "joint_limits / dds_security_config require ros2_bridge=True "
+                    "(they configure the ROS 2 bridge, which is disabled here)."
+                )
             return
 
         if ros2_transport not in ("rclpy", "rtps"):
             raise ValueError(f"ros2_transport must be 'rclpy' or 'rtps', got {ros2_transport!r}")
+
+        # DDS Security credentials are an RTPS (cyclonedds) concept; the rclpy
+        # transport gets its DDS Security from the ROS 2 RMW keystore/env, not a
+        # config dict. Reject rather than silently ignore.
+        if dds_security_config is not None and ros2_transport != "rtps":
+            raise ValueError(
+                "dds_security_config is only supported with ros2_transport='rtps'; "
+                "rclpy DDS Security is configured via the ROS 2 RMW keystore/env."
+            )
 
         # Bind self so the bridge can drive the arm on inbound commands.
         # command_robot_name is pinned to the same namespace we publish
@@ -421,6 +468,8 @@ class Robot(TeleopMixin, AgentTool):
                 self,
                 domain_id=self._ros2_domain,
                 enable_commands=bool(ros2_commands),
+                joint_limits=joint_limits,
+                dds_security_config=dds_security_config,
             )
         else:
             from strands_robots.hardware_ros_bridge import HardwareRosBridge
@@ -431,6 +480,7 @@ class Robot(TeleopMixin, AgentTool):
                 domain_id=self._ros2_domain,
                 node_name=node,
                 enable_commands=bool(ros2_commands),
+                joint_limits=joint_limits,
             )
 
     def _publish_ros_telemetry(self, observation: dict[str, Any], *, skip_images: bool = False) -> None:

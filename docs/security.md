@@ -130,6 +130,14 @@ Reference: `strands_robots.tools.gr00t_inference`.
 - **Calibration files** under `~/.cache/huggingface/lerobot/calibration/` define how joint commands map to the physical device. Protect them as integrity-sensitive configuration - corrupted or swapped calibration can produce unexpected motion.
 - **The `serial_tool` is broad.** It can enumerate and write to any serial port the process can see, not just the intended robot. Scope it out of agents that do not need raw device access (see [Tool scoping](#prompt-injection)).
 
+## ROS 2 / DDS bridge command surface
+
+`Robot(ros2_bridge=True)` can expose an inbound `/<robot>/joint_command` topic that drives the physical arm. Because **any participant on the DDS domain can publish to it**, the command surface is hardened:
+
+- **DDS Security gate (pure-RTPS transport).** When `ros2_transport="rtps"` and commands are enabled, the bridge **refuses to start** unless given a `dds_security_config` (identity CA, participant certificate + private key, signed governance + permissions) or the explicit `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` opt-out. The credentials are wired into the cyclonedds participant QoS so the whole graph is authenticated and access-controlled. The rclpy transport gets its DDS Security from the ROS 2 RMW keystore/env (`ROS_SECURITY_*` / `sros2`) instead. See the [RTPS integration guide](rtps-integration.md#securing-the-inbound-command-surface).
+- **Joint position bounds.** Pass `joint_limits={motor: (min, max)}` to reject any inbound command whose any joint falls outside its declared range - the whole command is dropped, never partially applied, so one out-of-range value cannot drive part of the arm.
+- **Telemetry-only is ungated.** `ros2_commands=False` is publish-only (no inbound surface) and needs no security config.
+
 ## Credentials and secrets
 
 The product touches several classes of secret. Handle each per least-privilege:

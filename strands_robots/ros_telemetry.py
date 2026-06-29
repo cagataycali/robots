@@ -39,6 +39,27 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+#: Env var an operator sets to explicitly run an INBOUND ``joint_command``
+#: surface on an unsecured DDS graph (no ``dds_security_config``). Truthy values
+#: mirror the mesh insecure opt-out (``STRANDS_MESH_I_KNOW_THIS_IS_INSECURE``):
+#: ``1``, ``true``, ``yes`` (case-insensitive). This is a deliberate second
+#: factor so a forgotten config cannot silently expose a drivable arm.
+ROS2_INSECURE_ENV = "STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE"
+
+#: Keys a ``dds_security_config`` dict must supply (non-empty). Each names a
+#: credential the RTPS bridge wires into its DDS Security participant: the
+#: identity CA, the participant's own certificate and private key (identity is
+#: unprovable without the key), and the signed governance + permissions
+#: documents. ``permissions_ca`` is optional and applied when present.
+_DDS_SECURITY_REQUIRED_KEYS = (
+    "identity_ca",
+    "certificate",
+    "private_key",
+    "governance",
+    "permissions",
+)
+
+
 class RosTelemetryBase:
     """Transport-agnostic ROS 2 wire contract shared by every telemetry bridge.
 
@@ -88,7 +109,121 @@ class RosTelemetryBase:
         """ROS 2 topic inbound ``joint_command`` messages are read from."""
         return f"/{cls._safe(robot)}/joint_command"
 
-    def _command_action(self, msg: Any, *, skip_empty: bool = False) -> dict[str, float] | None:
+    # -- security / safety gate (shared by both hardware bridges) ---------
+
+    @staticmethod
+    def _validate_joint_limits(
+        joint_limits: dict[str, Any] | None,
+    ) -> dict[str, tuple[float, float]] | None:
+        """Validate and normalize a ``joint_limits`` mapping at construction.
+
+        Returns ``{motor: (min, max)}`` with floats and ``min <= max``, or
+        ``None`` when no limits are configured. Failing fast here (rather than
+        per-command) means a malformed bound surfaces at bridge construction,
+        not as a silent mid-run rejection of every command.
+
+        Raises:
+            ValueError: If ``joint_limits`` is not a mapping of name to a
+                ``(min, max)`` numeric pair with ``min <= max``.
+        """
+        if joint_limits is None:
+            return None
+        if not isinstance(joint_limits, dict):
+            raise ValueError(f"joint_limits must be a dict[str, (min, max)], got {type(joint_limits).__name__}")
+        normalized: dict[str, tuple[float, float]] = {}
+        for name, bounds in joint_limits.items():
+            try:
+                low, high = bounds
+                low, high = float(low), float(high)
+            except (TypeError, ValueError):
+                raise ValueError(f"joint_limits[{name!r}] must be a (min, max) numeric pair, got {bounds!r}") from None
+            if low > high:
+                raise ValueError(f"joint_limits[{name!r}] has min {low} > max {high}")
+            normalized[str(name)] = (low, high)
+        return normalized
+
+    @staticmethod
+    def _validate_dds_security_config(config: Any) -> dict[str, str]:
+        """Validate a ``dds_security_config`` dict supplies every required key.
+
+        Returns the config unchanged on success. The required keys
+        (:data:`_DDS_SECURITY_REQUIRED_KEYS`) are the credentials a DDS Security
+        participant cannot authenticate or be governed without; each must be a
+        non-empty string (a path, ``file:`` / ``data:`` URI per the DDS Security
+        spec). Validated at construction so a half-filled config refuses the
+        bridge rather than silently degrading wire security.
+
+        Raises:
+            ValueError: If ``config`` is not a dict or a required key is missing
+                or empty.
+        """
+        if not isinstance(config, dict):
+            raise ValueError(f"dds_security_config must be a dict, got {type(config).__name__}")
+        missing = [k for k in _DDS_SECURITY_REQUIRED_KEYS if not str(config.get(k, "")).strip()]
+        if missing:
+            raise ValueError(
+                f"dds_security_config is missing required keys: {missing}. "
+                f"All of {list(_DDS_SECURITY_REQUIRED_KEYS)} must be supplied "
+                "(identity CA, participant certificate + private key, governance, permissions)."
+            )
+        return config
+
+    @staticmethod
+    def _insecure_opt_out() -> bool:
+        """True when the operator explicitly accepted an unsecured command surface.
+
+        Mirrors the mesh insecure opt-out contract: ``1`` / ``true`` / ``yes``
+        (case-insensitive) on :data:`ROS2_INSECURE_ENV`.
+        """
+        return os.getenv(ROS2_INSECURE_ENV, "").strip().lower() in ("1", "true", "yes")
+
+    @classmethod
+    def _require_secure_command_surface(
+        cls,
+        *,
+        enable_commands: bool,
+        dds_security_config: Any,
+    ) -> None:
+        """Refuse to expose an inbound command surface on an unsecured DDS graph.
+
+        An inbound ``joint_command`` subscription lets any participant on the
+        DDS domain drive the physical arm. When ``enable_commands`` is in
+        effect, require either a ``dds_security_config`` (DDS Security: signed
+        governance + permissions, authenticated identities) OR an explicit
+        operator opt-out via :data:`ROS2_INSECURE_ENV` (``=1``). A telemetry-only
+        bridge (``enable_commands`` False) is publish-only and is not gated.
+
+        Raises:
+            ValueError: When commands are enabled with neither a security config
+                nor the explicit insecure opt-out.
+        """
+        if not enable_commands:
+            return
+        if dds_security_config:
+            return
+        if cls._insecure_opt_out():
+            logger.warning(
+                "%s: exposing an inbound joint_command surface on an UNSECURED DDS graph "
+                "(%s set). Any participant on the domain can drive the arm. Provide a "
+                "dds_security_config for production.",
+                cls.__name__,
+                ROS2_INSECURE_ENV,
+            )
+            return
+        raise ValueError(
+            "Refusing to start an inbound joint_command surface on an unsecured DDS graph. "
+            "An enabled command bridge lets any DDS participant drive the physical arm. "
+            "Pass a dds_security_config (identity CA, participant certificate + private key, "
+            f"governance, permissions) or set {ROS2_INSECURE_ENV}=1 to explicitly accept the risk."
+        )
+
+    def _command_action(
+        self,
+        msg: Any,
+        *,
+        skip_empty: bool = False,
+        joint_limits: dict[str, tuple[float, float]] | None = None,
+    ) -> dict[str, float] | None:
         """Parse an inbound ``joint_command`` ``JointState`` into an action dict.
 
         Returns ``{motor: pos}`` ready for ``Robot.send_action``, or ``None``
@@ -97,6 +232,19 @@ class RosTelemetryBase:
         request) is dropped silently; an empty or length-mismatched message is
         otherwise rejected with a warning rather than partially applied, so a
         malformed command never drives the arm to a surprising pose.
+
+        When ``joint_limits`` is supplied (``{motor: (min, max)}``), the command
+        is range-checked against the declared bounds: if ANY commanded joint
+        falls outside its range the ENTIRE command is rejected (returns
+        ``None``) - no partial application - so one out-of-range joint can never
+        drive part of the arm to a surprising pose while the rest holds. Joints
+        without a declared bound are not constrained.
+
+        Args:
+            msg: The inbound ``JointState``-like message (``name``/``position``).
+            skip_empty: Drop a wholly empty sample silently (DDS keep-alive).
+            joint_limits: Optional ``{motor: (min, max)}`` clamp ranges; a
+                command with any joint outside its range is rejected whole.
         """
         names = list(getattr(msg, "name", []) or [])
         positions = list(getattr(msg, "position", []) or [])
@@ -110,7 +258,25 @@ class RosTelemetryBase:
                 len(positions),
             )
             return None
-        return {name: float(pos) for name, pos in zip(names, positions)}
+        action = {name: float(pos) for name, pos in zip(names, positions)}
+        if joint_limits:
+            for name, pos in action.items():
+                bounds = joint_limits.get(name)
+                if bounds is None:
+                    continue
+                low, high = bounds
+                if not (low <= pos <= high):
+                    logger.warning(
+                        "%s: rejecting joint_command - %s=%.4f outside declared range "
+                        "[%.4f, %.4f] (whole command dropped, no partial application)",
+                        type(self).__name__,
+                        name,
+                        pos,
+                        low,
+                        high,
+                    )
+                    return None
+        return action
 
     def _drive_from_command(self, robot: Any, msg: Any, *, skip_empty: bool = False) -> None:
         """Forward an inbound ``joint_command`` to ``robot.send_action``.
@@ -120,7 +286,7 @@ class RosTelemetryBase:
         raising) a ``send_action`` failure so a bad command cannot kill the
         command loop.
         """
-        action = self._command_action(msg, skip_empty=skip_empty)
+        action = self._command_action(msg, skip_empty=skip_empty, joint_limits=getattr(self, "_joint_limits", None))
         if action is None:
             return
         try:
