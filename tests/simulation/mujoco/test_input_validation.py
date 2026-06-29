@@ -66,6 +66,31 @@ class TestStepValidation:
         assert res["status"] == "success"
         assert sim_with_world._world.step_count == 3
 
+    def test_step_float_is_coerced_to_int(self, sim_with_world):
+        """A non-int but coercible n_steps (e.g. 3.0) is accepted as int(3)."""
+        res = sim_with_world.step(n_steps=3.0)
+        assert res["status"] == "success"
+        assert sim_with_world._world.step_count == 3
+
+    def test_step_non_coercible_type_errors(self, sim_with_world):
+        """A non-int n_steps that cannot be coerced errors and names the type."""
+        initial = sim_with_world._world.step_count
+        res = sim_with_world.step(n_steps="not-a-number")
+        assert res["status"] == "error"
+        msg = res["content"][0]["text"]
+        assert "n_steps must be an integer" in msg
+        assert "str" in msg
+        assert sim_with_world._world.step_count == initial, "step_count must not change on rejected call"
+
+    def test_step_exceeds_max_per_call_errors(self, sim_with_world):
+        """n_steps above the per-call ceiling is rejected without stepping."""
+        initial = sim_with_world._world.step_count
+        over = sim_with_world._MAX_STEPS_PER_CALL + 1
+        res = sim_with_world.step(n_steps=over)
+        assert res["status"] == "error"
+        assert "exceeds max" in res["content"][0]["text"]
+        assert sim_with_world._world.step_count == initial, "step_count must not change on rejected call"
+
 
 # Raycast zero-direction guard
 
