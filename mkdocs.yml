@@ -41,6 +41,7 @@ nav:
   - WBC (Whole-Body-Control): policies/wbc.md
   - LeRobot Local: policies/lerobot-local.md
   - MolmoAct2 (SO-100/101): policies/molmoact2.md
+  - Camera Naming: policies/camera-naming.md
   - Custom Policies: policies/custom-policies.md
 - Real Hardware:
   - Robot Control: hardware/robot-control.md

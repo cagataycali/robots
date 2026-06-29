@@ -87,6 +87,57 @@ def _check_trust_remote_code(provider: str) -> None:
     )
 
 
+def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], dict]:
+    """Resolve ``provider`` to its policy class WITHOUT instantiating it.
+
+    Imports the class and computes the effective constructor kwargs using the
+    same three-stage lookup as :func:`create_policy` (runtime registry, smart
+    string, then ``policies.json``), but never calls the constructor and never
+    enforces the trust-remote-code gate. This lets callers inspect or run a
+    class-level :meth:`Policy.preflight` check before paying the cost (and,
+    for remote-code providers, the risk) of construction.
+
+    Args:
+        provider: Provider name, HF model ID, or server URL.
+        **kwargs: Provider-specific parameters.
+
+    Returns:
+        ``(canonical_provider_name, PolicyClass, resolved_kwargs)``.
+
+    Raises:
+        ImportError / ValueError: Propagated from the underlying class import
+            or smart-string resolution when the provider cannot be resolved.
+    """
+    # 1. Runtime registry (user-registered providers).
+    resolved_name = _runtime_aliases.get(provider, provider)
+    if resolved_name in _runtime_registry:
+        return resolved_name, _runtime_registry[resolved_name](), dict(kwargs)
+
+    # 2. Smart string (HF ID, URL, etc.).
+    _needs_resolution = (
+        "/" in provider
+        or (":" in provider and not provider.replace("_", "").isalpha())
+        or provider.startswith("ws://")
+        or provider.startswith("grpc://")
+        or provider.startswith("zmq://")
+    )
+    if _needs_resolution:
+        try:
+            resolved_provider, resolved_kwargs = resolve_policy(provider, **kwargs)
+        except ImportError:
+            resolved_provider = None
+            resolved_kwargs = {}
+        except Exception as e:
+            logger.warning("Policy resolution failed for '%s': %s", provider, e)
+            resolved_provider = None
+            resolved_kwargs = {}
+        if resolved_provider:
+            return resolved_provider, import_policy_class(resolved_provider), dict(resolved_kwargs)
+
+    # 3. Standard lookup from policies.json.
+    return provider, import_policy_class(provider), dict(kwargs)
+
+
 def create_policy(provider: str, **kwargs) -> Policy:
     """Create a policy instance.
 
@@ -110,39 +161,49 @@ def create_policy(provider: str, **kwargs) -> Policy:
             ``trust_remote_code=True`` and ``STRANDS_TRUST_REMOTE_CODE``
             is not set.
     """
-    # 1. Check runtime registry first (user-registered providers)
-    resolved_name = _runtime_aliases.get(provider, provider)
-    if resolved_name in _runtime_registry:
-        _check_trust_remote_code(resolved_name)
-        PolicyClass = _runtime_registry[resolved_name]()
-        return PolicyClass(**kwargs)
+    canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
+    _check_trust_remote_code(canonical)
+    return PolicyClass(**resolved_kwargs)
 
-    # 2. Check if this looks like a smart string (HF ID, URL, etc.)
-    _needs_resolution = (
-        "/" in provider
-        or (":" in provider and not provider.replace("_", "").isalpha())
-        or provider.startswith("ws://")
-        or provider.startswith("grpc://")
-        or provider.startswith("zmq://")
-    )
 
-    if _needs_resolution:
-        try:
-            resolved_provider, resolved_kwargs = resolve_policy(provider, **kwargs)
-        except ImportError:
-            resolved_provider = None
-            resolved_kwargs = {}
-        except Exception as e:
-            logger.warning("Policy resolution failed for '%s': %s", provider, e)
-            resolved_provider = None
-            resolved_kwargs = {}
+def preflight_policy(provider: str, observation_keys: set[str], **kwargs) -> None:
+    """Run a provider's class-level :meth:`Policy.preflight` check, if any.
 
-        if resolved_provider:
-            _check_trust_remote_code(resolved_provider)
-            PolicyClass = import_policy_class(resolved_provider)
-            return PolicyClass(**resolved_kwargs)
+    Resolves ``provider`` to its policy class WITHOUT instantiating it (so no
+    model weights are downloaded) and invokes the class's ``preflight`` hook
+    with the runtime ``observation_keys`` and the provider kwargs. Providers
+    that do not override :meth:`Policy.preflight` are a no-op.
 
-    # 3. Standard lookup from policies.json
-    _check_trust_remote_code(provider)
-    PolicyClass = import_policy_class(provider)
-    return PolicyClass(**kwargs)
+    This is the fail-fast seam used by ``SimEngine.run_policy`` /
+    ``eval_policy`` to catch a misconfiguration (e.g. sim camera names that
+    cannot be routed to the model's declared image inputs) BEFORE the
+    expensive ``create_policy`` download, instead of crashing deep inside the
+    first inference. Resolution failures are swallowed (the matching error is
+    surfaced authoritatively by the subsequent ``create_policy``); only the
+    provider's own ``preflight`` ``ValueError`` propagates.
+
+    Args:
+        provider: Provider name, HF model ID, or server URL (as passed to
+            ``create_policy``).
+        observation_keys: Keys the runtime observation will contain (joint
+            names + camera names).
+        **kwargs: Provider-specific parameters (the policy_config).
+
+    Raises:
+        ValueError: When the resolved provider's ``preflight`` rejects the
+            configuration.
+    """
+    try:
+        _canonical, PolicyClass, resolved_kwargs = _resolve_policy_class(provider, **kwargs)
+    except Exception as e:
+        # Resolution problems (unknown provider, missing optional dep) are not
+        # this hook's concern - create_policy raises the authoritative error.
+        logger.debug("preflight_policy: could not resolve '%s' (%s); skipping", provider, e)
+        return
+
+    hook = getattr(PolicyClass, "preflight", None)
+    base_hook = getattr(Policy.preflight, "__func__", Policy.preflight)
+    if hook is None or getattr(hook, "__func__", hook) is base_hook:
+        # Provider did not override the default no-op preflight.
+        return
+    PolicyClass.preflight(set(observation_keys), **resolved_kwargs)

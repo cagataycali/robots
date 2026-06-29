@@ -222,6 +222,38 @@ class Policy(ABC):
         # reset endpoint call, etc.).
         return None
 
+    @classmethod
+    def preflight(cls, observation_keys: set[str], **policy_config: Any) -> None:
+        """Cheap pre-construction validation hook (no download, no instantiation).
+
+        Called by the simulation's ``run_policy`` / ``eval_policy`` BEFORE
+        :func:`~strands_robots.policies.create_policy` builds the policy - and
+        therefore before any model weight download - with the set of
+        observation keys the runtime will feed the policy. Override this to
+        fail fast on a misconfiguration (e.g. sim camera names that cannot be
+        routed to the model's declared image inputs) instead of surfacing it as
+        a confusing failure deep inside inference after a multi-minute weight
+        download.
+
+        The default implementation is a no-op. Implementations MUST be cheap:
+        no network access, no model instantiation - only local metadata
+        (``policy_config`` plus packaged JSON such as the embodiment registry)
+        and the provided ``observation_keys``.
+
+        Args:
+            observation_keys: Keys present in the runtime observation dict the
+                policy will receive (joint state names + attached camera
+                names), as returned by ``SimEngine.get_observation``.
+            **policy_config: The same provider kwargs that will be forwarded to
+                the policy constructor by ``create_policy``.
+
+        Raises:
+            ValueError: When the configuration cannot consume the runtime
+                observation (e.g. a required camera source key is absent and no
+                override maps an available key onto the model's image feature).
+        """
+        return None
+
     @property
     def requires_images(self) -> bool:
         """Whether this policy needs camera frames in its observation.

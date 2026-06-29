@@ -26,6 +26,10 @@ processor/`norm_stats.json` bridge and camera routing, see the
 | Joint order | shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper |
 | Cameras | `observation.images.image` (front), `observation.images.wrist_image` |
 
+The sim camera names that feed these features are `front` and `wrist` (the
+`so101` `obs_rename` source keys) - NOT "top"/"side". `run_policy` fails fast
+before download if they do not match; see [Camera Naming](camera-naming.md).
+
 The MuJoCo `so101` sim, by contrast, expresses revolute joints in **RADIANS**
 with bare numeric joint names `1..6` (the gripper is joint `6`, range
 `[-0.175, 1.745]` rad). The mismatch in both units and naming is what the

@@ -40,6 +40,7 @@ LerobotLocalPolicy(
     image_keys=None,                     # MolmoAct2 camera key override
     inference_action_mode="continuous",  # "continuous" | "discrete"
     camera_key_map=None,                 # {robot_cam_name: policy_image_key}
+    obs_rename_override=None,            # {runtime_obs_key: "observation.images.*"} merged over embodiment.obs_rename
     strict_keys=False,                   # raise instead of positional camera fallback
     cache_model=True,                    # reuse a process-cached model across instances
 )
@@ -258,6 +259,61 @@ policy = create_policy(
     camera_key_map={"front": "observation.images.top", "hand": "observation.images.wrist"},
 )
 ```
+
+### Embodiment `obs_rename` and the pre-flight check
+
+When you pass an `embodiment` (e.g. `embodiment="so101"`), camera routing is
+configured declaratively from the embodiment's `obs_rename` map
+(`{runtime_camera_name: "observation.images.*"}`) instead of the heuristic
+above. The runtime observation MUST therefore contain the camera names the
+embodiment declares as rename sources. For `so101` those are `front` and
+`wrist`:
+
+```json
+"obs_rename": {"front": "observation.images.image", "wrist": "observation.images.wrist_image"}
+```
+
+A camera-name mismatch (e.g. you added `realsense_top` / `realsense_side`
+because a model card said "top + side") used to surface only deep in the
+preprocessor AFTER the multi-minute weight download, as a confusing
+`image_keys missing from observation` failure. `run_policy` / `eval_policy` now
+run a cheap pre-flight check (`Policy.preflight`) BEFORE `create_policy`
+downloads anything, and return a `status=error` naming the expected source
+keys:
+
+```
+Embodiment 'so101' cannot route cameras to the model's image feature(s)
+['observation.images.image', 'observation.images.wrist_image']: none of the
+expected source key(s) ['front', 'wrist'] are in the runtime observation, which
+provides [...]. Either: (a) rename your sim cameras to one of ['front', 'wrist']
+..., or (b) pass policy_config={'obs_rename_override': {...}} ...
+```
+
+Two ways to fix it:
+
+1. Rename your cameras to the expected source keys
+   (`sim.add_camera(name="front", ...)`, `sim.add_camera(name="wrist", ...)`).
+2. Keep your custom names and pass `obs_rename_override`, which merges OVER the
+   embodiment's `obs_rename` so your names route onto the model's image
+   features without renaming cameras:
+
+   ```python
+   sim.run_policy(
+       robot_name="so101",
+       policy_provider="lerobot_local",
+       policy_config={
+           "pretrained_name_or_path": "allenai/MolmoAct2-SO100_101",
+           "embodiment": "so101",
+           "obs_rename_override": {
+               "realsense_top": "observation.images.image",
+               "realsense_side": "observation.images.wrist_image",
+           },
+       },
+   )
+   ```
+
+See [camera naming](camera-naming.md) for the model-card -> embodiment
+translation table.
 
 ## RTC
 

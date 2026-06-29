@@ -266,6 +266,44 @@ class SimEngine(ABC):
         """
         return None
 
+    def _preflight_policy_config(
+        self,
+        robot_name: str,
+        policy_provider: str,
+        policy_config: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Run a provider's pre-construction preflight before ``create_policy``.
+
+        Resolves the provider's policy class WITHOUT instantiating it and runs
+        its :meth:`~strands_robots.policies.base.Policy.preflight` hook (a
+        no-op for providers that do not override it) against the runtime
+        observation keys. This catches a misconfiguration - e.g. sim camera
+        names that cannot be routed to a VLA's declared image inputs - BEFORE
+        the expensive model-weight download, instead of crashing deep inside
+        the first inference.
+
+        Args:
+            robot_name: Robot whose observation keys define the runtime inputs.
+            policy_provider: Provider name / smart string passed to
+                ``create_policy``.
+            policy_config: Provider kwargs (the policy_config).
+
+        Returns:
+            A ``status=error`` dict (for the caller to return) when the
+            provider's preflight rejects the configuration; ``None`` when the
+            check passes, is a no-op, or the observation is not yet available.
+        """
+        from strands_robots.policies import preflight_policy
+
+        obs = self.get_observation(robot_name)
+        if not isinstance(obs, dict) or not obs:
+            return None
+        try:
+            preflight_policy(policy_provider, set(obs.keys()), **(policy_config or {}))
+        except ValueError as e:
+            return {"status": "error", "content": [{"text": str(e)}]}
+        return None
+
     # Object management
 
     @abstractmethod
@@ -578,13 +616,19 @@ class SimEngine(ABC):
                 "content": [{"text": f"Robot '{robot_name}' not found."}],
             }
 
-        if policy_object is not None:
+        if policy_object is None:
+            # Fail fast on a misconfiguration (e.g. camera names that cannot be
+            # routed to the policy's declared image inputs) BEFORE the expensive
+            # create_policy weight download.
+            preflight_error = self._preflight_policy_config(robot_name, policy_provider, policy_config)
+            if preflight_error is not None:
+                return preflight_error
+            policy = create_policy(policy_provider, **(policy_config or {}))
+        else:
             # Pre-built policy path - skip the expensive create_policy call.
             # Caller is responsible for policy.set_robot_state_keys(...) if needed,
             # but we set it here defensively so the semantics match the provider path.
             policy = policy_object
-        else:
-            policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(robot_name))
         self.bind_policy_sim_context(policy, robot_name)
 
@@ -1184,15 +1228,19 @@ class SimEngine(ABC):
             }
         resolved_robot = robot_name
 
-        if policy_object is not None:
+        if policy_object is None:
+            from strands_robots.policies import create_policy
+
+            # Fail fast on a misconfiguration BEFORE the create_policy download.
+            preflight_error = self._preflight_policy_config(resolved_robot, policy_provider, policy_config)
+            if preflight_error is not None:
+                return preflight_error
+            policy = create_policy(policy_provider, **(policy_config or {}))
+        else:
             # Pre-built policy path - mirror run_policy. Caller may have already
             # set robot_state_keys; we set defensively so semantics match the
             # provider path.
             policy = policy_object
-        else:
-            from strands_robots.policies import create_policy
-
-            policy = create_policy(policy_provider, **(policy_config or {}))
         policy.set_robot_state_keys(self.robot_joint_names(resolved_robot))
         self.bind_policy_sim_context(policy, resolved_robot)
 

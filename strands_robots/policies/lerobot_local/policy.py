@@ -219,6 +219,7 @@ class LerobotLocalPolicy(Policy):
         image_keys: list[str] | None = None,
         inference_action_mode: str = "continuous",
         camera_key_map: dict[str, str] | None = None,
+        obs_rename_override: dict[str, str] | None = None,
         strict_keys: bool = False,
         cache_model: bool = True,
         **kwargs,
@@ -248,6 +249,14 @@ class LerobotLocalPolicy(Policy):
         # When None, cameras are matched by exact short name and then by
         # declared order (see _resolve_camera_targets).
         self.camera_key_map = dict(camera_key_map) if camera_key_map else None
+        # Optional override merged OVER the embodiment's declared ``obs_rename``
+        # (``{runtime_obs_key: "observation.images.*"}``). Lets a caller keep
+        # custom sim camera names (e.g. ``realsense_top``) and still route them
+        # onto the model's declared image features without renaming cameras.
+        # Merged in :meth:`_configure_embodiment`; also consulted by the
+        # class-level :meth:`preflight` so the override is honoured before any
+        # model download.
+        self._obs_rename_override = dict(obs_rename_override) if obs_rename_override else None
         # When True, raise instead of routing cameras positionally if their
         # names cannot be matched to the policy's declared image keys (and no
         # camera_key_map covers them). Defaults to False (positional fallback
@@ -944,6 +953,82 @@ class LerobotLocalPolicy(Policy):
 
     # Embodiment configuration (declarative obs/action mapping)
 
+    @classmethod
+    def preflight(cls, observation_keys: set[str], **policy_config: Any) -> None:
+        """Validate camera routing against the embodiment BEFORE any download.
+
+        The crash this prevents: a VLA checkpoint (e.g. MolmoAct2 SO-100/101)
+        declares image input features that the embodiment's ``obs_rename`` feeds
+        from named runtime keys (e.g. ``front`` -> ``observation.images.image``).
+        If the sim's attached camera names do not match any source key for a
+        model image feature, the mismatch only surfaces deep in the preprocessor
+        after the multi-minute weight download, as a confusing "image_keys
+        missing from observation" failure. This hook catches it up front.
+
+        Resolution: the model needs every declared image feature populated, so
+        for each image rename TARGET (``observation.images.*``) at least one of
+        its source keys must be present in ``observation_keys``. A caller-
+        supplied ``obs_rename_override`` is merged over the embodiment's
+        ``obs_rename`` first, so an explicit override that maps a present camera
+        onto the feature satisfies the check.
+
+        No-op when no ``embodiment`` is configured (the policy then uses the
+        legacy heuristic camera routing, which this hook cannot reason about),
+        or when the embodiment name/spec cannot be resolved (``create_policy``
+        surfaces that error authoritatively).
+
+        Args:
+            observation_keys: Runtime observation keys (joint + camera names).
+            **policy_config: Provider kwargs (``embodiment``,
+                ``obs_rename_override``, ...).
+
+        Raises:
+            ValueError: When a model image feature has no satisfiable source
+                camera key in ``observation_keys``.
+        """
+        spec = policy_config.get("embodiment")
+        if spec is None:
+            return
+        from .embodiment import load_embodiment
+
+        try:
+            embodiment = load_embodiment(spec)
+        except Exception:  # noqa: BLE001 - unknown/odd spec; create_policy reports it
+            return
+
+        obs_rename = dict(embodiment.obs_rename)
+        override = policy_config.get("obs_rename_override") or {}
+        obs_rename.update(override)
+
+        # Group source keys by the image feature TARGET they feed. A target is
+        # satisfied when ANY of its sources is present in the observation, so an
+        # override that maps a present camera onto the feature counts even if
+        # the embodiment's default source key is absent.
+        targets: dict[str, list[str]] = {}
+        for src, dst in obs_rename.items():
+            if "image" in dst:
+                targets.setdefault(dst, []).append(src)
+        if not targets:
+            return
+
+        obs = set(observation_keys)
+        unsatisfied = {dst: srcs for dst, srcs in targets.items() if not any(s in obs for s in srcs)}
+        if not unsatisfied:
+            return
+
+        expected = sorted({s for srcs in unsatisfied.values() for s in srcs})
+        missing_features = sorted(unsatisfied)
+        raise ValueError(
+            f"Embodiment {embodiment.name!r} cannot route cameras to the model's image "
+            f"feature(s) {missing_features}: none of the expected source key(s) {expected} "
+            f"are in the runtime observation, which provides {sorted(obs)}. Either:\n"
+            f"  (a) rename your sim cameras to one of {expected} "
+            f"(e.g. sim.add_camera(name={expected[0]!r}, ...)), or\n"
+            f"  (b) pass policy_config={{'obs_rename_override': "
+            f"{{'<your_camera_name>': '{missing_features[0]}'}}}} to map an existing "
+            f"camera onto the model's image feature without renaming it."
+        )
+
     def _configure_embodiment(self) -> None:
         """Build, validate, and inject the declarative embodiment map (SOLUTION.md).
 
@@ -984,6 +1069,15 @@ class LerobotLocalPolicy(Policy):
             embodiment = load_embodiment(spec)
         except ValueError as exc:
             raise RuntimeError(f"Failed to load embodiment {spec!r}: {exc}") from exc
+
+        # Merge any caller-supplied obs_rename override OVER the embodiment's
+        # declared renames so custom sim camera names route onto the model's
+        # image features without renaming cameras. Override entries win.
+        if self._obs_rename_override:
+            from dataclasses import replace
+
+            merged = {**embodiment.obs_rename, **self._obs_rename_override}
+            embodiment = replace(embodiment, obs_rename=merged)
 
         # Fail-fast validation against the model's declared features.
         embodiment.validate(self._input_features, self._output_features)

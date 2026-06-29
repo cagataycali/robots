@@ -140,6 +140,11 @@ class ProcessorBridge:
         self._preprocessor = preprocessor
         self._postprocessor = postprocessor
         self._device = device
+        # The embodiment's obs_rename map ({runtime_key: model_feature}),
+        # latched by apply_embodiment. Used to enrich the 'image_keys
+        # missing' preprocessor failure with the expected camera source
+        # keys and what the runtime observation actually provided.
+        self._obs_rename: dict[str, str] = {}
 
     @classmethod
     def from_pretrained(
@@ -354,6 +359,7 @@ class ProcessorBridge:
 
         # Pipelines are mutable dataclasses; reassign the steps sequence.
         self._preprocessor.steps = steps
+        self._obs_rename = dict(embodiment.obs_rename)
         logger.info(
             "Embodiment '%s' applied: rename=%d keys, state_keys=%d, dim_policy=%s -> %d pipeline steps",
             embodiment.name,
@@ -454,7 +460,41 @@ class ProcessorBridge:
                 return merged
             return obs_out
         except Exception as exc:
-            raise RuntimeError(f"Preprocessor pipeline failed: {exc}") from exc
+            raise RuntimeError(f"Preprocessor pipeline failed: {exc}{self._camera_hint(exc, observation)}") from exc
+
+    def _camera_hint(self, exc: Exception, observation: dict[str, Any]) -> str:
+        """Actionable hint appended to an "image_keys missing" preprocessor error.
+
+        VLA preprocessors (e.g. MolmoAct2's ``pack_inputs``) raise when a
+        declared image feature is absent from the (already renamed) observation.
+        That happens when the runtime camera names do not match any source key
+        in the embodiment's ``obs_rename``, so the rename step never produces
+        the model's ``observation.images.*`` features. The raw error names only
+        the model feature keys, not the camera names to fix, so we append the
+        expected source camera key(s) and what the observation actually
+        provided. Returns an empty string for unrelated failures.
+
+        Args:
+            exc: The exception raised inside the pipeline.
+            observation: The raw observation fed to the pipeline.
+
+        Returns:
+            A "\nHint: ..." suffix, or "" when the failure is not an
+            image-keys mismatch or no obs_rename is known.
+        """
+        if "image_keys missing" not in str(exc) or not self._obs_rename:
+            return ""
+        expected = sorted(src for src, dst in self._obs_rename.items() if "image" in dst)
+        if not expected:
+            return ""
+        got = sorted(observation) if isinstance(observation, dict) else []
+        return (
+            f"\nHint: this usually means the runtime camera names do not match the "
+            f"embodiment's obs_rename. Expected camera source key(s): {expected}. "
+            f"Observation provided: {got}. Rename your cameras to the expected key(s), "
+            f"or pass policy_config={{'obs_rename_override': {{'<your_camera>': "
+            f"'observation.images.<feature>'}}}}."
+        )
 
     def postprocess(self, action: Any) -> Any:
         """Postprocess a policy action through the pipeline.
