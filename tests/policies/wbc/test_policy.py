@@ -38,7 +38,12 @@ from strands_robots.policies.wbc.control import (
     quat_rotate_inverse,
 )
 from strands_robots.policies.wbc.observation import ObservationHistory, build_single_frame
-from strands_robots.policies.wbc.policy import _MAIN_POLICY_FILENAME, _WALK_POLICY_FILENAME
+from strands_robots.policies.wbc.policy import (
+    _MAIN_POLICY_CANONICAL,
+    _MAIN_POLICY_FILENAME,
+    _WALK_POLICY_CANONICAL,
+    _WALK_POLICY_FILENAME,
+)
 
 # ---------------------------------------------------------------------------
 # Stub ONNX session
@@ -661,6 +666,56 @@ class TestCheckpointResolution:
         main, walk = WBCPolicy._default_onnx_paths(str(ckpt_file))
         assert main == str(ckpt_file)
         assert walk == str(ckpt_file.parent / _WALK_POLICY_FILENAME)
+
+    def test_default_onnx_paths_accepts_canonical_upstream_filenames(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Regression: a checkpoint directory holding the official upstream
+        # artifact names (GR00T-WholeBodyControl-Balance.onnx / -Walk.onnx) must
+        # resolve to those files verbatim, without forcing a rename to
+        # policy.onnx / walk_policy.onnx. Pre-fix this returned the conventional
+        # names, so the loader raised "policy.onnx not found".
+        d = tmp_path / "ckpt"
+        d.mkdir()
+        (d / _MAIN_POLICY_CANONICAL).touch()
+        (d / _WALK_POLICY_CANONICAL).touch()
+        main, walk = WBCPolicy._default_onnx_paths(str(d))
+        assert main == str(d / _MAIN_POLICY_CANONICAL)
+        assert walk == str(d / _WALK_POLICY_CANONICAL)
+
+    def test_default_onnx_paths_conventional_names_win_over_canonical(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # When both the conventional and canonical names are present, the
+        # conventional policy.onnx / walk_policy.onnx take precedence.
+        d = tmp_path / "ckpt"
+        d.mkdir()
+        for name in (_MAIN_POLICY_FILENAME, _WALK_POLICY_FILENAME, _MAIN_POLICY_CANONICAL, _WALK_POLICY_CANONICAL):
+            (d / name).touch()
+        main, walk = WBCPolicy._default_onnx_paths(str(d))
+        assert main == str(d / _MAIN_POLICY_FILENAME)
+        assert walk == str(d / _WALK_POLICY_FILENAME)
+
+    def test_default_onnx_paths_empty_dir_keeps_conventional_names(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # With neither name present the conventional filenames are returned
+        # unchanged, so the downstream not-found error names policy.onnx.
+        d = tmp_path / "ckpt"
+        d.mkdir()
+        main, walk = WBCPolicy._default_onnx_paths(str(d))
+        assert main == str(d / _MAIN_POLICY_FILENAME)
+        assert walk == str(d / _WALK_POLICY_FILENAME)
+
+    def test_default_onnx_paths_canonical_main_file_pairs_canonical_walk(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # Checkpoint pointing directly at the canonical Balance .onnx: the walk
+        # sibling is expected under the matching canonical Walk name.
+        ckpt_file = tmp_path / "g1" / _MAIN_POLICY_CANONICAL
+        ckpt_file.parent.mkdir()
+        ckpt_file.touch()
+        main, walk = WBCPolicy._default_onnx_paths(str(ckpt_file))
+        assert main == str(ckpt_file)
+        assert walk == str(ckpt_file.parent / _WALK_POLICY_CANONICAL)
+
+    def test_checkpoint_not_found_message_states_no_rename_needed(self) -> None:
+        # The actionable error must advertise that the canonical filenames are
+        # accepted verbatim, rather than instructing a manual rename.
+        msg = WBCPolicy._checkpoint_not_found_message(None, None)
+        assert "no rename needed" in msg
 
     def test_hf_id_download_success_returns_local_snapshot_dir(self, monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
         # A bare org/repo id with huggingface_hub present downloads (cached) and

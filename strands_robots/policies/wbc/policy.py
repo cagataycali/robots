@@ -141,6 +141,14 @@ _MAIN_POLICY_FILENAME = "policy.onnx"
 _WALK_POLICY_FILENAME = "walk_policy.onnx"
 _CONFIG_FILENAME = "config.json"
 
+# The canonical artifact names the decoupled-WBC weights ship under in the
+# NVlabs/GR00T-WholeBodyControl git-LFS tree (and its HuggingFace mirrors):
+# GR00T-WholeBodyControl-Balance.onnx (main) / -Walk.onnx (walk). The loader
+# accepts these verbatim so a user need not rename the official download to
+# policy.onnx / walk_policy.onnx before pointing the checkpoint at it.
+_MAIN_POLICY_CANONICAL = "GR00T-WholeBodyControl-Balance.onnx"
+_WALK_POLICY_CANONICAL = "GR00T-WholeBodyControl-Walk.onnx"
+
 # Raw-velocity-norm threshold for walk-vs-main policy selection, matching the
 # upstream reference (run_mujoco_gear_wbc.py: norm(loco_cmd) <= 0.05 -> main
 # "standing" policy; above -> walk_policy).
@@ -769,9 +777,40 @@ class WBCPolicy(Policy):
             return _MAIN_POLICY_FILENAME, _WALK_POLICY_FILENAME
         p = Path(checkpoint).expanduser()
         if p.is_dir():
-            return str(p / _MAIN_POLICY_FILENAME), str(p / _WALK_POLICY_FILENAME)
-        # checkpoint points directly at the main .onnx file.
-        return str(p), str(p.parent / _WALK_POLICY_FILENAME)
+            main = WBCPolicy._pick_onnx_in_dir(p, _MAIN_POLICY_FILENAME, _MAIN_POLICY_CANONICAL)
+            walk = WBCPolicy._pick_onnx_in_dir(p, _WALK_POLICY_FILENAME, _WALK_POLICY_CANONICAL)
+            return main, walk
+        # checkpoint points directly at the main .onnx file. Pair the walk policy
+        # beside it under the matching naming scheme: when the main file is the
+        # canonical upstream Balance artifact, the walk sibling is the canonical
+        # Walk artifact (not the conventional walk_policy.onnx).
+        walk_name = _WALK_POLICY_CANONICAL if p.name == _MAIN_POLICY_CANONICAL else _WALK_POLICY_FILENAME
+        return str(p), str(p.parent / walk_name)
+
+    @staticmethod
+    def _pick_onnx_in_dir(directory: Path, preferred: str, canonical: str) -> str:
+        """Resolve an ONNX filename inside ``directory``, accepting canonical names.
+
+        The conventional name (``policy.onnx`` / ``walk_policy.onnx``) wins when
+        it exists. Otherwise the canonical NVlabs/GR00T-WholeBodyControl artifact
+        name (``GR00T-WholeBodyControl-Balance.onnx`` / ``-Walk.onnx``) is
+        accepted verbatim, so users need not rename the official download. When
+        neither file exists the preferred name is returned unchanged, so the
+        downstream not-found error keeps naming the conventional file.
+
+        Args:
+            directory: Checkpoint directory to look in.
+            preferred: Conventional filename to prefer (e.g. ``policy.onnx``).
+            canonical: Canonical upstream artifact name to fall back to.
+
+        Returns:
+            Absolute path string to the chosen file.
+        """
+        if (directory / preferred).is_file():
+            return str(directory / preferred)
+        if (directory / canonical).is_file():
+            return str(directory / canonical)
+        return str(directory / preferred)
 
     def _load_sessions(self, checkpoint: str | None) -> None:
         """Load the ONNX sessions, raising loudly on any missing dependency/file.
@@ -862,11 +901,13 @@ class WBCPolicy(Policy):
         source_hint = (
             "No weights are bundled. Obtain GR00T-WholeBodyControl-Balance.onnx and "
             "GR00T-WholeBodyControl-Walk.onnx from the NVlabs/GR00T-WholeBodyControl "
-            "git-LFS tree (decoupled_wbc/sim2mujoco/resources/robots/g1/policy/), place "
-            "them in a directory as policy.onnx + walk_policy.onnx, and pass "
-            "checkpoint='/path/to/that/dir'. Note: the HuggingFace repo nvidia/GEAR-SONIC "
-            "is the SONIC VLA inference stack (encoder/decoder/planner), not this "
-            "decoupled-WBC Balance/Walk family."
+            "git-LFS tree (decoupled_wbc/sim2mujoco/resources/robots/g1/policy/), put "
+            "them in a directory, and pass checkpoint='/path/to/that/dir'. The "
+            "canonical GR00T-WholeBodyControl-Balance.onnx / -Walk.onnx filenames are "
+            "accepted verbatim (no rename needed); policy.onnx / walk_policy.onnx also "
+            "work if present. Note: the HuggingFace repo nvidia/GEAR-SONIC is the SONIC "
+            "VLA inference stack (encoder/decoder/planner), not this decoupled-WBC "
+            "Balance/Walk family."
         )
         if checkpoint is None:
             return f"WBCPolicy requires a checkpoint but none was provided. {source_hint}"

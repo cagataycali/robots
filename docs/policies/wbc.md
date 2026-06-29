@@ -37,13 +37,22 @@ git-LFS tree at `decoupled_wbc/sim2mujoco/resources/robots/g1/policy/`:
 git clone https://github.com/NVlabs/GR00T-WholeBodyControl.git   # 4.6G LFS
 mkdir -p /path/to/grootwbc-g1
 cp GR00T-WholeBodyControl/decoupled_wbc/sim2mujoco/resources/robots/g1/policy/\
-GR00T-WholeBodyControl-Balance.onnx /path/to/grootwbc-g1/policy.onnx
-cp GR00T-WholeBodyControl/decoupled_wbc/sim2mujoco/resources/robots/g1/policy/\
-GR00T-WholeBodyControl-Walk.onnx /path/to/grootwbc-g1/walk_policy.onnx
+GR00T-WholeBodyControl-{Balance,Walk}.onnx /path/to/grootwbc-g1/
 ```
 
-The result is a directory containing `policy.onnx` (the Balance policy) plus an
-optional `walk_policy.onnx` and `config.json`. Note: the HuggingFace repo
+The canonical `GR00T-WholeBodyControl-Balance.onnx` / `-Walk.onnx` filenames are
+accepted verbatim - no rename is needed. The conventional `policy.onnx` /
+`walk_policy.onnx` names also work and take precedence when both are present, so
+either layout is valid:
+
+```text
+/path/to/grootwbc-g1/
+    GR00T-WholeBodyControl-Balance.onnx   # main (Balance) policy
+    GR00T-WholeBodyControl-Walk.onnx      # optional walk policy
+    config.json                           # optional
+```
+
+Note: the HuggingFace repo
 [`nvidia/GEAR-SONIC`](https://huggingface.co/nvidia/GEAR-SONIC) is the SONIC VLA
 inference stack (encoder/decoder/planner ONNX), **not** this decoupled-WBC
 Balance/Walk family; passing it as a checkpoint raises a clear error.
