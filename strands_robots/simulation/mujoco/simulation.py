@@ -1464,6 +1464,12 @@ class MuJoCoSimEngine(
         ``list_bodies`` (optionally with ``robot_name``) to discover valid
         mount points before placing a camera; robot bodies are namespaced
         ``<robot>/<body>`` (e.g. ``so101/gripper`` is the SO101 wrist mount).
+
+        Validation: ``fov`` must be a finite angle in ``(0, 180)`` degrees and
+        ``width``/``height`` must be positive ints within the offscreen
+        framebuffer cap (same bounds ``render`` enforces). Invalid values are
+        rejected here at config time with an actionable error rather than
+        deferring a cryptic spec-recompile or GL failure to the first render.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1492,6 +1498,31 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
+
+        # Validate the field of view up front. MuJoCo's ``fovy`` must be a
+        # finite angle in the open interval (0, 180) degrees; otherwise the
+        # spec recompile aborts deep inside ``inject_camera_into_scene`` with a
+        # cryptic "spec recompile refused", or - for fov <= 0 - silently
+        # registers a degenerate camera that renders nothing useful. Reject it
+        # here with an actionable message, mirroring the position/target checks.
+        if not isinstance(fov, (int, float)) or isinstance(fov, bool) or not math.isfinite(fov):
+            return {
+                "status": "error",
+                "content": [{"text": f"add_camera: 'fov' must be a finite number in degrees, got {fov!r}."}],
+            }
+        if not (0.0 < float(fov) < 180.0):
+            return {
+                "status": "error",
+                "content": [{"text": f"add_camera: 'fov' must be in the open interval (0, 180) degrees, got {fov}."}],
+            }
+
+        # Validate the render resolution baked into this camera the same way
+        # ``render`` validates its dims, so a bad size fails at config time with
+        # a clear message instead of deferring a cryptic GL/Renderer error (or a
+        # silent non-positive dimension) to the first rollout that renders it.
+        if dim_err := self._validate_render_dims(width, height):
+            text = dim_err["content"][0]["text"].replace("render:", "add_camera:", 1)
+            return {"status": "error", "content": [{"text": text}]}
 
         # reject duplicate camera names.  Previously a second
         # add_camera(name=existing) silently overwrote the registry entry but

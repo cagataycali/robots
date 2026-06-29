@@ -558,3 +558,78 @@ class TestAddCameraTargetOrients:
             )
         finally:
             sim.destroy()
+
+
+class TestAddCameraParamValidation:
+    """add_camera validates fov / width / height eagerly.
+
+    Previously add_camera validated position, target, duplicate names and the
+    parent_body mount, but accepted any fov and any render resolution. A
+    non-positive or out-of-range fov silently registered a degenerate camera
+    (fov <= 0) or aborted with a cryptic "spec recompile refused" (fov >= 180),
+    and a non-positive / oversized width or height was accepted at config time
+    only to fail with an opaque GL/Renderer error on the first render. These
+    guard the config-time rejection with an actionable message.
+    """
+
+    def test_fov_zero_errors(self, sim_with_world):
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=0.0)
+        assert res["status"] == "error"
+        assert "fov" in res["content"][0]["text"]
+        assert "c" not in sim_with_world._world.cameras
+
+    def test_fov_negative_errors(self, sim_with_world):
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=-10.0)
+        assert res["status"] == "error"
+        assert "(0, 180)" in res["content"][0]["text"]
+
+    def test_fov_at_180_errors(self, sim_with_world):
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=180.0)
+        assert res["status"] == "error"
+        assert "fov" in res["content"][0]["text"]
+
+    def test_fov_above_180_errors(self, sim_with_world):
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=250.0)
+        assert res["status"] == "error"
+        # must fail cleanly, NOT with the opaque spec-recompile message
+        assert "spec recompile refused" not in res["content"][0]["text"]
+
+    def test_fov_nan_errors(self, sim_with_world):
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=float("nan"))
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+
+    def test_fov_inf_errors(self, sim_with_world):
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=float("inf"))
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+
+    def test_fov_bool_rejected(self, sim_with_world):
+        # bool is an int subclass; True (== 1 deg) is almost certainly a caller bug.
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=True)
+        assert res["status"] == "error"
+        assert "finite number" in res["content"][0]["text"]
+
+    def test_width_zero_errors(self, sim_with_world):
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], width=0)
+        assert res["status"] == "error"
+        assert "> 0" in res["content"][0]["text"]
+        assert "c" not in sim_with_world._world.cameras
+
+    def test_height_negative_errors(self, sim_with_world):
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], height=-5)
+        assert res["status"] == "error"
+        assert "> 0" in res["content"][0]["text"]
+
+    def test_width_above_abs_max_errors(self, sim_with_world):
+        res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], width=100000)
+        assert res["status"] == "error"
+        assert "add_camera" in res["content"][0]["text"]
+        assert "render:" not in res["content"][0]["text"]
+
+    def test_valid_camera_still_added(self, sim_with_world):
+        res = sim_with_world.add_camera(
+            name="good", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=58.0, width=256, height=256
+        )
+        assert res["status"] == "success"
+        assert "good" in sim_with_world._world.cameras
