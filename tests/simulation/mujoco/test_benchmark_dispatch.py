@@ -236,3 +236,71 @@ class TestEvaluateBenchmarkDispatch:
         assert payload["benchmark_class"] == "DeclarativeBenchmark"
         # With no success/failure/done in the spec, loop runs to max_steps=5.
         assert payload["episodes"][0]["steps"] == 5
+
+
+class TestEvaluateBenchmarkCountGuard:
+    """evaluate_benchmark must reject a non-positive ``n_episodes``.
+
+    evaluate_benchmark validated ``action_horizon`` (and robot/benchmark
+    resolution) but left ``n_episodes`` unguarded, so it shared the
+    fabricated-metric bug eval_policy/run_policy already close: a registered
+    benchmark evaluated with ``n_episodes=0`` ran the ``for ep in range(0)``
+    loop zero times and still reported ``status="success"`` with
+    ``Episodes: 0``; a negative value reported a nonsensical ``Episodes: -2``.
+    The guard runs at the entry point, ahead of ``get_benchmark`` and
+    ``create_policy``, mirroring run_policy's ordering.
+    """
+
+    @pytest.mark.parametrize("bad", [0, -2])
+    def test_rejects_non_positive_n_episodes(self, sim_with_robot, basic_spec_file, bad):
+        sim_with_robot._dispatch_action(
+            "register_benchmark_from_file",
+            {
+                "action": "register_benchmark_from_file",
+                "benchmark_name": "guard",
+                "spec_path": basic_spec_file,
+            },
+        )
+        result = sim_with_robot.evaluate_benchmark("guard", robot_name="arm1", policy_provider="mock", n_episodes=bad)
+        assert result["status"] == "error", result
+        text = result["content"][0]["text"]
+        assert "n_episodes must be a positive integer" in text
+        assert str(bad) in text
+        text.encode("ascii")  # message stays ASCII-only
+
+    def test_rejects_non_int_n_episodes(self, sim_with_robot, basic_spec_file):
+        sim_with_robot._dispatch_action(
+            "register_benchmark_from_file",
+            {
+                "action": "register_benchmark_from_file",
+                "benchmark_name": "guard",
+                "spec_path": basic_spec_file,
+            },
+        )
+        result = sim_with_robot.evaluate_benchmark("guard", robot_name="arm1", policy_provider="mock", n_episodes=1.5)
+        assert result["status"] == "error", result
+        assert "n_episodes must be a positive integer" in result["content"][0]["text"]
+
+    def test_guard_fires_before_benchmark_lookup(self, sim_with_robot):
+        # A bad n_episodes is reported even when the benchmark name is
+        # unregistered: the count guard short-circuits ahead of get_benchmark,
+        # so the caller sees the count problem rather than a lookup error.
+        result = sim_with_robot.evaluate_benchmark("never-registered", robot_name="arm1", n_episodes=0)
+        assert result["status"] == "error", result
+        assert "n_episodes must be a positive integer" in result["content"][0]["text"]
+
+    def test_accepts_valid_n_episodes(self, sim_with_robot, basic_spec_file):
+        sim_with_robot._dispatch_action(
+            "register_benchmark_from_file",
+            {
+                "action": "register_benchmark_from_file",
+                "benchmark_name": "ok",
+                "spec_path": basic_spec_file,
+            },
+        )
+        result = sim_with_robot.evaluate_benchmark(
+            "ok", robot_name="arm1", policy_provider="mock", n_episodes=1, seed=0
+        )
+        assert result["status"] == "success", result
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert payload["n_episodes"] == 1

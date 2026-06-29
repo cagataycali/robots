@@ -1467,7 +1467,10 @@ class SimEngine(ABC):
                 :func:`create_policy`).
             policy_config: Provider-specific kwargs.
             instruction: Natural-language instruction for the policy.
-            n_episodes: Number of episodes.
+            n_episodes: Number of episodes. Must be a positive integer;
+                a zero/negative/non-int value is rejected with a structured
+                error rather than fabricating a 0%-success report over an
+                empty rollout loop.
             seed: Master RNG seed for per-episode reproducibility.
             action_horizon: How many actions to consume from each
                 ``policy.get_actions(...)`` chunk before re-querying the
@@ -1505,6 +1508,8 @@ class SimEngine(ABC):
         from strands_robots.simulation.benchmark import get_benchmark
 
         if err := self._validate_action_horizon(action_horizon, "evaluate_benchmark"):
+            return err
+        if err := self._validate_positive_int(n_episodes, "n_episodes", "evaluate_benchmark"):
             return err
 
         spec = get_benchmark(benchmark_name)
