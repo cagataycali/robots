@@ -20,7 +20,7 @@ python examples/vla_g1_workflow.py
 python examples/vla_g1_workflow.py --tune --base-model nvidia/GR00T-N1.7-3B
 
 # Deploy-only with downloaded SONIC weights:
-python examples/vla_g1_workflow.py --checkpoint /path/to/GEAR-SONIC
+python examples/vla_g1_workflow.py --checkpoint /path/to/grootwbc-g1
 ```
 
 ## Pipeline stages
@@ -41,7 +41,7 @@ from strands_robots.policies import create_policy
 from strands_robots.policies.wbc import install_wbc_torque_control
 
 sim = Robot("unitree_g1", mesh=False)
-policy = create_policy("wbc", checkpoint="/path/to/GEAR-SONIC", walk=True)
+policy = create_policy("wbc", checkpoint="/path/to/grootwbc-g1", walk=True)
 
 # WBC emits joint-POSITION targets, but the G1 scene's actuators are
 # position-servos (uniform kp=500) that override SONIC's tuned per-joint PD -
@@ -70,7 +70,7 @@ sim.stop_recording()
 The `vla_g1_workflow.py` example wires exactly this up behind a flag:
 
 ```bash
-python examples/vla_g1_workflow.py --record-checkpoint /path/to/GEAR-SONIC
+python examples/vla_g1_workflow.py --record-checkpoint /path/to/grootwbc-g1
 ```
 
 Two ingredients make WBC close its loop through `sim.run_policy`:

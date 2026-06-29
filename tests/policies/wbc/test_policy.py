@@ -584,10 +584,10 @@ class TestCheckpointResolution:
 
         monkeypatch.setattr(wbc_policy, "require_optional", _boom)
         with pytest.raises(RuntimeError, match="HuggingFace model id"):
-            WBCPolicy._maybe_download_checkpoint("nvidia/GEAR-SONIC")
+            WBCPolicy._maybe_download_checkpoint("acme/wbc-g1")
 
     def test_hf_id_heuristic_accepts_org_repo(self) -> None:
-        assert wbc_policy._looks_like_hf_repo_id("nvidia/GEAR-SONIC")
+        assert wbc_policy._looks_like_hf_repo_id("acme/wbc-g1")
         assert wbc_policy._looks_like_hf_repo_id("org-name/repo.name_1")
 
     def test_hf_id_heuristic_rejects_path_like(self) -> None:
@@ -680,9 +680,9 @@ class TestCheckpointResolution:
 
         fake = _FakeHub()
         monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: fake)
-        result = WBCPolicy._maybe_download_checkpoint("nvidia/GEAR-SONIC")
+        result = WBCPolicy._maybe_download_checkpoint("acme/wbc-g1")
         assert result == str(snapshot)
-        assert fake.calls == ["nvidia/GEAR-SONIC"]
+        assert fake.calls == ["acme/wbc-g1"]
 
     def test_hf_id_download_failure_raises_actionable_runtime_error(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
         # A hub download failure must surface as a RuntimeError with an
@@ -693,7 +693,84 @@ class TestCheckpointResolution:
 
         monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: _BoomHub())
         with pytest.raises(RuntimeError, match="failed to download checkpoint"):
-            WBCPolicy._maybe_download_checkpoint("nvidia/GEAR-SONIC")
+            WBCPolicy._maybe_download_checkpoint("acme/wbc-g1")
+
+
+# ---------------------------------------------------------------------------
+# GAP-1: no default HF repo; a bare create_policy("wbc") must fail with an
+# actionable error BEFORE any network call (the old default nvidia/GEAR-SONIC
+# is the SONIC inference stack, not the decoupled-WBC Balance/Walk family).
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultCheckpoint:
+    def test_no_default_hf_repo_constant(self) -> None:
+        # The wrong-family default constant must be gone entirely.
+        assert not hasattr(wbc_policy, "_DEFAULT_HF_REPO")
+
+    def test_create_policy_wbc_without_checkpoint_raises_actionable_error(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        # A bare create_policy("wbc") must raise an actionable error and must
+        # NOT trigger a real HuggingFace download (no silent wrong-family fetch).
+        # snapshot_download is wired to blow up if ever reached; checkpoint=None
+        # short-circuits long before it, so the error is the no-checkpoint one.
+        class _ExplodingHub:
+            def snapshot_download(self, *a, **k):  # type: ignore[no-untyped-def]
+                raise AssertionError("create_policy('wbc') must not download a checkpoint")
+
+        monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: _ExplodingHub())
+        with pytest.raises(RuntimeError, match="requires a checkpoint but none was provided"):
+            create_policy("wbc")
+
+    def test_no_checkpoint_message_points_at_nvlabs_lfs(self) -> None:
+        msg = WBCPolicy._checkpoint_not_found_message(None, None)
+        assert "NVlabs/GR00T-WholeBodyControl" in msg
+        assert "decoupled_wbc/sim2mujoco/resources/robots/g1/policy/" in msg
+        # Names GEAR-SONIC only to warn it is the wrong family.
+        assert "GEAR-SONIC" in msg
+
+    def test_sonic_inference_stack_dir_rejected(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # A directory holding the SONIC encoder/decoder/planner ONNX (and no
+        # policy.onnx) must be rejected up front with a clear error.
+        d = tmp_path / "GEAR-SONIC"
+        d.mkdir()
+        for name in ("model_encoder.onnx", "model_decoder.onnx", "planner_sonic.onnx"):
+            (d / name).touch()
+        with pytest.raises(RuntimeError, match="SONIC VLA inference stack"):
+            WBCPolicy._reject_sonic_inference_stack(str(d))
+
+    def test_sonic_marker_with_policy_onnx_is_allowed(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        # If policy.onnx is colocated with a SONIC marker, the caller knowingly
+        # placed it - do not reject.
+        d = tmp_path / "mixed"
+        d.mkdir()
+        (d / "model_encoder.onnx").touch()
+        (d / "policy.onnx").touch()
+        WBCPolicy._reject_sonic_inference_stack(str(d))  # no raise
+
+    def test_reject_sonic_noops_on_none_and_files(self, tmp_path) -> None:  # type: ignore[no-untyped-def]
+        WBCPolicy._reject_sonic_inference_stack(None)  # no raise
+        f = tmp_path / "policy.onnx"
+        f.touch()
+        WBCPolicy._reject_sonic_inference_stack(str(f))  # a file, not a dir: no raise
+
+    def test_explicit_checkpoint_dir_still_works(self, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        # An explicit local checkpoint dir with a real policy.onnx must load
+        # (sanity that removing the default did not break the happy path). The
+        # ONNX session is stubbed so no real model file is needed.
+        d = tmp_path / "ckpt"
+        d.mkdir()
+        (d / "policy.onnx").touch()
+
+        class _FakeSession:
+            def __init__(self, path):  # type: ignore[no-untyped-def]
+                self.path = path
+
+        class _FakeOrt:
+            InferenceSession = _FakeSession
+
+        monkeypatch.setattr(wbc_policy, "require_optional", lambda *a, **k: _FakeOrt())
+        pol = WBCPolicy(checkpoint=str(d), walk=False)
+        assert pol.policy_session is not None
 
 
 # ---------------------------------------------------------------------------

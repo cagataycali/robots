@@ -13,7 +13,7 @@ Each stage is self-contained and gated:
   checkpoint). This completes in ~10 seconds on CPU with no external services.
 - Pass ``--tune`` to enable stage 2 (requires Docker + a GPU for Isaac-GR00T
   fine-tuning; takes ~hours). The deploy stage then uses the fine-tuned output.
-- Pass ``--checkpoint /path/to/GEAR-SONIC`` to skip recording + fine-tuning and
+- Pass ``--checkpoint /path/to/grootwbc-g1`` to skip recording + fine-tuning and
   jump straight to deploy with an existing SONIC checkpoint.
 
 This example proves the three pieces compose - dataset_recorder, GR00T Trainer,
@@ -34,7 +34,7 @@ Usage:
     python examples/vla_g1_workflow.py --tune --base-model nvidia/GR00T-N1.7-3B
 
     # Deploy-only with an existing SONIC checkpoint:
-    python examples/vla_g1_workflow.py --checkpoint /path/to/GEAR-SONIC
+    python examples/vla_g1_workflow.py --checkpoint /path/to/grootwbc-g1
 """
 
 from __future__ import annotations

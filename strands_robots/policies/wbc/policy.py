@@ -44,7 +44,7 @@ Usage through the sim backend::
 
     sim.run_policy(
         robot_name="unitree_g1", policy_provider="wbc",
-        policy_config={"checkpoint": ".../GEAR-SONIC", "walk": True},
+        policy_config={"checkpoint": "/path/to/grootwbc-g1", "walk": True},
         policy_kwargs={"target_velocity": [0.5, 0.0, 0.0]},
         duration=10.0, control_frequency=50.0,
     )
@@ -129,10 +129,11 @@ _G1_SONIC_KPS = (150.0, 150.0, 150.0, 200.0, 40.0, 40.0, 150.0, 150.0, 150.0, 20
 _G1_SONIC_KDS = (2.0, 2.0, 2.0, 4.0, 2.0, 2.0, 2.0, 2.0, 2.0, 4.0, 2.0, 2.0, 5.0, 5.0, 5.0)
 _G1_SONIC_DEFAULT_ANGLES = (-0.1, 0.0, 0.0, 0.3, -0.2, 0.0, -0.1, 0.0, 0.0, 0.3, -0.2, 0.0, 0.0, 0.0, 0.0)
 
-# The HF repo the checkpoint is fetched from when ``checkpoint`` is a bare
-# model id rather than a local path. No weights are bundled; they are fetched
-# at runtime under the NVIDIA Open Model License.
-_DEFAULT_HF_REPO = "nvidia/GEAR-SONIC"
+# Filenames the SONIC VLA inference stack ships in its HuggingFace repo
+# (nvidia/GEAR-SONIC). These are NOT the decoupled-WBC Balance/Walk policies
+# this provider runs - detecting them lets us reject that checkpoint up front
+# with an actionable error instead of a confusing "policy.onnx not found".
+_SONIC_INFERENCE_STACK_FILES = frozenset({"model_encoder.onnx", "model_decoder.onnx", "planner_sonic.onnx"})
 
 # Default per-session ONNX filenames inside a checkpoint directory.
 _MAIN_POLICY_FILENAME = "policy.onnx"
@@ -215,13 +216,13 @@ class WBCPolicy(Policy):
         self._warned_no_velocity = False
         self._default_command = self._validate_velocity(target_velocity) if target_velocity is not None else None
 
-        # Default to the canonical SONIC checkpoint when none is given, so
-        # ``create_policy("wbc")`` resolves to a downloadable repo rather than
-        # failing with a bare "checkpoint not found". No weights are bundled;
-        # the HF download happens lazily in _load_sessions under the model
-        # license. An explicit local path / id always wins.
-        if checkpoint is None:
-            checkpoint = _DEFAULT_HF_REPO
+        # No weights are bundled and there is no default download. The
+        # decoupled-WBC Balance/Walk ONNX policies this provider runs live only
+        # in the NVlabs/GR00T-WholeBodyControl git-LFS tree (not as a standalone
+        # HuggingFace repo), so a bare ``create_policy("wbc")`` cannot guess a
+        # working checkpoint. A missing checkpoint surfaces an actionable error
+        # in _load_sessions (before any network call) rather than silently
+        # downloading the wrong model family. An explicit local path / id wins.
 
         # Resolve the config first - it tells us dims + default file layout.
         self._config = self._resolve_config(config, checkpoint)
@@ -800,14 +801,13 @@ class WBCPolicy(Policy):
         # under the model's license and cache under the HF cache.
         checkpoint = self._maybe_download_checkpoint(checkpoint)
 
+        # Reject the SONIC VLA inference stack early: it ships encoder/decoder/
+        # planner ONNX, not the decoupled-WBC policy.onnx this provider loads.
+        self._reject_sonic_inference_stack(checkpoint)
+
         main_path = self._resolve_onnx_path(self._config.policy_path, checkpoint, _MAIN_POLICY_FILENAME)
         if main_path is None or not Path(main_path).is_file():
-            raise RuntimeError(
-                f"WBCPolicy main ONNX checkpoint not found (resolved: {main_path!r}). "
-                "Pass checkpoint='/path/to/GEAR-SONIC' (a dir with policy.onnx) or a "
-                "direct .onnx path. No weights are bundled - download them under the "
-                "NVIDIA Open Model License (e.g. nvidia/GEAR-SONIC)."
-            )
+            raise RuntimeError(self._checkpoint_not_found_message(checkpoint, main_path))
         self.policy_session = ort.InferenceSession(main_path)  # type: ignore[attr-defined]
 
         if self._walk:
@@ -822,12 +822,65 @@ class WBCPolicy(Policy):
                 )
 
     @staticmethod
+    def _reject_sonic_inference_stack(checkpoint: str | None) -> None:
+        """Raise if ``checkpoint`` is the SONIC inference stack, not decoupled-WBC.
+
+        The HuggingFace repo ``nvidia/GEAR-SONIC`` ships the SONIC VLA inference
+        stack (``model_encoder.onnx`` / ``model_decoder.onnx`` /
+        ``planner_sonic.onnx``), NOT the decoupled-WBC Balance/Walk policies this
+        provider runs. Loading it would fail later with a confusing
+        ``policy.onnx not found``; detect it up front and point at the correct
+        source. A directory holding both a SONIC marker and ``policy.onnx`` is
+        left alone (the caller knowingly colocated files).
+
+        Raises:
+            RuntimeError: If the checkpoint directory holds SONIC inference-stack
+                ONNX files but no ``policy.onnx``.
+        """
+        if not checkpoint:
+            return
+        d = Path(checkpoint).expanduser()
+        if not d.is_dir():
+            return
+        onnx_names = {f.name for f in d.glob("*.onnx")}
+        sonic_found = onnx_names & _SONIC_INFERENCE_STACK_FILES
+        if sonic_found and _MAIN_POLICY_FILENAME not in onnx_names:
+            raise RuntimeError(
+                f"WBCPolicy checkpoint {str(d)!r} looks like the SONIC VLA inference stack "
+                f"(found {sorted(sonic_found)}), not the decoupled-WBC policy family. "
+                "WBCPolicy loads GR00T-WholeBodyControl-Balance.onnx (as policy.onnx) and "
+                "GR00T-WholeBodyControl-Walk.onnx (as walk_policy.onnx) from the "
+                "NVlabs/GR00T-WholeBodyControl git-LFS tree "
+                "(decoupled_wbc/sim2mujoco/resources/robots/g1/policy/). The SONIC "
+                "encoder/decoder/planner ONNX are a different runtime and are not loaded here."
+            )
+
+    @staticmethod
+    def _checkpoint_not_found_message(checkpoint: str | None, main_path: str | None) -> str:
+        """Build an actionable not-found error for a missing main ONNX policy."""
+        source_hint = (
+            "No weights are bundled. Obtain GR00T-WholeBodyControl-Balance.onnx and "
+            "GR00T-WholeBodyControl-Walk.onnx from the NVlabs/GR00T-WholeBodyControl "
+            "git-LFS tree (decoupled_wbc/sim2mujoco/resources/robots/g1/policy/), place "
+            "them in a directory as policy.onnx + walk_policy.onnx, and pass "
+            "checkpoint='/path/to/that/dir'. Note: the HuggingFace repo nvidia/GEAR-SONIC "
+            "is the SONIC VLA inference stack (encoder/decoder/planner), not this "
+            "decoupled-WBC Balance/Walk family."
+        )
+        if checkpoint is None:
+            return f"WBCPolicy requires a checkpoint but none was provided. {source_hint}"
+        return (
+            f"WBCPolicy main ONNX checkpoint not found (resolved: {main_path!r}). "
+            f"Pass checkpoint='/path/to/dir' containing policy.onnx or a direct .onnx path. {source_hint}"
+        )
+
+    @staticmethod
     def _maybe_download_checkpoint(checkpoint: str | None) -> str | None:
         """Resolve a HuggingFace model id to a local snapshot directory.
 
         Checkpoint resolution order (issue #466): local path | HF download | cache.
         A value that already exists on disk (file or dir) is returned unchanged.
-        A bare ``org/repo`` id (e.g. the default ``nvidia/GEAR-SONIC``) is
+        A bare ``org/repo`` id (e.g. an explicit ``org/repo`` checkpoint) is
         fetched via ``huggingface_hub.snapshot_download`` - which is itself a
         cache (repeat calls are offline-fast) - and the local dir is returned.
 
@@ -862,8 +915,8 @@ class WBCPolicy(Policy):
                 f"path, pass an existing directory or .onnx file.\n{e}"
             ) from e
         # Log BEFORE the network call so an unexpected download (e.g. a bare
-        # create_policy("wbc") defaulting to nvidia/GEAR-SONIC, or a mistyped
-        # local path that happens to be org/repo-shaped) is visible, not silent.
+        # an explicit org/repo checkpoint, or a mistyped local path that happens
+        # to be org/repo-shaped) is visible, not silent.
         logger.info(
             "WBCPolicy resolving checkpoint %r as a HuggingFace model id; downloading (cached after first use)...",
             checkpoint,

@@ -27,11 +27,26 @@ pip install "strands-robots[wbc]"            # onnxruntime only - light, no torc
 pip install "strands-robots[wbc,sim-mujoco]" # + MuJoCo to drive the G1 in sim
 ```
 
-No model weights are bundled. Download a GR00T-WBC (SONIC) checkpoint under the
-NVIDIA Open Model License (e.g.
-[`nvidia/GEAR-SONIC`](https://huggingface.co/nvidia/GEAR-SONIC)) into a
-directory containing `policy.onnx` (plus an optional `walk_policy.onnx` and
-`config.json`).
+No model weights are bundled and there is no default download: a bare
+`create_policy("wbc")` raises an actionable error instead of fetching the wrong
+model family. The decoupled-WBC G1 policies live in the
+[`NVlabs/GR00T-WholeBodyControl`](https://github.com/NVlabs/GR00T-WholeBodyControl)
+git-LFS tree at `decoupled_wbc/sim2mujoco/resources/robots/g1/policy/`:
+
+```bash
+git clone https://github.com/NVlabs/GR00T-WholeBodyControl.git   # 4.6G LFS
+mkdir -p /path/to/grootwbc-g1
+cp GR00T-WholeBodyControl/decoupled_wbc/sim2mujoco/resources/robots/g1/policy/\
+GR00T-WholeBodyControl-Balance.onnx /path/to/grootwbc-g1/policy.onnx
+cp GR00T-WholeBodyControl/decoupled_wbc/sim2mujoco/resources/robots/g1/policy/\
+GR00T-WholeBodyControl-Walk.onnx /path/to/grootwbc-g1/walk_policy.onnx
+```
+
+The result is a directory containing `policy.onnx` (the Balance policy) plus an
+optional `walk_policy.onnx` and `config.json`. Note: the HuggingFace repo
+[`nvidia/GEAR-SONIC`](https://huggingface.co/nvidia/GEAR-SONIC) is the SONIC VLA
+inference stack (encoder/decoder/planner ONNX), **not** this decoupled-WBC
+Balance/Walk family; passing it as a checkpoint raises a clear error.
 
 ## Quickstart
 
@@ -40,7 +55,7 @@ from strands_robots.policies import create_policy
 
 policy = create_policy(
     "wbc",                                  # shorthand: "sonic"
-    checkpoint="/path/to/GEAR-SONIC",       # dir with policy.onnx (+ walk_policy.onnx)
+    checkpoint="/path/to/grootwbc-g1",       # dir with policy.onnx (+ walk_policy.onnx)
     walk=True,
 )
 
@@ -57,7 +72,7 @@ actions = policy.get_actions_sync(
 
 ```python
 WBCPolicy(
-    checkpoint="/path/to/GEAR-SONIC",  # dir with policy.onnx, a direct .onnx path, or an HF id
+    checkpoint="/path/to/grootwbc-g1",  # dir with policy.onnx, a direct .onnx path, or an HF id
     config=None,                       # WBCConfig | path | dict | None (None -> config.json in checkpoint)
     walk=True,                         # load + prefer walk_policy.onnx for locomotion
     target_velocity=None,              # constructor-time default [vx, vy, omega] (per-call kwarg overrides)
@@ -131,7 +146,7 @@ sim.run_policy(
     robot_name="unitree_g1",
     instruction="walk forward",       # ignored by the controller
     policy_provider="wbc",
-    policy_config={"checkpoint": "/path/to/GEAR-SONIC", "walk": True},
+    policy_config={"checkpoint": "/path/to/grootwbc-g1", "walk": True},
     policy_kwargs={"target_velocity": [0.5, 0.0, 0.0]},   # per-call locomotion goal
     duration=10.0,
     control_frequency=50.0,
@@ -166,7 +181,7 @@ reproduces that loop - torque motors, `policy.compute_torques(...)` at
 IMU - and is the right way to see the G1 actually locomote:
 
 ```bash
-python examples/wbc_g1_torque_deploy.py --checkpoint /path/to/GEAR-SONIC \
+python examples/wbc_g1_torque_deploy.py --checkpoint /path/to/grootwbc-g1 \
     --duration 5 --vx 0.5 --mp4 /tmp/g1_walk.mp4
 ```
 
