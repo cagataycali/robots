@@ -141,6 +141,49 @@ An unknown style or out-of-range index raises `ValueError` listing the
 available modes. A missing `[motionbricks]` install or checkpoint raises
 `RuntimeError` with an install hint - there is no silent fallback.
 
+## Driving the gait from a KinematicPlanner
+
+A [`KinematicPlanner`](../planning/kinematic_planner.md) steers MotionBricks at
+the *intent* layer: each control tick it emits a `locomotion_style` (its fixed
+SONIC-demo vocabulary - `run`, `happy`, `stealth`, `injured`, `hand_crawling`,
+`elbow_crawling`, `boxing`) plus a `target_velocity`. MotionBricks names its G1
+clips differently, so the policy translates `locomotion_style` to the matching
+clip via `PLANNER_STYLE_TO_G1_CLIP`:
+
+| planner `locomotion_style` | MotionBricks clip |
+| --- | --- |
+| `run` | `walk` |
+| `happy` | `walk_happy_dance` |
+| `stealth` | `stealth_walk` |
+| `injured` | `injured_walk` |
+| `hand_crawling` | `hand_crawling` |
+| `elbow_crawling` | `elbow_crawling` |
+| `boxing` | `walk_boxing` |
+
+```python
+from strands_robots import Robot
+from strands_robots.planning import KinematicPlanner
+from strands_robots.planning.inputs import ScriptedInput
+from strands_robots.planning.base import PlannerCommand
+
+robot = Robot("unitree_g1")
+planner = KinematicPlanner(ScriptedInput([
+    (0.0, PlannerCommand(root_vel=(0.5, 0.0, 0.0), style="run")),
+    (3.0, PlannerCommand(root_vel=(0.3, 0.0, 0.0), style="stealth")),
+    (6.0, PlannerCommand(root_vel=(0.0, 0.0, 0.0), style="boxing")),
+]))
+robot.run_policy(policy_provider="motionbricks", planner=planner,
+                 policy_config={"result_dir": "/path/to/.../motionbricks/out"},
+                 duration=9.0, control_frequency=30.0)
+```
+
+Resolution order per tick: an explicit `style=`/`mode=` kwarg pins the clip
+(overriding any planner style); otherwise `locomotion_style` is translated;
+otherwise the configured default `style` is used. The planner's `kneeling`
+style has no G1 clip - emitting it raises `ValueError` rather than miming the
+wrong motion. Supply a `style_map` (on the policy or in `MotionBricksConfig`) to
+remap styles or target a custom clip set.
+
 ## Visualisation
 
 Render a style sequence headless (`MUJOCO_GL=egl`) with the bundled example:

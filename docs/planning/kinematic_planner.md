@@ -75,6 +75,12 @@ Style names match the GR00T Whole-Body-Control SONIC demos exactly:
 the `locomotion_style` kwarg, so emitting a style is always safe; a
 style-conditioned policy uses it to switch gaits.
 
+The [MotionBricks](../policies/motionbricks.md) provider (`policy_provider="motionbricks"`)
+is style-conditioned: it translates the planner's `locomotion_style` to the
+matching G1 clip (`stealth` -> `stealth_walk`, `boxing` -> `walk_boxing`, ...),
+so a planner switches the synthesised gait live. See the MotionBricks page for
+the full style-to-clip table.
+
 ## Input sources
 
 Every source is a non-blocking `InputSource` the planner polls on a background

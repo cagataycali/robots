@@ -71,6 +71,10 @@ class MotionBricksConfig:
             ``--speed_scale``). ``(1.0, 1.0)`` disables perturbation.
         exp: Upstream experiment key selecting the checkpoint layout
             (``"default"``).
+        style_map: Optional overrides merged over the built-in planner-style ->
+            clip-name map (:data:`~strands_robots.policies.motionbricks.observation.PLANNER_STYLE_TO_G1_CLIP`),
+            used to translate a :class:`~strands_robots.planning.kinematic.KinematicPlanner`
+            ``locomotion_style`` to this generator's clip set. ``None`` uses the defaults.
     """
 
     result_dir: str
@@ -83,6 +87,7 @@ class MotionBricksConfig:
     device: str = "cuda"
     speed_scale: tuple[float, float] = (1.0, 1.0)
     exp: str = _DEFAULT_EXP
+    style_map: dict[str, str] | None = None
 
     def __post_init__(self) -> None:
         # Fail-fast on bad synthesis knobs (AGENTS.md #5: raise on fatal config,
@@ -105,6 +110,14 @@ class MotionBricksConfig:
             raise ValueError(f"MotionBricksConfig.speed_scale must be 0 < min <= max, got ({lo}, {hi})")
         # Normalise speed_scale to a plain float tuple (frozen -> object.__setattr__).
         object.__setattr__(self, "speed_scale", (lo, hi))
+        if self.style_map is not None and (
+            not isinstance(self.style_map, dict)
+            or not all(isinstance(k, str) and isinstance(v, str) for k, v in self.style_map.items())
+        ):
+            raise ValueError(
+                "MotionBricksConfig.style_map must be a dict[str, str] mapping planner-style "
+                f"name -> clip-mode name, got {self.style_map!r}"
+            )
 
     @property
     def controller_dt(self) -> float:
