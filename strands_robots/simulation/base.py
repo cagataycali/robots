@@ -572,6 +572,53 @@ class SimEngine(ABC):
             }
         return None
 
+    @staticmethod
+    def _validate_positive_int(value: Any, name: str, method: str) -> dict[str, Any] | None:
+        """Reject a non-positive-integer count at the public API.
+
+        Shared guard for the rollout count knobs that must be ``>= 1`` -
+        ``n_episodes`` (how many reset->rollout episodes to run) and
+        ``max_steps`` (the per-episode step cap). A zero/negative/non-int
+        value would otherwise flow into the rollout loop and produce a
+        degenerate result that still reports ``status="success"``: an eval
+        over zero episodes, or episodes of zero length, that fabricate a 0%
+        success rate (``Episodes: -2 | Success: 0/-2``) instead of surfacing
+        the caller's mistake. Returns a structured ``{"status": "error", ...}``
+        dict to surface, or ``None`` when the value is valid.
+
+        Args:
+            value: The caller-supplied value to validate.
+            name: Parameter name, used in the error message.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None``.
+        """
+        if not isinstance(value, int) or value < 1:
+            return {
+                "status": "error",
+                "content": [{"text": f"{method}: {name} must be a positive integer, got {value!r}."}],
+            }
+        return None
+
+    @staticmethod
+    def _validate_positive_frequency(control_frequency: float, method: str) -> dict[str, Any] | None:
+        """Reject a non-positive ``control_frequency`` at the public API.
+
+        ``control_frequency`` sets the control-loop rate the rollout steps
+        physics at; a value ``<= 0`` is meaningless and otherwise reaches the
+        per-period substep computation (``round(1 / control_frequency / ...)``)
+        deep inside :class:`PolicyRunner`, where it raises a bare ``ValueError``
+        rather than the structured tool-error dict the public API contracts.
+        Returns a structured error dict to surface, or ``None`` when valid.
+        """
+        if not isinstance(control_frequency, (int, float)) or control_frequency <= 0:
+            return {
+                "status": "error",
+                "content": [{"text": f"{method}: control_frequency must be > 0, got {control_frequency!r}."}],
+            }
+        return None
+
     def run_policy(
         self,
         robot_name: str | None = None,
@@ -707,11 +754,8 @@ class SimEngine(ABC):
         if horizon_error is not None:
             return horizon_error
 
-        if not isinstance(n_episodes, int) or n_episodes < 1:
-            return {
-                "status": "error",
-                "content": [{"text": f"run_policy: n_episodes must be a positive integer, got {n_episodes!r}."}],
-            }
+        if err := self._validate_positive_int(n_episodes, "n_episodes", "run_policy"):
+            return err
 
         if err := self._validate_action_horizon(action_horizon, "run_policy"):
             return err
@@ -1329,6 +1373,12 @@ class SimEngine(ABC):
         (e.g. paired with ``start_cameras_recording_synchronous``) so a
         daemon-thread recorder does not race ``mjData`` mutations. A hook
         exception is logged at WARN and never aborts the eval.
+
+        ``n_episodes`` and ``max_steps`` must be positive integers and
+        ``control_frequency`` must be ``> 0``; a non-positive value is
+        rejected with a structured error at the entry point (before
+        ``create_policy``) rather than running a degenerate eval that
+        reports a fabricated success rate over zero/negative episodes.
         """
         if not robot_name:
             return {
@@ -1346,6 +1396,12 @@ class SimEngine(ABC):
         resolved_robot = robot_name
 
         if err := self._validate_action_horizon(action_horizon, "eval_policy"):
+            return err
+        if err := self._validate_positive_int(n_episodes, "n_episodes", "eval_policy"):
+            return err
+        if err := self._validate_positive_int(max_steps, "max_steps", "eval_policy"):
+            return err
+        if err := self._validate_positive_frequency(control_frequency, "eval_policy"):
             return err
 
         if policy_object is None:

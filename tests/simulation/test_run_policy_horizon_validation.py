@@ -171,3 +171,57 @@ class TestActionHorizonGuards:
     def test_action_horizon_error_is_ascii(self, sim):
         text = _err_text(sim.run_policy("arm1", n_steps=4, action_horizon=0))
         text.encode("ascii")  # raises UnicodeEncodeError if any non-ASCII leaks
+
+
+class TestEvalPolicyCountGuards:
+    """eval_policy must reject non-positive rollout counts and frequency.
+
+    eval_policy used to validate only ``action_horizon`` and ``robot_name``;
+    its ``n_episodes`` (number of reset->rollout episodes), ``max_steps``
+    (per-episode step cap) and ``control_frequency`` were unvalidated. A
+    zero/negative ``n_episodes`` or ``max_steps`` flowed into the eval loop and
+    returned ``status="success"`` with a fabricated success rate over zero or
+    negative episodes (``Episodes: -2 | Success: 0/-2``) or zero-length episodes
+    (``Avg steps: 0/-5``), hiding the caller's mistake; a non-positive
+    ``control_frequency`` raised a bare ``ValueError`` from deep inside the
+    runner instead of the structured tool-error dict the public API contracts.
+    These guards run at the entry point, before ``create_policy``.
+    """
+
+    @pytest.mark.parametrize("bad", [0, -2])
+    def test_rejects_non_positive_n_episodes(self, sim, bad):
+        text = _err_text(sim.eval_policy(robot_name="arm1", n_episodes=bad))
+        assert "n_episodes must be a positive integer" in text
+        assert str(bad) in text
+
+    def test_rejects_non_int_n_episodes(self, sim):
+        text = _err_text(sim.eval_policy(robot_name="arm1", n_episodes=1.5))
+        assert "n_episodes must be a positive integer" in text
+
+    @pytest.mark.parametrize("bad", [0, -5])
+    def test_rejects_non_positive_max_steps(self, sim, bad):
+        text = _err_text(sim.eval_policy(robot_name="arm1", max_steps=bad))
+        assert "max_steps must be a positive integer" in text
+        assert str(bad) in text
+
+    @pytest.mark.parametrize("bad_freq", [0, -10.0])
+    def test_rejects_non_positive_control_frequency(self, sim, bad_freq):
+        text = _err_text(sim.eval_policy(robot_name="arm1", max_steps=3, control_frequency=bad_freq))
+        assert "control_frequency must be > 0" in text
+
+    def test_count_error_is_ascii(self, sim):
+        text = _err_text(sim.eval_policy(robot_name="arm1", n_episodes=-2))
+        text.encode("ascii")  # raises UnicodeEncodeError if any non-ASCII leaks
+
+    def test_guard_runs_before_policy_creation(self, sim):
+        # A malformed n_episodes is reported even when the policy provider is
+        # also bogus: the count guard short-circuits ahead of create_policy, so
+        # the caller sees the count problem rather than a provider/download error.
+        text = _err_text(sim.eval_policy(robot_name="arm1", policy_provider="no_such_provider", n_episodes=0))
+        assert "n_episodes must be a positive integer" in text
+
+    def test_accepts_valid_counts(self, sim):
+        result = sim.eval_policy(
+            robot_name="arm1", policy_provider="mock", n_episodes=1, max_steps=2, control_frequency=50.0
+        )
+        assert result["status"] == "success", result
