@@ -14,6 +14,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# Canonical "no live world" error message shared by every world-touching
+# MuJoCo facade/mixin method. Defined in this low-level module so the
+# Simulation facade and its mixins (physics, randomization, rendering,
+# recording) can all source the single string without a circular import -
+# an agent that learns the error from one action recognises it identically
+# from every other.
+_NO_WORLD_MSG = "No world. Call create_world (or load_scene) first."
+
 _mujoco = None
 _mujoco_viewer = None
 

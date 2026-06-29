@@ -69,6 +69,7 @@ from strands_robots.simulation.model_registry import (
 )
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimStatus, SimWorld
 from strands_robots.simulation.mujoco.backend import (
+    _NO_WORLD_MSG,
     _ensure_mujoco,
     filter_mujoco_attach_noise,
 )
@@ -93,12 +94,6 @@ if TYPE_CHECKING:
     from strands_robots.policies import Policy
 
 logger = logging.getLogger(__name__)
-
-# Single source of truth for the "no live world" guard message. Every
-# world-touching facade method checks the same condition (world + compiled
-# model + data all present) and returns this exact text, so an agent that
-# learns the string from one action recognises it from all of them.
-_NO_WORLD_MSG = "No world. Call create_world (or load_scene) first."
 
 
 def _drop_unrecorded_cameras(observation: dict[str, Any], recorded: set[str] | None) -> dict[str, Any]:

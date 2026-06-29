@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.mujoco.backend import _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ class RandomizationMixin:
             seed:                 Optional np.random seed for reproducibility.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # domain randomization mutates model arrays; a running policy racing with it is UB
         if err := self._require_no_running_policy("randomize"):
             return err

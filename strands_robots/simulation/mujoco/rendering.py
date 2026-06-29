@@ -4,7 +4,7 @@ import io
 import logging
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.simulation.mujoco.backend import _can_render, _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _can_render, _ensure_mujoco
 
 logger = logging.getLogger(__name__)
 
@@ -581,7 +581,7 @@ class RenderingMixin:
         ``width``/``height`` override the camera config.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         # treat `None` as "use default", but `0` / negative values must
@@ -686,7 +686,7 @@ class RenderingMixin:
         matter; the grayscale image is normalized for display only.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         # see note in render() re: None vs 0/negative.
@@ -853,7 +853,7 @@ class RenderingMixin:
         memory can appear as phantom penetrations at t=0).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -983,7 +983,7 @@ class RenderingMixin:
                                      {"text": "cam2"}, {"image": {...}}, ...]}``
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         names, unresolved = self._active_camera_list(cameras)
         if cameras is not None and unresolved:
             return {
@@ -1066,7 +1066,7 @@ class RenderingMixin:
         import uuid as _uuid
 
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]
@@ -1437,7 +1437,7 @@ class RenderingMixin:
         import uuid as _uuid
 
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]

@@ -1,11 +1,16 @@
 """Unified "no world" guard contract for the MuJoCo Simulation facade.
 
-Every world-touching facade method must, when called before ``create_world``
-(or after a failed ``load_scene`` that leaves a partial world), return the same
-structured error - never raise and never drift the wording. The canonical text
-lives in ``strands_robots.simulation.mujoco.simulation._NO_WORLD_MSG``; this
-module pins that single string across every guarded method so an agent that
-learns the error from one action recognises it from all of them.
+Every world-touching facade/mixin method must, when called before
+``create_world`` (or after a failed ``load_scene`` that leaves a partial
+world), return the same structured error - never raise and never drift the
+wording. The canonical text lives in a single shared constant,
+``strands_robots.simulation.mujoco.backend._NO_WORLD_MSG`` (re-exported from
+``...mujoco.simulation`` for the facade); this module pins that single string
+across every guarded method - the high-level facade methods AND the dynamics,
+randomization, rendering, and recording mixin methods - so an agent that learns
+the error from one action recognises it from all of them. Because every method
+sources the one constant, editing the message in one place can never silently
+leave a hand-rolled copy behind in a mixin.
 
 Two states are exercised:
 
@@ -45,6 +50,38 @@ GUARDED_CALLS: list[tuple[str, tuple, dict]] = [
     ("start_policy", (), {}),
     ("run_policy", (), {}),
     ("run_multi_policy", ({},), {}),
+    # PhysicsMixin dynamics/state methods - same unified guard.
+    ("save_state", (), {}),
+    ("load_state", (), {}),
+    ("apply_force", ("base",), {}),
+    ("raycast", ([0.0, 0.0, 1.0], [0.0, 0.0, -1.0]), {}),
+    ("get_jacobian", (), {}),
+    ("get_energy", (), {}),
+    ("get_mass_matrix", (), {}),
+    ("inverse_dynamics", (), {}),
+    ("get_body_state", ("base",), {}),
+    ("set_joint_positions", (), {}),
+    ("set_joint_velocities", (), {}),
+    ("get_sensor_data", (), {}),
+    ("set_body_properties", ("base",), {}),
+    ("set_geom_properties", (), {}),
+    ("get_contact_forces", (), {}),
+    ("multi_raycast", ([0.0, 0.0, 1.0], [[0.0, 0.0, -1.0]]), {}),
+    ("forward_kinematics", (), {}),
+    ("get_total_mass", (), {}),
+    ("export_xml", (), {}),
+    # RandomizationMixin.
+    ("randomize", (), {}),
+    # RenderingMixin - render + contact-query + camera-recording entry points.
+    ("render", (), {}),
+    ("render_depth", (), {}),
+    ("get_contacts", (), {}),
+    ("render_all", (), {}),
+    ("start_cameras_recording", (), {}),
+    ("start_cameras_recording_synchronous", (), {}),
+    # RecordingMixin - LeRobotDataset recording (guard fires before the
+    # lerobot extra is touched).
+    ("start_recording", (), {}),
 ]
 
 

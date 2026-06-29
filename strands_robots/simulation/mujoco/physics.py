@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.mujoco.backend import _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +109,7 @@ class PhysicsMixin:
         including ctrl and qfrc_applied buffers.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -145,7 +145,7 @@ class PhysicsMixin:
     def load_state(self, name: str = "default") -> dict[str, Any]:
         """Restore physics state from a named checkpoint."""
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # load_state during a running policy races worker thread
         if err := self._require_no_running_policy("load_state"):
             return err
@@ -202,7 +202,7 @@ class PhysicsMixin:
                    Defaults to body CoM if not specified.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # apply_force during a running policy races worker thread
         if err := self._require_no_running_policy("apply_force"):
             return err
@@ -318,7 +318,7 @@ class PhysicsMixin:
             include_static: Whether to include static geoms.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         # validate vector shapes and reject zero-direction (mj_ray aborts the process on len=0)
         try:
@@ -400,7 +400,7 @@ class PhysicsMixin:
         Returns both positional (3×nv) and rotational (3×nv) Jacobians.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -443,7 +443,7 @@ class PhysicsMixin:
     def get_energy(self) -> dict[str, Any]:
         """Compute potential and kinetic energy of the system."""
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -472,7 +472,7 @@ class PhysicsMixin:
         Useful for dynamics analysis, impedance control, etc.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -518,7 +518,7 @@ class PhysicsMixin:
         that would produce the current accelerations.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -552,7 +552,7 @@ class PhysicsMixin:
         Returns Cartesian pose + 6D spatial velocity (linear + angular).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -618,7 +618,7 @@ class PhysicsMixin:
           world must contain exactly one robot, or the call errors).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # mutating qpos under a running policy races mj_step
         if err := self._require_no_running_policy("set_joint_positions"):
             return err
@@ -722,7 +722,7 @@ class PhysicsMixin:
         (see set_joint_positions for list semantics).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("set_joint_velocities"):
             return err
 
@@ -819,7 +819,7 @@ class PhysicsMixin:
             sensor_name: Specific sensor name, or None for all sensors.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -885,7 +885,7 @@ class PhysicsMixin:
         Changes take effect on the next mj_step.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("set_body_properties"):
             return err
 
@@ -935,7 +935,7 @@ class PhysicsMixin:
         Changes take effect immediately for rendering (color) or next step (friction, size).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("set_geom_properties"):
             return err
 
@@ -984,7 +984,7 @@ class PhysicsMixin:
         Returns normal and friction forces.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -1040,7 +1040,7 @@ class PhysicsMixin:
         Returns array of distances and hit geoms.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -1111,7 +1111,7 @@ class PhysicsMixin:
         Otherwise returns every body as before.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
@@ -1158,7 +1158,7 @@ class PhysicsMixin:
     def get_total_mass(self) -> dict[str, Any]:
         """Get total mass and per-body mass breakdown."""
         if self._world is None or self._world._model is None or self._world._data is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
         model = self._world._model
@@ -1191,7 +1191,7 @@ class PhysicsMixin:
         mutation, so no extra caching or round-tripping is needed.
         """
         if self._world is None or self._world._model is None:
-            return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         spec = self._world._backend_state.get("spec") if self._world._backend_state else None
         if spec is None:
