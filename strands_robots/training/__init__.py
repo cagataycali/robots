@@ -44,3 +44,16 @@ __all__ = [
     "load_reward_model",
     "reward_progress",
 ]
+
+
+# Register the from-scratch RL trainers (strands_robots.training.rl). These live
+# in a torch-importing subpackage, so they are wired through the factory's lazy
+# loader rather than imported here - keeping ``import strands_robots.training``
+# torch-free. ``create_trainer("ppo")`` resolves the loader on first use.
+def _load_ppo_trainer() -> type[Trainer]:
+    from strands_robots.training.rl.ppo import PpoTrainer
+
+    return PpoTrainer
+
+
+register_trainer("ppo", _load_ppo_trainer)

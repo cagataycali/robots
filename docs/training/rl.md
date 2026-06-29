@@ -1,0 +1,133 @@
+---
+description: Train a policy from scratch with reinforcement learning - PPO over the SimEngine env interface, driven by a reward function instead of a dataset.
+---
+
+# Reinforcement learning (from scratch)
+
+The [`Trainer`](overview.md) family post-tunes a policy *from a dataset*.
+Reinforcement learning is the other half: train a policy *from a reward
+function* by interacting with a simulation, with no demonstration data. This is
+the only path to a locomotion / whole-body-control policy where no expert
+trajectories exist.
+
+RL trainers live in `strands_robots.training.rl` and are selected through the
+**same** `create_trainer` factory:
+
+```python
+from strands_robots.training import create_trainer
+from strands_robots.training.rl import RLTrainSpec
+
+trainer = create_trainer("ppo")   # on-policy PPO, from-scratch RL
+```
+
+## The pieces
+
+| Component | Role |
+|---|---|
+| [`BaseRLAlgo`](#baserlalgo) | Abstract RL trainer; peer of supervised `Trainer`. Lifecycle `setup -> collect_rollout -> update -> save_checkpoint`. |
+| [`RLTrainSpec`](#rltrainspec) | Reward-driven training spec (extends `TrainSpec`). |
+| [`PpoTrainer`](#ppo) | Proximal Policy Optimization (on-policy, GAE, clipped surrogate + value). |
+| [`SimEnv`](#simenv) | Gym-style `reset -> step` adapter over a `SimEngine`. |
+| `EmpiricalNormalization` | Running observation normalizer (whitens inputs for stable training). |
+
+## SimEnv
+
+`SimEnv` wraps a `SimEngine` into the `reset -> step` contract, building the
+observation vector from named `get_observation` keys and the step reward from
+any reward terms you pass (each a `Callable[[SimEngine], float]`). It uses the holosoma
+`actor_obs_keys` / `critic_obs_keys` split: the actor sees only deployable
+observations, while the critic may additionally see privileged simulation-only
+keys (asymmetric actor-critic).
+
+```python
+import strands_robots as sr
+from strands_robots.training.rl import SimEnv
+
+TARGET = 0.2
+
+def elbow_reach_reward(engine) -> float:        # a RewardTerm = SimEngine -> float
+    elbow = engine.get_observation(skip_images=True)["Elbow"]
+    return -abs(float(elbow) - TARGET)
+
+def make_env() -> SimEnv:
+    engine = sr.Robot("so100", mode="sim")
+    return SimEnv(
+        engine,
+        actor_obs_keys=["Elbow", "Elbow.vel"],   # what the policy sees
+        reward_terms=[elbow_reach_reward],        # dense reward
+        action_dim=6,
+        max_episode_steps=50,
+    )
+```
+
+## PPO
+
+```python
+from strands_robots.training import create_trainer
+from strands_robots.training.rl import RLTrainSpec
+
+trainer = create_trainer("ppo")
+spec = RLTrainSpec(
+    env_factory=make_env,          # a zero-arg callable returning a SimEnv
+    output_dir="/tmp/ppo_reach",
+    total_timesteps=250 * 150,
+    rollout_steps=250,             # on-policy batch horizon per update
+    num_mini_batches=4,
+    num_learning_epochs=5,
+    learning_rate=1e-3,
+    gamma=0.99, lam=0.95, clip_param=0.2,
+    init_noise_std=0.8,
+    seed=0,
+)
+
+problems = trainer.validate(spec)  # pure preflight (no side effects)
+assert not problems
+result = trainer.train(spec)       # setup -> (collect_rollout -> update)* -> save
+print(result.metrics)              # mean_reward, mean_episode_return, surrogate_loss, value_loss
+```
+
+`train()` writes a checkpoint under `output_dir/checkpoints/last/`:
+
+- `policy.pt` - the actor-critic + observation-normalizer state (the loadable
+  artifact returned by `result.exported_model`).
+- `policy_meta.json` - deployable-policy metadata: `num_actions`,
+  `actor_obs_keys`, `joint_names`, `hidden_dims`.
+
+`PpoTrainer` trains fine on CPU (its `hardware_floor` declares no GPU
+requirement); MuJoCo stepping dominates, not the network.
+
+## BaseRLAlgo
+
+`BaseRLAlgo` is the abstract RL trainer - a `Trainer` subclass, so RL flows
+through the same `create_trainer` / `validate` / `export` contract while adding
+the RL lifecycle hooks `setup`, `collect_rollout`, `update`, and
+`save_checkpoint`. The default `train()` runs the standard on-policy loop over
+those hooks; an off-policy algorithm overrides `train()` with a replay-buffer
+loop while keeping the same hooks and checkpoint format.
+
+## RLTrainSpec
+
+`RLTrainSpec` extends `TrainSpec`. RL ignores the dataset fields
+(`dataset_root` etc.) and reads `env_factory`, `total_timesteps`,
+`rollout_steps`, `num_envs`, the PPO hyperparameters (`gamma`, `lam`,
+`clip_param`, `num_learning_epochs`, `num_mini_batches`, `entropy_coef`,
+`value_loss_coef`, `max_grad_norm`, `hidden_dims`, `init_noise_std`), plus the
+universal `output_dir` / `learning_rate` / `seed`.
+
+## Worked example
+
+`examples/train_ppo_reach.py` trains the SO-100 `Elbow` joint to a target angle
+in MuJoCo from scratch and prints the resulting checkpoint path. The MuJoCo
+backend is single-environment (`num_envs == 1`); vectorized backends for
+massively-parallel rollouts are tracked separately.
+
+
+## Result
+
+PPO trained from scratch on CPU (no dataset, reward only) closes the reach
+gap over 150 iterations and the deterministic policy drives the `Elbow` joint
+to the target:
+
+![PPO reach learning curve](../assets/ppo_reach_curve.png)
+
+![PPO reach rollout](../assets/ppo_reach_demo.gif)

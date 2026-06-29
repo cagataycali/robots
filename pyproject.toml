@@ -499,6 +499,14 @@ disallow_untyped_defs = false
 warn_return_any = false
 ignore_missing_imports = true
 
+# RL trainers (training.rl.*) build torch modules with dynamic tensor-dict
+# returns; torch's untyped surface makes warn_return_any noise here, same as the
+# policies posture. Public signatures are still annotated.
+[[tool.mypy.overrides]]
+module = ["strands_robots.training.rl.*"]
+warn_return_any = false
+disallow_untyped_defs = false
+
 # LeRobot local policy uses dynamic attr access via draccus PreTrainedConfig
 [[tool.mypy.overrides]]
 module = ["strands_robots.policies.*"]
