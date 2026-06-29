@@ -534,15 +534,10 @@ class SimEngine(ABC):
                         "content": [{"text": f"run_policy: n_steps must be > 0, got {n_steps}."}],
                     },
                 )
-            if control_frequency <= 0:
-                return (
-                    duration,
-                    n_steps,
-                    {
-                        "status": "error",
-                        "content": [{"text": "run_policy: control_frequency must be > 0 when n_steps is used."}],
-                    },
-                )
+            # control_frequency is validated as a positive number at the public
+            # entry points (run_policy / start_policy / eval_policy) via
+            # _validate_positive_frequency before this helper runs, so the
+            # division below is safe.
             duration = float(n_steps) / float(control_frequency)
         return duration, n_steps, None
 
@@ -602,17 +597,33 @@ class SimEngine(ABC):
         return None
 
     @staticmethod
-    def _validate_positive_frequency(control_frequency: float, method: str) -> dict[str, Any] | None:
-        """Reject a non-positive ``control_frequency`` at the public API.
+    def _validate_positive_frequency(control_frequency: Any, method: str) -> dict[str, Any] | None:
+        """Reject a non-positive or non-numeric ``control_frequency`` at the public API.
 
-        ``control_frequency`` sets the control-loop rate the rollout steps
-        physics at; a value ``<= 0`` is meaningless and otherwise reaches the
-        per-period substep computation (``round(1 / control_frequency / ...)``)
-        deep inside :class:`PolicyRunner`, where it raises a bare ``ValueError``
-        rather than the structured tool-error dict the public API contracts.
-        Returns a structured error dict to surface, or ``None`` when valid.
+        ``control_frequency`` (Hz) sets the control-loop rate the rollout steps
+        physics at. It is used as a divisor (the per-action period is
+        ``1 / control_frequency`` and ``duration = n_steps / control_frequency``)
+        and is handed to :meth:`PolicyRunner`'s per-period substep computation
+        (``round(1 / control_frequency / ...)``); a value ``<= 0`` or a
+        non-number otherwise reaches that arithmetic deep inside the runner and
+        raises a bare ``ValueError``/``TypeError``/``ZeroDivisionError`` rather
+        than the structured tool-error dict the public API contracts. ``bool`` is
+        rejected explicitly: it is an ``int`` subclass, so ``True`` would slip
+        through the numeric check and act as a silent 1 Hz. Returns a structured
+        error dict to surface, or ``None`` when valid.
+
+        Args:
+            control_frequency: The caller-supplied value to validate.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None``.
         """
-        if not isinstance(control_frequency, (int, float)) or control_frequency <= 0:
+        if (
+            isinstance(control_frequency, bool)
+            or not isinstance(control_frequency, (int, float))
+            or control_frequency <= 0
+        ):
             return {
                 "status": "error",
                 "content": [{"text": f"{method}: control_frequency must be > 0, got {control_frequency!r}."}],
@@ -661,7 +672,9 @@ class SimEngine(ABC):
                 ...). Forwarded verbatim to ``create_policy``.
             instruction: Natural-language instruction for the policy.
             duration: Wall-clock seconds to run.
-            control_frequency: Target Hz for policy queries.
+            control_frequency: Target Hz for policy queries. Must be a
+                positive number; a non-positive, non-numeric, or bool value
+                is reported as a structured caller error.
             action_horizon: Max actions consumed from each policy chunk
                 before re-querying. Must be a positive integer (>= 1); a
                 non-positive or non-int value is reported as a caller error.
@@ -746,6 +759,9 @@ class SimEngine(ABC):
         from strands_robots.policies import create_policy
 
         robot_name = self._resolve_single_robot(robot_name)
+
+        if err := self._validate_positive_frequency(control_frequency, "run_policy"):
+            return err
 
         # accept n_steps (or legacy max_steps) as an alternate horizon
         # specification. duration = n_steps / control_frequency. If both

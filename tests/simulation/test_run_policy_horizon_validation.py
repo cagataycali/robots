@@ -54,9 +54,10 @@ class TestRunPolicyHorizonGuards:
 
     @pytest.mark.parametrize("bad_freq", [0, -10.0])
     def test_non_positive_control_frequency_errors(self, sim, bad_freq):
-        # control_frequency is only validated on the n_steps path (it divides
-        # n_steps to produce a duration); a bad frequency there would otherwise
-        # raise ZeroDivisionError or yield a negative duration.
+        # control_frequency is validated at the run_policy entry point (it is a
+        # divisor: 1 / control_frequency action period and n_steps /
+        # control_frequency duration); a bad frequency would otherwise raise
+        # ZeroDivisionError or yield a negative duration deep in the runner.
         text = _err_text(sim.run_policy("arm1", n_steps=5, control_frequency=bad_freq))
         assert "control_frequency must be > 0" in text
 
@@ -170,6 +171,71 @@ class TestActionHorizonGuards:
 
     def test_action_horizon_error_is_ascii(self, sim):
         text = _err_text(sim.run_policy("arm1", n_steps=4, action_horizon=0))
+        text.encode("ascii")  # raises UnicodeEncodeError if any non-ASCII leaks
+
+
+class TestControlFrequencyGuards:
+    """control_frequency is validated at EVERY public entry point, on every path.
+
+    ``control_frequency`` (Hz) is a divisor (``1 / control_frequency`` action
+    period, ``n_steps / control_frequency`` duration) and is handed to the
+    runner's per-period substep arithmetic, which raises a bare
+    ``ValueError``/``TypeError``/``ZeroDivisionError`` on a bad value. The
+    n_steps path and ``eval_policy`` were already guarded, but three paths still
+    leaked a raw traceback instead of the structured tool-error dict:
+
+    - ``run_policy`` duration path (``n_steps`` omitted): never validated.
+    - ``start_policy`` duration path: the synchronous guard only covered the
+      n_steps path, so a bad rate passed, raised inside the background future,
+      and left the robot falsely marked running.
+    - a ``bool`` (``True``): an ``int`` subclass, it slipped through the numeric
+      check on every path and silently acted as a 1 Hz rate.
+    """
+
+    @pytest.mark.parametrize("bad_freq", [0, 0.0, -10.0])
+    def test_run_policy_duration_path_rejects_non_positive(self, sim, bad_freq):
+        # n_steps omitted -> duration path; pre-fix this reached the runner and
+        # raised ValueError instead of returning a structured error.
+        text = _err_text(sim.run_policy("arm1", duration=1.0, control_frequency=bad_freq, fast_mode=True))
+        assert "control_frequency must be > 0" in text
+        assert str(bad_freq) in text
+
+    @pytest.mark.parametrize("bad_freq", ["fast", None])
+    def test_run_policy_rejects_non_numeric(self, sim, bad_freq):
+        # Pre-fix the n_steps inline check did `bad <= 0`, raising TypeError for
+        # a str/None rather than returning a structured error.
+        text = _err_text(sim.run_policy("arm1", n_steps=4, control_frequency=bad_freq))
+        assert "control_frequency must be > 0" in text
+
+    def test_run_policy_rejects_bool_control_frequency(self, sim):
+        # bool is an int subclass; True would sneak through an isinstance(int)
+        # check and act as a silent 1 Hz, so it is rejected explicitly.
+        text = _err_text(sim.run_policy("arm1", n_steps=4, control_frequency=True))
+        assert "control_frequency must be > 0" in text
+
+    def test_eval_policy_rejects_bool_control_frequency(self, sim):
+        text = _err_text(sim.eval_policy(robot_name="arm1", max_steps=4, control_frequency=True))
+        assert "control_frequency must be > 0" in text
+
+    def test_start_policy_duration_path_rejects_synchronously(self, sim):
+        # Duration path on the background-threaded start_policy: pre-fix the
+        # n_steps-only horizon guard let this through, it raised in the future,
+        # and the robot was left marked running.
+        result = sim.start_policy("arm1", duration=1.0, control_frequency=0)
+        assert result["status"] == "error"
+        assert "control_frequency must be > 0" in result["content"][0]["text"]
+        assert "arm1" not in sim._policy_threads
+        # A well-formed start on the same robot still succeeds afterwards.
+        ok = sim.start_policy("arm1", n_steps=2, control_frequency=50.0, fast_mode=True)
+        assert ok["status"] == "success", ok
+        sim.stop_policy("arm1")
+
+    def test_run_policy_accepts_positive_control_frequency(self, sim):
+        result = sim.run_policy("arm1", n_steps=2, control_frequency=30.0, fast_mode=True)
+        assert result["status"] == "success", result
+
+    def test_control_frequency_error_is_ascii(self, sim):
+        text = _err_text(sim.run_policy("arm1", duration=1.0, control_frequency=-1.0, fast_mode=True))
         text.encode("ascii")  # raises UnicodeEncodeError if any non-ASCII leaks
 
 

@@ -2267,7 +2267,11 @@ class MuJoCoSimEngine(
         # executor. run_policy runs on a background thread, so a malformed
         # horizon (n_steps <= 0, control_frequency <= 0) would otherwise be
         # reported only inside the future - the caller would receive a false
-        # "started" success and the robot would be left marked as running.
+        # "started" success and the robot would be left marked as running. The
+        # control_frequency guard covers the duration path too (n_steps omitted),
+        # which _resolve_horizon only checks when n_steps is given.
+        if err := self._validate_positive_frequency(control_frequency, "start_policy"):
+            return err
         _, _, horizon_error = self._resolve_horizon(n_steps, max_steps, control_frequency, duration)
         if horizon_error is not None:
             return horizon_error
