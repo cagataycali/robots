@@ -189,3 +189,38 @@ def test_ppo_smoke_train_produces_loadable_checkpoint(tmp_path) -> None:  # type
 
     # latest_checkpoint discovers the saved artifact.
     assert trainer.latest_checkpoint(str(tmp_path)) == result.checkpoint_dir
+
+
+def test_setup_reconciles_env_device_to_learner_device() -> None:
+    """Regression: the learner device is authoritative over the env device.
+
+    On a GPU host the learner (actor-critic, normalizers, rollout buffers)
+    resolves to ``cuda`` while ``SimEnv`` keeps its default ``cpu`` device, so
+    every forward pass over the env's observations raised "Expected all tensors
+    to be on the same device, but found at least two devices, cuda:0 and cpu".
+    ``setup`` must reconcile the env onto the learner device. The mismatch is
+    reproduced on CPU-only CI with the storage-free ``meta`` device, so this
+    guards the contract without requiring a GPU.
+    """
+    from strands_robots.training.rl import RLTrainSpec
+    from strands_robots.training.rl.ppo import PpoTrainer
+
+    def factory():  # type: ignore[no-untyped-def]
+        env = _make_reach_env()
+        # Mimic an env constructed on a different device than the learner.
+        env.device = torch.device("meta")
+        return env
+
+    trainer = PpoTrainer()
+    spec = RLTrainSpec(
+        env_factory=factory,
+        output_dir="/tmp/ppo_device_reconcile",
+        device="cpu",
+        rollout_steps=4,
+        num_mini_batches=2,
+    )
+    trainer.setup(spec)
+
+    assert trainer.env.device == trainer.device
+    assert trainer._obs["actor_obs"].device == trainer.device
+    assert trainer._obs["critic_obs"].device == trainer.device

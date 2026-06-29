@@ -174,6 +174,16 @@ class PpoTrainer(BaseRLAlgo):
         if spec.env_factory is None:  # pragma: no cover - guarded by validate()
             raise ValueError("env_factory is required")
         self.env: SimEnv = spec.env_factory()
+        # The learner (actor-critic, normalizers, rollout buffers) lives on
+        # self.device. The env emits observation / reward / done tensors on its
+        # own device, which defaults to CPU. On a GPU host the learner resolves
+        # to cuda while the env stays on CPU, so every actor/critic forward pass
+        # mixes cuda and cpu tensors and raises "Expected all tensors to be on
+        # the same device". The learner device is authoritative: reconcile the
+        # env onto it so observations are built on the right device at the
+        # source (no per-step host<->device copies).
+        if self.env.device != self.device:
+            self.env.device = self.device
         self.steps_per_iter = spec.rollout_steps * spec.num_envs
 
         self.actor_critic = _build_actor_critic(

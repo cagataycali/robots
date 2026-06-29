@@ -96,6 +96,16 @@ print(result.metrics)              # mean_reward, mean_episode_return, surrogate
 `PpoTrainer` trains fine on CPU (its `hardware_floor` declares no GPU
 requirement); MuJoCo stepping dominates, not the network.
 
+### Device selection
+
+The learner (actor-critic, normalizers, rollout buffers) is placed on
+`RLTrainSpec.device`, defaulting to `cuda` when available and `cpu` otherwise.
+The learner device is authoritative: on a GPU host `setup()` reconciles the
+`SimEnv` onto it so observations, rewards, and dones are built on the same
+device as the network (no cross-device tensor mismatch and no per-step
+host-to-device copies). Pass `device="cpu"` explicitly to keep everything on
+CPU even on a GPU machine.
+
 ## BaseRLAlgo
 
 `BaseRLAlgo` is the abstract RL trainer - a `Trainer` subclass, so RL flows
