@@ -267,6 +267,14 @@ python examples/wbc_g1_composite.py --checkpoint /path/to/grootwbc-g1 \
   (<a href="../../assets/wbc/g1_composite.mp4">MP4</a>).</figcaption>
 </figure>
 
+## Gait-clock variant
+
+NVIDIA's reference repo ships a second G1 controller - a single-policy
+**gait-clock** variant (95-dim observation, an 8-wide command with a
+`freq_cmd` step-frequency slot, and a 2-dim bipedal phase clock). It is
+implemented by `WBCGaitPolicy` (provider `wbc_gait`). See
+[WBC gait-clock variant](wbc_gait.md).
+
 ## See also
 
 - [Policy overview](overview.md)

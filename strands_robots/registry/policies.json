@@ -1,238 +1,256 @@
 {
-    "providers": {
-        "mock": {
-            "module": "strands_robots.policies.mock",
-            "class": "MockPolicy",
-            "description": "Sinusoidal test actions (no deps)",
-            "requires": [],
-            "config_keys": [],
-            "defaults": {},
-            "shorthands": [
-                "mock",
-                "random",
-                "test"
-            ],
-            "trainer": {
-                "module": "strands_robots.training.mock",
-                "class": "MockTrainer"
-            }
-        },
-        "groot": {
-            "module": "strands_robots.policies.groot",
-            "class": "Gr00tPolicy",
-            "description": "NVIDIA GR00T N1.5/N1.6 via ZMQ",
-            "requires": [
-                "port"
-            ],
-            "config_keys": [
-                "port",
-                "host",
-                "data_config",
-                "strict_keys"
-            ],
-            "defaults": {
-                "host": "localhost"
-            },
-            "shorthands": [
-                "groot"
-            ],
-            "url_patterns": [
-                "^zmq://"
-            ],
-            "hf_orgs": [
-                "nvidia"
-            ],
-            "model_id_overrides": [
-                "nvidia/gr00t",
-                "nvidia/groot"
-            ],
-            "trainer": {
-                "module": "strands_robots.training.groot",
-                "class": "Gr00tTrainer"
-            }
-        },
-        "lerobot_local": {
-            "module": "strands_robots.policies.lerobot_local",
-            "class": "LerobotLocalPolicy",
-            "description": "Direct HuggingFace inference (no server)",
-            "requires": [],
-            "config_keys": [
-                "pretrained_name_or_path",
-                "policy_type",
-                "device",
-                "actions_per_step",
-                "norm_tag",
-                "image_keys",
-                "inference_action_mode",
-                "embodiment",
-                "strict_keys"
-            ],
-            "defaults": {},
-            "aliases": [
-                "lerobot"
-            ],
-            "hf_orgs": [
-                "lerobot",
-                "allenai"
-            ],
-            "is_hf_default": true,
-            "trainer": {
-                "module": "strands_robots.training.lerobot",
-                "class": "LerobotTrainer"
-            }
-        },
-        "cosmos3": {
-            "module": "strands_robots.policies.cosmos3",
-            "class": "Cosmos3Policy",
-            "description": "NVIDIA Cosmos 3 omnimodal VLA policy (DROID/UMI/AV/bridge) via Cosmos Framework",
-            "requires": [],
-            "config_keys": [
-                "embodiment",
-                "host",
-                "port",
-                "action_space",
-                "observation_mapping",
-                "action_mapping",
-                "robot",
-                "prompt",
-                "api_key",
-                "backend",
-                "mode",
-                "model"
-            ],
-            "defaults": {
-                "host": "localhost",
-                "port": 8000,
-                "embodiment": "droid"
-            },
-            "shorthands": [
-                "cosmos3",
-                "c3"
-            ],
-            "url_patterns": [
-                "^cosmos3://"
-            ],
-            "hf_orgs": [],
-            "model_id_overrides": [
-                "nvidia/cosmos3",
-                "nvidia/cosmos3-nano-policy"
-            ],
-            "trainer": {
-                "module": "strands_robots.training.cosmos3",
-                "class": "Cosmos3Trainer"
-            }
-        },
-        "moveit2": {
-            "module": "strands_robots.policies.moveit2",
-            "class": "MoveIt2Policy",
-            "description": "MoveIt2 motion planning via ZMQ sidecar",
-            "requires": [
-                "port"
-            ],
-            "config_keys": [
-                "host",
-                "port",
-                "planning_group",
-                "timeout_ms",
-                "api_token"
-            ],
-            "defaults": {
-                "host": "127.0.0.1",
-                "port": 5556,
-                "planning_group": "arm"
-            },
-            "shorthands": [
-                "moveit2"
-            ],
-            "aliases": [
-                "moveit"
-            ]
-        },
-        "curobo": {
-            "module": "strands_robots.policies.curobo",
-            "class": "CuroboPolicy",
-            "description": "NVIDIA cuRobo collision-aware motion planning (in-process, CUDA)",
-            "requires": [],
-            "config_keys": [
-                "robot_config",
-                "world_config",
-                "action_horizon",
-                "tensor_args",
-                "motion_gen_kwargs"
-            ],
-            "defaults": {
-                "action_horizon": 16
-            },
-            "shorthands": [
-                "curobo"
-            ],
-            "aliases": [
-                "cumotion"
-            ]
-        },
-        "wbc": {
-            "module": "strands_robots.policies.wbc",
-            "class": "WBCPolicy",
-            "description": "NVIDIA GR00T Whole-Body-Control (SONIC) humanoid locomotion (in-process, ONNX)",
-            "requires": [],
-            "config_keys": [
-                "checkpoint",
-                "config",
-                "walk",
-                "target_velocity",
-                "allow_missing_models"
-            ],
-            "defaults": {
-                "walk": true
-            },
-            "shorthands": [
-                "wbc",
-                "sonic"
-            ]
-        },
-        "vera": {
-            "module": "strands_robots.policies.vera",
-            "class": "VeraPolicy",
-            "description": "MIT VERA video-to-action (two-stage planner + Jacobian IDM) via vera.server websocket",
-            "requires": [],
-            "config_keys": [
-                "embodiment",
-                "host",
-                "server_port",
-                "vis_port",
-                "algo_config",
-                "text_prompt",
-                "ckpt_root",
-                "auto_launch_server",
-                "n_action_steps",
-                "dynamics_run_id",
-                "tracker_backend",
-                "motion_plan_scale",
-                "image_keys",
-                "action_mapping",
-                "prompt",
-                "server_mode",
-                "docker_image",
-                "docker_gpus",
-                "ik_smoothing"
-            ],
-            "defaults": {
-                "embodiment": "pusht",
-                "host": "127.0.0.1"
-            },
-            "shorthands": [
-                "vera"
-            ],
-            "url_patterns": [
-                "^vera://"
-            ],
-            "hf_orgs": [
-                "sizhe-lester-li"
-            ],
-            "model_id_overrides": [
-                "sizhe-lester-li/VERA",
-                "sizhe-lester-li/vera"
-            ]
-        }
+  "providers": {
+    "mock": {
+      "module": "strands_robots.policies.mock",
+      "class": "MockPolicy",
+      "description": "Sinusoidal test actions (no deps)",
+      "requires": [],
+      "config_keys": [],
+      "defaults": {},
+      "shorthands": [
+        "mock",
+        "random",
+        "test"
+      ],
+      "trainer": {
+        "module": "strands_robots.training.mock",
+        "class": "MockTrainer"
+      }
+    },
+    "groot": {
+      "module": "strands_robots.policies.groot",
+      "class": "Gr00tPolicy",
+      "description": "NVIDIA GR00T N1.5/N1.6 via ZMQ",
+      "requires": [
+        "port"
+      ],
+      "config_keys": [
+        "port",
+        "host",
+        "data_config",
+        "strict_keys"
+      ],
+      "defaults": {
+        "host": "localhost"
+      },
+      "shorthands": [
+        "groot"
+      ],
+      "url_patterns": [
+        "^zmq://"
+      ],
+      "hf_orgs": [
+        "nvidia"
+      ],
+      "model_id_overrides": [
+        "nvidia/gr00t",
+        "nvidia/groot"
+      ],
+      "trainer": {
+        "module": "strands_robots.training.groot",
+        "class": "Gr00tTrainer"
+      }
+    },
+    "lerobot_local": {
+      "module": "strands_robots.policies.lerobot_local",
+      "class": "LerobotLocalPolicy",
+      "description": "Direct HuggingFace inference (no server)",
+      "requires": [],
+      "config_keys": [
+        "pretrained_name_or_path",
+        "policy_type",
+        "device",
+        "actions_per_step",
+        "norm_tag",
+        "image_keys",
+        "inference_action_mode",
+        "embodiment",
+        "strict_keys"
+      ],
+      "defaults": {},
+      "aliases": [
+        "lerobot"
+      ],
+      "hf_orgs": [
+        "lerobot",
+        "allenai"
+      ],
+      "is_hf_default": true,
+      "trainer": {
+        "module": "strands_robots.training.lerobot",
+        "class": "LerobotTrainer"
+      }
+    },
+    "cosmos3": {
+      "module": "strands_robots.policies.cosmos3",
+      "class": "Cosmos3Policy",
+      "description": "NVIDIA Cosmos 3 omnimodal VLA policy (DROID/UMI/AV/bridge) via Cosmos Framework",
+      "requires": [],
+      "config_keys": [
+        "embodiment",
+        "host",
+        "port",
+        "action_space",
+        "observation_mapping",
+        "action_mapping",
+        "robot",
+        "prompt",
+        "api_key",
+        "backend",
+        "mode",
+        "model"
+      ],
+      "defaults": {
+        "host": "localhost",
+        "port": 8000,
+        "embodiment": "droid"
+      },
+      "shorthands": [
+        "cosmos3",
+        "c3"
+      ],
+      "url_patterns": [
+        "^cosmos3://"
+      ],
+      "hf_orgs": [],
+      "model_id_overrides": [
+        "nvidia/cosmos3",
+        "nvidia/cosmos3-nano-policy"
+      ],
+      "trainer": {
+        "module": "strands_robots.training.cosmos3",
+        "class": "Cosmos3Trainer"
+      }
+    },
+    "moveit2": {
+      "module": "strands_robots.policies.moveit2",
+      "class": "MoveIt2Policy",
+      "description": "MoveIt2 motion planning via ZMQ sidecar",
+      "requires": [
+        "port"
+      ],
+      "config_keys": [
+        "host",
+        "port",
+        "planning_group",
+        "timeout_ms",
+        "api_token"
+      ],
+      "defaults": {
+        "host": "127.0.0.1",
+        "port": 5556,
+        "planning_group": "arm"
+      },
+      "shorthands": [
+        "moveit2"
+      ],
+      "aliases": [
+        "moveit"
+      ]
+    },
+    "curobo": {
+      "module": "strands_robots.policies.curobo",
+      "class": "CuroboPolicy",
+      "description": "NVIDIA cuRobo collision-aware motion planning (in-process, CUDA)",
+      "requires": [],
+      "config_keys": [
+        "robot_config",
+        "world_config",
+        "action_horizon",
+        "tensor_args",
+        "motion_gen_kwargs"
+      ],
+      "defaults": {
+        "action_horizon": 16
+      },
+      "shorthands": [
+        "curobo"
+      ],
+      "aliases": [
+        "cumotion"
+      ]
+    },
+    "wbc": {
+      "module": "strands_robots.policies.wbc",
+      "class": "WBCPolicy",
+      "description": "NVIDIA GR00T Whole-Body-Control (SONIC) humanoid locomotion (in-process, ONNX)",
+      "requires": [],
+      "config_keys": [
+        "checkpoint",
+        "config",
+        "walk",
+        "target_velocity",
+        "allow_missing_models"
+      ],
+      "defaults": {
+        "walk": true
+      },
+      "shorthands": [
+        "wbc",
+        "sonic"
+      ]
+    },
+    "vera": {
+      "module": "strands_robots.policies.vera",
+      "class": "VeraPolicy",
+      "description": "MIT VERA video-to-action (two-stage planner + Jacobian IDM) via vera.server websocket",
+      "requires": [],
+      "config_keys": [
+        "embodiment",
+        "host",
+        "server_port",
+        "vis_port",
+        "algo_config",
+        "text_prompt",
+        "ckpt_root",
+        "auto_launch_server",
+        "n_action_steps",
+        "dynamics_run_id",
+        "tracker_backend",
+        "motion_plan_scale",
+        "image_keys",
+        "action_mapping",
+        "prompt",
+        "server_mode",
+        "docker_image",
+        "docker_gpus",
+        "ik_smoothing"
+      ],
+      "defaults": {
+        "embodiment": "pusht",
+        "host": "127.0.0.1"
+      },
+      "shorthands": [
+        "vera"
+      ],
+      "url_patterns": [
+        "^vera://"
+      ],
+      "hf_orgs": [
+        "sizhe-lester-li"
+      ],
+      "model_id_overrides": [
+        "sizhe-lester-li/VERA",
+        "sizhe-lester-li/vera"
+      ]
+    },
+    "wbc_gait": {
+      "module": "strands_robots.policies.wbc",
+      "class": "WBCGaitPolicy",
+      "description": "NVIDIA GR00T Whole-Body-Control gait-clock variant (single ONNX policy, 95-dim obs + phase clock)",
+      "requires": [],
+      "config_keys": [
+        "checkpoint",
+        "config",
+        "target_velocity",
+        "gait_frequency",
+        "allow_missing_models"
+      ],
+      "defaults": {},
+      "shorthands": [
+        "wbc_gait",
+        "sonic_gait"
+      ]
     }
+  }
 }

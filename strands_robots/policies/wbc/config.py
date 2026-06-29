@@ -49,6 +49,10 @@ _DEFAULT_COMMAND_DIM = 7
 # command, from g1_gear_wbc.yaml.
 _DEFAULT_CMD_SCALE = (2.0, 2.0, 0.5)
 _DEFAULT_HEIGHT_CMD = 0.74
+# Upstream gait-variant step-frequency command (freq_cmd) from g1_gear_wbc.yaml.
+# Only consumed by the gait-clock variant (WBCGaitPolicy), which carries an
+# 8-wide command block with freq_cmd at slot [4]; the non-gait policy ignores it.
+_DEFAULT_FREQ_CMD = 0.75
 
 
 @dataclass(frozen=True)
@@ -83,6 +87,11 @@ class WBCConfig:
         height_cmd: Default target base height written to command slot [3]
             (upstream ``height_cmd = 0.74``). Overridable per call via the
             ``height`` kwarg.
+        freq_cmd: Default step-frequency command for the gait-clock variant
+            (upstream ``freq_cmd = 0.75``, written to the 8-wide command slot
+            [4]). Only the gait variant
+            (:class:`~strands_robots.policies.wbc.gait.WBCGaitPolicy`) reads it;
+            the non-gait policy's 7-wide command has no frequency slot.
         rpy_cmd: Default target roll/pitch/yaw written to command slots [4:7]
             (upstream ``rpy_cmd = [0, 0, 0]``). Overridable per call via the
             ``target_orientation`` kwarg.
@@ -110,6 +119,7 @@ class WBCConfig:
     obs_scales: dict[str, float] = field(default_factory=lambda: {"ang_vel": 0.5, "dof_pos": 1.0, "dof_vel": 0.05})
     cmd_scale: list[float] = field(default_factory=lambda: list(_DEFAULT_CMD_SCALE))
     height_cmd: float = _DEFAULT_HEIGHT_CMD
+    freq_cmd: float = _DEFAULT_FREQ_CMD
     rpy_cmd: list[float] = field(default_factory=lambda: [0.0, 0.0, 0.0])
     single_obs_dim: int = _DEFAULT_SINGLE_OBS_DIM
     obs_history_len: int = _DEFAULT_OBS_HISTORY_LEN
