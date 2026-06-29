@@ -284,6 +284,24 @@ action_unnorm = (clip(action, -1, 1) + 1) * (q99 - q01) / 2 + q01
 When a stats file declares multiple embodiment tags, pass `norm_tag=` to select
 one; a single-tag file is auto-detected.
 
+### Device-pinned checkpoints
+
+A checkpoint trained on GPU bakes `device_processor.device = "cuda"` into its
+`policy_preprocessor.json` / `policy_postprocessor.json`. Loaded on a host
+without that device (CPU-only edge box, or a CUDA build on a machine whose
+driver predates the wheel's CUDA version), LeRobot asserts the device is
+available and the `device_processor` step fails to instantiate -- which surfaces
+as an error indistinguishable from "no pipeline config present".
+
+The bridge already moves every tensor onto the `device` you pass to
+`create_policy` (auto-detected when `None`), so it reconciles the pinned step
+onto that resolved device and retries the load once, rather than dropping the
+pipeline. Without this, normalization would be silently disabled: state reaches
+the policy in raw units and actions reach the motors in normalized space,
+producing off-policy / micro-motion trajectories. An explicit
+`processor_overrides={"device_processor": {"device": ...}}` is still honored
+as-is and takes precedence over the automatic reconciliation.
+
 ## Camera routing
 
 Robot/sim observations use bare camera names (`top`, `wrist`, `side`); the policy
