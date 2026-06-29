@@ -209,7 +209,7 @@ def _ensure_policy_configs_registered() -> None:
                 continue
 
 
-def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> tuple[type[Any], str]:
+def resolve_policy_class_from_hub(pretrained_name_or_path: str, revision: str | None = None) -> tuple[type[Any], str]:
     """Resolve the LeRobot policy class from a pretrained path or HF repo.
 
     Uses PreTrainedConfig.from_pretrained() which handles config resolution,
@@ -220,6 +220,8 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> tuple[type[An
 
     Args:
         pretrained_name_or_path: HF model ID or local directory path.
+        revision: Optional Hub revision (branch, tag, or commit SHA) to pin the
+            resolved config to. ``None`` resolves the default branch.
 
     Returns:
         Tuple of (PolicyClass, policy_type_string).
@@ -238,7 +240,7 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> tuple[type[An
         # ALL policies via their module-level @ChoiceRegistry decorators.
         _ensure_policy_configs_registered()
 
-        config = PreTrainedConfig.from_pretrained(pretrained_name_or_path)
+        config = PreTrainedConfig.from_pretrained(pretrained_name_or_path, revision=revision)
         policy_type = getattr(config, "type", type(config).__name__.replace("Config", "").lower())
         logger.info("Auto-resolved via PreTrainedConfig: '%s' -> type='%s'", pretrained_name_or_path, policy_type)
 
@@ -258,7 +260,7 @@ def resolve_policy_class_from_hub(pretrained_name_or_path: str) -> tuple[type[An
             raise
 
     # Strategy 2: Manual config.json reading (fallback for custom/third-party)
-    policy_type = _read_policy_type_from_config(pretrained_name_or_path)
+    policy_type = _read_policy_type_from_config(pretrained_name_or_path, revision=revision)
 
     if not policy_type:
         raise ValueError(
@@ -546,7 +548,7 @@ def _policy_type_from_config(config: dict[str, Any]) -> str | None:
     return None
 
 
-def _read_policy_type_from_config(pretrained_name_or_path: str) -> str | None:
+def _read_policy_type_from_config(pretrained_name_or_path: str, revision: str | None = None) -> str | None:
     """Read policy type from config.json (local or HF Hub).
 
     Tries the lerobot-native ``type`` field first, then falls back to the
@@ -557,6 +559,8 @@ def _read_policy_type_from_config(pretrained_name_or_path: str) -> str | None:
 
     Args:
         pretrained_name_or_path: Local path or HF model ID.
+        revision: Optional Hub revision (branch, tag, or commit SHA) to pin the
+            downloaded config.json to. ``None`` uses the default branch.
 
     Returns:
         Policy type string or None if not found.
@@ -572,7 +576,7 @@ def _read_policy_type_from_config(pretrained_name_or_path: str) -> str | None:
     try:
         from huggingface_hub import hf_hub_download
 
-        config_path = hf_hub_download(pretrained_name_or_path, "config.json")
+        config_path = hf_hub_download(pretrained_name_or_path, "config.json", revision=revision)
         with open(config_path) as config_file:
             config = json.load(config_file)
         return _policy_type_from_config(config)

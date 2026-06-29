@@ -713,7 +713,7 @@ class TestResolvePolicyClassFromHub:
         class _FakeACTPolicy:
             pass
 
-        def _from_pretrained(_path):
+        def _from_pretrained(_path, revision=None):
             return _FakeConfig()
 
         monkeypatch.setattr(
@@ -740,7 +740,7 @@ class TestResolvePolicyClassFromHub:
         class _FakeCustomPolicy:
             pass
 
-        def _boom(_path):
+        def _boom(_path, revision=None):
             raise ValueError("draccus cannot decode this third-party config")
 
         monkeypatch.setattr(
@@ -748,7 +748,7 @@ class TestResolvePolicyClassFromHub:
             staticmethod(_boom),
         )
         monkeypatch.setattr(resolution, "_ensure_policy_configs_registered", lambda: None)
-        monkeypatch.setattr(resolution, "_read_policy_type_from_config", lambda _p: "custom_type")
+        monkeypatch.setattr(resolution, "_read_policy_type_from_config", lambda _p, revision=None: "custom_type")
         monkeypatch.setattr(
             resolution,
             "resolve_policy_class_by_name",
@@ -765,7 +765,7 @@ class TestResolvePolicyClassFromHub:
         function raises ``ValueError`` telling the caller to pass it explicitly."""
         from strands_robots.policies.lerobot_local import resolution
 
-        def _boom(_path):
+        def _boom(_path, revision=None):
             raise ValueError("undecodable")
 
         monkeypatch.setattr(
@@ -773,7 +773,7 @@ class TestResolvePolicyClassFromHub:
             staticmethod(_boom),
         )
         monkeypatch.setattr(resolution, "_ensure_policy_configs_registered", lambda: None)
-        monkeypatch.setattr(resolution, "_read_policy_type_from_config", lambda _p: None)
+        monkeypatch.setattr(resolution, "_read_policy_type_from_config", lambda _p, revision=None: None)
 
         with pytest.raises(ValueError, match="Could not determine policy type"):
             resolution.resolve_policy_class_from_hub("mystery/repo")
@@ -805,7 +805,7 @@ class TestResolvePolicyClassFromHub:
         class _WeirdError(Exception):
             pass
 
-        def _boom(_path):
+        def _boom(_path, revision=None):
             raise _WeirdError("not a draccus error and not in the handled tuple")
 
         monkeypatch.setattr(

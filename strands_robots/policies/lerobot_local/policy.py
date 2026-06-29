@@ -222,9 +222,13 @@ class LerobotLocalPolicy(Policy):
         obs_rename_override: dict[str, str] | None = None,
         strict_keys: bool = False,
         cache_model: bool = True,
+        revision: str | None = None,
         **kwargs,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
+        # Optional Hub revision (branch, tag, or commit SHA) to pin the
+        # checkpoint to a reproducible version. None loads the default branch.
+        self.revision = revision
         self.policy_type = policy_type
         self.requested_device = device
         self.actions_per_step = actions_per_step
@@ -629,6 +633,14 @@ class LerobotLocalPolicy(Policy):
         from . import molmoact2 as _molmoact2
 
         if _molmoact2.is_molmoact2(self.pretrained_name_or_path, self.policy_type):
+            if self.revision:
+                raise ValueError(
+                    "revision pinning is not supported for transformers-native "
+                    "MolmoAct2 checkpoints (loaded via checkpoint_path, not "
+                    "PreTrainedPolicy.from_pretrained). Pin the version by passing "
+                    "a commit-SHA-qualified pretrained_name_or_path, or download the "
+                    "revision locally and point at the directory."
+                )
             self._load_molmoact2_model()
             return
 
@@ -654,7 +666,7 @@ class LerobotLocalPolicy(Policy):
         # (path, policy_type, device) - skips the expensive from_pretrained
         # weight read + GPU upload on repeat instantiation. The resolved
         # policy_type is cached alongside the module so a hit needs no hub call.
-        cache_key = self._model_cache_key("generic", self.policy_type)
+        cache_key = self._model_cache_key("generic", self.policy_type, self.revision)
         cached = self._cache_get(cache_key)
         self.load_cache_hit = cached is not None
         if cached is not None:
@@ -669,9 +681,15 @@ class LerobotLocalPolicy(Policy):
             if self.policy_type:
                 PolicyClass = resolve_policy_class_by_name(self.policy_type)
             else:
-                PolicyClass, self.policy_type = resolve_policy_class_from_hub(self.pretrained_name_or_path)
+                PolicyClass, self.policy_type = resolve_policy_class_from_hub(
+                    self.pretrained_name_or_path, revision=self.revision
+                )
 
-            self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path)
+            # Pass revision only when set so the call matches lerobot's
+            # default (revision=None) and stays compatible with policy
+            # classes whose from_pretrained does not accept the kwarg.
+            from_pretrained_kwargs = {"revision": self.revision} if self.revision else {}
+            self._policy = PolicyClass.from_pretrained(self.pretrained_name_or_path, **from_pretrained_kwargs)
             assert self._policy is not None
 
             self._policy.eval()

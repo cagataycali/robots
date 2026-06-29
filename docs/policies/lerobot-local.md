@@ -43,8 +43,32 @@ LerobotLocalPolicy(
     obs_rename_override=None,            # {runtime_obs_key: "observation.images.*"} merged over embodiment.obs_rename
     strict_keys=False,                   # raise instead of positional camera fallback
     cache_model=True,                    # reuse a process-cached model across instances
+    revision=None,                       # pin a HF Hub revision (branch/tag/commit SHA)
 )
 ```
+
+### Pinning a Hub revision
+
+Pass `revision=` to pin a checkpoint to a reproducible Hub version - a
+branch name, tag, or commit SHA. It is threaded to lerobot's
+`PreTrainedPolicy.from_pretrained(..., revision=...)` (and to the config
+resolution that auto-detects `policy_type`), so the exact weights are
+loaded regardless of later pushes to the repo's default branch:
+
+```python
+policy = create_policy(
+    "lerobot_local",
+    pretrained_name_or_path="lerobot/smolvla_base",
+    revision="v1.0",   # or a 40-char commit SHA
+)
+```
+
+Two revisions of the same repo are cached independently (the revision is
+part of the model-cache key), so pinning never collides with an unpinned
+load. Revision pinning is not supported for transformers-native MolmoAct2
+checkpoints, which load weights via `checkpoint_path` rather than
+`from_pretrained`; passing `revision=` with one raises `ValueError`. Pin
+those by downloading the revision locally and pointing at the directory.
 
 ## Model caching
 
