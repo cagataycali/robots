@@ -620,8 +620,19 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     obs_out[cam_name] = img
         return obs_out
 
-    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
+    def send_action(
+        self,
+        action: dict[str, Any] | Sequence[float],
+        robot_name: str | None = None,
+        n_substeps: int = 1,
+    ) -> dict[str, Any]:
         """Apply position targets and advance physics by ``n_substeps``.
+
+        ``action`` may be a ``{joint name: target}`` mapping or an ordered
+        numeric vector (``list`` / ``tuple`` / 1-D ``numpy`` array) bound
+        positionally to ``robot_joint_names(robot_name)`` - the same positional
+        convention :meth:`replay_episode` uses. A vector whose length does not
+        match the robot's joint count is rejected with an actionable error.
 
         Args:
             action: Mapping of short joint name to target position (radians).
@@ -644,12 +655,17 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
+        action_map, coerce_error = self._coerce_action(action, robot_name)
+        if coerce_error is not None:
+            return coerce_error
+        assert action_map is not None  # narrow for mypy: no error implies a mapping
+
         valid = set(self._world.robots[robot_name].joint_names)
-        unresolved = [k for k in action if k not in valid]
-        applied = [k for k in action if k in valid]
+        unresolved = [k for k in action_map if k not in valid]
+        applied = [k for k in action_map if k in valid]
         with self._lock:
             for jname in applied:
-                self._targets[(robot_name, jname)] = float(action[jname])
+                self._targets[(robot_name, jname)] = float(action_map[jname])
             self._write_targets()
             self._advance(n_substeps)
 

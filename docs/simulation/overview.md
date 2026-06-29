@@ -98,6 +98,17 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 | `get_energy` | - |
 | `get_sensor_data` | `sensor_name` (optional) |
 
+## Actions
+
+`send_action(action, robot_name=None, n_substeps=1)` writes actuator/joint targets and advances physics. `action` accepts either form:
+
+| Form | Binding |
+|------|---------|
+| `{joint_or_actuator_name: value}` mapping | applied by name; unresolved keys are reported in an `unresolved_keys` JSON block so a caller can self-correct (no silent drop) |
+| ordered numeric vector (`list` / `tuple` / 1-D `numpy` array) | bound positionally to `robot_joint_names(robot_name)` in declaration order - the same convention `replay_episode` uses |
+
+A vector lets a policy's raw action chunk drive the arm directly without first zipping it into a dict. The vector length must match the robot's joint count exactly; a mismatch (or a non-numeric / scalar / string `action`) returns a structured `status="error"` dict naming the joint count and order, rather than crashing or silently truncating commands. Use a mapping to target a subset of joints.
+
 ## Policy
 
 | Action | Key params |

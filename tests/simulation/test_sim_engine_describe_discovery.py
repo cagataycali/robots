@@ -10,6 +10,7 @@ Also pins the no-alias rule: the registry must NOT export a duplicate
 it from the discovery surface rather than the API carrying a second name.
 """
 
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
@@ -90,7 +91,7 @@ def _make_minimal_engine():
 
         def send_action(
             self,
-            action: dict[str, Any],
+            action: dict[str, Any] | Sequence[float],
             robot_name: str | None = None,
             n_substeps: int = 1,
         ) -> dict[str, Any]:

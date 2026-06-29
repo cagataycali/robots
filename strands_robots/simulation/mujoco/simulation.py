@@ -49,7 +49,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -298,8 +298,21 @@ class MuJoCoSimEngine(
         with self._lock:
             return self._get_sim_observation(robot_name, skip_images=skip_images)
 
-    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
+    def send_action(
+        self,
+        action: dict[str, Any] | Sequence[float],
+        robot_name: str | None = None,
+        n_substeps: int = 1,
+    ) -> dict[str, Any]:
         """Apply action to simulation (Robot ABC compatible).
+
+        ``action`` is normally a ``{joint/actuator name: value}`` mapping, but an
+        ordered numeric vector (``list`` / ``tuple`` / 1-D ``numpy`` array) is
+        also accepted and bound positionally to ``robot_joint_names(robot_name)``
+        - the same positional convention :meth:`replay_episode` uses - so a
+        policy's raw action vector can be applied directly. A vector whose length
+        does not match the robot's joint count is rejected with an actionable
+        error rather than silently truncated.
 
         Thread-safety: acquires self._lock around ctrl writes + mj_step,
         as documented in base.py's SimEngine contract. Concurrent calls
@@ -321,11 +334,15 @@ class MuJoCoSimEngine(
             robot_name = next(iter(self._world.robots))
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+        action_map, coerce_error = self._coerce_action(action, robot_name)
+        if coerce_error is not None:
+            return coerce_error
+        assert action_map is not None  # narrow for mypy: no error implies a mapping
         with self._lock:
             self._unresolved_action_keys: list[str] = []
-            self._apply_sim_action(robot_name, action, n_substeps=n_substeps)
+            self._apply_sim_action(robot_name, action_map, n_substeps=n_substeps)
             unresolved = self._unresolved_action_keys
-        applied = [k for k in action if k not in unresolved]
+        applied = [k for k in action_map if k not in unresolved]
         if unresolved:
             # Surface the actual valid actuator names so the user can
             # self-correct without inspecting the MJCF by hand.

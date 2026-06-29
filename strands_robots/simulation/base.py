@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -326,8 +326,83 @@ class SimEngine(ABC):
         """
         ...
 
+    def _coerce_action(
+        self, action: dict[str, Any] | Sequence[float], robot_name: str
+    ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
+        """Normalize an action into a ``{joint/actuator name: value}`` mapping.
+
+        Policies and the ``Robot`` ABC commonly emit an ordered action *vector*
+        (a ``list`` / ``tuple`` / 1-D ``numpy`` array) rather than a name->value
+        mapping. To keep :meth:`send_action` usable directly with such a vector -
+        and consistent with :meth:`replay_episode`, which already binds a recorded
+        action vector positionally to ``robot_joint_names`` - a sequence is zipped
+        against ``robot_joint_names(robot_name)`` in declaration order. A mapping
+        is returned unchanged. The vector length must match the robot's joint
+        count exactly; a mismatch is reported as a caller error rather than
+        silently truncated (which would drop commands - e.g. a gripper axis).
+
+        Args:
+            action: A ``{name: value}`` mapping, or an ordered numeric vector
+                whose entries correspond to ``robot_joint_names(robot_name)``.
+            robot_name: Resolved robot whose joint order defines the binding.
+
+        Returns:
+            An ``(action_dict, error)`` tuple. When ``error`` is non-None it is a
+            structured ``{"status": "error", ...}`` dict and ``action_dict`` must
+            be ignored. Otherwise ``action_dict`` is the normalized mapping.
+        """
+        if isinstance(action, Mapping):
+            return dict(action), None
+
+        # ``str``/``bytes`` are iterable but never a valid multi-joint action;
+        # a scalar has no length. Reject both with an actionable message instead
+        # of producing garbage character/positional keys downstream.
+        if isinstance(action, (str, bytes)) or not hasattr(action, "__len__"):
+            return None, {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "send_action: 'action' must be a mapping of "
+                            "{joint/actuator name: value} or an ordered numeric "
+                            f"vector, got {type(action).__name__}."
+                        )
+                    }
+                ],
+            }
+
+        try:
+            values = [float(v) for v in action]
+        except (TypeError, ValueError) as exc:
+            return None, {
+                "status": "error",
+                "content": [{"text": f"send_action: action vector has a non-numeric entry: {exc}."}],
+            }
+
+        joint_names = self.robot_joint_names(robot_name)
+        if len(values) != len(joint_names):
+            return None, {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"send_action: action vector length {len(values)} does not "
+                            f"match robot '{robot_name}' joint count {len(joint_names)}. "
+                            f"Joints (in order): {joint_names}. Pass a {{name: value}} "
+                            "mapping to target a subset of joints."
+                        )
+                    }
+                ],
+            }
+        return {name: value for name, value in zip(joint_names, values)}, None
+
     @abstractmethod
-    def send_action(self, action: dict[str, Any], robot_name: str | None = None, n_substeps: int = 1) -> dict[str, Any]:
+    def send_action(
+        self,
+        action: dict[str, Any] | Sequence[float],
+        robot_name: str | None = None,
+        n_substeps: int = 1,
+    ) -> dict[str, Any]:
         """Apply action and advance physics by n_substeps.
 
         Contract: each call writes actuator/ctrl values and then runs
