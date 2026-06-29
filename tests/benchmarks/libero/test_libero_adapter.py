@@ -372,6 +372,80 @@ class TestWalkPredicateTree:
         assert verdict is False
         assert "missing_body_1=NONE" in leaf_repr
 
+    def test_walk_predicate_tree_prefixes_combinator_branches(self):
+        """``And`` / ``Or`` / ``Not`` combinators are reported as nested
+        string prefixes (``AND/``, ``OR/``, ``NOT/``) with one entry per
+        leaf, in tree-traversal order. This is what lets a reviewer see
+        *which* branch of a compound goal disagreed, not just the
+        top-level verdict."""
+        from strands_robots.benchmarks.libero.adapter import _walk_predicate_tree
+        from strands_robots.benchmarks.libero.bddl_parser import And, Not, Or, Pred
+
+        sim = FakeSim(
+            bodies={
+                "cube_1": {"position": [0, 0, 0.25]},
+                "plate_1": {"position": [0, 0, 0.10]},
+            },
+            contacts=[{"geom1": "cube_1_g0", "geom2": "plate_1_g0"}],
+        )
+        on = Pred("on", ("cube_1", "plate_1"))
+        upright = Pred("upright", ("cube_1",))
+
+        # ``And`` visits every clause with an ``AND/`` prefix.
+        and_leaves = _walk_predicate_tree(And((on, upright)), sim)
+        assert [v for _, v in and_leaves] == [True, True]
+        assert all(repr_.startswith("AND/") for repr_, _ in and_leaves)
+
+        # ``Or`` uses an ``OR/`` prefix; both leaves are still reported
+        # (the walker is a diagnostic, so it does not short-circuit).
+        or_leaves = _walk_predicate_tree(Or((on, upright)), sim)
+        assert [repr_.split("/", 1)[0] for repr_, _ in or_leaves] == ["OR", "OR"]
+
+        # ``Not`` recurses into its single clause with a ``NOT/`` prefix
+        # and preserves the inner verdict (the walker reports the leaf
+        # verdict, not the negated combinator result).
+        not_leaves = _walk_predicate_tree(Not(on), sim)
+        assert len(not_leaves) == 1
+        not_repr, not_verdict = not_leaves[0]
+        assert not_repr.startswith("NOT/")
+        assert not_verdict is True
+
+        # Nested combinators accumulate prefixes in traversal order.
+        nested = And((Or((on,)), Not(Pred("grasped", ("cube_1",)))))
+        nested_leaves = _walk_predicate_tree(nested, sim)
+        nested_reprs = [repr_ for repr_, _ in nested_leaves]
+        assert any(r.startswith("AND/OR/(on ") for r in nested_reprs)
+        assert any(r.startswith("AND/NOT/(grasped ") for r in nested_reprs)
+
+    def test_walk_predicate_tree_reports_uncompilable_leaf_as_false(self):
+        """A leaf whose predicate cannot be compiled (unknown predicate
+        name) is reported as ``False`` with the raw ``(name args)`` repr
+        rather than aborting the whole walk - so one malformed clause
+        never hides the verdicts of its siblings."""
+        from strands_robots.benchmarks.libero.adapter import _walk_predicate_tree
+        from strands_robots.benchmarks.libero.bddl_parser import And, Pred
+
+        sim = FakeSim(
+            bodies={
+                "cube_1": {"position": [0, 0, 0.25]},
+                "plate_1": {"position": [0, 0, 0.10]},
+            },
+            contacts=[{"geom1": "cube_1_g0", "geom2": "plate_1_g0"}],
+        )
+        # ``telekinesis`` is not in the predicate vocabulary, so
+        # ``compile_goal`` raises - the walker must catch it.
+        bogus = Pred("telekinesis", ("cube_1",))
+        leaves = _walk_predicate_tree(bogus, sim)
+        assert leaves == [("(telekinesis cube_1)", False)]
+
+        # A bogus leaf alongside a valid one: the valid sibling's verdict
+        # still surfaces (no abort), and the bogus leaf uses the raw repr
+        # (no position diagnostic, since it never resolved).
+        mixed = And((Pred("on", ("cube_1", "plate_1")), bogus))
+        mixed_leaves = _walk_predicate_tree(mixed, sim)
+        assert ("AND/(telekinesis cube_1)", False) in mixed_leaves
+        assert any(r.startswith("AND/(on ") and v is True for r, v in mixed_leaves)
+
 
 class TestOnEpisodeStart:
     def test_loads_scene_before_compat_check(self, tmp_path):
