@@ -891,8 +891,12 @@ def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None
 
     Raises:
         ImportError: If lerobot is not installed.
-        ValueError: If the episode is out of range or has no frames.
+        ValueError: If the episode index is negative, out of range, or the
+            resolved episode has no frames.
     """
+    if episode < 0:
+        raise ValueError(f"Episode index must be non-negative, got {episode}")
+
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
     ds = LeRobotDataset(repo_id=repo_id, root=root)

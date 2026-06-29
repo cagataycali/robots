@@ -1262,3 +1262,19 @@ def test_has_lerobot_dataset_does_not_negatively_cache(monkeypatch):
     # Failure clears: the very next call must re-probe and resolve True.
     monkeypatch.setitem(sys.modules, "lerobot.datasets.lerobot_dataset", real_module)
     assert dr.has_lerobot_dataset() is True
+
+
+def test_load_lerobot_episode_rejects_negative_index():
+    """A negative episode index is a programming error, not episode N-1.
+
+    ``load_lerobot_episode`` previously only guarded the upper bound
+    (``episode >= num_episodes``); a negative index fell through to Python's
+    negative list indexing, silently resolving (and replaying) the LAST
+    episode while reporting the negative number. Reject it up front, before
+    any dataset construction, so the contract holds even without lerobot
+    installed and without a network round-trip.
+    """
+    from strands_robots.dataset_recorder import load_lerobot_episode
+
+    with pytest.raises(ValueError, match="non-negative"):
+        load_lerobot_episode("any/repo", episode=-1)

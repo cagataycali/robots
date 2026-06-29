@@ -57,6 +57,31 @@ def test_replay_no_robots_errors_cleanly():
     assert "No robots" in r["content"][0]["text"]
 
 
+def test_replay_unknown_robot_name_errors_before_loading(monkeypatch):
+    """An explicit ``robot_name`` that is not in the sim must fail fast.
+
+    Previously replay() used ``robot_name`` verbatim without checking
+    membership, so an unknown name silently "replayed" onto a phantom robot
+    (send_action no-ops) and reported success - unlike run_policy/eval_policy,
+    which reject unknown robots. The check must run BEFORE the dataset loader,
+    so a typo does not trigger a wasted dataset download; the loader is
+    monkeypatched to fail loudly if it is ever reached.
+    """
+    sim = _MinimalSim(robots=["r0"])
+
+    import strands_robots.dataset_recorder as dr
+
+    def _must_not_load(*args, **kwargs):
+        raise AssertionError("load_lerobot_episode reached despite unknown robot")
+
+    monkeypatch.setattr(dr, "load_lerobot_episode", _must_not_load, raising=False)
+
+    r = PolicyRunner(sim).replay(repo_id="some/dataset", robot_name="ghost")
+    assert r["status"] == "error"
+    assert "ghost" in r["content"][0]["text"]
+    assert "not found" in r["content"][0]["text"]
+
+
 def test_replay_dataset_loader_raises_is_handled(monkeypatch):
     sim = _MinimalSim(robots=["r0"])
 

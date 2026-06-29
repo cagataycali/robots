@@ -1145,8 +1145,11 @@ class PolicyRunner:
 
         Args:
             repo_id: HuggingFace dataset id (e.g. ``lerobot/pusht``).
-            robot_name: Target robot. Defaults to first robot in the sim.
-            episode: Episode index in the dataset.
+            robot_name: Target robot. Defaults to the first robot in the sim
+                when omitted; an explicit name not present in the sim is
+                rejected with a structured error (no silent replay onto a
+                non-existent robot).
+            episode: Episode index in the dataset (non-negative).
             root: Optional local dataset root override.
             speed: Playback speed multiplier (1.0 = real time).
             action_key_map: Optional list of joint names, one per action
@@ -1166,6 +1169,17 @@ class PolicyRunner:
             resolved_robot = robot_name or self._require_default_robot()
         except ValueError as e:
             return {"status": "error", "content": [{"text": f"{e}"}]}
+
+        # Validate the target robot is actually in the sim before applying any
+        # actions. Without this an explicit ``robot_name`` that does not exist
+        # silently "replays" onto a phantom robot (send_action no-ops), mirroring
+        # neither run_policy nor eval_policy, both of which reject unknown robots.
+        robots = self.sim.list_robots()
+        if resolved_robot not in robots:
+            return {
+                "status": "error",
+                "content": [{"text": f"Robot '{resolved_robot}' not found in sim. Available robots: {robots}"}],
+            }
 
         try:
             ds, episode_start, episode_length = load_lerobot_episode(repo_id, episode, root)
