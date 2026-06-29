@@ -165,16 +165,23 @@ static list (see [Discovering supported policy types](#discovering-supported-pol
 ### Discovering supported policy types
 
 Enumerate the resolvable `policy_type` strings programmatically instead of
-guessing:
+guessing. `list_policy_types` is the discovery peer of `list_providers` (the
+follow-up to "which provider?" is "which `policy_type` does it take?"), so it
+is re-exported at the package root and on `strands_robots.policies` alongside
+`list_providers` -- no reach into the `lerobot_local` submodule required:
 
 ```python
-from strands_robots.policies.lerobot_local import list_policy_types
+from strands_robots import list_policy_types  # or: from strands_robots.policies import list_policy_types
 
 list_policy_types()
 # ['act', 'diffusion', 'eo1', 'gaussian_actor', 'groot', 'molmoact2',
 #  'multi_task_dit', 'pi0', 'pi05', 'pi0_fast', 'smolvla', 'tdmpc',
 #  'vla_jepa', 'vqbet', 'wall_x', 'xvla']
 ```
+
+The submodule path `from strands_robots.policies.lerobot_local import
+list_policy_types` keeps working; the top-level re-export is lazy, so reaching
+it does not make a bare `import strands_robots` pull in torch.
 
 The list reflects the *installed* lerobot (sourced from its policy registry),
 so a newer lerobot reports more entries and a slimmer one fewer; it returns

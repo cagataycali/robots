@@ -5,9 +5,10 @@ description: The Policy ABC and the providers that ship - MockPolicy, Gr00tPolic
 # Policy providers
 
 ```python
-from strands_robots.policies import create_policy, list_providers
+from strands_robots.policies import create_policy, list_policy_types, list_providers
 
 print(list_providers())   # ['cosmos3', 'groot', 'lerobot_local', 'mock', 'vera', ...]
+print(list_policy_types())  # lerobot_local policy_type strings: ['act', 'diffusion', 'smolvla', ...]
 
 policy = create_policy("mock")                                                     # always works, no model
 policy = create_policy("groot", port=5555, data_config="so100_dualcam")

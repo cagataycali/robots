@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from strands_robots.hardware_ros_bridge import HardwareRosBridge
     from strands_robots.hardware_rtps_bridge import HardwareRtpsBridge
     from strands_robots.policies.groot import Gr00tPolicy
+    from strands_robots.policies.lerobot_local.resolution import list_policy_types
     from strands_robots.registry import (
         get_robot,
         is_discoverable,
@@ -101,6 +102,11 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "is_discoverable": ("strands_robots.registry", "is_discoverable"),
     # Policies
     "Gr00tPolicy": ("strands_robots.policies.groot", "Gr00tPolicy"),
+    # lerobot_local policy-type discovery surface. Lazy (unlike list_providers,
+    # whose factory is torch-free) because the lerobot_local package import
+    # chain pulls in torch; resolving on first access keeps "import
+    # strands_robots" torch-free while still exposing the discovery peer.
+    "list_policy_types": ("strands_robots.policies.lerobot_local.resolution", "list_policy_types"),
     # Simulation (MuJoCo)
     "Simulation": ("strands_robots.simulation", "Simulation"),
     "create_simulation": ("strands_robots.simulation.factory", "create_simulation"),
@@ -148,6 +154,7 @@ __all__ = [
     "HardwareRtpsBridge",
     "Teleoperator",
     "Gr00tPolicy",
+    "list_policy_types",
     "Simulation",
     "SimWorld",
     "SimRobot",
