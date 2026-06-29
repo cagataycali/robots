@@ -161,7 +161,7 @@ class KeyboardInput(InputSource):
 
                 termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._restore)
             except (ImportError, OSError):
-                pass
+                pass  # Best-effort terminal restore: termios may be unavailable (non-Unix) or the FD closed.
             self._restore = None
 
     def reset(self) -> None:
