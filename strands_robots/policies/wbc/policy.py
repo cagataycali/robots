@@ -10,9 +10,10 @@ This is the locomotion / lower-body member of the non-VLA policy family
 (alongside cuRobo and MoveIt2): ``requires_images = False`` and the goal arrives
 through the well-known ``**kwargs`` locomotion keys rather than a natural-
 language instruction. The controller drives the **15 leg+waist DOFs**; the arm
-joints (16..n) are held at their nominal defaults. Layering an upper-body
-manipulation policy on top is the job of a future ``CompositePolicy`` (#468),
-deliberately out of scope here.
+joints (16..n) are held at their nominal defaults. Layer an upper-body
+manipulation policy on top with
+:class:`strands_robots.policies.composite.CompositePolicy` (legs+waist from
+WBC, arms from the manipulation policy).
 
 Scope: this targets the **non-gait** reference (``run_mujoco_gear_wbc.py`` +
 ``g1_gear_wbc.yaml``): single_obs_dim 86, a 7-wide command block, two policies

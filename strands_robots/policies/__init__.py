@@ -39,6 +39,7 @@ from strands_robots.policies.base import ChunkedPolicy, Policy, resolve_chunk_le
 # Cosmos3Policy is import-safe: it depends only on numpy. The WebSocket
 # client uses a self-contained msgpack+websockets transport (no
 # ``openpi-client`` dependency).
+from strands_robots.policies.composite import CompositePolicy
 from strands_robots.policies.cosmos3 import Cosmos3Policy
 from strands_robots.policies.factory import (
     UntrustedRemoteCodeError,
@@ -61,6 +62,7 @@ __all__ = [
     "resolve_chunk_length",
     "MockPolicy",
     "Cosmos3Policy",
+    "CompositePolicy",
     "create_policy",
     "preflight_policy",
     "register_policy",

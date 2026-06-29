@@ -216,6 +216,57 @@ holding height); a standing command (`--vx 0`) holds balance in place.
   (<a href="../../assets/wbc/g1_walk.mp4">MP4</a>).</figcaption>
 </figure>
 
+## Composing an upper body (manipulation on top of WBC)
+
+`WBCPolicy` drives the 15 leg+waist DOFs and holds the arms at their defaults.
+To layer a manipulation policy on the arms while WBC keeps the robot balanced
+and walking, wrap both in
+[`CompositePolicy`](custom-policies.md): the lower policy owns the
+legs+waist joints, the upper policy owns the arms, and the composite queries
+both each tick and merges their action dicts by joint name.
+
+```python
+from strands_robots.policies import CompositePolicy, create_policy
+from strands_robots.policies.wbc import WBC_G1_ALL_JOINTS, WBC_G1_LEG_WAIST_JOINTS
+
+ARM_JOINTS = WBC_G1_ALL_JOINTS[len(WBC_G1_LEG_WAIST_JOINTS):]  # the 14 arm DOFs
+
+lower = create_policy("wbc", checkpoint="/path/to/grootwbc-g1")
+upper = create_policy("groot", port=5555)        # or pi0 / MolmoAct / any Policy
+policy = CompositePolicy(
+    lower=lower,
+    upper=upper,
+    lower_joints=WBC_G1_LEG_WAIST_JOINTS,   # legs + waist
+    upper_joints=ARM_JOINTS,                 # both arms
+)
+```
+
+Routing is explicit: with `lower_joints` / `upper_joints` set, each child
+contributes only its own joint group (foreign keys are dropped). Left default,
+the lower policy takes precedence on any name it emits and the upper policy
+fills the rest. A genuine ownership conflict (both children claim the same
+joint) is raised, never silently resolved. The merged chunk length is the
+shorter of the two, so a per-tick controller (WBC, `execution_horizon == 1`) is
+never starved by a slower chunk-emitting manipulation policy.
+
+[`examples/wbc_g1_composite.py`](https://github.com/strands-labs/robots/blob/main/examples/wbc_g1_composite.py)
+runs the composite in the torque-deploy loop with a zero-dependency scripted
+arm-wave as the upper body (swap in `--upper-port` for a real GR00T server):
+
+```bash
+python examples/wbc_g1_composite.py --checkpoint /path/to/grootwbc-g1 \
+    --duration 5 --vx 0.4 --mp4 /tmp/g1_composite.mp4
+```
+
+<figure markdown>
+  ![Unitree G1 walking under WBC while the composite upper body waves its arms](../assets/wbc/g1_composite.gif)
+  <figcaption>Unitree G1 under <code>CompositePolicy</code>: <code>WBCPolicy</code> (GR00T-WBC SONIC)
+  drives the legs+waist for a <code>vx = 0.4 m/s</code> walk while the upper-body policy drives the
+  arms - the base advances ~1.55 m over 5 s while the arms move, in MuJoCo (headless).
+  Produced by <code>examples/wbc_g1_composite.py --vx 0.4 --mp4</code>
+  (<a href="../../assets/wbc/g1_composite.mp4">MP4</a>).</figcaption>
+</figure>
+
 ## See also
 
 - [Policy overview](overview.md)

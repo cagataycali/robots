@@ -11,8 +11,9 @@ non-VLA family:
 * ``get_actions`` reads the goal from the well-known locomotion ``**kwargs``
   (``target_velocity = [vx, vy, omega]``, optional ``target_orientation``).
 * The controller drives the **15 leg+waist DOFs** of the Unitree G1; the arm
-  joints are held at their nominal defaults. Layering an upper-body policy on
-  top is the job of a future ``CompositePolicy`` (#468), out of scope here.
+  joints are held at their nominal defaults. Layer an upper-body manipulation
+  policy on top with :class:`strands_robots.policies.composite.CompositePolicy`
+  (legs+waist from WBC, arms from a manipulation policy).
 
 Requires the ``[wbc]`` extra (``onnxruntime``); no model weights are bundled
 (fetched at runtime under the NVIDIA Open Model License). See issue #466.
