@@ -1,10 +1,11 @@
 """Behavior tests for the ``use_rtps`` tool.
 
-``use_rtps`` is a pure-RTPS ROS 2 participant on cyclonedds. These tests run
-with NO cyclonedds and NO ROS 2 present: the backend's ``available`` probe and
-its writer/reader factories are monkeypatched, so every action-dispatch branch,
-the agent-input validation, the no-backend error path, and the structured
-error-return contract are exercised middleware-free.
+``use_rtps`` is a pure-RTPS ROS 2 participant on cyclonedds. These tests are
+hermetic: they neither require nor reject an installed cyclonedds / ROS 2 -- the
+backend's ``available`` probe and its writer/reader factories are monkeypatched,
+so every action-dispatch branch, the agent-input validation, the no-backend
+error path, and the structured error-return contract are exercised middleware-
+free on any machine.
 """
 
 from __future__ import annotations
@@ -296,12 +297,28 @@ def test_resolve_field_types_falls_back_when_hints_unresolvable(monkeypatch: pyt
     assert set(resolved) == {"x", "y", "z"}
 
 
-# Real backend availability probe (no monkeypatch on available) -------------
+# Backend availability probe (have_cyclonedds gated) ------------------------
 
 
-def test_backend_available_false_without_cyclonedds() -> None:
-    # cyclonedds is not installed in this environment; the real probe returns
-    # False rather than raising, so the tool degrades to a clear status message.
+def test_backend_available_true_when_cyclonedds_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    # available() delegates to strands_robots.rtps.idl.have_cyclonedds(). Drive
+    # the present-dependency branch deterministically rather than depending on
+    # whether cyclonedds happens to be installed in the test environment.
+    import strands_robots.rtps.idl as idl_mod
+
+    monkeypatch.setattr(idl_mod, "have_cyclonedds", lambda: True)
+    assert rtps_mod._RtpsBackend().available() is True
+
+
+def test_backend_available_false_without_cyclonedds(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Simulate cyclonedds being absent regardless of the test environment.
+    # available() imports have_cyclonedds() from strands_robots.rtps.idl on each
+    # call, so forcing that probe to report False exercises the documented
+    # dependency-absent fallback (the tool degrades to a clear status message)
+    # on a machine where cyclonedds IS installed too.
+    import strands_robots.rtps.idl as idl_mod
+
+    monkeypatch.setattr(idl_mod, "have_cyclonedds", lambda: False)
     assert rtps_mod._RtpsBackend().available() is False
 
 
@@ -324,7 +341,7 @@ def test_backend_available_import_error_returns_false(monkeypatch: pytest.Monkey
 # The action-dispatch tests above stub ``_backend.writer`` / ``_backend.reader``
 # so they never reach the real get-or-create factories. These tests drive the
 # real ``_RtpsBackend`` methods with fake ``cyclonedds`` submodules injected
-# into ``sys.modules`` (cyclonedds is not installed), exercising the documented
+# into ``sys.modules`` (overriding any real install), exercising the documented
 # contract: one shared DomainParticipant, and writers/readers cached per
 # (topic, type) so repeated calls reuse the same DDS entity.
 

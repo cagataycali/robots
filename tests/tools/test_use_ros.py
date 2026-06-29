@@ -388,7 +388,14 @@ def test_backend_available_true_when_rclpy_importable(monkeypatch: pytest.Monkey
 
 
 def test_backend_available_false_when_rclpy_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delitem(sys.modules, "rclpy", raising=False)
+    # Simulate rclpy being absent regardless of whether a ROS 2 distro is
+    # sourced in the test environment. Deleting the cached module is not enough
+    # -- `import rclpy` would just re-resolve an installed distribution, so the
+    # assertion only held on a ROS-free machine. Binding the name to None in
+    # sys.modules makes the import statement raise ImportError deterministically
+    # (CPython's documented "module set to None" contract), exercising the real
+    # dependency-absent fallback on every machine.
+    monkeypatch.setitem(sys.modules, "rclpy", None)
     backend = ros_mod._RosBackend()
     assert backend.available() is False
 
