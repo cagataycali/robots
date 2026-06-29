@@ -21,6 +21,7 @@ from typing import Any
 
 from strands_robots.policies.base import Policy
 from strands_robots.simulation.base import SimEngine
+from strands_robots.simulation.benchmark import BenchmarkProtocol
 from strands_robots.simulation.policy_runner import PolicyRunner
 
 
@@ -192,3 +193,169 @@ def test_run_policy_threads_policy_kwargs_through_base() -> None:
     assert result["status"] == "success"
     assert policy.kwargs_seen, "policy.get_actions was never called"
     assert all(seen == goal for seen in policy.kwargs_seen)
+
+
+# --- Eval-path forwarding ----------------------------------------------------
+#
+# ``run_policy`` forwarded ``policy_kwargs`` (tests above), but the evaluation
+# entry points historically did not: ``eval_policy`` / ``evaluate_benchmark``
+# had no ``policy_kwargs`` parameter and ``PolicyRunner.evaluate`` called
+# ``policy.get_actions(observation, instruction)`` positionally on BOTH eval
+# routes (the ``success_fn`` legacy path and the ``spec`` benchmark path). A
+# goal-conditioned policy (WBC ``target_velocity``; cuRobo/MoveIt2
+# ``target_pose`` - the #300 keys) was therefore evaluated with an EMPTY goal,
+# producing a meaningless success rate. These tests pin the forwarding through
+# every eval surface and the no-kwargs default.
+
+
+class _ConstSuccessSpec(BenchmarkProtocol):
+    """Minimal benchmark: accepts any robot, never terminates early.
+
+    Used only to drive the ``spec`` eval path so the goal-kwarg forwarding on
+    that route is exercised independently of the ``success_fn`` route.
+    """
+
+    max_steps = 3
+
+    @property
+    def supported_robots(self) -> list[str]:
+        return []  # empty == "any robot"
+
+    @property
+    def default_robot(self) -> str:
+        return "fake_robot"
+
+    def on_step(self, sim, obs, action):  # type: ignore[no-untyped-def]
+        from strands_robots.simulation.benchmark import StepInfo
+
+        return StepInfo(reward=0.0, done=False)
+
+    def is_success(self, sim) -> bool:  # type: ignore[no-untyped-def]
+        return False
+
+
+def test_eval_policy_threads_policy_kwargs_through_base() -> None:
+    """SimEngine.eval_policy(policy_kwargs=...) reaches the policy each tick."""
+    sim = FakeSim()
+    policy = _GoalRecordingPolicy()
+    goal = {"target_velocity": [0.5, 0.0, 0.0]}
+
+    result = sim.eval_policy(
+        robot_name="fake_robot",
+        policy_object=policy,
+        instruction="walk forward",
+        n_episodes=1,
+        max_steps=3,
+        control_frequency=50.0,
+        action_horizon=1,
+        policy_kwargs=goal,
+    )
+
+    assert result["status"] == "success"
+    assert policy.kwargs_seen, "policy.get_actions was never called"
+    for seen in policy.kwargs_seen:
+        assert seen == goal
+    # Forwarding must not alias the caller's dict.
+    assert all(seen is not goal for seen in policy.kwargs_seen)
+
+
+def test_eval_policy_none_policy_kwargs_reproduces_no_kwargs() -> None:
+    """Omitting policy_kwargs on the eval path forwards no extra kwargs."""
+    sim = FakeSim()
+    policy = _GoalRecordingPolicy()
+
+    result = sim.eval_policy(
+        robot_name="fake_robot",
+        policy_object=policy,
+        n_episodes=1,
+        max_steps=3,
+        control_frequency=50.0,
+        action_horizon=1,
+    )
+
+    assert result["status"] == "success"
+    assert policy.kwargs_seen, "policy.get_actions was never called"
+    assert all(seen == {} for seen in policy.kwargs_seen)
+
+
+def test_evaluate_legacy_success_fn_path_forwards_policy_kwargs() -> None:
+    """PolicyRunner.evaluate (success_fn route) forwards policy_kwargs."""
+    sim = FakeSim()
+    policy = _GoalRecordingPolicy()
+    policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+    goal = {"target_pose": [0.3, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0]}
+
+    result = PolicyRunner(sim).evaluate(
+        "fake_robot",
+        policy,
+        n_episodes=1,
+        max_steps=3,
+        control_frequency=50.0,
+        action_horizon=1,
+        policy_kwargs=goal,
+    )
+
+    assert result["status"] == "success"
+    assert policy.kwargs_seen, "policy.get_actions was never called"
+    assert all(seen == goal for seen in policy.kwargs_seen)
+
+
+def test_evaluate_spec_path_forwards_policy_kwargs() -> None:
+    """PolicyRunner.evaluate (spec route) forwards policy_kwargs."""
+    sim = FakeSim()
+    policy = _GoalRecordingPolicy()
+    policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+    goal = {"target_velocity": [0.25, 0.0, 0.1]}
+
+    result = PolicyRunner(sim).evaluate(
+        "fake_robot",
+        policy,
+        spec=_ConstSuccessSpec(),
+        n_episodes=1,
+        control_frequency=50.0,
+        action_horizon=1,
+        policy_kwargs=goal,
+    )
+
+    assert result["status"] == "success"
+    assert policy.kwargs_seen, "policy.get_actions was never called"
+    assert all(seen == goal for seen in policy.kwargs_seen)
+
+
+def test_evaluate_benchmark_threads_policy_kwargs_through_base() -> None:
+    """SimEngine.evaluate_benchmark(policy_kwargs=...) reaches the policy.
+
+    Registers a goal-recording provider so the benchmark path (which builds the
+    policy from ``policy_provider`` via ``create_policy``) is genuinely shown to
+    forward the goal payload, not merely to accept the parameter.
+    """
+    from strands_robots.policies.factory import _runtime_registry, register_policy
+    from strands_robots.simulation.benchmark import register_benchmark, unregister_benchmark
+
+    sim = FakeSim()
+    goal = {"target_velocity": [0.5, 0.0, 0.0]}
+    seen: list[dict[str, Any]] = []
+
+    class _RecordingProvider(_GoalRecordingPolicy):
+        def __init__(self) -> None:
+            super().__init__()
+            self.kwargs_seen = seen  # share the module-local capture list
+
+    register_policy("_goal_recording_bench_test", lambda: _RecordingProvider)
+    register_benchmark("_const_success_kwargs_test", _ConstSuccessSpec())
+    try:
+        result = sim.evaluate_benchmark(
+            "_const_success_kwargs_test",
+            robot_name="fake_robot",
+            policy_provider="_goal_recording_bench_test",
+            n_episodes=1,
+            action_horizon=1,
+            policy_kwargs=goal,
+        )
+    finally:
+        unregister_benchmark("_const_success_kwargs_test")
+        _runtime_registry.pop("_goal_recording_bench_test", None)
+
+    assert result["status"] == "success"
+    assert seen, "policy.get_actions was never called"
+    assert all(s == goal for s in seen)

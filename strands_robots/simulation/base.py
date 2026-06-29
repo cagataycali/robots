@@ -1415,6 +1415,7 @@ class SimEngine(ABC):
         async_rtc: bool = False,
         rtc_inference_timeout_s: float | None = None,
         on_frame: Callable[[int, dict[str, Any], dict[str, Any]], None] | None = None,
+        policy_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Multi-episode policy evaluation via ``PolicyRunner.evaluate``.
 
@@ -1459,6 +1460,14 @@ class SimEngine(ABC):
         rejected with a structured error at the entry point (before
         ``create_policy``) rather than running a degenerate eval that
         reports a fabricated success rate over zero/negative episodes.
+
+        ``policy_kwargs`` is the per-call goal payload forwarded verbatim to
+        every ``policy.get_actions(obs, instruction, **policy_kwargs)`` call,
+        exactly as on :meth:`run_policy`. Goal-conditioned providers read their
+        target from these well-known keys (``target_velocity`` for WBC and other
+        locomotion policies; ``target_pose`` / ``target_joints`` / ``world_update``
+        for cuRobo / MoveIt2 - the issue #300 contract). Without it the eval ran
+        such a policy with an empty goal and reported a meaningless success rate.
         """
         if not robot_name:
             return {
@@ -1514,6 +1523,7 @@ class SimEngine(ABC):
             async_rtc=async_rtc,
             rtc_inference_timeout_s=rtc_inference_timeout_s,
             on_frame=on_frame,
+            policy_kwargs=policy_kwargs,
         )
 
     # Benchmark protocol facades
@@ -1529,6 +1539,7 @@ class SimEngine(ABC):
         seed: int | None = None,
         action_horizon: int = 8,
         on_frame: Callable[[int, dict[str, Any], dict[str, Any]], None] | None = None,
+        policy_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run a registered :class:`BenchmarkProtocol` against the current sim.
 
@@ -1578,6 +1589,13 @@ class SimEngine(ABC):
                 greenish GL clear-colour artifacts. Pair with
                 :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`
                 for the recorder side. See #191.
+            policy_kwargs: Per-call goal payload forwarded verbatim to every
+                ``policy.get_actions(obs, instruction, **policy_kwargs)`` call
+                (same contract as :meth:`run_policy` / :meth:`eval_policy`).
+                Goal-conditioned providers read their target from these keys
+                (``target_velocity`` / ``target_pose`` / ``target_joints`` /
+                ``world_update``); a benchmark that drives such a policy must
+                pass them or the policy runs with an empty goal.
 
         Returns:
             Standard status dict. On success, carries per-episode cumulative
@@ -1651,6 +1669,7 @@ class SimEngine(ABC):
             seed=seed,
             action_horizon=action_horizon,
             on_frame=on_frame,
+            policy_kwargs=policy_kwargs,
         )
 
     def list_benchmarks(self) -> dict[str, Any]:

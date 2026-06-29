@@ -1301,6 +1301,7 @@ class PolicyRunner:
         control_substeps: int | None = None,
         async_rtc: bool = False,
         rtc_inference_timeout_s: float | None = None,
+        policy_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Evaluate ``policy`` for ``n_episodes`` episodes.
 
@@ -1358,6 +1359,13 @@ class PolicyRunner:
                 async prefetch. When inference does not finish within the
                 timeout the eval fails with a structured error instead of
                 hanging the rollout. ``None`` waits indefinitely.
+            policy_kwargs: Per-call goal payload forwarded verbatim to every
+                ``policy.get_actions(obs, instruction, **policy_kwargs)`` call on
+                both eval paths (``success_fn`` and ``spec``). Empty/``None`` is
+                the historical no-kwargs behaviour. Goal-conditioned providers
+                (WBC ``target_velocity``; cuRobo/MoveIt2 ``target_pose`` /
+                ``target_joints`` / ``world_update`` - the issue #300 keys) need
+                this to be evaluated against a goal at all.
 
         Returns:
             Standard status dict. The JSON payload carries an RTC telemetry
@@ -1380,6 +1388,14 @@ class PolicyRunner:
                     }
                 ],
             }
+
+        # Per-call goal payload forwarded verbatim to every get_actions() call
+        # on both eval paths (success_fn + spec). An empty dict is the historical
+        # (no-kwargs) behaviour. Goal-conditioned providers (WBC target_velocity,
+        # cuRobo/MoveIt2 target_pose/target_joints, the issue #300 keys) need this
+        # to be evaluated against a goal at all; without it eval ran them with an
+        # empty goal and reported a meaningless success rate.
+        _policy_kwargs = policy_kwargs or {}
 
         if async_rtc and spec is not None:
             return {
@@ -1408,6 +1424,7 @@ class PolicyRunner:
                 on_frame=on_frame,
                 control_frequency=control_frequency,
                 control_substeps=control_substeps,
+                policy_kwargs=_policy_kwargs,
             )
 
         try:
@@ -1443,7 +1460,7 @@ class PolicyRunner:
             # count of still-pending steps of the chunk currently executing.
             policy.set_rtc_observed_delay(observed_delay)
             _t_infer = time.perf_counter()
-            actions = _resolve_coroutine(policy.get_actions(observation, instruction))
+            actions = _resolve_coroutine(policy.get_actions(observation, instruction, **_policy_kwargs))
             inference_ms.append((time.perf_counter() - _t_infer) * 1000.0)
             # resolve_chunk_length is the single source of truth for the
             # re-query interval (respects RTC + execution_horizon). Consuming the
@@ -1601,6 +1618,7 @@ class PolicyRunner:
         on_frame: OnFrame | None = None,
         control_frequency: float = 50.0,
         control_substeps: int | None = None,
+        policy_kwargs: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Drive a :class:`BenchmarkProtocol` for ``n_episodes`` episodes.
 
@@ -1764,7 +1782,7 @@ class PolicyRunner:
                         "status": "error",
                         "content": [{"text": f"augment_observation failed in {spec_name}: {e}"}],
                     }
-                coro_or_result = policy.get_actions(observation, effective_instruction)
+                coro_or_result = policy.get_actions(observation, effective_instruction, **(policy_kwargs or {}))
                 actions = _resolve_coroutine(coro_or_result)
 
                 # #168: consume up to ``action_horizon`` actions
