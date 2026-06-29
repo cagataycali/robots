@@ -18,7 +18,11 @@ lerobot, exercising the wrapper contract rather than any specific backend.
 
 from __future__ import annotations
 
+import asyncio
+import sys
 import threading
+
+import pytest
 
 from strands_robots.policies import (
     PersistentPolicy,
@@ -138,6 +142,34 @@ class TestPersistentPolicyWrapper:
         # The wrapper's lock guarantees at most one inference in flight.
         assert overlap["max"] == 1
 
+    def test_async_get_actions_delegates_to_inner(self):
+        # The async entry point (used by async runtimes) must delegate to the
+        # wrapped policy's coroutine under the async lock and return its
+        # per-tick action dicts - not a separately rebuilt or zeroed result.
+        inner = MockPolicy()
+        inner.set_robot_state_keys(["j1", "j2", "j3", "j4", "j5", "j6"])
+        wrapper = PersistentPolicy("mock", policy_object=inner)
+        wrapper.set_robot_state_keys(["j1", "j2", "j3", "j4", "j5", "j6"])
+        actions = asyncio.run(wrapper.get_actions(_obs(), ""))
+        assert isinstance(actions, list) and len(actions) >= 1
+        assert all(isinstance(a, dict) for a in actions)
+
+    def test_forwards_unknown_attribute_to_inner(self):
+        # Attributes not explicitly delegated on the wrapper (e.g. provider
+        # extras the runtime may probe) fall through __getattr__ to the wrapped
+        # policy rather than raising AttributeError.
+        inner = MockPolicy()
+        inner.custom_runtime_hint = 42  # type: ignore[attr-defined]
+        wrapper = PersistentPolicy("mock", policy_object=inner)
+        assert wrapper.custom_runtime_hint == 42
+
+    def test_unknown_attribute_absent_on_inner_raises(self):
+        # A name missing on BOTH wrapper and inner still raises AttributeError
+        # (transparent forwarding, not silent None).
+        wrapper = PersistentPolicy("mock", policy_object=MockPolicy())
+        with pytest.raises(AttributeError):
+            _ = wrapper.no_such_attribute_anywhere
+
 
 class TestPreload:
     def test_returns_policy_and_telemetry(self):
@@ -169,3 +201,16 @@ class TestCacheControls:
         # count rather than raising - safe to call defensively before a run.
         assert evict("definitely/not-loaded") == 0
         assert isinstance(evict(), int)
+
+    def test_list_cached_degrades_when_cache_backend_unavailable(self, monkeypatch):
+        # When the lerobot_local cache backend cannot be imported (optional deps
+        # absent), list_cached degrades to an empty list instead of raising.
+        monkeypatch.setitem(sys.modules, "strands_robots.policies.lerobot_local", None)
+        assert list_cached() == []
+
+    def test_evict_degrades_when_cache_backend_unavailable(self, monkeypatch):
+        # Same optional-dep degrade for evict: report zero entries freed rather
+        # than raising, so a defensive pre-run evict is always safe to call.
+        monkeypatch.setitem(sys.modules, "strands_robots.policies.lerobot_local", None)
+        assert evict() == 0
+        assert evict("some/checkpoint") == 0
