@@ -16,6 +16,7 @@ These tests exercise observable behavior:
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -242,3 +243,98 @@ def test_robot_factory_rejects_truly_unknown_name(monkeypatch) -> None:
 
     with pytest.raises(ValueError, match="Unknown robot"):
         _validate_known_robot("bogus", "bogus", None)
+
+
+# Optional-dependency absence and description-table filtering
+
+
+def _install_fake_description_table(monkeypatch) -> None:
+    """Inject a synthetic ``robot_descriptions._descriptions`` module.
+
+    The table mixes MJCF/URDF formats and suffix shapes so both the MJCF and
+    URDF module builders exercise every filter branch:
+        - ``alpha_mj_description``: MJCF+URDF, ``_mj_description`` suffix
+          -> kept by the MJCF table; rejected by the URDF table as the MJCF
+          variant.
+        - ``beta_description``: URDF only, ``_description`` suffix
+          -> kept by the URDF table; rejected by the MJCF table (no MJCF
+          format).
+        - ``gamma_mj_description``: URDF only, ``_mj_description`` suffix
+          -> rejected by the URDF table as the MJCF variant.
+        - ``delta_weird``: MJCF+URDF, neither canonical suffix
+          -> rejected by both tables on the suffix check.
+    """
+    import enum
+    from dataclasses import dataclass
+
+    class Format(enum.Enum):
+        MJCF = "mjcf"
+        URDF = "urdf"
+
+    @dataclass
+    class _Desc:
+        formats: tuple[Format, ...]
+
+    descriptions = {
+        "alpha_mj_description": _Desc(formats=(Format.MJCF, Format.URDF)),
+        "beta_description": _Desc(formats=(Format.URDF,)),
+        "gamma_mj_description": _Desc(formats=(Format.URDF,)),
+        "delta_weird": _Desc(formats=(Format.MJCF, Format.URDF)),
+    }
+    fake = SimpleNamespace(DESCRIPTIONS=descriptions, Format=Format)
+    monkeypatch.setitem(sys.modules, "robot_descriptions._descriptions", fake)
+    discovery.invalidate_cache()
+
+
+def test_mjcf_table_keeps_only_mj_description_suffix(monkeypatch) -> None:
+    """The MJCF table accepts only MJCF-format modules with the ``_mj_description`` suffix."""
+    _install_fake_description_table(monkeypatch)
+    # Only alpha qualifies: MJCF format + ``_mj_description`` suffix. delta_weird
+    # has the MJCF format but the wrong suffix and must be dropped.
+    assert discovery.list_discoverable() == ["alpha"]
+    assert discovery.descriptions_module("alpha") == "alpha_mj_description"
+    assert discovery.descriptions_module("delta_weird") is None
+
+
+def test_urdf_table_excludes_mj_variant_and_wrong_suffix(monkeypatch) -> None:
+    """The URDF table accepts ``_description`` modules but never the ``_mj_description`` variant."""
+    _install_fake_description_table(monkeypatch)
+    # beta qualifies. alpha_mj_description and gamma_mj_description are the MJCF
+    # variant; delta_weird lacks the ``_description`` suffix.
+    assert discovery.list_urdf_discoverable() == ["beta"]
+    assert discovery.urdf_descriptions_module("beta") == "beta_description"
+    assert discovery.urdf_descriptions_module("alpha") is None
+    assert discovery.urdf_descriptions_module("delta_weird") is None
+
+
+def test_tables_empty_when_robot_descriptions_missing(monkeypatch) -> None:
+    """Without ``robot_descriptions`` installed the lookup surfaces degrade to empty, never raising."""
+    # Setting the module to None makes ``import robot_descriptions._descriptions``
+    # raise ImportError, simulating the package being absent.
+    monkeypatch.setitem(sys.modules, "robot_descriptions._descriptions", None)
+    discovery.invalidate_cache()
+
+    assert discovery.list_discoverable() == []
+    assert discovery.list_urdf_discoverable() == []
+    assert discovery.descriptions_module("go2") is None
+    assert discovery.urdf_descriptions_module("panda") is None
+    assert discovery.is_discoverable("go2") is False
+    assert discovery.is_urdf_discoverable("panda") is False
+
+
+def test_discover_robot_caches_miss_when_module_import_fails(monkeypatch) -> None:
+    """A resolvable name whose description module fails to import yields a cached ``None``."""
+    monkeypatch.setattr(discovery, "_mjcf_modules", lambda: {"fakebot": "fakebot_mj_description"})
+
+    calls = {"n": 0}
+
+    def _raise(modpath: str):
+        calls["n"] += 1
+        raise ImportError(modpath)
+
+    monkeypatch.setattr(discovery.importlib, "import_module", _raise)
+
+    assert discovery.discover_robot("fakebot") is None
+    # The miss is cached: a second call must not re-attempt the failing import.
+    assert discovery.discover_robot("fakebot") is None
+    assert calls["n"] == 1
