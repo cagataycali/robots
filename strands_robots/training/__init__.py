@@ -57,3 +57,12 @@ def _load_ppo_trainer() -> type[Trainer]:
 
 
 register_trainer("ppo", _load_ppo_trainer)
+
+
+def _load_fast_sac_trainer() -> type[Trainer]:
+    from strands_robots.training.rl.fast_sac import FastSacTrainer
+
+    return FastSacTrainer
+
+
+register_trainer("fast_sac", _load_fast_sac_trainer)
