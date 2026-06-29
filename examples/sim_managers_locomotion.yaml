@@ -1,0 +1,40 @@
+# Declarative locomotion env recipe consumed by sim_managers.
+# Build with: strands_robots.sim_managers.load_managers_config(<this file>)
+command_manager:
+  terms:
+    - name: base_velocity
+      func: uniform_velocity
+      params:
+        lin_vel_x: [-1.0, 1.0]
+        lin_vel_y: [-0.5, 0.5]
+        ang_vel_z: [-1.0, 1.0]
+        resampling_time: 5.0
+
+observation_manager:
+  terms:
+    - {func: base_lin_vel, scale: 2.0}
+    - {func: base_ang_vel, scale: 0.25}
+    - {func: projected_gravity}
+    - {func: velocity_commands}
+    - {func: joint_pos}
+    - {func: joint_vel, scale: 0.05}
+    - {func: last_action}
+
+reward_manager:
+  scale_by_dt: true
+  terms:
+    - {name: track_lin_vel, func: track_lin_vel_xy_exp, weight: 1.0, params: {std: 0.25}}
+    - {name: track_ang_vel, func: track_ang_vel_z_exp, weight: 0.5, params: {std: 0.25}}
+    - {name: lin_vel_z, func: lin_vel_z_l2, weight: -2.0}
+    - {name: ang_vel_xy, func: ang_vel_xy_l2, weight: -0.05}
+    - {name: flat_orientation, func: flat_orientation_l2, weight: -1.0}
+    - {name: dof_torques, func: dof_torques_l2, weight: -2.0e-5}
+    - {name: dof_acc, func: dof_acc_l2, weight: -2.5e-7}
+    - {name: action_rate, func: action_rate_l2, weight: -0.01}
+    - {name: alive, func: alive, weight: 0.15}
+
+termination_manager:
+  terms:
+    - {func: time_out}
+    - {func: bad_orientation, params: {limit_angle: 1.0}}
+    - {func: base_height_below_threshold, params: {min_height: 0.5}}
