@@ -1150,17 +1150,22 @@ def validate_input_frame(action: Any) -> dict[str, float]:
         if not _INPUT_KEY_RE.fullmatch(key):
             raise ValidationError(f"input frame key has illegal characters: {key!r}")
 
-        # Coerce to float with a finite check. bool is an int subclass;
-        # reject it explicitly so a stray True/False can't masquerade as
-        # a 1.0/0.0 actuator command.
-        if isinstance(value, bool):
-            raise ValidationError(f"input frame value for {key!r} must be numeric, not bool")
+        # Unwrap numpy scalars / 0-d arrays to a python scalar BEFORE the
+        # bool check. A numpy boolean (``np.bool_``) is NOT a python ``bool``,
+        # so an early ``isinstance(value, bool)`` would not catch it; ``.item()``
+        # then yields a python ``bool`` that sails through the numeric check
+        # below (``bool`` is an ``int`` subclass) and masquerades as a 1.0/0.0
+        # actuator command. Coercing first lets the single bool gate reject
+        # both python and numpy booleans.
         if hasattr(value, "item"):
-            # numpy scalar / 0-d array -> python scalar
             try:
                 value = value.item()
             except Exception as exc:  # pragma: no cover - defensive
                 raise ValidationError(f"input frame value for {key!r} is not a scalar") from exc
+        # bool is an int subclass; reject it explicitly so a stray True/False
+        # (python- or numpy-derived) can't masquerade as a 1.0/0.0 command.
+        if isinstance(value, bool):
+            raise ValidationError(f"input frame value for {key!r} must be numeric, not bool")
         if not isinstance(value, (int, float)):
             raise ValidationError(f"input frame value for {key!r} must be numeric (got {type(value).__name__})")
         fval = float(value)

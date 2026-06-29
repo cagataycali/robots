@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import time
 
+import numpy as np
 import pytest
 
 from strands_robots.mesh import security
@@ -61,6 +62,50 @@ def test_bool_value_rejected():
 def test_non_numeric_value_rejected():
     with pytest.raises(security.ValidationError):
         security.validate_input_frame({"j0": "0.5"})
+
+
+@pytest.mark.parametrize("np_bool", [np.bool_(True), np.bool_(False)])
+def test_numpy_bool_value_rejected(np_bool):
+    """A numpy boolean must be rejected just like a python bool.
+
+    ``np.bool_`` is not a python ``bool``, so a bool gate placed before the
+    ``.item()`` numpy-scalar coercion lets it through; once coerced it becomes
+    a python ``bool`` that passes the ``isinstance(value, (int, float))`` check
+    (``bool`` subclasses ``int``) and silently maps to a 1.0 / 0.0 actuator
+    command. A LAN-adjacent peer streaming numpy-typed frames could otherwise
+    drive a joint with ``np.True_`` despite the explicit bool defense.
+    """
+    with pytest.raises(security.ValidationError):
+        security.validate_input_frame({"j0": np_bool})
+
+
+def test_numpy_scalar_value_accepted_and_coerced():
+    """Legitimate numpy scalars (the common case for arm reads) coerce to
+    plain python floats and pass the validator."""
+    out = security.validate_input_frame({"j0": np.float32(0.5), "j1": np.int64(3)})
+    assert out == {"j0": 0.5, "j1": 3.0}
+    assert all(type(v) is float for v in out.values())
+
+
+def test_numpy_non_finite_value_rejected():
+    """A numpy non-finite scalar is unwrapped then caught by the finite check."""
+    with pytest.raises(security.ValidationError):
+        security.validate_input_frame({"j0": np.float64("nan")})
+
+
+def test_non_string_key_rejected():
+    with pytest.raises(security.ValidationError):
+        security.validate_input_frame({123: 0.5})
+
+
+def test_empty_key_rejected():
+    with pytest.raises(security.ValidationError):
+        security.validate_input_frame({"": 0.5})
+
+
+def test_overlong_key_rejected():
+    with pytest.raises(security.ValidationError):
+        security.validate_input_frame({"x" * (security.MAX_INPUT_KEY_LEN + 1): 0.5})
 
 
 # --- InputReceiver wiring tests ------------------------------------------
