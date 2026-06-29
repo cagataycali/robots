@@ -2271,6 +2271,8 @@ class MuJoCoSimEngine(
         _, _, horizon_error = self._resolve_horizon(n_steps, max_steps, control_frequency, duration)
         if horizon_error is not None:
             return horizon_error
+        if err := self._validate_action_horizon(action_horizon, "start_policy"):
+            return err
 
         # Concurrent multi-robot policies run on disjoint ctrl slices (physics
         # serialized by _lock). For SYNCHRONIZED multi-robot *recording* (both

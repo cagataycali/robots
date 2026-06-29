@@ -546,6 +546,32 @@ class SimEngine(ABC):
             duration = float(n_steps) / float(control_frequency)
         return duration, n_steps, None
 
+    @staticmethod
+    def _validate_action_horizon(action_horizon: Any, method: str) -> dict[str, Any] | None:
+        """Reject a non-positive-integer ``action_horizon`` at the public API.
+
+        ``action_horizon`` is how many actions are consumed from each policy
+        chunk before re-querying. A value below 1 (or a non-int) is meaningless
+        and would otherwise be silently clamped to 1 by
+        :func:`~strands_robots.policies.base.resolve_chunk_length`, hiding the
+        caller's mistake behind a rollout that does not run the requested
+        horizon. Returns a structured ``{"status": "error", ...}`` dict to
+        surface, or ``None`` when the value is valid.
+
+        Args:
+            action_horizon: The caller-supplied value to validate.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None``.
+        """
+        if not isinstance(action_horizon, int) or action_horizon < 1:
+            return {
+                "status": "error",
+                "content": [{"text": f"{method}: action_horizon must be a positive integer, got {action_horizon!r}."}],
+            }
+        return None
+
     def run_policy(
         self,
         robot_name: str | None = None,
@@ -589,7 +615,9 @@ class SimEngine(ABC):
             instruction: Natural-language instruction for the policy.
             duration: Wall-clock seconds to run.
             control_frequency: Target Hz for policy queries.
-            action_horizon: Max actions per policy call.
+            action_horizon: Max actions consumed from each policy chunk
+                before re-querying. Must be a positive integer (>= 1); a
+                non-positive or non-int value is reported as a caller error.
             fast_mode: Skip real-time sleep between steps.
             video: Optional video-recording config dict. Accepted keys:
                 ``path`` (str, output MP4 - required to enable recording),
@@ -684,6 +712,9 @@ class SimEngine(ABC):
                 "status": "error",
                 "content": [{"text": f"run_policy: n_episodes must be a positive integer, got {n_episodes!r}."}],
             }
+
+        if err := self._validate_action_horizon(action_horizon, "run_policy"):
+            return err
 
         if robot_name not in self.list_robots():
             return {
@@ -1314,6 +1345,9 @@ class SimEngine(ABC):
             }
         resolved_robot = robot_name
 
+        if err := self._validate_action_horizon(action_horizon, "eval_policy"):
+            return err
+
         if policy_object is None:
             from strands_robots.policies import create_policy
 
@@ -1414,13 +1448,8 @@ class SimEngine(ABC):
         from strands_robots.policies import create_policy
         from strands_robots.simulation.benchmark import get_benchmark
 
-        if not isinstance(action_horizon, int) or action_horizon < 1:
-            return {
-                "status": "error",
-                "content": [
-                    {"text": (f"evaluate_benchmark: action_horizon must be a positive integer, got {action_horizon!r}")}
-                ],
-            }
+        if err := self._validate_action_horizon(action_horizon, "evaluate_benchmark"):
+            return err
 
         spec = get_benchmark(benchmark_name)
         if spec is None:

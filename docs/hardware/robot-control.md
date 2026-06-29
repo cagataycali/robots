@@ -36,7 +36,7 @@ robot.cleanup()
 | `tool_name` | Tool identifier for the agent. |
 | `robot` | LeRobot `Robot` instance, `RobotConfig`, or string (e.g. `"so100"`). |
 | `cameras` | `{name: config_dict}`. Config keys: `type`, `index_or_path`, `fps`, `width`, `height`, `serial`. |
-| `action_horizon` | Actions per inference step (default 8). |
+| `action_horizon` | Actions per inference step (default 8; must be a positive integer). |
 | `data_config` | GR00T data_config name. |
 | `control_frequency` | Control loop Hz (default 50). |
 | `**kwargs` | Forwarded to LeRobot backend (`port`, `robot_ip`, `kp`, `kd`, …). Unknown kwargs raise `ValueError`. |

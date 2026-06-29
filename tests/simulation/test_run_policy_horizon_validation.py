@@ -123,3 +123,51 @@ class TestEvalPolicyResolution:
     def test_empty_world_reports_no_robots(self, empty_sim):
         text = _err_text(empty_sim.eval_policy(robot_name="arm1"))
         assert "No robots" in text
+
+
+class TestActionHorizonGuards:
+    """run_policy / start_policy / eval_policy must reject a non-positive
+    ``action_horizon`` rather than silently clamping it.
+
+    ``action_horizon`` is the number of actions consumed from each policy
+    chunk before re-querying. ``resolve_chunk_length`` clamps it to ``>= 1``,
+    so a typo like ``action_horizon=0`` or ``-3`` used to be silently coerced
+    to 1 and the rollout ran a horizon the caller never asked for. The public
+    entry points now surface this as a structured caller error - matching the
+    guard ``evaluate_benchmark`` already enforced.
+    """
+
+    @pytest.mark.parametrize("bad", [0, -1, -8])
+    def test_run_policy_rejects_non_positive_action_horizon(self, sim, bad):
+        text = _err_text(sim.run_policy("arm1", n_steps=4, action_horizon=bad))
+        assert "action_horizon must be a positive integer" in text
+        assert str(bad) in text
+
+    def test_run_policy_rejects_non_int_action_horizon(self, sim):
+        text = _err_text(sim.run_policy("arm1", n_steps=4, action_horizon=2.5))
+        assert "action_horizon must be a positive integer" in text
+
+    def test_run_policy_accepts_positive_action_horizon(self, sim):
+        result = sim.run_policy("arm1", n_steps=2, control_frequency=50.0, fast_mode=True, action_horizon=1)
+        assert result["status"] == "success", result
+
+    def test_eval_policy_rejects_non_positive_action_horizon(self, sim):
+        text = _err_text(sim.eval_policy(robot_name="arm1", max_steps=4, action_horizon=0))
+        assert "action_horizon must be a positive integer" in text
+
+    def test_start_policy_rejects_action_horizon_synchronously(self, sim):
+        # The rollout runs on a background thread, so a bad action_horizon must
+        # be caught before submission - otherwise the caller gets a false
+        # "started" success and the robot is left marked as running.
+        result = sim.start_policy("arm1", n_steps=4, action_horizon=-1)
+        assert result["status"] == "error"
+        assert "action_horizon must be a positive integer" in result["content"][0]["text"]
+        assert "arm1" not in sim._policy_threads
+        # A well-formed start on the same robot still succeeds afterwards.
+        ok = sim.start_policy("arm1", n_steps=2, control_frequency=50.0, fast_mode=True)
+        assert ok["status"] == "success", ok
+        sim.stop_policy("arm1")
+
+    def test_action_horizon_error_is_ascii(self, sim):
+        text = _err_text(sim.run_policy("arm1", n_steps=4, action_horizon=0))
+        text.encode("ascii")  # raises UnicodeEncodeError if any non-ASCII leaks
