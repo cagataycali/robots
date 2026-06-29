@@ -952,7 +952,7 @@ def test_render_depth_linearizes_normalized_buffer_to_meters(monkeypatch) -> Non
 
         r = sim.render_depth(camera_name="cam_a", width=2, height=2)
         assert r["status"] == "success", r
-        payload = r["content"][1]["json"]
+        payload = next(b["json"] for b in r["content"] if isinstance(b, dict) and "json" in b)
         assert payload["depth_min"] == pytest.approx(znear, rel=1e-4)
         assert payload["depth_max"] == pytest.approx(zfar, rel=1e-4)
         assert "Depth 2x2 from 'cam_a'" in r["content"][0]["text"]
@@ -1104,6 +1104,52 @@ def test_render_depth_output_is_ascii_only(monkeypatch) -> None:
         assert any("Depth" in t for t in texts)
         for text in texts:
             assert text.isascii(), f"non-ASCII in render_depth output: {text!r}"
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_returns_viewable_grayscale_png_image_block(monkeypatch) -> None:
+    """render_depth() returns the depth map as a viewable PNG image block, not
+    just scalar min/max stats.
+
+    Regression for the depth map being discarded: the engine computed a full
+    HxW metric depth array but returned only depth_min/depth_max, so an agent
+    could never see or consume the depth. The response must now carry an
+    ``{"image": {"format": "png", ...}}`` block (mirroring render()) whose PNG
+    decodes to a single-channel image of the requested size, with the metric
+    bounds still present in the json block. Shading is near=bright, far=dark:
+    the near pixel must be brighter than the far pixel.
+    """
+    np = pytest.importorskip("numpy")
+    Image = pytest.importorskip("PIL.Image")
+    import io as _io
+
+    sim = _depth_world()
+    try:
+        # 0.0 -> near plane (brightest), 1.0 -> far plane (darkest), plus mids.
+        buf = np.array([[0.0, 1.0], [0.5, 0.5]], dtype=np.float32)
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: _FakeDepthRenderer(buf))
+
+        r = sim.render_depth(camera_name="cam_a", width=2, height=2)
+        assert r["status"] == "success", r
+
+        image_blocks = [b for b in r["content"] if isinstance(b, dict) and "image" in b]
+        assert image_blocks, f"render_depth returned no image block: {r}"
+        img = image_blocks[0]["image"]
+        assert img["format"] == "png"
+        png_bytes = img["source"]["bytes"]
+        assert isinstance(png_bytes, bytes) and png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+
+        decoded = Image.open(_io.BytesIO(png_bytes))
+        assert decoded.mode == "L", f"depth PNG must be grayscale, got {decoded.mode}"
+        assert decoded.size == (2, 2)
+        arr = np.asarray(decoded)
+        # near pixel (0,0) brighter than far pixel (0,1).
+        assert int(arr[0, 0]) > int(arr[0, 1])
+
+        # metric bounds still available in the json block.
+        payload = next(b["json"] for b in r["content"] if isinstance(b, dict) and "json" in b)
+        assert "depth_min" in payload and "depth_max" in payload
     finally:
         sim.destroy()
 

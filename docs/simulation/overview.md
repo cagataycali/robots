@@ -63,7 +63,7 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 | Action | Notes |
 |--------|-------|
 | `render(camera_name="default", width=None, height=None)` | PNG in `content[...]["image"]["source"]["bytes"]`; no `frame` key |
-| `render_depth(camera_name="default", width=None, height=None)` | Depth float32 in content; no `depth` key |
+| `render_depth(camera_name="default", width=None, height=None)` | Viewable grayscale depth PNG `image` block (near=bright, far=dark) + metric `depth_min`/`depth_max` (meters) in the `json` block |
 | `render_all(cameras=None, width=None, height=None)` | One `image` block per camera (multi-view snapshot) |
 | `open_viewer` / `close_viewer` | Interactive MuJoCo passive viewer |
 

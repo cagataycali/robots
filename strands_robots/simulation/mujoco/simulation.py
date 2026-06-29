@@ -1161,7 +1161,8 @@ class MuJoCoSimEngine(
         # them here lets an agent enumerate the full render surface from
         # describe() rather than discovering depth / multi-view by guessing.
         base["methods"]["render_depth"] = (
-            "(camera_name='default', width=None, height=None) -> dict (metric depth map stats)"
+            "(camera_name='default', width=None, height=None) -> dict "
+            "(viewable grayscale depth PNG image block + metric depth_min/depth_max stats)"
         )
         base["methods"]["render_all"] = "(cameras=None, width=None, height=None) -> dict (one image block per camera)"
         # Recording / dataset-collection surface (LeRobotDataset, [lerobot] extra).

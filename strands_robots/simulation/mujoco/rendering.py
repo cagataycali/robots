@@ -671,7 +671,20 @@ class RenderingMixin:
     def render_depth(
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
     ) -> dict[str, Any]:
-        """Render depth map from a camera."""
+        """Render a metric depth map from a camera.
+
+        Returns an agent-tool dict with ``status`` and a ``content`` list. On
+        success the content mirrors :meth:`render`: a ``text`` summary, an
+        ``image`` block carrying a viewable 8-bit grayscale PNG of the depth map
+        (``{"image": {"format": "png", "source": {"bytes": ...}}}``; nearer
+        surfaces are brighter, the far plane is darkest), and a ``json`` block
+        with the exact metric bounds ``depth_min``/``depth_max`` in meters.
+
+        The PNG makes the depth actually consumable - visualized, saved, or fed
+        to a depth-aware downstream - whereas the scalar bounds alone discard the
+        per-pixel structure. Use the ``json`` bounds when exact metric values
+        matter; the grayscale image is normalized for display only.
+        """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
 
@@ -777,14 +790,38 @@ class RenderingMixin:
             # Clamp: pixels at far plane (depth==1) -> zfar
             depth_m = _np.clip(depth_m, znear, zfar)
 
-            text = f"Depth {w}x{h} from '{label}'\nMin: {float(depth_m.min()):.4f}m, Max: {float(depth_m.max()):.4f}m"
+            dmin = float(depth_m.min())
+            dmax = float(depth_m.max())
+            text = f"Depth {w}x{h} from '{label}'\nMin: {dmin:.4f}m, Max: {dmax:.4f}m"
             if clip_warn:
                 text += f"\n{clip_warn}"
+
+            # Encode the metric depth map as a viewable 8-bit grayscale PNG so the
+            # depth is actually consumable (visualized, saved, or fed to a
+            # depth-aware downstream) - mirroring render()'s image block - instead
+            # of discarding the HxW array and returning only min/max scalars.
+            # Shading convention: nearer surfaces are brighter (255), the far
+            # plane is darkest (0); the exact metric bounds stay in the json block.
+            span = dmax - dmin
+            if span > 0:
+                gray = (255.0 * (1.0 - (depth_m - dmin) / span)).astype(_np.uint8)
+            else:
+                # Uniform depth (a single surface filling the view): flat mid-gray
+                # rather than a divide-by-zero or a misleading all-black frame.
+                gray = _np.full(depth_m.shape, 128, dtype=_np.uint8)
+
+            from PIL import Image
+
+            buffer = io.BytesIO()
+            Image.fromarray(gray, mode="L").save(buffer, format="PNG")
+            depth_png = buffer.getvalue()
+
             return {
                 "status": "success",
                 "content": [
                     {"text": text},
-                    {"json": {"depth_min": float(depth_m.min()), "depth_max": float(depth_m.max())}},
+                    {"image": {"format": "png", "source": {"bytes": depth_png}}},
+                    {"json": {"depth_min": dmin, "depth_max": dmax}},
                 ],
             }
         except Exception as e:
