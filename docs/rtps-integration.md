@@ -144,6 +144,74 @@ inbound `joint_command` parsing, so the two transports are byte-identical on the
 by construction; they present the identical `publish_joint_states` / `publish_image` /
 inbound-`joint_command` surface.
 
+## Securing the inbound command surface
+
+The inbound `/<robot>/joint_command` subscription lets **any participant on the
+DDS domain drive the physical arm**. Two layers harden it, both threaded through
+the `Robot()` constructor.
+
+### DDS Security gate (RTPS only)
+
+When the command surface is enabled (`ros2_bridge=True`, `ros2_commands=True`,
+`ros2_transport="rtps"`), `HardwareRtpsBridge` **refuses to start** unless one of
+the following is true:
+
+- a `dds_security_config` dict is supplied, or
+- the operator sets `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` (truthy:
+  `1` / `true` / `yes`) to explicitly accept an unsecured graph.
+
+A telemetry-only bridge (`ros2_commands=False`) is publish-only and is **not**
+gated. `dds_security_config` requires the following keys (each a path or a
+`file:` / `data:` URI per the OMG DDS-Security spec); `permissions_ca` is
+optional:
+
+```python
+from strands_robots import Robot
+
+arm = Robot(
+    "so101",
+    mode="real",
+    ros2_bridge=True,
+    ros2_transport="rtps",
+    dds_security_config={
+        "identity_ca":  "file:/etc/dds/identity_ca.pem",   # identity CA
+        "certificate":  "file:/etc/dds/participant.pem",   # participant cert
+        "private_key":  "file:/etc/dds/participant_key.pem",
+        "governance":   "file:/etc/dds/governance.p7s",    # signed governance
+        "permissions":  "file:/etc/dds/permissions.p7s",   # signed permissions
+        # "permissions_ca": "file:/etc/dds/permissions_ca.pem",  # optional
+    },
+)
+```
+
+The credentials are wired into the cyclonedds `DomainParticipant` QoS together
+with the builtin DDS-Security plugins, so **both** the outbound telemetry and the
+inbound command surface ride an authenticated, access-controlled graph. A
+half-filled config is rejected at construction.
+
+`dds_security_config` is RTPS-specific: passing it with `ros2_transport="rclpy"`
+raises, because the rclpy backend gets its DDS Security from the ROS 2 RMW
+keystore/env (`ROS_SECURITY_*` / `sros2`), not from a config dict.
+
+### Joint position bounds
+
+`joint_limits={motor: (min, max)}` (threaded into either transport) range-checks
+every inbound command. If **any** commanded joint falls outside its declared
+range, the **entire** command is rejected - never partially applied - so one
+out-of-range joint can never drive part of the arm while the rest holds. Joints
+without a declared bound are unconstrained.
+
+```python
+arm = Robot(
+    "so101",
+    mode="real",
+    ros2_bridge=True,
+    ros2_transport="rtps",
+    dds_security_config={...},
+    joint_limits={"shoulder_pan.pos": (-3.14, 3.14), "elbow.pos": (-1.57, 1.57)},
+)
+```
+
 ## Safety
 
 Agent-supplied topic and type names are validated against an allowlist before

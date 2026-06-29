@@ -420,6 +420,32 @@ def test_joint_command_drives_send_action(fake_ros: dict[str, Any]) -> None:
     bridge.shutdown()
 
 
+def test_joint_limits_reject_out_of_range_command_whole(fake_ros: dict[str, Any]) -> None:
+    # joint_limits threaded into the rclpy bridge are enforced by the shared
+    # base: any out-of-range joint rejects the WHOLE command (no partial apply).
+    robot = _FakeDrivableRobot()
+    bridge = HardwareRosBridge(robot, joint_limits={"shoulder_pan.pos": (-1.0, 1.0)})  # type: ignore[arg-type]
+    sub = next(s for s in fake_ros["nodes"][0].subscriptions if s.topic == "/so101/joint_command")
+
+    over = _JointState()
+    over.name = ["shoulder_pan.pos", "elbow.pos"]
+    over.position = [5.0, 0.0]  # shoulder_pan out of [-1, 1]
+    sub.callback(over)
+    assert robot.sent_actions == []
+
+    ok = _JointState()
+    ok.name = ["shoulder_pan.pos", "elbow.pos"]
+    ok.position = [0.5, 9.0]  # elbow has no declared bound -> unconstrained
+    sub.callback(ok)
+    assert robot.sent_actions == [{"shoulder_pan.pos": 0.5, "elbow.pos": 9.0}]
+    bridge.shutdown()
+
+
+def test_invalid_joint_limits_raise_at_construction(fake_ros: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="min .* > max"):
+        HardwareRosBridge(_FakeDrivableRobot(), joint_limits={"j0.pos": (1.0, -1.0)})  # type: ignore[arg-type]
+
+
 def test_joint_command_length_mismatch_is_ignored(fake_ros: dict[str, Any]) -> None:
     robot = _FakeDrivableRobot()
     bridge = HardwareRosBridge(robot)  # type: ignore[arg-type]
@@ -500,3 +526,28 @@ def test_make_robot_command_bridges_do_not_leak_spin_threads(fake_ros: dict[str,
     while _live_command_threads() > before and time.monotonic() < deadline:
         time.sleep(0.01)
     assert _live_command_threads() == before
+
+
+# --- Robot() threading of joint_limits / dds_security_config ----------------
+
+
+def test_joint_limits_threaded_into_rclpy_bridge(fake_ros: dict[str, Any]) -> None:
+    hw = _make_robot({"j0.pos": 0.0})
+    hw._init_ros_bridge(ros2_bridge=True, ros2_transport="rclpy", joint_limits={"j0.pos": (-2.0, 2.0)})
+    assert hw._ros_bridge._joint_limits == {"j0.pos": (-2.0, 2.0)}
+
+
+def test_dds_security_config_rejected_for_rclpy_transport(fake_ros: dict[str, Any]) -> None:
+    hw = _make_robot({"j0.pos": 0.0})
+    with pytest.raises(ValueError, match="only supported with ros2_transport='rtps'"):
+        hw._init_ros_bridge(
+            ros2_bridge=True,
+            ros2_transport="rclpy",
+            dds_security_config={"identity_ca": "file:ca.pem"},
+        )
+
+
+def test_inert_safety_config_without_bridge_is_rejected(fake_ros: dict[str, Any]) -> None:
+    hw = _make_robot({"j0.pos": 0.0})
+    with pytest.raises(ValueError, match="require ros2_bridge=True"):
+        hw._init_ros_bridge(ros2_bridge=False, joint_limits={"j0.pos": (-1.0, 1.0)})

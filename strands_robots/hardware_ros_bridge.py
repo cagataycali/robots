@@ -79,6 +79,14 @@ class HardwareRosBridge(RosTelemetryBridge):
             bridge *publishes* ``joint_states`` under), so a controller can echo
             our own joint names straight back to drive the arm.
         spin_period: Seconds between ``spin_once`` calls on the command thread.
+        joint_limits: Optional ``{motor: (min, max)}`` clamp ranges. When set,
+            an inbound ``joint_command`` whose ANY commanded joint is outside
+            its declared range is rejected whole (no partial application), so a
+            single out-of-range joint can never drive part of the arm.
+
+    Raises:
+        ValueError: If ``joint_limits`` is not a ``{motor: (min, max)}`` mapping
+            of numeric pairs with ``min <= max``.
     """
 
     default_node_name = "strands_hardware"
@@ -93,10 +101,14 @@ class HardwareRosBridge(RosTelemetryBridge):
         enable_commands: bool = True,
         command_robot_name: str | None = None,
         spin_period: float = 0.02,
+        joint_limits: dict[str, tuple[float, float]] | None = None,
     ) -> None:
         super().__init__(domain_id=domain_id, node_name=node_name, qos_depth=qos_depth)
 
         self._robot = robot
+        # Optional {motor: (min, max)} clamp ranges enforced on inbound commands
+        # by RosTelemetryBase._command_action (validated up front, fail fast).
+        self._joint_limits = self._validate_joint_limits(joint_limits)
         # Commands require a robot to drive; a pure-publisher bridge (robot
         # None) is telemetry-only and stays symmetric with the sim sibling.
         self._enable_commands = bool(enable_commands) and robot is not None

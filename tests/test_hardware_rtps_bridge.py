@@ -59,8 +59,9 @@ class _FakeTopic:
 
 
 class _FakeParticipant:
-    def __init__(self, domain_id: int = 0) -> None:
+    def __init__(self, domain_id: int = 0, qos: Any = None) -> None:
         self.domain_id = domain_id
+        self.qos = qos
 
 
 # Minimal IDL stand-ins (the real layouts are validated against live ROS 2).
@@ -116,8 +117,8 @@ def fake_cyclonedds(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     sub_mod = ModuleType("cyclonedds.sub")
     topic_mod = ModuleType("cyclonedds.topic")
 
-    def _make_participant(domain_id: int = 0) -> _FakeParticipant:
-        p = _FakeParticipant(domain_id)
+    def _make_participant(domain_id: int = 0, qos: Any = None) -> _FakeParticipant:
+        p = _FakeParticipant(domain_id, qos=qos)
         state["participants"].append(p)
         return p
 
@@ -136,11 +137,28 @@ def fake_cyclonedds(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     sub_mod.DataReader = _make_reader  # type: ignore[attr-defined]
     topic_mod.Topic = _FakeTopic  # type: ignore[attr-defined]
 
+    # Fake cyclonedds.qos so _build_security_qos can assemble Property policies.
+    qos_mod = ModuleType("cyclonedds.qos")
+
+    class _FakeQos:
+        def __init__(self, *policies: Any) -> None:
+            self.policies = list(policies)
+
+    class _FakePolicy:
+        class Property:
+            def __init__(self, name: str, value: str) -> None:
+                self.name = name
+                self.value = value
+
+    qos_mod.Qos = _FakeQos  # type: ignore[attr-defined]
+    qos_mod.Policy = _FakePolicy  # type: ignore[attr-defined]
+
     monkeypatch.setitem(sys.modules, "cyclonedds", cyclonedds)
     monkeypatch.setitem(sys.modules, "cyclonedds.domain", domain_mod)
     monkeypatch.setitem(sys.modules, "cyclonedds.pub", pub_mod)
     monkeypatch.setitem(sys.modules, "cyclonedds.sub", sub_mod)
     monkeypatch.setitem(sys.modules, "cyclonedds.topic", topic_mod)
+    monkeypatch.setitem(sys.modules, "cyclonedds.qos", qos_mod)
     monkeypatch.setattr(utils_mod, "_lazy_modules", {"cyclonedds": cyclonedds}, raising=False)
 
     # Patch the IDL bundle resolver so it returns our trivial classes.
@@ -148,6 +166,12 @@ def fake_cyclonedds(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
     monkeypatch.setattr(idl_mod, "get_type", lambda t: _IDL[t], raising=True)
     monkeypatch.setattr(idl_mod, "have_cyclonedds", lambda: True, raising=True)
+
+    # The command-behavior tests below exercise the inbound surface, which is
+    # now gated on DDS Security. They are not security tests, so run them under
+    # the explicit insecure opt-out; the dedicated gate tests control this env
+    # and a dds_security_config themselves.
+    monkeypatch.setenv("STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE", "1")
     return state
 
 
@@ -245,3 +269,128 @@ def test_missing_cyclonedds_raises_importerror(monkeypatch: pytest.MonkeyPatch) 
 
     with pytest.raises(ImportError):
         HardwareRtpsBridge(_FakeRobot())  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# DDS Security gate on the inbound command surface
+# ---------------------------------------------------------------------------
+
+_VALID_SECURITY = {
+    "identity_ca": "file:/etc/dds/identity_ca.pem",
+    "certificate": "file:/etc/dds/participant_cert.pem",
+    "private_key": "file:/etc/dds/participant_key.pem",
+    "governance": "file:/etc/dds/governance.p7s",
+    "permissions": "file:/etc/dds/permissions.p7s",
+}
+
+
+def test_command_surface_refuses_without_security_or_optout(
+    fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An enabled inbound command surface drives the physical arm, so without a
+    # dds_security_config and without the explicit opt-out the bridge refuses.
+    monkeypatch.delenv("STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE", raising=False)
+    with pytest.raises(ValueError, match="unsecured DDS graph"):
+        _bridge(_FakeRobot())
+
+
+def test_command_surface_allowed_with_insecure_optout(
+    fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE", "yes")
+    b = _bridge(_FakeRobot())
+    assert b._enable_commands is True
+    b.shutdown()
+
+
+def test_command_surface_allowed_with_security_config_when_env_unset(
+    fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE", raising=False)
+    b = _bridge(_FakeRobot(), dds_security_config=dict(_VALID_SECURITY))
+    assert b._enable_commands is True
+    b.shutdown()
+
+
+def test_telemetry_only_bridge_is_not_gated(fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    # enable_commands=False is publish-only: no inbound surface, so no gate.
+    monkeypatch.delenv("STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE", raising=False)
+    b = _bridge(_FakeRobot(), enable_commands=False)
+    assert b._enable_commands is False
+    b.shutdown()
+
+
+def test_security_config_missing_required_key_raises(fake_cyclonedds: dict[str, Any]) -> None:
+    incomplete = dict(_VALID_SECURITY)
+    del incomplete["private_key"]
+    with pytest.raises(ValueError, match="missing required keys"):
+        _bridge(_FakeRobot(), dds_security_config=incomplete)
+
+
+def test_security_config_wires_plugins_and_credentials_into_participant_qos(
+    fake_cyclonedds: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE", raising=False)
+    b = _bridge(_FakeRobot(), dds_security_config=dict(_VALID_SECURITY))
+    participant = fake_cyclonedds["participants"][-1]
+    assert participant.qos is not None
+    props = {p.name: p.value for p in participant.qos.policies}
+    # Builtin DDS-Security plugins are wired automatically.
+    assert props["dds.sec.auth.library.path"] == "dds_security_auth"
+    assert props["dds.sec.crypto.library.path"] == "dds_security_crypto"
+    assert props["dds.sec.access.library.path"] == "dds_security_ac"
+    # Operator credentials are mapped to their dds.sec.* property names.
+    assert props["dds.sec.auth.identity_ca"] == _VALID_SECURITY["identity_ca"]
+    assert props["dds.sec.auth.identity_certificate"] == _VALID_SECURITY["certificate"]
+    assert props["dds.sec.auth.private_key"] == _VALID_SECURITY["private_key"]
+    assert props["dds.sec.access.governance"] == _VALID_SECURITY["governance"]
+    assert props["dds.sec.access.permissions"] == _VALID_SECURITY["permissions"]
+    # Optional permissions_ca absent -> property not set.
+    assert "dds.sec.access.permissions_ca" not in props
+    b.shutdown()
+
+
+def test_telemetry_only_participant_has_no_security_qos(fake_cyclonedds: dict[str, Any]) -> None:
+    b = _bridge(enable_commands=False)  # no robot, no config
+    assert fake_cyclonedds["participants"][-1].qos is None
+    b.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Joint position bounds enforcement on the inbound command surface
+# ---------------------------------------------------------------------------
+
+
+def test_joint_limits_apply_in_range_command(fake_cyclonedds: dict[str, Any]) -> None:
+    robot = _FakeRobot()
+    b = _bridge(robot, joint_limits={"a": (-1.0, 1.0), "b": (-1.0, 1.0)})
+    b._on_command(_JointState(name=["a", "b"], position=[0.5, -0.5]))
+    assert robot.sent_actions == [{"a": 0.5, "b": -0.5}]
+    b.shutdown()
+
+
+def test_joint_limits_reject_whole_command_when_one_joint_out_of_range(
+    fake_cyclonedds: dict[str, Any],
+) -> None:
+    # One joint out of range -> the ENTIRE command is dropped (no partial apply).
+    robot = _FakeRobot()
+    b = _bridge(robot, joint_limits={"a": (-1.0, 1.0), "b": (-1.0, 1.0)})
+    b._on_command(_JointState(name=["a", "b"], position=[0.5, 9.0]))
+    assert robot.sent_actions == []
+    b.shutdown()
+
+
+def test_joint_limits_do_not_constrain_undeclared_joints(fake_cyclonedds: dict[str, Any]) -> None:
+    robot = _FakeRobot()
+    b = _bridge(robot, joint_limits={"a": (-1.0, 1.0)})
+    # "b" has no declared bound -> not constrained.
+    b._on_command(_JointState(name=["a", "b"], position=[0.5, 100.0]))
+    assert robot.sent_actions == [{"a": 0.5, "b": 100.0}]
+    b.shutdown()
+
+
+def test_invalid_joint_limits_raise_at_construction(fake_cyclonedds: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="min .* > max|must be a"):
+        _bridge(_FakeRobot(), joint_limits={"a": (1.0, -1.0)})
+    with pytest.raises(ValueError, match="must be a"):
+        _bridge(_FakeRobot(), joint_limits={"a": 5.0})  # type: ignore[dict-item]

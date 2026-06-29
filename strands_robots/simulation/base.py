@@ -1385,6 +1385,11 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Replay a LeRobotDataset episode via ``PolicyRunner.replay``.
 
+        ``speed`` is a playback-rate multiplier (1.0 = real time) and must be a
+        positive number; a non-positive or non-numeric value is rejected with a
+        structured error rather than raising or silently playing back at full
+        speed.
+
         Override per backend for optimised replay (e.g. direct ctrl
         writes) only when measured necessary.
         """

@@ -989,6 +989,7 @@ touches ROS 2.
 | `GROOT_API_TOKEN` | API token for the GR00T inference service | unset |
 | `STRANDS_MESH` | Set `false` to disable Zenoh mesh globally | `true` |
 | `STRANDS_MESH_LOCAL_DEV` | Set `1` for a one-var localhost preset (auth `none`, no second factor needed) | unset |
+| `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE` | Second factor to expose a `Robot(ros2_transport="rtps")` inbound `joint_command` surface with no `dds_security_config` (DDS Security). Truthy: `1`/`true`/`yes` | unset |
 <details>
 <summary><b>Mesh / IoT / GR00T-container env vars (advanced)</b></summary>
 

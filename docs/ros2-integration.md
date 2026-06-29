@@ -246,6 +246,20 @@ inbound command path is on by default (`ros2_commands=True`); set
 be driven. A daemon thread spins the node so inbound commands are serviced
 concurrently with publishing, and it is torn down cleanly on `cleanup()`/`stop()`.
 
+Because the inbound `joint_command` topic drives the physical arm, two guards
+harden it (both threaded through `Robot()`):
+
+- `joint_limits={motor: (min, max)}` range-checks every inbound command; if any
+  commanded joint is outside its declared range the **entire** command is
+  rejected (no partial application). Joints without a declared bound are
+  unconstrained. Available on both transports.
+- For the pure-RTPS transport (`ros2_transport="rtps"`), a `dds_security_config`
+  (or the explicit `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` opt-out) is
+  **required** to expose the command surface - see the
+  [RTPS integration guide](rtps-integration.md#securing-the-inbound-command-surface).
+  rclpy DDS Security is configured at the RMW layer (`ROS_SECURITY_*` / `sros2`),
+  not by a config dict.
+
 See `examples/ros2/hardware_bridge_demo.py` for a runnable end-to-end script.
 
 ![Hardware ROS 2 bridge: an SO-101 camera frame published by HardwareRosBridge and received by an independent ros2 subscriber over DDS, byte-identical](assets/hardware_ros_bridge_proof.png)
