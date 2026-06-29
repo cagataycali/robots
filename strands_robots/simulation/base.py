@@ -1259,6 +1259,7 @@ class SimEngine(ABC):
         seed: int | None = None,
         async_rtc: bool = False,
         rtc_inference_timeout_s: float | None = None,
+        on_frame: Callable[[int, dict[str, Any], dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
         """Multi-episode policy evaluation via ``PolicyRunner.evaluate``.
 
@@ -1287,6 +1288,16 @@ class SimEngine(ABC):
         bounds each async inference (structured error instead of a hung
         rollout). For benchmark-style latency masking use
         :meth:`run_policy` (``async_rtc=...``).
+
+        ``on_frame`` is an optional ``(step, observation, action) -> None``
+        hook fired per applied control step on the eval thread, immediately
+        after ``sim.send_action`` - the success-rate analogue of the
+        :meth:`run_policy` / :meth:`evaluate_benchmark` hook. ``step`` is a
+        monotonic index that continues across episode boundaries. Use it to
+        record frames or stream telemetry synchronously on the eval thread
+        (e.g. paired with ``start_cameras_recording_synchronous``) so a
+        daemon-thread recorder does not race ``mjData`` mutations. A hook
+        exception is logged at WARN and never aborts the eval.
         """
         if not robot_name:
             return {
@@ -1332,6 +1343,7 @@ class SimEngine(ABC):
             seed=seed,
             async_rtc=async_rtc,
             rtc_inference_timeout_s=rtc_inference_timeout_s,
+            on_frame=on_frame,
         )
 
     # Benchmark protocol facades

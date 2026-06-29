@@ -104,10 +104,10 @@ class TestRecorderEpisodeBoundary:
         policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
         runner = PolicyRunner(sim_with_robot)
 
-        # Use on_frame to pump add_frame so the recorder buffer is non-empty
-        # when finalize is called. evaluate() does not call on_frame in the
-        # base loop, so feed via a stub helper instead: pretend each step
-        # added a frame.
+        # Pump add_frame per policy step so the recorder buffer is non-empty
+        # when finalize is called. This test wraps ``policy.get_actions``
+        # (rather than ``on_frame``) to keep the recorder feed independent of
+        # the hook under test elsewhere.
         def fake_step_recorder() -> None:
             rec.add_frame()
 

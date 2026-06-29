@@ -676,3 +676,85 @@ class TestRunPolicyStructuredResult:
         # Recording was requested but produced no frames -> path None.
         assert payload["video_path"] is None
         assert payload["video_frames"] == 0
+
+
+class TestEvaluateOnFrameSuccessFnPath:
+    """The ``on_frame`` hook must fire on the legacy ``success_fn`` eval path.
+
+    Regression for the hook being accepted by ``PolicyRunner.evaluate`` (and
+    surfaced via ``Simulation.eval_policy``) yet silently dropped on the
+    non-benchmark path - the path ``eval_policy`` actually drives by default.
+    """
+
+    def test_success_fn_path_fires_on_frame_once_per_applied_step(self, sim_with_robot):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        runner = PolicyRunner(sim_with_robot)
+
+        steps_seen: list[int] = []
+
+        def on_frame(step: int, obs: dict, action: dict) -> None:
+            steps_seen.append(step)
+
+        result = runner.evaluate(
+            "alice",
+            policy,
+            n_episodes=2,
+            max_steps=3,
+            control_frequency=50,
+            on_frame=on_frame,
+        )
+        assert result["status"] == "success"
+
+        # Hook fired at least once and crossed the episode boundary (proves the
+        # global counter is continuous, not reset per episode).
+        assert steps_seen, "on_frame never fired on the success_fn eval path"
+        assert steps_seen == sorted(steps_seen)
+        assert steps_seen == list(range(len(steps_seen)))
+        assert len(steps_seen) > 3, "hook did not continue into the second episode"
+
+        # Exactly one hook call per applied control step (MockPolicy always
+        # emits a non-empty chunk, so applied steps == sum of per-episode steps).
+        json_block = next(b["json"] for b in result["content"] if "json" in b)
+        applied = sum(ep["steps"] for ep in json_block["episodes"])
+        assert len(steps_seen) == applied
+
+    def test_default_on_frame_none_is_noop(self, sim_with_robot):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        runner = PolicyRunner(sim_with_robot)
+        result = runner.evaluate("alice", policy, n_episodes=1, max_steps=2, control_frequency=50)
+        assert result["status"] == "success"
+
+    def test_on_frame_exception_is_logged_not_fatal(self, sim_with_robot):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        runner = PolicyRunner(sim_with_robot)
+
+        def boom(step: int, obs: dict, action: dict) -> None:
+            raise ValueError("hook blew up")
+
+        # A best-effort telemetry hook must never abort the eval.
+        result = runner.evaluate("alice", policy, n_episodes=1, max_steps=2, control_frequency=50, on_frame=boom)
+        assert result["status"] == "success"
+
+    def test_eval_policy_public_surface_forwards_on_frame(self, sim_with_robot):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+
+        seen: list[int] = []
+
+        def on_frame(step: int, obs: dict, action: dict) -> None:
+            seen.append(step)
+
+        result = sim_with_robot.eval_policy(
+            robot_name="alice",
+            policy_object=policy,
+            n_episodes=1,
+            max_steps=2,
+            control_frequency=50,
+            on_frame=on_frame,
+        )
+        assert result["status"] == "success"
+        assert seen, "eval_policy did not forward on_frame to the success_fn path"
+        assert seen == sorted(seen)

@@ -1303,11 +1303,12 @@ class PolicyRunner:
                 when ``spec`` is provided.
             on_frame: Optional ``(step, observation, action) -> None`` hook
                 fired per applied control step on the eval thread, after
-                ``sim.send_action``. Currently only forwarded on the
-                ``spec=`` path (the legacy ``success_fn`` path doesn't
-                expose telemetry hooks). Use this for synchronous
-                recording when the eval runs on a thread distinct from
-                the script main (e.g. Strands ``Agent`` tool dispatch
+                ``sim.send_action``. Forwarded on BOTH the ``spec=`` and the
+                legacy ``success_fn`` paths; ``step`` is a monotonic index
+                that continues across episode boundaries. A hook exception is
+                logged at WARN and never aborts the eval. Use this for
+                synchronous recording when the eval runs on a thread distinct
+                from the script main (e.g. Strands ``Agent`` tool dispatch
                 under asyncio) - see #191 and
                 :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`.
             async_rtc: Opt-in overlap of policy inference with action-chunk
@@ -1422,6 +1423,24 @@ class PolicyRunner:
             return list(actions[: resolve_chunk_length(policy, action_horizon)])
 
         results: list[dict[str, Any]] = []
+        # #191 - monotonic global step index handed to ``on_frame`` so a
+        # synchronous recorder/telemetry hook sees a continuous count across
+        # episode boundaries, exactly like the spec eval path and ``run()``.
+        global_step = 0
+
+        def _fire_on_frame(obs: dict[str, Any], action: dict[str, Any]) -> None:
+            # Fire AFTER ``send_action`` (post-action obs unavailable yet, so
+            # pass the pre-action obs the chunk was queried with - matches
+            # ``_evaluate_with_spec``). The hook is best-effort telemetry: a
+            # failure is logged at WARN and never aborts the eval.
+            nonlocal global_step
+            if on_frame is not None:
+                try:
+                    on_frame(global_step, obs, action)
+                except Exception as e:  # noqa: BLE001 - hook is best-effort telemetry
+                    logger.warning("on_frame hook failed at global_step=%d: %s", global_step, e)
+            global_step += 1
+
         for ep in range(n_episodes):
             self.sim.reset()
             success = False
@@ -1446,6 +1465,7 @@ class PolicyRunner:
                         if steps >= max_steps:
                             break
                         self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                        _fire_on_frame(_observation, action_dict)
                         steps += 1
                         # Check success against the LIVE post-action observation
                         # (mirrors the synchronous path / _evaluate_with_spec).
@@ -1477,6 +1497,7 @@ class PolicyRunner:
                         if steps >= max_steps:
                             break
                         self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                        _fire_on_frame(observation, action_dict)
                         steps += 1
                         # Check success against the LIVE post-action observation,
                         # not the stale pre-action obs. Checking the pre-action
