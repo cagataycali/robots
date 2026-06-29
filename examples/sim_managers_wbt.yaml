@@ -1,0 +1,24 @@
+# Declarative whole-body-tracking (WBT) recipe consumed by sim_managers.
+# The command_manager block (the reference motion clip) is generated in
+# sim_managers_wbt.py because its frames are large arrays; the observation /
+# reward / termination blocks below are the declarative half of the recipe.
+observation_manager:
+  terms:
+    - {func: motion_phase}
+    - {func: joint_pos}
+    - {func: joint_vel, scale: 0.05}
+    - {func: motion_target_joint_pos}
+    - {func: joint_pos_error}
+    - {func: last_action}
+
+reward_manager:
+  scale_by_dt: true
+  terms:
+    - {name: track_pos, func: track_joint_pos_exp, weight: 1.0, params: {std: 0.4}}
+    - {name: track_vel, func: track_joint_vel_exp, weight: 0.2, params: {std: 2.0}}
+    - {name: action_rate, func: action_rate_l2, weight: -0.01}
+
+termination_manager:
+  terms:
+    - {func: time_out}
+    - {func: motion_divergence, params: {threshold: 1.5}}

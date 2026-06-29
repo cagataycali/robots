@@ -33,6 +33,7 @@ from strands_robots.sim_managers.base import (
 )
 from strands_robots.sim_managers.command import CommandManager
 from strands_robots.sim_managers.config import ManagerSet, build_managers, load_managers_config
+from strands_robots.sim_managers.motion import MotionClip
 from strands_robots.sim_managers.observation import ObservationManager
 from strands_robots.sim_managers.reward import RewardManager
 from strands_robots.sim_managers.termination import TerminationManager, TerminationResult
@@ -50,6 +51,7 @@ __all__ = [
     "TerminationManager",
     "TerminationResult",
     "CommandManager",
+    "MotionClip",
     "ManagerSet",
     "build_managers",
     "load_managers_config",

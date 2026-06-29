@@ -165,6 +165,64 @@ kernel; penalties return a squared magnitude (apply a negative weight).
 resamples every `resampling_time` seconds; seed with `reset(rng=...)` for
 reproducibility).
 
+## Whole-body tracking (WBT)
+
+Whole-body tracking trains a policy to imitate a reference motion. The terms
+build on the same primitives as locomotion - they read the per-step target from
+the `EnvState`, so the identical recipe runs on any backend.
+
+A `MotionClip` is an immutable reference trajectory (joint positions, optional
+velocities) sampled at a fixed `fps`, interpolated by *phase* in `[0, 1)`:
+
+```python
+from strands_robots.sim_managers import MotionClip
+clip = MotionClip.from_arrays(frames_pos, frames_vel, fps=30.0)  # (num_frames, num_joints)
+target_pos, target_vel, phase = clip.sample(t=0.5, loop=True)
+```
+
+The `motion_clip` **command** term replays a clip: each control step the
+`CommandManager` advances its clock by `state.dt` and publishes the interpolated
+target pose, target velocity, and phase into `state.extras` under the
+`motion_target_pos` / `motion_target_vel` / `motion_phase` keys (see
+`strands_robots.sim_managers.motion`). The WBT observation / reward / termination
+terms read those keys, so a `motion_clip` command term must run **before** them
+each step (the standard "commands first" ordering). A WBT term that runs without
+one raises a clear error naming the missing command.
+
+**Observation** (`motion_phase` - cyclic `[sin, cos]` of the phase;
+`motion_target_joint_pos`; `motion_target_joint_vel`; `joint_pos_error` -
+`joint_pos - target`).
+
+**Reward** (`track_joint_pos_exp`, `track_joint_vel_exp` - bounded `(0, 1]`
+Gaussian kernels of the per-joint pose / velocity error, same `track_*_exp`
+convention as locomotion). For smoothness penalties reuse the shared
+`action_rate_l2` / `dof_acc_l2` terms.
+
+**Termination** (`motion_divergence` - failure when the L2 joint-position error
+exceeds `threshold`, the standard "lost the motion" early stop).
+
+```yaml
+command_manager:
+  terms:
+    - {name: motion, func: motion_clip, params: {frames_pos: [[...]], fps: 30.0}}
+observation_manager:
+  terms:
+    - {func: motion_phase}
+    - {func: joint_pos_error}
+reward_manager:
+  terms:
+    - {name: track_pos, func: track_joint_pos_exp, weight: 1.0, params: {std: 0.4}}
+    - {name: track_vel, func: track_joint_vel_exp, weight: 0.2, params: {std: 2.0}}
+termination_manager:
+  terms:
+    - {func: time_out}
+    - {func: motion_divergence, params: {threshold: 1.5}}
+```
+
+Locomotion and WBT share the same managers, registry, and config DSL - they
+differ only in which terms a recipe selects, so a multi-task policy reuses the
+common terms with no code duplication.
+
 ## Worked example
 
 `examples/sim_managers_locomotion.py` loads `sim_managers_locomotion.yaml`,
@@ -184,6 +242,12 @@ per-term reward contribution (summed):
   alive               +0.21600
   ...
 ```
+
+`examples/sim_managers_wbt.py` is the WBT counterpart: it builds a `motion_clip`
+recipe and drives a position-controlled SO-101 arm in headless MuJoCo to imitate
+the reference, recording the rollout to an MP4 while scoring it through the
+tracking reward (the arm completes the clip with no divergence and a
+pose-tracking-dominated reward).
 
 ## Extending
 
