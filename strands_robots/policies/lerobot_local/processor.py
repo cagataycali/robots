@@ -200,12 +200,21 @@ class ProcessorBridge:
         preprocessor = None
         postprocessor = None
 
-        # Load preprocessor
+        # Load preprocessor. A checkpoint trained on GPU pins its
+        # ``device_processor`` step to ``cuda``; reconstructing that step on a
+        # CPU/MPS host raises (``get_safe_torch_device`` asserts the device is
+        # available). Without intervention the WHOLE preprocessor is then
+        # dropped and the bridge runs with no input normalization -- actions
+        # stay in raw space and the arm barely moves. ``_load_preprocessor``
+        # remaps the pin to the resolved inference device and retries so
+        # normalization is preserved automatically (no manual override needed).
         try:
-            preprocessor = DataProcessorPipeline.from_pretrained(
+            preprocessor = cls._load_preprocessor(
+                DataProcessorPipeline,
                 pretrained_name_or_path,
-                config_filename=preprocessor_config,
-                overrides=overrides or {},
+                preprocessor_config,
+                overrides or {},
+                device,
             )
             logger.info("Loaded preprocessor from %s: %d steps", pretrained_name_or_path, len(preprocessor))
         except _missing_config_errors() as exc:
@@ -237,6 +246,79 @@ class ProcessorBridge:
             postprocessor=postprocessor,
             device=device,
         )
+
+    @staticmethod
+    def _load_preprocessor(
+        pipeline_cls: Any,
+        pretrained_name_or_path: str,
+        config_filename: str,
+        overrides: dict[str, Any],
+        device: str | None,
+    ) -> Any:
+        """Load the preprocessor pipeline, remapping a stale device pin if needed.
+
+        A checkpoint trained on GPU saves its ``device_processor`` step pinned
+        to ``cuda``. Reconstructing that step on a CPU/MPS host raises inside
+        ``from_pretrained`` because ``get_safe_torch_device`` asserts the device
+        is available. The caller's ``except`` then treats the present-but-broken
+        config as "no preprocessor" and the bridge runs with NO input
+        normalization -- the single biggest cause of an arm that barely moves.
+
+        When a target ``device`` is known and the caller did not already supply a
+        ``device_processor`` override, this retries the load once with the pin
+        remapped to the inference device, so normalization is preserved without
+        the caller having to pass ``processor_overrides`` manually.
+
+        Args:
+            pipeline_cls: The resolved ``DataProcessorPipeline`` class.
+            pretrained_name_or_path: HF model ID or local checkpoint path.
+            config_filename: Preprocessor config filename.
+            overrides: User-supplied step overrides (never mutated).
+            device: Resolved inference device, or None when unknown.
+
+        Returns:
+            The loaded preprocessor pipeline.
+
+        Raises:
+            The original missing-config error when no preprocessor can be built
+            (genuinely absent config, or a failure unrelated to the device pin).
+        """
+        try:
+            return pipeline_cls.from_pretrained(
+                pretrained_name_or_path,
+                config_filename=config_filename,
+                overrides=overrides,
+            )
+        except _missing_config_errors() as exc:
+            # Only a stale device pin is recoverable here, and only when we know
+            # which device to remap to and the caller has not already pinned it.
+            if device is None or "device_processor" in overrides:
+                raise
+            retry_overrides = {**overrides, "device_processor": {"device": device}}
+            # lerobot raises KeyError when an override targets a step the
+            # pipeline lacks; bundle it with the missing-config errors so the
+            # retry is non-fatal and the ORIGINAL error wins.
+            retryable: tuple[type[BaseException], ...] = (*_missing_config_errors(), KeyError)
+            try:
+                preprocessor = pipeline_cls.from_pretrained(
+                    pretrained_name_or_path,
+                    config_filename=config_filename,
+                    overrides=retry_overrides,
+                )
+            except retryable:
+                # No device_processor step to remap (KeyError) or genuinely no
+                # config: surface the ORIGINAL error so the caller logs the
+                # normal "no preprocessor" path.
+                raise exc from None
+            logger.warning(
+                "Preprocessor for %s pinned device_processor to an unavailable "
+                "device; remapped to '%s' so input normalization is preserved. "
+                "Pass processor_overrides={'device_processor': {'device': ...}} "
+                "to override.",
+                pretrained_name_or_path,
+                device,
+            )
+            return preprocessor
 
     @staticmethod
     def _load_norm_stats_fallback(

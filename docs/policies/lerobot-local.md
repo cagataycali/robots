@@ -284,6 +284,20 @@ action_unnorm = (clip(action, -1, 1) + 1) * (q99 - q01) / 2 + q01
 When a stats file declares multiple embodiment tags, pass `norm_tag=` to select
 one; a single-tag file is auto-detected.
 
+### Device-pinned preprocessors on a CPU/MPS host
+
+A checkpoint trained on GPU saves its preprocessor's `device_processor` step
+pinned to `cuda`. Reconstructing that step on a host without a matching CUDA
+build (a Jetson whose driver predates the checkpoint's CUDA, a Mac, x86 CI)
+raises while loading the pipeline. The bridge detects this and retries the load
+once with the pin remapped to the resolved inference `device`, so input
+normalization is preserved automatically - you do not need to pass
+`processor_overrides`. A `WARNING` is logged when the remap happens. An explicit
+`processor_overrides={"device_processor": {"device": ...}}` is always honored and
+suppresses the auto-remap. Without this, the preprocessor would be dropped and
+the model would silently receive raw, un-normalized observations (out of its
+training distribution), producing off-policy actions.
+
 ## Camera routing
 
 Robot/sim observations use bare camera names (`top`, `wrist`, `side`); the policy
