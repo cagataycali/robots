@@ -86,6 +86,30 @@ class TestValidate:
         problems = Gr00tTrainer().validate(spec)
         assert any("modality_config_path does not exist" in p for p in problems)
 
+    @pytest.mark.parametrize(
+        ("mutate", "expected"),
+        [
+            (lambda s: setattr(s, "dataset_root", ""), "dataset_root is required"),
+            (lambda s: setattr(s, "base_model", ""), "base_model is required"),
+            (lambda s: setattr(s, "output_dir", ""), "output_dir is required"),
+            (lambda s: setattr(s, "method", "bogus"), "unsupported method 'bogus'"),
+            (lambda s: setattr(s, "steps", 0), "steps must be > 0"),
+        ],
+    )
+    def test_required_field_branch(self, spec, mutate, expected):
+        """Each missing/invalid core field surfaces its own problem string."""
+        mutate(spec)
+        problems = Gr00tTrainer().validate(spec)
+        assert any(expected in p for p in problems), problems
+
+    def test_dataset_root_without_info_json_rejected(self, spec, tmp_path):
+        """A dataset_root dir lacking meta/info.json is not a v3 root."""
+        empty = tmp_path / "not_a_dataset"
+        empty.mkdir()
+        spec.dataset_root = str(empty)
+        problems = Gr00tTrainer().validate(spec)
+        assert any("is not a LeRobotDataset v3 root" in p for p in problems), problems
+
 
 class TestBuildCommand:
     def test_single_gpu_core_flags(self, spec):
