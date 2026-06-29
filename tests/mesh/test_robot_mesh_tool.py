@@ -211,6 +211,66 @@ def test_inbox_with_no_messages(fake_local_mesh):
     assert "no messages" in out["content"][0]["text"]
 
 
+# ---------------------------------------------------------------------------
+# Observation / read-only action set: teardown + mesh-not-running paths.
+#
+# The read-only set (peers, status, inbox, unsubscribe) plus the
+# subscribe/watch setup actions must each surface a clear, audited result -
+# including the "no subscription named" guard and the "mesh not running"
+# failure where the underlying transport returns None instead of a handle.
+# ---------------------------------------------------------------------------
+
+
+def test_unsubscribe_calls_mesh_unsubscribe(fake_local_mesh):
+    out = _strands_call(action="unsubscribe", name="sub-a")
+    assert out["status"] == "success"
+    assert "unsubscribed from 'sub-a'" in out["content"][0]["text"]
+    fake_local_mesh.unsubscribe.assert_called_once_with("sub-a")
+
+
+def test_unsubscribe_falls_back_to_target_when_no_name(fake_local_mesh):
+    # name is optional; the subscription handle defaults to target.
+    out = _strands_call(action="unsubscribe", target="sub-b")
+    assert out["status"] == "success"
+    assert "unsubscribed from 'sub-b'" in out["content"][0]["text"]
+    fake_local_mesh.unsubscribe.assert_called_once_with("sub-b")
+
+
+def test_unsubscribe_requires_name_or_target(fake_local_mesh):
+    out = _strands_call(action="unsubscribe")
+    assert out["status"] == "error"
+    assert "requires name" in out["content"][0]["text"]
+    fake_local_mesh.unsubscribe.assert_not_called()
+
+
+def test_inbox_requires_name_or_target(fake_local_mesh):
+    out = _strands_call(action="inbox")
+    assert out["status"] == "error"
+    assert "requires name" in out["content"][0]["text"]
+
+
+def test_subscribe_reports_mesh_not_running_when_handle_is_none(fake_local_mesh):
+    # An allowlisted target that resolves but whose mesh.subscribe() returns
+    # None (transport not running) must fail with an actionable message, not
+    # claim success on a missing subscription handle.
+    fake_local_mesh.subscribe.return_value = None
+    out = _strands_call(action="subscribe", target="**/presence", name="presence")
+    assert out["status"] == "error"
+    assert "mesh not running" in out["content"][0]["text"]
+
+
+def test_watch_reports_mesh_not_running_when_stream_is_none(fake_local_mesh, monkeypatch):
+    monkeypatch.setenv("STRANDS_MESH_SUBSCRIBE_ALLOW", "strands/*/stream")
+    from strands_robots.tools.robot_mesh import _reset_subscribe_allowlist_cache
+
+    _reset_subscribe_allowlist_cache()
+    fake_local_mesh.on_stream.return_value = None
+    out = _strands_call(action="watch", target="peer-b")
+    _reset_subscribe_allowlist_cache()
+    assert out["status"] == "error"
+    assert "mesh not running" in out["content"][0]["text"]
+
+
 def test_unknown_action_returns_error(fake_local_mesh):
     out = _strands_call(action="warp")
     assert out["status"] == "error"
