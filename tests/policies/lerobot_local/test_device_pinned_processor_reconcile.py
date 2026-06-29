@@ -45,7 +45,10 @@ def _unavailable_device() -> str:
         return "cuda"
     if not torch.backends.mps.is_available():
         return "mps"
-    pytest.skip("host has both CUDA and MPS; cannot pin an unavailable device")
+    # Both accelerators present: no unavailable device to pin. Return the
+    # skip (typed NoReturn) so every exit path is an explicit return and the
+    # function has no implicit fall-through.
+    return pytest.skip("host has both CUDA and MPS; cannot pin an unavailable device")
 
 
 def _write_pipeline_config(directory: Path, filename: str, device: str) -> None:
