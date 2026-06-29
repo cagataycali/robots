@@ -251,6 +251,27 @@
         "wbc_gait",
         "sonic_gait"
       ]
+    },
+    "motionbricks": {
+      "module": "strands_robots.policies.motionbricks",
+      "class": "MotionBricksPolicy",
+      "description": "NVIDIA MotionBricks generative kinematic motion for the Unitree G1 (in-process, torch)",
+      "requires": [],
+      "config_keys": [
+        "config",
+        "result_dir",
+        "style",
+        "target_velocity",
+        "device",
+        "motion_agent"
+      ],
+      "defaults": {
+        "style": "walk"
+      },
+      "shorthands": [
+        "motionbricks",
+        "motion_bricks"
+      ]
     }
   }
 }

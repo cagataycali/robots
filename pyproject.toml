@@ -142,6 +142,25 @@ wbc = [
     # lerobot, so the two must co-resolve.
     "huggingface_hub>=0.20.0,<2.0.0",
 ]
+motionbricks = [
+    # MotionBricks (NVlabs/GR00T-WholeBodyControl `motionbricks/`) generative
+    # kinematic motion for the G1. The `motionbricks` package itself is NOT on
+    # PyPI - install it editable from the upstream checkout AFTER this extra:
+    #   git clone https://github.com/NVlabs/GR00T-WholeBodyControl
+    #   git -C GR00T-WholeBodyControl lfs pull --include="motionbricks/out/**" --exclude=""
+    #   pip install -e GR00T-WholeBodyControl/motionbricks
+    # This extra pulls the PyPI support libraries its model code imports so the
+    # editable install resolves cleanly. Model weights are NOT bundled; they are
+    # fetched with git-LFS under the NVIDIA Open Model License. See
+    # policies/motionbricks/ and docs/policies/motionbricks.md.
+    "torch>=2.0.0",
+    "vector-quantize-pytorch>=1.14.0",
+    "adam-atan2-pytorch>=0.0.12",
+    "hydra-core>=1.3.0,<2.0.0",
+    "omegaconf>=2.3.0,<3.0.0",
+    "pytorch-lightning>=2.0.0,<3.0.0",
+    "scipy>=1.10.0",
+]
 lerobot = [
     # [dataset] bundles the read-back stack the streaming data loop needs:
     # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec
@@ -287,6 +306,7 @@ all = [
     "strands-robots[mesh-iot]",
     "strands-robots[device-connect]",
     "strands-robots[wbc]",
+    "strands-robots[motionbricks]",
     "strands-robots[molmoact2]",
 ]
 dev = [
@@ -447,7 +467,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "trimesh", "trimesh.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "motionbricks", "motionbricks.*", "trimesh", "trimesh.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge
@@ -540,6 +560,7 @@ markers = [
     "moveit2: requires a running MoveIt2 sidecar (ROS 2 / moveit_py). Run with: pytest -m moveit2",
     "curobo: requires NVIDIA cuRobo + a CUDA-capable GPU. Run with: pytest -m curobo (set CUROBO_LIVE=1)",
     "wbc: requires onnxruntime + a downloaded GR00T-WBC (SONIC) checkpoint + mujoco. Run with: pytest -m wbc (set WBC_LIVE=1)",
+    "motionbricks: requires the [motionbricks] extra + the upstream `motionbricks` package + git-LFS checkpoints + mujoco. Run with: pytest -m motionbricks (set MOTIONBRICKS_CKPT=<out dir>)",
     "molmoact2: requires lerobot >= 0.5.2 (from source) + the [molmoact2] extra (transformers, peft, scipy). Run with: pytest -m molmoact2",
     "rtps: requires cyclonedds ([ros2] extra) + a live ROS 2 peer (e.g. turtlesim) on the DDS domain. Run with: RTPS_LIVE=1 pytest -m rtps",
 ]

@@ -40,6 +40,7 @@ nav:
   - MoveIt2: policies/moveit2.md
   - WBC (Whole-Body-Control): policies/wbc.md
   - WBC Gait-Clock Variant: policies/wbc_gait.md
+  - MotionBricks (G1 generative motion): policies/motionbricks.md
   - LeRobot Local: policies/lerobot-local.md
   - MolmoAct2 (SO-100/101): policies/molmoact2.md
   - Camera Naming: policies/camera-naming.md
