@@ -31,6 +31,8 @@ from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from collections.abc import Callable
 
+    import torch
+
     from strands_robots.training.rl.env import SimEnv
 
 
@@ -130,6 +132,10 @@ class BaseRLAlgo(Trainer):
     """
 
     steps_per_iter: int = 1
+    # Subclass-provided attributes (set during setup)
+    actor_critic: Any  # torch.nn.Module (actor-critic network)
+    env: Any  # SimEnv or VecSimEnv
+    device: Any  # torch.device or str
 
     @abstractmethod
     def setup(self, spec: RLTrainSpec) -> None:
@@ -191,3 +197,180 @@ class BaseRLAlgo(Trainer):
             metrics=last_metrics,
             message=f"{self.provider_name}: {num_iters} iterations x {steps_per_iter} steps complete",
         )
+
+    def _deterministic_action(self, actor_obs: torch.Tensor) -> torch.Tensor:
+        """Return the deployable (mean / deterministic) action for ``actor_obs``.
+
+        Both concrete trainers expose ``act_inference`` on their actor-critic
+        module (PPO: the actor mean; SAC: ``tanh(mean)``), so the default
+        dispatches there. A subclass with a different module API can override.
+        """
+        return self.actor_critic.act_inference(actor_obs)
+
+    def evaluate(
+        self,
+        spec: RLTrainSpec | None = None,
+        checkpoint_dir: str | None = None,
+        num_episodes: int = 10,
+    ) -> dict[str, Any]:
+        """Roll out the DETERMINISTIC policy for ``num_episodes`` and score it.
+
+        The eval peer of :meth:`train`: it never updates the policy, the
+        normalizers, or the replay buffer - it runs the deployable (mean)
+        action only, with gradients disabled and observation normalization
+        frozen, so the numbers it returns are exactly what a deployed
+        ``policy.pt`` would produce.
+
+        Two entry modes:
+          - After :meth:`train` / :meth:`setup` on the SAME trainer instance:
+            call ``evaluate(num_episodes=...)`` with no spec; it reuses the
+            in-memory env + actor-critic.
+          - Fresh instance: pass ``spec`` (to build the env via
+            ``spec.env_factory``) and optionally ``checkpoint_dir`` (to load a
+            saved ``policy.pt``); when ``checkpoint_dir`` is omitted it uses
+            ``spec.output_dir``'s latest checkpoint if one exists, else the
+            freshly-initialised (untrained) weights.
+
+        Args:
+            spec: Required only when the trainer has not been ``setup``; builds
+                the env and networks. Ignored when the trainer is already live.
+            checkpoint_dir: Directory holding ``policy.pt`` to load before
+                evaluating. ``None`` keeps the in-memory weights (or the
+                latest checkpoint under ``spec.output_dir`` for a fresh
+                instance).
+            num_episodes: Number of full episodes to roll out. Must be > 0.
+
+        Returns:
+            Metrics dict::
+
+                {
+                    "num_episodes": int,
+                    "mean_return": float,
+                    "std_return": float,
+                    "min_return": float,
+                    "max_return": float,
+                    "mean_length": float,
+                    "success_rate": float,   # fraction terminated via success_fn
+                    "returns": list[float],  # per-episode
+                }
+
+            ``success_rate`` is the fraction of episodes that ended on a genuine
+            terminal (``info["terminated"]`` -> the env's ``success_fn``), not a
+            time-out. When the env has no ``success_fn`` every episode times out
+            and ``success_rate`` is ``0.0``.
+
+        Raises:
+            ValueError: ``num_episodes <= 0``, or the trainer is not set up and
+                no ``spec`` was provided to build it.
+        """
+        import torch
+
+        if num_episodes <= 0:
+            raise ValueError(f"num_episodes must be > 0, got {num_episodes}")
+
+        # Bring the trainer to a live state if it was not already set up.
+        if getattr(self, "actor_critic", None) is None or getattr(self, "env", None) is None:
+            if spec is None:
+                raise ValueError(
+                    "evaluate() on a trainer that has not been setup() requires a spec "
+                    "(with env_factory) to build the env and networks"
+                )
+            self.setup(spec)
+            if checkpoint_dir is None and spec.output_dir:
+                checkpoint_dir = self.latest_checkpoint(spec.output_dir)
+
+        if checkpoint_dir is not None:
+            self.load_checkpoint(checkpoint_dir)
+
+        actor_norm = getattr(self, "actor_norm", None)
+
+        def _norm(x: torch.Tensor) -> torch.Tensor:
+            # Freeze the normalizer (update=False) so eval never shifts the
+            # running statistics learned during training.
+            return actor_norm(x, update=False) if actor_norm is not None else x
+
+        # Capture the pre-eval mode so evaluate() can restore it: a train ->
+        # evaluate -> train continuation must resume with BatchNorm/Dropout
+        # live. Leaving a module in eval() silently freezes its running stats
+        # (the exact eval/train-mode footgun that bites supervised fine-tunes).
+        _ac_was_training = self.actor_critic.training
+        _norm_was_training = actor_norm.training if actor_norm is not None else False
+        self.actor_critic.eval()
+        if actor_norm is not None:
+            actor_norm.eval()
+
+        # Evaluation is inherently per-episode sequential, so it runs on a SINGLE
+        # env even when training used a VecSimEnv (N>1). A VecSimEnv returns
+        # (N,)-batched rewards/dones that cannot be scalarised here; use its
+        # first sub-env, which is a plain SimEnv with the (1,)-shaped contract.
+        eval_env = self.env.envs[0] if hasattr(self.env, "envs") else self.env
+
+        returns: list[float] = []
+        lengths: list[int] = []
+        successes = 0
+        for _ in range(num_episodes):
+            obs = eval_env.reset()
+            ep_return = 0.0
+            ep_len = 0
+            terminated = False
+            while True:
+                actor_obs = _norm(obs["actor_obs"])
+                with torch.no_grad():
+                    action = self._deterministic_action(actor_obs)
+                obs, reward, done, info = eval_env.step(action)
+                ep_return += float(reward.item())
+                ep_len += 1
+                if bool(done.item()):
+                    terminated = bool(info.get("terminated", False))
+                    break
+            returns.append(ep_return)
+            lengths.append(ep_len)
+            if terminated:
+                successes += 1
+
+        # Restore the pre-eval mode (side-effect-free evaluate()).
+        self.actor_critic.train(_ac_was_training)
+        if actor_norm is not None:
+            actor_norm.train(_norm_was_training)
+
+        returns_t = torch.tensor(returns, dtype=torch.float32)
+        return {
+            "num_episodes": num_episodes,
+            "mean_return": float(returns_t.mean().item()),
+            "std_return": float(returns_t.std(unbiased=False).item()),
+            "min_return": float(returns_t.min().item()),
+            "max_return": float(returns_t.max().item()),
+            "mean_length": float(sum(lengths) / len(lengths)),
+            "success_rate": float(successes / num_episodes),
+            "returns": returns,
+        }
+
+    def load_checkpoint(self, checkpoint_dir: str) -> None:
+        """Load ``policy.pt`` (actor-critic + normalizers) from ``checkpoint_dir``.
+
+        Restores weights into the already-constructed module graph (call
+        :meth:`setup` first). Subclasses whose checkpoint carries extra state
+        (e.g. SAC's ``log_alpha``) override to restore it, then ``super().``
+        for the shared actor-critic + normalizer load.
+
+        Raises:
+            FileNotFoundError: When ``policy.pt`` is absent from the directory.
+        """
+        import os
+
+        import torch
+
+        path = os.path.join(checkpoint_dir, "policy.pt")
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"no policy.pt in checkpoint dir: {checkpoint_dir}")
+        # The checkpoint payload is state_dicts + an int + a str (see
+        # save_checkpoint), so the hardened weights_only=True loader works and
+        # closes the arbitrary-code-execution surface of the legacy unpickler.
+        state = torch.load(path, map_location=self.device, weights_only=True)
+        self.actor_critic.load_state_dict(state["actor_critic"])
+        actor_norm = getattr(self, "actor_norm", None)
+        if actor_norm is not None and "actor_norm" in state:
+            actor_norm.load_state_dict(state["actor_norm"])
+        critic_norm = getattr(self, "critic_norm", None)
+        if critic_norm is not None and "critic_norm" in state:
+            critic_norm.load_state_dict(state["critic_norm"])

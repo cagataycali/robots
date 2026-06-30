@@ -5,6 +5,25 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `BaseRLAlgo.evaluate()` - deterministic eval peer of `train()`
+
+The from-scratch RL trainers (`PpoTrainer`, `FastSacTrainer`) could `train()` a
+policy but had no first-class way to *score* it: callers had to hand-roll a
+rollout loop and risk scoring the stochastic (exploration) action or an
+un-frozen normalizer, neither of which matches what a deployed `policy.pt`
+produces. `BaseRLAlgo.evaluate(spec=None, checkpoint_dir=None, num_episodes=10)`
+now rolls out the DETERMINISTIC (mean) action with gradients disabled and
+observation normalization frozen, and returns
+`{num_episodes, mean_return, std_return, min_return, max_return, mean_length,
+success_rate, returns}`. It works both on a live post-`train()` instance (reuses
+the in-memory env + network) and on a fresh instance (builds the env from `spec`
+and optionally loads `policy.pt` via the new `load_checkpoint()`); the default
+`_deterministic_action()` dispatches to the actor-critic's `act_inference`, so
+PPO and FastSAC share one implementation with no per-subclass override.
+`success_rate` is the fraction of episodes ending on a genuine terminal (the
+env's `success_fn`), not a time-out. Purely additive - no existing behaviour
+changes.
+
 ### Added: LeKiwi is now simulatable (`Robot("lekiwi", mode="sim")`)
 
 The `lekiwi` registry entry was hardware-only - it carried a `hardware.lerobot_type`
