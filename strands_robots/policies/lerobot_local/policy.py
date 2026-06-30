@@ -370,6 +370,11 @@ class LerobotLocalPolicy(Policy):
         # control_frequency (set_control_frequency never called) so the
         # 30Hz fallback is loud, not silent.
         self._rtc_freq_warned: bool = False
+        # Warn at most once per policy when the configured robot_state_keys
+        # do not match ANY key in the observation (the generic joint_0..N
+        # vs named-joint mismatch). Keeps the state-key fallback loud, not
+        # silent (see _resolve_state_order).
+        self._state_key_mismatch_warned: bool = False
 
         # Action diagnostics: surface a model<->embodiment action-dim mismatch
         # (zero-filled actuators) and a persistent near-zero action stream
@@ -1795,6 +1800,62 @@ class LerobotLocalPolicy(Policy):
 
         return fixed
 
+    def _resolve_state_order(self, observation_dict: dict[str, Any], scalar_keys: list[str]) -> list[str]:
+        """Resolve which observation keys hold this step's joint-state vector.
+
+        Honors ``robot_state_keys`` when at least one of them is present in the
+        observation. When ``robot_state_keys`` is non-empty but NONE of its
+        keys appear in the observation, the configured keys cannot describe
+        this robot/sim - the canonical case being auto-generated generic names
+        (``joint_0..joint_N``, derived from the model action dim) paired with a
+        sim/robot that reports named joints (``shoulder_pan`` ...). That
+        mismatch previously yielded a zero/empty ``observation.state`` silently,
+        so the policy ran open-loop while reporting no error. It is now LOUD:
+
+          * ``strict_keys=True``  -> raise :class:`ValueError` naming the actual
+            observation keys and pointing at ``embodiment=`` /
+            ``set_robot_state_keys()``.
+          * ``strict_keys=False`` -> warn once with the same guidance, then
+            fall back to the observation's own scalar keys so the state is
+            populated rather than silently dropped.
+
+        Args:
+            observation_dict: Raw strands/sim observation for this step.
+            scalar_keys: Non-image, non-``task`` scalar keys present in the
+                observation, used as the fallback ordering.
+
+        Returns:
+            The ordered keys to pull scalar joint values from.
+
+        Raises:
+            ValueError: When ``strict_keys`` is set and no configured key
+                matches the observation.
+        """
+        if not self.robot_state_keys:
+            return scalar_keys
+        if any(k in observation_dict for k in self.robot_state_keys):
+            return self.robot_state_keys
+        shown = self.robot_state_keys[:8]
+        ellipsis = "..." if len(self.robot_state_keys) > 8 else ""
+        msg = (
+            f"None of the configured robot_state_keys {shown}{ellipsis} are present "
+            f"in the observation. Observed joint/state keys: {scalar_keys}. This "
+            "usually means generic auto-generated keys (joint_0..joint_N) were "
+            "paired with a robot/sim that reports named joints. Pass "
+            "embodiment='<name>' (e.g. embodiment='so101') or call "
+            "set_robot_state_keys([...]) with the robot's actual joint names."
+        )
+        if self.strict_keys:
+            raise ValueError("strict_keys=True: " + msg)
+        # Surface the degraded binding as machine-detectable telemetry
+        # (run_policy / eval_policy read generic_state_keys_used) and warn at
+        # most once per policy so a long rollout is not spammed.
+        self.generic_state_keys_used = True
+        if not self._state_key_mismatch_warned:
+            logger.warning(msg)
+            self._state_key_mismatch_warned = True
+        return scalar_keys
+
     def _to_lerobot_observation(self, observation_dict: dict[str, Any]) -> dict[str, Any]:
         """Remap a strands-native observation to LeRobot feature keys.
 
@@ -1880,27 +1941,11 @@ class LerobotLocalPolicy(Policy):
         scalar_keys = [
             k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)
         ]
-        # Prefer robot_state_keys ordering, but fall back to the actual scalar
-        # keys present in the observation. robot_state_keys is often auto-filled
-        # with generic names (joint_0..joint_N) from the model's action dim,
-        # which won't match a sim/robot using real joint names ('1'..'6',
-        # 'shoulder', ...). If none of robot_state_keys are present, use the
-        # observation's own scalar keys so we never silently drop the state.
-        order = self.robot_state_keys or scalar_keys
-        if self.robot_state_keys and not any(k in observation_dict for k in self.robot_state_keys):
-            self.generic_state_keys_used = True
-            logger.warning(
-                "None of robot_state_keys %s are present in the observation "
-                "(scalar keys: %s); composing observation.state from the "
-                "observation's own scalar keys instead. This usually means the "
-                "policy fell back to generic joint_0..N names that do not match "
-                "the robot's real joint names - the state vector ordering may be "
-                "wrong. Set an embodiment or robot_state_keys that match the "
-                "runtime joints.",
-                list(self.robot_state_keys),
-                sorted(scalar_keys),
-            )
-            order = scalar_keys
+        # Resolve the joint-state ordering, raising/warning loudly when the
+        # configured robot_state_keys cannot describe this observation (the
+        # generic joint_0..N vs named-joint mismatch) instead of silently
+        # producing a zero/empty state (see _resolve_state_order).
+        order = self._resolve_state_order(observation_dict, scalar_keys)
         state_vals = []
         for k in order:
             if k in observation_dict:
@@ -2219,10 +2264,20 @@ class LerobotLocalPolicy(Policy):
                 "Call set_robot_state_keys() with the robot's motor names."
             )
 
-        # Collect state values in robot_state_keys order. Each key maps to a
-        # single float value representing one joint/motor position.
+        # Resolve the joint-state ordering. When the configured keys match
+        # nothing in the observation (generic joint_0..N vs named joints), this
+        # raises (strict_keys) or warns + falls back to the observation's own
+        # scalar keys, instead of silently dropping observation.state and
+        # running the policy open-loop (see _resolve_state_order).
+        scalar_keys = [
+            k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)
+        ]
+        order = self._resolve_state_order(observation_dict, scalar_keys)
+
+        # Collect state values in resolved order. Each key maps to a single
+        # float value representing one joint/motor position.
         state_values = []
-        for key in self.robot_state_keys:
+        for key in order:
             if key in observation_dict:
                 value = observation_dict[key]
                 if isinstance(value, (int, float)):

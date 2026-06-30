@@ -9,6 +9,24 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 `LerobotLocalPolicy`'s heuristic (non-declarative) remap path keeps a rollout alive even when it cannot bind the observation to the model's inputs by name: a camera whose name matches no declared image feature is routed to a free slot positionally, and `observation.state` is composed from the observation's own scalar keys when none of `robot_state_keys` match (the generic `joint_0..N` fallback). Either makes the robot move on meaningless inputs while `run_policy` / `eval_policy` still report `status="success"` with `success_rate ~ 0`, and the only trace was a log line (the positional fallback on the preprocessor path did not even warn). Both fallbacks now flip a flag on the policy (`positional_fallback_used` / `generic_state_keys_used`) and emit a WARNING, and `run_policy` / `eval_policy` surface both flags in their JSON result block alongside the existing `action_errors` / load telemetry. A `True` flag on an otherwise-successful run is the signature of a misconfigured camera/state binding. No behaviour change for correctly-named observations (both flags stay `False`); the remap itself is unchanged.
 
+### Fixed: LerobotLocalPolicy state-key mismatch is now loud instead of a silent zero/open-loop rollout
+
+When `LerobotLocalPolicy` auto-generated generic state keys (`joint_0..N`, from
+the model action dim) but the sim/robot reported named joints (`shoulder_pan`
+...), none of the configured `robot_state_keys` matched the observation. Both
+observation-to-batch paths handled this silently: the preprocessor/VLA path
+(`_to_lerobot_observation`) fell back to the observation's scalar keys with no
+warning, and the strands-native path (`_build_batch_from_strands_format`)
+dropped `observation.state` entirely. The model then ran conditioned on a
+zero/missing state - effectively open-loop - while reporting `action_errors=0`,
+`success_rate=0`, and no error log. The mismatch is now surfaced through the
+existing `strict_keys` knob: with `strict_keys=True` it raises a `ValueError`
+that names the actual observation keys and points at `embodiment=` /
+`set_robot_state_keys()`; with the default `strict_keys=False` it logs a single
+WARNING with the same guidance and then falls back to the observation's own
+scalar keys, so the state is populated rather than silently zeroed or dropped.
+
+
 ### Removed: the `strands_robots.planning` package - locomotion intent is `policy_kwargs`
 
 The `strands_robots.planning` package (a `Planner` ABC, `PlannerCommand`,
