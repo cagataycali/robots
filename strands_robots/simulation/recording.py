@@ -501,6 +501,7 @@ class DatasetRecordingMixin:
         joint_names: list[str],
         camera_keys: list[str],
         camera_dims: dict[str, tuple[int, int]],
+        action_names: list[str] | None = None,
     ) -> None:
         """Verify the live scene matches the resumed dataset's on-disk schema.
 
@@ -521,6 +522,9 @@ class DatasetRecordingMixin:
                 multi-robot scenes).
             camera_keys: Sanitized camera feature names the current scene emits.
             camera_dims: Map of camera feature name -> (height, width).
+            action_names: Action-column names the current scene will emit
+                (actuator keys; namespaced for multi-robot scenes). When None
+                the action feature is not compared.
 
         Raises:
             ValueError: If the live scene schema diverges from the on-disk one.
@@ -536,6 +540,13 @@ class DatasetRecordingMixin:
             disk_joints = list(state.get("names") or [])
             if disk_joints and disk_joints != list(joint_names):
                 diffs.append(f"observation.state joints differ: on-disk={disk_joints} vs scene={list(joint_names)}")
+
+        if action_names is not None:
+            action = features.get("action")
+            if isinstance(action, dict):
+                disk_action = list(action.get("names") or [])
+                if disk_action and disk_action != list(action_names):
+                    diffs.append(f"action columns differ: on-disk={disk_action} vs scene={list(action_names)}")
 
         for cam in camera_keys:
             key = f"observation.images.{cam}"

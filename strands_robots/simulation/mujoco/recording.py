@@ -43,6 +43,8 @@ class RecordingMixin(DatasetRecordingMixin):
         default_width: int
         default_height: int
 
+        def robot_action_keys(self, robot_name: str) -> list[str]: ...
+
     def start_recording(
         self,
         repo_id: str = "local/sim_recording",
@@ -163,14 +165,23 @@ class RecordingMixin(DatasetRecordingMixin):
             # so the dataset schema has unique joint ids per agent. Single-robot
             # scenes keep the clean ``shoulder_pan`` names for backwards compat.
             joint_names: list[str] = []
+            # Action columns are keyed by the ACTUATORS the rollout loops emit
+            # (SimEngine.robot_action_keys), not the joint names. These diverge
+            # whenever a robot has passive/mimic joints with no driving actuator
+            # or a tendon-driven gripper (an actuator with no matching joint);
+            # declaring the action schema from joint names there records all-zero
+            # action columns because add_frame can't match the actuator keys.
+            action_names: list[str] = []
             camera_keys: list[str] = []
             robot_type = "unknown"
             multi_robot = len(self._world.robots) > 1
             for rname, robot in self._world.robots.items():
                 if multi_robot:
                     joint_names.extend(f"{rname}__{jn}" for jn in robot.joint_names)
+                    action_names.extend(f"{rname}__{ak}" for ak in self.robot_action_keys(rname))
                 else:
                     joint_names.extend(robot.joint_names)
+                    action_names.extend(self.robot_action_keys(rname))
                 robot_type = robot.data_config or rname
 
             mj = _ensure_mujoco()
@@ -266,7 +277,7 @@ class RecordingMixin(DatasetRecordingMixin):
                 # a camera resolution between episodes would otherwise yield a
                 # cryptic per-feature shape error on the next add_frame. Compare
                 # up front and raise a clear schema-diff instead.
-                self._verify_resume_schema(resumed, joint_names, camera_keys, camera_dims)
+                self._verify_resume_schema(resumed, joint_names, camera_keys, camera_dims, action_names)
                 self._world._backend_state["dataset_recorder"] = resumed
             else:
                 self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
@@ -274,6 +285,7 @@ class RecordingMixin(DatasetRecordingMixin):
                     fps=fps,
                     robot_type=robot_type,
                     joint_names=joint_names,
+                    action_names=action_names,
                     camera_keys=camera_keys,
                     camera_dims=camera_dims,
                     task=task,

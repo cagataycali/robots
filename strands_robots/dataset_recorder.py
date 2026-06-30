@@ -252,6 +252,7 @@ class DatasetRecorder:
         camera_keys: list[str] | None = None,
         camera_dims: dict[str, tuple[int, int]] | None = None,
         joint_names: list[str] | None = None,
+        action_names: list[str] | None = None,
         task: str = "",
         root: str | None = None,
         use_videos: bool = True,
@@ -274,6 +275,10 @@ class DatasetRecorder:
             action_features: Dict of action feature names → types
             camera_keys: List of camera names (images become video features)
             joint_names: List of joint names (alternative to robot_features for sim)
+            action_names: Explicit action-column names. Use when the action
+                space diverges from the joint names (e.g. actuator short-names
+                from SimEngine.robot_action_keys, where a tendon gripper is an
+                actuator with no matching joint). Falls back to joint_names.
             task: Default task description
             root: Local directory for dataset storage
             use_videos: Encode camera frames as video (True) or keep as images
@@ -304,6 +309,7 @@ class DatasetRecorder:
             camera_keys=camera_keys,
             camera_dims=camera_dims,
             joint_names=joint_names,
+            action_names=action_names,
             use_videos=use_videos,
             video_width=video_width,
             video_height=video_height,
@@ -436,6 +442,7 @@ class DatasetRecorder:
         camera_keys: list[str] | None = None,
         camera_dims: dict[str, tuple[int, int]] | None = None,
         joint_names: list[str] | None = None,
+        action_names: list[str] | None = None,
         use_videos: bool = True,
         video_height: int = 480,
         video_width: int = 640,
@@ -492,9 +499,13 @@ class DatasetRecorder:
                 "names": state_names,
             }
 
-        # Action
+        # Action. Prefer an explicit action_names list (the actuator keys the
+        # rollout loops emit, which can diverge from the joint names - see
+        # SimEngine.robot_action_keys) so the recorded action columns match the
+        # keys add_frame receives. Fall back to action_features, then to the
+        # joint/state names for robots whose actuators mirror their joints.
         action_dim = 0
-        action_names = []
+        action_col_names: list[str] = []
         if action_features:
             action_keys = [
                 k
@@ -502,19 +513,22 @@ class DatasetRecorder:
                 if not isinstance(v, dict) or v.get("dtype") not in ("image", "video")
             ]
             action_dim = len(action_keys)
-            action_names = action_keys
+            action_col_names = action_keys
+        elif action_names:
+            action_dim = len(action_names)
+            action_col_names = list(action_names)
         elif joint_names:
             action_dim = len(joint_names)
-            action_names = list(joint_names)
+            action_col_names = list(joint_names)
         elif state_dim > 0:
             action_dim = state_dim  # Same dim as state by default
-            action_names = state_names[:]
+            action_col_names = state_names[:]
 
         if action_dim > 0:
             features["action"] = {
                 "dtype": "float32",
                 "shape": (action_dim,),
-                "names": action_names[:action_dim],
+                "names": action_col_names[:action_dim],
             }
 
         return features

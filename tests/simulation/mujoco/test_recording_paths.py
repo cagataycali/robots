@@ -274,6 +274,75 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
     assert both == len(ds) and len(ds) > 0, f"B4: only {both}/{len(ds)} frames had both robots co-observed"
 
 
+def test_multi_robot_recording_action_columns_keyed_by_actuators(sim_with_two_robots, tmp_path):
+    """Recorded action columns are keyed by each robot's ACTUATORS, not its
+    joints, so every frame carries both arms' commanded actions.
+
+    The rollout loops drive policies with ``robot_action_keys`` (actuator
+    short-names), which on this arm (joints ``shoulder_pan`` vs actuators
+    ``shoulder_pan_act``) differ from the joint names. If the recorder declared
+    its action schema from the joint names, ``add_frame`` could not match the
+    actuator-keyed action dict and would write all-zero action columns. This
+    asserts the action schema follows the actuator keys and that both robots'
+    action columns are non-zero in every frame.
+
+    Reads the action column straight from the on-disk parquet so the assertion
+    does not depend on a working video decoder (the image features are still
+    encoded; only ``action`` is inspected here).
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    pq = pytest.importorskip("pyarrow.parquet")
+    import glob
+
+    import numpy as np
+
+    from strands_robots.policies import create_policy
+
+    sim = sim_with_two_robots
+    root = str(tmp_path / "act_keys")
+    r = sim.start_recording(repo_id="local/act_keys", fps=20, root=root, overwrite=True)
+    assert r["status"] == "success", r
+
+    # The declared action schema follows the actuator keys (namespaced), not
+    # the joint names.
+    recorder = sim._world._backend_state["dataset_recorder"]
+    feat = recorder.dataset.features.get("action")
+    names = feat["names"] if isinstance(feat, dict) else getattr(feat, "names", None)
+    assert names == [
+        "alpha__shoulder_pan_act",
+        "alpha__shoulder_lift_act",
+        "alpha__elbow_act",
+        "beta__shoulder_pan_act",
+        "beta__shoulder_lift_act",
+        "beta__elbow_act",
+    ], names
+
+    pols = {"alpha": create_policy("mock"), "beta": create_policy("mock")}
+    r = sim.run_multi_policy(
+        policies=pols, instructions={"alpha": "a", "beta": "b"}, duration=0.5, control_frequency=20.0
+    )
+    assert r["status"] == "success", r
+    assert r["steps"] > 0
+    sim.stop_recording()
+
+    # Read the action column directly from parquet (no video decode needed).
+    parquets = [p for p in glob.glob(f"{root}/**/*.parquet", recursive=True) if f"{os.sep}data{os.sep}" in p]
+    parquets = parquets or glob.glob(f"{root}/**/*.parquet", recursive=True)
+    assert parquets, "no parquet data files written"
+    actions = np.asarray(pq.read_table(parquets).column("action").to_pylist())
+    assert actions.shape[0] > 0 and actions.shape[1] == 6, actions.shape
+
+    half = actions.shape[1] // 2
+    both = sum(
+        1 for row in actions if float(np.abs(row[:half]).sum()) > 1e-6 and float(np.abs(row[half:]).sum()) > 1e-6
+    )
+    assert both == actions.shape[0], f"only {both}/{actions.shape[0]} frames had both robots' actions recorded"
+
+
 def test_run_multi_policy_validates_robots(sim_with_two_robots):
     """run_multi_policy rejects unknown robots and empty policy maps."""
     from strands_robots.policies import create_policy

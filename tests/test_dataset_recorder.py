@@ -727,6 +727,42 @@ class TestBuildFeaturesSchema:
         assert action["shape"] == (2,)
         assert action["names"] == ["shoulder.pos", "gripper.pos"]
 
+    def test_action_names_define_action_columns_independent_of_joints(self):
+        """An explicit ``action_names`` list defines the action columns even
+        when it diverges from ``joint_names``. This is the actuator-keyed sim
+        path: a policy emits actuator short-names (``shoulder_pan_act``) while
+        observation.state stays joint-keyed (``shoulder_pan``), so the recorded
+        action columns must follow the actuator keys add_frame receives -- not
+        the joint names, which would never match and record all zeros."""
+        features = DatasetRecorder._build_features(
+            joint_names=["shoulder_pan", "shoulder_lift", "elbow"],
+            action_names=["shoulder_pan_act", "shoulder_lift_act", "elbow_act"],
+        )
+
+        # State stays joint-keyed.
+        assert features["observation.state"]["names"] == ["shoulder_pan", "shoulder_lift", "elbow"]
+        # Action follows the actuator keys.
+        assert features["action"]["shape"] == (3,)
+        assert features["action"]["names"] == ["shoulder_pan_act", "shoulder_lift_act", "elbow_act"]
+
+    def test_action_features_take_precedence_over_action_names(self):
+        """``action_features`` (explicit typed schema) wins over the
+        ``action_names`` fallback when both are supplied."""
+        features = DatasetRecorder._build_features(
+            action_features={"a": {"dtype": "float32"}, "b": {"dtype": "float32"}},
+            action_names=["x", "y", "z"],
+            joint_names=["j1", "j2"],
+        )
+
+        assert features["action"]["names"] == ["a", "b"]
+
+    def test_action_names_fall_back_to_joint_names_when_absent(self):
+        """With no ``action_names`` the action columns mirror ``joint_names``
+        (the actuator-mirrors-joints case for stock arms, unchanged behaviour)."""
+        features = DatasetRecorder._build_features(joint_names=["j1", "j2", "j3"])
+
+        assert features["action"]["names"] == ["j1", "j2", "j3"]
+
     def test_action_mirrors_state_when_only_robot_features_given(self):
         """With state from ``robot_features`` but no action source, the action
         feature mirrors the state dimension and names."""
