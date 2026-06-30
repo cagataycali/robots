@@ -604,3 +604,124 @@ class TestConcurrentLifecycle:
         # No leaked registration.
         assert "stress-1" not in get_local_robots()
         assert m.alive is False
+
+
+# ---------------------------------------------------------------------------
+# Telemetry robustness: the presence/state builders and their periodic loops
+# must never crash on a flaky or hostile robot driver. A misbehaving robot
+# object (whose probed attributes raise on access) must degrade to a safe,
+# minimal payload rather than killing the heartbeat/state mesh threads.
+# ---------------------------------------------------------------------------
+
+
+class _HostileRobot:
+    """A robot whose every telemetry-probed attribute raises on access.
+
+    Each attribute ``_build_presence`` / ``_read_state`` introspects is a
+    property that raises ``RuntimeError`` rather than ``AttributeError`` (a
+    non-``AttributeError`` propagates through ``getattr(..., default)`` and
+    ``hasattr`` in Python 3, so it exercises the defensive ``except`` swallows
+    instead of the missing-attribute fast path).
+    """
+
+    @property
+    def tool_name_str(self) -> Any:
+        raise RuntimeError("tool_name_str unavailable")
+
+    @property
+    def _task_state(self) -> Any:
+        raise RuntimeError("task_state unavailable")
+
+    @property
+    def robot(self) -> Any:
+        raise RuntimeError("inner robot unavailable")
+
+    @property
+    def _action_features(self) -> Any:
+        raise RuntimeError("action_features unavailable")
+
+    @property
+    def _world(self) -> Any:
+        raise RuntimeError("world unavailable")
+
+    def __getattr__(self, name: str) -> Any:
+        # Any other probed attribute (_pose, _imu, _odom, _lidar_*, _battery,
+        # _hands, _map_info, _input_publishers, ...) also raises a non-Attribute
+        # error so every defensive branch in the builders is exercised.
+        raise RuntimeError(f"{name} unavailable")
+
+
+class TestTelemetryRobustness:
+    """Presence/state builders survive a robot whose attributes all raise."""
+
+    def test_build_presence_swallows_every_attribute_error(self) -> None:
+        """A hostile robot must not break presence; a minimal payload survives."""
+        m = Mesh(_HostileRobot(), peer_id="hostile-1", peer_type="robot")
+
+        p = m._build_presence()  # must not raise
+
+        # The constant fields are always present regardless of the robot.
+        assert p["robot_id"] == "hostile-1"
+        assert p["robot_type"] == "robot"
+        assert "hostname" in p
+        assert "timestamp" in p
+        # None of the enrichment keys leaked through the failing probes.
+        for enriched in ("tool_name", "task_status", "connected", "hw", "cameras", "inputs", "action_keys", "world"):
+            assert enriched not in p
+        # "health" is always advertised even when every sensor probe fails.
+        assert p["topics"] == ["health"]
+
+    def test_read_state_swallows_every_attribute_error(self) -> None:
+        """A hostile robot yields no useful state -> None, never an exception."""
+        m = Mesh(_HostileRobot(), peer_id="hostile-2")
+
+        assert m._read_state() is None  # must not raise
+
+
+class TestOnPresenceNonDict:
+    """_on_presence ignores valid-JSON payloads that are not objects."""
+
+    def test_ignores_non_dict_json_payload(self) -> None:
+        """A JSON array (valid JSON, wrong shape) is dropped, not processed."""
+        sample = MagicMock()
+        sample.payload.to_bytes.return_value = json.dumps([1, 2, 3]).encode()
+
+        m = Mesh(_FakeRobot(), peer_id="me")
+        m._on_presence(sample)  # must not raise
+
+        assert mesh_session.peer_count() == 0
+
+
+class TestTelemetryLoopsSurviveTickErrors:
+    """The heartbeat/state loops swallow a per-tick error and keep running.
+
+    A transient failure building or publishing one frame must not tear down
+    the periodic thread. Each loop is driven for exactly one iteration by
+    pre-setting ``_stop_event`` so ``_stop_event.wait`` returns immediately.
+    """
+
+    def test_heartbeat_loop_survives_publish_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        m = Mesh(_FakeRobot(), peer_id="hb-1")
+        m._running = True
+        m._stop_event.set()  # break after a single iteration
+        pub = MagicMock(side_effect=RuntimeError("zenoh put failed"))
+        monkeypatch.setattr(m, "publish", pub)
+
+        m._heartbeat_loop()  # must not raise
+
+        pub.assert_called_once()
+
+    def test_state_loop_survives_read_state_error(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        m = Mesh(_FakeRobot(), peer_id="st-1")
+        m._running = True
+        m._stop_event.set()  # break after a single iteration
+        read_state = MagicMock(side_effect=RuntimeError("observation read failed"))
+        pub = MagicMock()
+        monkeypatch.setattr(m, "_read_state", read_state)
+        monkeypatch.setattr(m, "publish", pub)
+
+        m._state_loop()  # must not raise
+
+        read_state.assert_called_once()
+        # The error happened before any publish, so nothing was sent.
+        pub.assert_not_called()
