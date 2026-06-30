@@ -10,6 +10,7 @@ import sys
 import tempfile
 import threading
 import warnings
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,112 @@ def _is_headless() -> bool:
     return True
 
 
+# glvnd EGL vendor ICD payload that points at the NVIDIA EGL library, plus the
+# standard directories glvnd scans for vendor ICD JSON files. When MUJOCO_GL is
+# "egl", libglvnd loads the first vendor whose ICD JSON is registered here; an
+# NVIDIA host missing 10_nvidia.json silently falls through to Mesa llvmpipe.
+_NVIDIA_EGL_ICD_JSON = '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}'
+_GLVND_EGL_VENDOR_DIRS: tuple[str, ...] = (
+    "/usr/share/glvnd/egl_vendor.d",
+    "/etc/glvnd/egl_vendor.d",
+)
+# Directories that may hold an installed NVIDIA EGL library (x86_64 + aarch64).
+_NVIDIA_EGL_LIB_DIRS: tuple[str, ...] = (
+    "/usr/lib",
+    "/usr/lib/x86_64-linux-gnu",
+    "/usr/lib/aarch64-linux-gnu",
+    "/usr/lib64",
+)
+
+
+def _nvidia_egl_library_present() -> bool:
+    """Return True when an NVIDIA EGL library (libEGL_nvidia.so.*) is installed."""
+    for root in _NVIDIA_EGL_LIB_DIRS:
+        try:
+            if any(Path(root).glob("libEGL_nvidia.so.*")):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _nvidia_egl_icd_registered() -> bool:
+    """Return True when a glvnd EGL vendor ICD already references NVIDIA."""
+    for vendor_dir in _GLVND_EGL_VENDOR_DIRS:
+        try:
+            entries = sorted(Path(vendor_dir).glob("*.json"))
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if "nvidia" in entry.read_text(errors="replace").lower():
+                    return True
+            except OSError:
+                continue
+    return False
+
+
+def _ensure_nvidia_egl_vendor_icd() -> None:
+    """Route MuJoCo's EGL backend to the NVIDIA GPU when the vendor ICD is missing.
+
+    glvnd routes ``MUJOCO_GL=egl`` to whichever EGL vendor ICD JSON is registered
+    under ``/usr/share/glvnd/egl_vendor.d/``. On an NVIDIA host or container where
+    ``libEGL_nvidia`` is installed but the NVIDIA ICD (``10_nvidia.json``) is
+    absent - common in CUDA base images that do not request the ``graphics``
+    driver capability - glvnd silently falls back to Mesa ``llvmpipe`` (CPU
+    software rasterization), roughly two orders of magnitude slower. That
+    throttles every policy observation, rollout video, and dataset recording with
+    no signal (see :func:`_warn_if_software_rendering`, which makes the symptom
+    loud; this makes it go away).
+
+    Rather than require root to write the system ICD, this stages a vendor ICD
+    JSON in the user-writable strands-robots base dir and points glvnd at it via
+    the ``__EGL_VENDOR_LIBRARY_FILENAMES`` env var (the documented libglvnd
+    override) - the NVIDIA ICD first, then any already-registered system ICDs as
+    fallback so non-NVIDIA setups are unaffected. Must run before ``import
+    mujoco``; best-effort and never raises.
+
+    No-op when: not Linux; the user already set ``__EGL_VENDOR_LIBRARY_FILENAMES``
+    or ``__EGL_VENDOR_LIBRARY_DIRS`` (an explicit override is always respected); an
+    NVIDIA ICD is already registered system-wide; or no NVIDIA EGL library is
+    installed (not an NVIDIA host, so Mesa is the correct backend).
+    """
+    if sys.platform != "linux":
+        return
+    # Respect an explicit user/glvnd vendor override - never second-guess it.
+    if os.environ.get("__EGL_VENDOR_LIBRARY_FILENAMES") or os.environ.get("__EGL_VENDOR_LIBRARY_DIRS"):
+        return
+    if _nvidia_egl_icd_registered():
+        return
+    if not _nvidia_egl_library_present():
+        return
+
+    try:
+        from strands_robots.utils import get_base_dir
+
+        icd_dir = get_base_dir() / "egl_vendor.d"
+        icd_dir.mkdir(parents=True, exist_ok=True)
+        nvidia_icd = icd_dir / "10_nvidia.json"
+        nvidia_icd.write_text(_NVIDIA_EGL_ICD_JSON, encoding="utf-8")
+    except OSError as e:
+        logger.debug("Could not stage NVIDIA EGL vendor ICD, leaving glvnd default: %s", e)
+        return
+
+    # NVIDIA first, then any system vendor ICDs (Mesa etc.) as fallback.
+    filenames = [str(nvidia_icd)]
+    for vendor_dir in _GLVND_EGL_VENDOR_DIRS:
+        try:
+            filenames.extend(str(p) for p in sorted(Path(vendor_dir).glob("*.json")))
+        except OSError:
+            continue
+    os.environ["__EGL_VENDOR_LIBRARY_FILENAMES"] = ":".join(filenames)
+    logger.info(
+        "Registered NVIDIA EGL vendor ICD for GPU-accelerated MuJoCo offscreen rendering "
+        "via __EGL_VENDOR_LIBRARY_FILENAMES (%s)",
+        nvidia_icd,
+    )
+
+
 def _configure_gl_backend() -> None:  # noqa: C901
     """Auto-configure MuJoCo's OpenGL backend for headless environments.
 
@@ -57,8 +164,11 @@ def _configure_gl_backend() -> None:  # noqa: C901
 
     Never overrides a user-set MUJOCO_GL value.
     """
-    if os.environ.get("MUJOCO_GL"):
-        logger.debug(f"MUJOCO_GL already set to '{os.environ['MUJOCO_GL']}', respecting user config")
+    existing = os.environ.get("MUJOCO_GL")
+    if existing:
+        logger.debug(f"MUJOCO_GL already set to '{existing}', respecting user config")
+        if existing == "egl":
+            _ensure_nvidia_egl_vendor_icd()
         return
 
     if not _is_headless():
@@ -68,6 +178,7 @@ def _configure_gl_backend() -> None:  # noqa: C901
     try:
         ctypes.cdll.LoadLibrary("libEGL.so.1")
         os.environ["MUJOCO_GL"] = "egl"
+        _ensure_nvidia_egl_vendor_icd()
         logger.info("Headless environment detected - using MUJOCO_GL=egl (GPU-accelerated offscreen)")
         return
     except OSError:

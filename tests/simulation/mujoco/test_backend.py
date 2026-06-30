@@ -17,8 +17,14 @@ from strands_robots.simulation.mujoco import backend as backend_mod
 
 @pytest.fixture
 def restore_env(monkeypatch):
-    """Isolate MUJOCO_GL / DISPLAY / WAYLAND_DISPLAY per test."""
-    for var in ("MUJOCO_GL", "DISPLAY", "WAYLAND_DISPLAY"):
+    """Isolate MUJOCO_GL / DISPLAY / glvnd EGL vendor env per test."""
+    for var in (
+        "MUJOCO_GL",
+        "DISPLAY",
+        "WAYLAND_DISPLAY",
+        "__EGL_VENDOR_LIBRARY_FILENAMES",
+        "__EGL_VENDOR_LIBRARY_DIRS",
+    ):
         monkeypatch.delenv(var, raising=False)
     yield monkeypatch
 
