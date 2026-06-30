@@ -325,6 +325,66 @@ class TestZenohTransportDelegation:
                 sess_mod._SESSION = saved_session
                 sess_mod._SESSION_REFS = saved_refs
 
+    def test_connect_returns_false_when_zenoh_unavailable(self, monkeypatch):
+        """connect() reports failure (not an exception) when Zenoh is absent.
+
+        The documented contract is "Returns True on success, False if Zenoh is
+        unavailable". A False return must leave the instance unreferenced so a
+        later retry can still acquire, and is_alive() must stay False.
+        """
+        from strands_robots.mesh import session as sess_mod
+
+        monkeypatch.setattr(sess_mod, "_get_zenoh_session_directly", lambda: None)
+        t = ZenohTransport()
+        assert t.connect() is False
+        assert t.is_alive() is False
+        # No reference was taken, so close() is still a clean no-op.
+        t.close()
+
+    def test_raw_session_exposes_underlying_session(self, monkeypatch):
+        """raw_session reflects the live session handle (or None when closed)."""
+        from strands_robots.mesh import session as sess_mod
+
+        sentinel = MagicMock(name="zenoh.Session")
+        monkeypatch.setattr(sess_mod, "_current_zenoh_session_directly", lambda: sentinel)
+        assert ZenohTransport().raw_session is sentinel
+
+        monkeypatch.setattr(sess_mod, "_current_zenoh_session_directly", lambda: None)
+        assert ZenohTransport().raw_session is None
+
+    def test_declare_subscriber_raises_when_session_not_open(self, monkeypatch):
+        """declare_subscriber must fail loudly (RuntimeError) on a closed session.
+
+        No silent no-op: a caller subscribing before connect() is a bug, and
+        swallowing it would drop inbound traffic without any signal.
+        """
+        from strands_robots.mesh import session as sess_mod
+
+        monkeypatch.setattr(sess_mod, "_current_zenoh_session_directly", lambda: None)
+        t = ZenohTransport()
+        with pytest.raises(RuntimeError, match="not open"):
+            t.declare_subscriber("strands/test/state", lambda _s: None)
+
+    def test_declare_subscriber_delegates_to_open_session(self, monkeypatch):
+        """declare_subscriber forwards key_expr + handler to the live session and
+        returns the session's subscriber handle unchanged."""
+        from strands_robots.mesh import session as sess_mod
+
+        session = MagicMock(name="zenoh.Session")
+        sub_handle = MagicMock(name="zenoh.Subscriber")
+        session.declare_subscriber.return_value = sub_handle
+        monkeypatch.setattr(sess_mod, "_current_zenoh_session_directly", lambda: session)
+
+        t = ZenohTransport()
+
+        def handler(_sample):
+            return None
+
+        result = t.declare_subscriber("strands/robot-a/cmd", handler)
+
+        assert result is sub_handle
+        session.declare_subscriber.assert_called_once_with("strands/robot-a/cmd", handler)
+
 
 class TestIotMqttTransportInternals:
     """White-box tests for IotMqttTransport methods that are not normally
