@@ -439,3 +439,64 @@ def test_config_style_map_feeds_policy() -> None:
     pol.get_actions_sync({}, "", locomotion_style="run")
     signals, _ = agent.calls[-1]
     assert agent.clip_keys[signals["mode"]] == "idle"
+
+
+# ---------------------------------------------------------------------------
+# Config-input normalisation + constructor seams
+# ---------------------------------------------------------------------------
+class TestConfigInputNormalisation:
+    """The constructor accepts a MotionBricksConfig, a dict, a JSON path, or a
+    ``result_dir`` shortcut, exposes the resolved config via ``.config``, and
+    rejects anything else.
+
+    Verified through the public constructor (the stub-agent seam keeps it
+    CPU-only, no checkpoints): the ``config=`` input is polymorphic, so the
+    normalisation contract is what callers actually depend on.
+    """
+
+    def test_dict_config_resolved_and_exposed(self) -> None:
+        pol = MotionBricksPolicy(config={"result_dir": "out", "style": "walk"}, motion_agent=StubAgent())
+        assert isinstance(pol.config, MotionBricksConfig)
+        assert pol.config.result_dir == "out"
+        assert pol.config.style == "walk"
+
+    def test_json_path_config_resolved(self, tmp_path: Any) -> None:
+        p = tmp_path / "mb.json"
+        p.write_text(json.dumps({"result_dir": "out", "device": "cpu"}))
+        pol = MotionBricksPolicy(config=str(p), motion_agent=StubAgent())
+        assert isinstance(pol.config, MotionBricksConfig)
+        assert pol.config.device == "cpu"
+
+    def test_result_dir_shortcut_applies_style_and_device(self) -> None:
+        pol = MotionBricksPolicy(result_dir="out", style="stealth_walk", device="cpu", motion_agent=StubAgent())
+        assert isinstance(pol.config, MotionBricksConfig)
+        assert pol.config.result_dir == "out"
+        assert pol.config.style == "stealth_walk"
+        assert pol.config.device == "cpu"
+
+    def test_no_config_leaves_config_none(self) -> None:
+        pol = MotionBricksPolicy(motion_agent=StubAgent())
+        assert pol.config is None
+
+    def test_unsupported_config_type_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported config type"):
+            MotionBricksPolicy(config=123, motion_agent=StubAgent())  # type: ignore[arg-type]
+
+    def test_unknown_constructor_kwargs_are_ignored(self) -> None:
+        # Unknown kwargs are tolerated (logged at debug), so a caller passing a
+        # forward-compat option does not crash the policy.
+        pol = MotionBricksPolicy(motion_agent=StubAgent(), some_future_option=True)
+        assert pol.get_actions_sync({}, "")  # still functional
+
+
+def test_default_target_velocity_injected_when_call_omits_it() -> None:
+    # A constructor ``target_velocity`` is the standing movement direction used
+    # when a get_actions call passes none; an explicit per-call value overrides.
+    stub = StubAgent()
+    pol = MotionBricksPolicy(motion_agent=stub, target_velocity=[0.0, 2.0])
+    pol.get_actions_sync({}, "")
+    # +y default normalised into the control signal.
+    assert stub.calls[-1][0]["movement_direction"] == pytest.approx([0.0, 1.0, 0.0])
+    # Per-call target_velocity wins over the constructor default.
+    pol.get_actions_sync({}, "", target_velocity=[2.0, 0.0])
+    assert stub.calls[-1][0]["movement_direction"] == pytest.approx([1.0, 0.0, 0.0])
