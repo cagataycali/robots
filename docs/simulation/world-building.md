@@ -40,6 +40,47 @@ for i in range(5):
     )
 ```
 
+## Materials and textures
+
+By default an object renders with a flat `color` (rgba) - a glossy, obviously
+synthetic primitive. Pass `material=` to `add_object` to attach a real MuJoCo
+material so the surface can be matte or carry a texture. This narrows the
+sim-to-real visual gap for VLM/VLA policies trained on real footage. The
+`color` (rgba) still applies and tints a textured or solid material.
+
+```python
+# Matte (non-plastic) surface: kill specular highlight + shininess.
+sim.add_object("apple", shape="sphere", size=[0.04, 0, 0], color=[0.8, 0.1, 0.1, 1],
+               material={"specular": 0, "shininess": 0, "reflectance": 0})
+
+# Image texture from disk (absolute path), tiled 2x2 across the surface.
+sim.add_object("table", shape="box", size=[0.5, 0.5, 0.02], is_static=True,
+               material={"texture": "/abs/path/wood.png", "texrepeat": [2, 2],
+                         "specular": 0, "shininess": 0})
+
+# Procedural builtin texture (no image file needed).
+sim.add_object("floor_tile", shape="box", size=[0.3, 0.3, 0.01], is_static=True,
+               material={"builtin": "checker", "rgb1": [0.2, 0.3, 0.4],
+                         "rgb2": [0.1, 0.2, 0.3], "texdim": 512})
+```
+
+`material` is a dict; all keys are optional:
+
+| Key | Type | Meaning |
+|-----|------|---------|
+| `reflectance` / `specular` / `shininess` | float 0..1 | Surface response. `specular=0, shininess=0` = matte; the defaults read as glossy plastic. |
+| `texrepeat` | `[u, v]` | Texture tiling across the surface. |
+| `texture` | str | Absolute path to an image file (PNG/etc.) used as the RGB texture. |
+| `builtin` | `"checker" \| "gradient" \| "flat"` | Procedural texture, coloured by `rgb1` / `rgb2` and sized `texdim` (default 512) per side. |
+
+Specify **either** `texture` **or** `builtin`, not both. An invalid texture
+path, an unknown `builtin` name, or specifying both fails loudly with a
+`ValueError` (returned as a `status=error` dict through the agent tool) - there
+is no silent fallback to the flat-plastic default. For natural surfaces prefer
+an **image texture**; the `checker` builtin reads as a literal checkerboard.
+Materials are currently supported by the MuJoCo backend; the Newton backend
+rejects a non-`None` `material` rather than silently ignoring it.
+
 ## Cameras
 
 Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` - no `add_camera` needed.

@@ -79,6 +79,14 @@ class SimObject:
     color: list[float] = field(default_factory=lambda: [0.5, 0.5, 0.5, 1.0])  # RGBA
     mass: float = 0.1
     mesh_path: str | None = None
+    # Optional visual material/texture spec (post-material PR). When ``None``
+    # the geom renders with the flat ``color`` rgba (byte-for-byte the old
+    # behaviour). When set, the MuJoCo spec builder attaches a real
+    # ``mjMaterial`` (reflectance/specular/shininess) and, optionally, a
+    # texture (image file or procedural builtin). Backend-independent dict so
+    # this module stays free of any MuJoCo import; see
+    # ``SpecBuilder._build_material`` for the schema and validation.
+    material: dict[str, Any] | None = None
     body_id: int = -1
     is_static: bool = False
     _original_position: list[float] = field(default_factory=list)

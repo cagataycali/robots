@@ -147,6 +147,21 @@
     "mesh_path": {
       "type": "string"
     },
+    "material": {
+      "type": "object",
+      "description": "Optional visual material/texture for add_object (MuJoCo backend). Keys: reflectance|specular|shininess (float 0..1; specular=0,shininess=0 = matte), texture (absolute image path) OR builtin (checker|gradient|flat) with rgb1/rgb2 ([r,g,b]) + texdim (int, default 512), texrepeat ([u,v]). Omit for a flat color-only surface. Invalid texture path or unknown builtin fails loudly.",
+      "properties": {
+        "reflectance": { "type": "number" },
+        "specular": { "type": "number" },
+        "shininess": { "type": "number" },
+        "texture": { "type": "string" },
+        "builtin": { "type": "string", "enum": ["checker", "gradient", "flat"] },
+        "rgb1": { "type": "array", "items": { "type": "number" } },
+        "rgb2": { "type": "array", "items": { "type": "number" } },
+        "texdim": { "type": "integer" },
+        "texrepeat": { "type": "array", "items": { "type": "number" } }
+      }
+    },
     "target": {
       "type": "array",
       "items": {

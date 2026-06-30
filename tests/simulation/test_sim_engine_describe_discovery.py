@@ -79,6 +79,7 @@ def _make_minimal_engine():
             mass: float = 1.0,
             is_static: bool = False,
             mesh_path: str | None = None,
+            material: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> dict[str, Any]:
             return {}

@@ -20,6 +20,7 @@ transformation goes through MuJoCo's own AST.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 import numpy as np
@@ -356,6 +357,13 @@ class SpecBuilder:
           registered (usually by :meth:`build`); this method does NOT
           register mesh assets.
         """
+        # Build the visual material/texture FIRST (gated on ``obj.material is
+        # not None`` so the rgba-only path is byte-for-byte unchanged). Doing
+        # it before ``add_body`` means an invalid material raises ValueError
+        # before any body/geom is added to the spec, so a rejected add never
+        # leaves an orphan body behind.
+        material_name = SpecBuilder._build_material(spec, obj) if obj.material is not None else None
+
         body = spec.worldbody.add_body(
             name=obj.name,
             pos=list(obj.position),
@@ -384,7 +392,113 @@ class SpecBuilder:
         if obj.shape == "box":
             geom_kwargs["friction"] = [1.0, 0.5, 0.001]
 
+        if material_name is not None:
+            geom_kwargs["material"] = material_name
+
         body.add_geom(**geom_kwargs)
+
+    # material build
+    @staticmethod
+    def _build_material(spec: Any, obj: SimObject) -> str:
+        """Create a ``mjMaterial`` (+ optional texture) for ``obj.material``.
+
+        Returns the material name to assign to the geom's ``material`` field.
+        Called only when ``obj.material is not None``.
+
+        Schema of the ``obj.material`` dict (all keys optional):
+
+        * ``reflectance`` / ``specular`` / ``shininess`` (float 0..1): surface
+          response. ``specular=0, shininess=0`` gives a matte (non-plastic)
+          look; the MuJoCo defaults read as glossy plastic.
+        * ``texrepeat`` (``[u, v]``): texture tiling across the surface.
+        * exactly one texture source, OR neither (matte solid colour):
+            - ``texture`` (str): absolute path to an image file (PNG/etc.),
+              applied as an ``mjTEXTURE_2D`` RGB texture.
+            - ``builtin`` (``"checker" | "gradient" | "flat"``): procedural
+              texture, coloured by ``rgb1`` / ``rgb2`` (each ``[r, g, b]``)
+              and sized ``texdim`` (default 512) per side.
+
+        Fails loudly (``ValueError``) on a missing texture file, an unknown
+        ``builtin`` name, or both ``texture`` and ``builtin`` set -- there is
+        no silent fallback to the flat-plastic default. The geom keeps its
+        ``rgba`` (which tints an image/solid material), so callers can still
+        colour a procedural/solid surface via ``color=``.
+        """
+        mujoco = _ensure_mujoco()
+        mat_spec = obj.material or {}
+        mat_name = f"{obj.name}_mat"
+        tex_name = f"{obj.name}_tex"
+
+        # 1) Validate the whole spec BEFORE mutating ``spec`` so an invalid
+        #    material never leaves a half-built (orphan) asset behind.
+        texture = mat_spec.get("texture")
+        builtin = mat_spec.get("builtin")
+        if texture is not None and builtin is not None:
+            raise ValueError(
+                f"add_object material for {obj.name!r}: specify either 'texture' "
+                "(image file) or 'builtin' (procedural), not both."
+            )
+        builtin_enum = None
+        if texture is not None:
+            path = str(texture)
+            if not os.path.isfile(path):
+                raise ValueError(f"add_object material for {obj.name!r}: texture file not found: {path!r}")
+        elif builtin is not None:
+            builtin_map = {
+                "checker": mujoco.mjtBuiltin.mjBUILTIN_CHECKER,
+                "gradient": mujoco.mjtBuiltin.mjBUILTIN_GRADIENT,
+                "flat": mujoco.mjtBuiltin.mjBUILTIN_FLAT,
+            }
+            key = str(builtin).lower()
+            if key not in builtin_map:
+                raise ValueError(
+                    f"add_object material for {obj.name!r}: unknown builtin "
+                    f"{builtin!r}; supported: {', '.join(sorted(builtin_map))}."
+                )
+            builtin_enum = builtin_map[key]
+
+        # 2) Defensive cleanup: a prior add under this object name (then a
+        #    remove_object that deletes only the body) can leave a stale
+        #    material/texture asset behind. Re-adding would collide at compile
+        #    ("repeated name"), so drop any existing asset under our names.
+        for existing in list(getattr(spec, "materials", []) or []):
+            if existing.name == mat_name:
+                spec.delete(existing)
+        for existing in list(getattr(spec, "textures", []) or []):
+            if existing.name == tex_name:
+                spec.delete(existing)
+
+        # 3) Build the texture (if any), then the material, then bind them.
+        tex = None
+        if texture is not None:
+            tex = spec.add_texture(name=tex_name, type=mujoco.mjtTexture.mjTEXTURE_2D, file=str(texture))
+        elif builtin_enum is not None:
+            texdim = int(mat_spec.get("texdim", 512))
+            tex_kwargs: dict[str, Any] = {
+                "name": tex_name,
+                "type": mujoco.mjtTexture.mjTEXTURE_2D,
+                "builtin": builtin_enum,
+                "width": texdim,
+                "height": texdim,
+            }
+            if mat_spec.get("rgb1") is not None:
+                tex_kwargs["rgb1"] = [float(c) for c in mat_spec["rgb1"]]
+            if mat_spec.get("rgb2") is not None:
+                tex_kwargs["rgb2"] = [float(c) for c in mat_spec["rgb2"]]
+            tex = spec.add_texture(**tex_kwargs)
+
+        mat_kwargs: dict[str, Any] = {}
+        for mat_key in ("reflectance", "specular", "shininess"):
+            if mat_spec.get(mat_key) is not None:
+                mat_kwargs[mat_key] = float(mat_spec[mat_key])
+        if mat_spec.get("texrepeat") is not None:
+            tr = mat_spec["texrepeat"]
+            mat_kwargs["texrepeat"] = [float(tr[0]), float(tr[1])]
+
+        mat = spec.add_material(name=mat_name, **mat_kwargs)
+        if tex is not None:
+            mat.textures[mujoco.mjtTextureRole.mjTEXROLE_RGB] = tex.name
+        return mat_name
 
     # camera add
     @staticmethod

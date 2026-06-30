@@ -426,6 +426,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         mass: float = 0.1,
         is_static: bool = False,
         mesh_path: str | None = None,
+        material: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Add a primitive or mesh object to the scene.
@@ -447,6 +448,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ``.usd`` -- anything ``trimesh.load`` accepts). Required and
                 only used when ``shape="mesh"``; the mesh is loaded via
                 ``trimesh`` and converted to a Newton collision/visual shape.
+            material: Visual material/texture spec. NOT supported by the
+                Newton backend yet; a non-``None`` value is rejected loudly
+                rather than silently dropped (use the MuJoCo backend for
+                matte/textured surfaces).
             **kwargs: Ignored.
 
         Returns:
@@ -454,6 +459,18 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        if material is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "add_object: material= is not supported by the Newton "
+                            "backend. Use the MuJoCo backend for matte/textured surfaces."
+                        )
+                    }
+                ],
+            }
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' already exists."}]}
         if shape not in ("box", "sphere", "capsule", "cylinder", "mesh"):

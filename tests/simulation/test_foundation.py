@@ -84,6 +84,7 @@ def _make_dummy_engine_class() -> type[SimEngine]:
             mass: float = 0.1,
             is_static: bool = False,
             mesh_path: str | None = None,
+            material: dict[str, Any] | None = None,
             **kwargs: Any,
         ) -> dict[str, Any]:
             return {}

@@ -1386,6 +1386,7 @@ class MuJoCoSimEngine(
         mass: float = 0.1,
         is_static: bool | None = None,
         mesh_path: str | None = None,
+        material: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Add a primitive or mesh object to the live MuJoCo scene.
@@ -1440,6 +1441,16 @@ class MuJoCoSimEngine(
         Example:
             >>> sim.add_object("cube", shape="box", size=[0.05, 0.05, 0.05])  # 5 cm cube
             >>> # on a table whose top is at z=0.75, the cube rests at z=0.775
+
+        ``material`` (optional): a visual material/texture spec. When ``None``
+        the object renders with the flat ``color`` rgba (unchanged behaviour).
+        When set, a real MuJoCo material/texture is attached so the surface can
+        be matte (``{"specular": 0, "shininess": 0}``) or carry an image
+        texture (``{"texture": "/abs/path.png", "texrepeat": [2, 2]}``) or a
+        procedural builtin (``{"builtin": "checker", "rgb1": [...], "rgb2":
+        [...]}``). See :meth:`SpecBuilder._build_material` for the full schema;
+        an invalid texture path or unknown builtin fails loudly (no silent
+        fallback to flat plastic).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1480,6 +1491,7 @@ class MuJoCoSimEngine(
             color=color or [0.5, 0.5, 0.5, 1.0],
             mass=mass,
             mesh_path=mesh_path,
+            material=material,
             is_static=is_static,
         )
         self._world.objects[name] = obj

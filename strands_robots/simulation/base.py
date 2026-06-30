@@ -333,6 +333,7 @@ class SimEngine(ABC):
         mass: float = 0.1,
         is_static: bool = False,
         mesh_path: str | None = None,
+        material: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Add a primitive or mesh object to the scene.
@@ -343,6 +344,12 @@ class SimEngine(ABC):
         half-extents / radii directly. See the concrete backend's
         ``add_object`` docstring for the exact per-shape semantics and an
         example. Returns an agent-tool status dict.
+
+        ``material`` (optional): backend-specific visual material/texture
+        spec. ``None`` keeps the flat ``color`` rgba (unchanged); a backend
+        that supports it (MuJoCo) attaches a real material so surfaces can be
+        matte or textured. Backends that do not support it should reject a
+        non-``None`` ``material`` loudly rather than silently ignore it.
         """
         ...
 
@@ -1819,8 +1826,12 @@ class SimEngine(ABC):
                 ),
                 "add_object": (
                     "(name: str, shape='box', position=None, orientation=None, "
-                    "size=None, color=None, mass=0.1, is_static=None, mesh_path=None) "
-                    "-> dict  # add a manipulable object (cube/sphere/.../mesh) to the scene"
+                    "size=None, color=None, mass=0.1, is_static=None, mesh_path=None, "
+                    "material=None) -> dict  # add a manipulable object "
+                    "(cube/sphere/.../mesh) to the scene. material is an optional "
+                    "dict for matte/textured surfaces: keys reflectance|specular|"
+                    "shininess (0..1), texture (abs image path) OR builtin "
+                    "(checker|gradient|flat) + rgb1/rgb2/texdim, texrepeat [u,v]"
                 ),
                 "remove_object": "(name: str) -> dict  # remove a previously added object",
                 "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, reset_between=True, ...) -> dict",
