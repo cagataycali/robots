@@ -980,11 +980,11 @@ def _ensure_paths(path: Path) -> None:
         # create with O_NOFOLLOW so an attacker who races a
         # symlink in between the is_symlink check above and this open
         # cannot redirect the create. ``Path.touch`` follows symlinks
-        # (verified at runtime in tests/mesh/test_security_regressions.py
-        # ::test_r7_1_audit_log_create_refuses_symlink_target). On
-        # Windows where O_NOFOLLOW is 0 the static check above is the
-        # only line of defence; this matches the residual-risk note in
-        # the module docstring.
+        # (the symlink-refusal and fail-soft contracts are pinned in
+        # tests/mesh/test_audit_log_symlink_refused.py). On Windows where
+        # O_NOFOLLOW is 0 the static check above is the only line of
+        # defence; this matches the residual-risk note in the module
+        # docstring.
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         nofollow = getattr(os, "O_NOFOLLOW", 0)
         try:

@@ -20,7 +20,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import (
+    _NO_WORLD_MSG,
+    _ensure_mujoco,
+    filter_mujoco_attach_noise,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1205,7 +1209,12 @@ class PhysicsMixin:
             }
 
         try:
-            xml = spec.to_xml()
+            # spec.to_xml() emits benign "Attach conflict ... keeping parent
+            # value" chatter (Python UserWarning + raw fd-2 writes) for every
+            # attached robot scene. Every other call site wraps it; export_xml
+            # must too, or the noise leaks straight to the user's console.
+            with filter_mujoco_attach_noise():
+                xml = spec.to_xml()
         except Exception as e:
             return {"status": "error", "content": [{"text": f"spec.to_xml() failed: {e}"}]}
 

@@ -73,6 +73,18 @@ class RLTrainSpec(TrainSpec):
         normalize_advantage: Standardize advantages per batch.
         device: Torch device (``"cpu"`` / ``"cuda"``); ``None`` auto-selects.
         log_interval: Iterations between progress logs.
+        buffer_size: Off-policy replay-buffer capacity (SAC).
+        batch_size: Transitions sampled per gradient step (SAC).
+        learning_starts: Env steps of random warmup collected into the
+            buffer before the first gradient update (SAC).
+        gradient_steps: SAC gradient updates run per training iteration.
+        tau: Polyak averaging coefficient for the target critics (SAC).
+        autotune_alpha: Automatically tune the entropy temperature against
+            ``target_entropy`` (SAC).
+        init_alpha: Initial entropy temperature (SAC).
+        alpha_lr: Learning rate for the temperature optimizer (SAC).
+        target_entropy: Target policy entropy; ``None`` uses ``-num_actions``
+            (the SAC heuristic).
     """
 
     env_factory: Callable[[], SimEnv] | None = None
@@ -95,6 +107,16 @@ class RLTrainSpec(TrainSpec):
     normalize_advantage: bool = True
     device: str | None = None
     log_interval: int = 10
+    # --- off-policy (SAC) fields; ignored by on-policy backends (PPO) ---
+    buffer_size: int = 100_000
+    batch_size: int = 256
+    learning_starts: int = 1_000
+    gradient_steps: int = 1
+    tau: float = 0.005
+    autotune_alpha: bool = True
+    init_alpha: float = 1.0
+    alpha_lr: float = 3e-4
+    target_entropy: float | None = None
 
 
 class BaseRLAlgo(Trainer):

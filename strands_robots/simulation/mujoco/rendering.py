@@ -4,7 +4,12 @@ import io
 import logging
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _can_render, _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import (
+    _NO_WORLD_MSG,
+    _can_render,
+    _ensure_mujoco,
+    capture_stderr_fd,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -734,22 +739,38 @@ class RenderingMixin:
             # text (the LLM otherwise never hears about it).
             clip_warn = getattr(self, "_depth_warn_text", None)
             if clip_warn is None:
-                import contextlib as _ctx
-                import io as _io
                 import sys as _sys
 
-                buf = _io.StringIO()
-                with _ctx.redirect_stderr(buf):
+                # MuJoCo's ARB_clip_control notice is a C-level write to fd 2,
+                # so Python's contextlib.redirect_stderr (which only swaps the
+                # sys.stderr object) cannot see it. Capture the real fd.
+                with capture_stderr_fd() as _cap:
                     renderer.enable_depth_rendering()
                     depth = renderer.render()
                     renderer.disable_depth_rendering()
-                captured = buf.getvalue()
-                # Also forward to the real stderr so logs don't vanish.
-                if captured and _sys.__stderr__ is not None:
-                    try:
-                        _sys.__stderr__.write(captured)
-                    except Exception:
-                        pass
+                captured = _cap[0]
+                # Forward captured stderr, but drop the ARB_clip_control line
+                # -- it's now surfaced in the response text below, so echoing
+                # it to the console too would be duplicate noise. Anything
+                # *other* than that benign notice is passed through unchanged
+                # so genuine errors never vanish.
+                if captured:
+                    kept_lines = [ln for ln in captured.splitlines(keepends=True) if "ARB_clip_control" not in ln]
+                    leftover = "".join(kept_lines)
+                    if leftover.strip() and _sys.__stderr__ is not None:
+                        try:
+                            _sys.__stderr__.write(leftover)
+                        except (ValueError, OSError):
+                            # Best-effort forward of non-benign stderr; the
+                            # original __stderr__ may be closed or detached
+                            # (pytest capsys, teardown). Nothing to recover.
+                            pass
+                    if "ARB_clip_control" in captured:
+                        logger.debug(
+                            "Suppressed benign MuJoCo depth warning "
+                            "(surfaced in response text): ARB_clip_control "
+                            "unavailable, depth precision degraded."
+                        )
                 if "ARB_clip_control" in captured:
                     # ARB_clip_control missing -> OpenGL depth buffer uses
                     # default [0,1] range with compressed far-plane precision.
@@ -759,7 +780,7 @@ class RenderingMixin:
                     # consumers should treat these values as approximate.
                     self._depth_warn_text = (
                         "Warning: Depth accuracy limited on this GPU (missing ARB_clip_control). "
-                        "Linearized Min/Max are in meters but precision is degraded "
+                        "Metric Min/Max are in meters but precision is degraded "
                         "(especially for far-plane pixels) - treat as approximate."
                     )
                 else:
@@ -770,25 +791,27 @@ class RenderingMixin:
                 depth = renderer.render()
                 renderer.disable_depth_rendering()
 
-            # Linearize OpenGL depth buffer to metric depth (meters).
-            # MuJoCo renderer returns normalized values in [0, 1] where 0 = near,
-            # 1 = far plane. Convert: z = znear*zfar / (zfar - d*(zfar - znear))
+            # MuJoCo >= 3.0's ``Renderer.enable_depth_rendering()`` returns
+            # METRIC depth in meters directly (distance from the camera to the
+            # first surface along each ray), NOT a normalized [0, 1] OpenGL
+            # depth buffer. Re-linearizing it with the znear/zfar formula (as
+            # older OpenGL pipelines required) is wrong and collapses the whole
+            # frame to znear -- so we consume the array as-is.
             #
-            # On MuJoCo >= 3.0, `model.vis.map.{znear,zfar}` are fractions of
-            # `model.stat.extent` (the model's bounding scale), NOT absolute
-            # meters - multiply by extent to get real clip-plane distances.
-            # pyproject.toml pins mujoco>=3.2, so this convention is safe here.
+            # pyproject.toml pins mujoco>=3.2, so the metric-depth convention is
+            # guaranteed. We only sanitize: pixels with no geometry come back as
+            # the far-clip distance (large finite value); NaN/inf can appear on
+            # some GL backends and would poison min/max and the PNG, so replace
+            # them with the far-clip distance before computing bounds.
             import numpy as _np
 
             extent = float(self._world._model.stat.extent)
-            znear = float(self._world._model.vis.map.znear) * extent
             zfar = float(self._world._model.vis.map.zfar) * extent
-            # Avoid division by zero for pixels at exactly the far plane
-            denom = zfar - depth * (zfar - znear)
-            denom = _np.where(denom == 0, 1e-10, denom)
-            depth_m = znear * zfar / denom
-            # Clamp: pixels at far plane (depth==1) -> zfar
-            depth_m = _np.clip(depth_m, znear, zfar)
+            depth_m = _np.asarray(depth, dtype=_np.float32)
+            depth_m = _np.nan_to_num(depth_m, nan=zfar, posinf=zfar, neginf=0.0)
+            # Negative depth is non-physical (a surface behind the camera);
+            # clamp the lower bound at 0 and cap runaway values at the far clip.
+            depth_m = _np.clip(depth_m, 0.0, zfar)
 
             dmin = float(depth_m.min())
             dmax = float(depth_m.max())

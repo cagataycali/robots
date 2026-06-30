@@ -10,6 +10,8 @@ Public surface:
     - :class:`BaseRLAlgo` - abstract RL trainer (peer of ``Trainer``).
     - :class:`RLTrainSpec` - reward-driven training spec.
     - :class:`PpoTrainer` - Proximal Policy Optimization (on-policy).
+    - :class:`FastSacTrainer` - Soft Actor-Critic (off-policy, replay buffer).
+    - :class:`SimpleReplayBuffer` - off-policy transition store.
     - :class:`SimEnv` - ``SimEngine`` -> RL env adapter.
     - :class:`EmpiricalNormalization` - running observation normalizer.
 
@@ -20,13 +22,17 @@ registered there through a lazy loader instead.
 
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
 from strands_robots.training.rl.env import SimEnv
+from strands_robots.training.rl.fast_sac import FastSacTrainer
 from strands_robots.training.rl.normalization import EmpiricalNormalization
 from strands_robots.training.rl.ppo import PpoTrainer
+from strands_robots.training.rl.replay_buffer import SimpleReplayBuffer
 
 __all__ = [
     "BaseRLAlgo",
     "RLTrainSpec",
     "PpoTrainer",
+    "FastSacTrainer",
+    "SimpleReplayBuffer",
     "SimEnv",
     "EmpiricalNormalization",
 ]

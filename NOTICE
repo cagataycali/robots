@@ -88,19 +88,23 @@ You may obtain a copy of the Apache License at:
 --------------------------------------------------------------------------------
 From-scratch RL trainers (strands_robots/training/rl/base_algo.py,
 strands_robots/training/rl/normalization.py,
-strands_robots/training/rl/ppo.py)
+strands_robots/training/rl/ppo.py,
+strands_robots/training/rl/fast_sac.py,
+strands_robots/training/rl/replay_buffer.py)
 
-The on-policy reinforcement-learning trainers reproduce control-and-statistics
+The from-scratch reinforcement-learning trainers reproduce control-and-statistics
 math from:
 
   * Amazon FAR Holosoma (https://github.com/amazon-far/holosoma)
     Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
     BSD-3-Clause License. The PPO algorithm (clipped policy surrogate, clipped
     value loss, Generalized Advantage Estimation, advantage normalization), the
-    BaseAlgo on-policy lifecycle, and the EmpiricalNormalization (Welford)
-    observation normalizer are adapted from this project, re-homed onto the
-    strands-robots SimEngine env interface. Holosoma is itself derived in part
-    from RSL-RL (https://github.com/leggedrobotics/rsl_rl), BSD-3-Clause.
+    FastSAC algorithm (clipped double-Q target, tanh-squashed Gaussian actor,
+    automatic entropy temperature, SimpleReplayBuffer), the BaseAlgo lifecycle,
+    and the EmpiricalNormalization (Welford) observation normalizer are adapted
+    from this project, re-homed onto the strands-robots SimEngine env interface.
+    Holosoma is itself derived in part from RSL-RL
+    (https://github.com/leggedrobotics/rsl_rl), BSD-3-Clause.
 
   The BSD-3-Clause License text is reproduced below:
 

@@ -27,6 +27,8 @@ trainer = create_trainer("ppo")   # on-policy PPO, from-scratch RL
 | [`BaseRLAlgo`](#baserlalgo) | Abstract RL trainer; peer of supervised `Trainer`. Lifecycle `setup -> collect_rollout -> update -> save_checkpoint`. |
 | [`RLTrainSpec`](#rltrainspec) | Reward-driven training spec (extends `TrainSpec`). |
 | [`PpoTrainer`](#ppo) | Proximal Policy Optimization (on-policy, GAE, clipped surrogate + value). |
+| [`FastSacTrainer`](#fastsac) | Soft Actor-Critic (off-policy, replay buffer, twin Q critics, auto-tuned entropy). |
+| `SimpleReplayBuffer` | Off-policy transition store (fixed-capacity ring buffer). |
 | [`SimEnv`](#simenv) | Gym-style `reset -> step` adapter over a `SimEngine`. |
 | `EmpiricalNormalization` | Running observation normalizer (whitens inputs for stable training). |
 
@@ -106,6 +108,44 @@ device as the network (no cross-device tensor mismatch and no per-step
 host-to-device copies). Pass `device="cpu"` explicitly to keep everything on
 CPU even on a GPU machine.
 
+## FastSAC
+
+`FastSacTrainer` is the **off-policy** trainer: it keeps a replay buffer of past
+transitions and reuses each one across many gradient steps, so it reaches a
+target in far fewer environment steps than on-policy PPO (at the cost of more
+compute per step). It trains a tanh-squashed Gaussian actor and twin Q critics
+(clipped double-Q) with Polyak-averaged target critics and an automatically
+tuned entropy temperature, and writes the **same** `policy.pt` +
+`policy_meta.json` checkpoint as PPO.
+
+```python
+from strands_robots.training import create_trainer
+from strands_robots.training.rl import RLTrainSpec
+
+trainer = create_trainer("fast_sac")
+spec = RLTrainSpec(
+    env_factory=make_env,          # same SimEnv contract as PPO
+    output_dir="/tmp/fastsac_reach",
+    total_timesteps=50 * 80,
+    rollout_steps=50,              # env steps collected per iteration
+    learning_starts=500,           # random-action warmup before the first update
+    batch_size=256,                # transitions sampled per gradient step
+    gradient_steps=50,             # SAC updates per iteration
+    buffer_size=50_000,            # replay-buffer capacity
+    learning_rate=3e-4,
+    gamma=0.99, tau=0.01,          # discount + Polyak target-critic coefficient
+    seed=0,
+)
+result = trainer.train(spec)       # setup -> (collect_rollout -> update)* -> save
+print(result.metrics)              # mean_reward, critic_loss, actor_loss, alpha, entropy
+```
+
+The off-policy fields on `RLTrainSpec` (`buffer_size`, `batch_size`,
+`learning_starts`, `gradient_steps`, `tau`, `autotune_alpha`, `init_alpha`,
+`alpha_lr`, `target_entropy`) are read only by SAC; on-policy PPO ignores them.
+`target_entropy` defaults to `-num_actions` (the SAC heuristic) when left
+`None`. Like PPO, `FastSacTrainer` trains fine on CPU.
+
 ## BaseRLAlgo
 
 `BaseRLAlgo` is the abstract RL trainer - a `Trainer` subclass, so RL flows
@@ -121,14 +161,17 @@ loop while keeping the same hooks and checkpoint format.
 (`dataset_root` etc.) and reads `env_factory`, `total_timesteps`,
 `rollout_steps`, `num_envs`, the PPO hyperparameters (`gamma`, `lam`,
 `clip_param`, `num_learning_epochs`, `num_mini_batches`, `entropy_coef`,
-`value_loss_coef`, `max_grad_norm`, `hidden_dims`, `init_noise_std`), plus the
-universal `output_dir` / `learning_rate` / `seed`.
+`value_loss_coef`, `max_grad_norm`, `hidden_dims`, `init_noise_std`), the
+off-policy SAC fields (`buffer_size`, `batch_size`, `learning_starts`,
+`gradient_steps`, `tau`, `autotune_alpha`, `init_alpha`, `alpha_lr`,
+`target_entropy`), plus the universal `output_dir` / `learning_rate` / `seed`.
 
 ## Worked example
 
-`examples/train_ppo_reach.py` trains the SO-100 `Elbow` joint to a target angle
-in MuJoCo from scratch and prints the resulting checkpoint path. The MuJoCo
-backend is single-environment (`num_envs == 1`); vectorized backends for
+`examples/train_ppo_reach.py` (on-policy) and `examples/train_fastsac_reach.py`
+(off-policy) both train the SO-100 `Elbow` joint to a target angle in MuJoCo
+from scratch and print the resulting checkpoint path. The MuJoCo backend is
+single-environment (`num_envs == 1`); vectorized backends for
 massively-parallel rollouts are tracked separately.
 
 
@@ -141,3 +184,11 @@ to the target:
 ![PPO reach learning curve](../assets/ppo_reach_curve.png)
 
 ![PPO reach rollout](../assets/ppo_reach_demo.gif)
+
+FastSAC (off-policy) reaches the same target in far fewer environment steps,
+reusing replayed transitions; the deterministic policy drives the `Elbow`
+joint onto the target (0.19 rad vs. a 0.20 target):
+
+![FastSAC reach learning curve](../assets/fastsac_reach_curve.png)
+
+![FastSAC reach rollout](../assets/fastsac_reach_demo.gif)

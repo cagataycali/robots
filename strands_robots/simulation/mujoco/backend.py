@@ -347,3 +347,55 @@ def filter_mujoco_attach_noise():
                 )
         # Tear down the UserWarning filter last.
         _wctx.__exit__(None, None, None)
+
+
+@contextlib.contextmanager
+def capture_stderr_fd():
+    """Capture C-level (fd 2) stderr writes into a list-wrapped string.
+
+    Unlike ``contextlib.redirect_stderr`` -- which only swaps Python's
+    ``sys.stderr`` object and is blind to writes coming from C extensions
+    such as MuJoCo's OpenGL backend -- this redirects the underlying file
+    descriptor 2, so warnings like the one-time ``ARB_clip_control`` notice
+    emitted by ``renderer.render()`` are actually captured.
+
+    Yields a single-element list; after the block exits, ``box[0]`` holds the
+    captured text (possibly empty).
+
+    No-op-ish fallback: if fd 2 can't be duped (captured stderr, pytest
+    capsys, Jupyter), it yields an empty box and lets writes pass through
+    rather than breaking the wrapped call.
+    """
+    box = [""]
+    try:
+        orig_fd = sys.stderr.fileno()
+        saved_fd = os.dup(orig_fd)
+    except (AttributeError, OSError, ValueError):
+        # No real fd to capture; yield empty and pass through.
+        yield box
+        return
+
+    tmp = tempfile.TemporaryFile(mode="w+b")
+    try:
+        with _noise_lock:
+            os.dup2(tmp.fileno(), orig_fd)
+            try:
+                yield box
+            finally:
+                try:
+                    sys.stderr.flush()
+                except (ValueError, OSError):
+                    pass  # stderr may be closed/detached (pytest capsys, Jupyter)
+                os.dup2(saved_fd, orig_fd)
+    finally:
+        try:
+            tmp.seek(0)
+            box[0] = tmp.read().decode(errors="replace")
+        except OSError:
+            box[0] = ""
+        finally:
+            tmp.close()
+            try:
+                os.close(saved_fd)
+            except OSError:
+                pass  # fd may already be closed during interpreter shutdown
