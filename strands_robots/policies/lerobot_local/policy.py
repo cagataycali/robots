@@ -266,6 +266,18 @@ class LerobotLocalPolicy(Policy):
         # camera_key_map covers them). Defaults to False (positional fallback
         # with a warning), preserving zero-config ergonomics.
         self.strict_keys = strict_keys
+        # Routing-degradation telemetry. The heuristic (non-declarative)
+        # remap path can keep a run alive while silently producing
+        # meaningless inputs - a camera routed to an arbitrary model image
+        # slot positionally, or a state vector ordered by the observation's
+        # own keys because none of robot_state_keys matched. Both make the
+        # robot wiggle with success_rate ~ 0 while the run reports success.
+        # These flags are flipped True the first time each fallback fires so
+        # run_policy / eval_policy can surface a machine-checkable signal
+        # (positional_fallback_used / generic_state_keys_used) instead of the
+        # degradation only living in a log line nobody reads.
+        self.positional_fallback_used = False
+        self.generic_state_keys_used = False
         # When True (default), the loaded underlying model is cached at
         # process level and shared by later instances with the same load
         # key (see _MODEL_CACHE). Set False to force a private load (e.g.
@@ -1782,6 +1794,15 @@ class LerobotLocalPolicy(Policy):
                 "or set strict_keys=False to allow positional fallback."
             )
         for (k, v), feat in zip(unmatched_imgs, free_feats):
+            self.positional_fallback_used = True
+            logger.warning(
+                "Camera '%s' does not match any declared policy image key by name; "
+                "routing positionally to '%s'. The frame may feed the wrong model "
+                "input - pass camera_key_map to bind cameras explicitly (or "
+                "strict_keys=True to make this an error).",
+                k,
+                feat,
+            )
             out[feat] = v
             used_feats.add(feat)
 
@@ -1797,6 +1818,18 @@ class LerobotLocalPolicy(Policy):
         # observation's own scalar keys so we never silently drop the state.
         order = self.robot_state_keys or scalar_keys
         if self.robot_state_keys and not any(k in observation_dict for k in self.robot_state_keys):
+            self.generic_state_keys_used = True
+            logger.warning(
+                "None of robot_state_keys %s are present in the observation "
+                "(scalar keys: %s); composing observation.state from the "
+                "observation's own scalar keys instead. This usually means the "
+                "policy fell back to generic joint_0..N names that do not match "
+                "the robot's real joint names - the state vector ordering may be "
+                "wrong. Set an embodiment or robot_state_keys that match the "
+                "runtime joints.",
+                list(self.robot_state_keys),
+                sorted(scalar_keys),
+            )
             order = scalar_keys
         state_vals = []
         for k in order:
@@ -2068,6 +2101,7 @@ class LerobotLocalPolicy(Policy):
                 "or set strict_keys=False to allow positional fallback."
             )
         for cam, feat in zip(unmatched, free):
+            self.positional_fallback_used = True
             logger.warning(
                 "Camera '%s' does not match any declared policy image key by name; "
                 "routing positionally to '%s'. Pass camera_key_map to bind cameras "

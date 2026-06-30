@@ -779,8 +779,16 @@ class SimEngine(ABC):
             content block alongside the human-readable ``text``. The json block
             carries the rollout facts as typed fields (``n_steps``,
             ``elapsed_s``, ``stopped_early``, ``action_errors``, ``video_path``,
-            ``video_frames``, ...) so callers can self-correct programmatically
-            without parsing the text. Mirrors :meth:`eval_policy`.
+            ``video_frames``, ``positional_fallback_used``,
+            ``generic_state_keys_used``, ...) so callers can self-correct
+            programmatically without parsing the text. The two routing-
+            degradation flags are True when the driving policy could not bind
+            the observation to the model's inputs by name and silently fell
+            back (a camera routed to a model image slot positionally, or
+            ``observation.state`` composed from the observation's own scalar
+            keys because none of ``robot_state_keys`` matched). A True flag on
+            an otherwise ``success`` run is the signature of the robot moving
+            on meaningless inputs. Mirrors :meth:`eval_policy`.
         """
         from strands_robots.policies import create_policy
 

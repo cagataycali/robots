@@ -1104,6 +1104,16 @@ class PolicyRunner:
             # no load telemetry (e.g. MockPolicy).
             "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
             "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
+            # Routing-degradation telemetry from the driving policy. True means
+            # the heuristic remap silently degraded the run: a camera routed to
+            # a model image slot positionally (no name/camera_key_map match), or
+            # observation.state composed from the observation's own scalar keys
+            # because none of robot_state_keys matched (generic joint_0..N). The
+            # robot then moves on meaningless inputs while status stays "success",
+            # so the signal must be machine-readable, not only a log line.
+            # Defaults False for policies without the attribute (e.g. MockPolicy).
+            "positional_fallback_used": bool(getattr(policy, "positional_fallback_used", False)),
+            "generic_state_keys_used": bool(getattr(policy, "generic_state_keys_used", False)),
             # Process RSS (MB) at result time: confirms a heavy model is resident
             # and, across a loop, that it stays resident instead of oscillating
             # as it would on a per-episode reload. None when unmeasurable.
@@ -1599,6 +1609,8 @@ class PolicyRunner:
                         "max_steps": max_steps,
                         "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
                         "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
+                        "positional_fallback_used": bool(getattr(policy, "positional_fallback_used", False)),
+                        "generic_state_keys_used": bool(getattr(policy, "generic_state_keys_used", False)),
                         **rtc_telemetry,
                         "policy_resident_rss_mb": process_rss_mb(),
                         "episodes": results,
@@ -1928,6 +1940,8 @@ class PolicyRunner:
                         "benchmark_class": spec_name,
                         "policy_load_time_s": round(float(getattr(policy, "load_time_s", 0.0)), 3),
                         "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
+                        "positional_fallback_used": bool(getattr(policy, "positional_fallback_used", False)),
+                        "generic_state_keys_used": bool(getattr(policy, "generic_state_keys_used", False)),
                         "policy_resident_rss_mb": process_rss_mb(),
                         "episodes": results,
                     }
