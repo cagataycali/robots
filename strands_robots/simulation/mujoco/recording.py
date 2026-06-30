@@ -50,7 +50,7 @@ class RecordingMixin(DatasetRecordingMixin):
         fps: int = 30,
         root: str | None = None,
         push_to_hub: bool = False,
-        vcodec: str = "libsvtav1",
+        vcodec: str = "h264",
         overwrite: bool = False,
         cameras: list[str] | None = None,
     ) -> dict[str, Any]:
@@ -79,6 +79,14 @@ class RecordingMixin(DatasetRecordingMixin):
                 record from scratch. When False (default) an existing dataset is
                 appended to; a non-empty, non-dataset ``root`` is reported as an
                 error rather than clobbered.
+            vcodec: Video codec for the per-camera MP4 streams. Defaults to
+                "h264" (H.264), which decodes everywhere - including OpenCV's
+                VideoCapture, used by many downstream VLM video readers - so a
+                recorded episode can be replayed/reasoned about without
+                transcoding. Use "libsvtav1" (AV1) for smaller files in
+                storage-constrained training pipelines; LeRobot read-back
+                (torchcodec/pyav) handles AV1, but OpenCV wheels commonly cannot
+                decode it and silently yield 0 frames.
             cameras: Camera names to record into the dataset. When ``None``
                 (default) every scene camera is recorded - which includes the
                 implicit ``default`` free camera. Pass an explicit subset to

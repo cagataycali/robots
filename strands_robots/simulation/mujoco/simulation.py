@@ -1241,7 +1241,7 @@ class MuJoCoSimEngine(
         # instead of guessing method names.
         base["methods"]["start_recording"] = (
             "(repo_id='local/sim_recording', task='', fps=30, root=None, "
-            "push_to_hub=False, vcodec='libsvtav1', overwrite=False) -> dict"
+            "push_to_hub=False, vcodec='h264', overwrite=False) -> dict"
         )
         base["methods"]["save_episode"] = (
             "() -> dict  (flush current rollout as one episode; call once per "

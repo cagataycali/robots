@@ -241,6 +241,32 @@ which returns the same report dict.
 | `save_episode` | `[lerobot]` | Close current rollout as one episode (call once per `run_policy` for N episodes) |
 | `start_cameras_recording` / `stop_cameras_recording` | `[sim-mujoco]` alone | Plain MP4, no parquet |
 
+## Video codec (H.264 default, AV1 opt-in)
+
+`start_recording` (and `DatasetRecorder.create`/`resume`) default to
+`vcodec="h264"`. H.264 is universally decodable - including by OpenCV's
+`cv2.VideoCapture`, which is what many downstream VLM video readers use to
+*watch* a recorded episode. The recorded per-camera MP4s therefore reopen and
+decode everywhere without a transcode step:
+
+```python
+import cv2
+cap = cv2.VideoCapture(".../videos/observation.images.base/chunk-000/file-000.mp4")
+ok, frame = cap.read()   # H.264: ok is True, frame is a real (H, W, 3) array
+```
+
+Pass `vcodec="libsvtav1"` to opt into AV1 for smaller files in
+storage-constrained training pipelines. AV1 reads back fine through LeRobot's
+own loader (`torchcodec`/`pyav`), but OpenCV wheels commonly lack an AV1 decoder
+and silently yield **0 frames** (`VideoCapture.read()` returns `False`
+immediately even though the stream has frames) - so avoid AV1 if anything in
+your pipeline reads the videos through OpenCV.
+
+The flat `vcodec` value accepts either codec names (`h264`, `hevc`,
+`libsvtav1`) or ffmpeg encoder names (`libx264`, `libx265`); it is normalized
+to whatever the installed LeRobot version's encoder config expects. An
+unsupported codec fails loudly rather than silently reverting to the default.
+
 ## DatasetRecorder direct API
 
 ```python
@@ -260,7 +286,7 @@ recorder = DatasetRecorder.create(
     joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
     task="pick up the red cube",
     # root=None → ~/.strands_robots/datasets/
-    # vcodec="libsvtav1", streaming_encoding=True, image_writer_threads=4
+    # vcodec="h264", streaming_encoding=True, image_writer_threads=4
 )
 
 for step in control_loop:

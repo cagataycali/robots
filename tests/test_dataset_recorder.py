@@ -1121,7 +1121,9 @@ def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
     recorder = DatasetRecorder.create("user/data", joint_names=["j1"])
 
     sent = _FakeDatasetMinimalCreate.last_create_kwargs
-    assert sent == {"repo_id": "user/data", "vcodec": "libsvtav1"}
+    # The default codec is the codec name "h264"; on the legacy flat ``vcodec``
+    # surface it is normalized to the ffmpeg encoder name "libx264".
+    assert sent == {"repo_id": "user/data", "vcodec": "libx264"}
     assert recorder.dataset.repo_id == "user/data"
 
 
@@ -1278,3 +1280,63 @@ def test_load_lerobot_episode_rejects_negative_index():
 
     with pytest.raises(ValueError, match="non-negative"):
         load_lerobot_episode("any/repo", episode=-1)
+
+
+class TestCodecRouting:
+    """Cover ``_codec_create_kwargs`` version-tolerant codec routing.
+
+    LeRobot's codec plumbing drifted across releases - flat ``vcodec`` (ffmpeg
+    encoder names) on 0.5.0/0.5.1, then ``rgb_encoder=RGBEncoderConfig(...)`` on
+    0.5.2+ (codec-name allowlist). Routing the codec onto the wrong (or no)
+    surface silently drops the caller's request and falls back to the AV1
+    default. These tests assert the requested codec actually reaches the
+    surface this LeRobot exposes, with name spellings normalized per surface.
+    """
+
+    def test_legacy_flat_vcodec_uses_ffmpeg_name(self):
+        from strands_robots.dataset_recorder import _codec_create_kwargs
+
+        # Canonical "h264" maps to the ffmpeg encoder name on the flat surface.
+        assert _codec_create_kwargs({"vcodec": None}, "h264") == {"vcodec": "libx264"}
+        # An ffmpeg name passes through unchanged.
+        assert _codec_create_kwargs({"vcodec": None}, "libx264") == {"vcodec": "libx264"}
+        # AV1 is spelled the same on both surfaces.
+        assert _codec_create_kwargs({"vcodec": None}, "libsvtav1") == {"vcodec": "libsvtav1"}
+
+    def test_no_known_codec_surface_returns_empty(self):
+        from strands_robots.dataset_recorder import _codec_create_kwargs
+
+        # A signature exposing none of the known codec kwargs -> no routing
+        # (recorder falls back to the LeRobot default codec).
+        assert _codec_create_kwargs({"repo_id": None, "fps": None}, "h264") == {}
+
+    def test_rgb_encoder_normalizes_ffmpeg_name_to_allowlist(self):
+        pytest.importorskip("lerobot")
+        rgb = pytest.importorskip("lerobot.configs.video")
+        if not hasattr(rgb, "RGBEncoderConfig"):
+            pytest.skip("this LeRobot has no RGBEncoderConfig surface")
+        from strands_robots.dataset_recorder import _codec_create_kwargs
+
+        # ffmpeg "libx264" must be normalized to the allowlist name "h264",
+        # otherwise RGBEncoderConfig rejects it and the codec is dropped.
+        out = _codec_create_kwargs({"rgb_encoder": None}, "libx264")
+        assert set(out) == {"rgb_encoder"}
+        assert out["rgb_encoder"].vcodec == "h264"
+        # Canonical "h264" is already allowlist-valid and passes through.
+        out2 = _codec_create_kwargs({"rgb_encoder": None}, "h264")
+        assert out2["rgb_encoder"].vcodec == "h264"
+        # AV1 opt-in survives onto the encoder config.
+        out3 = _codec_create_kwargs({"rgb_encoder": None}, "libsvtav1")
+        assert out3["rgb_encoder"].vcodec == "libsvtav1"
+
+    def test_rgb_encoder_rejects_unknown_codec_loudly(self):
+        pytest.importorskip("lerobot")
+        rgb = pytest.importorskip("lerobot.configs.video")
+        if not hasattr(rgb, "RGBEncoderConfig"):
+            pytest.skip("this LeRobot has no RGBEncoderConfig surface")
+        from strands_robots.dataset_recorder import _codec_create_kwargs
+
+        # An unsupported codec must surface LeRobot's ValueError rather than
+        # silently reverting to the default codec.
+        with pytest.raises(ValueError):
+            _codec_create_kwargs({"rgb_encoder": None}, "not_a_codec")
