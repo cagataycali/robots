@@ -15,6 +15,7 @@ import os
 import shutil
 import tempfile
 
+import numpy as np
 import pytest
 
 mj = pytest.importorskip("mujoco")
@@ -87,6 +88,29 @@ FREE_BASE_XML = """
 """
 
 
+# Scene with a material-backed, UNNAMED geom - mirrors a real robot whose mesh
+# geoms are unnamed and draw their colour from a referenced material (so the
+# renderer ignores geom_rgba for them).
+MATERIAL_SCENE_XML = """
+<mujoco model="mat_scene">
+  <compiler angle="radian" autolimits="true"/>
+  <asset>
+    <material name="body_mat" rgba="0.2 0.2 0.2 1"/>
+  </asset>
+  <worldbody>
+    <light name="main" pos="0 0 3" dir="0 0 -1"/>
+    <body name="base" pos="0 0 0.1">
+      <joint name="j" type="hinge" axis="0 0 1"/>
+      <geom type="box" size="0.05 0.05 0.05" material="body_mat"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="j_act" joint="j" kp="10"/>
+  </actuator>
+</mujoco>
+"""
+
+
 @pytest.fixture
 def sim():
     """Create a fresh Simulation instance."""
@@ -140,6 +164,17 @@ def robot_xml_path():
     path = os.path.join(tmpdir, "test_arm.xml")
     with open(path, "w") as f:
         f.write(ROBOT_XML)
+    yield path
+    shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+@pytest.fixture
+def material_scene_path():
+    """Write the material-backed scene XML to a temp file."""
+    tmpdir = tempfile.mkdtemp()
+    path = os.path.join(tmpdir, "mat_scene.xml")
+    with open(path, "w") as f:
+        f.write(MATERIAL_SCENE_XML)
     yield path
     shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -739,6 +774,50 @@ class TestRandomization:
         sim_with_world.add_object("cube", shape="box", position=[0, 0, 0.1])
         result = sim_with_world.randomize(randomize_positions=True, seed=42)
         assert result["status"] == "success"
+
+    def test_randomize_colors_recolors_unnamed_geoms_and_reports_true_count(self, sim_with_robot):
+        """Recoloring must touch every non-ground geom - including the UNNAMED
+        mesh geoms a real robot body is built from - and the success message
+        must report the count it actually changed, not the total geom count.
+
+        Pre-fix the loop skipped any geom with a falsy (unnamed) name, so a
+        robot kept its colours while the call reported every geom randomized.
+        """
+        m = sim_with_robot._world._model
+        before = m.geom_rgba.copy()
+
+        result = sim_with_robot.randomize(randomize_colors=True, randomize_lighting=False, seed=42)
+        assert result["status"] == "success"
+        after = m.geom_rgba.copy()
+
+        changed = [i for i in range(m.ngeom) if not np.allclose(before[i, :3], after[i, :3])]
+        ground = mj.mj_name2id(m, mj.mjtObj.mjOBJ_GEOM, "ground")
+        # the robot's geoms are unnamed; every non-ground geom must recolor
+        assert ground not in changed
+        assert len(changed) == m.ngeom - 1
+        # the reported count is the true number changed, not ngeom
+        assert f"Colors: {len(changed)} geoms" in result["content"][0]["text"]
+
+    def test_randomize_colors_propagates_to_materials(self, sim, material_scene_path):
+        """A material-backed geom draws its colour from the material, which
+        overrides geom_rgba in the renderer, so randomization must recolor the
+        material too or the change is visually inert.
+
+        The scene's geom is both unnamed and material-backed, so pre-fix it was
+        skipped entirely and no material colour ever changed.
+        """
+        sim.create_world(ground_plane=False)
+        assert sim.add_robot("m", urdf_path=material_scene_path)["status"] == "success"
+        m = sim._world._model
+        assert m.nmat >= 1
+
+        mat_before = m.mat_rgba.copy()
+        result = sim.randomize(randomize_colors=True, randomize_lighting=False, seed=1)
+        assert result["status"] == "success"
+        mat_after = m.mat_rgba.copy()
+
+        changed_mats = [i for i in range(m.nmat) if not np.allclose(mat_before[i, :3], mat_after[i, :3])]
+        assert changed_mats, "material colours must be randomized so the recolor is visible"
 
     def test_randomize_no_world(self, sim):
         result = sim.randomize()

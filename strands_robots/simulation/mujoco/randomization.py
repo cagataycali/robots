@@ -63,7 +63,9 @@ class RandomizationMixin:
         arrays and to ``data.qpos``); recompile the scene to undo.
 
         Args:
-            randomize_colors:     Re-sample geom RGB values.
+            randomize_colors:     Re-sample every non-ground geom's RGB (and
+                                  its material colour, which overrides geom RGB
+                                  in the renderer).
             randomize_lighting:   Jitter light positions + diffuse colour.
             randomize_physics:    Scale geom friction and body mass.
             randomize_positions:  Add uniform noise to dynamic-object xyz.
@@ -87,11 +89,27 @@ class RandomizationMixin:
 
         with self._lock:
             if randomize_colors:
+                # Recolor every geom except the ground plane. Two correctness
+                # points, both previously silent:
+                #   1. Robot mesh geoms are typically UNNAMED, so a truthiness
+                #      check on the name skipped them entirely - the robot kept
+                #      its original colors while the call reported success.
+                #   2. A geom that references a material draws its colour from
+                #      that material in the renderer, NOT from geom_rgba, so the
+                #      recolor is visually inert unless the material is updated
+                #      too. Geoms sharing one material converge to the last
+                #      colour written - acceptable for domain randomization.
+                n_recolored = 0
                 for i in range(model.ngeom):
-                    geom_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i)
-                    if geom_name and geom_name != "ground":
-                        model.geom_rgba[i, :3] = rng.uniform(color_range[0], color_range[1], size=3)
-                changes.append(f"Colors: {model.ngeom} geoms randomized")
+                    if mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i) == "ground":
+                        continue
+                    color = rng.uniform(color_range[0], color_range[1], size=3)
+                    model.geom_rgba[i, :3] = color
+                    matid = int(model.geom_matid[i])
+                    if matid >= 0:
+                        model.mat_rgba[matid, :3] = color
+                    n_recolored += 1
+                changes.append(f"Colors: {n_recolored} geoms randomized")
 
             if randomize_lighting:
                 for i in range(model.nlight):
