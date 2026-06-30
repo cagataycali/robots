@@ -43,7 +43,8 @@ class RecordingMixin(DatasetRecordingMixin):
         default_width: int
         default_height: int
 
-        def robot_action_keys(self, robot_name: str) -> list[str]: ...
+        def robot_action_keys(self, robot_name: str) -> list[str]:
+            """Actuator-ordered action keys for ``robot_name`` (concrete on SimEngine)."""
 
     def start_recording(
         self,
