@@ -268,6 +268,35 @@ class TestPolicyConfigDiscovery:
             with pytest.raises(ImportError, match=name):
                 resolve_policy_class_by_name(name)
 
+    def test_package_import_typeerror_is_surfaced_as_importerror(self, monkeypatch):
+        """Importing a candidate ``lerobot.policies.<type>`` module executes its
+        body, which can raise a *non*-ImportError when an optional VLA dep is
+        absent: e.g. ``lerobot.policies.pi_gemma`` does ``class
+        PiGemmaModel(GemmaModel)`` where ``GemmaModel`` is ``None`` without
+        transformers, raising ``TypeError`` at import. ``resolve_policy_class_by_name``
+        must still honour its documented contract and raise a clean ``ImportError``
+        naming the unresolvable type -- never leak lerobot's internal exception.
+
+        Env-independent: the failing package import is simulated so the contract
+        holds whether or not transformers/the VLA extras are installed."""
+        from strands_robots.policies.lerobot_local import resolution
+
+        real_import = resolution.importlib.import_module
+
+        def fake_import(name, *args, **kwargs):
+            # The bare package import (Strategy 2) blows up like ``class Foo(None)``.
+            if name == "lerobot.policies.faketype":
+                raise TypeError("NoneType takes no arguments")
+            # The ``modeling_*`` submodules (Strategy 1) simply do not exist.
+            if name.startswith("lerobot.policies.faketype."):
+                raise ImportError(f"No module named {name!r}")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(resolution.importlib, "import_module", fake_import)
+
+        with pytest.raises(ImportError, match="faketype"):
+            resolution.resolve_policy_class_by_name("faketype")
+
     def test_walk_continues_after_subpackage_decorator_failure(self, tmp_path, monkeypatch, caplog):
         """A subpackage whose ``configuration_*`` raises a non-ImportError
         (e.g. ``RuntimeError`` from a re-registration collision, or

@@ -381,8 +381,16 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
                     and hasattr(obj, "from_pretrained")
                 ):
                     return obj
-        except ImportError:
-            pass
+        except (ImportError, TypeError, AttributeError, RuntimeError, ValueError) as exc:
+            # A candidate ``modeling_*`` submodule can fail at import/execution
+            # time for reasons other than ImportError: when an optional VLA dep
+            # (e.g. transformers) is absent, a building-block module sets its
+            # base class to ``None`` and ``class Foo(None)`` raises TypeError at
+            # import. Any such failure means "this strategy cannot resolve the
+            # class here", so fall through to the remaining strategies and the
+            # clean, actionable ImportError below instead of leaking lerobot's
+            # internal exception type to the caller.
+            logger.debug("modeling_ import for '%s' failed (%s); trying next strategy", policy_type, exc)
 
     # Strategy 2: Direct package-level import
     try:
@@ -396,8 +404,16 @@ def resolve_policy_class_by_name(policy_type: str) -> type[Any]:
                 and hasattr(obj, "from_pretrained")
             ):
                 return obj
-    except ImportError:
-        pass
+    except (ImportError, TypeError, AttributeError, RuntimeError, ValueError) as exc:
+        # Importing ``lerobot.policies.<type>`` executes that module's body,
+        # which can raise a non-ImportError when an optional VLA dependency is
+        # missing -- e.g. ``lerobot.policies.pi_gemma`` (a PaliGemma
+        # building-block module for pi0/pi05, not a registered policy) does
+        # ``class PiGemmaModel(GemmaModel)`` where ``GemmaModel`` is ``None``
+        # when transformers is absent, raising ``TypeError`` at import. Treat
+        # every such failure as "this strategy is unavailable" and fall through
+        # to the clean ImportError below rather than leaking the internal type.
+        logger.debug("package-level import for '%s' failed (%s); trying next strategy", policy_type, exc)
 
     # Strategy 3: Legacy get_policy_class (LeRobot <0.4)
     try:
