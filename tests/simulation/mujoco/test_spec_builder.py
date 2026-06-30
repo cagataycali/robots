@@ -101,9 +101,44 @@ class TestTargetQuat:
         norm = (quat[0] ** 2 + quat[1] ** 2 + quat[2] ** 2 + quat[3] ** 2) ** 0.5
         assert norm == pytest.approx(1.0, abs=1e-6)
 
-    def test_forward_parallel_to_up_returns_none(self):
-        # Straight-down camera - forward is (0,0,-1), colinear with world up.
-        assert _target_quat([0, 0, 1], [0, 0, 0]) is None
+    def test_top_down_camera_resolves_valid_quat(self):
+        # Top-down overhead camera: forward (0,0,-1) is parallel to world +Z.
+        # Previously this returned None (degenerate) and add_camera silently
+        # dropped the orientation, leaving the camera mis-pointed. It must now
+        # fall back to world +Y and produce a valid, normalised quaternion.
+        quat = _target_quat([0.2, 0, 0.5], [0.2, 0, 0])
+        assert quat is not None
+        assert len(quat) == 4
+        norm = sum(c * c for c in quat) ** 0.5
+        assert norm == pytest.approx(1.0, abs=1e-6)
+
+    def test_straight_up_camera_resolves_valid_quat(self):
+        # Looking straight up: forward (0,0,+1), also parallel to world +Z.
+        quat = _target_quat([0, 0, 0], [0, 0, 1])
+        assert quat is not None
+        norm = sum(c * c for c in quat) ** 0.5
+        assert norm == pytest.approx(1.0, abs=1e-6)
+
+    @pytest.mark.parametrize(
+        ("pos", "target"),
+        [
+            ([0.2, 0.0, 0.5], [0.2, 0.0, 0.0]),  # top-down looking down
+            ([0.0, 0.0, 0.0], [0.0, 0.0, 1.0]),  # straight up
+        ],
+    )
+    def test_vertical_camera_forward_points_at_target(self, pos, target):
+        """A vertical look-at must orient the camera's -Z toward the target."""
+        quat = _target_quat(pos, target)
+        assert quat is not None
+
+        spec = mujoco.MjSpec()
+        spec.worldbody.add_camera(name="c", pos=pos, quat=quat, fovy=60, mode=mujoco.mjtCamLight.mjCAMLIGHT_FIXED)
+        model = spec.compile()
+        rot = model.cam_mat0[0].reshape(3, 3)
+        cam_forward = -rot[:, 2]
+        expected = np.array(target, dtype=float) - np.array(pos, dtype=float)
+        expected /= np.linalg.norm(expected)
+        assert np.allclose(cam_forward, expected, atol=1e-3)
 
     def test_quat_rotates_camera_to_face_target(self):
         """Compile a spec with quat=, then check the resulting cam_mat0 actually

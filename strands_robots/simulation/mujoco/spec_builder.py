@@ -152,8 +152,13 @@ def _target_quat(position: list[float], target: list[float]) -> list[float] | No
     * Right   (cam local +X) = normalize(forward x up)
     * Image-up (cam local +Y) = normalize(right x forward)
 
-    Returns ``None`` for degenerate cases (target == position, or forward
-    parallel to up). Callers handle the degenerate case upstream.
+    The up vector is world +Z, except when the view direction is parallel to
+    +Z (a vertical / top-down camera), in which case world +Y is used as the
+    reference up so the look-at still resolves to a valid orientation.
+
+    Returns ``None`` only for the truly degenerate case where
+    ``target == position`` (zero-length view direction). Callers handle the
+    degenerate case upstream.
 
     Uses MuJoCo's ``mju_mat2Quat`` so no hand-rolled quaternion math.
     """
@@ -169,7 +174,16 @@ def _target_quat(position: list[float], target: list[float]) -> list[float] | No
     right = np.cross(fwd, up)
     rlen = float(np.linalg.norm(right))
     if rlen < 1e-9:
-        return None
+        # Forward is parallel to world +Z (a vertical camera, e.g. the
+        # top-down overhead view). The world-up reference is degenerate, so
+        # fall back to world +Y as the reference up. This still yields a
+        # well-defined orientation instead of silently dropping the quat and
+        # leaving the camera at its default (mis-oriented) pose.
+        up = np.array([0.0, 1.0, 0.0])
+        right = np.cross(fwd, up)
+        rlen = float(np.linalg.norm(right))
+        if rlen < 1e-9:
+            return None
     right /= rlen
     image_up = np.cross(right, fwd)
     image_up /= float(np.linalg.norm(image_up))
