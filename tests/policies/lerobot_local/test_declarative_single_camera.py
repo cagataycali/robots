@@ -191,3 +191,63 @@ class TestDeclarativeSingleCameraEndToEnd:
         state = batch["observation.state"]
         assert tuple(state.shape) == (1, 6)
         assert state.dtype.is_floating_point
+
+
+class TestDeclarativeBatchesWithoutAddBatchDimensionStep:
+    """F3: the declarative path must batch even when the pipeline omits AddBatchDimension.
+
+    The end-to-end test above runs a pipeline that ends in
+    ``AddBatchDimensionProcessorStep``, which batches every tensor. But not every
+    checkpoint ships such a pipeline: when a checkpoint has no standard
+    ``policy_preprocessor.json`` the bridge falls back to a ``norm_stats.json``
+    pipeline built as ``DataProcessorPipeline(steps=[normalizer])`` only - no
+    batch step and no device step. On that pipeline the declarative branch
+    previously fed the model an unbatched ``observation.state`` ``(D,)`` next to a
+    batched ``(1, C, H, W)`` image, a ``torch.stack`` rank mismatch inside
+    ``select_action``. The branch now runs the idempotent
+    ``_fixup_preprocessed_batch`` so the batched-tensor contract holds regardless
+    of which steps the pipeline ships.
+    """
+
+    def test_get_actions_batches_state_and_image_without_add_batch_step(self):
+        pytest.importorskip("lerobot.processor.pipeline")
+        import torch
+        from lerobot.processor import RenameObservationsProcessorStep
+        from lerobot.processor.pipeline import DataProcessorPipeline
+
+        from strands_robots.policies.lerobot_local.processor import ProcessorBridge
+
+        policy = _single_camera_policy("observation.images.front")
+        policy._device = "cpu"
+        policy._rtc_enabled = False
+        policy.actions_per_step = 1
+        policy.inference_kwargs = {}
+
+        # Minimal pipeline: rename only, NO AddBatchDimension / Device step -
+        # the shape the norm_stats.json fallback produces.
+        pipe = DataProcessorPipeline(steps=[RenameObservationsProcessorStep(rename_map={})])
+        policy._processor_bridge = ProcessorBridge(preprocessor=pipe, device="cpu")
+        policy.set_robot_state_keys([f"j{i}" for i in range(6)])
+        policy._configure_embodiment()
+        assert policy._embodiment is not None  # declarative branch is taken
+
+        captured: dict[str, object] = {}
+
+        class _Inner:
+            def eval(self):
+                return None
+
+            def select_action(self, batch, **kw):
+                captured["batch"] = {k: getattr(v, "shape", None) for k, v in batch.items()}
+                return torch.zeros(6)
+
+        policy._policy = _Inner()
+        policy._requires_action_chunk = lambda: False
+
+        obs = {f"j{i}": float(i) for i in range(6)}
+        obs["front"] = np.ones((48, 64, 3), dtype=np.uint8) * 255
+        policy.get_actions_sync(obs, "pick up the cube")
+
+        # State and image both reach the model batched (no rank mismatch).
+        assert tuple(captured["batch"]["observation.state"]) == (1, 6)
+        assert tuple(captured["batch"]["observation.images.front"]) == (1, 3, 48, 64)

@@ -1594,18 +1594,30 @@ class LerobotLocalPolicy(Policy):
         # numpy, state tensors missing a batch dimension).
         if self._processor_bridge and self._processor_bridge.has_preprocessor:
             if self._embodiment is not None:
-                # SOLUTION.md bulletproof path: the embodiment map was injected
+                # SOLUTION.md declarative path: the embodiment map was injected
                 # into the pipeline at load time (rename_map + strands_pack_state
                 # step), so the pipeline itself renames cameras and composes
                 # observation.state. Feed RAW obs straight in - ZERO per-step
-                # strands-side remapping, no _fixup needed (AddBatchDimension +
-                # Device steps in the pipeline handle shape/device).
+                # strands-side remapping.
                 observation = self._canonicalize_obs_images(
                     observation, image_source_keys=self._embodiment_image_source_keys()
                 )
                 batch = self._processor_bridge.preprocess(observation, instruction=instruction)
                 if not isinstance(batch, dict):
                     batch = {"observation.state": batch}
+                # A standard lerobot preprocessor pipeline ends in
+                # AddBatchDimension + Device steps that batch every tensor and
+                # move it to the policy device, so _fixup is a no-op there. But a
+                # MINIMAL pipeline does not: the norm_stats.json fallback builds
+                # ``DataProcessorPipeline(steps=[normalizer])`` only (no batch /
+                # device step), so without this the model receives an unbatched
+                # ``observation.state`` (D,) alongside a (1, C, H, W) image -> a
+                # torch.stack rank mismatch inside select_action. _fixup is
+                # idempotent (it leaves already-batched, already-CHW, already-on-
+                # device tensors untouched), so run it on BOTH paths to make the
+                # batched-tensor contract independent of which steps the
+                # checkpoint's pipeline happens to ship.
+                batch = self._fixup_preprocessed_batch(batch)
             else:
                 # Legacy heuristic path (no embodiment declared). B12: remap
                 # strands-native obs (bare camera names + per-joint scalars) to

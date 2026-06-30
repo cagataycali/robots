@@ -280,6 +280,14 @@ through un-normalized: state reaches the policy in raw degrees and predicted
 actions reach the motors still in the model's normalized space, producing
 off-policy / micro-motion trajectories.
 
+The `norm_stats.json` fallback builds a minimal pipeline (the normalizer
+step only) - it has no `AddBatchDimension` or device step, unlike a standard
+`policy_preprocessor.json`. The runtime batches and device-moves the
+preprocessed observation itself, so a stats-only checkpoint runs on the
+declarative `embodiment=` path with the same batched-tensor contract as a
+standard pipeline; the model never sees an unbatched `observation.state`
+alongside a batched image.
+
 The fallback supports the `q01_q99`, `q10_q90`, `min_max` and `mean_std`
 normalization modes declared by `norm_mode`. For `q01_q99`:
 
