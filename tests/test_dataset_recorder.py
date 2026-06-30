@@ -871,7 +871,9 @@ def test_resume_passes_vcodec_directly_when_supported(monkeypatch):
     recorder = dr.DatasetRecorder.resume("user/data", root="/tmp/ds", vcodec="libx264", task="pick")
 
     sent = _FakeDatasetVcodecResume.last_resume_kwargs
-    assert sent["vcodec"] == "libx264"
+    # The flat ``vcodec`` surface validates against the codec-name allowlist
+    # (it rejects "libx264"), so the ffmpeg name is normalized to "h264".
+    assert sent["vcodec"] == "h264"
     assert sent["repo_id"] == "user/data"
     assert sent["root"] == "/tmp/ds"
     assert sent["streaming_encoding"] is True
@@ -1046,7 +1048,9 @@ def test_create_passes_vcodec_directly_when_supported(monkeypatch):
     )
 
     sent = _FakeDatasetVcodecCreate.last_create_kwargs
-    assert sent["vcodec"] == "libx264"
+    # The flat ``vcodec`` surface validates against the codec-name allowlist
+    # (it rejects "libx264"), so the ffmpeg name is normalized to "h264".
+    assert sent["vcodec"] == "h264"
     assert sent["repo_id"] == "user/data"
     assert sent["fps"] == 50
     assert sent["streaming_encoding"] is True
@@ -1121,9 +1125,9 @@ def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
     recorder = DatasetRecorder.create("user/data", joint_names=["j1"])
 
     sent = _FakeDatasetMinimalCreate.last_create_kwargs
-    # The default codec is the codec name "h264"; on the legacy flat ``vcodec``
-    # surface it is normalized to the ffmpeg encoder name "libx264".
-    assert sent == {"repo_id": "user/data", "vcodec": "libx264"}
+    # The default codec "h264" is already an allowlist-valid codec name and is
+    # forwarded unchanged onto the flat ``vcodec`` surface.
+    assert sent == {"repo_id": "user/data", "vcodec": "h264"}
     assert recorder.dataset.repo_id == "user/data"
 
 
@@ -1285,23 +1289,28 @@ def test_load_lerobot_episode_rejects_negative_index():
 class TestCodecRouting:
     """Cover ``_codec_create_kwargs`` version-tolerant codec routing.
 
-    LeRobot's codec plumbing drifted across releases - flat ``vcodec`` (ffmpeg
-    encoder names) on 0.5.0/0.5.1, then ``rgb_encoder=RGBEncoderConfig(...)`` on
-    0.5.2+ (codec-name allowlist). Routing the codec onto the wrong (or no)
+    LeRobot routes the codec onto different surfaces across releases (flat
+    ``vcodec`` on 0.5.0/0.5.1; an encoder-config object on later minors), but
+    every one validates against the same codec-name allowlist and rejects the
+    ffmpeg names "libx264"/"libx265". Routing the codec onto the wrong (or no)
     surface silently drops the caller's request and falls back to the AV1
     default. These tests assert the requested codec actually reaches the
     surface this LeRobot exposes, with name spellings normalized per surface.
     """
 
-    def test_legacy_flat_vcodec_uses_ffmpeg_name(self):
+    def test_flat_vcodec_uses_codec_name(self):
         from strands_robots.dataset_recorder import _codec_create_kwargs
 
-        # Canonical "h264" maps to the ffmpeg encoder name on the flat surface.
-        assert _codec_create_kwargs({"vcodec": None}, "h264") == {"vcodec": "libx264"}
-        # An ffmpeg name passes through unchanged.
-        assert _codec_create_kwargs({"vcodec": None}, "libx264") == {"vcodec": "libx264"}
-        # AV1 is spelled the same on both surfaces.
+        # The flat ``vcodec`` surface validates against the codec-name allowlist
+        # in every supported LeRobot (>=0.5.0,<0.6.0), so the codec name is
+        # forwarded as-is - NOT mapped to the ffmpeg name "libx264".
+        assert _codec_create_kwargs({"vcodec": None}, "h264") == {"vcodec": "h264"}
+        # An ffmpeg name is normalized to its allowlist codec name.
+        assert _codec_create_kwargs({"vcodec": None}, "libx264") == {"vcodec": "h264"}
+        assert _codec_create_kwargs({"vcodec": None}, "libx265") == {"vcodec": "hevc"}
+        # AV1 and HW encoders are already codec names and pass through.
         assert _codec_create_kwargs({"vcodec": None}, "libsvtav1") == {"vcodec": "libsvtav1"}
+        assert _codec_create_kwargs({"vcodec": None}, "h264_nvenc") == {"vcodec": "h264_nvenc"}
 
     def test_no_known_codec_surface_returns_empty(self):
         from strands_robots.dataset_recorder import _codec_create_kwargs

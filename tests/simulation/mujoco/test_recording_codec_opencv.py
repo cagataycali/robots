@@ -7,12 +7,12 @@ recorded episode. The previous default (AV1 / ``libsvtav1``) is commonly
 undecodable by the FFmpeg build bundled in OpenCV wheels: ``VideoCapture`` opens
 the file, reports a non-zero frame count, yet ``read()`` yields zero frames.
 
-A second, subtler defect this guards: LeRobot's codec plumbing drifted to
-``rgb_encoder=RGBEncoderConfig(vcodec="h264")`` and validates ``vcodec`` against
-an allowlist that uses codec names ("h264") and rejects ffmpeg encoder names
-("libx264"). A recorder that routed the flat ``vcodec`` only onto the old
-surfaces silently dropped it and fell back to the AV1 default - so the H.264
-request never took effect.
+A second, subtler defect this guards: every LeRobot in the supported
+``>=0.5.0,<0.6.0`` range validates ``vcodec`` against a codec-name allowlist
+(``{"h264", "hevc", "libsvtav1", "auto"} | HW_ENCODERS``) and rejects the ffmpeg
+encoder names ("libx264"/"libx265"). A recorder that forwarded the ffmpeg name
+onto the flat ``vcodec`` surface had its H.264 request rejected outright - so
+the codec never took effect.
 
 Covers:
 * the default codec produces an MP4 that OpenCV decodes to exactly the recorded

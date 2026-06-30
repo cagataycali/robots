@@ -32,37 +32,38 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-# Codec-name vocabularies differ across LeRobot surfaces. The legacy flat
-# ``vcodec`` kwarg (0.5.0/0.5.1) was passed straight to ffmpeg, so it wants
-# ffmpeg encoder names ("libx264", "libsvtav1"). The 0.5.2+ encoder configs
-# (RGBEncoderConfig / VideoEncoderConfig) validate against a fixed allowlist
-# that uses codec names ("h264", "hevc", "libsvtav1") and reject "libx264".
-# We accept either spelling from callers and translate to the target surface.
-_FFMPEG_CODEC_NAMES = {"h264": "libx264", "hevc": "libx265"}
+# Every LeRobot surface in the supported ``>=0.5.0,<0.6.0`` range validates the
+# codec against the same codec-name allowlist - ``video_utils.VALID_VIDEO_CODECS
+# = {"h264", "hevc", "libsvtav1", "auto"} | HW_ENCODERS`` - and *rejects* the
+# ffmpeg library names ("libx264"/"libx265"). This holds for the flat ``vcodec``
+# kwarg (0.5.0/0.5.1) just as much as for the ``RGBEncoderConfig`` /
+# ``VideoEncoderConfig`` surfaces a later minor may expose. So there is exactly
+# one correct normalization direction: ffmpeg name -> codec name, applied to
+# whichever surface is present. Callers may pass either spelling.
 _ENCODER_CODEC_NAMES = {"libx264": "h264", "libx265": "hevc"}
 
 
 def _codec_create_kwargs(sig_params: Any, vcodec: str, *, context: str = "create") -> dict[str, Any]:
     """Map a flat ``vcodec`` onto whatever codec surface this LeRobot exposes.
 
-    LeRobot's video-codec plumbing drifted across releases, and the codec is
-    both named and routed differently on each. Passing the wrong kwarg (or none)
-    silently leaves the encoder on its built-in default, so the caller's
-    ``vcodec`` is dropped without error - which is how an AV1 default sneaks back
-    in even when the caller asked for H.264:
+    LeRobot routes the codec differently across releases. Passing the wrong
+    kwarg (or none) silently leaves the encoder on its built-in default, so the
+    caller's ``vcodec`` is dropped without error - which is how an AV1 default
+    sneaks back in even when the caller asked for H.264:
 
-      * 0.5.0 / 0.5.1: ``create/resume(..., vcodec="libx264")`` - a flat ffmpeg
-        encoder name.
+      * 0.5.0 / 0.5.1: a flat ``create/resume(..., vcodec=...)`` kwarg.
       * an interim build briefly exposed
-        ``camera_encoder=VideoEncoderConfig(vcodec="h264")``.
-      * 0.5.2+: ``rgb_encoder=RGBEncoderConfig(vcodec="h264")`` (the flat kwarg
-        and ``camera_encoder`` were both removed; the codec now lives inside the
-        per-modality encoder config and is validated against an allowlist that
-        uses codec names like "h264", NOT ffmpeg names like "libx264").
+        ``camera_encoder=VideoEncoderConfig(vcodec=...)``.
+      * a later minor may move the codec into
+        ``rgb_encoder=RGBEncoderConfig(vcodec=...)``.
 
-    The caller may pass either spelling ("h264" or "libx264"); this normalizes
-    to whatever the detected surface expects. An unknown codec raises loudly
-    (LeRobot's own ValueError) rather than silently falling back to the default.
+    Every one of these surfaces validates against LeRobot's codec-name allowlist
+    (``{"h264", "hevc", "libsvtav1", "auto"} | HW_ENCODERS``) and rejects the
+    ffmpeg library names ("libx264"/"libx265"). So the codec is normalized to its
+    codec-name spelling once and routed onto whichever surface is present. The
+    caller may pass either spelling ("h264" or "libx264"). An unknown codec
+    raises loudly (LeRobot's own ValueError) rather than silently falling back
+    to the default.
 
     Args:
         sig_params: ``inspect.Signature.parameters`` of ``create``/``resume``.
@@ -76,26 +77,28 @@ def _codec_create_kwargs(sig_params: Any, vcodec: str, *, context: str = "create
         present (recorder falls back to the LeRobot default codec).
 
     Raises:
-        ValueError: When the encoder-config surface rejects the requested codec
+        ValueError: When the codec surface rejects the requested codec
             (propagated from LeRobot so an unsupported codec fails loudly
             instead of silently reverting to the default).
     """
+    # ffmpeg library name -> codec name; codec names (and HW encoders) pass through.
+    codec = _ENCODER_CODEC_NAMES.get(vcodec, vcodec)
     if "vcodec" in sig_params:
-        return {"vcodec": _FFMPEG_CODEC_NAMES.get(vcodec, vcodec)}
+        return {"vcodec": codec}
     if "rgb_encoder" in sig_params:
         try:
             from lerobot.configs.video import RGBEncoderConfig
         except ImportError as exc:
             logger.warning("RGBEncoderConfig import failed on %s (%s); using default codec", context, exc)
             return {}
-        return {"rgb_encoder": RGBEncoderConfig(vcodec=_ENCODER_CODEC_NAMES.get(vcodec, vcodec))}
+        return {"rgb_encoder": RGBEncoderConfig(vcodec=codec)}
     if "camera_encoder" in sig_params:
         try:
             from lerobot.configs.video import VideoEncoderConfig
         except ImportError as exc:
             logger.warning("VideoEncoderConfig import failed on %s (%s); using default codec", context, exc)
             return {}
-        return {"camera_encoder": VideoEncoderConfig(vcodec=_ENCODER_CODEC_NAMES.get(vcodec, vcodec))}
+        return {"camera_encoder": VideoEncoderConfig(vcodec=codec)}
     return {}
 
 
@@ -374,7 +377,7 @@ class DatasetRecorder:
             root: Local dataset directory (same as the original recording).
             task: Default task description for appended frames.
             vcodec: Video codec for the per-camera MP4 streams (default
-                "libx264"; routed into the version-appropriate encoder
+                "h264"; routed into the version-appropriate encoder
                 config). See create() for the H.264-vs-AV1 trade-off.
             streaming_encoding: Stream-encode video during capture.
             image_writer_threads: Threads for writing image frames.
