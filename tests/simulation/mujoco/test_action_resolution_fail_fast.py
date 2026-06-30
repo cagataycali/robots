@@ -141,3 +141,71 @@ class TestPartialResolutionStats:
         rates = payload["action_resolution_rate"]
         assert set(rates) == {"1", "2", "3", "4", "5", "6"}
         assert all(v == 1.0 for v in rates.values())
+
+
+class _FixedVectorPolicy(Policy):
+    """Policy that emits a fixed-length numeric action vector every step.
+
+    Models a policy trained for a different embodiment whose action head width
+    does not match the target robot's joint count - e.g. a 7-DOF checkpoint
+    driving a 6-DOF arm by positional vector. A numeric vector binds
+    positionally to every joint, so a length mismatch is a structural failure
+    the runner cannot partially resolve.
+    """
+
+    def __init__(self, vector: list[float]) -> None:
+        self._vector = vector
+
+    @property
+    def provider_name(self) -> str:
+        return "fixed_vector_test"
+
+    @property
+    def requires_images(self) -> bool:
+        return False
+
+    def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        pass
+
+    async def get_actions(
+        self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
+    ) -> list[dict[str, Any]]:
+        # A bare numeric vector is a valid runner action (it binds positionally
+        # to every joint); the Policy ABC types the chunk as dicts, so silence
+        # the element-type check for this intentionally-vector chunk.
+        return [list(self._vector)]  # type: ignore[list-item]
+
+
+class TestFailFastOnActionVectorShapeMismatch:
+    """A numeric action vector whose length never matches the robot's joint
+    count drives zero actuators on every step. ``send_action`` rejects it with a
+    plain shape-mismatch error that carries no per-key breakdown (unlike a dict
+    with unresolvable names), so the runner must still count the step as a 100%
+    failure and bail in the probe window - not silently run the full episode
+    with an arm that never moves.
+    """
+
+    @pytest.mark.parametrize(
+        "vector",
+        [
+            pytest.param([0.1, 0.2, 0.3], id="too-short"),
+            pytest.param([0.1] * 9, id="too-long"),
+        ],
+    )
+    def test_vector_length_mismatch_fails_fast_within_probe_window(self, sim, vector):
+        policy = _FixedVectorPolicy(vector)  # so101 has 6 joints
+        result = sim.run_policy(
+            robot_name="so101",
+            policy_object=policy,
+            n_steps=50,  # would run 50 steps pre-fix; must bail at step 3
+            control_frequency=20.0,
+            fast_mode=True,
+        )
+        assert result["status"] == "error", result
+        text = result["content"][0]["text"]
+        # Bailed in the probe window, did NOT run the full 50-step episode.
+        assert "first 3 action steps" in text
+        assert "50 steps" not in text
+        # The diagnostic points at the embodiment fix and names valid joints.
+        assert "get_features" in text
+        assert "1" in text and "6" in text
