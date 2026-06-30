@@ -82,6 +82,24 @@ policy declaring only `observation.images.front`) driven via an embodiment
 is handled the same as the legacy (no-embodiment) path. You do not need to
 name your camera with an `image` substring for this to work.
 
+## Bare declared image keys bind by exact name
+
+Most ACT/diffusion checkpoints declare image features in the prefixed form
+(`observation.images.<cam>`). Some VLAs - notably MolmoAct2 - instead declare
+BARE image keys (`base`, `wrist`) in their `input_features`. When you route sim
+cameras onto such a policy by name (via `image_keys` or simply by naming the
+sim cameras to match), a camera whose name equals a bare declared key binds to
+it BY NAME, exactly like the prefixed form does. Positional fallback (with its
+`Camera '<name>' does not match any declared policy image key` warning) only
+kicks in for cameras whose names match neither a prefixed nor a bare declared
+key.
+
+This matters when the scene carries an extra camera the policy does not
+consume (for example the MuJoCo `default` free camera): the named views still
+bind to their own slots and the extra camera is dropped, instead of the extra
+camera positionally displacing a real view. Set `strict_keys=True` to turn an
+unresolved camera name into a hard error rather than a positional guess.
+
 ## See also
 
 - [LeRobot Local](lerobot-local.md) - camera routing, the pre-flight check, `obs_rename_override`.

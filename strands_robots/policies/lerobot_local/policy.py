@@ -1807,9 +1807,10 @@ class LerobotLocalPolicy(Policy):
         Mapping rules:
           * Keys already starting with ``observation.`` (and ``task``) pass through.
           * ndarray values with ndim>=2 (images) are matched to the model's
-            declared ``observation.images.*`` features. An exact short-name match
-            (``image`` → ``observation.images.image``) is preferred; otherwise
-            images fill declared image slots in order.
+            declared image features by exact name first - either the prefixed
+            form (``image`` → ``observation.images.image``) or a BARE declared
+            key (``base`` → ``base``, as VLAs like MolmoAct2 declare them);
+            otherwise images fill remaining declared image slots in order.
           * Remaining scalar joint values are collected (in ``robot_state_keys``
             order when available, else insertion order) into ``observation.state``.
 
@@ -1847,10 +1848,22 @@ class LerobotLocalPolicy(Policy):
                     out[mapped] = v
                     used_feats.add(mapped)
                 continue
-            target = f"observation.images.{k}"
-            if target in self._input_features and target not in used_feats:
-                out[target] = v
-                used_feats.add(target)
+            prefixed = f"observation.images.{k}"
+            if prefixed in self._input_features and prefixed not in used_feats:
+                out[prefixed] = v
+                used_feats.add(prefixed)
+            elif k in declared_img_feats and k not in used_feats:
+                # VLAs such as MolmoAct2 declare bare image keys (``base`` /
+                # ``wrist``) rather than the ``observation.images.<cam>`` form.
+                # Mirror the exact-name precedence already in
+                # ``_resolve_camera_targets`` so a camera whose name equals a
+                # bare declared key binds BY NAME, not positionally - otherwise
+                # every camera falls through to positional fill, which shuffles
+                # views (and drops a real one when an extra free camera such as
+                # the sim ``default`` is present) and emits a misleading
+                # "does not match" warning even on an exact-name hit.
+                out[k] = v
+                used_feats.add(k)
             else:
                 unmatched_imgs.append((k, v))
         # Fill any remaining declared image slots, in declaration order.
