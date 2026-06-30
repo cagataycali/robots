@@ -22,6 +22,7 @@ description: Error → fix table for the most common gotchas across install, sim
 |---------|--------------|-----|
 | `GLXBadFBConfig` (Linux) | Missing OSMesa | `sudo apt install libosmesa6-dev` + `export MUJOCO_GL=osmesa` |
 | Black frames from `render(...)` | Headless, no GL backend | `export MUJOCO_GL=osmesa` (Linux) or `=egl` |
+| Rendering very slow (~100x), warning `rendering on a CPU software rasterizer` | `MUJOCO_GL=egl` but no GPU EGL vendor ICD registered, so EGL falls back to Mesa `llvmpipe` (CPU) | On NVIDIA hosts register the EGL ICD: write `/usr/share/glvnd/egl_vendor.d/10_nvidia.json` = `{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}` and set `NVIDIA_DRIVER_CAPABILITIES` to include `graphics`. Verify with `GL_RENDERER` (should report the NVIDIA GPU, not `llvmpipe`). |
 | `Robot("foo")` raises ValueError | Unknown name | Check `list_robots("all")`; or pass `urdf_path=...` |
 | Sim hangs on `create_world` | Asset download | Wait - first call downloads MJCF, then cached |
 | `ModuleNotFoundError: trs_so_arm100_mj_description` | Auto-install failed | `uv pip install trs-so-arm100-mj-description` |

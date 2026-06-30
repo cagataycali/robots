@@ -122,6 +122,59 @@ def _ensure_mujoco() -> "Any":
 
 _rendering_available: bool | None = None
 
+# One-shot guard so the software-rendering warning fires at most once per process.
+_software_render_warned: bool = False
+
+# GL_RENDERER substrings that identify a CPU software rasterizer (no GPU).
+_SOFTWARE_RENDERERS: tuple[str, ...] = (
+    "llvmpipe",
+    "softpipe",
+    "swrast",
+    "kms_swrast",
+    "software rasterizer",
+)
+
+
+def _warn_if_software_rendering(probe_stdout: str) -> None:
+    """Warn once when the active GL renderer is a CPU software rasterizer.
+
+    MuJoCo's EGL backend silently routes to Mesa ``llvmpipe`` when no GPU EGL
+    vendor ICD is registered - e.g. an NVIDIA container missing
+    ``/usr/share/glvnd/egl_vendor.d/10_nvidia.json``. Offscreen rendering still
+    works but runs on the CPU at roughly two orders of magnitude lower
+    throughput, which silently throttles every policy observation, rollout
+    video, and dataset recording. The render probe reports ``GL_RENDERER`` via
+    the ``__GL_RENDERER__=`` marker; surface a software rasterizer as an
+    actionable warning instead of a silent performance cliff.
+
+    Args:
+        probe_stdout: Captured stdout of the render probe subprocess. When it
+            lacks the ``__GL_RENDERER__=`` marker (e.g. PyOpenGL unavailable in
+            the probe) this is a no-op - detection is best-effort only.
+    """
+    global _software_render_warned
+    if _software_render_warned:
+        return
+    renderer = ""
+    for line in probe_stdout.splitlines():
+        if line.startswith("__GL_RENDERER__="):
+            renderer = line[len("__GL_RENDERER__=") :].strip()
+            break
+    if not renderer:
+        return
+    low = renderer.lower()
+    if any(token in low for token in _SOFTWARE_RENDERERS):
+        _software_render_warned = True
+        logger.warning(
+            "MuJoCo is rendering on a CPU software rasterizer (GL_RENDERER=%r); "
+            "offscreen renders will be ~100x slower than GPU and the GPU EGL "
+            "backend is NOT active. On an NVIDIA host/container, register the "
+            "NVIDIA EGL vendor ICD - write /usr/share/glvnd/egl_vendor.d/10_nvidia.json "
+            'containing {"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}} '
+            "and ensure NVIDIA_DRIVER_CAPABILITIES includes 'graphics'.",
+            renderer,
+        )
+
 
 def _can_render() -> bool:
     """Check if MuJoCo offscreen rendering is available.
@@ -160,11 +213,22 @@ def _can_render() -> bool:
     # On some CI environments, libEGL.so.1 is loadable but non-functional -
     # mj.Renderer() triggers a fatal abort that kills the entire process.
     # By running the probe in a child process, we detect the failure safely.
+    # The renderer creation (and close) determines availability. The GL_RENDERER
+    # capture is purely additive and fully wrapped in try/except so it can never
+    # change the probe's success/failure - it only lets the parent detect a
+    # silent CPU software-rasterizer fallback (see _warn_if_software_rendering).
     probe_script = (
-        "import mujoco;"
-        "m=mujoco.MjModel.from_xml_string('<mujoco><worldbody/></mujoco>');"
-        "r=mujoco.Renderer(m,height=1,width=1);"
-        "r.close()"
+        "import sys, mujoco\n"
+        "m = mujoco.MjModel.from_xml_string('<mujoco><worldbody/></mujoco>')\n"
+        "r = mujoco.Renderer(m, height=1, width=1)\n"
+        "try:\n"
+        "    r.update_scene(mujoco.MjData(m)); r.render()\n"
+        "    from OpenGL import GL\n"
+        "    _g = GL.glGetString(GL.GL_RENDERER)\n"
+        "    sys.stdout.write('__GL_RENDERER__=' + (_g.decode(errors='replace') if _g else '') + '\\n')\n"
+        "except Exception:\n"
+        "    pass\n"
+        "r.close()\n"
     )
     try:
         result = subprocess.run(
@@ -176,6 +240,7 @@ def _can_render() -> bool:
         if result.returncode == 0:
             _rendering_available = True
             logger.info("MuJoCo rendering available (subprocess probe passed)")
+            _warn_if_software_rendering(result.stdout.decode(errors="replace"))
         else:
             _rendering_available = False
             stderr = result.stderr.decode(errors="replace").strip()
