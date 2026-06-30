@@ -24,6 +24,24 @@ PPO and FastSAC share one implementation with no per-subclass override.
 env's `success_fn`), not a time-out. Purely additive - no existing behaviour
 changes.
 
+### Added: `VecSimEnv` - N independent `SimEnv` presented as one `(N, D)`-batched env
+
+The single-env `SimEnv` emits `(1, D)` tensors by design ("only the env count
+changes"); `VecSimEnv` is the realisation of that promise for the CPU/MuJoCo
+backend. It owns `num_envs` independent `SimEnv` (each its own engine), steps
+them through one reused thread pool (MuJoCo releases the GIL during `mj_step`,
+so threads give real parallelism on the physics call), and stacks the results
+to `(N, D)` so the from-scratch PPO / FastSAC trainers can collect N
+trajectories per step. Autoreset matches the gymnasium vector API: on a done
+env the pre-reset terminal observation is captured into
+`infos[i]["terminal_obs"]` before reset (load-bearing for value bootstrapping a
+truncation), and the returned `obs[i]` is the fresh post-reset observation. A
+construction-time homogeneity guard rejects sub-envs that disagree on
+obs/action dims, and `num_envs=1` skips the thread pool entirely. Exported from
+`strands_robots.training.rl`. A future GPU-batched backend can implement this
+same interface as one engine driving N worlds, so trainer code written against
+`VecSimEnv` does not change when the backend does.
+
 ### Added: LeKiwi is now simulatable (`Robot("lekiwi", mode="sim")`)
 
 The `lekiwi` registry entry was hardware-only - it carried a `hardware.lerobot_type`

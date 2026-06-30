@@ -13,6 +13,7 @@ Public surface:
     - :class:`FastSacTrainer` - Soft Actor-Critic (off-policy, replay buffer).
     - :class:`SimpleReplayBuffer` - off-policy transition store.
     - :class:`SimEnv` - ``SimEngine`` -> RL env adapter.
+    - :class:`VecSimEnv` - N independent ``SimEnv`` presented as one ``(N, D)`` env.
     - :class:`EmpiricalNormalization` - running observation normalizer.
 
 Importing this package imports ``torch`` (via the env / algo modules), so it is
@@ -26,6 +27,7 @@ from strands_robots.training.rl.fast_sac import FastSacTrainer
 from strands_robots.training.rl.normalization import EmpiricalNormalization
 from strands_robots.training.rl.ppo import PpoTrainer
 from strands_robots.training.rl.replay_buffer import SimpleReplayBuffer
+from strands_robots.training.rl.vec_env import VecSimEnv
 
 __all__ = [
     "BaseRLAlgo",
@@ -34,5 +36,6 @@ __all__ = [
     "FastSacTrainer",
     "SimpleReplayBuffer",
     "SimEnv",
+    "VecSimEnv",
     "EmpiricalNormalization",
 ]
