@@ -56,6 +56,34 @@ def _declared_feature_is_image(name: str, feature: Any = None) -> bool:
     return "image" in name
 
 
+def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | None) -> dict[str, str]:
+    """Merge an ``obs_rename_override`` over an embodiment's ``obs_rename``.
+
+    An override entry whose value is falsy (``None`` or ``""``) DROPS the
+    matching source key from the merged map instead of adding a bogus rename.
+    This is how a caller adapts a multi-camera embodiment (e.g. ``so_real``
+    declares both ``front`` and ``wrist``) to a single-camera checkpoint that
+    does not declare ``observation.images.wrist_image``: pass
+    ``obs_rename_override={"wrist": None}`` to remove the stale rename whose
+    target the model never declares (the embodiment ``validate`` would
+    otherwise reject it). Non-empty values add or replace a rename as before.
+
+    Args:
+        base: The embodiment's declared ``obs_rename`` map.
+        override: Caller override; falsy values drop, truthy values set.
+
+    Returns:
+        The merged rename map with dropped keys removed.
+    """
+    merged = dict(base)
+    for src, dst in (override or {}).items():
+        if dst:
+            merged[src] = dst
+        else:
+            merged.pop(src, None)
+    return merged
+
+
 # Fallback control rate used ONLY when RTC runs without the runtime having
 # called set_control_frequency(). Used to keep a standalone (no-runner) RTC
 # call functional; the runner always plumbs the real rate. A loud one-time
@@ -219,7 +247,7 @@ class LerobotLocalPolicy(Policy):
         image_keys: list[str] | None = None,
         inference_action_mode: str = "continuous",
         camera_key_map: dict[str, str] | None = None,
-        obs_rename_override: dict[str, str] | None = None,
+        obs_rename_override: dict[str, str | None] | None = None,
         strict_keys: bool = False,
         cache_model: bool = True,
         revision: str | None = None,
@@ -256,10 +284,14 @@ class LerobotLocalPolicy(Policy):
         # Optional override merged OVER the embodiment's declared ``obs_rename``
         # (``{runtime_obs_key: "observation.images.*"}``). Lets a caller keep
         # custom sim camera names (e.g. ``realsense_top``) and still route them
-        # onto the model's declared image features without renaming cameras.
-        # Merged in :meth:`_configure_embodiment`; also consulted by the
-        # class-level :meth:`preflight` so the override is honoured before any
-        # model download.
+        # onto the model's declared image features without renaming cameras. A
+        # falsy value (``None`` or ``""``) DROPS that source key, so a
+        # multi-camera embodiment (e.g. ``so_real`` declares ``front`` +
+        # ``wrist``) can be adapted to a single-camera checkpoint that does not
+        # declare the second image feature. Merged in
+        # :meth:`_configure_embodiment` via :func:`_merge_obs_rename`; also
+        # consulted by the class-level :meth:`preflight` so the override is
+        # honoured before any model download.
         self._obs_rename_override = dict(obs_rename_override) if obs_rename_override else None
         # When True, raise instead of routing cameras positionally if their
         # names cannot be matched to the policy's declared image keys (and no
@@ -1014,9 +1046,7 @@ class LerobotLocalPolicy(Policy):
         except Exception:  # noqa: BLE001 - unknown/odd spec; create_policy reports it
             return
 
-        obs_rename = dict(embodiment.obs_rename)
-        override = policy_config.get("obs_rename_override") or {}
-        obs_rename.update(override)
+        obs_rename = _merge_obs_rename(embodiment.obs_rename, policy_config.get("obs_rename_override"))
 
         # Group source keys by the image feature TARGET they feed. A target is
         # satisfied when ANY of its sources is present in the observation, so an
@@ -1047,6 +1077,46 @@ class LerobotLocalPolicy(Policy):
             f"camera onto the model's image feature without renaming it."
         )
 
+    def _synthesized_camera_renames(self) -> dict[str, str]:
+        """Derive camera ``obs_rename`` entries for a state-only embodiment.
+
+        When a caller declares only joint names via :meth:`set_robot_state_keys`
+        (no explicit ``embodiment``), :meth:`_configure_embodiment` synthesizes a
+        state-only embodiment so the declarative pipeline composes
+        ``observation.state``. That synthesized map previously had an empty
+        ``obs_rename``, so the pipeline never renamed the robot's bare camera key
+        (e.g. ``front``) onto the model's declared image feature
+        (``observation.images.front``); the model then raised a ``KeyError`` for
+        its missing image input, and :meth:`_embodiment_image_source_keys`
+        returned nothing so the bare frame was never canonicalized either. This
+        routes each declared image feature from a runtime source key so a
+        single-camera (or multi-camera) checkpoint works on the declarative path
+        without an explicit embodiment.
+
+        Routing precedence per declared image feature:
+          1. An explicit ``camera_key_map`` entry (runtime cam -> feature) wins.
+          2. Otherwise the feature is fed from its short name
+             (``observation.images.front`` <- ``front``); a bare-named feature
+             (e.g. MolmoAct2 ``base``) maps from itself (a harmless no-op rename).
+
+        Returns:
+            A ``{runtime_source_key: model_image_feature}`` map (possibly empty
+            when the model declares no image features).
+        """
+        declared = {f for f, feat in self._input_features.items() if _declared_feature_is_image(f, feat)}
+        renames: dict[str, str] = {}
+        if self.camera_key_map:
+            for cam, feat in self.camera_key_map.items():
+                if feat in declared:
+                    renames[cam] = feat
+        mapped = set(renames.values())
+        for feat in declared:
+            if feat in mapped:
+                continue
+            short = feat.rsplit(".", 1)[-1] if "." in feat else feat
+            renames.setdefault(short, feat)
+        return renames
+
     def _configure_embodiment(self) -> None:
         """Build, validate, and inject the declarative embodiment map (SOLUTION.md).
 
@@ -1073,7 +1143,7 @@ class LerobotLocalPolicy(Policy):
             if self.robot_state_keys and not any(k.startswith("joint_") for k in self.robot_state_keys):
                 spec = EmbodimentMap(
                     name="<from robot_state_keys>",
-                    obs_rename={},
+                    obs_rename=self._synthesized_camera_renames(),
                     state_keys=list(self.robot_state_keys),
                     action_keys=list(self.robot_state_keys),
                     dim_policy="pad",
@@ -1094,7 +1164,7 @@ class LerobotLocalPolicy(Policy):
         if self._obs_rename_override:
             from dataclasses import replace
 
-            merged = {**embodiment.obs_rename, **self._obs_rename_override}
+            merged = _merge_obs_rename(embodiment.obs_rename, self._obs_rename_override)
             embodiment = replace(embodiment, obs_rename=merged)
 
         # Fail-fast validation against the model's declared features.

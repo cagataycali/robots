@@ -40,7 +40,7 @@ LerobotLocalPolicy(
     image_keys=None,                     # MolmoAct2 camera key override
     inference_action_mode="continuous",  # "continuous" | "discrete"
     camera_key_map=None,                 # {robot_cam_name: policy_image_key}
-    obs_rename_override=None,            # {runtime_obs_key: "observation.images.*"} merged over embodiment.obs_rename
+    obs_rename_override=None,            # {runtime_obs_key: "observation.images.*"} merged over embodiment.obs_rename (value None/"" DROPS that key)
     strict_keys=False,                   # raise instead of positional camera fallback
     cache_model=True,                    # reuse a process-cached model across instances
     revision=None,                       # pin a HF Hub revision (branch/tag/commit SHA)
@@ -394,6 +394,49 @@ Two ways to fix it:
        },
    )
    ```
+
+3. Drop a camera the embodiment declares but your checkpoint does not. The
+   built-in SO embodiments declare both `front` and `wrist`; a single-camera
+   checkpoint declares only one image feature, so the unmatched `wrist` rename
+   targets a feature the model never declares and fails validation. Map the
+   stale source key to `None` (or `""`) in `obs_rename_override` to remove it,
+   and route your real camera onto the model's feature:
+
+   ```python
+   create_policy(
+       "lerobot_local",
+       pretrained_name_or_path="your-org/so101-single-cam-act",
+       embodiment="so_real",
+       obs_rename_override={
+           "front": "observation.images.front",  # route the one camera you have
+           "wrist": None,                         # drop the camera you do not
+       },
+   )
+   ```
+
+### Single camera with no embodiment
+
+You do not need an embodiment at all for a single-camera checkpoint. Declare the
+robot's joint names with `set_robot_state_keys([...])` and the policy synthesizes
+a state-only embodiment that routes each declared `observation.images.*` feature
+from its short name (`observation.images.front` <- `front`) and composes
+`observation.state` in your joint order. A bare camera key (`front`) is
+canonicalized to CHW float and renamed onto the model feature, and the state is
+batched alongside it, so a single-camera ACT checkpoint runs on the declarative
+path without manual key wiring:
+
+```python
+policy = create_policy("lerobot_local", pretrained_name_or_path="your-org/so101-single-cam-act")
+policy.set_robot_state_keys(
+    ["shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos",
+     "wrist_flex.pos", "wrist_roll.pos", "gripper.pos"]
+)
+# obs={"front": <HWC uint8 frame>, "shoulder_pan.pos": ..., ...}
+actions = policy.get_actions_sync(obs, "pick up the cube")
+```
+
+Pass `camera_key_map={"my_cam": "observation.images.front"}` if your runtime
+camera name differs from the feature's short name.
 
 See [camera naming](camera-naming.md) for the model-card -> embodiment
 translation table.

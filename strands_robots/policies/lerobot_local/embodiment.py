@@ -268,6 +268,7 @@ def register_pack_state_step() -> type | None:
     unavailable. Idempotent: returns the already-registered class on re-call.
     """
     try:
+        import torch
         from lerobot.processor.pipeline import ObservationProcessorStep, ProcessorStepRegistry
     except ImportError:
         logger.debug("lerobot processor framework unavailable; PackStateProcessorStep not registered")
@@ -356,7 +357,15 @@ def register_pack_state_step() -> type | None:
             vals = reconcile_dim(vals, target, self.dim_policy, label="observation.state")
 
             out = {k: v for k, v in observation.items() if k not in self.state_keys}
-            out["observation.state"] = np.asarray(vals, dtype=np.float32)
+            # Emit a 1-D float32 torch Tensor (not a numpy array) so the
+            # pipeline's own AddBatchDimensionObservationStep batches it to
+            # (1, D) exactly as it batches image tensors. A numpy state is left
+            # unbatched by that step, which on the declarative path stranded
+            # observation.state at (D,) while images were (1, C, H, W) -> a
+            # torch.stack rank mismatch inside the model. A real LeRobot dataset
+            # feeds observation.state as a tensor too, so this matches the
+            # convention the downstream steps (normalizer, batcher) expect.
+            out["observation.state"] = torch.as_tensor(vals, dtype=torch.float32)
             return out
 
         def get_config(self) -> dict[str, Any]:
