@@ -622,6 +622,11 @@ class _HostileRobot:
     non-``AttributeError`` propagates through ``getattr(..., default)`` and
     ``hasattr`` in Python 3, so it exercises the defensive ``except`` swallows
     instead of the missing-attribute fast path).
+
+    Every attribute that ``core.py`` probes via ``getattr(r, ...)`` or
+    ``hasattr(r, ...)`` is enumerated explicitly as a raising property so
+    the defensive branches are exercised without a catch-all ``__getattr__``
+    (which triggers CodeQL "non-standard exception in special method").
     """
 
     @property
@@ -644,11 +649,61 @@ class _HostileRobot:
     def _world(self) -> Any:
         raise RuntimeError("world unavailable")
 
-    def __getattr__(self, name: str) -> Any:
-        # Any other probed attribute (_pose, _imu, _odom, _lidar_*, _battery,
-        # _hands, _map_info, _input_publishers, ...) also raises a non-Attribute
-        # error so every defensive branch in the builders is exercised.
-        raise RuntimeError(f"{name} unavailable")
+    @property
+    def _pose(self) -> Any:
+        raise RuntimeError("pose unavailable")
+
+    @property
+    def _slam_pose(self) -> Any:
+        raise RuntimeError("slam_pose unavailable")
+
+    @property
+    def _odom_pose(self) -> Any:
+        raise RuntimeError("odom_pose unavailable")
+
+    @property
+    def _imu(self) -> Any:
+        raise RuntimeError("imu unavailable")
+
+    @property
+    def _odom(self) -> Any:
+        raise RuntimeError("odom unavailable")
+
+    @property
+    def _lidar_summary(self) -> Any:
+        raise RuntimeError("lidar_summary unavailable")
+
+    @property
+    def _lidar_state(self) -> Any:
+        raise RuntimeError("lidar_state unavailable")
+
+    @property
+    def _battery(self) -> Any:
+        raise RuntimeError("battery unavailable")
+
+    @property
+    def _hands(self) -> Any:
+        raise RuntimeError("hands unavailable")
+
+    @property
+    def _map_info(self) -> Any:
+        raise RuntimeError("map_info unavailable")
+
+    @property
+    def _input_publishers(self) -> Any:
+        raise RuntimeError("input_publishers unavailable")
+
+    @property
+    def joint_names(self) -> Any:
+        raise RuntimeError("joint_names unavailable")
+
+    @property
+    def name(self) -> Any:
+        raise RuntimeError("name unavailable")
+
+    @property
+    def namespace(self) -> Any:
+        raise RuntimeError("namespace unavailable")
 
 
 class TestTelemetryRobustness:
