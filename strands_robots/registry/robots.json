@@ -873,8 +873,19 @@
       ]
     },
     "lekiwi": {
-      "description": "LeKiwi mobile robot",
+      "description": "LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuators)",
       "category": "mobile",
+      "joints": 9,
+      "asset": {
+        "dir": "lekiwi",
+        "model_xml": "lekiwi/lekiwi.xml",
+        "scene_xml": "scene.xml",
+        "source": {
+          "type": "github",
+          "repo": "Ekumen-OS/lekiwi",
+          "subdir": "packages/lekiwi_sim/lekiwi_sim/assets"
+        }
+      },
       "hardware": {
         "lerobot_type": "lekiwi"
       }

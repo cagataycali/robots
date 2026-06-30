@@ -25,7 +25,7 @@ sim = Robot("crazyflie")        # Bitcraze Crazyflie 2 quadcopter
 | `earthrover` | EarthRover Mini Plus (mobile outdoor navigation) _(hardware-only, no sim asset)_ | ? | `earth_rover`, `earthrover_mini_plus`, `frodobots` |
 | `go1` | Unitree Go1 Quadruped (12-DOF) | 13 | `unitree_go1` |
 | `google_robot` | Google Robot (mobile base + arm, RT-X) | 10 | `oxe_google` |
-| `lekiwi` | LeKiwi mobile robot _(hardware-only, no sim asset)_ | ? | - |
+| `lekiwi` | LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuators) | 9 | - |
 | `robot_soccer_kit` | Robot Soccer Kit (multi-robot soccer, 65-DOF total) | 65 | `rsk` |
 | `skydio_x2` | Skydio X2 Autonomous Drone | 1 | - |
 | `spot` | Boston Dynamics Spot (with arm) | 20 | `boston_dynamics_spot` |

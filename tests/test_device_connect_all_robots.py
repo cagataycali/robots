@@ -386,7 +386,7 @@ class TestSimDriverAllRobots:
 
 
 class TestRealOnlyRobots:
-    """Tests for real-only robots (no sim asset): lekiwi, reachy2, hope_jr, earthrover, omx, bi_openarm."""
+    """Tests for real-only robots (no sim asset): reachy2, hope_jr, earthrover, omx, bi_openarm."""
 
     @pytest.mark.parametrize("robot_name,robot_info", REAL_ONLY_ROBOTS, ids=[r[0] for r in REAL_ONLY_ROBOTS])
     def test_driver_creation(self, robot_name, robot_info):

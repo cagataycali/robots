@@ -5,6 +5,17 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: LeKiwi is now simulatable (`Robot("lekiwi", mode="sim")`)
+
+The `lekiwi` registry entry was hardware-only - it carried a `hardware.lerobot_type`
+mapping but no `asset` block, and `robot_descriptions` ships no lekiwi module, so
+`Robot("lekiwi", mode="sim")` failed with `No model found for 'lekiwi'`. The entry
+now points at the Apache-2.0 [Ekumen-OS/lekiwi](https://github.com/Ekumen-OS/lekiwi)
+MuJoCo description via a GitHub asset `source` (6-DOF SO-ARM arm on a 3-omniwheel
+base, 9 actuators). LeKiwi auto-downloads and compiles on first sim use, steps
+stably, and renders from its `front`/`wrist` cameras. The existing hardware mapping
+is unchanged.
+
 ### Added: routing-degradation telemetry so a silently-degraded LeRobot rollout is machine-detectable
 
 `LerobotLocalPolicy`'s heuristic (non-declarative) remap path keeps a rollout alive even when it cannot bind the observation to the model's inputs by name: a camera whose name matches no declared image feature is routed to a free slot positionally, and `observation.state` is composed from the observation's own scalar keys when none of `robot_state_keys` match (the generic `joint_0..N` fallback). Either makes the robot move on meaningless inputs while `run_policy` / `eval_policy` still report `status="success"` with `success_rate ~ 0`, and the only trace was a log line (the positional fallback on the preprocessor path did not even warn). Both fallbacks now flip a flag on the policy (`positional_fallback_used` / `generic_state_keys_used`) and emit a WARNING, and `run_policy` / `eval_policy` surface both flags in their JSON result block alongside the existing `action_errors` / load telemetry. A `True` flag on an otherwise-successful run is the signature of a misconfigured camera/state binding. No behaviour change for correctly-named observations (both flags stay `False`); the remap itself is unchanged.

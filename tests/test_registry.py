@@ -345,7 +345,7 @@ class TestRobotRegistry:
         assert has_sim("panda") is True
 
     def test_has_sim_false_for_real_only(self):
-        assert has_sim("lekiwi") is False
+        assert has_sim("reachy2") is False
 
     def test_has_hardware(self):
         assert has_hardware("so100") is True
@@ -376,7 +376,7 @@ class TestRobotRegistry:
         robots = list_robots("sim")
         for r in robots:
             assert r["has_sim"] is True
-        assert "lekiwi" not in [r["name"] for r in robots]
+        assert "reachy2" not in [r["name"] for r in robots]
 
     def test_list_robots_real_only(self):
         robots = list_robots("real")
@@ -391,7 +391,8 @@ class TestRobotRegistry:
             assert r["has_real"] is True
         names = [r["name"] for r in robots]
         assert "so100" in names
-        assert "lekiwi" not in names
+        assert "lekiwi" in names  # sim + real
+        assert "reachy2" not in names
         assert "ur5e" not in names
 
     def test_list_robots_by_category(self):

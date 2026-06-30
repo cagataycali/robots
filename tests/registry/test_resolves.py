@@ -37,7 +37,7 @@ def _load_registry() -> dict:
 _ROBOTS = _load_registry()
 
 # Robots that have simulation assets (asset.dir + asset.model_xml).
-# Hardware-only robots (e.g. lekiwi, reachy2) have no 'asset' key.
+# Hardware-only robots (e.g. reachy2) have no 'asset' key.
 _SIM_ROBOTS = {name: info for name, info in _ROBOTS.items() if "asset" in info}
 _SIM_ROBOT_NAMES = list(_SIM_ROBOTS.keys())
 
