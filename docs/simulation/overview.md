@@ -118,7 +118,7 @@ A vector lets a policy's raw action chunk drive the arm directly without first z
 | `stop_policy` | `robot_name` (optional, defaults to `""`) |
 | `list_policies_running` | - |
 | `run_multi_policy` | `policies={robot: Policy}`, `instructions`, `duration`, `n_steps` |
-| `eval_policy` | `robot_name` (required), `n_episodes=1`, `max_steps=300`, `success_fn=None`, `async_rtc=False`, `rtc_inference_timeout_s=None` |
+| `eval_policy` | `robot_name` (optional; auto-resolves the sole robot like `run_policy`), `n_episodes=1`, `max_steps=300`, `success_fn=None`, `async_rtc=False`, `rtc_inference_timeout_s=None` |
 
 The step horizon is given either as `duration` (seconds) or as `n_steps` (`duration = n_steps / control_frequency`; `n_steps` wins when both are set, and the legacy `max_steps` is an alias for `n_steps`). A non-positive `n_steps` or `control_frequency` is rejected up front with a structured `status="error"` dict naming the bad parameter - `start_policy` validates synchronously before the background rollout starts, so a malformed horizon never returns a false "started" success. `eval_policy` likewise rejects a non-positive `n_episodes`, `max_steps`, or `control_frequency` at the entry point (before `create_policy`), so a typo cannot produce a "successful" evaluation over zero or negative episodes.
 

@@ -77,11 +77,29 @@ class FakeSim(SimEngine):
 # eval_policy
 
 
-def test_eval_policy_requires_robot_name():
-    """Empty robot_name is rejected with a structured error, never a guess."""
-    result = FakeSim().eval_policy(robot_name="")
+def test_eval_policy_resolves_sole_robot_when_name_omitted():
+    """None robot_name auto-selects the only robot, mirroring run_policy.
+
+    eval_policy and run_policy are siblings; a single-robot scene must
+    resolve identically for both so a policy run with run_policy() can be
+    evaluated the same way with eval_policy() (no spurious hard error).
+    """
+    result = FakeSim().eval_policy(policy_object=MockPolicy(), n_episodes=1, max_steps=2, control_frequency=10.0)
+    assert result["status"] == "success", result
+
+
+def test_eval_policy_ambiguous_multi_robot_lists_candidates():
+    """None robot_name in a multi-robot scene errors with the candidate list."""
+    result = FakeSim(robots=("arm_a", "arm_b")).eval_policy(policy_object=MockPolicy())
     assert result["status"] == "error"
-    assert "robot_name" in result["content"][0]["text"]
+    text = result["content"][0]["text"]
+    assert "arm_a" in text and "arm_b" in text
+
+
+def test_eval_policy_empty_world_reports_no_robots():
+    result = FakeSim(robots=()).eval_policy(policy_object=MockPolicy())
+    assert result["status"] == "error"
+    assert "No robots" in result["content"][0]["text"]
 
 
 def test_eval_policy_unknown_robot_reports_not_found():

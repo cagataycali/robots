@@ -110,11 +110,19 @@ class TestStartPolicyHorizonGuards:
 
 
 class TestEvalPolicyResolution:
-    """eval_policy requires an explicit, existing robot (no silent first-pick)."""
+    """eval_policy resolves robot_name like run_policy: None auto-selects the
+    sole robot, and only errors when the choice is ambiguous or impossible."""
 
-    def test_missing_robot_name_errors(self, sim):
+    def test_omitted_robot_name_resolves_sole_robot(self, sim):
+        # Single-robot scene + no name -> resolves to that robot and runs,
+        # exactly like run_policy() (no spurious "requires robot_name" error).
+        result = sim.eval_policy(n_episodes=1, max_steps=2, control_frequency=10.0)
+        assert result["status"] == "success", result
+
+    def test_ambiguous_multi_robot_lists_candidates(self, sim):
+        sim.add_robot("arm2", data_config="so100", position=[0.5, 0, 0])
         text = _err_text(sim.eval_policy())
-        assert "robot_name" in text
+        assert "arm1" in text and "arm2" in text
 
     def test_unknown_robot_name_errors(self, sim):
         text = _err_text(sim.eval_policy(robot_name="ghost"))

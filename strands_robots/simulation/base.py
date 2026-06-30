@@ -1422,8 +1422,12 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Multi-episode policy evaluation via ``PolicyRunner.evaluate``.
 
-        ``robot_name`` is required - eval_policy used to silently pick
-        the first robot, which is surprising in multi-robot scenes.
+        ``robot_name`` resolves like :meth:`run_policy`: ``None`` (the
+        default) auto-selects the sole robot in a single-robot scene and
+        errors with the candidate list only when the choice is ambiguous
+        (multiple robots) or impossible (empty scene). This keeps the two
+        sibling entry points consistent - a policy you just ran with
+        ``run_policy()`` evals the same way with ``eval_policy()``.
         ``n_episodes`` default lowered from 10 to 1 (callers opt in to
         longer evals explicitly).
 
@@ -1472,20 +1476,18 @@ class SimEngine(ABC):
         for cuRobo / MoveIt2 - the issue #300 contract). Without it the eval ran
         such a policy with an empty goal and reported a meaningless success rate.
         """
-        if not robot_name:
-            return {
-                "status": "error",
-                "content": [{"text": "eval_policy requires 'robot_name'."}],
-            }
         robots = self.list_robots()
         if not robots:
             return {"status": "error", "content": [{"text": "No robots in sim. Add one first."}]}
-        if robot_name not in robots:
+        try:
+            resolved_robot = self._resolve_single_robot(robot_name)
+        except ValueError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
+        if resolved_robot not in robots:
             return {
                 "status": "error",
-                "content": [{"text": f"Robot '{robot_name}' not found."}],
+                "content": [{"text": f"Robot '{resolved_robot}' not found."}],
             }
-        resolved_robot = robot_name
 
         if err := self._validate_action_horizon(action_horizon, "eval_policy"):
             return err

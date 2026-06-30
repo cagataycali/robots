@@ -522,12 +522,15 @@ class TestSetGeomPropertiesAlias:
 
 
 class TestEvalPolicyDefaults:
-    """T34: eval_policy requires robot_name; n_episodes default is 1."""
+    """T34: eval_policy resolves robot_name like run_policy; n_episodes default
+    is 1."""
 
-    def test_eval_policy_missing_robot_name_errors(self, sim):
+    def test_eval_policy_empty_world_errors(self, sim):
+        # The fixture sim has a world but no robots; eval_policy reports the
+        # empty scene rather than a "requires robot_name" guard.
         r = sim._dispatch_action("eval_policy", {})
         assert r["status"] == "error"
-        assert "robot_name" in r["content"][0]["text"]
+        assert "No robots" in r["content"][0]["text"]
 
     def test_eval_policy_unknown_robot_errors(self, sim):
         r = sim._dispatch_action("eval_policy", {"robot_name": "ghost"})
