@@ -122,8 +122,10 @@ def _ensure_mujoco() -> "Any":
 
 _rendering_available: bool | None = None
 
-# One-shot guard so the software-rendering warning fires at most once per process.
-_software_render_warned: bool = False
+# One-shot guard so the software-rendering warning fires at most once per
+# process. A set (mutated via .add, never reassigned) avoids a `global`
+# rebind so static analysis sees it as used.
+_software_render_warned: set[str] = set()
 
 # GL_RENDERER substrings that identify a CPU software rasterizer (no GPU).
 _SOFTWARE_RENDERERS: tuple[str, ...] = (
@@ -152,7 +154,6 @@ def _warn_if_software_rendering(probe_stdout: str) -> None:
             lacks the ``__GL_RENDERER__=`` marker (e.g. PyOpenGL unavailable in
             the probe) this is a no-op - detection is best-effort only.
     """
-    global _software_render_warned
     if _software_render_warned:
         return
     renderer = ""
@@ -164,7 +165,7 @@ def _warn_if_software_rendering(probe_stdout: str) -> None:
         return
     low = renderer.lower()
     if any(token in low for token in _SOFTWARE_RENDERERS):
-        _software_render_warned = True
+        _software_render_warned.add("warned")
         logger.warning(
             "MuJoCo is rendering on a CPU software rasterizer (GL_RENDERER=%r); "
             "offscreen renders will be ~100x slower than GPU and the GPU EGL "

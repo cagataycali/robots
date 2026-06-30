@@ -16,7 +16,7 @@ import strands_robots.simulation.mujoco.backend as backend
 
 def _reset_caches() -> None:
     backend._rendering_available = None
-    backend._software_render_warned = False
+    backend._software_render_warned.clear()
 
 
 def _fake_probe(stdout: bytes):
