@@ -881,16 +881,16 @@ def test_render_all_errors_on_unresolved_requested_cameras(monkeypatch) -> None:
     assert "ghost" in r["content"][0]["text"]
 
 
-# render_depth() metric-depth linearization - GL-free coverage.
+# render_depth() metric-depth handling - GL-free coverage.
 #
 # render_depth() resolves a camera, asks _get_renderer() for an offscreen
-# renderer, grabs a normalized [0, 1] OpenGL depth buffer, and linearizes it
-# to metric depth (meters) using the model's znear/zfar clip planes scaled by
-# stat.extent. The linearization math, the one-time ARB_clip_control warning
-# capture, the cached-warning fast path, and the failure handler are all pure
-# Python that only needs a compiled model (no live GL), so we drive them with
-# a real world plus a scripted fake renderer. This pins the metric conversion
-# and the warning contract on every platform, including GL-less CI.
+# renderer, and reads MuJoCo's metric depth buffer (meters) directly, only
+# sanitizing NaN/inf and clamping to [0, zfar]. The passthrough + sanitation,
+# the one-time ARB_clip_control warning capture, the cached-warning fast path,
+# and the failure handler are all pure Python that only needs a compiled model
+# (no live GL), so we drive them with a real world plus a scripted fake
+# renderer. This pins the metric-depth contract and the warning contract on
+# every platform, including GL-less CI.
 
 
 def _depth_world():
@@ -906,10 +906,14 @@ def _depth_world():
 
 
 class _FakeDepthRenderer:
-    """Scripted offscreen renderer: returns a fixed normalized depth buffer.
+    """Scripted offscreen renderer: returns a fixed METRIC depth buffer.
+
+    MuJoCo >= 3.0 returns metric depth (meters) directly from
+    ``enable_depth_rendering()`` + ``render()`` -- not a normalized [0, 1]
+    OpenGL buffer -- so the fake mirrors that contract.
 
     Args:
-        depth: the [0, 1] normalized depth array render() should return.
+        depth: the metric depth array (meters) render() should return.
         stderr_text: text to emit on enable_depth_rendering(), used to drive
             the ARB_clip_control warning-capture branch.
         raise_on_render: when set, render() raises it (failure-path coverage).
@@ -937,25 +941,52 @@ class _FakeDepthRenderer:
         return self._depth
 
 
-def test_render_depth_linearizes_normalized_buffer_to_meters(monkeypatch) -> None:
-    """A normalized [0,1] depth buffer is converted to metric depth bounded by
-    the model's znear/zfar clip planes; near pixel -> znear, far pixel -> zfar."""
+def test_render_depth_passes_through_metric_depth(monkeypatch) -> None:
+    """MuJoCo >= 3.0 returns METRIC depth (meters) directly, so render_depth
+    must surface those meters as-is -- NOT re-linearize them with a znear/zfar
+    formula (which wrongly collapses the whole frame to znear).
+
+    Regression for the depth bug: the engine treated the renderer output as a
+    normalized [0, 1] OpenGL buffer and re-projected it through
+    ``znear*zfar / (zfar - d*(zfar-znear))``, so a scene with surfaces at
+    1.1 m / 2.5 m reported Min==Max==znear (0.01 m). The renderer already hands
+    back meters; the engine must report them unchanged (modulo NaN/inf
+    sanitation and a [0, zfar] clamp)."""
     np = pytest.importorskip("numpy")
     sim = _depth_world()
     try:
-        extent = float(sim._world._model.stat.extent)
-        znear = float(sim._world._model.vis.map.znear) * extent
-        zfar = float(sim._world._model.vis.map.zfar) * extent
-        # 0.0 -> near plane, 1.0 -> far plane, plus a mid value.
-        buf = np.array([[0.0, 1.0], [0.5, 0.5]], dtype=np.float32)
+        # Metric depths in meters: nearest surface 0.75 m, farthest 2.40 m.
+        buf = np.array([[0.75, 2.40], [1.50, 1.50]], dtype=np.float32)
         monkeypatch.setattr(sim, "_get_renderer", lambda w, h: _FakeDepthRenderer(buf))
 
         r = sim.render_depth(camera_name="cam_a", width=2, height=2)
         assert r["status"] == "success", r
         payload = next(b["json"] for b in r["content"] if isinstance(b, dict) and "json" in b)
-        assert payload["depth_min"] == pytest.approx(znear, rel=1e-4)
-        assert payload["depth_max"] == pytest.approx(zfar, rel=1e-4)
+        assert payload["depth_min"] == pytest.approx(0.75, rel=1e-4)
+        assert payload["depth_max"] == pytest.approx(2.40, rel=1e-4)
         assert "Depth 2x2 from 'cam_a'" in r["content"][0]["text"]
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_sanitizes_nan_and_inf(monkeypatch) -> None:
+    """NaN/inf pixels (some GL backends emit them for empty rays) must not
+    poison the metric min/max or the PNG -- they're replaced with the far-clip
+    distance, and negative depth is clamped to 0."""
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        extent = float(sim._world._model.stat.extent)
+        zfar = float(sim._world._model.vis.map.zfar) * extent
+        buf = np.array([[0.5, np.nan], [np.inf, -1.0]], dtype=np.float32)
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: _FakeDepthRenderer(buf))
+
+        r = sim.render_depth(camera_name="cam_a", width=2, height=2)
+        assert r["status"] == "success", r
+        payload = next(b["json"] for b in r["content"] if isinstance(b, dict) and "json" in b)
+        # min comes from the clamped -1.0 -> 0.0; max from nan/inf -> zfar.
+        assert payload["depth_min"] == pytest.approx(0.0, abs=1e-6)
+        assert payload["depth_max"] == pytest.approx(zfar, rel=1e-4)
     finally:
         sim.destroy()
 
