@@ -210,3 +210,60 @@ class TestPolicyFactorySymbolsReexported:
         providers = strands_robots.list_providers()
         assert isinstance(providers, (list, tuple, set))
         assert "mock" in providers
+
+
+class TestPolicyTypeDiscoveryReexported:
+    """``list_policy_types`` is re-exported as a peer of ``list_providers``.
+
+    ``list_providers()`` answers "which providers can I pass to
+    ``create_policy``?" and resolves ``lerobot_local``. The blind follow-up is
+    "which ``policy_type`` strings does ``lerobot_local`` accept?", answered by
+    ``list_policy_types()``. Pre-fix that discovery surface was reachable only
+    via the buried ``strands_robots.policies.lerobot_local`` submodule, so an
+    agent that found the provider had no peer-level way to enumerate its types.
+    These pin the surface at both the package root and ``strands_robots.policies``.
+
+    It is exported *lazily* (in ``_LAZY_IMPORTS``, not eagerly like
+    ``list_providers``) because the ``lerobot_local`` package import chain pulls
+    in torch -- resolving on first access keeps the package imports torch-free.
+    """
+
+    def test_in_top_level_all_and_is_lazy(self):
+        assert "list_policy_types" in strands_robots.__all__
+        # Unlike list_providers (torch-free factory), this peer is lazy.
+        assert "list_policy_types" in strands_robots._LAZY_IMPORTS
+
+    def test_in_policies_subpackage_all(self):
+        import strands_robots.policies as policies_pkg
+
+        assert "list_policy_types" in policies_pkg.__all__
+
+    def test_resolves_to_canonical_object_at_both_levels(self):
+        import strands_robots.policies as policies_pkg
+        from strands_robots.policies.lerobot_local.resolution import (
+            list_policy_types as canonical,
+        )
+
+        assert strands_robots.list_policy_types is canonical
+        assert policies_pkg.list_policy_types is canonical
+
+    def test_callable_returns_list_from_top_level(self):
+        # Discovery surface: callable straight off the package root, and it
+        # degrades to an empty list (never raises) when lerobot is absent.
+        result = strands_robots.list_policy_types()
+        assert isinstance(result, list)
+
+    def test_policies_import_stays_torch_free(self):
+        # The new lazy export must not regress the torch-free import contract:
+        # a clean interpreter importing strands_robots.policies must not pull
+        # torch, yet must still advertise list_policy_types in __all__.
+        import subprocess
+        import sys
+
+        code = (
+            "import sys, strands_robots.policies as p; "
+            "assert 'torch' not in sys.modules, 'torch eagerly imported'; "
+            "assert 'list_policy_types' in p.__all__"
+        )
+        proc = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True)
+        assert proc.returncode == 0, proc.stderr

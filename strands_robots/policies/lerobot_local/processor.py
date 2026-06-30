@@ -197,32 +197,22 @@ class ProcessorBridge:
         # leaving model_inputs empty at inference time. See B10.
         _register_policy_processor_steps(policy_type)
 
-        preprocessor = None
-        postprocessor = None
-
-        # Load preprocessor
-        try:
-            preprocessor = DataProcessorPipeline.from_pretrained(
-                pretrained_name_or_path,
-                config_filename=preprocessor_config,
-                overrides=overrides or {},
-            )
-            logger.info("Loaded preprocessor from %s: %d steps", pretrained_name_or_path, len(preprocessor))
-        except _missing_config_errors() as exc:
-            # No config file found - model doesn't ship a preprocessor. This is normal.
-            logger.debug("No preprocessor found: %s", exc)
-
-        # Load postprocessor
-        try:
-            postprocessor = DataProcessorPipeline.from_pretrained(
-                pretrained_name_or_path,
-                config_filename=postprocessor_config,
-                overrides=overrides or {},
-            )
-            logger.info("Loaded postprocessor from %s: %d steps", pretrained_name_or_path, len(postprocessor))
-        except _missing_config_errors() as exc:
-            # No config file found - model doesn't ship a postprocessor. This is normal.
-            logger.debug("No postprocessor found: %s", exc)
+        preprocessor = cls._load_pipeline(
+            DataProcessorPipeline,
+            pretrained_name_or_path,
+            preprocessor_config,
+            overrides or {},
+            device,
+            kind="preprocessor",
+        )
+        postprocessor = cls._load_pipeline(
+            DataProcessorPipeline,
+            pretrained_name_or_path,
+            postprocessor_config,
+            overrides or {},
+            device,
+            kind="postprocessor",
+        )
 
         # Fallback: a checkpoint may ship NEITHER standard pipeline config but a
         # recognized norm_stats.json (e.g. MolmoAct2 SO-100/101). Without this,
@@ -237,6 +227,85 @@ class ProcessorBridge:
             postprocessor=postprocessor,
             device=device,
         )
+
+    @staticmethod
+    def _load_pipeline(
+        pipeline_cls: Any,
+        pretrained_name_or_path: str,
+        config_filename: str,
+        overrides: dict[str, Any],
+        device: str | None,
+        kind: str,
+    ) -> Any | None:
+        """Load one processor pipeline, reconciling a device-pinned step.
+
+        A checkpoint trained on GPU bakes ``device_processor.device = "cuda"``
+        into its ``policy_preprocessor.json`` / ``policy_postprocessor.json``.
+        On a host without that device, LeRobot's ``get_safe_torch_device``
+        asserts the device is available and the ``device_processor`` step fails
+        to instantiate, which ``DataProcessorPipeline.from_pretrained`` surfaces
+        as a ``ValueError`` indistinguishable from "no config file present".
+        Swallowing it drops normalization silently: observations reach the model
+        un-normalized and predicted actions reach the motors un-unnormalized
+        (the arm barely moves). Since the bridge already knows its resolved
+        target ``device`` and moves every tensor there itself, reconcile the
+        pinned step onto that device and retry once before giving up.
+
+        Args:
+            pipeline_cls: LeRobot ``DataProcessorPipeline`` class.
+            pretrained_name_or_path: HF model ID or local checkpoint path.
+            config_filename: Pipeline config filename to load.
+            overrides: User-provided step overrides (never mutated here).
+            device: Resolved target device, or None when unknown.
+            kind: ``"preprocessor"`` or ``"postprocessor"`` (for log messages).
+
+        Returns:
+            The loaded pipeline, or ``None`` when the checkpoint genuinely ships
+            no such config.
+        """
+        try:
+            pipeline = pipeline_cls.from_pretrained(
+                pretrained_name_or_path,
+                config_filename=config_filename,
+                overrides=overrides,
+            )
+            logger.info("Loaded %s from %s: %d steps", kind, pretrained_name_or_path, len(pipeline))
+            return pipeline
+        except _missing_config_errors() as exc:
+            # Distinguish a device-pinned step that failed to instantiate from a
+            # genuinely absent config. The former is a ValueError whose message
+            # names the device_processor step (LeRobot wraps the underlying
+            # device assertion via _instantiate_step); the latter is a
+            # FileNotFoundError / ProcessorMigrationError. Only retry the former,
+            # and only when we know our device and the user has not already
+            # pinned device_processor themselves.
+            if (
+                device
+                and "device_processor" not in overrides
+                and isinstance(exc, ValueError)
+                and "device_processor" in str(exc)
+            ):
+                retry_overrides = {**overrides, "device_processor": {"device": device}}
+                try:
+                    pipeline = pipeline_cls.from_pretrained(
+                        pretrained_name_or_path,
+                        config_filename=config_filename,
+                        overrides=retry_overrides,
+                    )
+                    logger.warning(
+                        "%s ships a device-pinned 'device_processor' step that is "
+                        "unavailable on this host; reconciled it onto '%s' so "
+                        "normalization is applied. Original error: %s",
+                        kind,
+                        device,
+                        exc,
+                    )
+                    return pipeline
+                except _missing_config_errors() as retry_exc:
+                    logger.debug("%s device_processor retry on '%s' failed: %s", kind, device, retry_exc)
+            # No config file found - model doesn't ship this pipeline. Normal.
+            logger.debug("No %s found: %s", kind, exc)
+            return None
 
     @staticmethod
     def _load_norm_stats_fallback(

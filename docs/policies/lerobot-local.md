@@ -165,16 +165,23 @@ static list (see [Discovering supported policy types](#discovering-supported-pol
 ### Discovering supported policy types
 
 Enumerate the resolvable `policy_type` strings programmatically instead of
-guessing:
+guessing. `list_policy_types` is the discovery peer of `list_providers` (the
+follow-up to "which provider?" is "which `policy_type` does it take?"), so it
+is re-exported at the package root and on `strands_robots.policies` alongside
+`list_providers` -- no reach into the `lerobot_local` submodule required:
 
 ```python
-from strands_robots.policies.lerobot_local import list_policy_types
+from strands_robots import list_policy_types  # or: from strands_robots.policies import list_policy_types
 
 list_policy_types()
 # ['act', 'diffusion', 'eo1', 'gaussian_actor', 'groot', 'molmoact2',
 #  'multi_task_dit', 'pi0', 'pi05', 'pi0_fast', 'smolvla', 'tdmpc',
 #  'vla_jepa', 'vqbet', 'wall_x', 'xvla']
 ```
+
+The submodule path `from strands_robots.policies.lerobot_local import
+list_policy_types` keeps working; the top-level re-export is lazy, so reaching
+it does not make a bare `import strands_robots` pull in torch.
 
 The list reflects the *installed* lerobot (sourced from its policy registry),
 so a newer lerobot reports more entries and a slimmer one fewer; it returns
@@ -283,6 +290,24 @@ action_unnorm = (clip(action, -1, 1) + 1) * (q99 - q01) / 2 + q01
 
 When a stats file declares multiple embodiment tags, pass `norm_tag=` to select
 one; a single-tag file is auto-detected.
+
+### Device-pinned checkpoints
+
+A checkpoint trained on GPU bakes `device_processor.device = "cuda"` into its
+`policy_preprocessor.json` / `policy_postprocessor.json`. Loaded on a host
+without that device (CPU-only edge box, or a CUDA build on a machine whose
+driver predates the wheel's CUDA version), LeRobot asserts the device is
+available and the `device_processor` step fails to instantiate -- which surfaces
+as an error indistinguishable from "no pipeline config present".
+
+The bridge already moves every tensor onto the `device` you pass to
+`create_policy` (auto-detected when `None`), so it reconciles the pinned step
+onto that resolved device and retries the load once, rather than dropping the
+pipeline. Without this, normalization would be silently disabled: state reaches
+the policy in raw units and actions reach the motors in normalized space,
+producing off-policy / micro-motion trajectories. An explicit
+`processor_overrides={"device_processor": {"device": ...}}` is still honored
+as-is and takes precedence over the automatic reconciliation.
 
 ## Camera routing
 

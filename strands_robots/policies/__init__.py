@@ -34,6 +34,8 @@ Usage::
     register_policy("my_provider", lambda: MyPolicy, aliases=["my"])
 """
 
+from typing import TYPE_CHECKING
+
 from strands_robots.policies.base import ChunkedPolicy, Policy, resolve_chunk_length
 
 # Cosmos3Policy is import-safe: it depends only on numpy. The WebSocket
@@ -67,9 +69,37 @@ __all__ = [
     "preflight_policy",
     "register_policy",
     "list_providers",
+    "list_policy_types",
     "UntrustedRemoteCodeError",
     "PersistentPolicy",
     "preload",
     "list_cached",
     "evict",
 ]
+
+
+if TYPE_CHECKING:
+    # Static-analysis import so ``list_policy_types`` (resolved lazily below)
+    # is a defined export for type-checkers / CodeQL py/undefined-export.
+    from strands_robots.policies.lerobot_local.resolution import list_policy_types
+
+
+def __getattr__(name: str) -> object:
+    """Lazily expose the ``lerobot_local`` policy-type discovery surface.
+
+    ``list_policy_types()`` answers "which ``policy_type`` strings can I pass to
+    ``create_policy('lerobot_local', policy_type=...)``?" -- the natural follow-up
+    to ``list_providers()``. It lives in the ``lerobot_local`` package, whose
+    eager import chain pulls in torch, so it is resolved on first access (PEP
+    562) rather than at ``import strands_robots.policies`` time. This keeps the
+    package import torch-free while still exposing the discovery peer next to
+    ``list_providers``.
+    """
+    if name == "list_policy_types":
+        from strands_robots.policies.lerobot_local.resolution import (
+            list_policy_types as _list_policy_types,
+        )
+
+        globals()["list_policy_types"] = _list_policy_types
+        return _list_policy_types
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
