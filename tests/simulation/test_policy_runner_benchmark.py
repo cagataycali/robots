@@ -392,6 +392,55 @@ class TestAugmentObservationHook:
         assert "intentional failure" in text
 
 
+# Lifecycle-hook failures surface as structured errors
+
+
+class TestSpecLifecycleHookFailures:
+    """A benchmark whose ``on_episode_start`` / ``on_step`` hook raises must not
+    crash the eval loop - it must abort the run and return a structured
+    ``{"status": "error"}`` dict that names the failing hook and the spec.
+
+    ``augment_observation`` failures are covered in
+    :class:`TestAugmentObservationHook`; these pin the other two per-episode
+    lifecycle hooks so a regression that drops either ``try/except`` is caught.
+    """
+
+    def test_on_episode_start_failure_returns_structured_error(self):
+        class _BoomStart(_CountingBenchmark):
+            def on_episode_start(self, sim, rng):  # type: ignore[override]
+                raise RuntimeError("start boom")
+
+        sim = FakeSim()
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=_BoomStart(), n_episodes=1)
+
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "on_episode_start failed" in text
+        # The failing spec class is named so an agent can locate the bug.
+        assert "_BoomStart" in text
+        assert "start boom" in text
+
+    def test_on_step_failure_returns_structured_error(self):
+        class _BoomStep(_CountingBenchmark):
+            def on_step(self, sim, obs, action):  # type: ignore[override]
+                raise RuntimeError("step boom")
+
+        sim = FakeSim()
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=_BoomStep(), n_episodes=1)
+
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "on_step failed" in text
+        assert "_BoomStep" in text
+        assert "step boom" in text
+
+
 # Legacy success_fn path still works
 
 
