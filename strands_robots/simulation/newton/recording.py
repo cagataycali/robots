@@ -60,7 +60,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         fps: int = 30,
         root: str | None = None,
         push_to_hub: bool = False,
-        vcodec: str = "libsvtav1",
+        vcodec: str = "h264",
         overwrite: bool = False,
     ) -> dict[str, Any]:
         """Start recording the Newton scene to LeRobotDataset format.
@@ -85,7 +85,12 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             root: Explicit on-disk dataset directory (overrides the repo_id
                 cache-path resolution).
             push_to_hub: Publish to the Hub at ``stop_recording``.
-            vcodec: Video codec for camera MP4 encoding.
+            vcodec: Video codec for the per-camera MP4 streams. Defaults to
+                "h264" (H.264), universally decodable including by OpenCV's
+                VideoCapture (used by many downstream VLM video readers). Use
+                "libsvtav1" (AV1) for smaller files in storage-constrained
+                training pipelines; LeRobot read-back handles AV1 but OpenCV
+                wheels commonly cannot decode it and silently yield 0 frames.
             overwrite: Wipe and recreate an existing dataset dir instead of
                 appending to it.
 

@@ -20,6 +20,7 @@ import strands_robots
 | `create_policy(provider, **kw)` | Policy factory | [Policies](policies/overview.md) |
 | `register_policy(name, loader, aliases=None)` | Runtime registration | [Custom policies](policies/custom-policies.md) |
 | `list_providers()` | Known policy providers | [Policies](policies/overview.md) |
+| `list_policy_types()` (lazy) | Resolvable `lerobot_local` `policy_type` strings | [LeRobot local](policies/lerobot-local.md) |
 | `Simulation` (lazy) | MuJoCo-backed AgentTool | [Simulation overview](simulation/overview.md) |
 | `Gr00tPolicy` (lazy) | NVIDIA GR00T client | [GR00T](policies/groot.md) |
 
@@ -120,6 +121,7 @@ from strands_robots.policies.cosmos3 import Cosmos3Policy
 | `create_policy(provider, **kw)` | Resolve + construct. Accepts `zmq://`, `cosmos3://`, HF `org/model`. |
 | `register_policy(name, loader, aliases)` | Runtime registration. |
 | `list_providers()` | `['cosmos3', 'groot', 'lerobot_local', 'mock', + aliases]`. |
+| `list_policy_types()` | `policy_type` strings the installed lerobot resolves; `[]` without lerobot. Discovery peer of `list_providers`. |
 | `UntrustedRemoteCodeError` | Raised when `STRANDS_TRUST_REMOTE_CODE` is required but unset. |
 | `Gr00tPolicy` | GR00T N1.5/N1.6/N1.7 via ZMQ (service) or in-process. |
 | `LerobotLocalPolicy` | HF LeRobot inference (ACT, Pi0, Pi0.5, SmolVLA, …). Needs `STRANDS_TRUST_REMOTE_CODE=1`. |

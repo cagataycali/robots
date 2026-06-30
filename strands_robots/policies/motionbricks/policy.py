@@ -56,7 +56,7 @@ from strands_robots.policies.wbc.policy import WBC_G1_ALL_JOINTS
 from strands_robots.utils import require_optional
 
 from .config import MotionBricksConfig
-from .observation import build_control_signals, resolve_mode, resolve_planner_style
+from .observation import build_control_signals, resolve_locomotion_style, resolve_mode
 
 logger = logging.getLogger(__name__)
 
@@ -134,11 +134,12 @@ class MotionBricksPolicy(Policy):
         target_velocity: Optional default movement direction ``[vx, vy]`` used
             when a call passes none.
         device: Torch device for the generator (when building from ``config``).
-        style_map: Optional overrides merged over the built-in planner-style ->
-            clip-name map (:data:`~strands_robots.policies.motionbricks.observation.PLANNER_STYLE_TO_G1_CLIP`).
-            Used to translate a :class:`~strands_robots.planning.kinematic.KinematicPlanner`
-            ``locomotion_style`` to this generator's clip set; merged over (and
-            taking precedence over) any ``config.style_map``.
+        style_map: Optional overrides merged over the built-in
+            ``locomotion_style`` -> clip-name map
+            (:data:`~strands_robots.policies.motionbricks.observation.LOCOMOTION_STYLE_TO_G1_CLIP`).
+            Used to translate a caller-supplied ``locomotion_style`` goal kwarg
+            to this generator's clip set; merged over (and taking precedence
+            over) any ``config.style_map``.
 
     Raises:
         ValueError: If neither ``config``/``result_dir`` nor ``motion_agent`` is
@@ -169,9 +170,9 @@ class MotionBricksPolicy(Policy):
         )
         self._default_velocity = list(target_velocity) if target_velocity is not None else None
 
-        # Planner-style -> clip-name overrides: config.style_map is the base,
+        # locomotion_style -> clip-name overrides: config.style_map is the base,
         # the constructor arg takes precedence; both overlay the built-in
-        # PLANNER_STYLE_TO_G1_CLIP defaults inside resolve_planner_style.
+        # LOCOMOTION_STYLE_TO_G1_CLIP defaults inside resolve_locomotion_style.
         merged_style_map: dict[str, str] = {}
         if self._config is not None and self._config.style_map:
             merged_style_map.update(self._config.style_map)
@@ -342,14 +343,14 @@ class MotionBricksPolicy(Policy):
         chunked plan): the runner re-queries every control step.
         """
         # Style precedence: an explicit style=/mode= kwarg pins the clip (direct
-        # callers, back-compat). Otherwise a planner-emitted locomotion_style is
-        # translated to this generator's clip set, so a KinematicPlanner steers
+        # callers). Otherwise a caller-supplied locomotion_style goal kwarg is
+        # translated to this generator's clip set, so the goal channel steers
         # the gait. Falls back to the configured default style.
         explicit_style = kwargs.get("style", kwargs.get("mode"))
         if explicit_style is not None:
             style: int | str = explicit_style
         elif kwargs.get("locomotion_style") is not None:
-            style = resolve_planner_style(kwargs["locomotion_style"], self._agent.clip_keys, self._style_map)
+            style = resolve_locomotion_style(kwargs["locomotion_style"], self._agent.clip_keys, self._style_map)
         else:
             style = self._default_style
         mode_idx = resolve_mode(style, self._agent.clip_keys)

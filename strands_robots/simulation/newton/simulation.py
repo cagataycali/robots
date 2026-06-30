@@ -1548,7 +1548,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 "step": "(n_steps: int = 1) -> dict",
                 "start_recording": (
                     "(repo_id='local/sim_recording', task='', fps=30, root=None, "
-                    "push_to_hub=False, vcodec='libsvtav1', overwrite=False) -> dict  "
+                    "push_to_hub=False, vcodec='h264', overwrite=False) -> dict  "
                     "(record joint state + action + named cameras to a LeRobotDataset)"
                 ),
                 "save_episode": (

@@ -290,16 +290,16 @@ def test_policy_last_qpos_exposes_full_body_pose() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Planner-style bridge: a KinematicPlanner steers MotionBricks' gait.
+# locomotion_style goal channel: a caller-supplied locomotion_style steers
+# MotionBricks' gait.
 #
-# The planner emits a fixed SONIC-demo style vocabulary (locomotion_style) each
-# control tick; MotionBricks names its clips differently. Before this bridge the
-# planner's style was silently dropped and the policy stuck on its default clip.
-# These pin that locomotion_style now selects the matching clip.
+# Callers pass a fixed SONIC locomotion style vocabulary via
+# run_policy(policy_kwargs={"locomotion_style": ...}); MotionBricks names its
+# clips differently. These pin that locomotion_style selects the matching clip.
 # ---------------------------------------------------------------------------
 
-# A clip set covering every mappable planner style (a superset of the upstream
-# clip_holder_G1 names the bridge maps onto).
+# A clip set covering every mappable locomotion style (a superset of the
+# upstream clip_holder_G1 names the bridge maps onto).
 _FULL_CLIP_KEYS = [
     "idle",
     "walk",
@@ -313,58 +313,58 @@ _FULL_CLIP_KEYS = [
 
 
 class _FullClipAgent(StubAgent):
-    """A stub whose clip set covers every mappable planner style."""
+    """A stub whose clip set covers every mappable locomotion style."""
 
     clip_keys = _FULL_CLIP_KEYS
     clip_token_specs = [None] * len(_FULL_CLIP_KEYS)
 
 
-def test_resolve_planner_style_maps_every_mappable_style() -> None:
-    from strands_robots.policies.motionbricks import PLANNER_STYLE_TO_G1_CLIP, resolve_planner_style
+def test_resolve_locomotion_style_maps_every_mappable_style() -> None:
+    from strands_robots.policies.motionbricks import LOCOMOTION_STYLE_TO_G1_CLIP, resolve_locomotion_style
 
-    for planner_style, clip in PLANNER_STYLE_TO_G1_CLIP.items():
-        assert resolve_planner_style(planner_style, _FULL_CLIP_KEYS) == clip
+    for locomotion_style, clip in LOCOMOTION_STYLE_TO_G1_CLIP.items():
+        assert resolve_locomotion_style(locomotion_style, _FULL_CLIP_KEYS) == clip
 
 
-def test_resolve_planner_style_passes_native_clip_name_through() -> None:
-    from strands_robots.policies.motionbricks import resolve_planner_style
+def test_resolve_locomotion_style_passes_native_clip_name_through() -> None:
+    from strands_robots.policies.motionbricks import resolve_locomotion_style
 
     # A value already in the clip set is used as-is (a caller may emit a clip name).
-    assert resolve_planner_style("stealth_walk", _FULL_CLIP_KEYS) == "stealth_walk"
+    assert resolve_locomotion_style("stealth_walk", _FULL_CLIP_KEYS) == "stealth_walk"
 
 
-def test_resolve_planner_style_override_map() -> None:
-    from strands_robots.policies.motionbricks import resolve_planner_style
+def test_resolve_locomotion_style_override_map() -> None:
+    from strands_robots.policies.motionbricks import resolve_locomotion_style
 
-    # An override remaps a planner style onto a different clip in the set.
-    assert resolve_planner_style("run", _FULL_CLIP_KEYS, {"run": "idle"}) == "idle"
+    # An override remaps a locomotion style onto a different clip in the set.
+    assert resolve_locomotion_style("run", _FULL_CLIP_KEYS, {"run": "idle"}) == "idle"
 
 
-def test_resolve_planner_style_unmapped_raises() -> None:
-    from strands_robots.policies.motionbricks import resolve_planner_style
+def test_resolve_locomotion_style_unmapped_raises() -> None:
+    from strands_robots.policies.motionbricks import resolve_locomotion_style
 
     # "kneeling" has no G1 clip: a clear error, never a silent wrong gait.
     with pytest.raises(ValueError, match="kneeling.*no MotionBricks clip mapping"):
-        resolve_planner_style("kneeling", _FULL_CLIP_KEYS)
+        resolve_locomotion_style("kneeling", _FULL_CLIP_KEYS)
 
 
-def test_resolve_planner_style_mapped_clip_absent_from_set_raises() -> None:
-    from strands_robots.policies.motionbricks import resolve_planner_style
+def test_resolve_locomotion_style_mapped_clip_absent_from_set_raises() -> None:
+    from strands_robots.policies.motionbricks import resolve_locomotion_style
 
     # "boxing" maps to "walk_boxing", which a reduced clip set does not provide.
     with pytest.raises(ValueError, match="walk_boxing.*does not provide"):
-        resolve_planner_style("boxing", ["idle", "walk"])
+        resolve_locomotion_style("boxing", ["idle", "walk"])
 
 
-def test_resolve_planner_style_rejects_non_string() -> None:
-    from strands_robots.policies.motionbricks import resolve_planner_style
+def test_resolve_locomotion_style_rejects_non_string() -> None:
+    from strands_robots.policies.motionbricks import resolve_locomotion_style
 
     with pytest.raises(ValueError, match="must be a clip/style name"):
-        resolve_planner_style(2, _FULL_CLIP_KEYS)  # type: ignore[arg-type]
+        resolve_locomotion_style(2, _FULL_CLIP_KEYS)  # type: ignore[arg-type]
 
 
-def test_get_actions_consumes_planner_locomotion_style() -> None:
-    # The regression: locomotion_style (planner channel) selects the clip when no
+def test_get_actions_consumes_locomotion_style() -> None:
+    # locomotion_style selects the clip when no
     # explicit style=/mode= is pinned.
     agent = _FullClipAgent()
     pol = MotionBricksPolicy(motion_agent=agent, style="walk")
@@ -373,8 +373,8 @@ def test_get_actions_consumes_planner_locomotion_style() -> None:
     assert agent.clip_keys[signals["mode"]] == "stealth_walk"
 
 
-def test_explicit_style_overrides_planner_locomotion_style() -> None:
-    # An explicit style=/mode= pins the clip even when a planner also emits one.
+def test_explicit_style_overrides_locomotion_style() -> None:
+    # An explicit style=/mode= pins the clip even when a locomotion_style is given.
     agent = _FullClipAgent()
     pol = MotionBricksPolicy(motion_agent=agent, style="walk")
     pol.get_actions_sync({}, "", style="walk_boxing", locomotion_style="stealth")
@@ -392,7 +392,7 @@ def test_locomotion_style_falls_back_to_default_when_absent() -> None:
 
 
 def test_policy_style_map_override_applied() -> None:
-    # A style_map on the policy remaps a planner style onto another clip.
+    # A style_map on the policy remaps a locomotion style onto another clip.
     agent = _FullClipAgent()
     pol = MotionBricksPolicy(motion_agent=agent, style="walk", style_map={"run": "idle"})
     pol.get_actions_sync({}, "", locomotion_style="run")
@@ -400,14 +400,12 @@ def test_policy_style_map_override_applied() -> None:
     assert agent.clip_keys[signals["mode"]] == "idle"
 
 
-def test_planner_to_policy_kwargs_drives_motionbricks_end_to_end() -> None:
-    # Full path: a PlannerCommand's to_policy_kwargs() feeds get_actions, the way
-    # the policy runner merges planner.poll().to_policy_kwargs() each tick.
-    from strands_robots.planning.base import PlannerCommand
-
+def test_policy_kwargs_goal_channel_drives_motionbricks_end_to_end() -> None:
+    # Full path: the well-known policy_kwargs goal channel feeds get_actions, the
+    # way run_policy(policy_kwargs={...}) forwards it verbatim each tick.
     agent = _FullClipAgent()
     pol = MotionBricksPolicy(motion_agent=agent, style="walk")
-    kwargs = PlannerCommand(root_vel=(0.4, 0.0, 0.0), style="boxing").to_policy_kwargs()
+    kwargs = {"target_velocity": [0.4, 0.0, 0.0], "locomotion_style": "boxing"}
     pol.get_actions_sync({}, "", **kwargs)
     signals, _ = agent.calls[-1]
     assert agent.clip_keys[signals["mode"]] == "walk_boxing"
@@ -415,13 +413,16 @@ def test_planner_to_policy_kwargs_drives_motionbricks_end_to_end() -> None:
     assert signals["movement_direction"][0] == pytest.approx(1.0)
 
 
-def test_planner_styles_all_mapped_or_intentionally_absent() -> None:
-    # Keep the bridge in sync with the planner vocabulary: every planner style is
-    # either mapped to a clip or the one documented gap (kneeling has no G1 clip).
-    from strands_robots.planning.base import STYLES
-    from strands_robots.policies.motionbricks import PLANNER_STYLE_TO_G1_CLIP
+def test_locomotion_styles_all_mapped_or_intentionally_absent() -> None:
+    # Keep the bridge in sync with the accepted vocabulary: every locomotion
+    # style is either mapped to a clip or the one documented gap (kneeling has no
+    # G1 clip). LOCOMOTION_STYLES is owned by MotionBricks (no external module).
+    from strands_robots.policies.motionbricks import (
+        LOCOMOTION_STYLE_TO_G1_CLIP,
+        LOCOMOTION_STYLES,
+    )
 
-    assert set(PLANNER_STYLE_TO_G1_CLIP) | {"kneeling"} == set(STYLES)
+    assert set(LOCOMOTION_STYLE_TO_G1_CLIP) | {"kneeling"} == set(LOCOMOTION_STYLES)
 
 
 def test_config_style_map_roundtrip_and_validation() -> None:
