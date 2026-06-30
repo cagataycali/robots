@@ -761,6 +761,9 @@ class RenderingMixin:
                         try:
                             _sys.__stderr__.write(leftover)
                         except (ValueError, OSError):
+                            # Best-effort forward of non-benign stderr; the
+                            # original __stderr__ may be closed or detached
+                            # (pytest capsys, teardown). Nothing to recover.
                             pass
                     if "ARB_clip_control" in captured:
                         logger.debug(
