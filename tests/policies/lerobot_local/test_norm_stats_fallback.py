@@ -141,6 +141,37 @@ class TestFeatureNormalizer:
         assert fn.normalize(None) is None
         assert fn.unnormalize(None) is None
 
+    def test_q10_q90_mode_round_trip_matches_analytic_form(self):
+        # q10_q90 is a documented mode (see class docstring) that shares the
+        # quantile-scaling math of q01_q99 but keys off q10/q90 stats. Verify
+        # both the forward map and that a value inside [q10, q90] round-trips.
+        stats = {"q10": [0.0, -5.0], "q90": [10.0, 5.0]}
+        fn = ns.FeatureNormalizer.from_stats(stats, "q10_q90")
+        q10 = np.asarray(stats["q10"], dtype=np.float32)
+        q90 = np.asarray(stats["q90"], dtype=np.float32)
+
+        x = np.array([2.5, 0.0], dtype=np.float32)  # strictly inside [q10, q90]
+        want = 2.0 * (x - q10) / np.maximum(q90 - q10, 1e-6) - 1.0
+        got = fn.normalize(x)
+        assert np.allclose(got, want, atol=1e-6)
+        assert np.allclose(fn.unnormalize(got), x, atol=1e-4)
+
+    def test_normalizes_without_torch_installed(self, monkeypatch):
+        # torch is an optional dep: the normalizer must still work numpy-in /
+        # numpy-out when torch cannot be imported. Masking sys.modules["torch"]
+        # with None makes ``import torch`` raise ImportError, exercising the
+        # documented torch-absent fallback in _to_array and _restore_like.
+        import sys
+
+        monkeypatch.setitem(sys.modules, "torch", None)
+        stats = {"min": [0.0, 0.0], "max": [10.0, 10.0]}
+        fn = ns.FeatureNormalizer.from_stats(stats, "min_max")
+
+        got = fn.normalize(np.array([5.0, 0.0], dtype=np.float32))
+        assert isinstance(got, np.ndarray)
+        assert np.allclose(got, [0.0, -1.0])
+        assert np.allclose(fn.unnormalize(got), [5.0, 0.0])
+
 
 class TestSchemaDetection:
     """Payload schema detection and tag selection."""
