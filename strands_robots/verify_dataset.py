@@ -22,6 +22,11 @@ Checks performed against a dataset root (the dir containing ``meta/``):
      video-modality sibling of mega-episode corruption, where the episode
      count is correct but the pixels are missing/unwritten (disable with
      ``--no-check-videos``).
+  6. no ``action`` / ``observation.state`` column is identically zero across
+     a multi-frame episode - the dead-control-column corruption (correct
+     counts and pixels, but the proprioceptive/action signal was written as
+     all zeros), read from the per-episode stats (disable with
+     ``--no-check-stats``).
 
 Usage:
     strands-robots verify-dataset /path/to/dataset
@@ -49,6 +54,7 @@ def verify_dataset(
     expected: int | None = None,
     min_frames: int = 1,
     check_videos: bool = True,
+    check_stats: bool = True,
 ) -> dict[str, Any]:
     """Verify the episode integrity of a LeRobot dataset on disk.
 
@@ -63,6 +69,9 @@ def verify_dataset(
         min_frames: Minimum frames every episode must contain (default 1).
         check_videos: When True (default), verify that every per-episode
             video file referenced by the dataset exists and is non-empty.
+        check_stats: When True (default), flag any episode whose ``action``
+            or ``observation.state`` column is identically zero across the
+            whole episode (a dead control column).
 
     Returns:
         A report dict with:
@@ -78,6 +87,9 @@ def verify_dataset(
           - ``video_files_checked``: number of distinct per-episode video
             files resolved and checked (``0`` when ``check_videos`` is False
             or the dataset declares no video features).
+          - ``stats_vectors_checked``: number of per-episode control-feature
+            stat vectors inspected for the dead-column check (``0`` when
+            ``check_stats`` is False or the dataset carries no stats).
           - ``problems``: list of human-readable failure strings (empty on pass).
     """
     from strands_robots.dataset_recorder import read_dataset_episode_indices
@@ -95,6 +107,7 @@ def verify_dataset(
         "info_total_episodes": None,
         "info_total_frames": None,
         "video_files_checked": 0,
+        "stats_vectors_checked": 0,
         "problems": [],
     }
     problems: list[str] = report["problems"]
@@ -173,6 +186,19 @@ def verify_dataset(
         checked, video_problems = _verify_video_files(root_path)
         report["video_files_checked"] = checked
         problems.extend(video_problems)
+
+    # Check 6: dead control columns. A dataset can pass every count/length
+    # and video check yet carry an ``action`` (or ``observation.state``)
+    # column that is identically zero across an entire multi-frame episode -
+    # the proprioceptive sibling of the mega-episode and missing-video
+    # classes. This happens when a writer's action keys never resolve to the
+    # declared columns, so every frame's action is written as zeros while the
+    # episode and frame counts stay correct. The per-episode feature stats
+    # LeRobot v3 writes inline make this a cheap, decoder-independent check.
+    if check_stats:
+        stats_checked, stats_problems = _verify_feature_stats(root_path)
+        report["stats_vectors_checked"] = stats_checked
+        problems.extend(stats_problems)
 
     report["ok"] = not problems
     report["status"] = "success" if report["ok"] else "error"
@@ -270,6 +296,101 @@ def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
     return len(referenced), problems
 
 
+def _verify_feature_stats(root_path: Path) -> tuple[int, list[str]]:
+    """Flag dead (identically-zero) control columns via per-episode stats.
+
+    LeRobot v3 writes per-episode feature statistics inline in
+    ``meta/episodes/**/*.parquet`` (``stats/<feature>/min`` / ``.../max`` /
+    ``.../count`` ...). A recording whose ``action`` (or ``observation.state``)
+    column is identically zero across an entire multi-frame episode passes every
+    count, length and video check yet carries no usable control signal -- the
+    proprioceptive sibling of the mega-episode and missing-video corruption
+    classes. This happens when a writer's action keys never resolve to the
+    declared columns (so every frame's action is written as zeros) while the
+    episode and frame counts stay correct.
+
+    For each control feature (``action`` and any ``observation.state*``) that
+    carries per-episode ``min``/``max`` stats, flag every episode with at least
+    two frames whose feature vector is identically zero (every component
+    ``min == max == 0``). Single-frame episodes are skipped: a lone frame has
+    ``min == max`` trivially, so all-zero there is not yet evidence of a dead
+    column. Reading only the lightweight stats columns keeps this
+    decoder-independent (no video decode, no ``data/`` scan).
+
+    Args:
+        root_path: Dataset root directory (the dir that contains ``meta/``).
+
+    Returns:
+        A ``(checked, problems)`` tuple where ``checked`` is the number of
+        per-episode control-feature stat vectors inspected and ``problems``
+        lists the dead-column episodes (empty when the dataset carries no stats
+        or every control column varies).
+    """
+    try:
+        import pyarrow.parquet as pq
+    except ImportError:  # pragma: no cover - pyarrow ships with the lerobot extra
+        return 0, []
+
+    parquet_files = sorted((root_path / "meta" / "episodes").glob("**/*.parquet"))
+    if not parquet_files:
+        return 0, []
+
+    def _is_control_feature(name: str) -> bool:
+        return name == "action" or name == "observation.state" or name.startswith("observation.state.")
+
+    def _episode_count(value: Any) -> int | None:
+        # The stats ``count`` column is stored as a length-1 list per episode.
+        if value is None:
+            return None
+        if isinstance(value, (list, tuple)):
+            return int(value[0]) if value else None
+        return int(value)
+
+    checked = 0
+    problems: list[str] = []
+    for pf in parquet_files:
+        table = pq.read_table(pf)
+        cols = set(table.column_names)
+        if "episode_index" not in cols:
+            continue
+        data = table.to_pydict()
+        episodes = data["episode_index"]
+        features = sorted(
+            {
+                c[len("stats/") : -len("/min")]
+                for c in cols
+                if c.startswith("stats/")
+                and c.endswith("/min")
+                and _is_control_feature(c[len("stats/") : -len("/min")])
+            }
+        )
+        for feat in features:
+            min_col = f"stats/{feat}/min"
+            max_col = f"stats/{feat}/max"
+            if max_col not in cols:
+                continue
+            mins = data[min_col]
+            maxs = data[max_col]
+            counts = data.get(f"stats/{feat}/count")
+            for i in range(len(mins)):
+                row_min = mins[i]
+                row_max = maxs[i]
+                if row_min is None or row_max is None:
+                    continue
+                checked += 1
+                n = _episode_count(counts[i]) if counts is not None and i < len(counts) else None
+                if n is not None and n < 2:
+                    continue  # single frame: identically-zero is not yet corruption evidence
+                ep = int(episodes[i]) if i < len(episodes) and episodes[i] is not None else -1
+                if all(v == 0 for v in row_min) and all(v == 0 for v in row_max):
+                    frames = f"{n} frame(s)" if n is not None else "all frames"
+                    problems.append(
+                        f"feature '{feat}' is identically zero across episode {ep} ({frames}) - "
+                        "dead control column (the recorded values never change and are all zero)"
+                    )
+    return checked, problems
+
+
 def _format_report(report: dict[str, Any]) -> str:
     """Render a report dict as a human-readable multi-line summary."""
     lines: list[str] = []
@@ -278,6 +399,8 @@ def _format_report(report: dict[str, Any]) -> str:
     lines.append(f"  episodes (parquet): {report['total_episodes']}")
     if report.get("video_files_checked"):
         lines.append(f"  video files checked: {report['video_files_checked']}")
+    if report.get("stats_vectors_checked"):
+        lines.append(f"  stat vectors checked: {report['stats_vectors_checked']}")
     if report["total_frames"]:
         lines.append(f"  frames   (parquet): {report['total_frames']}")
     if report["expected"] is not None:
@@ -320,10 +443,20 @@ def main(argv: list[str] | None = None) -> int:
         action="store_false",
         help="Skip per-episode video-file existence/non-empty checks.",
     )
+    parser.add_argument(
+        "--no-check-stats",
+        dest="check_stats",
+        action="store_false",
+        help="Skip the dead-control-column (all-zero action/state) check.",
+    )
     args = parser.parse_args(argv)
 
     report = verify_dataset(
-        args.root, expected=args.expected, min_frames=args.min_frames, check_videos=args.check_videos
+        args.root,
+        expected=args.expected,
+        min_frames=args.min_frames,
+        check_videos=args.check_videos,
+        check_stats=args.check_stats,
     )
     if args.json:
         print(json.dumps(report, indent=2))

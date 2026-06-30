@@ -439,3 +439,155 @@ class TestVideoIndexColumnEdgeCases:
         # No file resolved (the only row is null) and no missing-file problem.
         assert report["video_files_checked"] == 0
         assert not any("video file" in p for p in report["problems"])
+
+
+def _write_dataset_with_stats(
+    root: Path,
+    episode_indices: list[int],
+    counts: list[int],
+    action_minmax: list[tuple[list[float], list[float]]] | None = None,
+    state_minmax: list[tuple[list[float], list[float]]] | None = None,
+    info: dict | None = None,
+) -> Path:
+    """Write an episodes parquet carrying the inline per-episode feature stats.
+
+    LeRobot v3 stores ``stats/<feature>/min`` / ``.../max`` / ``.../count`` as
+    list-typed columns (one row per episode). This builds exactly that schema so
+    the dead-control-column check can be exercised without lerobot or mujoco.
+
+    Args:
+        root: Dataset root (the dir that will contain ``meta/``).
+        episode_indices: Distinct ``episode_index`` values to write.
+        counts: Per-episode frame count (the ``count`` stat).
+        action_minmax: Per-episode ``(min_vec, max_vec)`` for ``action`` (omit
+            the column when None).
+        state_minmax: Per-episode ``(min_vec, max_vec)`` for
+            ``observation.state`` (omit the column when None).
+        info: Optional ``meta/info.json`` payload.
+
+    Returns:
+        The dataset root path.
+    """
+    ep_dir = root / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True, exist_ok=True)
+    columns: dict[str, list] = {
+        "episode_index": episode_indices,
+        "length": counts,
+    }
+    if action_minmax is not None:
+        columns["stats/action/min"] = [mn for mn, _ in action_minmax]
+        columns["stats/action/max"] = [mx for _, mx in action_minmax]
+        columns["stats/action/count"] = [[c] for c in counts]
+    if state_minmax is not None:
+        columns["stats/observation.state/min"] = [mn for mn, _ in state_minmax]
+        columns["stats/observation.state/max"] = [mx for _, mx in state_minmax]
+        columns["stats/observation.state/count"] = [[c] for c in counts]
+    pq.write_table(pa.table(columns), ep_dir / "episodes_000.parquet")
+    if info is not None:
+        (root / "meta" / "info.json").write_text(json.dumps(info), encoding="utf-8")
+    return root
+
+
+class TestDeadControlColumn:
+    """All-zero ``action`` / ``observation.state`` columns are flagged.
+
+    A recording can pass every count, length and video check yet carry a control
+    column written entirely as zeros (a writer whose action keys never resolved
+    to the declared columns). The per-episode stats expose this cheaply.
+    """
+
+    def test_all_zero_action_column_flagged(self, tmp_path: Path) -> None:
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[10],
+            action_minmax=[([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])],
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is False
+        assert report["stats_vectors_checked"] == 1
+        assert any("identically zero" in p and "action" in p for p in report["problems"])
+
+    def test_varying_action_column_passes(self, tmp_path: Path) -> None:
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0, 1],
+            counts=[10, 12],
+            action_minmax=[
+                ([-0.5, -0.1, 0.0], [0.5, 0.2, 0.3]),
+                ([-0.4, 0.0, -0.2], [0.4, 0.1, 0.2]),
+            ],
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True
+        assert report["stats_vectors_checked"] == 2
+        assert report["problems"] == []
+
+    def test_all_zero_observation_state_flagged(self, tmp_path: Path) -> None:
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[8],
+            state_minmax=[([0.0, 0.0], [0.0, 0.0])],
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is False
+        assert any("observation.state" in p and "identically zero" in p for p in report["problems"])
+
+    def test_single_frame_all_zero_not_flagged(self, tmp_path: Path) -> None:
+        # A single-frame episode has min == max trivially; all-zero there is not
+        # yet evidence of a dead column, so it must not be flagged.
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[1],
+            action_minmax=[([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])],
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True
+        assert report["problems"] == []
+
+    def test_no_check_stats_skips_dead_column(self, tmp_path: Path) -> None:
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[10],
+            action_minmax=[([0.0, 0.0, 0.0], [0.0, 0.0, 0.0])],
+        )
+        report = verify_dataset(tmp_path, check_videos=False, check_stats=False)
+        assert report["ok"] is True
+        assert report["stats_vectors_checked"] == 0
+
+    def test_dataset_without_stats_columns_passes(self, tmp_path: Path) -> None:
+        # Writers that omit inline stats must not be penalized.
+        _write_dataset(tmp_path, episode_indices=[0, 1], frames_per_episode=[5, 5])
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is True
+        assert report["stats_vectors_checked"] == 0
+
+    def test_one_dead_episode_among_healthy_flagged(self, tmp_path: Path) -> None:
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0, 1, 2],
+            counts=[10, 10, 10],
+            action_minmax=[
+                ([-0.5, -0.1], [0.5, 0.2]),
+                ([0.0, 0.0], [0.0, 0.0]),  # dead
+                ([-0.3, -0.2], [0.3, 0.2]),
+            ],
+        )
+        report = verify_dataset(tmp_path, check_videos=False)
+        assert report["ok"] is False
+        dead = [p for p in report["problems"] if "identically zero" in p]
+        assert len(dead) == 1
+        assert "episode 1" in dead[0]
+
+    def test_dead_action_cli_exit_code(self, tmp_path: Path) -> None:
+        _write_dataset_with_stats(
+            tmp_path,
+            episode_indices=[0],
+            counts=[10],
+            action_minmax=[([0.0, 0.0], [0.0, 0.0])],
+        )
+        assert verify_main([str(tmp_path), "--no-check-videos"]) == 1
+        assert verify_main([str(tmp_path), "--no-check-videos", "--no-check-stats"]) == 0
