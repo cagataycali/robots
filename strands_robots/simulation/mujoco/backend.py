@@ -385,7 +385,7 @@ def capture_stderr_fd():
                 try:
                     sys.stderr.flush()
                 except (ValueError, OSError):
-                    pass
+                    pass  # stderr may be closed/detached (pytest capsys, Jupyter)
                 os.dup2(saved_fd, orig_fd)
     finally:
         try:
@@ -398,4 +398,4 @@ def capture_stderr_fd():
             try:
                 os.close(saved_fd)
             except OSError:
-                pass
+                pass  # fd may already be closed during interpreter shutdown
