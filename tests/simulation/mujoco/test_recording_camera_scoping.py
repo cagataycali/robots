@@ -147,3 +147,48 @@ def test_drop_unrecorded_cameras_helper():
     assert out["shoulder_pan"] == 0.1
     assert "cam_b" not in out
     assert "default" not in out
+
+
+def test_recording_default_camera_alongside_sensors_warns(sim_with_cameras, tmp_path, caplog):
+    """Record-all (``cameras=None``) must not silently sweep in ``default``.
+
+    The implicit ``default`` overview camera that ``create_world`` adds is not a
+    sensor any policy declares; recording it bloats the dataset with an
+    ``observation.images.default`` view. Recording still happens (back-compat),
+    but a one-time warning must surface it instead of including it silently.
+    """
+    sim = sim_with_cameras
+    with caplog.at_level("WARNING"):
+        res = sim.start_recording(
+            repo_id="local/scope_warn",
+            root=str(tmp_path / "warn"),
+            overwrite=True,
+        )
+    assert res["status"] == "success"
+    # Behavior unchanged: default is still recorded alongside the sensors.
+    assert _recorder_image_features(sim) == {
+        "observation.images.default",
+        "observation.images.cam_a",
+        "observation.images.cam_b",
+    }
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert any("default" in m and "observation.images.default" in m and "cameras=" in m for m in warnings), (
+        f"expected a stray-default-camera warning, got: {warnings}"
+    )
+
+
+def test_recording_scoped_cameras_does_not_warn(sim_with_cameras, tmp_path, caplog):
+    """Scoping with ``cameras=`` drops ``default`` and must emit no stray warning."""
+    sim = sim_with_cameras
+    with caplog.at_level("WARNING"):
+        res = sim.start_recording(
+            repo_id="local/scope_quiet",
+            root=str(tmp_path / "quiet"),
+            cameras=["cam_a", "cam_b"],
+            overwrite=True,
+        )
+    assert res["status"] == "success"
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+    assert not any("observation.images.default" in m for m in warnings), (
+        f"scoped recording must not warn about default, got: {warnings}"
+    )

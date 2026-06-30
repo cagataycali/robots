@@ -92,7 +92,10 @@ class RecordingMixin(DatasetRecordingMixin):
                 decode it and silently yield 0 frames.
             cameras: Camera names to record into the dataset. When ``None``
                 (default) every scene camera is recorded - which includes the
-                implicit ``default`` free camera. Pass an explicit subset to
+                implicit ``default`` overview camera (a one-time warning is
+                logged when it is swept in alongside real sensor cameras, since
+                no policy declares ``observation.images.default``). Pass an
+                explicit subset to
                 record exactly the views a policy declares (e.g.
                 ``cameras=["camera1", "camera2", "camera3"]`` for a 3-camera
                 SmolVLA dataset) and keep the stray ``default`` view out of the
@@ -217,7 +220,7 @@ class RecordingMixin(DatasetRecordingMixin):
                     camera_dims[safe_name] = (int(self.default_height), int(self.default_width))
 
             # Optional camera scoping. By default EVERY scene camera is recorded,
-            # which silently includes the implicit ``default`` free camera and any
+            # which sweeps in the implicit ``default`` overview camera and any
             # view the trained policy never declared - bloating the dataset and
             # producing image features that do not match the policy's
             # ``input_features``. When ``cameras`` is given, record exactly that
@@ -262,6 +265,28 @@ class RecordingMixin(DatasetRecordingMixin):
             # Stash the scoped RAW camera names so the run_policy frame hook drops
             # un-recorded camera arrays before add_frame (None -> record all).
             self._world._backend_state["recording_cameras"] = record_raw_cameras
+
+            # Doctrine: warn loudly, never silently surprise. On the record-all
+            # path (``cameras is None``) the implicit ``default`` overview camera
+            # that ``create_world`` auto-adds is swept into the dataset alongside
+            # the real, user-added sensor cameras. That produces an
+            # ``observation.images.default`` view no trained policy declares -
+            # bloating the dataset and breaking feature-matching against a
+            # policy's ``input_features``. Keep recording it (back-compat), but
+            # surface it instead of including it silently, and point at the
+            # ``cameras=`` escape hatch.
+            if cameras is None and "default" in camera_keys and len(camera_keys) > 1:
+                sensor_cams = [c for c in camera_keys if c != "default"]
+                logger.warning(
+                    "start_recording: recording the implicit 'default' overview "
+                    "camera into observation.images.default alongside %d sensor "
+                    "camera(s) %s. The 'default' view is not a sensor any policy "
+                    "declares; it bloats the dataset and will not match a policy's "
+                    "input_features. Pass cameras=%r to record only your sensors.",
+                    len(sensor_cams),
+                    sensor_cams,
+                    sensor_cams,
+                )
 
             assert _DatasetRecorder is not None  # checked above
             if resume_existing:

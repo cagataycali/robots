@@ -42,7 +42,10 @@ The dataset schema then declares only those three image features. Names may be
 given in raw MuJoCo form (`arm0/wrist_cam`) or schema-safe form
 (`arm0__wrist_cam`); an unknown name fails loudly and lists the available
 cameras rather than silently recording the wrong set. Omit `cameras=` to keep
-the legacy behavior of recording every camera.
+the legacy behavior of recording every camera - in that case a one-time
+warning is logged when the implicit `default` overview camera is swept in
+alongside your real sensor cameras, so the stray view is never recorded
+silently.
 
 ### Where the dataset is written (`root` / `overwrite`)
 
