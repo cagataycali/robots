@@ -229,3 +229,44 @@ class TestWithRealMockPolicy:
         out = _run(c, obs={"observation.state": [0.0] * 3})
         assert len(out) == 8  # both mocks emit an 8-step chunk
         assert set(out[0]) == set(LEG_JOINTS + ARM_JOINTS)
+
+
+class TestChildAccessAndRtcForwarding:
+    """Public child accessors and RTC observed-delay forwarding."""
+
+    def test_lower_and_upper_expose_the_child_policies(self):
+        # The composite exposes its children so a caller can introspect or
+        # re-scope them (e.g. re-running set_robot_state_keys per child).
+        lower, upper = StubPolicy([{"hip": 0.0}]), StubPolicy([{"shoulder": 0.0}])
+        c = CompositePolicy(lower, upper)
+        assert c.lower is lower
+        assert c.upper is upper
+
+    def test_set_rtc_observed_delay_forwarded_to_composite_and_both_children(self):
+        # A latency-sensitive child slices its leftover chunk by this counted
+        # step delay; it must reach BOTH children and the composite itself.
+        lower, upper = StubPolicy([{"hip": 0.0}]), StubPolicy([{"shoulder": 0.0}])
+        c = CompositePolicy(lower, upper)
+        c.set_rtc_observed_delay(3)
+        assert c.rtc_observed_delay_steps == 3
+        assert lower.rtc_observed_delay_steps == 3
+        assert upper.rtc_observed_delay_steps == 3
+
+    def test_set_rtc_observed_delay_none_clears_on_all(self):
+        lower, upper = StubPolicy([{"hip": 0.0}]), StubPolicy([{"shoulder": 0.0}])
+        c = CompositePolicy(lower, upper)
+        c.set_rtc_observed_delay(5)
+        c.set_rtc_observed_delay(None)
+        assert c.rtc_observed_delay_steps is None
+        assert lower.rtc_observed_delay_steps is None
+        assert upper.rtc_observed_delay_steps is None
+
+    def test_set_rtc_observed_delay_rejects_negative_before_forwarding(self):
+        # The base contract rejects a negative count; the composite surfaces it
+        # without leaving children in a half-updated state.
+        lower, upper = StubPolicy([{"hip": 0.0}]), StubPolicy([{"shoulder": 0.0}])
+        c = CompositePolicy(lower, upper)
+        with pytest.raises(ValueError, match="rtc_observed_delay_steps must be >= 0"):
+            c.set_rtc_observed_delay(-1)
+        assert lower.rtc_observed_delay_steps is None
+        assert upper.rtc_observed_delay_steps is None
