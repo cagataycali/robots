@@ -86,7 +86,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     patch_scene_mjcf,
     replace_scene_mjcf,
 )
-from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
+from strands_robots.simulation.mujoco.spec_builder import SpecBuilder, _validate_size
 from strands_robots.simulation.policy_runner import CooperativeStop
 from strands_robots.teleop_mixin import TeleopMixin
 
@@ -1388,7 +1388,59 @@ class MuJoCoSimEngine(
         mesh_path: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Add an object to the simulation."""
+        """Add a primitive or mesh object to the live MuJoCo scene.
+
+        The ``size`` argument is the **full extent in meters** along each local
+        axis -- *not* MuJoCo's native half-extent. It is halved internally when
+        the geom is compiled, so a box created with ``size=[0.05, 0.05, 0.05]``
+        is a 5 cm cube (MuJoCo stores ``geom_size == [0.025, 0.025, 0.025]``).
+        Per-shape ``size`` semantics (all values are full extents / diameters in
+        meters):
+
+        * ``box`` / ``ellipsoid``: ``[x, y, z]`` full edge lengths per axis.
+        * ``sphere``: ``size[0]`` is the diameter (``size[1:]`` ignored).
+        * ``cylinder`` / ``capsule``: ``size[0]`` diameter, ``size[2]`` full
+          height (``size[1]`` ignored).
+        * ``plane``: ``size[0]`` / ``size[1]`` are visual half-widths; planes are
+          infinite for collision and are forced static.
+        * ``mesh``: ``size`` is ignored -- the asset's own units define the
+          extent (requires ``mesh_path``).
+
+        A free (non-static) body rests on a horizontal support at
+        ``rest_z = support_top + size_z / 2`` -- e.g. a 5 cm cube on a table
+        whose top is at ``z = 0.75`` settles with its body origin at
+        ``z = 0.775``. Assuming half-extent makes objects look like they "sink
+        into" a support when the rest height was simply mis-computed.
+
+        Args:
+            name: Unique object name. Its geom is injected as ``"<name>_geom"``.
+            shape: ``"box"``, ``"sphere"``, ``"cylinder"``, ``"capsule"``,
+                ``"ellipsoid"``, ``"plane"``, or ``"mesh"``.
+            position: World position ``[x, y, z]`` of the body origin (default
+                origin).
+            orientation: wxyz quaternion (default identity).
+            size: Full extents in meters per the per-shape table above. Defaults
+                to ``[0.05, 0.05, 0.05]`` (a 5 cm box). Every meaningful
+                component must be > 0; a non-positive extent is rejected.
+            color: RGBA in 0..1 (default mid-grey).
+            mass: Body mass in kg for dynamic objects (default 0.1); ignored when
+                ``is_static``.
+            is_static: Fix the body in the world. ``shape="plane"`` forces this
+                True; other shapes default to dynamic.
+            mesh_path: Mesh asset path; required and only used when
+                ``shape="mesh"``.
+            **kwargs: Reserved for backend-specific extensions; currently ignored.
+
+        Returns:
+            Agent-tool status dict. ``{"status": "success", ...}`` on success;
+            ``{"status": "error", ...}`` when no world exists, a policy is
+            running, the name is taken, ``size`` has a non-positive extent, or
+            the recompile fails.
+
+        Example:
+            >>> sim.add_object("cube", shape="box", size=[0.05, 0.05, 0.05])  # 5 cm cube
+            >>> # on a table whose top is at z=0.75, the cube rests at z=0.775
+        """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_object"):
@@ -1412,6 +1464,12 @@ class MuJoCoSimEngine(
             is_static = True
         elif is_static is None:
             is_static = False
+
+        # 'size' is the full extent in meters per the docstring; reject a
+        # non-positive (degenerate) extent before mutating scene state so the
+        # caller gets a clear error rather than a confusing recompile failure.
+        if size is not None and (size_err := _validate_size(shape, list(size))) is not None:
+            return {"status": "error", "content": [{"text": size_err}]}
 
         obj = SimObject(
             name=name,

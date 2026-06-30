@@ -335,7 +335,15 @@ class SimEngine(ABC):
         mesh_path: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Add an object to the scene."""
+        """Add a primitive or mesh object to the scene.
+
+        The ``size`` convention is backend-specific -- the default MuJoCo
+        backend treats ``size`` as the **full extent in meters** per axis
+        (halved internally to MuJoCo's half-extents), whereas Newton consumes
+        half-extents / radii directly. See the concrete backend's
+        ``add_object`` docstring for the exact per-shape semantics and an
+        example. Returns an agent-tool status dict.
+        """
         ...
 
     @abstractmethod

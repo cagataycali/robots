@@ -61,6 +61,41 @@ def _geom_type(shape: str) -> int:
         raise ValueError(f"Unsupported shape {shape!r}. Supported: {supported}.") from e
 
 
+def _validate_size(shape: str, size: list[float]) -> str | None:
+    """Return an error message if ``size`` has a non-positive meaningful extent.
+
+    ``size`` follows the full-extent convention used by
+    :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.add_object`
+    (meters along each axis, halved internally to MuJoCo's half-extents). Only
+    the components a given shape actually consumes are checked, so a cylinder
+    may legitimately pass ``size[1] == 0`` (it is ignored). ``mesh`` ignores
+    ``size`` entirely. Returns ``None`` when the size is acceptable.
+    """
+    if shape == "mesh":
+        return None
+    if shape in ("box", "ellipsoid"):
+        used: tuple[tuple[int, str], ...] = ((0, "x"), (1, "y"), (2, "z"))
+    elif shape == "sphere":
+        used = ((0, "diameter"),)
+    elif shape in ("cylinder", "capsule"):
+        used = ((0, "diameter"), (2, "height"))
+    elif shape == "plane":
+        used = ((0, "x"),) if len(size) < 2 else ((0, "x"), (1, "y"))
+    else:
+        # Unknown shapes are rejected by _geom_type; nothing to validate here.
+        return None
+    for idx, axis in used:
+        if idx >= len(size):
+            continue
+        if size[idx] <= 0:
+            return (
+                f"add_object: {shape} {axis} extent must be > 0, got "
+                f"{size[idx]} (size={list(size)}). 'size' is the full extent "
+                "in meters along each axis (not MuJoCo's half-extent)."
+            )
+    return None
+
+
 def _normalize_size(shape: str, size: list[float]) -> list[float]:
     """Convert SimObject ``size`` convention to MuJoCo's per-geom size vector.
 
@@ -77,8 +112,12 @@ def _normalize_size(shape: str, size: list[float]) -> list[float]:
     ``SimObject.size`` is always 3 floats. Box/ellipsoid use all 3 as full
     extents, sphere uses ``size[0]`` as diameter (MuJoCo halves it to radius),
     cylinder/capsule use ``size[0]`` as diameter and ``size[2]`` as full height
-    (both halved), plane uses ``size[0]``/``size[1]`` as full extents (halved).
+    (both halved). Plane is the one exception: ``size[0]``/``size[1]`` are
+    passed through unchanged as MuJoCo's visual half-widths (a plane is
+    infinite for collision, so only its rendered grid extent matters).
     """
+    if (msg := _validate_size(shape, size)) is not None:
+        raise ValueError(msg)
     if shape == "box":
         sx, sy, sz = size if len(size) >= 3 else (0.1, 0.1, 0.1)
         return [sx / 2, sy / 2, sz / 2]
@@ -572,5 +611,6 @@ __all__ = [
     "_is_z0_ground_plane",
     "_geom_type",
     "_normalize_size",
+    "_validate_size",
     "_target_quat",
 ]
