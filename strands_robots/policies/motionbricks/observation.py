@@ -36,18 +36,31 @@ import numpy as np
 # Default movement / facing direction: walk straight ahead along +x (world).
 _DEFAULT_DIRECTION = (1.0, 0.0, 0.0)
 
-# Planner-vocabulary -> MotionBricks G1 clip-mode names. The KinematicPlanner
-# (:mod:`strands_robots.planning`) emits a fixed style vocabulary matching
-# NVIDIA's GR00T-WholeBodyControl SONIC kinematic-planner demos
-# (``run|happy|stealth|injured|kneeling|hand_crawling|elbow_crawling|boxing``);
-# MotionBricks names its G1 clips differently (``walk`` / ``stealth_walk`` /
-# ``walk_boxing`` ...), so a planner that drives this policy needs its emitted
-# ``locomotion_style`` translated to the matching clip. The mapping below pairs
-# each planner style with the upstream ``clip_holder_G1`` clip that realises it.
-# Styles with no G1 clip (notably ``kneeling``) are intentionally absent: a
-# planner emitting one raises a clear error rather than silently miming the
-# wrong motion (AGENTS.md: raise on fatal, no silent wrong default).
-PLANNER_STYLE_TO_G1_CLIP: dict[str, str] = {
+# Accepted ``locomotion_style`` vocabulary - the SONIC locomotion style names a
+# caller passes through ``run_policy(policy_kwargs={"locomotion_style": ...})``.
+# MotionBricks owns this list directly (it has no dependency on any other
+# module): the names match NVIDIA's GR00T-WholeBodyControl SONIC demos
+# (``run|happy|stealth|injured|kneeling|hand_crawling|elbow_crawling|boxing``).
+LOCOMOTION_STYLES: tuple[str, ...] = (
+    "run",
+    "happy",
+    "stealth",
+    "injured",
+    "kneeling",
+    "hand_crawling",
+    "elbow_crawling",
+    "boxing",
+)
+
+# ``locomotion_style`` -> MotionBricks G1 clip-mode name. MotionBricks names its
+# G1 clips differently (``walk`` / ``stealth_walk`` / ``walk_boxing`` ...) from
+# the style vocabulary, so a caller-supplied ``locomotion_style`` is translated
+# to the matching clip. The mapping pairs each style with the upstream
+# ``clip_holder_G1`` clip that realises it. Styles with no G1 clip (notably
+# ``kneeling``) are intentionally absent: a caller passing one raises a clear
+# error rather than silently miming the wrong motion (AGENTS.md: raise on fatal,
+# no silent wrong default).
+LOCOMOTION_STYLE_TO_G1_CLIP: dict[str, str] = {
     "run": "walk",
     "happy": "walk_happy_dance",
     "stealth": "stealth_walk",
@@ -88,18 +101,17 @@ def resolve_mode(style: int | str, clip_keys: list[str]) -> int:
     raise ValueError(f"MotionBricks style must be an int index or str name, got {type(style).__name__}")
 
 
-def resolve_planner_style(
+def resolve_locomotion_style(
     locomotion_style: str,
     clip_keys: list[str],
     style_map: dict[str, str] | None = None,
 ) -> str:
-    """Translate a planner ``locomotion_style`` to a MotionBricks G1 clip name.
+    """Translate a ``locomotion_style`` goal kwarg to a MotionBricks G1 clip name.
 
-    The :class:`~strands_robots.planning.kinematic.KinematicPlanner` emits a
-    ``locomotion_style`` (its fixed SONIC-demo vocabulary) on every control tick
-    via :meth:`~strands_robots.planning.base.PlannerCommand.to_policy_kwargs`.
-    MotionBricks selects motion by clip-mode *name*, which differs from the
-    planner vocabulary, so the style must be mapped before
+    Callers pass ``locomotion_style`` through
+    ``run_policy(policy_kwargs={"locomotion_style": ...})`` (one of
+    :data:`LOCOMOTION_STYLES`). MotionBricks selects motion by clip-mode *name*,
+    which differs from the style vocabulary, so the style must be mapped before
     :func:`resolve_mode` turns it into a clip index.
 
     Resolution order:
@@ -107,12 +119,12 @@ def resolve_planner_style(
     1. A value that is already a clip name in ``clip_keys`` passes through
        unchanged (a caller may emit a native clip name directly).
     2. Otherwise the value is looked up in the merged style map
-       (:data:`PLANNER_STYLE_TO_G1_CLIP` overlaid with ``style_map``).
+       (:data:`LOCOMOTION_STYLE_TO_G1_CLIP` overlaid with ``style_map``).
 
     Args:
-        locomotion_style: The planner-emitted style name.
+        locomotion_style: The requested locomotion style name.
         clip_keys: Ordered clip mode names (the generator's ``CLIPS`` keys).
-        style_map: Optional overrides merged over :data:`PLANNER_STYLE_TO_G1_CLIP`
+        style_map: Optional overrides merged over :data:`LOCOMOTION_STYLE_TO_G1_CLIP`
             (e.g. for a custom clip set). ``None`` uses the defaults only.
 
     Returns:
@@ -126,20 +138,20 @@ def resolve_planner_style(
     """
     if not isinstance(locomotion_style, str):
         raise ValueError(f"locomotion_style must be a clip/style name (str), got {type(locomotion_style).__name__}")
-    mapping = PLANNER_STYLE_TO_G1_CLIP if style_map is None else {**PLANNER_STYLE_TO_G1_CLIP, **style_map}
+    mapping = LOCOMOTION_STYLE_TO_G1_CLIP if style_map is None else {**LOCOMOTION_STYLE_TO_G1_CLIP, **style_map}
     # A native clip name is used as-is (lets a caller pass a clip name directly).
     if locomotion_style in clip_keys:
         return locomotion_style
     clip = mapping.get(locomotion_style)
     if clip is None:
         raise ValueError(
-            f"planner locomotion_style {locomotion_style!r} has no MotionBricks clip mapping; "
+            f"locomotion_style {locomotion_style!r} has no MotionBricks clip mapping; "
             f"mappable styles: {sorted(mapping)}; or pass an explicit style=<clip name> "
             f"(available clips: {clip_keys})"
         )
     if clip not in clip_keys:
         raise ValueError(
-            f"planner locomotion_style {locomotion_style!r} maps to clip {clip!r}, which this "
+            f"locomotion_style {locomotion_style!r} maps to clip {clip!r}, which this "
             f"generator's clip set does not provide: {clip_keys}"
         )
     return clip
@@ -248,8 +260,9 @@ def build_control_signals(
 
 __all__ = [
     "resolve_mode",
-    "resolve_planner_style",
-    "PLANNER_STYLE_TO_G1_CLIP",
+    "resolve_locomotion_style",
+    "LOCOMOTION_STYLE_TO_G1_CLIP",
+    "LOCOMOTION_STYLES",
     "allowed_pred_num_tokens",
     "build_control_signals",
 ]

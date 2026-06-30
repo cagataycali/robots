@@ -23,11 +23,12 @@ NVIDIA Open Model License); no weights are bundled. See ``docs/policies/motionbr
 
 from strands_robots.policies.motionbricks.config import MotionBricksConfig
 from strands_robots.policies.motionbricks.observation import (
-    PLANNER_STYLE_TO_G1_CLIP,
+    LOCOMOTION_STYLE_TO_G1_CLIP,
+    LOCOMOTION_STYLES,
     allowed_pred_num_tokens,
     build_control_signals,
+    resolve_locomotion_style,
     resolve_mode,
-    resolve_planner_style,
 )
 from strands_robots.policies.motionbricks.policy import (
     MOTIONBRICKS_G1_JOINTS,
@@ -41,8 +42,9 @@ __all__ = [
     "MotionAgent",
     "MOTIONBRICKS_G1_JOINTS",
     "resolve_mode",
-    "resolve_planner_style",
-    "PLANNER_STYLE_TO_G1_CLIP",
+    "resolve_locomotion_style",
+    "LOCOMOTION_STYLE_TO_G1_CLIP",
+    "LOCOMOTION_STYLES",
     "allowed_pred_num_tokens",
     "build_control_signals",
 ]

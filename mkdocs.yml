@@ -54,7 +54,6 @@ nav:
   - VLA-on-G1 Workflow: training/vla_workflow.md
   - Sim Managers (RL recipes): training/managers.md
 - Recording & Datasets: recording.md
-- Locomotion Planning: planning/kinematic_planner.md
 - Examples:
   - Overview: examples/overview.md
 - Architecture: architecture.md

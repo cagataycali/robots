@@ -141,16 +141,17 @@ An unknown style or out-of-range index raises `ValueError` listing the
 available modes. A missing `[motionbricks]` install or checkpoint raises
 `RuntimeError` with an install hint - there is no silent fallback.
 
-## Driving the gait from a KinematicPlanner
+## Driving the gait with the `locomotion_style` goal kwarg
 
-A [`KinematicPlanner`](../planning/kinematic_planner.md) steers MotionBricks at
-the *intent* layer: each control tick it emits a `locomotion_style` (its fixed
-SONIC-demo vocabulary - `run`, `happy`, `stealth`, `injured`, `hand_crawling`,
-`elbow_crawling`, `boxing`) plus a `target_velocity`. MotionBricks names its G1
-clips differently, so the policy translates `locomotion_style` to the matching
-clip via `PLANNER_STYLE_TO_G1_CLIP`:
+MotionBricks reads a high-level `locomotion_style` from the well-known
+`policy_kwargs` goal channel - the same channel WBC and the other non-VLA
+providers use. The accepted SONIC style vocabulary (`LOCOMOTION_STYLES`:
+`run`, `happy`, `stealth`, `injured`, `kneeling`, `hand_crawling`,
+`elbow_crawling`, `boxing`) is owned by MotionBricks. Its G1 clips are named
+differently, so the policy translates `locomotion_style` to the matching clip
+via `LOCOMOTION_STYLE_TO_G1_CLIP`:
 
-| planner `locomotion_style` | MotionBricks clip |
+| `locomotion_style` | MotionBricks clip |
 | --- | --- |
 | `run` | `walk` |
 | `happy` | `walk_happy_dance` |
@@ -160,29 +161,32 @@ clip via `PLANNER_STYLE_TO_G1_CLIP`:
 | `elbow_crawling` | `elbow_crawling` |
 | `boxing` | `walk_boxing` |
 
+A caller steers the gait by passing `locomotion_style` (and an optional
+`target_velocity`) through `run_policy(policy_kwargs=...)`, re-issuing
+short-horizon calls to change the goal over time (closed-loop at the caller's
+own cadence):
+
 ```python
 from strands_robots import Robot
-from strands_robots.planning import KinematicPlanner
-from strands_robots.planning.inputs import ScriptedInput
-from strands_robots.planning.base import PlannerCommand
 
-robot = Robot("unitree_g1")
-planner = KinematicPlanner(ScriptedInput([
-    (0.0, PlannerCommand(root_vel=(0.5, 0.0, 0.0), style="run")),
-    (3.0, PlannerCommand(root_vel=(0.3, 0.0, 0.0), style="stealth")),
-    (6.0, PlannerCommand(root_vel=(0.0, 0.0, 0.0), style="boxing")),
-]))
-robot.run_policy(policy_provider="motionbricks", planner=planner,
-                 policy_config={"result_dir": "/path/to/.../motionbricks/out"},
-                 duration=9.0, control_frequency=30.0)
+robot = Robot("unitree_g1", mode="sim")
+cfg = {"result_dir": "/path/to/.../motionbricks/out"}
+for style in ("run", "stealth", "boxing"):
+    robot.run_policy(
+        policy_provider="motionbricks",
+        policy_config=cfg,
+        policy_kwargs={"locomotion_style": style, "target_velocity": [0.4, 0.0, 0.0]},
+        duration=3.0,
+        control_frequency=30.0,
+    )
 ```
 
 Resolution order per tick: an explicit `style=`/`mode=` kwarg pins the clip
-(overriding any planner style); otherwise `locomotion_style` is translated;
-otherwise the configured default `style` is used. The planner's `kneeling`
-style has no G1 clip - emitting it raises `ValueError` rather than miming the
-wrong motion. Supply a `style_map` (on the policy or in `MotionBricksConfig`) to
-remap styles or target a custom clip set.
+(overriding `locomotion_style`); otherwise `locomotion_style` is translated;
+otherwise the configured default `style` is used. The `kneeling` style has no
+G1 clip - passing it raises `ValueError` rather than miming the wrong motion.
+Supply a `style_map` (on the policy or in `MotionBricksConfig`) to remap styles
+or target a custom clip set.
 
 ## Visualisation
 

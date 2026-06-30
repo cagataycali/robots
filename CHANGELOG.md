@@ -5,6 +5,27 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Removed: the `strands_robots.planning` package - locomotion intent is `policy_kwargs`
+
+The `strands_robots.planning` package (a `Planner` ABC, `PlannerCommand`,
+`KinematicPlanner`, and keyboard / gamepad / agent / scripted `InputSource`s)
+re-implemented a locomotion goal channel that already exists: the well-known
+`policy_kwargs` keys (`target_velocity` / `target_height` / `locomotion_style`)
+that `run_policy` forwards verbatim to the policy. It is removed in full, along
+with the `planner=` parameter on `SimEngine.run_policy` / `PolicyRunner.run` and
+the `[planning]` (pygame) extra. Locomotion intent is now expressed only through
+`run_policy(policy_kwargs={...})`; a caller (including an `Agent(tools=[robot])`)
+steers by re-issuing short-horizon `run_policy` calls, closing the loop at its
+own cadence. The MotionBricks policy still consumes `locomotion_style` from
+`policy_kwargs` (a plain string contract, never a planner import): its
+planner-named symbols were renamed to the goal-kwarg framing
+(`resolve_planner_style` -> `resolve_locomotion_style`,
+`PLANNER_STYLE_TO_G1_CLIP` -> `LOCOMOTION_STYLE_TO_G1_CLIP`) and the accepted
+style vocabulary is now owned by MotionBricks as `LOCOMOTION_STYLES`. The
+`examples/planner/` scripts moved to `examples/locomotion/` as self-contained
+demos that own their own goal state. The accepted `locomotion_style` vocabulary
+and clip mapping are byte-for-byte unchanged.
+
 ### Fixed: unknown LeRobot policy types raise a clean ImportError instead of leaking lerobot's internal ValueError
 
 `resolve_policy_class_by_name()` documents that it raises `ImportError` (naming

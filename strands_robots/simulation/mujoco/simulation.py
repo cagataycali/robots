@@ -91,7 +91,6 @@ from strands_robots.simulation.policy_runner import CooperativeStop
 from strands_robots.teleop_mixin import TeleopMixin
 
 if TYPE_CHECKING:
-    from strands_robots.planning.base import Planner
     from strands_robots.policies import Policy
 
 logger = logging.getLogger(__name__)
@@ -2449,7 +2448,6 @@ class MuJoCoSimEngine(
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
         wbc_install_torque_control: bool = True,
-        planner: "Planner | None" = None,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -2498,7 +2496,6 @@ class MuJoCoSimEngine(
                 async_rtc=async_rtc,
                 rtc_inference_timeout_s=rtc_inference_timeout_s,
                 wbc_install_torque_control=wbc_install_torque_control,
-                planner=planner,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:
