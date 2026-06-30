@@ -5,6 +5,23 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Security: Hardened MuJoCo `render(output_path=...)` against path traversal, symlink, oversize, and partial-write corruption
+
+`render(output_path=...)` is an LLM-callable tool, so its destination path is
+attacker-influenced. The previous guard was a metacharacter blacklist plus a
+`/`-only `..` check, which still accepted absolute paths (`/etc/cron.d/x`),
+backslash traversal (`..\..\etc\passwd`), and symlinked targets, and wrote
+non-atomically with no size cap. Writes are now confined to a sandbox root
+(`STRANDS_ROBOTS_RENDER_ROOT`, default `~/.strands_robots/renders`); paths that
+resolve outside it, use backslash separators, carry shell metacharacters, or
+point at a symlink are rejected with `status=error`. Set
+`STRANDS_ROBOTS_RENDER_ALLOW_ABS=1` to opt out of the sandbox for absolute
+paths. PNGs larger than `STRANDS_ROBOTS_RENDER_MAX_BYTES` (default 50 MB) are
+refused without writing. The write is atomic (`tempfile.mkstemp` + `os.replace`),
+so a crash mid-write cannot corrupt an existing file; created files are `0o644`
+and freshly created directories `0o755`.
+
+
 ### Added: `BaseRLAlgo.evaluate()` - deterministic eval peer of `train()`
 
 The from-scratch RL trainers (`PpoTrainer`, `FastSacTrainer`) could `train()` a

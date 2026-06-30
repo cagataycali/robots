@@ -1,7 +1,11 @@
 """Rendering mixin - render, render_depth, get_contacts, observation helpers."""
 
+import contextlib
 import io
 import logging
+import os
+import tempfile
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.simulation.mujoco.backend import (
@@ -12,6 +16,126 @@ from strands_robots.simulation.mujoco.backend import (
 )
 
 logger = logging.getLogger(__name__)
+
+# render(output_path=...) is an LLM-callable tool: the path is attacker-influenced.
+# Confine writes to a sandbox root, reject shell metacharacters / traversal /
+# symlinked targets, cap the payload size, and write atomically so a crash mid-write
+# cannot corrupt an existing file. See docs and the STRANDS_ROBOTS_RENDER_* env vars.
+_RENDER_PATH_BAD_CHARS = frozenset({";", "|", "$", "`", ">", "<", "\n", "\r", "\x00"})
+_DEFAULT_MAX_RENDER_BYTES = 50 * 1024 * 1024  # 50 MB
+
+
+def _render_sandbox_root() -> Path:
+    """Resolve the directory render() may write into (read at call time).
+
+    Defaults to ``~/.strands_robots/renders``; override with the
+    ``STRANDS_ROBOTS_RENDER_ROOT`` env var.
+    """
+    raw = os.getenv("STRANDS_ROBOTS_RENDER_ROOT") or str(Path.home() / ".strands_robots" / "renders")
+    return Path(raw).expanduser().resolve(strict=False)
+
+
+def _max_render_bytes() -> int:
+    """Maximum PNG payload render() will persist (``STRANDS_ROBOTS_RENDER_MAX_BYTES``)."""
+    raw = os.getenv("STRANDS_ROBOTS_RENDER_MAX_BYTES")
+    if not raw:
+        return _DEFAULT_MAX_RENDER_BYTES
+    try:
+        val = int(raw)
+    except ValueError as e:
+        raise ValueError(f"invalid STRANDS_ROBOTS_RENDER_MAX_BYTES {raw!r}: not an integer") from e
+    if val <= 0:
+        raise ValueError(f"invalid STRANDS_ROBOTS_RENDER_MAX_BYTES {raw!r}: must be positive")
+    return val
+
+
+def _validate_render_output_path(output_path: str) -> Path:
+    """Validate and resolve an LLM-supplied render output path.
+
+    Rejects shell metacharacters, backslash (Windows-style) separators, paths
+    that resolve outside the render sandbox root, and symlinked targets. Returns
+    the fully-resolved destination ``Path``.
+
+    Args:
+        output_path: Caller-supplied destination path.
+
+    Returns:
+        The resolved, sandbox-confined destination path.
+
+    Raises:
+        ValueError: If the path is unsafe (the caller maps this to a tool error).
+    """
+    if any(b in output_path for b in _RENDER_PATH_BAD_CHARS):
+        raise ValueError("unsafe output_path: shell metacharacters")
+    # Backslash is not a POSIX separator, so "..\..\etc" would survive a
+    # "/"-only traversal check. Reject it outright rather than guess intent.
+    if "\\" in output_path:
+        raise ValueError("unsafe output_path: backslash separators not allowed")
+    if not output_path.strip():
+        raise ValueError("unsafe output_path: empty")
+
+    raw = Path(output_path).expanduser()
+    # Refuse to follow a symlink planted at the target (arbitrary-write vector).
+    if raw.is_symlink():
+        raise ValueError(f"output_path {output_path!r} is a symlink - refusing to follow")
+
+    # resolve() normalizes "..", expands the chain, and follows any intermediate
+    # symlinks, so the sandbox check below sees the true on-disk destination.
+    resolved = raw.resolve(strict=False)
+
+    allow_abs = (os.getenv("STRANDS_ROBOTS_RENDER_ALLOW_ABS") or "").strip().lower() in ("1", "true", "yes")
+    if not allow_abs:
+        root = _render_sandbox_root()
+        try:
+            resolved.relative_to(root)
+        except ValueError as e:
+            raise ValueError(
+                f"output_path {resolved} is outside the render sandbox {root} "
+                "(set STRANDS_ROBOTS_RENDER_ALLOW_ABS=1 to allow absolute paths)"
+            ) from e
+    return resolved
+
+
+def _atomic_write_png(path: Path, data: bytes) -> None:
+    """Write ``data`` to ``path`` atomically with restrictive permissions.
+
+    Writes to a temp file in the destination directory then ``os.replace``s it
+    into place, so a crash mid-write cannot truncate or corrupt an existing file
+    at ``path``. Created directories are ``0o755`` and the final file is ``0o644``.
+    """
+    parent = path.parent
+    parent_existed = parent.exists()
+    parent.mkdir(parents=True, exist_ok=True)
+    if not parent_existed:
+        with contextlib.suppress(OSError):
+            os.chmod(parent, 0o755)
+
+    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=parent)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
+    os.chmod(path, 0o644)
+
+
+def _save_render_png(output_path: str, png_bytes: bytes) -> str:
+    """Validate ``output_path``, enforce the size cap, and atomically persist ``png_bytes``.
+
+    Returns the resolved saved path as a string.
+
+    Raises:
+        ValueError: On an unsafe path or an oversized payload.
+    """
+    safe = _validate_render_output_path(output_path)
+    max_bytes = _max_render_bytes()
+    if len(png_bytes) > max_bytes:
+        raise ValueError(f"png is {len(png_bytes)} bytes, exceeds limit {max_bytes}")
+    _atomic_write_png(safe, png_bytes)
+    return str(safe)
 
 
 class RenderingMixin:
@@ -580,10 +704,19 @@ class RenderingMixin:
         """Render a camera view to a PNG image.
 
         When ``output_path`` is given the PNG is ALSO written to that file path
-        (parent dirs created) and the saved path is reported in the ``json``
-        block as ``saved_path`` and in the text summary. This lets an agent (or
-        a human) persist a render for independent verification instead of only
-        receiving the bytes inline.
+        and the saved path is reported in the ``json`` block as ``saved_path``
+        and in the text summary. This lets an agent (or a human) persist a render
+        for independent verification instead of only receiving the bytes inline.
+
+        ``output_path`` is treated as untrusted (LLM-callable tool): writes are
+        confined to the render sandbox (``STRANDS_ROBOTS_RENDER_ROOT``, default
+        ``~/.strands_robots/renders``); paths with shell metacharacters,
+        backslash separators, ``..`` escapes, or a symlinked target, and PNGs
+        larger than ``STRANDS_ROBOTS_RENDER_MAX_BYTES`` (default 50 MB) are
+        rejected with ``status=error``. Set ``STRANDS_ROBOTS_RENDER_ALLOW_ABS=1``
+        to permit absolute paths outside the sandbox. The write is atomic
+        (temp file + ``os.replace``), so a crash mid-write cannot corrupt an
+        existing file at the destination.
 
 
         Returns an agent-tool dict with ``status`` and a ``content`` list; on
@@ -675,20 +808,12 @@ class RenderingMixin:
 
             saved_path: str | None = None
             if output_path:
-                import os as _os
-
-                # Validate against shell/path-traversal injection (LLM-supplied).
-                bad = {";", "|", "$", "`", ">", "<", "\n", "\r", "\x00"}
-                if any(b in output_path for b in bad) or ".." in output_path.split("/"):
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"render: unsafe output_path {output_path!r}"}],
-                    }
-                _dir = _os.path.dirname(_os.path.abspath(output_path))
-                _os.makedirs(_dir, exist_ok=True)
-                with open(output_path, "wb") as _f:
-                    _f.write(png_bytes)
-                saved_path = _os.path.abspath(output_path)
+                # output_path is LLM-supplied: validate against traversal /
+                # symlink / oversize and write atomically (see _save_render_png).
+                try:
+                    saved_path = _save_render_png(output_path, png_bytes)
+                except ValueError as e:
+                    return {"status": "error", "content": [{"text": f"render: {e}"}]}
 
             summary = f"{w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"
             if saved_path:
