@@ -24,8 +24,8 @@ pytest.importorskip("pyarrow")
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from strands_robots.verify_dataset import _verify_feature_stats, verify_dataset
 from strands_robots.verify_dataset import main as verify_main
-from strands_robots.verify_dataset import verify_dataset
 
 
 def _write_dataset(
@@ -591,3 +591,102 @@ class TestDeadControlColumn:
         )
         assert verify_main([str(tmp_path), "--no-check-videos"]) == 1
         assert verify_main([str(tmp_path), "--no-check-videos", "--no-check-stats"]) == 0
+
+
+def _write_stats_parquet(root: Path, columns: dict[str, list]) -> Path:
+    """Write a raw episodes-stats parquet from explicit columns.
+
+    Unlike ``_write_dataset_with_stats`` this performs no schema normalisation,
+    so malformed-but-valid layouts (missing ``episode_index``, a ``min`` without
+    a matching ``max``, scalar or null ``count`` cells, null min/max rows) can be
+    written to exercise the defensive branches of ``_verify_feature_stats``.
+    """
+    ep_dir = root / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True, exist_ok=True)
+    pq.write_table(pa.table(columns), ep_dir / "episodes_000.parquet")
+    return root
+
+
+class TestFeatureStatsEdgeCases:
+    """Defensive branches of ``_verify_feature_stats`` over irregular parquet.
+
+    Each case returns ``(checked, problems)`` so the behaviour is asserted on
+    outputs alone: a malformed or stat-free parquet must never raise and must
+    never invent a problem it cannot prove.
+    """
+
+    def test_no_parquet_files_returns_empty(self, tmp_path: Path) -> None:
+        # No meta/episodes dir at all: nothing to inspect, no problems.
+        assert _verify_feature_stats(tmp_path) == (0, [])
+
+    def test_parquet_without_episode_index_is_skipped(self, tmp_path: Path) -> None:
+        # A stats parquet lacking the episode_index key column is unusable for
+        # per-episode attribution and is skipped without checking anything.
+        _write_stats_parquet(
+            tmp_path,
+            {
+                "stats/action/min": [[0.0, 0.0]],
+                "stats/action/max": [[0.0, 0.0]],
+                "stats/action/count": [[10]],
+            },
+        )
+        assert _verify_feature_stats(tmp_path) == (0, [])
+
+    def test_min_without_matching_max_is_skipped(self, tmp_path: Path) -> None:
+        # A ``min`` column with no paired ``max`` cannot be range-checked.
+        _write_stats_parquet(
+            tmp_path,
+            {
+                "episode_index": [0],
+                "stats/action/min": [[0.0, 0.0]],
+                "stats/action/count": [[10]],
+            },
+        )
+        assert _verify_feature_stats(tmp_path) == (0, [])
+
+    def test_null_minmax_row_is_skipped(self, tmp_path: Path) -> None:
+        # A null min/max row (a stat that failed to compute) is not evidence of
+        # a dead column, so it is skipped and never counted.
+        _write_stats_parquet(
+            tmp_path,
+            {
+                "episode_index": [0],
+                "stats/action/min": [None],
+                "stats/action/max": [None],
+                "stats/action/count": [[10]],
+            },
+        )
+        assert _verify_feature_stats(tmp_path) == (0, [])
+
+    def test_scalar_count_cell_is_accepted(self, tmp_path: Path) -> None:
+        # LeRobot normally stores count as a length-1 list; a scalar cell must
+        # still resolve to the frame count (>= 2 here), so a varying column is
+        # checked and passes clean.
+        _write_stats_parquet(
+            tmp_path,
+            {
+                "episode_index": [0],
+                "stats/action/min": [[-0.5, -0.2]],
+                "stats/action/max": [[0.5, 0.2]],
+                "stats/action/count": [5],
+            },
+        )
+        checked, problems = _verify_feature_stats(tmp_path)
+        assert checked == 1
+        assert problems == []
+
+    def test_null_count_cell_flags_dead_column_as_all_frames(self, tmp_path: Path) -> None:
+        # A null count cannot prove single-frame, so an all-zero column is still
+        # flagged - and reported against "all frames" rather than a frame total.
+        _write_stats_parquet(
+            tmp_path,
+            {
+                "episode_index": [0],
+                "stats/action/min": [[0.0, 0.0]],
+                "stats/action/max": [[0.0, 0.0]],
+                "stats/action/count": [None],
+            },
+        )
+        checked, problems = _verify_feature_stats(tmp_path)
+        assert checked == 1
+        assert any("identically zero" in p and "all frames" in p for p in problems)
