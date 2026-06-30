@@ -149,12 +149,38 @@ class TestRobotFactory:
         assert "not yet implemented" not in msg
         assert "roadmap" not in msg
 
-    def test_newton_backend_surfaces_dependency_install_hint(self):
-        """``newton`` is a built-in (warp-lang GPU) backend. With ``warp``
-        absent, ``Robot(backend="newton")`` now surfaces the backend's own
-        ``ImportError`` naming the ``sim-newton`` pip extra - the same error
-        ``create_simulation("newton")`` raises - instead of masking it behind
-        a generic NotImplementedError."""
+    def test_newton_backend_surfaces_dependency_install_hint(self, monkeypatch):
+        """``newton`` is a built-in (warp-lang GPU) backend. When its optional
+        deps (``warp``/``newton``) are absent, ``Robot(backend="newton")``
+        surfaces the backend's own ``ImportError`` naming the ``sim-newton``
+        pip extra - the same error ``create_simulation("newton")`` raises -
+        instead of masking it behind a generic NotImplementedError.
+
+        The optional deps may or may not be installed in a given environment
+        (they are present on GPU dev boxes, absent in CPU CI), so simulate
+        their absence deterministically rather than relying on the ambient
+        install state: clear both lazy-import caches and make importing
+        ``warp``/``newton`` fail, then assert the install hint surfaces. This
+        keeps the test green wherever the ``sim-newton`` backend is installed."""
+        import strands_robots.simulation.newton.backend as newton_backend
+        from strands_robots import utils as sr_utils
+
+        # Defeat both memoization layers so the import is genuinely re-attempted:
+        # the backend module's ``_modules`` cache and ``require_optional``'s
+        # ``_lazy_modules`` cache (which may already hold ``warp``/``newton``).
+        monkeypatch.setattr(newton_backend, "_modules", {})
+        for name in ("warp", "newton"):
+            sr_utils._lazy_modules.pop(name, None)
+
+        real_import_module = importlib.import_module
+
+        def _blocked_import(name, *args, **kwargs):
+            if name in ("warp", "newton") or name.startswith(("warp.", "newton.")):
+                raise ImportError(f"No module named {name!r}")
+            return real_import_module(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib, "import_module", _blocked_import)
+
         with pytest.raises(ImportError, match="sim-newton"):
             Robot("so100", mode="sim", backend="newton")
 
