@@ -227,6 +227,34 @@ class VideoConfig:
 # See GH #117.
 _MAX_CONSECUTIVE_ONFRAME_FAILURES = 5
 
+# Fail-fast probe window for 100%-unresolved action keys. If EVERY action step
+# in the opening ``_FAIL_FAST_PROBE_STEPS`` drives zero actuators (the policy's
+# output keys cannot resolve to any of the robot's actuators/joints), the
+# rollout can never move the robot, so :meth:`PolicyRunner.run` raises at the
+# probe boundary instead of burning the whole episode (and every remaining model
+# inference call + recording write) on a rollout that is structurally dead. Once
+# any step resolves a single key the probe is permanently disarmed. See the
+# end-of-episode all-unresolved guard for the (already-handled) terminal case.
+_FAIL_FAST_PROBE_STEPS = 3
+
+
+def _extract_result_json(result: object) -> dict[str, Any] | None:
+    """Return the ``{"json": {...}}`` payload from a backend status dict.
+
+    ``send_action`` reports unresolved action keys via a ``json`` content block
+    (``{"unresolved_keys": [...], "applied": [...]}``). Returns that mapping, or
+    ``None`` when the result carries no structured block (e.g. a non-MuJoCo
+    backend or a coarse error without a per-key breakdown).
+    """
+    if not isinstance(result, dict):
+        return None
+    for block in result.get("content", []) or []:
+        if isinstance(block, dict):
+            payload = block.get("json")
+            if isinstance(payload, dict):
+                return payload
+    return None
+
 
 class CooperativeStop(BaseException):
     """Raised by an ``on_frame`` hook to cooperatively stop a run.
@@ -607,7 +635,25 @@ class PolicyRunner:
             async-RTC telemetry (``rtc_async_enabled``, ``rtc_chunks_acquired``,
             ``rtc_prefetch_hits``, ``rtc_prefetch_blocks``, ``rtc_avg_inference_ms``,
             ``rtc_max_inference_ms``) so latency masking is provable from the
-            payload instead of from logs.
+            payload instead of from logs. It also carries the per-actuator
+            resolution stats - ``action_resolution_rate`` (a
+            ``{actuator_name: fraction_of_steps_driven}`` map) and
+            ``partial_action_failure_rate`` (the mean fraction of the robot's
+            DOF never driven; ``0.0`` == every actuator moved every step,
+            ``~0.83`` == only 1 of 6 actuators ever moved) - so a rollout that
+            silently drives only a subset of the robot's joints is visible
+            instead of looking like a clean ``success`` with a zero success-rate.
+
+            Fail-fast: if EVERY action step in the opening probe window
+            (``_FAIL_FAST_PROBE_STEPS``, currently 3) drives zero actuators -
+            i.e. none of the policy's emitted keys resolve to any of the robot's
+            actuators - the rollout can never move the robot, so this raises
+            (returned as ``status=error``) at the probe boundary instead of
+            running the full episode (and every remaining model inference call +
+            recording write). The error enumerates the unresolved keys and the
+            robot's valid actuator names. A PARTIAL failure (some keys resolve)
+            is operational and runs to completion, surfaced via
+            ``partial_action_failure_rate``.
         """
         # A single rollout draws the policy's stochastic ops (VLA action-
         # chunk sampling, diffusion noise) from the unmanaged global RNG, so the
@@ -791,6 +837,18 @@ class PolicyRunner:
                 n_substeps,
             )
             _action_errors = 0  # count send_action failures (unresolved keys)
+            # Per-actuator resolution tracking (issue #165). Init a counter to 0
+            # for EVERY robot actuator so a never-driven joint surfaces as
+            # resolution_rate 0.0 in the result rather than being absent from the
+            # map. ``_total_failure_steps`` counts steps where the policy emitted
+            # keys but NONE resolved (100% failure) -- the fail-fast trigger.
+            try:
+                _robot_actuators = list(self.sim.robot_joint_names(robot_name))
+            except Exception:  # noqa: BLE001 - stats are best-effort, never fatal
+                _robot_actuators = []
+            _actuator_resolved: dict[str, int] = dict.fromkeys(_robot_actuators, 0)
+            _total_failure_steps = 0
+            _last_unresolved: list[str] = []
 
             onframe_failure_limit = (
                 max_onframe_failures if max_onframe_failures is not None else _MAX_CONSECUTIVE_ONFRAME_FAILURES
@@ -804,10 +862,45 @@ class PolicyRunner:
             def _apply(observation: dict[str, Any], action_dict: dict[str, Any]) -> None:
                 nonlocal step_count, _action_errors, consecutive_onframe_failures
                 nonlocal frame_count, next_frame_step
+                nonlocal _total_failure_steps, _last_unresolved
 
                 _send_result = self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
-                if isinstance(_send_result, dict) and _send_result.get("status") == "error":
+                _is_error = isinstance(_send_result, dict) and _send_result.get("status") == "error"
+                # Resolve which of the robot's actuators this step actually drove
+                # and which emitted keys no actuator could absorb. On the success
+                # path send_action returns no json block, so every emitted key
+                # resolved; on the error path the block enumerates applied /
+                # unresolved keys.
+                _unresolved: list[str] = []
+                if _is_error:
                     _action_errors += 1
+                    _json = _extract_result_json(_send_result)
+                    if _json is not None:
+                        _unresolved = list(_json.get("unresolved_keys", []))
+                        _applied = list(_json.get("applied", []))
+                    else:
+                        # Error without a per-key breakdown (e.g. missing world,
+                        # vector length mismatch): treat the whole step as a
+                        # 100% failure so it counts toward the fail-fast probe.
+                        _applied = []
+                        if isinstance(action_dict, dict):
+                            _unresolved = list(action_dict.keys())
+                elif isinstance(action_dict, dict):
+                    _applied = list(action_dict)
+                else:
+                    # A numeric vector binds positionally to every joint.
+                    _applied = list(_robot_actuators)
+                for _name in _applied:
+                    if _name in _actuator_resolved:
+                        _actuator_resolved[_name] += 1
+                # A step is a 100%-failure when the policy emitted keys but NONE
+                # resolved to an actuator (the robot did not move at all). A
+                # PARTIAL failure (some keys resolve) is operational and runs to
+                # completion -- reported via partial_action_failure_rate.
+                if _is_error and not _applied:
+                    _total_failure_steps += 1
+                    if _unresolved:
+                        _last_unresolved = _unresolved
 
                 if on_frame is not None:
                     try:
@@ -838,6 +931,27 @@ class PolicyRunner:
                             ) from e
 
                 step_count += 1
+
+                # Fail fast: if EVERY step of the opening probe window drove zero
+                # actuators, the policy's output keys cannot match this robot, so
+                # the rollout is structurally dead -- raise now instead of running
+                # the remaining steps (and inference / recording I/O). Once any
+                # step resolves a key, _total_failure_steps < step_count forever
+                # and this never fires.
+                if step_count >= _FAIL_FAST_PROBE_STEPS and _total_failure_steps == step_count:
+                    try:
+                        _valid = self.sim.robot_joint_names(robot_name)
+                    except Exception:  # noqa: BLE001
+                        _valid = _robot_actuators
+                    raise RuntimeError(
+                        f"All of the first {step_count} action steps had 100% "
+                        f"unresolved keys on '{robot_name}' -- the robot has not "
+                        f"moved. Unresolved keys: {_last_unresolved}. Valid "
+                        f"actuator/joint names: {_valid}. The policy is almost "
+                        f"certainly running the wrong embodiment; inspect the "
+                        f"expected keys via sim.get_features(robot_name="
+                        f"'{robot_name}')."
+                    )
 
                 if writer is not None and step_count >= next_frame_step:
                     assert video is not None  # for mypy: writer only set when video.enabled
@@ -1116,6 +1230,37 @@ class PolicyRunner:
             payload["video_path"] = video_path if wrote_video else None
             payload["video_frames"] = frame_count
         payload.update(_rtc_telemetry())
+
+        # Per-actuator resolution stats (issue #165): the fraction of steps each
+        # of the robot's actuators was actually driven. A joint stuck at 0.0
+        # means the policy never produced a key that resolved to it (wrong name /
+        # missing DOF), so a caller can see exactly which actuators the policy is
+        # and is not driving -- not just a single aggregate error count.
+        if step_count > 0 and _robot_actuators:
+            action_resolution_rate = {
+                name: round(_actuator_resolved.get(name, 0) / step_count, 4) for name in _robot_actuators
+            }
+            # Aggregate: the mean fraction of the robot's DOF NOT driven across
+            # the rollout. 0.0 == every actuator driven every step; ~0.83 == only
+            # 1 of 6 actuators ever moved. This is per-actuator coverage, distinct
+            # from action_errors (a step-level status count): a policy that drives
+            # 1 of 6 joints every step returns status=success with action_errors=0
+            # yet a partial_action_failure_rate of ~0.83.
+            _driven = sum(_actuator_resolved.get(n, 0) for n in _robot_actuators)
+            partial_action_failure_rate = round(1.0 - _driven / (len(_robot_actuators) * step_count), 4)
+            payload["action_resolution_rate"] = action_resolution_rate
+            payload["partial_action_failure_rate"] = partial_action_failure_rate
+            # Promote a high-but-not-total under-actuation to the human text so a
+            # silently-crippled rollout (success_rate 0 because only 1 joint
+            # moved) is not invisible. A total failure already errors above.
+            if 0.5 < partial_action_failure_rate < 1.0:
+                text += (
+                    f"\n\nPartial action coverage: {partial_action_failure_rate:.0%} of this robot's "
+                    f"actuators were never driven. Per-actuator resolution: {action_resolution_rate}."
+                )
+        else:
+            payload["action_resolution_rate"] = {}
+            payload["partial_action_failure_rate"] = 0.0
 
         # If every send_action call failed (all keys unresolved), the robot
         # never moved -- report this as an error rather than a false success.
