@@ -47,6 +47,9 @@ class SimEnv:
             (symmetric).
         max_episode_steps: Steps before the episode is truncated (time-out).
         action_scale: Scalar multiplier applied to actions before sending.
+        n_substeps: Physics control substeps per env step. The action is a
+            position target; the PD controller needs several substeps to track
+            it, so a single substep barely moves the arm. Default 5.
         success_fn: Optional predicate; when it returns ``True`` the episode
             terminates (a genuine terminal, not a time-out).
         reset_fn: Optional callable run on ``engine`` at each reset (e.g. to
@@ -67,6 +70,7 @@ class SimEnv:
         critic_obs_keys: Sequence[str] | None = None,
         max_episode_steps: int = 200,
         action_scale: float = 1.0,
+        n_substeps: int = 5,
         success_fn: Callable[[SimEngine], bool] | None = None,
         reset_fn: Callable[[SimEngine], None] | None = None,
         device: torch.device | str = "cpu",
@@ -82,6 +86,9 @@ class SimEnv:
         self.reward_terms = list(reward_terms)
         self.max_episode_steps = int(max_episode_steps)
         self.action_scale = float(action_scale)
+        if int(n_substeps) < 1:
+            raise ValueError(f"n_substeps must be >= 1, got {n_substeps}")
+        self.n_substeps = int(n_substeps)
         self.success_fn = success_fn
         self.reset_fn = reset_fn
         self.device = torch.device(device)
@@ -120,11 +127,21 @@ class SimEnv:
         }
 
     def reset(self) -> dict[str, torch.Tensor]:
-        """Reset the episode and return the initial ``{actor_obs, critic_obs}``."""
+        """Reset the episode and return the initial ``{actor_obs, critic_obs}``.
+
+        Stateful reward terms (any term exposing a zero-arg ``reset()``, e.g. a
+        ``staged_reward`` phase machine) are reset here so per-episode state
+        (current phase, awarded bonuses) does not leak across episodes. Plain
+        stateless function terms have no ``reset`` and are left untouched.
+        """
         if self.reset_fn is not None:
             self.reset_fn(self.engine)
         else:
             self.engine.reset()
+        for term in self.reward_terms:
+            term_reset = getattr(term, "reset", None)
+            if callable(term_reset):
+                term_reset()
         self._step_count = 0
         return self._obs_dict()
 
@@ -141,7 +158,7 @@ class SimEnv:
             should be value-bootstrapped, not treated as a terminal state).
         """
         act = action.detach().reshape(-1).to("cpu").numpy().astype(np.float64) * self.action_scale
-        self.engine.send_action(act.tolist(), robot_name=self.robot_name)
+        self.engine.send_action(act.tolist(), robot_name=self.robot_name, n_substeps=self.n_substeps)
         self._step_count += 1
 
         reward = sum(term(self.engine) for term in self.reward_terms)
@@ -158,3 +175,9 @@ class SimEnv:
         # true terminal obs (a time-out is value-bootstrapped, a real terminal is
         # not). See ``PpoTrainer.collect_rollout``.
         return obs, reward_t, done_t, info
+
+    def close(self) -> None:
+        """Release env resources. No-op: the engine/Robot lifecycle is owned by
+        the caller (mirrors ``GymSimEnv.close`` / ``VecSimEnv.close`` so SimEnv
+        and VecSimEnv present one interface to the trainers)."""
+        return None

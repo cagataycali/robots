@@ -65,6 +65,9 @@ def test_ppo_learns_to_reach_target(tmp_path) -> None:  # type: ignore[no-untype
 
     # 2. The deterministic (mean) policy drives the joint to the target.
     trainer.actor_critic.eval()
+    from strands_robots.training.rl.env import SimEnv
+
+    assert isinstance(trainer.env, SimEnv)  # num_envs=1 -> single env
     trainer.env.reset()
     final_elbow = 0.0
     for _ in range(50):

@@ -25,8 +25,6 @@ from strands_robots.utils import require_optional
 if TYPE_CHECKING:  # pragma: no cover - typing only
     import torch
 
-    from strands_robots.training.rl.env import SimEnv
-
 
 def _mlp(in_dim: int, hidden: tuple[int, ...], out_dim: int) -> Any:
     """Build a Tanh-activated MLP ``in_dim -> *hidden -> out_dim``."""
@@ -151,8 +149,8 @@ class PpoTrainer(BaseRLAlgo):
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:
             problems.append(f"rollout_steps must be > 0, got {spec.rollout_steps}")
-        if spec.num_envs != 1:
-            problems.append(f"the MuJoCo backend is single-env (num_envs must be 1), got {spec.num_envs}")
+        if spec.num_envs < 1:
+            problems.append(f"num_envs must be >= 1, got {spec.num_envs}")
         if spec.num_mini_batches <= 0 or spec.rollout_steps % spec.num_mini_batches != 0:
             problems.append(
                 f"rollout_steps ({spec.rollout_steps}) must be divisible by num_mini_batches ({spec.num_mini_batches})"
@@ -173,7 +171,16 @@ class PpoTrainer(BaseRLAlgo):
 
         if spec.env_factory is None:  # pragma: no cover - guarded by validate()
             raise ValueError("env_factory is required")
-        self.env: SimEnv = spec.env_factory()
+        # num_envs == 1 keeps the single SimEnv path (zero behavioural change);
+        # num_envs > 1 wraps N independent SimEnv in a VecSimEnv that emits
+        # (N, D) batches. ``self._vectorized`` selects the collect_rollout path.
+        self._vectorized = spec.num_envs > 1
+        if self._vectorized:
+            from strands_robots.training.rl.vec_env import VecSimEnv
+
+            self.env = VecSimEnv(spec.env_factory, spec.num_envs, device=self.device)
+        else:
+            self.env = spec.env_factory()
         # The learner (actor-critic, normalizers, rollout buffers) lives on
         # self.device. The env emits observation / reward / done tensors on its
         # own device, which defaults to CPU. On a GPU host the learner resolves
@@ -203,9 +210,22 @@ class PpoTrainer(BaseRLAlgo):
         return self.critic_norm(x, update=update) if self.critic_norm is not None else x
 
     def collect_rollout(self) -> dict[str, float]:
-        """Roll out ``rollout_steps`` transitions and compute GAE returns/advantages."""
+        """Roll out ``rollout_steps`` transitions and compute GAE returns/advantages.
+
+        Dispatches to the vectorized path when ``setup`` built a ``VecSimEnv``
+        (num_envs > 1), else the original single-env path (unchanged).
+        """
+        if getattr(self, "_vectorized", False):
+            return self._collect_rollout_vectorized()
+        return self._collect_rollout_single()
+
+    def _collect_rollout_single(self) -> dict[str, float]:
+        """Single-env rollout (num_envs == 1). Behaviourally identical to the original."""
         import torch
 
+        from strands_robots.training.rl.env import SimEnv
+
+        assert isinstance(self.env, SimEnv)  # non-vectorized path
         spec = self.spec
         T = spec.rollout_steps
         obs_buf, cobs_buf, act_buf, logp_buf = [], [], [], []
@@ -269,6 +289,111 @@ class PpoTrainer(BaseRLAlgo):
             "advantages": advantages,
         }
         mean_return = float(sum(ep_returns) / len(ep_returns)) if ep_returns else float(rewards.sum().item())
+        return {"mean_reward": float(rewards.mean().item()), "mean_episode_return": mean_return}
+
+    def _collect_rollout_vectorized(self) -> dict[str, float]:
+        """Vectorized rollout over a ``VecSimEnv`` (num_envs == N > 1).
+
+        Collects ``(T, N, ...)`` transitions, bootstraps each step's next-value
+        from the per-env resulting observation (using the captured pre-reset
+        ``terminal_obs`` on a done env so a truncation is value-bootstrapped from
+        its TRUE terminal state, not the post-reset state), computes GAE per env
+        on the ``(T, N)`` tensors (``compute_gae`` broadcasts over the env axis),
+        then flattens to ``(T*N, ...)`` for the same minibatch update the
+        single-env path uses. Asymmetric actor/critic, normalizers, and the
+        checkpoint contract are unchanged.
+        """
+        import torch
+
+        from strands_robots.training.rl.vec_env import VecSimEnv
+
+        assert isinstance(self.env, VecSimEnv)  # vectorized path
+        spec = self.spec
+        T = spec.rollout_steps
+        N = self.env.num_envs
+        obs_buf, cobs_buf, act_buf, logp_buf = [], [], [], []
+        val_buf, rew_buf, done_buf, term_buf, nextval_buf = [], [], [], [], []
+
+        self.actor_critic.train()
+        # Per-env running returns + completed-episode returns for logging.
+        running = torch.zeros(N, device=self.device)
+        ep_returns: list[float] = []
+
+        for _ in range(T):
+            actor_obs = self._norm_actor(self._obs["actor_obs"])  # (N, Da)
+            critic_obs = self._norm_critic(self._obs["critic_obs"])  # (N, Dc)
+            with torch.no_grad():
+                out = self.actor_critic.act(actor_obs, critic_obs)
+            next_obs, reward, done, infos = self.env.step(out["action"])  # reward,done (N,)
+
+            obs_buf.append(actor_obs)
+            cobs_buf.append(critic_obs)
+            act_buf.append(out["action"])  # (N, A)
+            logp_buf.append(out["log_prob"])  # (N,)
+            val_buf.append(out["value"])  # (N,)
+            rew_buf.append(reward)  # (N,)
+            done_buf.append(done)  # (N,)
+
+            # Per-env terminated flag (real terminal, not time-out).
+            term_flags = torch.tensor(
+                [float(info.get("terminated", False)) for info in infos],
+                dtype=torch.float32,
+                device=self.device,
+            )
+            term_buf.append(term_flags)
+
+            # next-value: for a done env, bootstrap from the captured TERMINAL
+            # critic obs (pre-reset); for a live env, from the resulting obs.
+            # VecSimEnv put fresh post-reset obs into next_obs[i] on done, so we
+            # must pull the terminal obs back out of infos[i]["terminal_obs"].
+            critic_next = next_obs["critic_obs"].clone()  # (N, Dc)
+            for i, info in enumerate(infos):
+                term_obs = info.get("terminal_obs")
+                if term_obs is not None:
+                    critic_next[i] = term_obs["critic_obs"].reshape(-1)
+            with torch.no_grad():
+                next_value = self.actor_critic.critic(self._norm_critic(critic_next, update=False)).squeeze(-1)  # (N,)
+            nextval_buf.append(next_value)
+
+            running = running + reward
+            done_mask = done.bool()
+            if bool(done_mask.any()):
+                for i in range(N):
+                    if bool(done_mask[i].item()):
+                        ep_returns.append(float(running[i].item()))
+                        running[i] = 0.0
+            self._obs = next_obs
+
+        # Stack to (T, N, ...).
+        obs = torch.stack(obs_buf, 0)  # (T, N, Da)
+        cobs = torch.stack(cobs_buf, 0)
+        actions = torch.stack(act_buf, 0)  # (T, N, A)
+        old_logp = torch.stack(logp_buf, 0)  # (T, N)
+        values = torch.stack(val_buf, 0)  # (T, N)
+        rewards = torch.stack(rew_buf, 0)  # (T, N)
+        dones = torch.stack(done_buf, 0)  # (T, N)
+        terminated = torch.stack(term_buf, 0)  # (T, N)
+        next_values = torch.stack(nextval_buf, 0)  # (T, N)
+
+        # GAE per env: compute_gae broadcasts the recurrence over the N axis.
+        advantages, returns = compute_gae(
+            rewards, values, next_values, dones, terminated, spec.gamma, spec.lam
+        )  # (T, N)
+        if spec.normalize_advantage:
+            advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+
+        # Flatten (T, N, ...) -> (T*N, ...) for the shared minibatch update.
+        Da, Dc, A = self.env.num_actor_obs, self.env.num_critic_obs, self.env.num_actions
+        self._batch = {
+            "actor_obs": obs.reshape(T * N, Da),
+            "critic_obs": cobs.reshape(T * N, Dc),
+            "actions": actions.reshape(T * N, A),
+            "old_log_prob": old_logp.reshape(T * N),
+            "values": values.reshape(T * N),
+            "returns": returns.reshape(T * N),
+            "advantages": advantages.reshape(T * N),
+        }
+        mean_return = float(sum(ep_returns) / len(ep_returns)) if ep_returns else float(rewards.sum().item() / N)
         return {"mean_reward": float(rewards.mean().item()), "mean_episode_return": mean_return}
 
     def update(self) -> dict[str, float]:

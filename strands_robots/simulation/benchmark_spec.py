@@ -236,6 +236,13 @@ class DeclarativeBenchmark(BenchmarkProtocol):
                     raise RuntimeError(
                         f"DeclarativeBenchmark '{self._name}': load_scene({self._scene!r}) failed: {msg}"
                     )
+        # Reset any stateful reward terms (e.g. a staged_reward phase machine)
+        # so per-episode phase state does not leak across episodes. Stateless
+        # function terms have no reset() and are skipped.
+        for term in self._reward_terms:
+            term_reset = getattr(term, "reset", None)
+            if callable(term_reset):
+                term_reset()
         super().on_episode_start(sim, rng)
 
     def on_step(self, sim: SimEngine, obs: dict[str, Any], action: dict[str, Any]) -> StepInfo:

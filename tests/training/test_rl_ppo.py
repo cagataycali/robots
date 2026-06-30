@@ -88,9 +88,13 @@ def test_validate_rejects_bad_specs() -> None:
     problems = trainer.validate(RLTrainSpec(output_dir="/tmp/x"))
     assert any("env_factory" in p for p in problems)
 
-    # Vectorized envs are not supported by the MuJoCo backend yet.
+    # Vectorized envs ARE now supported by PPO (VecSimEnv path): num_envs > 1
+    # must NOT be rejected (only the missing env_factory above is the problem).
     problems = trainer.validate(RLTrainSpec(output_dir="/tmp/x", num_envs=4))
-    assert any("single-env" in p for p in problems)
+    assert not any("num_envs" in p for p in problems), problems
+    # But num_envs < 1 is still invalid.
+    problems = trainer.validate(RLTrainSpec(output_dir="/tmp/x", env_factory=lambda: None, num_envs=0))  # type: ignore[arg-type,return-value]
+    assert any("num_envs must be >= 1" in p for p in problems)
 
     # rollout_steps must divide into num_mini_batches.
     problems = trainer.validate(RLTrainSpec(output_dir="/tmp/x", rollout_steps=10, num_mini_batches=3))

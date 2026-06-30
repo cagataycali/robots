@@ -554,6 +554,161 @@ def _constant(value: float) -> RewardTerm:
     return term
 
 
+# Stateful reward terms (declarative phase machine)
+#
+# A plain RewardTerm is stateless: ``(SimEngine) -> float``. Some rewards need
+# memory across steps - a pick-place curriculum advances Reach -> Grasp ->
+# Transport -> Place, awards a one-time bonus on each transition, and only ever
+# moves forward. Rather than hardcode any specific task, we expose ONE
+# generic primitive, ``staged_reward``, that composes EXISTING registry
+# predicates into a phase machine. The task itself is then authored as data
+# (a spec dict / YAML) by a human or LLM - never as shipped code, and never via
+# ``eval`` (sub-predicates are compiled through :func:`make_predicate`, the same
+# closed-registry path as every other DSL call).
+
+
+class StatefulRewardTerm:
+    """A reward term that carries per-episode state and must be ``reset()``.
+
+    Duck-typed by consumers: anything with ``__call__(sim) -> float`` AND a
+    zero-arg ``reset()`` is treated as episode-stateful. ``SimEnv.reset`` and
+    ``DeclarativeBenchmark.on_episode_start`` call ``reset()`` on any reward
+    term that has it, so stateless plain-function terms are unaffected.
+    """
+
+    def __call__(self, sim: SimEngine) -> float:  # pragma: no cover - interface
+        raise NotImplementedError
+
+    def reset(self) -> None:  # pragma: no cover - interface
+        raise NotImplementedError
+
+
+class _StagedReward(StatefulRewardTerm):
+    """Monotonic multi-stage (phase-machine) reward built from sub-predicates.
+
+    Each stage declares:
+        - ``reward``: a float-valued registry predicate giving the dense
+          shaping signal while the machine is IN that stage.
+        - ``advance_when``: a bool-valued registry predicate; the FIRST step it
+          returns True the machine awards ``bonus`` once and advances to the
+          next stage. Phases only ever move forward (no regression), matching
+          curriculum semantics and giving a stable, non-oscillating signal.
+        - ``bonus``: a one-time scalar added on the transition out of the stage
+          (default 0.0).
+
+    The last stage has no ``advance_when`` gate (the task is "done" there for
+    reward purposes; episode termination is a separate ``success`` predicate).
+    Per step the emitted reward is ``current_stage.reward(sim) +
+    (bonus if this step advanced else 0.0)``.
+    """
+
+    def __init__(
+        self,
+        stages: list[tuple[RewardTerm, BoolPredicate | None, float]],
+    ) -> None:
+        self._stages = stages
+        self._phase = 0
+
+    def reset(self) -> None:
+        self._phase = 0
+
+    @property
+    def phase(self) -> int:
+        """Current stage index (0-based). Exposed for logging / tests."""
+        return self._phase
+
+    def __call__(self, sim: SimEngine) -> float:
+        if not self._stages:
+            return 0.0
+        phase = min(self._phase, len(self._stages) - 1)
+        reward_fn, advance_fn, bonus = self._stages[phase]
+        r = float(reward_fn(sim))
+        # Advance (and award the one-time bonus) only if there IS a next stage
+        # and this stage declares a gate that now fires.
+        if self._phase < len(self._stages) - 1 and advance_fn is not None and bool(advance_fn(sim)):
+            self._phase += 1
+            return r + float(bonus)
+        return r
+
+
+def _staged_reward(stages: list[Any]) -> RewardTerm:
+    """Factory: compile a declared stage list into a :class:`_StagedReward`.
+
+    This is the single new primitive that turns the stateless DSL into a
+    declarative phase machine. It recursively compiles each stage's ``reward``
+    and ``advance_when`` through :func:`make_predicate`, so the whole thing
+    stays inside the closed-registry / no-``eval`` safety contract: a spec can
+    only ever reference predicates that already exist in the registry.
+
+    Args:
+        stages: Ordered list of stage dicts. Each stage::
+
+            {
+                "reward": {"predicate": <float-term name>, **kwargs},
+                "advance_when": {"predicate": <bool-pred name>, **kwargs},  # omit on last stage
+                "bonus": <float>,   # optional, default 0.0
+            }
+
+    Returns:
+        A callable+resettable :class:`_StagedReward`.
+
+    Raises:
+        ValueError: stages is not a non-empty list, a stage is malformed, a
+            non-final stage omits ``advance_when``, or ``bonus`` is non-numeric.
+        TypeError: surfaced from :func:`make_predicate` for bad sub-kwargs.
+    """
+    if not isinstance(stages, list) or not stages:
+        raise ValueError("staged_reward: 'stages' must be a non-empty list of stage dicts")
+
+    compiled: list[tuple[RewardTerm, BoolPredicate | None, float]] = []
+    n = len(stages)
+    for i, stage in enumerate(stages):
+        if not isinstance(stage, dict):
+            raise ValueError(f"staged_reward: stage[{i}] must be a dict, got {type(stage).__name__}")
+        unknown = set(stage.keys()) - {"reward", "advance_when", "bonus"}
+        if unknown:
+            raise ValueError(
+                f"staged_reward: stage[{i}] has unknown keys {sorted(unknown)}; allowed: reward, advance_when, bonus"
+            )
+
+        reward_call = stage.get("reward")
+        if not isinstance(reward_call, dict) or "predicate" not in reward_call:
+            raise ValueError(
+                f"staged_reward: stage[{i}].reward must be a predicate-call dict "
+                "like {predicate: distance_neg, body_a: ..., body_b: ...}"
+            )
+        reward_name = reward_call["predicate"]
+        reward_kwargs = {k: v for k, v in reward_call.items() if k != "predicate"}
+        reward_fn = make_predicate(reward_name, **reward_kwargs)
+
+        advance_call = stage.get("advance_when")
+        advance_fn: BoolPredicate | None
+        if advance_call is None:
+            if i != n - 1:
+                raise ValueError(
+                    f"staged_reward: stage[{i}] is not the final stage and must declare "
+                    "'advance_when' (a bool predicate gating the transition to the next stage)"
+                )
+            advance_fn = None
+        else:
+            if not isinstance(advance_call, dict) or "predicate" not in advance_call:
+                raise ValueError(
+                    f"staged_reward: stage[{i}].advance_when must be a predicate-call dict "
+                    "like {predicate: distance_less_than, body_a: ..., body_b: ..., threshold: ...}"
+                )
+            advance_name = advance_call["predicate"]
+            advance_kwargs = {k: v for k, v in advance_call.items() if k != "predicate"}
+            advance_fn = make_predicate(advance_name, **advance_kwargs)
+
+        bonus_raw = stage.get("bonus", 0.0)
+        if isinstance(bonus_raw, bool) or not isinstance(bonus_raw, (int, float)):
+            raise ValueError(f"staged_reward: stage[{i}].bonus must be a number, got {bonus_raw!r}")
+
+        compiled.append((reward_fn, advance_fn, float(bonus_raw)))
+
+    return _StagedReward(compiled)
+
+
 # Registry
 
 PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
@@ -574,6 +729,8 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,
     "constant": _constant,
+    # stateful (phase machine)
+    "staged_reward": _staged_reward,
 }
 
 
@@ -634,6 +791,7 @@ __all__ = [
     "BoolPredicate",
     "PredicateFactory",
     "RewardTerm",
+    "StatefulRewardTerm",
     "make_predicate",
     "register_predicate",
 ]

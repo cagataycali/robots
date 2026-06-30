@@ -24,6 +24,7 @@ registered there through a lazy loader instead.
 from strands_robots.training.rl.base_algo import BaseRLAlgo, RLTrainSpec
 from strands_robots.training.rl.env import SimEnv
 from strands_robots.training.rl.fast_sac import FastSacTrainer
+from strands_robots.training.rl.gym_env import GymSimEnv
 from strands_robots.training.rl.normalization import EmpiricalNormalization
 from strands_robots.training.rl.ppo import PpoTrainer
 from strands_robots.training.rl.replay_buffer import SimpleReplayBuffer
@@ -36,6 +37,7 @@ __all__ = [
     "FastSacTrainer",
     "SimpleReplayBuffer",
     "SimEnv",
+    "GymSimEnv",
     "VecSimEnv",
     "EmpiricalNormalization",
 ]

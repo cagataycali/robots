@@ -34,6 +34,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
     import torch
 
     from strands_robots.training.rl.env import SimEnv
+    from strands_robots.training.rl.vec_env import VecSimEnv
 
 
 @dataclass
@@ -132,10 +133,11 @@ class BaseRLAlgo(Trainer):
     """
 
     steps_per_iter: int = 1
-    # Subclass-provided attributes (set during setup)
+    # Subclass-provided attributes (set during setup()); declared so the shared
+    # train()/evaluate()/load_checkpoint() type-check against the abstract base.
     actor_critic: Any  # torch.nn.Module (actor-critic network)
-    env: Any  # SimEnv or VecSimEnv
-    device: Any  # torch.device or str
+    env: SimEnv | VecSimEnv
+    device: torch.device
 
     @abstractmethod
     def setup(self, spec: RLTrainSpec) -> None:
@@ -303,7 +305,9 @@ class BaseRLAlgo(Trainer):
         # env even when training used a VecSimEnv (N>1). A VecSimEnv returns
         # (N,)-batched rewards/dones that cannot be scalarised here; use its
         # first sub-env, which is a plain SimEnv with the (1,)-shaped contract.
-        eval_env = self.env.envs[0] if hasattr(self.env, "envs") else self.env
+        from strands_robots.training.rl.vec_env import VecSimEnv
+
+        eval_env = self.env.envs[0] if isinstance(self.env, VecSimEnv) else self.env
 
         returns: list[float] = []
         lengths: list[int] = []

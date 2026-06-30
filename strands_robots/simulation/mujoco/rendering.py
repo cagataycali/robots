@@ -571,9 +571,20 @@ class RenderingMixin:
         return lo + frac * span
 
     def render(
-        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+        self,
+        camera_name: str = "default",
+        width: int | None = None,
+        height: int | None = None,
+        output_path: str | None = None,
     ) -> dict[str, Any]:
         """Render a camera view to a PNG image.
+
+        When ``output_path`` is given the PNG is ALSO written to that file path
+        (parent dirs created) and the saved path is reported in the ``json``
+        block as ``saved_path`` and in the text summary. This lets an agent (or
+        a human) persist a render for independent verification instead of only
+        receiving the bytes inline.
+
 
         Returns an agent-tool dict with ``status`` and a ``content`` list; on
         success the content holds an ``image`` block carrying PNG bytes
@@ -662,12 +673,36 @@ class RenderingMixin:
             pixel_var = float(_np.var(img))
             pixel_mean = float(_np.mean(img))
 
+            saved_path: str | None = None
+            if output_path:
+                import os as _os
+
+                # Validate against shell/path-traversal injection (LLM-supplied).
+                bad = {";", "|", "$", "`", ">", "<", "\n", "\r", "\x00"}
+                if any(b in output_path for b in bad) or ".." in output_path.split("/"):
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"render: unsafe output_path {output_path!r}"}],
+                    }
+                _dir = _os.path.dirname(_os.path.abspath(output_path))
+                _os.makedirs(_dir, exist_ok=True)
+                with open(output_path, "wb") as _f:
+                    _f.write(png_bytes)
+                saved_path = _os.path.abspath(output_path)
+
+            summary = f"{w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"
+            if saved_path:
+                summary += f" -> saved {saved_path}"
+            json_block = {"pixel_variance": pixel_var, "pixel_mean": pixel_mean, "camera": label}
+            if saved_path:
+                json_block["saved_path"] = saved_path
+
             return {
                 "status": "success",
                 "content": [
-                    {"text": f"{w}x{h} from '{label}' at t={self._world.sim_time:.3f}s"},
+                    {"text": summary},
                     {"image": {"format": "png", "source": {"bytes": png_bytes}}},
-                    {"json": {"pixel_variance": pixel_var, "pixel_mean": pixel_mean, "camera": label}},
+                    {"json": json_block},
                 ],
             }
         except Exception as e:
