@@ -1096,6 +1096,28 @@ class MuJoCoSimEngine(
             return []
         return list(self._world.robots[robot_name].joint_names)
 
+    def robot_action_keys(self, robot_name: str) -> list[str]:
+        """Actuator short-names a policy should emit for ``robot_name``.
+
+        Overrides :meth:`SimEngine.robot_action_keys`. Returns the actuator
+        names scoped to the robot's namespace - exactly the keys
+        :meth:`send_action` resolves - rather than the joint names. This
+        matters whenever a robot's actuator set differs from its joint set:
+
+        * passive/mimic finger joints have no driving actuator (so keying by
+          joint name emits keys that resolve to nothing), and
+        * a tendon-driven gripper is an *actuator* with no matching joint name.
+
+        Keying a policy by :meth:`robot_joint_names` in those cases makes the
+        affected DOFs silently no-op. The namespace short-names are produced by
+        :meth:`_get_valid_action_keys`, which strips the trailing-slash
+        namespace prefix (e.g. ``"xarm7/"``).
+        """
+        if self._world is None or robot_name not in self._world.robots:
+            return []
+        namespace = self._world.robots[robot_name].namespace or ""
+        return self._get_valid_action_keys(namespace)
+
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Hand the compiled MjModel + robot namespace to policies that opt in.
 
@@ -2687,10 +2709,11 @@ class MuJoCoSimEngine(
             h = max(1, int(action_horizon))
             horizon_map = {r: h for r in policies}
 
-        # Bind robot_state_keys for each policy (per-robot joint names).
+        # Bind robot_state_keys for each policy (per-robot action keys -- the
+        # actuators send_action resolves, not the joints; see robot_action_keys).
         for rname, pol in policies.items():
             try:
-                pol.set_robot_state_keys(self.robot_joint_names(rname))
+                pol.set_robot_state_keys(self.robot_action_keys(rname))
                 self.bind_policy_sim_context(pol, rname)
             except Exception as exc:  # noqa: BLE001 - non-fatal, mirrors run_policy defensiveness
                 logger.debug("set_robot_state_keys(%s) failed: %s", rname, exc)

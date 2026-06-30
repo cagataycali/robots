@@ -255,6 +255,24 @@ class SimEngine(ABC):
         """
         ...
 
+    def robot_action_keys(self, robot_name: str) -> list[str]:
+        """Return the action keys ``send_action`` resolves for ``robot_name``.
+
+        These are the names a policy should emit as its action-dict keys: the
+        robot's *actuators*, which are NOT always its joints. A robot can have
+        passive/mimic joints with no driving actuator (gripper finger
+        followers) and tendon-driven actuators that are not joints at all (a
+        grasp tendon). Keying a policy by ``robot_joint_names`` in those cases
+        emits keys that ``send_action`` cannot resolve, so the affected
+        actuators never move and the robot silently no-ops.
+
+        The default mirrors :meth:`robot_joint_names` for backends whose
+        actuator set matches their joint set. Backends with a distinct
+        actuator namespace (e.g. MuJoCo tendon grippers) override this to
+        return the actuator short-names instead.
+        """
+        return self.robot_joint_names(robot_name)
+
     def bind_policy_sim_context(self, policy: Any, robot_name: str) -> None:
         """Give a policy the backend sim context it needs to close the loop.
 
@@ -837,7 +855,7 @@ class SimEngine(ABC):
             # Caller is responsible for policy.set_robot_state_keys(...) if needed,
             # but we set it here defensively so the semantics match the provider path.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_joint_names(robot_name))
+        policy.set_robot_state_keys(self.robot_action_keys(robot_name))
         self.bind_policy_sim_context(policy, robot_name)
 
         # Auto-install any action controller this policy needs to run correctly
@@ -1502,7 +1520,7 @@ class SimEngine(ABC):
             # set robot_state_keys; we set defensively so semantics match the
             # provider path.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_joint_names(resolved_robot))
+        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
         self.bind_policy_sim_context(policy, resolved_robot)
 
         return PolicyRunner(self).evaluate(
@@ -1653,7 +1671,7 @@ class SimEngine(ABC):
             }
 
         policy = create_policy(policy_provider, **(policy_config or {}))
-        policy.set_robot_state_keys(self.robot_joint_names(resolved_robot))
+        policy.set_robot_state_keys(self.robot_action_keys(resolved_robot))
         self.bind_policy_sim_context(policy, resolved_robot)
 
         return PolicyRunner(self).evaluate(

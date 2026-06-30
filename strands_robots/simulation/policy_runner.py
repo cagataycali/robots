@@ -843,7 +843,7 @@ class PolicyRunner:
             # map. ``_total_failure_steps`` counts steps where the policy emitted
             # keys but NONE resolved (100% failure) -- the fail-fast trigger.
             try:
-                _robot_actuators = list(self.sim.robot_joint_names(robot_name))
+                _robot_actuators = list(self.sim.robot_action_keys(robot_name))
             except Exception:  # noqa: BLE001 - stats are best-effort, never fatal
                 _robot_actuators = []
             _actuator_resolved: dict[str, int] = dict.fromkeys(_robot_actuators, 0)
@@ -940,7 +940,7 @@ class PolicyRunner:
                 # and this never fires.
                 if step_count >= _FAIL_FAST_PROBE_STEPS and _total_failure_steps == step_count:
                     try:
-                        _valid = self.sim.robot_joint_names(robot_name)
+                        _valid = self.sim.robot_action_keys(robot_name)
                     except Exception:  # noqa: BLE001
                         _valid = _robot_actuators
                     raise RuntimeError(
