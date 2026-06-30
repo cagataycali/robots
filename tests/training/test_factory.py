@@ -47,6 +47,23 @@ class TestFactory:
     def test_list_trainers_includes_mock(self):
         assert "mock" in list_trainers()
 
+    def test_builtin_rl_trainers_coexist(self):
+        """Both from-scratch RL trainers stay registered side by side.
+
+        ``training.__init__`` wires the on-policy ``ppo`` and off-policy
+        ``fast_sac`` providers through separate lazy loaders; a regression that
+        drops either registration would silently strip one RL backend. Pin that
+        both are discoverable and resolve to distinct trainer classes.
+        """
+        registered = list_trainers()
+        assert "ppo" in registered
+        assert "fast_sac" in registered
+        ppo = create_trainer("ppo")
+        fast_sac = create_trainer("fast_sac")
+        assert ppo.provider_name == "ppo"
+        assert fast_sac.provider_name == "fast_sac"
+        assert type(ppo) is not type(fast_sac)
+
     def test_import_trainer_class(self):
         assert import_trainer_class("mock") is MockTrainer
 
