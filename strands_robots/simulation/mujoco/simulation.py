@@ -303,11 +303,13 @@ class MuJoCoSimEngine(
 
         ``action`` is normally a ``{joint/actuator name: value}`` mapping, but an
         ordered numeric vector (``list`` / ``tuple`` / 1-D ``numpy`` array) is
-        also accepted and bound positionally to ``robot_joint_names(robot_name)``
+        also accepted and bound positionally to ``robot_action_keys(robot_name)``
         - the same positional convention :meth:`replay_episode` uses - so a
-        policy's raw action vector can be applied directly. A vector whose length
-        does not match the robot's joint count is rejected with an actionable
-        error rather than silently truncated.
+        policy's raw action vector can be applied directly. Those are the robot's
+        *actuator* keys, which diverge from its joint names when it has
+        passive/mimic joints or a tendon gripper. A vector whose length does not
+        match the robot's actuator count is rejected with an actionable error
+        rather than silently truncated.
 
         Thread-safety: acquires self._lock around ctrl writes + mj_step,
         as documented in base.py's SimEngine contract. Concurrent calls

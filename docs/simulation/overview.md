@@ -105,9 +105,9 @@ Robot-URDF cameras are auto-discovered on `add_robot`.
 | Form | Binding |
 |------|---------|
 | `{joint_or_actuator_name: value}` mapping | applied by name; unresolved keys are reported in an `unresolved_keys` JSON block so a caller can self-correct (no silent drop) |
-| ordered numeric vector (`list` / `tuple` / 1-D `numpy` array) | bound positionally to `robot_joint_names(robot_name)` in declaration order - the same convention `replay_episode` uses |
+| ordered numeric vector (`list` / `tuple` / 1-D `numpy` array) | bound positionally to `robot_action_keys(robot_name)` (the robot's actuator keys) in declaration order - the same convention `replay_episode` uses |
 
-A vector lets a policy's raw action chunk drive the arm directly without first zipping it into a dict. The vector length must match the robot's joint count exactly; a mismatch (or a non-numeric / scalar / string `action`) returns a structured `status="error"` dict naming the joint count and order, rather than crashing or silently truncating commands. Use a mapping to target a subset of joints.
+A vector lets a policy's raw action chunk drive the arm directly without first zipping it into a dict. It binds to `robot_action_keys` (not `robot_joint_names`) because those are the keys `send_action` resolves and the ordering the `LeRobotDataset` recorder writes the `action` column in; the two coincide unless a robot has passive/mimic joints or a tendon gripper. The vector length must match the robot's actuator count exactly; a mismatch (or a non-numeric / scalar / string `action`) returns a structured `status="error"` dict naming the actuator count and order, rather than crashing or silently truncating commands. Use a mapping to target a subset of actuators.
 
 ## Policy
 

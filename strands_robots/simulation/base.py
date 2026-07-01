@@ -249,9 +249,11 @@ class SimEngine(ABC):
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Return ordered joint names for ``robot_name``.
 
-        Used by ``Policy.set_robot_state_keys`` and by
-        ``PolicyRunner.replay`` to map dataset action-vector indices to
-        named joints. Order must match the backend's action ordering.
+        Used by ``Policy.set_robot_state_keys`` to name the
+        ``observation.state`` vector. Action-vector binding (``send_action``
+        with a numeric vector, ``PolicyRunner.replay``) uses
+        :meth:`robot_action_keys` instead - a robot's actuators are not always
+        its joints. Order must match the backend's joint ordering.
         """
         ...
 
@@ -420,17 +422,22 @@ class SimEngine(ABC):
         Policies and the ``Robot`` ABC commonly emit an ordered action *vector*
         (a ``list`` / ``tuple`` / 1-D ``numpy`` array) rather than a name->value
         mapping. To keep :meth:`send_action` usable directly with such a vector -
-        and consistent with :meth:`replay_episode`, which already binds a recorded
-        action vector positionally to ``robot_joint_names`` - a sequence is zipped
-        against ``robot_joint_names(robot_name)`` in declaration order. A mapping
-        is returned unchanged. The vector length must match the robot's joint
+        and consistent with :meth:`replay_episode`, which binds a recorded action
+        vector positionally to :meth:`robot_action_keys` - a sequence is zipped
+        against ``robot_action_keys(robot_name)`` in declaration order. Those are
+        the robot's *actuator* keys (what ``send_action`` resolves and what the
+        LeRobotDataset recorder writes the ``action`` column in); they diverge
+        from ``robot_joint_names`` whenever a robot has passive/mimic joints with
+        no driving actuator or a tendon-driven gripper, so binding a raw action
+        vector to joint names there mis-maps or drops commanded DOFs. A mapping
+        is returned unchanged. The vector length must match the robot's actuator
         count exactly; a mismatch is reported as a caller error rather than
         silently truncated (which would drop commands - e.g. a gripper axis).
 
         Args:
             action: A ``{name: value}`` mapping, or an ordered numeric vector
-                whose entries correspond to ``robot_joint_names(robot_name)``.
-            robot_name: Resolved robot whose joint order defines the binding.
+                whose entries correspond to ``robot_action_keys(robot_name)``.
+            robot_name: Resolved robot whose actuator order defines the binding.
 
         Returns:
             An ``(action_dict, error)`` tuple. When ``error`` is non-None it is a
@@ -465,22 +472,22 @@ class SimEngine(ABC):
                 "content": [{"text": f"send_action: action vector has a non-numeric entry: {exc}."}],
             }
 
-        joint_names = self.robot_joint_names(robot_name)
-        if len(values) != len(joint_names):
+        action_keys = self.robot_action_keys(robot_name)
+        if len(values) != len(action_keys):
             return None, {
                 "status": "error",
                 "content": [
                     {
                         "text": (
                             f"send_action: action vector length {len(values)} does not "
-                            f"match robot '{robot_name}' joint count {len(joint_names)}. "
-                            f"Joints (in order): {joint_names}. Pass a {{name: value}} "
-                            "mapping to target a subset of joints."
+                            f"match robot '{robot_name}' action-key count {len(action_keys)}. "
+                            f"Action keys (in order): {action_keys}. Pass a {{name: value}} "
+                            "mapping to target a subset of actuators."
                         )
                     }
                 ],
             }
-        return {name: value for name, value in zip(joint_names, values)}, None
+        return {name: value for name, value in zip(action_keys, values)}, None
 
     @abstractmethod
     def send_action(

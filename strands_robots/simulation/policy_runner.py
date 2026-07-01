@@ -1310,10 +1310,13 @@ class PolicyRunner:
             speed: Playback speed multiplier (1.0 = real time). Must be a
                 positive number; a non-positive or non-numeric value is
                 rejected with a structured error.
-            action_key_map: Optional list of joint names, one per action
-                vector index. Required when dataset joint ordering differs
-                from ``robot_joint_names(robot_name)``. If ``None``, positional
-                mapping to ``robot_joint_names`` is used.
+            action_key_map: Optional list of action keys, one per action
+                vector index. Required when dataset action ordering differs
+                from ``robot_action_keys(robot_name)``. If ``None``, positional
+                mapping to ``robot_action_keys`` is used - the robot's
+                *actuator* keys, which is the ordering the LeRobotDataset
+                recorder writes the ``action`` column in (a robot's actuators
+                are not always its joints; see :meth:`SimEngine.robot_action_keys`).
 
         Returns:
             Standard status dict with per-frame stats.
@@ -1359,8 +1362,16 @@ class PolicyRunner:
         except Exception as e:  # noqa: BLE001 - library errors are opaque
             return {"status": "error", "content": [{"text": f"{e}"}]}
 
-        # Resolve joint name ordering for action vector index → action dict.
-        joint_names = list(action_key_map) if action_key_map else self.sim.robot_joint_names(resolved_robot)
+        # Resolve the action-key ordering for action-vector index -> action
+        # dict. The recorded ``action`` column is written in the robot's
+        # *actuator* order (SimEngine.robot_action_keys), which diverges from
+        # robot_joint_names whenever a robot has passive/mimic joints with no
+        # driving actuator or a tendon-driven gripper. Mapping the recorded
+        # vector back onto joint names there shifts/drops the recorded values
+        # (send_action cannot resolve passive-joint names) while replay still
+        # reports success - a silent round-trip corruption. Bind to the same
+        # actuator keys the recorder used so record -> replay round-trips.
+        action_keys = list(action_key_map) if action_key_map else self.sim.robot_action_keys(resolved_robot)
 
         dataset_fps = getattr(ds, "fps", 30)
         frame_interval = 1.0 / (dataset_fps * speed)
@@ -1404,9 +1415,9 @@ class PolicyRunner:
 
                 action_dict: dict[str, Any] = {}
                 for i, val in enumerate(action_vals):
-                    if i >= len(joint_names):
+                    if i >= len(action_keys):
                         break
-                    action_dict[joint_names[i]] = float(val)
+                    action_dict[action_keys[i]] = float(val)
 
                 self.sim.send_action(action_dict, robot_name=resolved_robot)
                 frames_applied += 1

@@ -773,6 +773,30 @@ locomotion (closes #466). Clean-room against the upstream reference
   `simulate_rollout` at `examples/wbc_g1_torque_deploy.py` (the real weights
   produce a stable forward G1 walk).
 
+### Fixed: `replay_episode` / `send_action` vector bound to joints, not actuators
+
+`PolicyRunner.replay` (`Simulation.replay_episode`) mapped a recorded
+`LeRobotDataset` action vector positionally onto `robot_joint_names`, and
+`SimEngine._coerce_action` bound a raw numeric action vector passed to
+`send_action` the same way. But the dataset recorder writes the `action`
+column in the robot's *actuator* order (`robot_action_keys`), and `send_action`
+resolves actuator keys -- these diverge from the joint names whenever a robot
+has passive/mimic joints with no driving actuator or a tendon-driven gripper
+(e.g. `aloha`: 14 actuators vs 16 joints; `xarm7`; dexterous hands).
+
+The result was a silent record->replay round-trip corruption: replaying a
+dataset recorded by `start_recording` shifted the action vector across the
+wrong DOFs and dropped the grippers (their names have no matching joint), while
+`replay_episode` still returned `status="success"`. This is the "success
+contract, no physical effect" failure mode the project forbids, and mirrors the
+policy-keying fix already applied to `run_policy`/`eval_policy`.
+
+Positional action-vector binding now uses `robot_action_keys` in both paths, so
+a self-recorded episode round-trips onto the actuators it was recorded from. For
+robots whose actuators mirror their joints (e.g. `so101`) behaviour is
+unchanged. Pass `action_key_map=` to `replay_episode` to override the ordering
+for third-party datasets.
+
 ## [0.4.0] - 2026-06-16
 
 First tagged release since v0.3.8. Collapses the full v0.3.9 (mesh security hardening) and v0.4.0 (docs, policies, motion planners, hardware compatibility, plus the coverage and API-ergonomics hardening pass) work that had accumulated under topic-scoped `Unreleased` sections. No code changed in this release-prep step; the version is derived from the git tag via `hatch-vcs`.

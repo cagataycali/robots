@@ -4,11 +4,13 @@ A policy's ``get_actions`` naturally emits an ordered action *vector* (a list /
 tuple / 1-D numpy array), not a ``{joint: value}`` mapping. Before the fix,
 passing such a vector to ``send_action`` crashed deep in the actuator/joint
 name-lookup loop with ``AttributeError: 'list' object has no attribute 'items'``
-- a cryptic failure far from the call site. ``replay_episode`` already binds a
-recorded action vector positionally to ``robot_joint_names``, so ``send_action``
-is made consistent: a vector is zipped against the robot's joint order, a mapping
-is applied unchanged, and an ill-typed / wrong-length action returns an
-actionable error instead of crashing or being silently dropped.
+- a cryptic failure far from the call site. ``replay_episode`` binds a recorded
+action vector positionally to ``robot_action_keys`` (the robot's actuator keys,
+the ordering the dataset recorder writes the action column in), so ``send_action``
+is made consistent: a vector is zipped against the robot's actuator order, a
+mapping is applied unchanged, and an ill-typed / wrong-length action returns an
+actionable error instead of crashing or being silently dropped. For a robot whose
+actuators mirror its joints (e.g. so101) the two orderings coincide.
 """
 
 import numpy as np
@@ -64,8 +66,8 @@ class TestSendActionVector:
         assert result["status"] == "error"
         text = result["content"][0]["text"]
         assert "length 3" in text
-        assert "joint count 6" in text
-        # The valid joint order is surfaced so the caller can self-correct.
+        assert "action-key count 6" in text
+        # The valid actuator order is surfaced so the caller can self-correct.
         assert "1" in text and "6" in text
 
     def test_scalar_action_is_actionable_error(self, sim):
