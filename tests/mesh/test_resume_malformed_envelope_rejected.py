@@ -130,3 +130,41 @@ def test_missing_peer_id_rejected(engaged_mesh: Mesh, caplog: pytest.LogCaptureF
     assert any("missing/invalid ``peer_id``" in r.getMessage() for r in caplog.records), (
         f"expected a missing-peer_id warning; got {[r.getMessage() for r in caplog.records]}"
     )
+
+
+def _raw_sample(raw: object) -> MagicMock:
+    """Fake Zenoh sample whose payload bytes are supplied verbatim (or None).
+
+    Unlike ``_sample`` this bypasses JSON encoding so a test can hand the
+    handler payloads that fail *before* ``json.loads`` -- a payload that is not
+    bytes-like, or bytes that are not valid UTF-8 / JSON. ``raw=None`` models a
+    sample whose ``payload`` attribute is absent entirely.
+    """
+    s = MagicMock()
+    if raw is None:
+        s.payload = None
+    else:
+        s.payload.to_bytes.return_value = raw
+    return s
+
+
+@pytest.mark.parametrize(
+    ("raw", "label"),
+    [
+        (None, "payload attribute is None (AttributeError)"),
+        (b"\xff\xfe\x00garbage", "payload bytes are not valid UTF-8 (UnicodeDecodeError)"),
+        (b"{not: valid json,", "payload decodes but is not valid JSON (JSONDecodeError)"),
+    ],
+)
+def test_undecodable_payload_leaves_lockout_engaged(engaged_mesh: Mesh, raw: object, label: str) -> None:
+    """A payload that cannot be decoded to a JSON object never clears the lockout.
+
+    The four JSON-shape refuse-paths above all assume ``json.loads`` succeeded.
+    This pins the earlier guard: an envelope whose payload is not bytes-like,
+    not valid UTF-8, or not valid JSON must be dropped before touching the
+    lockout -- garbage on the wire can never resume a stopped fleet, and it must
+    not pollute the replay cache either.
+    """
+    engaged_mesh._on_safety_resume(_raw_sample(raw))
+    assert engaged_mesh._estop_lockout.is_set(), f"undecodable payload must not clear the lockout: {label}"
+    assert len(engaged_mesh._resume_replay_cache) == 0, f"no cache entry for an undecodable envelope: {label}"
