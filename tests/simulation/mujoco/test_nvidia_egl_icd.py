@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -154,3 +155,100 @@ class TestConfigureGLBackendWiring:
                 assert called == [True]
             finally:
                 backend.os.environ.pop("MUJOCO_GL", None)
+
+
+class TestNvidiaIcdScanResilience:
+    """Host-detection scans are best-effort: an unreadable glvnd dir or vendor
+    JSON must be skipped, never abort the scan, so a later real match is still
+    found. Staging failures leave glvnd's default routing untouched rather than
+    crashing MuJoCo import.
+    """
+
+    def test_library_scan_skips_unreadable_dir_and_finds_later_match(self, monkeypatch, tmp_path):
+        """A permission error globbing one lib dir does not hide an NVIDIA library
+        installed in a subsequent dir."""
+        denied = tmp_path / "denied"
+        lib_dir = tmp_path / "lib"
+        lib_dir.mkdir()
+        (lib_dir / "libEGL_nvidia.so.580.1").write_text("")
+        real_glob = Path.glob
+
+        def flaky_glob(self, pattern, *args, **kwargs):
+            if str(self) == str(denied):
+                raise PermissionError("EACCES")
+            return real_glob(self, pattern, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "glob", flaky_glob)
+        monkeypatch.setattr(backend, "_NVIDIA_EGL_LIB_DIRS", (str(denied), str(lib_dir)))
+
+        assert backend._nvidia_egl_library_present() is True
+
+    def test_icd_scan_skips_unreadable_dir_and_unreadable_json(self, monkeypatch, tmp_path):
+        """An unreadable vendor dir and an unreadable JSON entry are both skipped;
+        a readable NVIDIA vendor JSON still registers as present."""
+        denied_dir = tmp_path / "denied_dir"
+        vendor_dir = tmp_path / "vendor"
+        vendor_dir.mkdir()
+        # sorted() visits 00_broken.json (unreadable) before 10_nvidia.json.
+        (vendor_dir / "00_broken.json").write_text("unreadable")
+        (vendor_dir / "10_nvidia.json").write_text(backend._NVIDIA_EGL_ICD_JSON)
+        real_glob = Path.glob
+        real_read = Path.read_text
+
+        def flaky_glob(self, pattern, *args, **kwargs):
+            if str(self) == str(denied_dir):
+                raise PermissionError("EACCES")
+            return real_glob(self, pattern, *args, **kwargs)
+
+        def flaky_read(self, *args, **kwargs):
+            if self.name == "00_broken.json":
+                raise PermissionError("EACCES")
+            return real_read(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "glob", flaky_glob)
+        monkeypatch.setattr(Path, "read_text", flaky_read)
+        monkeypatch.setattr(backend, "_GLVND_EGL_VENDOR_DIRS", (str(denied_dir), str(vendor_dir)))
+
+        assert backend._nvidia_egl_icd_registered() is True
+
+    def test_staging_write_failure_is_nonfatal(self, isolate):
+        """When the user base dir is not writable, staging fails soft: glvnd's
+        default routing is left in place (no __EGL_VENDOR_LIBRARY_FILENAMES)."""
+        isolate.setattr(backend, "_nvidia_egl_icd_registered", lambda: False)
+        isolate.setattr(backend, "_nvidia_egl_library_present", lambda: True)
+
+        def boom(self, *args, **kwargs):
+            raise OSError("read-only file system")
+
+        isolate.setattr(Path, "write_text", boom)
+
+        backend._ensure_nvidia_egl_vendor_icd()
+
+        assert _FILENAMES not in backend.os.environ
+
+    def test_staged_filenames_list_nvidia_first_then_system_fallbacks(self, isolate, tmp_path):
+        """The staged vendor list puts the NVIDIA ICD first (wins glvnd resolution)
+        and appends readable system vendor ICDs as fallback, skipping any vendor
+        dir that cannot be listed."""
+        isolate.setattr(backend, "_nvidia_egl_icd_registered", lambda: False)
+        isolate.setattr(backend, "_nvidia_egl_library_present", lambda: True)
+        system_vendor = tmp_path / "system_glvnd"
+        system_vendor.mkdir()
+        (system_vendor / "50_mesa.json").write_text("{}")
+        denied_vendor = tmp_path / "denied_glvnd"
+        real_glob = Path.glob
+
+        def flaky_glob(self, pattern, *args, **kwargs):
+            if str(self) == str(denied_vendor):
+                raise PermissionError("EACCES")
+            return real_glob(self, pattern, *args, **kwargs)
+
+        isolate.setattr(Path, "glob", flaky_glob)
+        isolate.setattr(backend, "_GLVND_EGL_VENDOR_DIRS", (str(denied_vendor), str(system_vendor)))
+
+        backend._ensure_nvidia_egl_vendor_icd()
+
+        filenames = backend.os.environ[_FILENAMES].split(":")
+        staged = tmp_path / "egl_vendor.d" / "10_nvidia.json"
+        assert filenames[0] == str(staged)
+        assert filenames[-1] == str(system_vendor / "50_mesa.json")
