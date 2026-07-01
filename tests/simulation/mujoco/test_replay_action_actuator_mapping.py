@@ -81,7 +81,7 @@ class TestReplayRoundTrip:
     """A self-recorded dataset replays onto the actuators it was recorded from."""
 
     def test_replay_maps_recorded_actions_to_actuators(self, aloha_sim):
-        lerobot = pytest.importorskip("lerobot")  # noqa: F841
+        pytest.importorskip("lerobot")
         from strands_robots.dataset_recorder import load_lerobot_episode
 
         root = tempfile.mkdtemp(prefix="aloha_replay_rt_")
