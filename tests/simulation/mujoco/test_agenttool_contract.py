@@ -153,12 +153,10 @@ class TestRouterKwargsPassthrough:
         import inspect
 
         def fake(self, name, **kwargs):  # noqa: ANN001, ANN002, ANN202
-            ...
+            """Signature-only stub; never called, its body is irrelevant."""
 
         sig = inspect.signature(fake)
-        kwargs, err = sim._validate_and_build_kwargs(
-            "fake", "fake", sig, {"name": "x", "future_flag": True}
-        )
+        kwargs, err = sim._validate_and_build_kwargs("fake", "fake", sig, {"name": "x", "future_flag": True})
         assert err is None
         # only declared params are forwarded; the extra key is dropped silently
         assert kwargs == {"name": "x"}
