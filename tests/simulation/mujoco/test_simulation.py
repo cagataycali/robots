@@ -190,6 +190,37 @@ def sim_with_robot(sim_with_world, robot_xml_path):
 # World Management
 
 
+class TestConstructorForwardCompatKwargs:
+    """The engine constructor accepts and ignores backend-specific kwargs.
+
+    The shared ``create_simulation`` / ``Robot`` factory forwards one superset
+    of keyword arguments to whichever backend is selected. MuJoCo tolerates and
+    drops kwargs it does not use (e.g. ``num_envs`` / ``device`` meant for GPU
+    backends), mirroring ``NewtonSimEngine``, so an identical factory call
+    resolves across backends. This pins that documented forward-compatible
+    contract: unknown kwargs must neither raise nor disturb recognized params.
+    """
+
+    def test_unknown_kwargs_are_ignored_not_raised(self):
+        sim = Simulation(num_envs=4, device="cuda", some_future_backend_kwarg=True)
+        assert sim._world is None  # construction only; no world yet
+        sim.cleanup()
+
+    def test_recognized_params_survive_alongside_unknown_kwargs(self):
+        sim = Simulation(
+            tool_name="factory_sim",
+            default_width=320,
+            default_height=240,
+            num_envs=8,  # forwarded-but-ignored backend kwarg
+        )
+        assert sim.tool_name_str == "factory_sim"
+        assert sim.default_width == 320
+        assert sim.default_height == 240
+        # The ignored kwarg leaves no stray attribute behind.
+        assert not hasattr(sim, "num_envs")
+        sim.cleanup()
+
+
 class TestWorldLifecycle:
     """Test create_world → get_state → reset → destroy lifecycle."""
 

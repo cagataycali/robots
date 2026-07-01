@@ -185,8 +185,15 @@ class MuJoCoSimEngine(
             peer_id: Stable identifier the mesh transport uses to
                 address this Simulation. Opaque to MuJoCo itself; only
                 consulted when ``mesh`` is truthy.
-            **kwargs: Forwarded to ``AgentTool.__init__`` for subclass
-                compatibility.
+            **kwargs: Accepted and ignored, for cross-backend forward
+                compatibility. The shared ``create_simulation`` / ``Robot``
+                factory forwards one superset of keyword arguments to whichever
+                backend is selected; MuJoCo tolerates and drops backend-specific
+                kwargs it does not use (e.g. ``num_envs`` / ``device`` meant for
+                GPU backends) so an identical call resolves across backends.
+                Mirrors ``NewtonSimEngine``'s forward-compatible contract. Note
+                they are NOT passed to ``super().__init__()`` (``AgentTool``
+                takes no constructor arguments).
         """
         super().__init__()
         self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
