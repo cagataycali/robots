@@ -32,6 +32,7 @@ import pytest
 
 from strands_robots.policies import preflight_policy
 from strands_robots.policies.base import Policy
+from strands_robots.policies.lerobot_local import processor as processor_mod
 from strands_robots.policies.lerobot_local.embodiment import EmbodimentMap
 from strands_robots.policies.lerobot_local.policy import LerobotLocalPolicy
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge
@@ -250,6 +251,67 @@ def test_camera_hint_empty_without_obs_rename():
     """No latched obs_rename (legacy path) -> no hint even on image-keys error."""
     bridge = ProcessorBridge()
     assert bridge._camera_hint(RuntimeError("image_keys missing"), {}) == ""
+
+
+def test_camera_hint_empty_when_obs_rename_maps_no_image_features():
+    """A state-only embodiment must not emit a camera hint on an image-keys error.
+
+    ``_camera_hint`` names the *camera* source keys to fix, derived from the
+    obs_rename entries whose target is an ``observation.images.*`` feature. When
+    the latched obs_rename maps only proprioceptive state (no image targets),
+    there are no camera keys to suggest, so the enrichment must stay empty rather
+    than emit a hint listing zero expected keys. Regression pin for the
+    ``if not expected`` guard: dropping it would surface a truncated
+    "Expected camera source key(s): []" hint on non-vision policies.
+    """
+    bridge = ProcessorBridge()
+    bridge._obs_rename = {"shoulder.pos": "observation.state"}
+    assert bridge._camera_hint(RuntimeError("image_keys missing"), {"front": object()}) == ""
+
+
+# ---------------------------------------------------------------------------
+# Optional-dependency degradation of the module-level helpers
+# ---------------------------------------------------------------------------
+def test_try_import_processor_none_when_pipeline_class_absent(monkeypatch):
+    """A lerobot build whose processor module lacks DataProcessorPipeline -> None.
+
+    The bridge treats a missing pipeline class the same as a missing lerobot:
+    it degrades to pass-through rather than raising, so a partial/older install
+    does not crash policy construction.
+    """
+    monkeypatch.setattr(processor_mod, "require_optional", lambda *a, **k: object())
+    assert processor_mod._try_import_processor() is None
+
+
+def test_try_import_processor_none_when_lerobot_missing(monkeypatch):
+    """A missing [lerobot] extra degrades to pass-through (None), never ImportError."""
+
+    def _raise(*a, **k):
+        raise ImportError("lerobot processor extra not installed")
+
+    monkeypatch.setattr(processor_mod, "require_optional", _raise)
+    assert processor_mod._try_import_processor() is None
+
+
+def test_register_policy_processor_steps_noop_without_type():
+    """No policy_type -> silent no-op (nothing imported, no crash)."""
+    assert processor_mod._register_policy_processor_steps(None) is None
+
+
+def test_register_policy_processor_steps_best_effort_on_import_failure(monkeypatch):
+    """Every candidate module failing to import is swallowed; the helper returns.
+
+    Step registration is best-effort: a failed import is logged at DEBUG and the
+    caller proceeds (the pipeline load then raises its own clear error). A raise
+    here would turn an optional-dep gap into a hard construction failure.
+    """
+    import importlib
+
+    def _boom(name):
+        raise ImportError(f"cannot import {name}")
+
+    monkeypatch.setattr(importlib, "import_module", _boom)
+    assert processor_mod._register_policy_processor_steps("act") is None
 
 
 # ---------------------------------------------------------------------------
