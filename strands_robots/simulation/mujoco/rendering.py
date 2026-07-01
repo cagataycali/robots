@@ -1,10 +1,8 @@
 """Rendering mixin - render, render_depth, get_contacts, observation helpers."""
 
-import contextlib
 import io
 import logging
 import os
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -14,14 +12,23 @@ from strands_robots.simulation.mujoco.backend import (
     _ensure_mujoco,
     capture_stderr_fd,
 )
+from strands_robots.simulation.safe_output import (
+    atomic_write_bytes,
+    env_flag,
+    resolve_sandbox_root,
+    sanitize_name_component,
+    validate_output_path,
+    video_sandbox_args,
+)
 
 logger = logging.getLogger(__name__)
 
 # render(output_path=...) is an LLM-callable tool: the path is attacker-influenced.
 # Confine writes to a sandbox root, reject shell metacharacters / traversal /
 # symlinked targets, cap the payload size, and write atomically so a crash mid-write
-# cannot corrupt an existing file. See docs and the STRANDS_ROBOTS_RENDER_* env vars.
-_RENDER_PATH_BAD_CHARS = frozenset({";", "|", "$", "`", ">", "<", "\n", "\r", "\x00"})
+# cannot corrupt an existing file. The generic guards live in
+# strands_robots.simulation.safe_output; the render-specific sandbox + size cap
+# (STRANDS_ROBOTS_RENDER_* env vars) are bound here.
 _DEFAULT_MAX_RENDER_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
@@ -31,8 +38,7 @@ def _render_sandbox_root() -> Path:
     Defaults to ``~/.strands_robots/renders``; override with the
     ``STRANDS_ROBOTS_RENDER_ROOT`` env var.
     """
-    raw = os.getenv("STRANDS_ROBOTS_RENDER_ROOT") or str(Path.home() / ".strands_robots" / "renders")
-    return Path(raw).expanduser().resolve(strict=False)
+    return resolve_sandbox_root("STRANDS_ROBOTS_RENDER_ROOT", "renders")
 
 
 def _max_render_bytes() -> int:
@@ -50,77 +56,21 @@ def _max_render_bytes() -> int:
 
 
 def _validate_render_output_path(output_path: str) -> Path:
-    """Validate and resolve an LLM-supplied render output path.
+    """Validate an LLM-supplied render path, confined to the render sandbox.
 
-    Rejects shell metacharacters, backslash (Windows-style) separators, paths
-    that resolve outside the render sandbox root, and symlinked targets. Returns
-    the fully-resolved destination ``Path``.
-
-    Args:
-        output_path: Caller-supplied destination path.
-
-    Returns:
-        The resolved, sandbox-confined destination path.
+    Thin render-specific binding over
+    :func:`strands_robots.simulation.safe_output.validate_output_path`: absolute
+    paths outside the sandbox are rejected unless ``STRANDS_ROBOTS_RENDER_ALLOW_ABS``
+    opts in.
 
     Raises:
         ValueError: If the path is unsafe (the caller maps this to a tool error).
     """
-    if any(b in output_path for b in _RENDER_PATH_BAD_CHARS):
-        raise ValueError("unsafe output_path: shell metacharacters")
-    # Backslash is not a POSIX separator, so "..\..\etc" would survive a
-    # "/"-only traversal check. Reject it outright rather than guess intent.
-    if "\\" in output_path:
-        raise ValueError("unsafe output_path: backslash separators not allowed")
-    if not output_path.strip():
-        raise ValueError("unsafe output_path: empty")
-
-    raw = Path(output_path).expanduser()
-    # Refuse to follow a symlink planted at the target (arbitrary-write vector).
-    if raw.is_symlink():
-        raise ValueError(f"output_path {output_path!r} is a symlink - refusing to follow")
-
-    # resolve() normalizes "..", expands the chain, and follows any intermediate
-    # symlinks, so the sandbox check below sees the true on-disk destination.
-    resolved = raw.resolve(strict=False)
-
-    allow_abs = (os.getenv("STRANDS_ROBOTS_RENDER_ALLOW_ABS") or "").strip().lower() in ("1", "true", "yes")
-    if not allow_abs:
-        root = _render_sandbox_root()
-        try:
-            resolved.relative_to(root)
-        except ValueError as e:
-            raise ValueError(
-                f"output_path {resolved} is outside the render sandbox {root} "
-                "(set STRANDS_ROBOTS_RENDER_ALLOW_ABS=1 to allow absolute paths)"
-            ) from e
-    return resolved
-
-
-def _atomic_write_png(path: Path, data: bytes) -> None:
-    """Write ``data`` to ``path`` atomically with restrictive permissions.
-
-    Writes to a temp file in the destination directory then ``os.replace``s it
-    into place, so a crash mid-write cannot truncate or corrupt an existing file
-    at ``path``. Created directories are ``0o700`` and the final file is ``0o600``
-    (owner-only; the render sandbox is private to the running user).
-    """
-    parent = path.parent
-    parent_existed = parent.exists()
-    parent.mkdir(parents=True, exist_ok=True)
-    if not parent_existed:
-        with contextlib.suppress(OSError):
-            os.chmod(parent, 0o700)
-
-    fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=parent)
-    try:
-        with os.fdopen(fd, "wb") as f:
-            f.write(data)
-        os.replace(tmp, path)
-    except BaseException:
-        with contextlib.suppress(OSError):
-            os.unlink(tmp)
-        raise
-    os.chmod(path, 0o600)
+    return validate_output_path(
+        output_path,
+        sandbox_root=_render_sandbox_root(),
+        allow_abs=env_flag("STRANDS_ROBOTS_RENDER_ALLOW_ABS"),
+    )
 
 
 def _save_render_png(output_path: str, png_bytes: bytes) -> str:
@@ -135,7 +85,7 @@ def _save_render_png(output_path: str, png_bytes: bytes) -> str:
     max_bytes = _max_render_bytes()
     if len(png_bytes) > max_bytes:
         raise ValueError(f"png is {len(png_bytes)} bytes, exceeds limit {max_bytes}")
-    _atomic_write_png(safe, png_bytes)
+    atomic_write_bytes(safe, png_bytes)
     return str(safe)
 
 
@@ -1237,10 +1187,13 @@ class RenderingMixin:
 
         Args:
             cameras: list of camera names; None = every camera.
-            output_dir: where to write ``{tag}__{cam}.mp4``.
+            output_dir: where to write ``{tag}__{cam}.mp4``. Validated against
+                ``..`` traversal / backslash / shell metacharacters / symlink;
+                set ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it to a sandbox.
             fps: capture rate.
             width/height: per-frame size.
-            name: filename tag (auto if None).
+            name: filename tag (auto if None). Validated as a single path
+                component - separators / traversal / metacharacters rejected.
             max_frames_per_camera: safety cap on in-memory buffers.
         """
         import os as _os
@@ -1272,7 +1225,22 @@ class RenderingMixin:
         if not names:
             return {"status": "error", "content": [{"text": "No cameras to record."}]}
 
-        out_dir = _os.path.abspath(output_dir or _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings"))
+        # output_dir and name are LLM-supplied: reject traversal / symlink /
+        # metacharacters (and a name carrying path separators) before we
+        # makedirs and interpolate name into the per-camera filename.
+        # Confinement to a video sandbox is opt-in via STRANDS_ROBOTS_VIDEO_ROOT.
+        try:
+            if name is not None:
+                sanitize_name_component(name, label="name")
+            if output_dir is not None:
+                _sb_root, _allow_abs = video_sandbox_args()
+                out_dir = str(
+                    validate_output_path(output_dir, sandbox_root=_sb_root, allow_abs=_allow_abs, label="output_dir")
+                )
+            else:
+                out_dir = _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings")
+        except ValueError as _e:
+            return {"status": "error", "content": [{"text": f"cameras_recording: {_e}"}]}
         _os.makedirs(out_dir, exist_ok=True)
         tag = name or f"rec_{_uuid.uuid4().hex[:8]}"
 
@@ -1594,12 +1562,16 @@ class RenderingMixin:
         Args:
             cameras: list of camera names; ``None`` = every camera.
             output_dir: where to write ``{tag}__{cam}.mp4``. Defaults to
-                ``$TMPDIR/strands_robots/recordings``.
+                ``$TMPDIR/strands_robots/recordings``. Validated against ``..``
+                traversal / backslash / shell metacharacters / symlink; set
+                ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it to a sandbox.
             fps: encoded MP4 frame rate (and target capture rate when
                 ``on_frame`` fires more often than ``fps``).
             width, height: per-frame size; defaults to the renderer's
                 native resolution.
             name: filename tag (auto-generated UUID prefix when ``None``).
+                Validated as a single path component - separators / traversal
+                / metacharacters rejected.
             max_frames_per_camera: safety cap on in-memory buffers.
                 Frames beyond the cap are silently dropped (status
                 visible via :meth:`get_cameras_recording_status`).
@@ -1639,7 +1611,22 @@ class RenderingMixin:
         if not names:
             return {"status": "error", "content": [{"text": "No cameras to record."}]}
 
-        out_dir = _os.path.abspath(output_dir or _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings"))
+        # output_dir and name are LLM-supplied: reject traversal / symlink /
+        # metacharacters (and a name carrying path separators) before we
+        # makedirs and interpolate name into the per-camera filename.
+        # Confinement to a video sandbox is opt-in via STRANDS_ROBOTS_VIDEO_ROOT.
+        try:
+            if name is not None:
+                sanitize_name_component(name, label="name")
+            if output_dir is not None:
+                _sb_root, _allow_abs = video_sandbox_args()
+                out_dir = str(
+                    validate_output_path(output_dir, sandbox_root=_sb_root, allow_abs=_allow_abs, label="output_dir")
+                )
+            else:
+                out_dir = _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings")
+        except ValueError as _e:
+            return {"status": "error", "content": [{"text": f"cameras_recording: {_e}"}]}
         _os.makedirs(out_dir, exist_ok=True)
         tag = name or f"rec_{_uuid.uuid4().hex[:8]}"
 

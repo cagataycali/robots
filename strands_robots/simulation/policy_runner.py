@@ -51,6 +51,7 @@ if TYPE_CHECKING:
     from strands_robots.simulation.benchmark import BenchmarkProtocol
 
 from strands_robots.simulation.models import TrajectoryStep
+from strands_robots.simulation.safe_output import validate_output_path, video_sandbox_args
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +187,10 @@ class VideoConfig:
 
     Attributes:
         path: Output MP4 path. ``None``/empty string → recording disabled.
+            LLM-supplied, so it is validated (no ``..`` traversal, backslash
+            separators, shell metacharacters, or symlinked target) before a
+            writer is opened; set ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it
+            to a sandbox.
         fps: Frames per second to write.
         camera: Camera name to render from. ``None`` → backend default.
         width: Render width in pixels.
@@ -724,7 +729,17 @@ class PolicyRunner:
         if video is not None and video.enabled:
             # video.enabled guarantees video.path is a non-empty str; narrow for mypy.
             assert video.path is not None
-            video_path = video.path
+            # video.path is LLM-supplied: reject shell metacharacters, backslash
+            # separators, ".." traversal, and a symlinked target before we
+            # makedirs + open a writer on it. Absolute paths stay allowed (the
+            # historic contract); set STRANDS_ROBOTS_VIDEO_ROOT to sandbox them.
+            _sb_root, _allow_abs = video_sandbox_args()
+            try:
+                video_path = str(
+                    validate_output_path(video.path, sandbox_root=_sb_root, allow_abs=_allow_abs, label="video path")
+                )
+            except ValueError as _e:
+                return {"status": "error", "content": [{"text": f"video recording: {_e}"}]}
 
             # Pre-validate the camera name ONCE before the step loop. This
             # surfaces "camera not found" as a clean up-front error rather

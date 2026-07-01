@@ -22,6 +22,26 @@ so a crash mid-write cannot corrupt an existing file; created files are `0o644`
 and freshly created directories `0o755`.
 
 
+### Security: Extended output-path hardening to `run_policy(video=...)` and `start_cameras_recording`
+
+`render(output_path=...)` was hardened in isolation, but the sibling video sinks
+that also persist an LLM-supplied filesystem path were still unguarded:
+`run_policy(video={"path": ...})` and `start_cameras_recording(output_dir=...,
+name=...)` did `os.path.abspath` + `os.makedirs` on the raw path (and
+interpolated the raw `name` tag into the per-camera filename), so a `..`
+traversal, a symlinked target, shell metacharacters, or a `name` carrying path
+separators could escape the intended location. The guards are now centralized in
+`strands_robots.simulation.safe_output` and shared by all three sinks: `..`
+traversal segments, backslash separators, shell metacharacters, and symlinked
+targets are rejected with `status=error` before any file is opened, and the
+recording `name` is validated as a single path component. Unlike `render`, whose
+sandbox is on by default, the video sinks preserve their historic
+absolute-path contract: confinement is opt-in via `STRANDS_ROBOTS_VIDEO_ROOT`
+(with `STRANDS_ROBOTS_VIDEO_ALLOW_ABS=1` to re-permit absolute paths inside that
+mode). The `render` implementation now delegates to the shared helpers; its
+behavior and env vars (`STRANDS_ROBOTS_RENDER_*`) are unchanged.
+
+
 ### Added: `BaseRLAlgo.evaluate()` - deterministic eval peer of `train()`
 
 The from-scratch RL trainers (`PpoTrainer`, `FastSacTrainer`) could `train()` a

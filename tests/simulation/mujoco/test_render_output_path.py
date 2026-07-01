@@ -1,7 +1,7 @@
 """Security regression tests for render(output_path=...) path hardening.
 
 Exercises the pure helpers behind ``MuJoCoSimEngine.render(output_path=...)``
-(:func:`_validate_render_output_path`, :func:`_atomic_write_png`,
+(:func:`_validate_render_output_path`, :func:`~strands_robots.simulation.safe_output.atomic_write_bytes`,
 :func:`_save_render_png`). These are GL-free so they run in CI without an
 OpenGL context and on both Linux and macOS.
 """
@@ -13,10 +13,10 @@ import pytest
 
 from strands_robots.simulation.mujoco import rendering
 from strands_robots.simulation.mujoco.rendering import (
-    _atomic_write_png,
     _save_render_png,
     _validate_render_output_path,
 )
+from strands_robots.simulation.safe_output import atomic_write_bytes
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"x" * 64
 
@@ -118,7 +118,7 @@ def test_atomic_write_preserves_existing_on_failure(sandbox, monkeypatch):
 
     monkeypatch.setattr(rendering.os, "replace", boom)
     with pytest.raises(OSError, match="simulated replace failure"):
-        _atomic_write_png(target, b"NEW-DATA-THAT-SHOULD-NOT-LAND")
+        atomic_write_bytes(target, b"NEW-DATA-THAT-SHOULD-NOT-LAND")
 
     # Original content preserved; no stray temp files left behind.
     assert target.read_bytes() == b"ORIGINAL"
