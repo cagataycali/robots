@@ -37,6 +37,7 @@ def sim():
 
 
 def _body_xpos(sim: Simulation, name: str) -> np.ndarray:
+    assert sim._world is not None, "world not created"
     model, data = sim._world._model, sim._world._data
     bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, name)
     assert bid >= 0, f"body {name!r} not found"
