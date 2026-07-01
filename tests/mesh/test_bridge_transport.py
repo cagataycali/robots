@@ -416,3 +416,59 @@ class TestDefaultBridgeSuffixesPinned:
                 f"{suffix!r} is documented as not bridged by default but is in "
                 f"DEFAULT_BRIDGE_SUFFIXES; remove it or update the documentation."
             )
+
+
+class TestSubHandleTeardownFailSoft:
+    """``_BridgeSubHandle.undeclare`` must swallow the documented transport-
+    teardown failure surface (already-closed handle / socket race) so idempotent
+    cleanup never propagates, while still tearing down the other side and
+    letting unexpected exceptions escape."""
+
+    @pytest.mark.parametrize("exc", [RuntimeError, AttributeError, OSError])
+    def test_undeclare_swallows_documented_transport_errors(self, exc):
+        raising, healthy = MagicMock(), MagicMock()
+        raising.undeclare.side_effect = exc("teardown race")
+        h = _BridgeSubHandle(raising, healthy)
+
+        h.undeclare()  # must not raise despite the zenoh side failing
+
+        raising.undeclare.assert_called_once()
+        # A failure on the first side must not abort teardown of the second.
+        healthy.undeclare.assert_called_once()
+
+    def test_undeclare_propagates_unexpected_error(self):
+        raising = MagicMock()
+        raising.undeclare.side_effect = ValueError("not a teardown error")
+        h = _BridgeSubHandle(raising, MagicMock())
+
+        with pytest.raises(ValueError):
+            h.undeclare()
+
+
+class TestBridgeCloseFailSoft:
+    """``BridgeTransport.close`` must swallow the documented transport-close
+    failure surface on either backend, still attempt to close both, and let
+    unexpected exceptions propagate."""
+
+    @pytest.mark.parametrize("exc", [RuntimeError, ConnectionError, OSError])
+    def test_close_swallows_documented_transport_errors(self, fake_transports, exc):
+        z, i = fake_transports
+        z.close.side_effect = exc("zenoh close race")
+        i.close.side_effect = exc("iot close race")
+        b = BridgeTransport(zenoh=z, iot=i)
+        b.connect()
+
+        b.close()  # must not raise despite both backends failing to close
+
+        # A failure closing zenoh must not skip closing iot.
+        z.close.assert_called_once()
+        i.close.assert_called_once()
+
+    def test_close_propagates_unexpected_error(self, fake_transports):
+        z, i = fake_transports
+        z.close.side_effect = ValueError("not a close error")
+        b = BridgeTransport(zenoh=z, iot=i)
+        b.connect()
+
+        with pytest.raises(ValueError):
+            b.close()
