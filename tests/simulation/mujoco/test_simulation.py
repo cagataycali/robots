@@ -770,6 +770,46 @@ class TestRandomization:
         assert result["status"] == "success"
         assert "Physics" in result["content"][0]["text"]
 
+    def test_randomize_physics_scales_inertia_with_mass(self, sim_with_robot):
+        """Scaling a body's mass must scale its inertia by the same factor.
+
+        For a rigid body at fixed geometry a mass scale ``s`` (a uniform
+        density change) scales the inertia tensor by the same ``s`` (I is the
+        integral of r^2 dm). Pre-fix ``randomize_physics`` scaled ``body_mass``
+        but left ``body_inertia`` untouched, producing physically inconsistent
+        bodies - heavy in translation but with the light body's rotational
+        resistance - which silently corrupts the dynamics the randomization is
+        meant to perturb (and diverges from the Newton backend, which scales
+        both).
+        """
+        m = sim_with_robot._world._model
+        mass_before = m.body_mass.copy()
+        inertia_before = m.body_inertia.copy()
+
+        result = sim_with_robot.randomize(
+            randomize_colors=False, randomize_lighting=False, randomize_physics=True, seed=42
+        )
+        assert result["status"] == "success"
+
+        mass_after = m.body_mass.copy()
+        inertia_after = m.body_inertia.copy()
+
+        scaled_bodies = [
+            i for i in range(m.nbody) if mass_before[i] > 0 and not np.isclose(mass_before[i], mass_after[i])
+        ]
+        assert scaled_bodies, "the robot must have bodies whose mass was scaled"
+
+        # inertia must actually move (pre-fix it stayed stale) ...
+        assert not np.allclose(inertia_before[scaled_bodies], inertia_after[scaled_bodies])
+        # ... and by exactly the per-body mass factor, keeping each body consistent.
+        for i in scaled_bodies:
+            s = mass_after[i] / mass_before[i]
+            assert np.allclose(inertia_after[i], inertia_before[i] * s, rtol=1e-6), (
+                f"body {i}: inertia scaled by "
+                f"{inertia_after[i] / np.where(inertia_before[i] != 0, inertia_before[i], 1)} "
+                f"but mass scaled by {s}"
+            )
+
     def test_randomize_positions(self, sim_with_world):
         sim_with_world.add_object("cube", shape="box", position=[0, 0, 0.1])
         result = sim_with_world.randomize(randomize_positions=True, seed=42)

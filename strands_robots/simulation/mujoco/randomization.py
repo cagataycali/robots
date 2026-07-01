@@ -13,8 +13,9 @@ logger = logging.getLogger(__name__)
 class RandomizationMixin:
     """Domain randomization mixed into ``Simulation``.
 
-    Recolors geoms, perturbs lighting, and scales body mass / geom friction
-    by a random factor inside a user-supplied range.
+    Recolors geoms, perturbs lighting, and scales body mass (with a matching
+    inertia scale, so randomized bodies stay physically consistent) and geom
+    friction by a random factor inside a user-supplied range.
 
     **Coupling** (see simulation.py top-level docstring): mixin reaches
     into ``self._world``, ``self._lock``, and the host's
@@ -67,7 +68,10 @@ class RandomizationMixin:
                                   its material colour, which overrides geom RGB
                                   in the renderer).
             randomize_lighting:   Jitter light positions + diffuse colour.
-            randomize_physics:    Scale geom friction and body mass.
+            randomize_physics:    Scale geom friction and body mass (body
+                                  inertia is scaled by the same factor as the
+                                  mass so each randomized body stays physically
+                                  consistent).
             randomize_positions:  Add uniform noise to dynamic-object xyz.
             position_noise:       Max ± xyz offset in meters when randomising positions.
             color_range:          (lo, hi) for uniform RGB sampling.
@@ -130,6 +134,16 @@ class RandomizationMixin:
                         bn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i) or f"body_{i}"
                         s = float(rng.uniform(*mass_range))
                         model.body_mass[i] *= s
+                        # Inertia tracks mass for fixed geometry: scaling a
+                        # rigid body's mass by ``s`` at constant shape (a uniform
+                        # density change) scales its inertia tensor by the same
+                        # ``s`` (I = integral of r^2 dm). Scaling mass alone
+                        # leaves a physically inconsistent body - heavy in
+                        # translation but with the light body's rotational
+                        # resistance - which silently corrupts the dynamics the
+                        # randomization is meant to perturb. Match the Newton
+                        # backend, which scales both.
+                        model.body_inertia[i] *= s
                         mass_scales[bn] = s
                 changes.append(
                     f"Physics: {len(friction_scales)} geoms friction-scaled, {len(mass_scales)} bodies mass-scaled"
