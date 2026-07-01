@@ -16,6 +16,7 @@ Public API:
 * :func:`inject_object_into_scene` - ``SpecBuilder.add_object(spec, obj)`` + recompile.
 * :func:`inject_camera_into_scene` - ``SpecBuilder.add_camera(spec, cam)`` + recompile.
 * :func:`eject_body_from_scene` - ``SpecBuilder.remove_body(spec, name)`` + recompile.
+* :func:`reposition_body_in_scene` - edit a body's spec ``pos``/``quat`` + recompile.
 * :func:`eject_robot_from_scene` - walk the spec, delete everything namespaced
   under ``{robot_name}/``, then recompile.
 
@@ -216,6 +217,47 @@ def eject_body_from_scene(world: SimWorld, body_name: str) -> bool:
         # Matching legacy behaviour: return True so scene state stays consistent
         # (caller has already popped the Python-side dict entry).
         return True
+
+    return _recompile_preserving_state(world, spec)
+
+
+def reposition_body_in_scene(
+    world: SimWorld,
+    body_name: str,
+    position: list[float] | None = None,
+    orientation: list[float] | None = None,
+) -> bool:
+    """Reposition a body (by short name) by editing its spec pose and recompiling.
+
+    Used for STATIC objects, which have no freejoint and therefore cannot be
+    moved through ``data.qpos`` at runtime - MuJoCo welds a static body to the
+    worldbody with no DOF. Editing the spec body ``pos``/``quat`` and
+    recompiling (preserving other joints' state) is the only way to move a
+    welded fixture, mirroring :func:`inject_object_into_scene` /
+    :func:`eject_body_from_scene`.
+
+    ``position`` / ``orientation`` are applied only when provided (a ``None``
+    leaves that component untouched). Returns ``True`` on success, ``False`` if
+    the spec/body is missing or the recompile fails (both logged), so the
+    caller can surface a clean error instead of a silent no-op.
+    """
+    spec = _get_spec(world)
+    if spec is None or world._model is None:
+        logger.error("reposition_body: no spec or model in world")
+        return False
+
+    try:
+        body = spec.body(body_name)
+    except (KeyError, ValueError):
+        body = None
+    if body is None:
+        logger.warning("Body '%s' not found in spec - nothing repositioned", body_name)
+        return False
+
+    if position is not None:
+        body.pos = list(position)
+    if orientation is not None:
+        body.quat = list(orientation)
 
     return _recompile_preserving_state(world, spec)
 

@@ -5,6 +5,22 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `move_object` silently no-op'd on static objects
+
+`Simulation.move_object(name, position=...)` moves an object by writing its
+freejoint `data.qpos`. Static objects (`is_static=True`) are welded to the
+worldbody and have no freejoint, so the write was skipped -- but the method
+still returned `{"status": "success", "text": "'<name>' moved to ..."}` while
+the body never moved and its stored `SimObject.position` stayed stale. This is
+the "success contract, no physical effect" failure mode the project forbids.
+
+`move_object` now repositions static objects by editing the body pose in the
+live `MjSpec` and recompiling the scene (preserving other joints' state), via a
+new `scene_ops.reposition_body_in_scene` helper -- mirroring how `add_object` /
+`remove_object` mutate the scene. Dynamic objects keep the cheap `data.qpos`
+path. A static-body recompile failure now reports `status="error"` rather than a
+misleading success.
+
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
 
 The `vera-sim` extra pinned `mimicgen==1.0.0`, but NVlabs MimicGen has never

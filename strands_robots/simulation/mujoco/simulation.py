@@ -85,6 +85,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     inject_robot_into_scene,
     patch_scene_mjcf,
     replace_scene_mjcf,
+    reposition_body_in_scene,
 )
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder, _validate_size
 from strands_robots.simulation.policy_runner import CooperativeStop
@@ -1564,6 +1565,25 @@ class MuJoCoSimEngine(
     def move_object(
         self, name: str, position: list[float] | None = None, orientation: list[float] | None = None
     ) -> dict[str, Any]:
+        """Move an existing object to a new pose.
+
+        ``position`` is ``[x, y, z]`` in meters; ``orientation`` is a
+        ``[w, x, y, z]`` quaternion. Either may be omitted to leave that
+        component unchanged.
+
+        Two paths, transparent to the caller:
+
+        * **Dynamic objects** (``is_static=False``, created with a freejoint)
+          are moved cheaply by writing ``data.qpos`` + a forward pass.
+        * **Static objects** (``is_static=True``, welded to the worldbody with
+          no DOF) cannot be moved through ``data.qpos``; they are repositioned
+          by editing the spec body pose and recompiling the scene (preserving
+          other joints' state), just like ``add_object`` / ``remove_object``.
+
+        Returns ``status="error"`` if the object is unknown or the static-body
+        recompile fails - it never reports success without actually moving the
+        object.
+        """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if name not in self._world.objects:
@@ -1577,6 +1597,8 @@ class MuJoCoSimEngine(
 
         jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, f"{name}_joint")
         if jnt_id >= 0:
+            # Dynamic object: a freejoint carries its pose, so move it cheaply
+            # through data.qpos + a forward pass (no recompile).
             qpos_addr = model.jnt_qposadr[jnt_id]
             if position:
                 data.qpos[qpos_addr : qpos_addr + 3] = position
@@ -1585,6 +1607,22 @@ class MuJoCoSimEngine(
                 data.qpos[qpos_addr + 3 : qpos_addr + 7] = orientation
                 self._world.objects[name].orientation = orientation
             mj.mj_forward(model, data)
+        elif position is not None or orientation is not None:
+            # Static object: welded to the worldbody with no freejoint, so it
+            # has no data.qpos slice to write - the old code fell through here
+            # and returned success while moving nothing (a silent no-op).
+            # Reposition it by editing the spec body pose and recompiling
+            # (preserving other joints' state), mirroring add_object /
+            # remove_object.
+            if not reposition_body_in_scene(self._world, name, position=position, orientation=orientation):
+                return {
+                    "status": "error",
+                    "content": [{"text": f"Failed to reposition '{name}' in the live scene."}],
+                }
+            if position is not None:
+                self._world.objects[name].position = position
+            if orientation is not None:
+                self._world.objects[name].orientation = orientation
 
         return {"status": "success", "content": [{"text": f"'{name}' moved to {position or 'same'}"}]}
 
