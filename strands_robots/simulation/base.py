@@ -204,7 +204,18 @@ class SimEngine(ABC):
 
     @abstractmethod
     def reset(self) -> dict[str, Any]:
-        """Reset simulation to initial state."""
+        """Reset simulation to its initial state.
+
+        Contract: on return the world must be left in a fully consistent,
+        observation-ready state - derived kinematics (Cartesian body/site/geom
+        poses and camera transforms) must reflect the reset pose WITHOUT
+        requiring a subsequent ``step()``. ``eval_policy`` calls
+        ``get_observation()`` immediately after ``reset()`` and before the
+        first action, so a backend that leaves derived state stale would feed
+        the policy's first inference of every episode a degenerate observation.
+        The MuJoCo backend enforces this by running ``mj_forward`` after
+        ``mj_resetData`` (which alone zeroes all derived quantities).
+        """
         ...
 
     @abstractmethod

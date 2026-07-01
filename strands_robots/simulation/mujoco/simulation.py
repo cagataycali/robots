@@ -1879,6 +1879,18 @@ class MuJoCoSimEngine(
         mj = self._mj
         with self._lock:
             mj.mj_resetData(self._world._model, self._world._data)
+            # mj_resetData restores qpos/qvel/ctrl but zeroes ALL derived
+            # kinematics (xpos, site_xpos, geom_xpos, cam_xpos, ...) until the
+            # next mj_step/mj_forward. A consumer that reads state or RENDERS
+            # before the next step - e.g. eval_policy's per-episode loop, which
+            # calls get_observation() immediately after reset() and before the
+            # first send_action - would otherwise see every body collapsed at
+            # the origin: a degenerate camera frame and zeroed Cartesian state
+            # feeding the policy's FIRST inference of every episode. Forward
+            # here so reset() leaves a fully consistent, render-ready state,
+            # matching the mj_resetData -> mj_forward idiom used by
+            # _compile_world and load_scene.
+            mj.mj_forward(self._world._model, self._world._data)
             self._world.sim_time = 0.0
             self._world.step_count = 0
             # Flip policy_running flag inside the lock so a racing worker
