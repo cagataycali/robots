@@ -240,6 +240,122 @@ def test_sync_to_bucket_rejects_unsafe_run_id(tmp_path, monkeypatch, run_id):
     assert "run_id" in res["message"]
 
 
+def test_sync_to_bucket_bucket_create_failure_surfaces_error(tmp_path, monkeypatch):
+    """A failing ``hf buckets create`` must abort with the CLI's stderr and
+    never fall through to ``hf sync`` (a silent success would upload nowhere)."""
+    (tmp_path / "meta").mkdir()
+    rec = _recorder(tmp_path)
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/hf")
+
+    calls = []
+
+    def fake_run(cmd, capture_output=True, text=True):
+        calls.append(cmd)
+
+        class R:
+            returncode = 1
+            stdout = ""
+            stderr = "permission denied for bucket"
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    res = rec.sync_to_bucket("my-org/robot-fave", run_id="run-021")
+    assert res["status"] == "error"
+    assert "bucket create failed" in res["message"]
+    assert "permission denied" in res["message"]
+    # sync must not run once create has failed.
+    assert not any(c[:2] == ["hf", "sync"] for c in calls)
+
+
+def test_sync_to_bucket_existing_bucket_proceeds_to_sync(tmp_path, monkeypatch):
+    """A non-zero ``hf buckets create`` whose output says the bucket already
+    exists is idempotent: sync proceeds and the call succeeds."""
+    (tmp_path / "meta").mkdir()
+    rec = _recorder(tmp_path)
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/hf")
+
+    calls = []
+
+    def fake_run(cmd, capture_output=True, text=True):
+        calls.append(cmd)
+        is_create = cmd[:3] == ["hf", "buckets", "create"]
+
+        class R:
+            returncode = 1 if is_create else 0
+            stdout = ""
+            stderr = "Error: bucket already exists" if is_create else ""
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    res = rec.sync_to_bucket("my-org/robot-fave", run_id="run-021")
+    assert res["status"] == "success"
+    assert res["bucket_uri"] == "hf://buckets/my-org/robot-fave/run-021"
+    assert any(c[:2] == ["hf", "sync"] for c in calls)
+
+
+def test_sync_to_bucket_sync_failure_surfaces_stderr(tmp_path, monkeypatch):
+    """A failing ``hf sync`` must surface as an error carrying the CLI stderr,
+    not a false success."""
+    (tmp_path / "meta").mkdir()
+    rec = _recorder(tmp_path)
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/hf")
+
+    def fake_run(cmd, capture_output=True, text=True):
+        is_create = cmd[:3] == ["hf", "buckets", "create"]
+
+        class R:
+            returncode = 0 if is_create else 1
+            stdout = ""
+            stderr = "" if is_create else "authentication token expired"
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    res = rec.sync_to_bucket("my-org/robot-fave", run_id="run-021")
+    assert res["status"] == "error"
+    assert "authentication token expired" in res["message"]
+
+
+def test_sync_to_bucket_delete_flag_forwarded(tmp_path, monkeypatch):
+    """``delete=True`` appends ``--delete`` to the sync argv so the bucket is
+    mirrored (removed-locally files are pruned remotely)."""
+    (tmp_path / "meta").mkdir()
+    rec = _recorder(tmp_path)
+    import shutil
+
+    monkeypatch.setattr(shutil, "which", lambda _: "/usr/bin/hf")
+
+    calls = []
+
+    def fake_run(cmd, capture_output=True, text=True):
+        calls.append(cmd)
+
+        class R:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+
+        return R()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+
+    res = rec.sync_to_bucket("my-org/robot-fave", run_id="run-021", delete=True)
+    assert res["status"] == "success"
+    sync_cmds = [c for c in calls if c[:2] == ["hf", "sync"]]
+    assert sync_cmds and "--delete" in sync_cmds[0]
+
+
 # ── stream_dataset facade ──────────────────────────────────────────────────
 
 
