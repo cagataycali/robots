@@ -138,6 +138,42 @@ class TestRouterValidatesVectorDims:
         assert result["status"] == "error"
         assert "'gravity'" in result["content"][0]["text"]
 
+    def test_none_vector_param_skips_validation(self, sim):
+        # An explicit ``None`` for an optional vector param means "use the
+        # default", so the router must skip dimension/dtype validation and let
+        # the value flow through rather than rejecting it as malformed.
+        result = sim._dispatch_action(
+            "add_object",
+            {"name": "box_none_orient", "shape": "box", "orientation": None},
+        )
+        assert result["status"] == "success"
+
+
+class TestRouterNameRobotNameAlias:
+    """The router aliases ``name`` and ``robot_name`` in both directions so an
+    agent can use either spelling regardless of which one the target method
+    declares. Without this, a caller guessing the wrong name gets a spurious
+    "requires parameter" error instead of reaching the method.
+    """
+
+    def test_robot_name_alias_feeds_a_name_param(self, sim):
+        # remove_object's signature uses ``name``; passing ``robot_name`` must
+        # resolve to it. Proof: we reach the method (which reports the object
+        # is missing) instead of failing validation with "requires parameter".
+        result = sim._dispatch_action("remove_object", {"robot_name": "ghost"})
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "ghost" in text
+        assert "requires parameter" not in text
+
+    def test_name_alias_feeds_a_robot_name_param(self, sim):
+        # stop_policy's signature uses ``robot_name``; passing ``name`` must
+        # resolve to it. Proof: the method reports the named robot is unknown,
+        # rather than treating robot_name as empty (its default).
+        result = sim._dispatch_action("stop_policy", {"name": "ghost"})
+        assert result["status"] == "error"
+        assert "ghost" in result["content"][0]["text"]
+
 
 class TestRouterKwargsPassthrough:
     """Methods with **kwargs in signature accept unknown params without error."""
