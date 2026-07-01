@@ -10,9 +10,15 @@ that does not need a running VERA server or GPU:
   binding) -- joint-name binding, trailing-gripper extras, and the warn-once
   unbound fallback that emits ``action_i`` keys.
 * ``VeraPolicy.close`` -- fail-soft client close plus managed-runner stop.
+* ``_resolve_view_keys`` / ``_extract_frame`` -- camera-view precedence
+  (explicit ``image_keys`` > server ``view_keys`` > discovered frames) and the
+  width-concatenation of the selected views into one context frame.
+* ``_ensure_started`` -- start-the-runner-once handshake and the live
+  ``motion_plan_scale`` configure call.
+* ``VeraPolicy.reset`` -- seed forwarding and best-effort server-error swallow.
 
-All assertions are on observable outputs (returned arrays/dicts, emitted log
-records, recorded runner calls), not internal state.
+All assertions are on observable outputs (returned arrays/dicts, the recorded
+wire payload sent to the fake client, emitted log records), not internal state.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ import sys
 import numpy as np
 import pytest
 
+from strands_robots.policies.vera.config import VeraConfig
 from strands_robots.policies.vera.provider import (
     VeraPolicy,
     _resize_frame,
@@ -96,17 +103,23 @@ class _FakeClient:
         self._chunk = np.asarray(action_chunk, dtype=np.float32)
         self._raise_on_close = raise_on_close
         self.closed = False
+        # Recorded wire traffic (observable outputs for assertions).
+        self.infer_requests: list[dict] = []
+        self.reset_calls: list[dict | None] = []
+        self.configure_calls: list[dict] = []
 
     def get_server_metadata(self):
         return dict(self._meta)
 
     def infer(self, observation):
+        self.infer_requests.append(observation)
         return {"action": self._chunk}
 
     def reset(self, reset_info=None):
-        pass
+        self.reset_calls.append(reset_info)
 
     def configure(self, params):
+        self.configure_calls.append(params)
         return {"applied": params}
 
     def close(self):
@@ -188,3 +201,120 @@ class TestClose:
         policy, _ = _policy({}, [[0.0]], client=client, runner=None)
         policy.close()
         assert client.closed is True
+
+
+def _cfg(**kw):
+    """A VeraConfig with a tiny per-view render width and no auto-launch.
+
+    render_width=8 keeps the width-concatenated context tensor small; the
+    provider squares each view to this width before stacking, so assertions on
+    ``context_rgb`` shape stay cheap and exact.
+    """
+    kw.setdefault("embodiment", "mimicgen")
+    kw.setdefault("render_width", 8)
+    kw.setdefault("auto_launch_server", False)
+    return VeraConfig(**kw)
+
+
+def _cam(h=4, w=4):
+    return np.zeros((h, w, 3), dtype=np.uint8)
+
+
+class TestViewResolution:
+    """``_resolve_view_keys`` picks camera keys by precedence: explicit >
+    server-advertised ``view_keys`` > frames discovered in the observation, and
+    ``_extract_frame`` width-concatenates the selected views into one frame."""
+
+    def test_explicit_image_keys_win_over_extra_cameras(self):
+        meta = {"action_space": "pos", "context_frames": 1}
+        client = _FakeClient(meta, [[0.0, 0.0]])
+        policy = VeraPolicy(image_keys=["front"], client=client, config=_cfg())
+        obs = {"front": _cam(), "wrist": _cam(), "joint0": 0.1}
+        asyncio.run(policy.get_actions(obs, ""))
+        req = client.infer_requests[-1]
+        # Only the explicitly requested view is sent; the extra camera is dropped.
+        assert req["view_keys"] == ["front"]
+        assert req["view_widths"] == [8]
+        assert req["context_rgb"].shape[1:] == (8, 8, 3)  # single squared view
+
+    def test_server_view_keys_select_and_order_matching_cameras(self):
+        # Server advertises its own view order; the provider honours it even when
+        # the observation dict enumerates the cameras in a different order.
+        meta = {"action_space": "pos", "context_frames": 1, "view_keys": ["cam_right", "cam_left"]}
+        client = _FakeClient(meta, [[0.0]])
+        policy = VeraPolicy(client=client, config=_cfg())
+        obs = {"cam_left": _cam(), "cam_right": _cam(), "gripper": 0.0}
+        asyncio.run(policy.get_actions(obs, ""))
+        req = client.infer_requests[-1]
+        assert req["view_keys"] == ["cam_right", "cam_left"]  # server order, not obs order
+        assert req["view_widths"] == [8, 8]
+        assert req["context_rgb"].shape[1:] == (8, 16, 3)  # two views width-concatenated
+
+    def test_discovered_frames_used_when_server_advertises_no_views(self):
+        # No explicit keys and no server view_keys: fall back to every (H, W, 3)
+        # frame found in the observation, in dict order.
+        meta = {"action_space": "pos", "context_frames": 1}
+        client = _FakeClient(meta, [[0.0]])
+        policy = VeraPolicy(client=client, config=_cfg())
+        obs = {"top": _cam(), "side": _cam(), "elbow": 0.2}
+        asyncio.run(policy.get_actions(obs, ""))
+        req = client.infer_requests[-1]
+        assert req["view_keys"] == ["top", "side"]
+        assert req["context_rgb"].shape[1:] == (8, 16, 3)
+
+    def test_no_camera_frame_raises_actionable_valueerror(self):
+        meta = {"action_space": "pos", "context_frames": 1}
+        client = _FakeClient(meta, [[0.0]])
+        policy = VeraPolicy(client=client, config=_cfg())
+        with pytest.raises(ValueError, match="at least one camera frame"):
+            asyncio.run(policy.get_actions({"joint0": 0.1}, ""))
+
+
+class TestServerHandshake:
+    """``_ensure_started`` starts the managed runner exactly once and applies
+    live-tunable knobs (``motion_plan_scale``) via a single ``configure`` call."""
+
+    def test_motion_plan_scale_applied_once_and_runner_started_once(self):
+        meta = {"action_space": "pos", "context_frames": 1}
+        client = _FakeClient(meta, [[0.0]])
+        runner = _FakeRunner()
+        policy = VeraPolicy(client=client, server_runner=runner, config=_cfg(motion_plan_scale=1.5))
+        asyncio.run(policy.get_actions(_img_obs(), ""))
+        asyncio.run(policy.get_actions(_img_obs(), ""))  # second call must not re-handshake
+        assert runner.start_calls == 1
+        assert client.configure_calls == [{"motion_plan_scale": 1.5}]
+
+    def test_no_configure_call_when_motion_plan_scale_unset(self):
+        meta = {"action_space": "pos", "context_frames": 1}
+        client = _FakeClient(meta, [[0.0]])
+        policy = VeraPolicy(client=client, config=_cfg())  # motion_plan_scale defaults to None
+        asyncio.run(policy.get_actions(_img_obs(), ""))
+        assert client.configure_calls == []
+
+
+class TestReset:
+    """``reset`` forwards the seed to the server and is fail-soft on errors."""
+
+    def test_reset_forwards_seed_and_reason(self):
+        client = _FakeClient({"action_space": "pos"}, [[0.0]])
+        policy = VeraPolicy(client=client, config=_cfg())
+        policy.reset(seed=7)
+        assert client.reset_calls[-1]["seed"] == 7
+        assert client.reset_calls[-1]["reason"] == "eval_episode"
+
+    def test_reset_omits_seed_when_none(self):
+        client = _FakeClient({"action_space": "pos"}, [[0.0]])
+        policy = VeraPolicy(client=client, config=_cfg())
+        policy.reset()
+        assert "seed" not in client.reset_calls[-1]
+
+    def test_reset_is_best_effort_when_server_errors(self, caplog):
+        class _BoomClient(_FakeClient):
+            def reset(self, reset_info=None):
+                raise RuntimeError("server down")
+
+        client = _BoomClient({"action_space": "pos"}, [[0.0]])
+        policy = VeraPolicy(client=client, config=_cfg())
+        with caplog.at_level(logging.INFO, logger="strands_robots.policies.vera.provider"):
+            policy.reset()  # must not raise despite the server error
+        assert any("best-effort failed" in r.getMessage() for r in caplog.records)
