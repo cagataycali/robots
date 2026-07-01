@@ -160,8 +160,20 @@ class RandomizationMixin:
                             qpos_addr = model.jnt_qposadr[jnt_id]
                             noise = rng.uniform(-position_noise, position_noise, size=3)
                             data.qpos[qpos_addr : qpos_addr + 3] += noise
-                mj.mj_forward(model, data)
                 changes.append(f"Positions: ±{position_noise}m noise on dynamic objects")
+
+            # Recompute derived state so the sim is left render-ready. Several
+            # randomization axes mutate model arrays whose rendered/simulated
+            # effect flows through data: light_pos -> data.light_xpos (the
+            # array the renderer reads, NOT model.light_pos), and object qpos ->
+            # body xpos. Without a forward the next render()/get_observation()
+            # keeps stale derived values, so a light-position jitter is a silent
+            # visual no-op until some later mj_step. Mirror the mutate-then-
+            # forward contract already used by reset(), load_scene() and
+            # move_object(). Guarded on ``changes`` so a no-flag call stays a
+            # true no-op.
+            if changes:
+                mj.mj_forward(model, data)
 
         return {
             "status": "success",

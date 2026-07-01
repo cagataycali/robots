@@ -20,6 +20,8 @@ sim.randomize(
 
 **Destructive** - writes into MuJoCo model arrays. To restore: `load_scene(...)` or recreate the sim.
 
+`randomize()` leaves the sim in a forwarded, render-ready state: the next `render()` / `get_observation()` reflects the perturbation immediately, with no manual `step()` in between. This matters for lighting in particular - the renderer reads light positions from the derived `data.light_xpos`, not `model.light_pos`, so a light-position jitter only reaches a render after a forward.
+
 ## Categories
 
 | Flag | What changes | Range param |
