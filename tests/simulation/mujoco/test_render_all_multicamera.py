@@ -158,3 +158,58 @@ class TestRenderAllRealRender:
         for blk in image_blocks:
             assert blk["image"]["format"] == "png"
             assert blk["image"]["source"]["bytes"]
+
+
+class TestRenderAllNamespacedCameraResolution:
+    """``render_all`` resolves short camera names against namespaced ones.
+
+    Robots attach their cameras under a ``<robot>/<cam>`` namespace (e.g.
+    ``arm0/wrist``). ``_active_camera_list`` lets a caller request the short
+    suffix (``wrist``) and resolves it to the unique namespaced camera. These
+    drive the real resolver (not the stubbed one used by the aggregation
+    tests) via the public ``render_all`` surface, stubbing only per-camera
+    ``render`` so the assertions stay deterministic without a GPU.
+    """
+
+    def test_short_name_resolves_to_unique_namespaced_camera(self, sim: Simulation, monkeypatch) -> None:
+        """A short name maps to the single namespaced camera ending in ``/<name>``."""
+        sim.create_world()
+        assert (
+            sim.add_camera(name="arm0/wrist", position=[0.4, 0.0, 0.5], target=[0.0, 0.0, 0.2])["status"] == "success"
+        )
+        monkeypatch.setattr(sim, "render", lambda camera_name, width, height: _fake_render(camera_name))
+
+        r = sim.render_all(cameras=["wrist"])
+        assert r["status"] == "success"
+        assert "1 ok, 0 failed, 1 requested" in r["content"][0]["text"]
+        # The resolved (namespaced) name is what actually gets rendered/labelled.
+        assert r["content"][1]["text"] == "arm0/wrist"
+
+    def test_exact_namespaced_name_passes_through(self, sim: Simulation, monkeypatch) -> None:
+        """A fully-qualified namespaced name matches directly (no suffix search)."""
+        sim.create_world()
+        assert (
+            sim.add_camera(name="arm0/wrist", position=[0.4, 0.0, 0.5], target=[0.0, 0.0, 0.2])["status"] == "success"
+        )
+        monkeypatch.setattr(sim, "render", lambda camera_name, width, height: _fake_render(camera_name))
+
+        r = sim.render_all(cameras=["arm0/wrist"])
+        assert r["status"] == "success"
+        assert r["content"][1]["text"] == "arm0/wrist"
+
+    def test_ambiguous_short_name_is_unresolved(self, sim: Simulation, monkeypatch) -> None:
+        """A short name matching two namespaced cameras is ambiguous -> error, not a guess."""
+        sim.create_world()
+        assert (
+            sim.add_camera(name="arm0/wrist", position=[0.4, 0.0, 0.5], target=[0.0, 0.0, 0.2])["status"] == "success"
+        )
+        assert (
+            sim.add_camera(name="arm1/wrist", position=[-0.4, 0.0, 0.5], target=[0.0, 0.0, 0.2])["status"] == "success"
+        )
+        # render must never be reached for an unresolved request.
+        monkeypatch.setattr(sim, "render", lambda camera_name, width, height: _fake_render(camera_name))
+
+        r = sim.render_all(cameras=["wrist"])
+        assert r["status"] == "error"
+        msg = r["content"][0]["text"]
+        assert "wrist" in msg  # the ambiguous request is named back to the caller
