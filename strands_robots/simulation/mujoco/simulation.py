@@ -1416,7 +1416,6 @@ class MuJoCoSimEngine(
         is_static: bool | None = None,
         mesh_path: str | None = None,
         material: dict[str, Any] | None = None,
-        **kwargs: Any,
     ) -> dict[str, Any]:
         """Add a primitive or mesh object to the live MuJoCo scene.
 
@@ -1459,7 +1458,6 @@ class MuJoCoSimEngine(
                 True; other shapes default to dynamic.
             mesh_path: Mesh asset path; required and only used when
                 ``shape="mesh"``.
-            **kwargs: Reserved for backend-specific extensions; currently ignored.
 
         Returns:
             Agent-tool status dict. ``{"status": "success", ...}`` on success;

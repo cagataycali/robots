@@ -142,16 +142,26 @@ class TestRouterValidatesVectorDims:
 class TestRouterKwargsPassthrough:
     """Methods with **kwargs in signature accept unknown params without error."""
 
-    def test_add_object_accepts_extra_kwargs(self, sim):
-        # add_object has **kwargs so extra params are allowed (backwards compat).
-        result = sim._dispatch_action(
-            "add_object",
-            {"name": "box1", "shape": "box", "future_flag": True},
+    def test_router_skips_unknown_check_for_var_keyword_methods(self, sim):
+        # The router's unknown-parameter guard is skipped only for methods that
+        # genuinely declare **kwargs; extra keys are dropped (not rejected).
+        # Verified directly against the validator, because no dispatchable
+        # action currently relies on this branch: add_object used to, but its
+        # signature is identical across backends and now rejects unknown params
+        # instead of silently dropping them (see
+        # test_add_object_rejects_unknown_kwargs.py).
+        import inspect
+
+        def fake(self, name, **kwargs):  # noqa: ANN001, ANN002, ANN202
+            ...
+
+        sig = inspect.signature(fake)
+        kwargs, err = sim._validate_and_build_kwargs(
+            "fake", "fake", sig, {"name": "x", "future_flag": True}
         )
-        # Either success (extra key ignored) or a proper runtime error; must NOT
-        # be an "unknown parameter" router rejection.
-        if result["status"] == "error":
-            assert "Unknown parameter" not in result["content"][0]["text"]
+        assert err is None
+        # only declared params are forwarded; the extra key is dropped silently
+        assert kwargs == {"name": "x"}
 
 
 class TestToolSpecMethodParity:

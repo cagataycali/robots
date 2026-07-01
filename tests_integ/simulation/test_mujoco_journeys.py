@@ -108,8 +108,8 @@ def test_j1_scene_build_multi_robot_multi_camera():
         ("blue_ball", "sphere", [0.03, 0.03, 0.03], [0.0, 0.25, 0.05], [0, 0, 1, 1]),
         ("green_rod", "cylinder", [0.02, 0.02, 0.08], [0.2, 0.25, 0.08], [0, 1, 0, 1]),
     ]
-    for name, shape, size, pos, rgba in shapes:
-        r = sim.add_object(name=name, shape=shape, size=size, position=pos, rgba=rgba)
+    for name, shape, size, pos, color in shapes:
+        r = sim.add_object(name=name, shape=shape, size=size, position=pos, color=color)
         assert r["status"] == "success", r
 
     # 4 user-defined cameras

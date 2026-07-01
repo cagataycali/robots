@@ -352,7 +352,6 @@ class SimEngine(ABC):
         is_static: bool = False,
         mesh_path: str | None = None,
         material: dict[str, Any] | None = None,
-        **kwargs: Any,
     ) -> dict[str, Any]:
         """Add a primitive or mesh object to the scene.
 

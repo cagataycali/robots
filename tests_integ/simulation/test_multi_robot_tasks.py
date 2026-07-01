@@ -35,8 +35,8 @@ def dual_robot_world():
     sim.create_world(timestep=0.002, gravity=[0, 0, -9.81])
     sim.add_robot("alice", data_config="so101", position=[-0.25, 0.0, 0.0])
     sim.add_robot("bob", data_config="so101", position=[0.25, 0.0, 0.0])
-    sim.add_object("red_cube", shape="box", size=[0.025, 0.025, 0.025], position=[-0.15, 0.2, 0.05], rgba=[1, 0, 0, 1])
-    sim.add_object("blue_ball", shape="sphere", size=[0.03, 0.03, 0.03], position=[0.15, 0.2, 0.05], rgba=[0, 0, 1, 1])
+    sim.add_object("red_cube", shape="box", size=[0.025, 0.025, 0.025], position=[-0.15, 0.2, 0.05], color=[1, 0, 0, 1])
+    sim.add_object("blue_ball", shape="sphere", size=[0.03, 0.03, 0.03], position=[0.15, 0.2, 0.05], color=[0, 0, 1, 1])
     sim.add_camera("top", position=[0, 0, 0.9], target=[0, 0.2, 0.05])
     # Per-robot wrist cameras: the "/" namespace separator is normalised to
     # "__" in recorded LeRobot feature names (observation.images.alice__wrist_cam).

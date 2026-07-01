@@ -427,7 +427,6 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         is_static: bool = False,
         mesh_path: str | None = None,
         material: dict[str, Any] | None = None,
-        **kwargs: Any,
     ) -> dict[str, Any]:
         """Add a primitive or mesh object to the scene.
 
@@ -452,7 +451,6 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 Newton backend yet; a non-``None`` value is rejected loudly
                 rather than silently dropped (use the MuJoCo backend for
                 matte/textured surfaces).
-            **kwargs: Ignored.
 
         Returns:
             Status dict.

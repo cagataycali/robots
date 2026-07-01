@@ -5,6 +5,28 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `add_object` rejects unknown keyword arguments instead of silently dropping them
+
+`Simulation.add_object` declared `**kwargs` on both the MuJoCo and Newton
+backends, documented as "reserved for backend-specific extensions; currently
+ignored". In practice the two signatures are identical and carry no
+backend-specific parameters, so the `**kwargs` only served to swallow caller
+mistakes. Passing MuJoCo's native `add_object(rgba=[1, 0, 0, 1])`, or a typo
+such as `colour=`/`radius=`, silently discarded the argument and returned
+`{"status": "success"}` while creating a default-grey object -- the
+"success contract, wrong physical effect" failure mode the project forbids
+elsewhere ("never warn-and-continue; no silent defaults"). The agent-dispatch
+router (`sim(action="add_object", ...)`) reproduced the same silent drop because
+it skips its "Unknown parameter" guard for `**kwargs` methods.
+
+`add_object` now takes only its declared parameters. The agent-dispatch path
+reports a structured error naming the offending parameter and listing the valid
+ones (`rgba` -> use `color`); a direct Python call raises `TypeError`. The
+constructor's and `create_world`'s `**kwargs` are unchanged -- those carry
+genuine cross-backend forward-compat parameters (`num_envs`/`device`) that a
+parallel backend consumes and MuJoCo ignores.
+
+
 ### Security: Hardened MuJoCo `render(output_path=...)` against path traversal, symlink, oversize, and partial-write corruption
 
 `render(output_path=...)` is an LLM-callable tool, so its destination path is
