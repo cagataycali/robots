@@ -293,7 +293,13 @@ vera-sim = [
     "gym-pusht==0.1.5",
     "robomimic==0.5.0",
     "robosuite==1.4.1",
-    "mimicgen==1.0.0",
+    # MimicGen (NVlabs) is NOT published to PyPI -- the `mimicgen` name on PyPI
+    # is an unaffiliated third-party package, so pinning it here is a
+    # dependency-confusion risk and it is not imported anywhere in the source.
+    # The `mimicgen` VERA *embodiment* is just a config string and does not need
+    # the package. If you genuinely need NVlabs MimicGen for data generation,
+    # install it from source:
+    #     pip install "mimicgen @ git+https://github.com/NVlabs/mimicgen.git"
     "mujoco>=3.5.0",
     "imageio",
 ]

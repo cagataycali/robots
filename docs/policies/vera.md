@@ -199,5 +199,16 @@ pip install 'strands-robots[vera]'        # provider + the VERA git dep (subproc
 pip install 'strands-robots[vera-sim]'    # + MimicGen sim deps for the example (also pulls the experimental PushT env)
 ```
 
+> **Note on MimicGen.** The `vera-sim` extra does **not** install NVlabs
+> MimicGen: that project has no PyPI release, and the `mimicgen` name on
+> PyPI is an unaffiliated package (a dependency-confusion risk), so it is
+> intentionally not pinned here. The `mimicgen` VERA *embodiment* is just a
+> config string and needs no such package. If you genuinely need NVlabs
+> MimicGen for data generation, install it from source:
+>
+> ```bash
+> pip install "mimicgen @ git+https://github.com/NVlabs/mimicgen.git"
+> ```
+
 For the **docker** path the host needs only `websockets` + `msgpack` (the client
 transport) — no `vera`, no torch.

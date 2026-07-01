@@ -48,6 +48,16 @@ so the provider:
    arm joints are read back by qpos address (robust to free-body DOFs).
 4. The gripper column is binarized and routed to the Panda's finger joints.
 
+> **Note.** This demo uses VERA's `mimicgen` *embodiment* (a config string),
+> not the NVlabs MimicGen package -- which has no PyPI release. The
+> `mimicgen` name on PyPI is unaffiliated (a dependency-confusion risk) and
+> is intentionally not a dependency. If you need NVlabs MimicGen for data
+> generation, install it from source:
+>
+> ```bash
+> pip install "mimicgen @ git+https://github.com/NVlabs/mimicgen.git"
+> ```
+
 ## See also
 
 - Provider docs: [`docs/policies/vera.md`](../../docs/policies/vera.md)
