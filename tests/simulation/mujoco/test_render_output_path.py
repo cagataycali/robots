@@ -33,14 +33,14 @@ def sandbox(tmp_path, monkeypatch):
 
 
 def test_accepts_path_inside_sandbox(sandbox):
-    """A path inside the sandbox resolves and writes with 0o644 perms."""
+    """A path inside the sandbox resolves and writes with 0o600 perms."""
     target = sandbox / "sub" / "ok.png"
     saved = _save_render_png(str(target), PNG)
     assert os.path.realpath(saved) == os.path.realpath(str(target))
     assert target.read_bytes() == PNG
-    assert oct(target.stat().st_mode & 0o777) == "0o644"
-    # the directory we created is 0o755
-    assert oct((sandbox / "sub").stat().st_mode & 0o777) == "0o755"
+    assert oct(target.stat().st_mode & 0o777) == "0o600"
+    # the directory we created is 0o700 (owner-only)
+    assert oct((sandbox / "sub").stat().st_mode & 0o777) == "0o700"
 
 
 @pytest.mark.parametrize(
@@ -128,8 +128,8 @@ def test_atomic_write_preserves_existing_on_failure(sandbox, monkeypatch):
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX permission semantics")
 def test_created_file_and_dir_permissions(sandbox):
-    """Created files are 0o644 and freshly created dirs are 0o755."""
+    """Created files are 0o600 and freshly created dirs are 0o700 (owner-only)."""
     target = sandbox / "deep" / "shot.png"
     _save_render_png(str(target), PNG)
-    assert oct(target.stat().st_mode & 0o777) == "0o644"
-    assert oct((sandbox / "deep").stat().st_mode & 0o777) == "0o755"
+    assert oct(target.stat().st_mode & 0o777) == "0o600"
+    assert oct((sandbox / "deep").stat().st_mode & 0o777) == "0o700"

@@ -61,5 +61,6 @@ print("4. Resolve the policy class registered as 'act'")
 print("=" * 70)
 print(text(call(module="policies.factory", method="get_policy_class", parameters={"name": "act"}))[:400])
 
-print("\nDone. In an agent, ask in natural language: "
-      "\"List the LeRobot policies I can use, then describe the ACT policy.\"")
+print(
+    '\nDone. In an agent, ask in natural language: "List the LeRobot policies I can use, then describe the ACT policy."'
+)

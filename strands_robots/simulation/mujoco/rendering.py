@@ -101,14 +101,15 @@ def _atomic_write_png(path: Path, data: bytes) -> None:
 
     Writes to a temp file in the destination directory then ``os.replace``s it
     into place, so a crash mid-write cannot truncate or corrupt an existing file
-    at ``path``. Created directories are ``0o755`` and the final file is ``0o644``.
+    at ``path``. Created directories are ``0o700`` and the final file is ``0o600``
+    (owner-only; the render sandbox is private to the running user).
     """
     parent = path.parent
     parent_existed = parent.exists()
     parent.mkdir(parents=True, exist_ok=True)
     if not parent_existed:
         with contextlib.suppress(OSError):
-            os.chmod(parent, 0o755)
+            os.chmod(parent, 0o700)
 
     fd, tmp = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=parent)
     try:
@@ -119,7 +120,7 @@ def _atomic_write_png(path: Path, data: bytes) -> None:
         with contextlib.suppress(OSError):
             os.unlink(tmp)
         raise
-    os.chmod(path, 0o644)
+    os.chmod(path, 0o600)
 
 
 def _save_render_png(output_path: str, png_bytes: bytes) -> str:
