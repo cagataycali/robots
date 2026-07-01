@@ -1317,3 +1317,58 @@ class TestStartRestartDispatch:
         result = gr00t_inference(action="teleport")
         assert result["status"] == "error"
         assert "Unknown action: teleport" in result["message"]
+
+
+class TestDispatchBoundarySecurity:
+    """Agent-supplied inputs are validated at the dispatch boundary.
+
+    ``gr00t_inference`` is a security-sensitive tool: it resolves a container
+    image, bind-mounts a host directory, and downloads checkpoints. Untrusted
+    inputs (a prompt-injected ``hf_local_dir``, an operator-misconfigured image
+    name) must be rejected with a structured error BEFORE any docker/subprocess
+    or filesystem sink is touched - never raised past the dispatcher.
+    """
+
+    def test_hf_local_dir_traversal_rejected_before_download(self, monkeypatch):
+        """A protected ``hf_local_dir`` is refused before download runs.
+
+        ``/etc`` is a blocked host path; the guard must fire at the boundary so
+        the same rejection covers download, start_container, and lifecycle
+        (all of which sink the value). If the guard is skipped, the download
+        helper would be invoked - so we also assert it is never called.
+        """
+        called = []
+        monkeypatch.setattr(
+            "strands_robots.tools.gr00t_inference._download_checkpoint",
+            lambda **kw: called.append(kw) or {"status": "success"},
+        )
+        result = gr00t_inference(
+            action="download_checkpoint",
+            hf_repo="org/model",
+            hf_local_dir="/etc",
+        )
+        assert result["status"] == "error"
+        assert "/etc" in result["message"]
+        assert called == []
+
+    @pytest.mark.parametrize("action", ["build_image", "start_container", "lifecycle"])
+    def test_non_allowlisted_image_rejected_for_every_action(self, monkeypatch, action):
+        """A charset-valid but non-allowlisted image fails closed on each action.
+
+        The three actions that resolve+run a container image (build_image,
+        start_container, lifecycle) must all reject an image outside the
+        allowlist rather than shelling out to docker with it.
+        """
+        monkeypatch.delenv("STRANDS_GR00T_IMAGE_ALLOW", raising=False)
+        monkeypatch.setenv("STRANDS_GR00T_IMAGE", "registry.example.com/rogue:latest")
+        result = gr00t_inference(action=action, checkpoint_path="/cp")
+        assert result["status"] == "error"
+        assert "not in the allowlist" in result["message"]
+        assert "registry.example.com/rogue:latest" in result["message"]
+
+    def test_download_checkpoint_requires_hf_repo(self):
+        """``download_checkpoint`` without ``hf_repo`` returns a structured
+        error naming the missing required parameter."""
+        result = gr00t_inference(action="download_checkpoint")
+        assert result["status"] == "error"
+        assert "hf_repo" in result["message"]
