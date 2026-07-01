@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 
 from strands_robots.policies.lerobot_local import molmoact2
@@ -222,3 +223,69 @@ class TestSelectiveEviction:
             policy_mod._MODEL_CACHE[("generic", "owner/model-a", "cpu")] = object()
         assert clear_model_cache("owner/not-loaded") == 0
         assert len(list_cached_models()) == 1
+
+
+class TestGpuReleaseBestEffort:
+    """clear_model_cache releases the CUDA allocator best-effort after eviction.
+
+    Dropping the entries is the contract that matters: once they are gone, a
+    failure while returning freed GPU memory to the driver (no live CUDA
+    context, a driver hiccup) must not turn a successful clear into an error.
+    These pin that (a) the allocator release is attempted when CUDA is present
+    and (b) a raising release is swallowed so the reported eviction count still
+    stands. On CPU-only torch the release is skipped entirely, so the failure
+    path is otherwise never exercised.
+
+    The module-level ``torch`` reference is replaced with a fake so the CUDA
+    branch is driven deterministically regardless of the host torch build.
+    """
+
+    def setup_method(self):
+        clear_model_cache()
+
+    def teardown_method(self):
+        clear_model_cache()
+
+    @staticmethod
+    def _seed_one_entry():
+        from strands_robots.policies.lerobot_local import policy as policy_mod
+
+        with policy_mod._MODEL_CACHE_LOCK:
+            policy_mod._MODEL_CACHE[("generic", "owner/model", "cuda")] = object()
+
+    @staticmethod
+    def _fake_torch(available, empty_cache_exc=None):
+        fake = MagicMock()
+        fake.cuda.is_available.return_value = available
+        if empty_cache_exc is not None:
+            fake.cuda.empty_cache.side_effect = empty_cache_exc
+        return fake
+
+    def test_allocator_released_when_cuda_available(self):
+        self._seed_one_entry()
+        fake = self._fake_torch(available=True)
+        with patch("strands_robots.policies.lerobot_local.policy.torch", fake):
+            evicted = clear_model_cache()
+        assert evicted == 1
+        assert list_cached_models() == []
+        fake.cuda.empty_cache.assert_called_once()
+
+    def test_allocator_release_skipped_without_cuda(self):
+        self._seed_one_entry()
+        fake = self._fake_torch(available=False)
+        with patch("strands_robots.policies.lerobot_local.policy.torch", fake):
+            evicted = clear_model_cache()
+        assert evicted == 1
+        assert list_cached_models() == []
+        fake.cuda.empty_cache.assert_not_called()
+
+    @pytest.mark.parametrize("exc", [RuntimeError("no CUDA context"), AssertionError("driver hiccup")])
+    def test_release_failure_does_not_fail_the_clear(self, exc):
+        self._seed_one_entry()
+        fake = self._fake_torch(available=True, empty_cache_exc=exc)
+        with patch("strands_robots.policies.lerobot_local.policy.torch", fake):
+            # A failing allocator release must be swallowed: the eviction
+            # already happened, so clear_model_cache still returns its count.
+            evicted = clear_model_cache()
+        assert evicted == 1
+        assert list_cached_models() == []
