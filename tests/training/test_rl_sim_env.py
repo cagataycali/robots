@@ -136,3 +136,67 @@ def test_close_is_noop() -> None:
     env = SimEnv(_engine(_OneJointEngine()), actor_obs_keys=["J"], reward_terms=[lambda e: 1.0], action_dim=1)
     # close() owns no resources (engine lifecycle is the caller's); it must not raise.
     env.close()
+
+
+# --- termination vs truncation classification (the SAC/PPO bootstrap contract) ---
+#
+# ``step`` MUST report a time-out (episode-length limit) and a genuine success
+# terminal as DISTINCT events: a time-out is a truncation whose successor value
+# is still bootstrapped, while a success is a terminal that stops the value
+# backup. Collapsing the two -- surfacing a time-out as ``terminated`` -- silently
+# breaks the off-policy target (the FastTD3 truncation-bootstrap bug, fixed
+# upstream Jun 2025). These pin that the flags never collapse.
+
+
+def test_step_timeout_is_truncation_not_terminal() -> None:
+    """A time-out sets done=1 but reports time_out (bootstrappable), NOT terminated."""
+    # max_episode_steps=1 -> the first step is a time-out; no success_fn -> never a terminal.
+    env = SimEnv(
+        _engine(_OneJointEngine()),
+        actor_obs_keys=["J"],
+        reward_terms=[lambda e: 1.0],
+        action_dim=1,
+        max_episode_steps=1,
+    )
+    env.reset()
+    _, _, done, info = env.step(torch.zeros(1, 1))
+    assert float(done.reshape(-1)[0]) == 1.0  # episode ends (the caller resets)
+    assert info["time_out"] is True  # ...but as a truncation -> bootstrap the value
+    assert info["terminated"] is False  # a time-out is NOT a terminal state
+
+
+def test_step_success_is_terminal_not_truncation() -> None:
+    """A success_fn hit sets terminated (no bootstrap), NOT time_out; disproves always-False."""
+    # success on the first step, with head-room before the time-out limit so the
+    # two conditions are unambiguously separable.
+    env = SimEnv(
+        _engine(_OneJointEngine()),
+        actor_obs_keys=["J"],
+        reward_terms=[lambda e: 1.0],
+        action_dim=1,
+        max_episode_steps=99,
+        success_fn=lambda e: True,
+    )
+    env.reset()
+    _, _, done, info = env.step(torch.zeros(1, 1))
+    assert float(done.reshape(-1)[0]) == 1.0
+    assert info["terminated"] is True  # genuine terminal -> stop the value backup
+    assert info["time_out"] is False  # not a truncation
+
+
+def test_step_truncation_boundary_is_exact() -> None:
+    """time_out fires exactly at step == max_episode_steps, not the step before."""
+    env = SimEnv(
+        _engine(_OneJointEngine()),
+        actor_obs_keys=["J"],
+        reward_terms=[lambda e: 1.0],
+        action_dim=1,
+        max_episode_steps=2,
+    )
+    env.reset()
+    _, _, done1, info1 = env.step(torch.zeros(1, 1))
+    assert float(done1.reshape(-1)[0]) == 0.0  # step 1 of 2 -> not yet a time-out
+    assert info1["time_out"] is False
+    _, _, done2, info2 = env.step(torch.zeros(1, 1))
+    assert float(done2.reshape(-1)[0]) == 1.0  # step 2 == limit -> time-out
+    assert info2["time_out"] is True
