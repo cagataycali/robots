@@ -107,3 +107,55 @@ def test_move_unknown_object_errors(sim):
     result = sim.move_object("ghost", position=[0.0, 0.0, 0.0])
     assert result["status"] == "error", result
     assert "ghost" in result["content"][0]["text"]
+
+
+# The corrected static-object path routes through
+# ``reposition_body_in_scene`` (edit spec pose + recompile). That helper is
+# documented to return ``True`` on success and ``False`` when the spec/body is
+# missing or the recompile fails, so the ``move_object`` facade can surface a
+# loud error instead of the old silent no-op. The tests below pin that
+# failure contract - both the helper's bool return and the facade's
+# error-surfacing that depends on it.
+
+from strands_robots.simulation.mujoco import simulation as _sim_mod  # noqa: E402
+from strands_robots.simulation.mujoco.scene_ops import reposition_body_in_scene  # noqa: E402
+
+
+def test_reposition_missing_body_returns_false(sim):
+    """Repositioning a body absent from the spec is a clean False, not a crash.
+
+    A tracked object could desync from the compiled spec; the helper must
+    report the miss so the caller surfaces an error rather than silently
+    "succeeding" on a body that does not exist.
+    """
+    sim.add_object("wall", shape="box", size=[0.2, 0.02, 0.1], position=[0.3, 0.0, 0.1], is_static=True)
+    assert reposition_body_in_scene(sim._world, "no_such_body", position=[0.1, 0.2, 0.3]) is False
+
+
+def test_reposition_without_compiled_model_returns_false(sim):
+    """No compiled model -> the helper cannot recompile, so it returns False."""
+    sim.add_object("wall", shape="box", size=[0.2, 0.02, 0.1], position=[0.3, 0.0, 0.1], is_static=True)
+    saved_model = sim._world._model
+    sim._world._model = None
+    try:
+        assert reposition_body_in_scene(sim._world, "wall", position=[0.1, 0.2, 0.3]) is False
+    finally:
+        sim._world._model = saved_model
+
+
+def test_move_static_object_surfaces_error_when_reposition_fails(sim, monkeypatch):
+    """A failed static reposition must yield status=error, never silent success.
+
+    This locks the anti-silent-no-op contract at the facade boundary: when the
+    underlying spec-recompile cannot relocate the body, ``move_object`` reports
+    an error and leaves the stored ``SimObject`` pose untouched.
+    """
+    sim.add_object("wall", shape="box", size=[0.2, 0.02, 0.1], position=[0.3, 0.0, 0.1], is_static=True)
+    monkeypatch.setattr(_sim_mod, "reposition_body_in_scene", lambda *a, **k: False)
+
+    result = sim.move_object("wall", position=[0.5, 0.1, 0.2])
+
+    assert result["status"] == "error", result
+    assert "wall" in result["content"][0]["text"]
+    # The stored pose must NOT advance to the requested position on failure.
+    assert list(sim._world.objects["wall"].position) == pytest.approx([0.3, 0.0, 0.1])
