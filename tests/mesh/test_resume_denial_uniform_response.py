@@ -28,20 +28,19 @@ from __future__ import annotations
 import threading
 
 import strands_robots.mesh.core as core
-from strands_robots.mesh.core import Mesh
 
 _GENERIC_ERROR = {"status": "error", "error": "resume rejected"}
 _CODE = "correct-code-1234567890abcdef00"
 
 
-def _stub() -> Mesh:
+def _stub() -> core.Mesh:
     """A Mesh with just enough state for ``_resume_lockout``.
 
     Built via ``__new__`` (bypassing the Zenoh/transport ``__init__``) and given
     a recording ``publish_safety_event`` so tests can assert the exact wire
     payloads emitted by each denial branch.
     """
-    m = Mesh.__new__(Mesh)
+    m = core.Mesh.__new__(core.Mesh)
     m.peer_id = "p"
     m._estop_lockout = threading.Event()
     m._last_estop_ts = 0.0
