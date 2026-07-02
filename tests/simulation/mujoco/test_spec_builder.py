@@ -2,7 +2,8 @@
 
 Tests cover:
 
-* Module-level helpers (``_geom_type``, ``_normalize_size``, ``_target_quat``).
+* Module-level helpers (``_geom_type``, ``_normalize_size``, ``_target_quat``,
+  ``_is_z0_ground_plane``).
 * ``SpecBuilder.build`` produces a compile-valid spec for empty, object-only,
   and camera-only worlds.
 * Mutation helpers (``add_object``, ``remove_body``, ``add_camera``,
@@ -14,6 +15,8 @@ These tests use the actual mujoco AST - they require the ``mujoco`` package.
 """
 
 from __future__ import annotations
+
+import types
 
 import pytest
 
@@ -31,6 +34,7 @@ from strands_robots.simulation.models import (  # noqa: E402
 from strands_robots.simulation.mujoco.spec_builder import (  # noqa: E402
     SpecBuilder,
     _geom_type,
+    _is_z0_ground_plane,
     _normalize_size,
     _target_quat,
 )
@@ -88,6 +92,47 @@ class TestNormalizeSize:
     def test_unknown_shape_raises(self):
         with pytest.raises(ValueError, match="Cannot normalize size"):
             _normalize_size("hyperboloid", [1.0])
+
+    def test_rejects_non_positive_extent(self):
+        # A zero or negative extent on an axis the shape actually consumes
+        # is rejected up front (add_object surfaces this as a clear error
+        # rather than compiling a degenerate geom). The message states the
+        # full-extent convention so a caller can self-correct.
+        with pytest.raises(ValueError, match="extent must be > 0"):
+            _normalize_size("box", [0.2, 0.0, 0.4])
+        with pytest.raises(ValueError, match="extent must be > 0"):
+            _normalize_size("sphere", [-0.1])
+
+
+class TestIsZ0GroundPlane:
+    """The z=0 ground-plane detector used to strip a redundant robot floor
+    when attaching into a world that already owns a ground plane (#363).
+
+    Only an axis-aligned plane sitting at z~0 is treated as the ground; a
+    plane a robot MJCF ships intentionally (an elevated ramp, or one tilted
+    via a non-identity quat such as a wall) must NOT match, so it survives
+    the attach instead of being silently deleted.
+    """
+
+    def test_axis_aligned_z0_plane_is_ground(self):
+        geom = types.SimpleNamespace(pos=[0.0, 0.0, 0.0], quat=[1.0, 0.0, 0.0, 0.0])
+        assert _is_z0_ground_plane(geom) is True
+
+    def test_missing_pos_and_quat_defaults_to_ground(self):
+        # A bare plane geom with neither attribute set defaults to +Z at the
+        # body origin, which is the ground case.
+        geom = types.SimpleNamespace()
+        assert _is_z0_ground_plane(geom) is True
+
+    def test_elevated_plane_is_not_ground(self):
+        geom = types.SimpleNamespace(pos=[0.0, 0.0, 0.5], quat=[1.0, 0.0, 0.0, 0.0])
+        assert _is_z0_ground_plane(geom) is False
+
+    def test_rotated_plane_is_not_ground(self):
+        # A plane rotated off the +Z normal (e.g. a wall or angled ramp
+        # modeled at z=0) has a non-identity quat and must survive attach.
+        geom = types.SimpleNamespace(pos=[0.0, 0.0, 0.0], quat=[0.7071, 0.7071, 0.0, 0.0])
+        assert _is_z0_ground_plane(geom) is False
 
 
 class TestTargetQuat:
