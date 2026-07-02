@@ -1532,6 +1532,13 @@ class PolicyRunner:
             cost and latency masking are provable from the payload. When
             ``spec`` is used, it also contains ``cumulative_reward`` and
             ``avg_reward`` fields per episode and aggregate.
+
+            Every payload carries ``success_measured`` (bool): ``True`` when a
+            success criterion was in force (a ``spec`` or a non-``None``
+            ``success_fn``), ``False`` when neither was given. When ``False`` the
+            reported ``success_rate`` is a hard ``0.0`` that measures nothing
+            (no episode can be marked successful without a criterion), and a
+            warning is logged - check this flag before trusting ``success_rate``.
         """
         if spec is not None and success_fn is not None:
             return {
@@ -1588,6 +1595,24 @@ class PolicyRunner:
             resolved_check = self._resolve_success_fn(success_fn)
         except ValueError as e:
             return {"status": "error", "content": [{"text": f"{e}"}]}
+
+        # A None check means no success criterion was supplied (the
+        # success_fn=None default with no spec). The loop then never sets
+        # success=True, so success_rate reports a hard 0.0 for every
+        # episode - indistinguishable from a policy that genuinely failed
+        # every episode. Warn loudly and flag the payload so 0.0 is not
+        # mistaken for a measurement (mirrors the entry-point guards that
+        # reject other degenerate/fabricated success-rate configs).
+        success_measured = resolved_check is not None
+        if not success_measured:
+            logger.warning(
+                "evaluate()/eval_policy called without a success criterion "
+                "(success_fn=None and no spec): success_rate will be 0.0 for "
+                "every episode regardless of what the policy does and does "
+                "NOT measure task success. Pass success_fn (e.g. 'contact' "
+                "or a callable) or a benchmark spec to measure success; the "
+                "returned json flags this as success_measured=false."
+            )
 
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
@@ -1741,13 +1766,16 @@ class PolicyRunner:
                     "text": (
                         f"Evaluation: {type(policy).__name__} on '{robot_name}'\n"
                         f"Episodes: {n_episodes} | Success: {n_success}/{n_episodes} "
-                        f"({success_rate:.1%})\n"
+                        f"({success_rate:.1%})"
+                        + ("" if success_measured else " [no success criterion - not measured]")
+                        + "\n"
                         f"Avg steps: {avg_steps:.0f}/{max_steps}"
                     )
                 },
                 {
                     "json": {
                         "success_rate": round(success_rate, 4),
+                        "success_measured": success_measured,
                         "n_episodes": n_episodes,
                         "n_success": n_success,
                         "avg_steps": round(avg_steps, 1),
@@ -2075,6 +2103,7 @@ class PolicyRunner:
                 {
                     "json": {
                         "success_rate": round(success_rate, 4),
+                        "success_measured": True,
                         "n_episodes": n_episodes,
                         "n_success": n_success,
                         "n_failure": n_failure,

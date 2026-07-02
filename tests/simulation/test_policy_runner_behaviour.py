@@ -758,3 +758,54 @@ class TestEvaluateOnFrameSuccessFnPath:
         assert result["status"] == "success"
         assert seen, "eval_policy did not forward on_frame to the success_fn path"
         assert seen == sorted(seen)
+
+
+class TestEvaluateSuccessMeasured:
+    """Guard against a silently-meaningless success_rate.
+
+    With no success criterion (``success_fn=None`` and no benchmark spec) an
+    episode can never be marked successful, so ``success_rate`` is a hard
+    ``0.0`` regardless of policy behaviour - indistinguishable from a policy
+    that genuinely failed every episode. The payload must flag this
+    (``success_measured=False``), the text must say so, and a warning must be
+    logged, so callers do not mistake the fabricated 0.0 for a measurement.
+    """
+
+    def test_no_success_criterion_flags_unmeasured_and_warns(self, sim_with_robot, caplog):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        runner = PolicyRunner(sim_with_robot)
+
+        with caplog.at_level("WARNING", logger="strands_robots.simulation.policy_runner"):
+            result = runner.evaluate("alice", policy, n_episodes=1, max_steps=3, success_fn=None)
+
+        assert result["status"] == "success"
+        payload = result["content"][-1]["json"]
+        # success_rate stays numeric (0.0) for backward compatibility ...
+        assert payload["success_rate"] == 0.0
+        # ... but the payload must flag that nothing was measured.
+        assert payload["success_measured"] is False
+        # The human-readable text must not present 0.0% as a real result.
+        text = result["content"][0]["text"]
+        assert "not measured" in text
+        # And a warning must be logged so interactive callers are not misled.
+        assert any("without a success criterion" in r.message for r in caplog.records), (
+            "expected a warning when eval runs with no success criterion"
+        )
+
+    def test_success_fn_marks_measured(self, sim_with_robot):
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim_with_robot.robot_joint_names("alice"))
+        runner = PolicyRunner(sim_with_robot)
+
+        result = runner.evaluate(
+            "alice",
+            policy,
+            n_episodes=1,
+            max_steps=3,
+            success_fn=lambda obs: True,
+        )
+        payload = result["content"][-1]["json"]
+        assert payload["success_measured"] is True
+        assert payload["success_rate"] == 1.0
+        assert "not measured" not in result["content"][0]["text"]

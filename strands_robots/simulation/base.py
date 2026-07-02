@@ -1493,6 +1493,14 @@ class SimEngine(ABC):
         locomotion policies; ``target_pose`` / ``target_joints`` / ``world_update``
         for cuRobo / MoveIt2 - the issue #300 contract). Without it the eval ran
         such a policy with an empty goal and reported a meaningless success rate.
+
+        ``success_fn`` defaults to ``None``. With no ``success_fn`` (and no
+        benchmark spec) there is no criterion by which an episode can be marked
+        successful, so ``success_rate`` reports a hard ``0.0`` for every episode
+        regardless of what the policy does - indistinguishable from a policy that
+        genuinely failed every episode. This case logs a warning and sets
+        ``success_measured=false`` in the returned json; pass
+        ``success_fn="contact"`` (or a callable) to measure real task success.
         """
         robots = self.list_robots()
         if not robots:
