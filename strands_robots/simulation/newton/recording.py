@@ -62,6 +62,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         push_to_hub: bool = False,
         vcodec: str = "h264",
         overwrite: bool = False,
+        cameras: list[str] | None = None,
     ) -> dict[str, Any]:
         """Start recording the Newton scene to LeRobotDataset format.
 
@@ -93,6 +94,14 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                 wheels commonly cannot decode it and silently yield 0 frames.
             overwrite: Wipe and recreate an existing dataset dir instead of
                 appending to it.
+            cameras: Camera names to record into the dataset. When ``None``
+                (default) every named scene camera is recorded. Pass a subset
+                (e.g. ``cameras=["camera1", "camera2"]``) to scope the dataset
+                to exactly those views - matching the MuJoCo backend so
+                ``run_policy(dataset_cameras=...)`` behaves identically on both
+                engines. Names may be given in either the raw camera name or the
+                schema-safe form (``/`` collapsed to ``__``); an unknown name
+                fails loudly, listing the available cameras.
 
         Returns:
             Standard status dict. ``status="error"`` when no world exists, the
@@ -148,6 +157,51 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
             joint_names, camera_keys, camera_dims, robot_type, recording_cameras = self._collect_recording_schema()
+
+            # Optional camera scoping (parity with the MuJoCo backend). By
+            # default every named scene camera is recorded; when ``cameras`` is
+            # given, record exactly that subset. Names may be the raw camera
+            # name (``arm0/wrist_cam``) or the schema-safe form
+            # (``arm0__wrist_cam``); an unknown name fails loudly (no silent
+            # drop), listing what exists. Scoping filters the ``recording_cameras``
+            # tuples so the on_frame hook renders only the selected views.
+            if cameras is not None:
+                raw_to_safe = {src: safe for src, safe, _w, _h in recording_cameras}
+                safe_to_raw = {safe: src for src, safe in raw_to_safe.items()}
+                selected_safe: list[str] = []
+                selected_raw: set[str] = set()
+                unknown: list[str] = []
+                for requested in cameras:
+                    if requested in raw_to_safe:  # raw camera name
+                        raw, safe = requested, raw_to_safe[requested]
+                    elif requested in safe_to_raw:  # already schema-safe
+                        raw, safe = safe_to_raw[requested], requested
+                    else:
+                        unknown.append(requested)
+                        continue
+                    if safe not in selected_safe:
+                        selected_safe.append(safe)
+                        selected_raw.add(raw)
+                if unknown:
+                    world._backend_state["recording"] = False
+                    available = sorted(raw_to_safe)
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"start_recording: unknown camera(s) {unknown} in cameras=. "
+                                    f"Available scene cameras: {available}. Add them with "
+                                    "add_camera(...) before recording, or omit cameras= to "
+                                    "record all of them."
+                                )
+                            }
+                        ],
+                    }
+                camera_keys = selected_safe
+                camera_dims = {safe: camera_dims[safe] for safe in selected_safe}
+                recording_cameras = [tpl for tpl in recording_cameras if tpl[0] in selected_raw]
+
             world._backend_state["recording_cameras"] = recording_cameras
 
             if resume_existing:

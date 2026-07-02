@@ -211,3 +211,65 @@ def _encode_png(img: np.ndarray) -> bytes:
     buf = io.BytesIO()
     Image.fromarray(img).save(buf, format="PNG")
     return buf.getvalue()
+
+
+def test_start_recording_scopes_cameras_to_subset(tmp_path):
+    """``cameras=`` records only the requested subset (parity with MuJoCo).
+
+    Regression: ``run_policy(dataset_cameras=...)`` is a backend-agnostic tool
+    that forwards ``start_recording(cameras=...)``. The Newton backend must
+    accept the same scope the MuJoCo backend does; before it did not accept a
+    ``cameras`` kwarg at all, so a scoped Newton rollout raised
+    ``TypeError: start_recording() got an unexpected keyword argument 'cameras'``.
+    """
+    root = str(tmp_path / "newton_scope")
+    world = _world_with_robot()
+    world.cameras["front"] = SimCamera(name="front", width=64, height=48)
+    world.cameras["top"] = SimCamera(name="top", width=64, height=48)
+    engine = _make_engine(world)
+
+    started = engine.start_recording(repo_id="local/newton_scope", root=root, fps=30, overwrite=True, cameras=["front"])
+    assert started["status"] == "success", started
+
+    recorder = world._backend_state["dataset_recorder"]
+    image_feats = {k for k in recorder.dataset.features if k.startswith("observation.images")}
+    assert image_feats == {"observation.images.front"}, image_feats
+
+    # The on_frame hook renders only the scoped camera.
+    scoped = [tpl[0] for tpl in world._backend_state["recording_cameras"]]
+    assert scoped == ["front"], scoped
+
+
+def test_start_recording_accepts_schema_safe_camera_name(tmp_path):
+    """A namespaced camera can be scoped by its schema-safe ``__`` form."""
+    root = str(tmp_path / "newton_safe")
+    world = _world_with_robot()
+    world.cameras["arm0/wrist"] = SimCamera(name="arm0/wrist", width=64, height=48)
+    world.cameras["overview"] = SimCamera(name="overview", width=64, height=48)
+    engine = _make_engine(world)
+
+    started = engine.start_recording(
+        repo_id="local/newton_safe", root=root, fps=30, overwrite=True, cameras=["arm0__wrist"]
+    )
+    assert started["status"] == "success", started
+
+    recorder = world._backend_state["dataset_recorder"]
+    image_feats = {k for k in recorder.dataset.features if k.startswith("observation.images")}
+    assert image_feats == {"observation.images.arm0__wrist"}, image_feats
+
+
+def test_start_recording_unknown_camera_errors(tmp_path):
+    """An unknown ``cameras=`` name fails loudly and lists what exists."""
+    root = str(tmp_path / "newton_unknown")
+    world = _world_with_robot()
+    world.cameras["front"] = SimCamera(name="front", width=64, height=48)
+    engine = _make_engine(world)
+
+    result = engine.start_recording(repo_id="local/newton_unknown", root=root, fps=30, overwrite=True, cameras=["nope"])
+    assert result["status"] == "error", result
+    text = result["content"][0]["text"]
+    assert "unknown camera(s)" in text
+    assert "nope" in text
+    assert "front" in text  # the available list is surfaced
+    # A failed scope must not leave the session flagged as recording.
+    assert world._backend_state.get("recording") is False

@@ -20,6 +20,22 @@ is unchanged.
 
 `LerobotLocalPolicy`'s heuristic (non-declarative) remap path keeps a rollout alive even when it cannot bind the observation to the model's inputs by name: a camera whose name matches no declared image feature is routed to a free slot positionally, and `observation.state` is composed from the observation's own scalar keys when none of `robot_state_keys` match (the generic `joint_0..N` fallback). Either makes the robot move on meaningless inputs while `run_policy` / `eval_policy` still report `status="success"` with `success_rate ~ 0`, and the only trace was a log line (the positional fallback on the preprocessor path did not even warn). Both fallbacks now flip a flag on the policy (`positional_fallback_used` / `generic_state_keys_used`) and emit a WARNING, and `run_policy` / `eval_policy` surface both flags in their JSON result block alongside the existing `action_errors` / load telemetry. A `True` flag on an otherwise-successful run is the signature of a misconfigured camera/state binding. No behaviour change for correctly-named observations (both flags stay `False`); the remap itself is unchanged.
 
+### Fixed: `dataset_cameras` scoping crashed on the Newton backend
+
+`run_policy(dataset_cameras=[...])` scopes a recorded dataset to a chosen
+subset of cameras by forwarding `start_recording(cameras=...)`. Only the
+MuJoCo backend accepted that keyword; the Newton backend's `start_recording`
+had no `cameras` parameter, so a scoped rollout on a Newton-backed simulation
+raised an uncaught `TypeError: start_recording() got an unexpected keyword
+argument 'cameras'` out of the otherwise backend-agnostic `run_policy` tool.
+
+`NewtonSimEngine.start_recording` now accepts `cameras=` with the same
+semantics as the MuJoCo backend: `None` records every named scene camera,
+a subset scopes the dataset schema (and the per-step capture hook) to exactly
+those views, names may be given in raw or schema-safe (`/` -> `__`) form, and
+an unknown name fails loudly listing the available cameras. `dataset_cameras`
+now behaves identically on both engines.
+
 ### Fixed: LerobotLocalPolicy state-key mismatch is now loud instead of a silent zero/open-loop rollout
 
 When `LerobotLocalPolicy` auto-generated generic state keys (`joint_0..N`, from

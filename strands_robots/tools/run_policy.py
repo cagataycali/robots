@@ -174,10 +174,10 @@ def run_policy(
         dataset_fps: Dataset FPS forwarded to ``start_recording``.
         dataset_cameras: Camera names to record into the dataset.
             When set, forwarded as ``start_recording(cameras=...)``
-            (a MuJoCo-backend feature) to scope a policy-specific
-            dataset to exactly the views the policy declares (e.g.
-            ``["camera1", "camera2", "camera3"]``) and keep the
-            implicit ``default`` free camera out of
+            (supported by both the MuJoCo and Newton backends) to
+            scope a policy-specific dataset to exactly the views the
+            policy declares (e.g. ``["camera1", "camera2", "camera3"]``)
+            and keep the implicit ``default`` free camera out of
             ``observation.images.*``. When ``None`` (default) no
             ``cameras`` kwarg is forwarded at all, so every scene
             camera is recorded and the call stays backend-agnostic
@@ -252,14 +252,12 @@ def run_policy(
                 "expose .start_recording(). Install the [lerobot] extra or pass "
                 "dataset_root=None for a recording-less rollout."
             )
-        # Only forward ``cameras`` when the caller asked for a subset. The
-        # kwarg is MuJoCo-only (``simulation/mujoco/recording.py``); the Newton
-        # backend's ``start_recording`` takes no ``cameras`` and no ``**kwargs``
-        # catch-all, so an unconditional ``cameras=`` would raise an uncaught
-        # ``TypeError`` out of this backend-agnostic tool - a regression even
-        # when ``dataset_cameras`` is omitted (it would still forward
-        # ``cameras=None``). Gating on ``is not None`` keeps the default path
-        # byte-for-byte identical to pre-feature behaviour on every backend.
+        # Only forward ``cameras`` when the caller asked for a subset. Both
+        # the MuJoCo and Newton backends' ``start_recording`` accept a
+        # ``cameras=`` scope, so this tool stays backend-agnostic. Gating on
+        # ``is not None`` keeps the default record-all path byte-for-byte
+        # identical to pre-feature behaviour on every backend (no redundant
+        # ``cameras=None`` forwarded).
         start_kwargs: dict[str, Any] = dict(
             repo_id=dataset_repo_id,
             task=dataset_task,

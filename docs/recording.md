@@ -80,10 +80,10 @@ run_policy(
 )
 ```
 
-When set, `dataset_cameras` is forwarded as `start_recording(cameras=...)`
-(the camera subset is a MuJoCo-backend feature). Omit it (the default `None`)
-to record every scene camera - the default path forwards no `cameras` kwarg at
-all, so it stays backend-agnostic across the MuJoCo and Newton engines.
+When set, `dataset_cameras` is forwarded as `start_recording(cameras=...)`,
+which both the MuJoCo and Newton backends support, so the subset is applied
+identically on either engine. Omit it (the default `None`) to record every
+scene camera - the default path forwards no `cameras` kwarg at all.
 
 To also capture a rollout MP4 (the visual artifact for review or VLM
 defect-checking), pass the same `video={...}` config the
