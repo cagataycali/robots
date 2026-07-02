@@ -81,6 +81,22 @@ those views, names may be given in raw or schema-safe (`/` -> `__`) form, and
 an unknown name fails loudly listing the available cameras. `dataset_cameras`
 now behaves identically on both engines.
 
+### Fixed: `render_depth` ignored a camera's configured resolution
+
+`render()` and `render_all()` honor a named camera's configured resolution
+(from `add_camera(width=, height=)`) when the caller omits `width`/`height`, so
+the rendered frame matches the camera - and the recorded dataset - it belongs
+to. `render_depth()` was left out of that contract: it always fell back to the
+engine default (640x480) for a named camera, so `render_depth("cam")` came back
+at a different size than `render("cam")` for the same camera. Any depth-aware
+consumer pairing the RGB frame with the depth map per pixel got mismatched
+dimensions.
+
+`render_depth()` now resolves resolution exactly like `render()`: omitted dims
+-> the named camera's configured resolution; explicit dims -> override; the
+free/model-only cameras -> engine default. RGB and depth for the same camera
+are now pixel-aligned.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

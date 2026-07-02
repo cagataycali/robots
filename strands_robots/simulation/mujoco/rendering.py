@@ -800,14 +800,26 @@ class RenderingMixin:
         to a depth-aware downstream - whereas the scalar bounds alone discard the
         per-pixel structure. Use the ``json`` bounds when exact metric values
         matter; the grayscale image is normalized for display only.
+
+        Resolution: when ``width``/``height`` are omitted, the named camera's
+        configured resolution (from ``add_camera``) is used - so the depth map
+        is pixel-aligned with :meth:`render` for the same camera. The free
+        camera and model-only cameras fall back to the engine default. Explicit
+        ``width``/``height`` override the camera config.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
         mj = _ensure_mujoco()
-        # see note in render() re: None vs 0/negative.
-        w = self.default_width if width is None else width
-        h = self.default_height if height is None else height
+        # see note in render() re: None vs 0/negative. Honor the named camera's
+        # CONFIGURED resolution (add_camera(width=, height=)) when the caller
+        # omits a dimension, so the depth map is pixel-aligned with the RGB
+        # frame render() produces for the same camera (and with get_observation).
+        # The free camera and model-only cameras with no SimCamera entry fall
+        # back to the engine default.
+        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
+        h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
             return err
 
