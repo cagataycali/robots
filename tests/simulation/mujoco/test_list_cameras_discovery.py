@@ -102,7 +102,8 @@ def test_list_cameras_in_tool_spec_enum():
     import strands_robots.simulation.mujoco as mjpkg
 
     ts = Path(mjpkg.__file__).parent / "tool_spec.json"
-    enum = json.load(open(ts))["properties"]["action"]["enum"]
+    with open(ts) as fh:
+        enum = json.load(fh)["properties"]["action"]["enum"]
     assert "list_cameras" in enum
     # parity with the sibling discovery actions
     for sibling in ("list_robots", "list_objects", "list_bodies"):
