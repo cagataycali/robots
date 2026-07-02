@@ -172,3 +172,60 @@ class TestThreadSafety:
                 assert len(results) == 8
                 assert all(r is results[0] for r in results)
                 assert factory._TRANSPORT_REFS == 8
+
+
+class TestBridgeBackendSelection:
+    """When STRANDS_MESH_BACKEND=bridge, the factory builds a BridgeTransport.
+
+    ``bridge`` is the third documented backend (Zenoh + IoT together). Its
+    factory-level construction path was previously unexercised, so a regression
+    that dropped it from ``_construct`` (or from ``_select_backend``'s allow
+    list) would go unnoticed while the two other backends stayed green.
+    """
+
+    def test_bridge_backend_constructs_bridge_transport(self, monkeypatch):
+        from strands_robots.mesh.transport.bridge_transport import BridgeTransport
+
+        monkeypatch.setenv("STRANDS_MESH_BACKEND", "bridge")
+        with patch.object(BridgeTransport, "connect", return_value=True):
+            with patch.object(BridgeTransport, "is_alive", return_value=True):
+                t = factory.get_transport()
+                assert t is not None
+                assert isinstance(t, BridgeTransport)
+                assert factory.current_backend() == "bridge"
+
+    def test_bridge_connect_failure_returns_none(self, monkeypatch):
+        from strands_robots.mesh.transport.bridge_transport import BridgeTransport
+
+        monkeypatch.setenv("STRANDS_MESH_BACKEND", "bridge")
+        with patch.object(BridgeTransport, "connect", return_value=False):
+            assert factory.get_transport() is None
+            assert factory._TRANSPORT is None
+            assert factory._TRANSPORT_REFS == 0
+
+
+class TestReleaseIsResilientToRaisingClose:
+    """Releasing the final reference must reset the singleton even when the
+    transport's ``close()`` raises.
+
+    ``release_transport`` runs during host teardown; a transport whose
+    ``close()`` throws (e.g. a Zenoh session already torn down by a signal
+    handler) must NOT propagate that exception or leave a stale singleton
+    installed. The factory swallows the error and clears its state so the next
+    ``get_transport`` starts clean.
+    """
+
+    def test_raising_close_is_swallowed_and_singleton_cleared(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_MESH_BACKEND", "zenoh")
+        with patch.object(ZenohTransport, "connect", return_value=True):
+            with patch.object(ZenohTransport, "is_alive", return_value=True):
+                with patch.object(ZenohTransport, "close", side_effect=RuntimeError("session already gone")):
+                    factory.get_transport()
+                    assert factory._TRANSPORT_REFS == 1
+
+                    # Must not raise despite close() throwing on the last release.
+                    factory.release_transport()
+
+                    assert factory._TRANSPORT is None
+                    assert factory._TRANSPORT_REFS == 0
+                    assert factory._TRANSPORT_BACKEND == ""
