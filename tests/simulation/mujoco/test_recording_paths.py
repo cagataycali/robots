@@ -22,6 +22,8 @@ pytest.importorskip("mujoco")
 
 os.environ.setdefault("MUJOCO_GL", "glfw")
 
+from tests.tool_result_contract import tool_json  # noqa: E402
+
 # Inline MJCF XML to avoid network-dependent so101 model downloads.
 _ROBOT_XML = """
 <mujoco model="test_arm">
@@ -248,7 +250,7 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
         policies=pols, instructions={"alpha": "a", "beta": "b"}, duration=0.5, control_frequency=20.0
     )
     assert r["status"] == "success", r
-    assert r["steps"] > 0
+    assert tool_json(r)["steps"] > 0
     sim.stop_recording()
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
@@ -326,7 +328,7 @@ def test_multi_robot_recording_action_columns_keyed_by_actuators(sim_with_two_ro
         policies=pols, instructions={"alpha": "a", "beta": "b"}, duration=0.5, control_frequency=20.0
     )
     assert r["status"] == "success", r
-    assert r["steps"] > 0
+    assert tool_json(r)["steps"] > 0
     sim.stop_recording()
 
     # Read the action column directly from parquet (no video decode needed).

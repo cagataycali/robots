@@ -59,6 +59,7 @@ nav:
 - Architecture: architecture.md
 - API Reference: api-reference.md
 - Security: security.md
+- Tool Result Contract: contracts.md
 - Contributing: contributing.md
 - Troubleshooting: troubleshooting.md
 theme:

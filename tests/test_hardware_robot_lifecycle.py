@@ -27,6 +27,7 @@ import pytest
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState, TaskStatus
 from strands_robots.policies.base import Policy
+from tests.tool_result_contract import tool_json
 
 
 class _FakeLeRobot:
@@ -711,8 +712,8 @@ class TestTeleopStopAndStatus:
         self._wire(hw)
         result = hw.get_teleop_status()
         assert result["status"] == "success"
-        assert len(result["publishers"]) == 1
-        assert len(result["receivers"]) == 1
+        assert len(tool_json(result)["publishers"]) == 1
+        assert len(tool_json(result)["receivers"]) == 1
         assert "Publishers: 1 active" in result["content"][0]["text"]
         assert "Receivers: 1 active" in result["content"][0]["text"]
         hw.cleanup()

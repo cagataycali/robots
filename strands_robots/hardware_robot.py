@@ -1706,8 +1706,6 @@ class Robot(TeleopMixin, AgentTool):
 
         return {
             "status": "success",
-            "publishers": publishers,
-            "receivers": receivers,
             "content": [
                 {
                     "text": f"Teleop status:\n"
@@ -1721,6 +1719,7 @@ class Robot(TeleopMixin, AgentTool):
                         f"  [rcv] {k}: {s.get('frames_received', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n"
                         for k, s in receivers.items()
                     )
-                }
+                },
+                {"json": {"publishers": publishers, "receivers": receivers}},
             ],
         }

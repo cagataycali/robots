@@ -376,8 +376,10 @@ def pose_tool(
             if not poses:
                 return {
                     "status": "success",
-                    "content": [{"text": f"No poses stored for robot {robot_id}"}],
-                    "poses": [],
+                    "content": [
+                        {"text": f"No poses stored for robot {robot_id}"},
+                        {"json": {"poses": []}},
+                    ],
                 }
 
             # Get detailed pose information
@@ -401,8 +403,10 @@ def pose_tool(
 
             return {
                 "status": "success",
-                "content": [{"text": f"Stored poses for {robot_id}:\n{pose_list}"}],
-                "poses": pose_details,
+                "content": [
+                    {"text": f"Stored poses for {robot_id}:\n{pose_list}"},
+                    {"json": {"poses": pose_details}},
+                ],
             }
 
         if action == "show_pose":
@@ -423,9 +427,9 @@ def pose_tool(
                         f"Description: {pose.description or 'None'}\n"
                         f"Created: {time.ctime(pose.timestamp)}\n"
                         f"Motor Positions:\n{motor_info}"
-                    }
+                    },
+                    {"json": {"pose": pose.to_dict()}},
                 ],
-                "pose": pose.to_dict(),
             }
 
         if action == "delete_pose":
@@ -465,8 +469,10 @@ def pose_tool(
                     unit = "%" if motor_name == "gripper" else " deg"
                     return {
                         "status": "success",
-                        "content": [{"text": f"{motor_name}: {position:.2f}{unit}"}],
-                        "position": position,
+                        "content": [
+                            {"text": f"{motor_name}: {position:.2f}{unit}"},
+                            {"json": {"position": position}},
+                        ],
                     }
                 else:
                     return {"status": "error", "content": [{"text": f"Failed to read {motor_name}"}]}
@@ -489,8 +495,10 @@ def pose_tool(
                     )
                     return {
                         "status": "success",
-                        "content": [{"text": f"Current robot positions:\n{pos_text}"}],
-                        "positions": positions,
+                        "content": [
+                            {"text": f"Current robot positions:\n{pos_text}"},
+                            {"json": {"positions": positions}},
+                        ],
                     }
                 else:
                     return {"status": "error", "content": [{"text": "Failed to read positions"}]}
@@ -521,8 +529,10 @@ def pose_tool(
 
                 return {
                     "status": "success",
-                    "content": [{"text": f"Stored pose '{pose_name}':\n{pos_text}"}],
-                    "pose": pose.to_dict(),
+                    "content": [
+                        {"text": f"Stored pose '{pose_name}':\n{pos_text}"},
+                        {"json": {"pose": pose.to_dict()}},
+                    ],
                 }
             finally:
                 controller.disconnect()
@@ -549,8 +559,10 @@ def pose_tool(
                 if success:
                     return {
                         "status": "success",
-                        "content": [{"text": f"Moved to pose '{pose_name}'"}],
-                        "target_positions": pose.positions,
+                        "content": [
+                            {"text": f"Moved to pose '{pose_name}'"},
+                            {"json": {"target_positions": pose.positions}},
+                        ],
                     }
                 else:
                     return {"status": "error", "content": [{"text": f"Failed to move to pose '{pose_name}'"}]}
@@ -637,8 +649,10 @@ def pose_tool(
                 if success:
                     return {
                         "status": "success",
-                        "content": [{"text": "Robot moved to home position"}],
-                        "home_positions": home_positions,
+                        "content": [
+                            {"text": "Robot moved to home position"},
+                            {"json": {"home_positions": home_positions}},
+                        ],
                     }
                 else:
                     return {"status": "error", "content": [{"text": "Failed to move to home position"}]}

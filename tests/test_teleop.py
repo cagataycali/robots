@@ -15,6 +15,7 @@ import time
 import pytest
 
 from strands_robots.teleop_mixin import AttachedTeleop, TeleopMixin
+from tests.tool_result_contract import tool_json
 
 # ---------------------------------------------------------------------------
 # Fakes
@@ -326,7 +327,7 @@ def test_list_teleops():
     host.attach_teleop(FakeTeleop({"a": 1.0}), name="leader")
     res = host.list_teleops()
     assert res["status"] == "success"
-    assert "leader" in res["teleops"]
+    assert "leader" in tool_json(res)["teleops"]
 
 
 def test_publish_delegates_to_host():
@@ -336,7 +337,7 @@ def test_publish_delegates_to_host():
     res = host.teleoperate(hz=100, publish=True)
     try:
         assert res["status"] == "success"
-        assert res["publish"] is True
+        assert tool_json(res)["publish"] is True
         assert len(host.publish_calls) == 1
         assert host.publish_calls[0]["device_name"] == "arm"
         assert host.publish_calls[0]["teleoperator"] is arm
@@ -360,8 +361,8 @@ def test_get_teleoperate_status():
     host = FakeHost()
     host.attach_teleop(FakeTeleop({"a": 1.0}), name="leader")
     st = host.get_teleoperate_status()
-    assert st["running"] is False
-    assert st["devices"] == ["leader"]
+    assert tool_json(st)["running"] is False
+    assert tool_json(st)["devices"] == ["leader"]
 
 
 def test_attached_teleop_dataclass():

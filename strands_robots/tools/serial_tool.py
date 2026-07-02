@@ -80,9 +80,9 @@ def serial_tool(
                     {
                         "text": f"Found {len(ports)} serial ports:\n"
                         + "\n".join([f"- {p['device']} - {p['description']}" for p in ports])
-                    }
+                    },
+                    {"json": {"ports": ports}},
                 ],
-                "ports": ports,
             }
 
         if not port:
@@ -117,9 +117,10 @@ def serial_tool(
 
             return {
                 "status": "success",
-                "content": [{"text": f"Read {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"}],
-                "raw_data": read_data.hex(),
-                "length": len(read_data),
+                "content": [
+                    {"text": f"Read {len(read_data)} bytes:\nHex: {hex_str}\nASCII: {ascii_str}"},
+                    {"json": {"raw_data": read_data.hex(), "length": len(read_data)}},
+                ],
             }
 
         elif action == "send_read":
@@ -221,8 +222,10 @@ def serial_tool(
 
             return {
                 "status": "success",
-                "content": [{"text": f"Monitored {len(monitor_data)} data chunks in 5 seconds"}],
-                "monitor_data": monitor_data,
+                "content": [
+                    {"text": f"Monitored {len(monitor_data)} data chunks in 5 seconds"},
+                    {"json": {"monitor_data": monitor_data}},
+                ],
             }
 
         else:

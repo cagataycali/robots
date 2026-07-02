@@ -31,6 +31,7 @@ from strands_robots.tools.pose_tool import (
     RobotPose,
     pose_tool,
 )
+from tests.tool_result_contract import tool_json
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -251,7 +252,7 @@ def test_read_motor_position_decodes_response(fake_serial) -> None:
 def test_pose_tool_list_empty_is_ascii(cwd_tmp) -> None:
     result = pose_tool(action="list_poses", robot_id="empty_arm")
     assert result["status"] == "success"
-    assert result["poses"] == []
+    assert tool_json(result)["poses"] == []
     _assert_ascii(result)
 
 
@@ -259,12 +260,12 @@ def test_pose_tool_show_and_list_after_store(cwd_tmp) -> None:
     PoseManager("disp_arm").store_pose("ready", {"gripper": 40.0, "wrist_flex": 5.0}, description="staged")
     listed = pose_tool(action="list_poses", robot_id="disp_arm")
     assert listed["status"] == "success"
-    assert any(p["name"] == "ready" for p in listed["poses"])
+    assert any(p["name"] == "ready" for p in tool_json(listed)["poses"])
     _assert_ascii(listed)
 
     shown = pose_tool(action="show_pose", robot_id="disp_arm", pose_name="ready")
     assert shown["status"] == "success"
-    assert shown["pose"]["description"] == "staged"
+    assert tool_json(shown)["pose"]["description"] == "staged"
     _assert_ascii(shown)
 
 
@@ -344,7 +345,7 @@ def test_pose_tool_reset_to_home_is_ascii(cwd_tmp, fake_serial) -> None:
     result = pose_tool(action="reset_to_home", robot_id="hw_arm", port="/dev/ttyTEST")
     assert result["status"] == "success"
     _assert_ascii(result)
-    assert "home_positions" in result
+    assert "home_positions" in tool_json(result)
 
 
 def test_module_source_is_ascii() -> None:
@@ -399,7 +400,7 @@ def test_pose_tool_read_position_decodes_and_returns_degrees(cwd_tmp, reading_se
     result = pose_tool(action="read_position", robot_id="hw_arm", port="/dev/ttyTEST", motor_name="shoulder_pan")
     assert result["status"] == "success"
     _assert_ascii(result)
-    assert result["position"] == pytest.approx(0.0, abs=1.0)
+    assert tool_json(result)["position"] == pytest.approx(0.0, abs=1.0)
 
 
 def test_pose_tool_read_position_reports_failure_without_response(cwd_tmp, fake_serial) -> None:
@@ -416,7 +417,7 @@ def test_pose_tool_read_all_formats_every_motor(cwd_tmp, reading_serial) -> None
     assert result["status"] == "success"
     _assert_ascii(result)
     # All six SO-101 motors should be present in the positions payload.
-    assert set(result["positions"]) == {
+    assert set(tool_json(result)["positions"]) == {
         "shoulder_pan",
         "shoulder_lift",
         "elbow_flex",
@@ -473,7 +474,7 @@ def test_pose_tool_load_pose_moves_to_stored_positions(cwd_tmp, fake_serial) -> 
     )
     assert result["status"] == "success"
     _assert_ascii(result)
-    assert result["target_positions"] == {"shoulder_pan": 10.0, "gripper": 50.0}
+    assert tool_json(result)["target_positions"] == {"shoulder_pan": 10.0, "gripper": 50.0}
     assert fake_serial[0].writes
 
 
@@ -747,7 +748,7 @@ def test_pose_tool_list_poses_skips_pose_removed_mid_listing(cwd_tmp, monkeypatc
     result = pose_tool(action="list_poses", robot_id="race_arm")
     assert result["status"] == "success"
     _assert_ascii(result)
-    names = [p["name"] for p in result.get("poses", [])]
+    names = [p["name"] for p in tool_json(result).get("poses", [])]
     assert "keep" in names
     assert "gone" not in names
 

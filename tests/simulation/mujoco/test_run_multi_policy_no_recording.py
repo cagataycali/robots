@@ -27,6 +27,7 @@ os.environ.setdefault("MUJOCO_GL", "egl")
 from strands_robots.policies.base import Policy  # noqa: E402
 from strands_robots.policies.mock import MockPolicy  # noqa: E402
 from strands_robots.simulation import Simulation  # noqa: E402
+from tests.tool_result_contract import tool_json  # noqa: E402
 
 _ROBOT_XML = """
 <mujoco model="test_arm">
@@ -109,7 +110,7 @@ def test_run_multi_policy_runs_without_recorder(sim_two_robots):
         action_horizon=4,
     )
     assert r["status"] == "success", r
-    assert r["steps"] == 10
+    assert tool_json(r)["steps"] == 10
     assert "synchronized steps" in r["content"][0]["text"]
     # No "(recorded)" suffix when no recorder is attached.
     assert "recorded" not in r["content"][0]["text"]
@@ -165,7 +166,7 @@ def test_run_multi_policy_max_steps_aliases_n_steps(sim_two_robots):
         control_frequency=40.0,
     )
     assert r["status"] == "success", r
-    assert r["steps"] == 8
+    assert tool_json(r)["steps"] == 8
 
 
 def test_run_multi_policy_rejects_empty_policies(sim_two_robots):
@@ -274,7 +275,7 @@ def test_run_multi_policy_cooperative_stop_ends_early(sim_two_robots):
     )
     assert r["status"] == "success", r
     assert "stopped early" in r["content"][0]["text"]
-    assert r["steps"] < 50
+    assert tool_json(r)["steps"] < 50
     # Running flags are cleared on the way out regardless of early stop.
     for name in ("alpha", "beta"):
         assert sim._world.robots[name].policy_running is False

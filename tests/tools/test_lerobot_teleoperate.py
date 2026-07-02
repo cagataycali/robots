@@ -20,6 +20,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_teleoperate as tele_mod
+from tests.tool_result_contract import tool_json
 
 # Bind the public names off the single module handle rather than a second
 # ``from ... import`` of the same module (CodeQL: import + import-from of one
@@ -336,11 +337,11 @@ def test_start_background_session_is_ascii_and_persisted(monkeypatch: pytest.Mon
         auto_accept_calibration=False,
     )
     assert result["status"] == "success"
-    assert result["pid"] == os.getpid()
+    assert tool_json(result)["pid"] == os.getpid()
     _assert_ascii(_texts(result))
     # Session was persisted and is discoverable.
     listed = lerobot_teleoperate(action="list")
-    assert "teleop_test" in listed["sessions"]
+    assert "teleop_test" in tool_json(listed)["sessions"]
 
 
 def test_start_rejects_duplicate_session(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -354,7 +355,7 @@ def test_start_rejects_duplicate_session(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_list_empty_is_ascii() -> None:
     result = lerobot_teleoperate(action="list")
     assert result["status"] == "success"
-    assert result["count"] == 0
+    assert tool_json(result)["count"] == 0
     _assert_ascii(_texts(result))
 
 
@@ -402,7 +403,7 @@ def test_replay_runs_command_and_is_ascii(monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setattr(tele_mod.subprocess, "run", lambda *a, **k: _FakeProc(returncode=0, stdout="done", stderr=""))
     result = lerobot_teleoperate(action="replay", dataset_repo_id="user/cubes", replay_episode=2)
     assert result["status"] == "success"
-    assert result["return_code"] == 0
+    assert tool_json(result)["return_code"] == 0
     _assert_ascii(_texts(result))
 
 
@@ -422,7 +423,7 @@ def test_start_foreground_runs_and_is_ascii(monkeypatch: pytest.MonkeyPatch) -> 
         background=False,
     )
     assert result["status"] == "success"
-    assert result["return_code"] == 0
+    assert tool_json(result)["return_code"] == 0
     _assert_ascii(_texts(result))
 
 
@@ -433,7 +434,7 @@ def test_list_with_active_session_is_ascii(monkeypatch: pytest.MonkeyPatch) -> N
     )
     result = lerobot_teleoperate(action="list")
     assert result["status"] == "success"
-    assert result["count"] == 1
+    assert tool_json(result)["count"] == 1
     body = _texts(result)
     assert "live" in body
     assert "Running" in body
@@ -491,7 +492,7 @@ def test_start_auto_accept_calibration_sends_enter_keys(monkeypatch: pytest.Monk
     )
 
     assert result["status"] == "success"
-    assert result["background"] is True
+    assert tool_json(result)["background"] is True
     # Two ENTER presses were sent and stdin was closed afterwards.
     assert stdin.writes == ["\n", "\n"]
     assert stdin.closed
@@ -591,7 +592,7 @@ def test_replay_nonzero_return_code_is_error(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(tele_mod.subprocess, "run", lambda *a, **k: _FakeProc(returncode=1, stdout="", stderr="boom"))
     result = lerobot_teleoperate(action="replay", dataset_repo_id="user/cubes", replay_episode=0)
     assert result["status"] == "error"
-    assert result["return_code"] == 1
+    assert tool_json(result)["return_code"] == 1
     _assert_ascii(_texts(result))
 
 
@@ -605,7 +606,7 @@ def test_start_foreground_nonzero_return_code_is_error(monkeypatch: pytest.Monke
         background=False,
     )
     assert result["status"] == "error"
-    assert result["return_code"] == 2
+    assert tool_json(result)["return_code"] == 2
     _assert_ascii(_texts(result))
 
 
@@ -738,4 +739,4 @@ def test_dagger_dispatch_starts_session(monkeypatch: pytest.MonkeyPatch) -> None
     assert result["status"] == "success"
     _assert_ascii(_texts(result))
     listed = lerobot_teleoperate(action="list")
-    assert "dagger_test" in listed["sessions"]
+    assert "dagger_test" in tool_json(listed)["sessions"]

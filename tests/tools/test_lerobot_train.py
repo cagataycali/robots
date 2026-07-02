@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 
 import strands_robots.tools.lerobot_train as train_mod
+from tests.tool_result_contract import tool_json
 
 build_train_command = train_mod.build_train_command
 lerobot_train = train_mod.lerobot_train
@@ -287,13 +288,13 @@ def test_session_lifecycle_round_trips(tmp_path: Path, monkeypatch: pytest.Monke
         session_name="t1",
     )
     assert start["status"] == "success"
-    assert start["session_name"] == "t1"
-    assert start["pid"] == 9999
+    assert tool_json(start)["session_name"] == "t1"
+    assert tool_json(start)["pid"] == 9999
     _assert_ascii(_texts(start))
 
     listed = lerobot_train(action="list", dataset_root=str(root))
     assert listed["status"] == "success"
-    assert "t1" in listed["sessions"]
+    assert "t1" in tool_json(listed)["sessions"]
     _assert_ascii(_texts(listed))
 
     status = lerobot_train(action="status", dataset_root=str(root), session_name="t1")
@@ -500,7 +501,7 @@ def test_status_reports_log_tail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 def test_list_reports_no_active_sessions_when_empty(tmp_path: Path) -> None:
     result = lerobot_train(action="list", dataset_root="/x")
     assert result["status"] == "success"
-    assert result["count"] == 0
+    assert tool_json(result)["count"] == 0
     assert "No active sessions" in _texts(result)
 
 
@@ -543,7 +544,7 @@ def test_start_autogenerates_session_name_and_clears_stale_empty_output(
     monkeypatch.setattr(train_mod.shutil, "rmtree", _spy_rmtree)
     result = lerobot_train(action="start", dataset_root=str(root), policy_type="act", output_dir=str(out))
     assert result["status"] == "success"
-    assert result["session_name"].startswith("train_")
+    assert tool_json(result)["session_name"].startswith("train_")
     assert str(out) in rmtree_calls
 
 

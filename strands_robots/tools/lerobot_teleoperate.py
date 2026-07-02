@@ -664,13 +664,17 @@ def lerobot_teleoperate(
                             f"Command: `{' '.join(cmd)}`\n"
                             f"Log file: `{log_file}`\n"
                             f"Running in background"
-                        }
+                        },
+                        {
+                            "json": {
+                                "session_name": session_name,
+                                "pid": proc.pid,
+                                "command": " ".join(cmd),
+                                "log_file": str(log_file),
+                                "background": True,
+                            }
+                        },
                     ],
-                    "session_name": session_name,
-                    "pid": proc.pid,
-                    "command": " ".join(cmd),
-                    "log_file": str(log_file),
-                    "background": True,
                 }
             else:
                 # Start in foreground
@@ -685,12 +689,16 @@ def lerobot_teleoperate(
                             f"Command: `{' '.join(cmd)}`\n\n"
                             f"**Output:**\n```\n{result.stdout}\n```\n\n"
                             f"**Errors:**\n```\n{result.stderr}\n```"
-                        }
+                        },
+                        {
+                            "json": {
+                                "command": " ".join(cmd),
+                                "return_code": result.returncode,
+                                "stdout": result.stdout,
+                                "stderr": result.stderr,
+                            }
+                        },
                     ],
-                    "command": " ".join(cmd),
-                    "return_code": result.returncode,
-                    "stdout": result.stdout,
-                    "stderr": result.stderr,
                 }
 
         elif action == "stop":
@@ -719,9 +727,10 @@ def lerobot_teleoperate(
 
                 return {
                     "status": "success",
-                    "content": [{"text": f"**Session Stopped**\nSession: `{session_name}`\nPID: {pid}"}],
-                    "session_name": session_name,
-                    "session_info": session_info,
+                    "content": [
+                        {"text": f"**Session Stopped**\nSession: `{session_name}`\nPID: {pid}"},
+                        {"json": {"session_name": session_name, "session_info": session_info}},
+                    ],
                 }
 
             except ProcessLookupError:
@@ -729,8 +738,10 @@ def lerobot_teleoperate(
                 session_manager.remove_session(session_name)
                 return {
                     "status": "success",
-                    "content": [{"text": f"Session '{session_name}' was already stopped"}],
-                    "session_name": session_name,
+                    "content": [
+                        {"text": f"Session '{session_name}' was already stopped"},
+                        {"json": {"session_name": session_name}},
+                    ],
                 }
             except Exception as e:
                 return {
@@ -767,9 +778,10 @@ def lerobot_teleoperate(
 
             return {
                 "status": "success",
-                "content": [{"text": "\n".join(content_lines)}],
-                "sessions": sessions,
-                "count": len(sessions),
+                "content": [
+                    {"text": "\n".join(content_lines)},
+                    {"json": {"sessions": sessions, "count": len(sessions)}},
+                ],
             }
 
         elif action == "status":
@@ -858,11 +870,17 @@ def lerobot_teleoperate(
 
             return {
                 "status": "success" if result.returncode == 0 else "error",
-                "content": [{"text": "\n".join(content_lines)}],
-                "command": " ".join(cmd),
-                "return_code": result.returncode,
-                "stdout": result.stdout,
-                "stderr": result.stderr,
+                "content": [
+                    {"text": "\n".join(content_lines)},
+                    {
+                        "json": {
+                            "command": " ".join(cmd),
+                            "return_code": result.returncode,
+                            "stdout": result.stdout,
+                            "stderr": result.stderr,
+                        }
+                    },
+                ],
             }
 
         else:

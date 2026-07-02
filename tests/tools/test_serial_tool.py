@@ -16,6 +16,7 @@ import pytest
 import serial
 
 from strands_robots.tools.serial_tool import serial_tool
+from tests.tool_result_contract import tool_json
 
 
 def _texts(result: dict[str, Any]) -> str:
@@ -85,7 +86,7 @@ def test_list_ports_formats_discovered_ports(monkeypatch):
     result = serial_tool(action="list_ports")
 
     assert result["status"] == "success"
-    assert result["ports"][0]["device"] == "/dev/ttyACM0"
+    assert tool_json(result)["ports"][0]["device"] == "/dev/ttyACM0"
     text = _texts(result)
     assert "Found 1 serial ports" in text
     assert "/dev/ttyACM0" in text
@@ -126,8 +127,8 @@ def test_read_formats_hex_and_ascii(fake_serial_factory):
     created = fake_serial_factory(reads=[b"AB\x01"])
     result = serial_tool(action="read", port="/dev/ttyACM0", read_bytes=8)
     assert result["status"] == "success"
-    assert result["length"] == 3
-    assert result["raw_data"] == b"AB\x01".hex()
+    assert tool_json(result)["length"] == 3
+    assert tool_json(result)["raw_data"] == b"AB\x01".hex()
     text = _texts(result)
     assert "41 42 01" in text
     assert "AB\\x01" in text
@@ -233,8 +234,8 @@ def test_monitor_collects_chunks(fake_serial_factory, monkeypatch):
     created = fake_serial_factory(reads=[b"hi"], in_waiting=2)
     result = serial_tool(action="monitor", port="/dev/ttyACM0")
     assert result["status"] == "success"
-    assert len(result["monitor_data"]) == 1
-    assert result["monitor_data"][0]["data"] == b"hi".hex()
+    assert len(tool_json(result)["monitor_data"]) == 1
+    assert tool_json(result)["monitor_data"][0]["data"] == b"hi".hex()
     assert _texts(result).isascii()
     assert created[0].closed
 

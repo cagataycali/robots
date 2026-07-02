@@ -411,10 +411,9 @@ def lerobot_calibrate(
                     "content": [
                         {
                             "text": f"**No calibration files found.**\n\nCalibrations are stored in: `{manager.base_path}`"
-                        }
+                        },
+                        {"json": {"calibrations": structure, "count": 0}},
                     ],
-                    "calibrations": structure,
-                    "count": 0,
                 }
 
             # Format output
@@ -451,9 +450,10 @@ def lerobot_calibrate(
 
             return {
                 "status": "success",
-                "content": [{"text": "\n".join(content_lines)}],
-                "calibrations": structure,
-                "count": total_count,
+                "content": [
+                    {"text": "\n".join(content_lines)},
+                    {"json": {"calibrations": structure, "count": total_count}},
+                ],
             }
 
         elif action == "view":
@@ -496,7 +496,13 @@ def lerobot_calibrate(
                             ]
                         )
 
-            return {"status": "success", "content": [{"text": "\n".join(content_lines)}], "calibration_info": info}
+            return {
+                "status": "success",
+                "content": [
+                    {"text": "\n".join(content_lines)},
+                    {"json": {"calibration_info": info}},
+                ],
+            }
 
         elif action == "search":
             results = manager.search_calibrations(query or "", device_type, device_model)
@@ -505,9 +511,10 @@ def lerobot_calibrate(
                 search_desc = f"query '{query}'" if query else "specified criteria"
                 return {
                     "status": "success",
-                    "content": [{"text": f"**No calibrations found** matching {search_desc}"}],
-                    "results": [],
-                    "count": 0,
+                    "content": [
+                        {"text": f"**No calibrations found** matching {search_desc}"},
+                        {"json": {"results": [], "count": 0}},
+                    ],
                 }
 
             content_lines = [f"**Search Results** ({len(results)} found)", f"Query: `{query or 'all'}`", ""]
@@ -530,9 +537,10 @@ def lerobot_calibrate(
 
             return {
                 "status": "success",
-                "content": [{"text": "\n".join(content_lines)}],
-                "results": results,
-                "count": len(results),
+                "content": [
+                    {"text": "\n".join(content_lines)},
+                    {"json": {"results": results, "count": len(results)}},
+                ],
             }
 
         elif action == "backup":
@@ -558,9 +566,10 @@ def lerobot_calibrate(
 
                 return {
                     "status": "success",
-                    "content": [{"text": "\n".join(content_lines)}],
-                    "backup_path": message,
-                    "files_count": count,
+                    "content": [
+                        {"text": "\n".join(content_lines)},
+                        {"json": {"backup_path": message, "files_count": count}},
+                    ],
                 }
             else:
                 return {"status": "error", "content": [{"text": f"**Backup failed:** {message}"}]}
@@ -574,8 +583,10 @@ def lerobot_calibrate(
             if success:
                 return {
                     "status": "success",
-                    "content": [{"text": f"**{message}**\nFrom: `{backup_dir}`\nOverwrite mode: `{overwrite}`"}],
-                    "restored_count": count,
+                    "content": [
+                        {"text": f"**{message}**\nFrom: `{backup_dir}`\nOverwrite mode: `{overwrite}`"},
+                        {"json": {"restored_count": count}},
+                    ],
                 }
             else:
                 return {"status": "error", "content": [{"text": f"**Restore failed:** {message}"}]}
@@ -611,7 +622,13 @@ def lerobot_calibrate(
             structure = manager.get_calibration_structure()
 
             if not any(structure.values()):
-                return {"status": "success", "content": [{"text": "**No calibrations to analyze**"}], "analysis": {}}
+                return {
+                    "status": "success",
+                    "content": [
+                        {"text": "**No calibrations to analyze**"},
+                        {"json": {"analysis": {}}},
+                    ],
+                }
 
             total_calibrations = 0
             device_counts = {"teleoperators": 0, "robots": 0}
@@ -669,7 +686,13 @@ def lerobot_calibrate(
                 "base_path": str(manager.base_path),
             }
 
-            return {"status": "success", "content": [{"text": "\n".join(content_lines)}], "analysis": analysis}
+            return {
+                "status": "success",
+                "content": [
+                    {"text": "\n".join(content_lines)},
+                    {"json": {"analysis": analysis}},
+                ],
+            }
 
         elif action == "path":
             if device_type and device_model and device_id:
@@ -683,10 +706,9 @@ def lerobot_calibrate(
                         {
                             "text": f"**Calibration Path**\n`{calib_path}`\n\n"
                             f"{' File exists' if exists else ' File does not exist'}"
-                        }
+                        },
+                        {"json": {"path": str(calib_path), "exists": exists}},
                     ],
-                    "path": str(calib_path),
-                    "exists": exists,
                 }
             else:
                 # Show base paths
@@ -698,11 +720,15 @@ def lerobot_calibrate(
                             f"**Base:** `{manager.base_path}`\n"
                             f"**Teleoperators:** `{manager.teleop_path}`\n"
                             f"**Robots:** `{manager.robot_path}`"
-                        }
+                        },
+                        {
+                            "json": {
+                                "base_path": str(manager.base_path),
+                                "teleop_path": str(manager.teleop_path),
+                                "robot_path": str(manager.robot_path),
+                            }
+                        },
                     ],
-                    "base_path": str(manager.base_path),
-                    "teleop_path": str(manager.teleop_path),
-                    "robot_path": str(manager.robot_path),
                 }
 
         else:

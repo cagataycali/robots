@@ -462,13 +462,17 @@ def lerobot_train(
                         f"Command: `{' '.join(cmd)}`\n"
                         f"Log file: `{log_file}`\n"
                         f"Running in background"
-                    }
+                    },
+                    {
+                        "json": {
+                            "session_name": session_name,
+                            "pid": proc.pid,
+                            "command": " ".join(cmd),
+                            "log_file": str(log_file),
+                            "output_dir": resolved_output_dir,
+                        }
+                    },
                 ],
-                "session_name": session_name,
-                "pid": proc.pid,
-                "command": " ".join(cmd),
-                "log_file": str(log_file),
-                "output_dir": resolved_output_dir,
             }
 
         elif action == "stop":
@@ -490,16 +494,19 @@ def lerobot_train(
                 session_manager.remove_session(session_name)
                 return {
                     "status": "success",
-                    "content": [{"text": f"**Session Stopped**\nSession: `{session_name}`\nPID: {pid}"}],
-                    "session_name": session_name,
-                    "session_info": session_info,
+                    "content": [
+                        {"text": f"**Session Stopped**\nSession: `{session_name}`\nPID: {pid}"},
+                        {"json": {"session_name": session_name, "session_info": session_info}},
+                    ],
                 }
             except ProcessLookupError:
                 session_manager.remove_session(session_name)
                 return {
                     "status": "success",
-                    "content": [{"text": f"Session '{session_name}' was already stopped"}],
-                    "session_name": session_name,
+                    "content": [
+                        {"text": f"Session '{session_name}' was already stopped"},
+                        {"json": {"session_name": session_name}},
+                    ],
                 }
 
         elif action == "list":
@@ -526,9 +533,10 @@ def lerobot_train(
                 lines.append("No active sessions")
             return {
                 "status": "success",
-                "content": [{"text": "\n".join(lines)}],
-                "sessions": sessions,
-                "count": len(sessions),
+                "content": [
+                    {"text": "\n".join(lines)},
+                    {"json": {"sessions": sessions, "count": len(sessions)}},
+                ],
             }
 
         elif action == "status":

@@ -235,8 +235,10 @@ class TeleopMixin:
         body = "\n".join(rows) if rows else "  (none)"
         return {
             "status": "success",
-            "content": [{"text": f"Attached teleoperators ({len(self._teleops)}):\n{body}"}],
-            "teleops": list(self._teleops),
+            "content": [
+                {"text": f"Attached teleoperators ({len(self._teleops)}):\n{body}"},
+                {"json": {"teleops": list(self._teleops)}},
+            ],
         }
 
     # --- drive ------------------------------------------------------------
@@ -390,10 +392,9 @@ class TeleopMixin:
                     "text": f"Teleoperation started: driving {selected} @ {hz:.0f}Hz "
                     f"-> {self.tool_name_label(robot_name)}{pub_note}.\n"
                     f"Call stop_teleoperate() to stop."
-                }
+                },
+                {"json": {"devices": selected, "publish": publish}},
             ],
-            "devices": selected,
-            "publish": publish,
         }
 
     def stop_teleoperate(self) -> dict[str, Any]:
@@ -428,17 +429,21 @@ class TeleopMixin:
         hz = self._teleop_frames / elapsed if elapsed > 0 else 0
         return {
             "status": "success",
-            "running": self._teleop_running,
-            "frames": self._teleop_frames,
-            "errors": self._teleop_errors,
-            "hz_actual": hz,
-            "devices": list(self._teleops),
             "content": [
                 {
                     "text": f"Local teleop: running={self._teleop_running}, "
                     f"frames={self._teleop_frames}, errors={self._teleop_errors}, "
                     f"hz={hz:.1f}, devices={list(self._teleops)}"
-                }
+                },
+                {
+                    "json": {
+                        "running": self._teleop_running,
+                        "frames": self._teleop_frames,
+                        "errors": self._teleop_errors,
+                        "hz_actual": hz,
+                        "devices": list(self._teleops),
+                    }
+                },
             ],
         }
 
@@ -534,18 +539,25 @@ class TeleopMixin:
             status = "error"  # every attempt failed, either mode
         else:
             status = "degraded"  # some ok, some failed
+        telemetry = {
+            "frames": frames,
+            "errors": errors,
+            "hz_actual": hz,
+            "elapsed_s": elapsed,
+            "status": status,
+            "blocking": blocking,
+            "publish_count": len(publish_results) if publish_results else 0,
+        }
         return {
             "status": status,
             "content": [
                 {
                     "text": f"Teleoperation {'completed' if blocking else 'stopped'}: "
-                    f"{self._teleop_frames} frames, {self._teleop_errors} errors, "
+                    f"{frames} frames, {errors} errors, "
                     f"{hz:.1f}Hz over {elapsed:.1f}s.{note}"
-                }
+                },
+                {"json": telemetry},
             ],
-            "frames": self._teleop_frames,
-            "errors": self._teleop_errors,
-            "hz_actual": hz,
         }
 
 

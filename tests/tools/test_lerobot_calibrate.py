@@ -22,6 +22,7 @@ from strands_robots.tools.lerobot_calibrate import (
     LeRobotCalibrationManager,
     lerobot_calibrate,
 )
+from tests.tool_result_contract import tool_json
 
 
 def _motor(idx: int) -> dict[str, int]:
@@ -195,21 +196,21 @@ def test_list_empty_tree_reports_zero(tmp_path: Path) -> None:
     """``list`` on an empty tree succeeds with count 0."""
     result = lerobot_calibrate(action="list", base_path=str(tmp_path))
     assert result["status"] == "success"
-    assert result["count"] == 0
+    assert tool_json(result)["count"] == 0
 
 
 def test_list_populated_counts_all(populated: Path) -> None:
     """``list`` enumerates every calibration across both device types."""
     result = lerobot_calibrate(action="list", base_path=str(populated))
     assert result["status"] == "success"
-    assert result["count"] == 3
+    assert tool_json(result)["count"] == 3
     assert "so101_follower" in result["content"][0]["text"]
 
 
 def test_list_filtered_by_device_type(populated: Path) -> None:
     """``list`` with device_type='robots' counts only robot calibrations."""
     result = lerobot_calibrate(action="list", device_type="robots", base_path=str(populated))
-    assert result["count"] == 2
+    assert tool_json(result)["count"] == 2
 
 
 def test_view_returns_motor_details(populated: Path) -> None:
@@ -222,7 +223,7 @@ def test_view_returns_motor_details(populated: Path) -> None:
         base_path=str(populated),
     )
     assert result["status"] == "success"
-    assert result["calibration_info"]["motor_count"] == 6
+    assert tool_json(result)["calibration_info"]["motor_count"] == 6
     assert "shoulder" in result["content"][0]["text"]
 
 
@@ -249,31 +250,31 @@ def test_search_action_returns_matches(populated: Path) -> None:
     """``search`` returns the matching calibration records."""
     result = lerobot_calibrate(action="search", query="green", base_path=str(populated))
     assert result["status"] == "success"
-    assert result["count"] == 1
-    assert result["results"][0]["device_id"] == "green_arm"
+    assert tool_json(result)["count"] == 1
+    assert tool_json(result)["results"][0]["device_id"] == "green_arm"
 
 
 def test_search_no_match_reports_zero(populated: Path) -> None:
     """``search`` with no hits succeeds with an empty result set."""
     result = lerobot_calibrate(action="search", query="zzz", base_path=str(populated))
     assert result["status"] == "success"
-    assert result["count"] == 0
+    assert tool_json(result)["count"] == 0
 
 
 def test_backup_action_reports_file_count(populated: Path, tmp_path: Path) -> None:
     """``backup`` copies all calibrations and reports the count."""
     result = lerobot_calibrate(action="backup", output_dir=str(tmp_path / "out"), base_path=str(populated))
     assert result["status"] == "success"
-    assert result["files_count"] == 3
+    assert tool_json(result)["files_count"] == 3
 
 
 def test_restore_action_round_trips(populated: Path, tmp_path: Path) -> None:
     """``restore`` rebuilds calibrations from a prior ``backup``."""
     backup = lerobot_calibrate(action="backup", output_dir=str(tmp_path / "out"), base_path=str(populated))
     dest = tmp_path / "dest"
-    result = lerobot_calibrate(action="restore", backup_dir=backup["backup_path"], base_path=str(dest))
+    result = lerobot_calibrate(action="restore", backup_dir=tool_json(backup)["backup_path"], base_path=str(dest))
     assert result["status"] == "success"
-    assert result["restored_count"] == 3
+    assert tool_json(result)["restored_count"] == 3
 
 
 def test_restore_action_requires_backup_dir(tmp_path: Path) -> None:
@@ -318,7 +319,7 @@ def test_analyze_action_summarizes_statistics(populated: Path) -> None:
     """``analyze`` aggregates counts and per-model motor statistics."""
     result = lerobot_calibrate(action="analyze", base_path=str(populated))
     assert result["status"] == "success"
-    analysis: dict[str, Any] = result["analysis"]
+    analysis: dict[str, Any] = tool_json(result)["analysis"]
     assert analysis["total_calibrations"] == 3
     assert analysis["device_counts"] == {"teleoperators": 1, "robots": 2}
     assert analysis["motor_stats"]["robots/so101_follower"]["max"] == 6
@@ -328,7 +329,7 @@ def test_analyze_empty_tree(tmp_path: Path) -> None:
     """``analyze`` on an empty tree succeeds with an empty analysis."""
     result = lerobot_calibrate(action="analyze", base_path=str(tmp_path))
     assert result["status"] == "success"
-    assert result["analysis"] == {}
+    assert tool_json(result)["analysis"] == {}
 
 
 def test_path_action_specific_calibration(populated: Path) -> None:
@@ -341,16 +342,16 @@ def test_path_action_specific_calibration(populated: Path) -> None:
         base_path=str(populated),
     )
     assert result["status"] == "success"
-    assert result["exists"] is True
-    assert result["path"].endswith("orange_arm.json")
+    assert tool_json(result)["exists"] is True
+    assert tool_json(result)["path"].endswith("orange_arm.json")
 
 
 def test_path_action_base_paths(tmp_path: Path) -> None:
     """``path`` without an identifier reports the base/teleop/robot paths."""
     result = lerobot_calibrate(action="path", base_path=str(tmp_path))
     assert result["status"] == "success"
-    assert result["teleop_path"].endswith("teleoperators")
-    assert result["robot_path"].endswith("robots")
+    assert tool_json(result)["teleop_path"].endswith("teleoperators")
+    assert tool_json(result)["robot_path"].endswith("robots")
 
 
 def test_unknown_action_errors(tmp_path: Path) -> None:
@@ -508,7 +509,7 @@ def test_list_filters_out_nonmatching_model(populated: Path) -> None:
     # so101_follower has two calibrations; the teleoperator model must be hidden.
     assert "so101_follower" in text
     assert "so101_leader" not in text
-    assert result["count"] == 2
+    assert tool_json(result)["count"] == 2
 
 
 def test_list_marks_unreadable_calibration_without_failing(populated: Path, monkeypatch: pytest.MonkeyPatch) -> None:

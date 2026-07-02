@@ -2954,7 +2954,10 @@ class MuJoCoSimEngine(
             f"{step_count} synchronized steps"
             f"{' (recorded)' if recording else ''}"
         )
-        return {"status": "success", "content": [{"text": text}], "steps": step_count}
+        return {
+            "status": "success",
+            "content": [{"text": text}, {"json": {"steps": step_count}}],
+        }
 
     # Action name aliases (tool-action -> method-name)
     _ACTION_ALIASES = {
