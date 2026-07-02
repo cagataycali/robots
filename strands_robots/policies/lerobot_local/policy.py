@@ -833,17 +833,48 @@ class LerobotLocalPolicy(Policy):
         # normalized actions (~[-1, 1] or z-scored) straight to the robot. Fed
         # to a radian-joint sim those are micro-motions and the arm barely
         # moves. Warn once at load so this isn't debugged as a frozen policy.
-        if self.use_processor and (self._processor_bridge is None or not self._processor_bridge.has_postprocessor):
-            logger.warning(
-                "lerobot_local: %s loaded WITHOUT an action postprocessor "
-                "(no policy_postprocessor.json). Actions are emitted in the "
-                "model's RAW/normalized space and are NOT unnormalized to robot "
-                "units -- if the arm barely moves, this is why. Provide the "
-                "checkpoint's postprocessor, or drive it through a provider with "
-                "explicit unit handling (e.g. the 'transformers' provider's "
-                "state_units/action_units/stats knobs).",
-                self.pretrained_name_or_path or "<model>",
-            )
+        if self.use_processor:
+            bridge = self._processor_bridge
+            if bridge is None or not bridge.has_postprocessor:
+                logger.warning(
+                    "lerobot_local: %s loaded WITHOUT an action postprocessor "
+                    "(no policy_postprocessor.json). Actions are emitted in the "
+                    "model's RAW/normalized space and are NOT unnormalized to robot "
+                    "units -- if the arm barely moves, this is why. Provide the "
+                    "checkpoint's postprocessor, or drive it through a provider with "
+                    "explicit unit handling (e.g. the 'transformers' provider's "
+                    "state_units/action_units/stats knobs).",
+                    self.pretrained_name_or_path or "<model>",
+                )
+            else:
+                # Subtler failure than a missing postprocessor: the pipeline IS
+                # present and active, but its normalizer stats do not cover the
+                # declared action/state keys, so LeRobot's normalizer silently
+                # passes those tensors through (normalize_processor.py returns the
+                # tensor unchanged when the key is absent from its stats).
+                # Pretraining base checkpoints (e.g. lerobot/smolvla_base) ship
+                # stats keyed by the training dataset ('so100.buffer.action') with
+                # no 'observation.state' stats and no bare 'action' key -- so state
+                # reaches the model raw and actions reach the robot un-unnormalized
+                # while has_postprocessor stays True. Detect and warn, matching the
+                # no-silent-passthrough intent of the missing-postprocessor case.
+                inert = bridge.inert_normalization_features()
+                if inert:
+                    logger.warning(
+                        "lerobot_local: %s has an ACTIVE normalization pipeline "
+                        "but its stats do not cover %s -- those features are passed "
+                        "through UN-normalized (observation.state reaches the model "
+                        "raw; predicted actions reach the robot without "
+                        "unnormalization). Pretraining base checkpoints often ship "
+                        "dataset-prefixed stats (e.g. 'so100.buffer.action') instead "
+                        "of the canonical 'action'/'observation.state' keys. "
+                        "Fine-tune the checkpoint (which writes proper stats) or pass "
+                        "processor_overrides={'normalizer_processor': {'stats': "
+                        "<dataset stats>}} -- if the arm reaches an out-of-distribution "
+                        "pose or ignores proprioception, this is why.",
+                        self.pretrained_name_or_path or "<model>",
+                        inert,
+                    )
 
         # Initialize RTC if supported by this policy
         self._init_rtc()

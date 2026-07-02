@@ -468,6 +468,71 @@ class ProcessorBridge:
         """Whether any processing pipeline is active."""
         return self.has_preprocessor or self.has_postprocessor
 
+    def inert_normalization_features(self) -> list[str]:
+        """Declared normalization features that will silently pass through.
+
+        A LeRobot ``NormalizerProcessorStep`` / ``UnnormalizerProcessorStep``
+        declares a ``norm_map`` (e.g. ``STATE`` / ``ACTION`` -> ``MEAN_STD``) but
+        applies it only when the looked-up stats key is present; otherwise it
+        returns the tensor unchanged (``normalize_processor.py``:
+        ``if norm_mode == IDENTITY or key not in self._tensor_stats: return
+        tensor``). Pretraining *base* checkpoints - notably
+        ``lerobot/smolvla_base`` - ship stats keyed by the training dataset
+        (e.g. ``so100.buffer.action``) with no ``observation.state`` stats and
+        no bare ``action`` key, so a present, active pipeline normalizes
+        NOTHING: ``observation.state`` reaches the model raw and the predicted
+        ``action`` reaches the robot without unnormalization. This is the same
+        silent-passthrough hazard :mod:`.norm_stats` guards for the MolmoAct2
+        ``norm_stats.json`` path, but it slips past the standard-pipeline path
+        because the pipeline *is* present.
+
+        Returns a list of ``"<key> (<type>/<mode>)"`` descriptors for every
+        feature whose declared, non-IDENTITY normalization will be skipped.
+        Empty when every declared normalization is backed by matching stats -
+        the normal case for a fine-tuned checkpoint whose stats use the
+        canonical ``action`` / ``observation.state`` keys.
+        """
+        try:
+            from lerobot.configs.types import FeatureType, NormalizationMode
+            from lerobot.utils.constants import ACTION
+        except ImportError:
+            return []
+
+        inert: list[str] = []
+        for pipeline in (self._preprocessor, self._postprocessor):
+            if pipeline is None:
+                continue
+            for step in getattr(pipeline, "steps", []):
+                class_name = type(step).__name__
+                if class_name not in ("NormalizerProcessorStep", "UnnormalizerProcessorStep"):
+                    continue
+                features = getattr(step, "features", None) or {}
+                norm_map = getattr(step, "norm_map", None) or {}
+                stat_keys = set((getattr(step, "stats", None) or {}).keys())
+                stat_keys |= set(getattr(step, "_tensor_stats", {}).keys())
+                is_unnormalizer = class_name == "UnnormalizerProcessorStep"
+                for key, feature in features.items():
+                    ftype = getattr(feature, "type", None)
+                    if ftype is None:
+                        continue
+                    mode = norm_map.get(ftype)
+                    if mode is None or mode == NormalizationMode.IDENTITY:
+                        continue
+                    # A NormalizerProcessorStep applies only observation features
+                    # (it skips ACTION); an UnnormalizerProcessorStep applies only
+                    # the ACTION. Mirror that so a feature the step never touches
+                    # is not falsely flagged.
+                    if is_unnormalizer and ftype != FeatureType.ACTION:
+                        continue
+                    if not is_unnormalizer and ftype == FeatureType.ACTION:
+                        continue
+                    lookup = ACTION if ftype == FeatureType.ACTION else key
+                    if lookup not in stat_keys:
+                        descriptor = f"{key} ({ftype.value}/{mode.value})"
+                        if descriptor not in inert:
+                            inert.append(descriptor)
+        return inert
+
     def preprocess(self, observation: dict[str, Any], instruction: str | None = None) -> dict[str, Any]:
         """Preprocess a raw observation dict through the pipeline.
 

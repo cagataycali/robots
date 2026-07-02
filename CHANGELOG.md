@@ -65,6 +65,30 @@ it. This extends the entry-point guards that already reject other
 fabricated-success-rate configs (non-positive `n_episodes`/`max_steps`, empty
 goal payloads).
 
+### Fixed: warn when a checkpoint's normalization pipeline is present but inert
+
+`lerobot_local` warned when a checkpoint shipped *no* `policy_postprocessor.json`
+(actions emitted in raw space). It stayed silent for a subtler, equally broken
+case: a pipeline that IS present and active but whose normalizer stats do not
+cover the declared `action` / `observation.state` keys. LeRobot's
+`NormalizerProcessorStep` returns a tensor unchanged when its lookup key is
+absent from the loaded stats, so such a pipeline normalizes NOTHING -
+`observation.state` reaches the model raw and predicted actions reach the robot
+without unnormalization - while `has_postprocessor` stays `True`, so the
+existing guard never fired.
+
+Pretraining *base* checkpoints hit this: `lerobot/smolvla_base` ships stats
+keyed by the training dataset (`so100.buffer.action`) with no
+`observation.state` stats and no bare `action` key, so both state normalization
+and action unnormalization silently pass through. The result looks like an
+out-of-distribution / proprioception-ignoring policy with no diagnostic.
+
+`ProcessorBridge.inert_normalization_features()` now reports declared,
+non-IDENTITY normalization features that will be skipped, and the load path
+warns (pointing at fine-tuning or `processor_overrides` stats) - matching the
+no-silent-passthrough intent of the missing-postprocessor warning. Diagnostic
+only; no change to action values.
+
 ### Fixed: `dataset_cameras` scoping crashed on the Newton backend
 
 `run_policy(dataset_cameras=[...])` scopes a recorded dataset to a chosen
