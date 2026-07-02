@@ -819,6 +819,107 @@ class TestLifecycle:
         # Only the failing step should be in the trail; downstream not attempted.
         assert [s["step"] for s in result["steps"]] == ["build_image"]
 
+    def test_full_aborts_on_download_failure(self):
+        """A download_checkpoint failure aborts before start_container/start."""
+        with patch(
+            "strands_robots.tools.gr00t_inference._build_image",
+            return_value={"status": "success", "image_name": "x", "skipped": True},
+        ):
+            with patch(
+                "strands_robots.tools.gr00t_inference._download_checkpoint",
+                return_value={"status": "error", "message": "hub 401"},
+            ):
+                with patch(
+                    "strands_robots.tools.gr00t_inference._start_container",
+                ) as mock_start_container:
+                    result = _lifecycle(
+                        phase="full",
+                        **{**_lifecycle_default_kwargs(), "hf_repo": "nvidia/foo"},
+                    )
+        assert result["status"] == "error"
+        assert "download_checkpoint failed" in result["message"]
+        # Trail stops at the failed step; downstream steps not attempted.
+        assert [s["step"] for s in result["steps"]] == ["build_image", "download_checkpoint"]
+        mock_start_container.assert_not_called()
+
+    def test_full_aborts_on_start_container_failure(self, tmp_path):
+        """A start_container failure aborts before the service is started."""
+        with patch(
+            "strands_robots.tools.gr00t_inference._build_image",
+            return_value={"status": "success", "image_name": "x", "skipped": True},
+        ):
+            with patch(
+                "strands_robots.tools.gr00t_inference._download_checkpoint",
+                return_value={
+                    "status": "success",
+                    "local_dir": str(tmp_path / "cp"),
+                    "skipped": False,
+                    "hf_repo": "nvidia/foo",
+                },
+            ):
+                with patch(
+                    "strands_robots.tools.gr00t_inference._start_container",
+                    return_value={"status": "error", "message": "docker run failed"},
+                ):
+                    with patch(
+                        "strands_robots.tools.gr00t_inference._start_service",
+                    ) as mock_start_service:
+                        result = _lifecycle(
+                            phase="full",
+                            **{**_lifecycle_default_kwargs(), "hf_repo": "nvidia/foo"},
+                        )
+        assert result["status"] == "error"
+        assert "start_container failed" in result["message"]
+        assert [s["step"] for s in result["steps"]] == [
+            "build_image",
+            "download_checkpoint",
+            "start_container",
+        ]
+        mock_start_service.assert_not_called()
+
+    def test_full_errors_when_checkpoint_location_unresolvable(self, tmp_path):
+        """With no checkpoint_path and no hf_subfolder, the service target is
+        unknown - lifecycle must error out (not start the service blind)."""
+        with patch(
+            "strands_robots.tools.gr00t_inference._build_image",
+            return_value={"status": "success", "image_name": "x", "skipped": True},
+        ):
+            with patch(
+                "strands_robots.tools.gr00t_inference._download_checkpoint",
+                return_value={
+                    "status": "success",
+                    "local_dir": str(tmp_path / "cp"),
+                    "skipped": False,
+                    "hf_repo": "nvidia/foo",
+                },
+            ):
+                with patch(
+                    "strands_robots.tools.gr00t_inference._start_container",
+                    return_value={"status": "success", "container_name": "gr00t", "skipped": False},
+                ):
+                    with patch(
+                        "strands_robots.tools.gr00t_inference._start_service",
+                    ) as mock_start_service:
+                        result = _lifecycle(
+                            phase="full",
+                            **{
+                                **_lifecycle_default_kwargs(),
+                                "hf_repo": "nvidia/foo",
+                                "hf_subfolder": None,
+                                "checkpoint_path": None,
+                            },
+                        )
+        assert result["status"] == "error"
+        assert "checkpoint_path" in result["message"]
+        assert "hf_subfolder" in result["message"]
+        # The container was started but the service was never launched blind.
+        assert [s["step"] for s in result["steps"]] == [
+            "build_image",
+            "download_checkpoint",
+            "start_container",
+        ]
+        mock_start_service.assert_not_called()
+
     def test_full_auto_resolves_in_container_checkpoint_path_from_subfolder(self, tmp_path):
         captured: dict[str, Any] = {}
 
