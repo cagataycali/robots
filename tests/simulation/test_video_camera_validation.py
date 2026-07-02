@@ -150,3 +150,67 @@ class TestCamerasRecordingSuffixResolution:
         assert r["status"] == "error", r
         text = r["content"][0]["text"]
         assert "nope" in text
+
+
+class TestVideoPathGuard:
+    """run_policy(video={"path": ...}) validates the LLM-supplied path before
+    it opens a writer. A path carrying shell metacharacters or a ".." traversal
+    segment must be rejected up-front with a clean error dict - never a crash
+    and never a partially-written file - and a render probe that raises must be
+    caught rather than propagated out of run_policy.
+    """
+
+    def test_path_traversal_rejected_before_write(self, sim_with_arm, tmp_path):
+        """A ".." traversal in video.path fails fast with a clean error dict
+        and writes nothing (no writer is ever opened)."""
+        escape = tmp_path / ".." / "escape.mp4"
+        r = sim_with_arm.run_policy(
+            robot_name="arm1",
+            policy_provider="mock",
+            duration=0.5,
+            fast_mode=False,
+            video={"path": str(escape), "camera": "arm1/side", "fps": 30},
+        )
+        assert r["status"] == "error", r
+        text = r["content"][0]["text"].lower()
+        assert "video recording" in text
+        assert "traversal" in text
+        # The guard runs before any writer is opened, so nothing is created.
+        assert not escape.resolve().exists()
+
+    def test_shell_metacharacter_rejected(self, sim_with_arm, tmp_path):
+        """A shell metacharacter in video.path is rejected before recording."""
+        bad = f"{tmp_path}/rollout;rm.mp4"
+        r = sim_with_arm.run_policy(
+            robot_name="arm1",
+            policy_provider="mock",
+            duration=0.5,
+            fast_mode=False,
+            video={"path": bad, "camera": "arm1/side", "fps": 30},
+        )
+        assert r["status"] == "error", r
+        text = r["content"][0]["text"].lower()
+        assert "video recording" in text
+        assert "metacharacter" in text
+
+    def test_render_probe_crash_is_caught(self, sim_with_arm, tmp_path, monkeypatch):
+        """If the up-front camera render probe raises, run_policy returns a
+        clean error dict instead of letting the exception escape."""
+        video_path = tmp_path / "ok.mp4"
+
+        def _boom(*args, **kwargs):
+            raise RuntimeError("render backend exploded")
+
+        monkeypatch.setattr(sim_with_arm, "render", _boom)
+        r = sim_with_arm.run_policy(
+            robot_name="arm1",
+            policy_provider="mock",
+            duration=0.5,
+            fast_mode=False,
+            video={"path": str(video_path), "camera": "arm1/side", "fps": 30},
+        )
+        assert r["status"] == "error", r
+        text = r["content"][0]["text"].lower()
+        assert "render probe crashed" in text
+        assert "render backend exploded" in text
+        assert not video_path.exists()
