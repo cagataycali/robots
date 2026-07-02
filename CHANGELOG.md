@@ -215,6 +215,20 @@ documents it, and `list_cameras` is a dispatchable agent action alongside
 surface on the default backend.
 
 
+### Fixed: `inverse_dynamics` reported ~0 torques regardless of pose (stale `qacc`)
+
+`inverse_dynamics()` runs `mj_inverse`, which reads `data.qacc` as the
+*desired* acceleration. The method used whatever value was left in `qacc` by
+the previous forward pass -- the unforced free-fall acceleration -- and so
+asked `mj_inverse` to reproduce free-fall, which needs ~0 generalized force.
+It therefore returned near-zero torques at every pose instead of the
+gravity-/velocity-bias-compensation torques the query exists to provide (the
+standard "hold this configuration" inverse-dynamics result). It now runs
+`mj_forward` first (so the position/velocity kinematics match the current
+`qpos`/`qvel`, matching the defensive forward in `get_mass_matrix`), zeroes
+`qacc` for the solve, and restores the buffer afterwards, so the result is
+correct and independent of any leftover acceleration.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

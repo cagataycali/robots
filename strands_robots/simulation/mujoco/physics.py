@@ -516,10 +516,22 @@ class PhysicsMixin:
     # Inverse Dynamics
 
     def inverse_dynamics(self) -> dict[str, Any]:
-        """Compute inverse dynamics: given qacc, what forces are needed?
+        """Compute the generalized forces required to hold the current state.
 
-        Runs mj_inverse to compute qfrc_inverse - the generalized forces
-        that would produce the current accelerations.
+        Runs ``mj_inverse`` for a target acceleration of zero, so the result
+        is the gravity- and velocity-bias (Coriolis/centrifugal) compensation
+        torques that keep the robot at its current ``qpos``/``qvel`` with zero
+        acceleration - the standard inverse-dynamics query for a manipulator
+        (at rest, pure gravity compensation).
+
+        ``mj_inverse`` reads ``data.qacc`` as the *desired* acceleration, so
+        this method runs ``mj_forward`` first (so the position/velocity
+        kinematics match the current ``qpos``/``qvel``, matching the defensive
+        forward in ``get_mass_matrix``) and zeroes ``qacc`` for the solve,
+        restoring the buffer afterwards. Without this it would use whatever
+        stale forward-dynamics acceleration was left in ``data.qacc`` and ask
+        ``mj_inverse`` to reproduce free-fall - returning ~0 forces regardless
+        of pose, never the compensation torques the query is for.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -528,14 +540,22 @@ class PhysicsMixin:
         model, data = self._world._model, self._world._data
 
         with self._lock:
-            mj.mj_inverse(model, data)
-            # Build named force mapping
-            forces = {}
-            for i in range(model.njnt):
-                name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
-                if name:
-                    dof_adr = model.jnt_dofadr[i]
-                    forces[name] = float(data.qfrc_inverse[dof_adr])
+            # Establish consistent position/velocity kinematics for the current
+            # state, then solve inverse dynamics for zero desired acceleration.
+            mj.mj_forward(model, data)
+            saved_qacc = data.qacc.copy()
+            data.qacc[:] = 0.0
+            try:
+                mj.mj_inverse(model, data)
+                # Build named force mapping
+                forces = {}
+                for i in range(model.njnt):
+                    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
+                    if name:
+                        dof_adr = model.jnt_dofadr[i]
+                        forces[name] = float(data.qfrc_inverse[dof_adr])
+            finally:
+                data.qacc[:] = saved_qacc
 
         return {
             "status": "success",

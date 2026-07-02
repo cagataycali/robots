@@ -312,12 +312,67 @@ class TestStateCheckpointing:
 
 
 class TestInverseDynamics:
+    @staticmethod
+    def _gravity_compensation(model, data):
+        """Ground-truth compensation torques: mj_inverse for zero desired qacc."""
+        mj.mj_forward(model, data)
+        data.qacc[:] = 0.0
+        mj.mj_inverse(model, data)
+        return {
+            mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i): float(data.qfrc_inverse[model.jnt_dofadr[i]])
+            for i in range(model.njnt)
+            if mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
+        }
+
     def test_inverse_dynamics(self, sim):
-        mj.mj_forward(sim._world._model, sim._world._data)
         result = sim.inverse_dynamics()
         assert result["status"] == "success"
         forces = _extract_json_block(result, 1)["qfrc_inverse"]
         assert "shoulder" in forces or "elbow" in forces
+
+    def test_inverse_dynamics_returns_gravity_compensation(self, sim):
+        """inverse_dynamics reports the torques that HOLD the current pose.
+
+        Regression: previously it read the stale forward-dynamics ``qacc``
+        (the unforced/free-fall acceleration) as the desired acceleration and
+        asked ``mj_inverse`` to reproduce free-fall - which needs ~0 force. It
+        therefore reported near-zero torques regardless of pose instead of the
+        gravity-/bias-compensation torques the query is for.
+        """
+        model, data = sim._world._model, sim._world._data
+        # A gravity-loaded pose (arm tilted away from the vertical).
+        sim.set_joint_positions({"shoulder": 0.8, "elbow": -0.5})
+
+        forces = _extract_json_block(sim.inverse_dynamics(), 1)["qfrc_inverse"]
+
+        # Ground truth computed independently AFTER the call (the fixed method
+        # forwards + restores qacc, so state is unchanged for this compare).
+        expected = self._gravity_compensation(model, data)
+        for jn in ("shoulder", "elbow"):
+            assert forces[jn] == pytest.approx(expected[jn], abs=1e-9)
+
+        # The shoulder carries a real gravity load in this pose; the buggy
+        # free-fall path returned ~0 here, so this discriminates the fix.
+        assert abs(forces["shoulder"]) > 1e-2
+
+    def test_inverse_dynamics_ignores_stale_qacc(self, sim):
+        """The result must not depend on leftover free-fall qacc.
+
+        Stepping (or a prior forward) leaves ``data.qacc`` holding the
+        forward-dynamics acceleration. inverse_dynamics must zero it for the
+        solve, so back-to-back calls are identical and independent of that
+        buffer.
+        """
+        sim.set_joint_positions({"shoulder": 0.6, "elbow": 0.4})
+        first = _extract_json_block(sim.inverse_dynamics(), 1)["qfrc_inverse"]
+
+        # Perturb the leftover qacc buffer directly; the answer must not move.
+        sim._world._data.qacc[:] = 123.4
+        second = _extract_json_block(sim.inverse_dynamics(), 1)["qfrc_inverse"]
+
+        for jn in ("shoulder", "elbow"):
+            assert first[jn] == pytest.approx(second[jn], abs=1e-9)
+        assert abs(first["shoulder"]) > 1e-2
 
 
 class TestBodyState:
