@@ -59,7 +59,7 @@ def test_non_symlink_open_failure_degrades_to_no_lock(audit_dir, monkeypatch):
     """A non-ELOOP OSError opening the lockfile (e.g. EACCES) degrades, not raises."""
     real_open = mesh_audit.os.open
 
-    def fake_open(path, flags, mode=0o777):
+    def fake_open(path, flags, mode=0o600):
         if str(path).endswith("mesh_audit.seq.lock"):
             raise OSError(errno.EACCES, "permission denied")
         return real_open(path, flags, mode)
@@ -102,7 +102,7 @@ def test_finally_swallows_unlock_and_close_errors(audit_dir, monkeypatch):
 def test_symlink_open_still_hard_fails(audit_dir, monkeypatch):
     """Contract boundary: an ELOOP (symlink) open is NOT degraded -- it raises."""
 
-    def fake_open(path, flags, mode=0o777):
+    def fake_open(path, flags, mode=0o600):
         raise OSError(errno.ELOOP, "symlink refused")
 
     monkeypatch.setattr(mesh_audit.os, "open", fake_open)
