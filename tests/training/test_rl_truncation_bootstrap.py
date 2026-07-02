@@ -17,9 +17,14 @@ lane rather than the GPU / physics lane where the smoke train lives.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, cast
+
 import pytest
 
 torch = pytest.importorskip("torch")
+
+if TYPE_CHECKING:
+    from strands_robots.training.rl import SimEnv
 
 
 class _FakeTermEnv:
@@ -67,7 +72,7 @@ def _sac_trainer_on_fake(terminated_flag: bool):  # type: ignore[no-untyped-def]
 
     trainer = FastSacTrainer()
     spec = RLTrainSpec(
-        env_factory=lambda: _FakeTermEnv(terminated_flag),
+        env_factory=lambda: cast("SimEnv", _FakeTermEnv(terminated_flag)),
         output_dir="/tmp/sac_truncation_contract",
         device="cpu",
         rollout_steps=1,
