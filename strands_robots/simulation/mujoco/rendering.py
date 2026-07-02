@@ -118,6 +118,10 @@ class RenderingMixin:
         default_height: int
         _lock: Any  # threading.RLock from Simulation
 
+        # Provided by RandomizationMixin (set_obs_noise); render() applies
+        # camera jitter through it. Stub so mypy accepts the cross-mixin call.
+        def _maybe_jitter_frame(self, frame: Any) -> Any: ...
+
     def _validate_render_dims(self, width: int, height: int) -> dict[str, Any] | None:
         """reject non-positive render dims; convert MuJoCo's framebuffer
         overflow to a plain-English message that tells the LLM the actual cap.
@@ -736,6 +740,8 @@ class RenderingMixin:
                 renderer.update_scene(self._world._data, scene_option=self._get_viz_option())
 
             img = renderer.render().copy()
+            # Additive camera jitter (set_obs_noise); no-op when disabled.
+            img = self._maybe_jitter_frame(img)
 
             from PIL import Image
 

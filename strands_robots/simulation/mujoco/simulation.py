@@ -210,6 +210,14 @@ class MuJoCoSimEngine(
         self.mesh: Any = mesh if mesh else None
         self.peer_id: str | None = peer_id
 
+        # Additive sensor-noise config + reproducible RNG (set_obs_noise).
+        # None until configured; the noise is then applied on every
+        # get_observation / get_robot_state and every rendered frame.
+        # Mirrors the Newton backend so a set_obs_noise(...) call behaves
+        # identically on both engines. Type-declared on RandomizationMixin.
+        self._obs_noise = None
+        self._obs_noise_rng = None
+
         self._world: SimWorld | None = None
         self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix=f"{tool_name}_sim")
         # Per-robot Future refs for *active* policies. Completed futures are
@@ -299,7 +307,10 @@ class MuJoCoSimEngine(
             # the policy's skip hint when an active recorder is attached.
             skip_images = False
         with self._lock:
-            return self._get_sim_observation(robot_name, skip_images=skip_images)
+            obs = self._get_sim_observation(robot_name, skip_images=skip_images)
+        # Additive sensor noise (set_obs_noise). Exact no-op / same dict when
+        # unconfigured, so the default path is byte-for-byte unchanged.
+        return self._apply_obs_noise(obs)
 
     def send_action(
         self,
@@ -1266,6 +1277,10 @@ class MuJoCoSimEngine(
             "(viewable grayscale depth PNG image block + metric depth_min/depth_max stats)"
         )
         base["methods"]["render_all"] = "(cameras=None, width=None, height=None) -> dict (one image block per camera)"
+        base["methods"]["set_obs_noise"] = (
+            "(joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0, seed=None) -> dict "
+            "(additive Gaussian sensor noise on joint observations + rendered frames)"
+        )
         # Recording / dataset-collection surface (LeRobotDataset, [lerobot] extra).
         # Exposed here so agents discover the explicit episode-boundary workflow
         # (start_recording -> run_policy + save_episode per episode -> stop_recording)
@@ -1327,6 +1342,9 @@ class MuJoCoSimEngine(
                     "position": float(data.qpos[model.jnt_qposadr[jnt_id]]),
                     "velocity": float(data.qvel[model.jnt_dofadr[jnt_id]]),
                 }
+
+        # Additive sensor noise (set_obs_noise); no-op when unconfigured.
+        state = self._apply_state_noise(state)
 
         text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
         for jnt, vals in state.items():
@@ -1965,6 +1983,10 @@ class MuJoCoSimEngine(
         """
         if self._world is None:
             return {"status": "success", "content": [{"text": "No world to destroy."}]}
+        # Sensor-noise config is engine-level; clear it on destroy so a
+        # recreated world starts noise-free (parity with the Newton backend).
+        self._obs_noise = None
+        self._obs_noise_rng = None
         self.cleanup()
         return {"status": "success", "content": [{"text": "World destroyed."}]}
 

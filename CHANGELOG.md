@@ -169,6 +169,24 @@ dimensions.
 free/model-only cameras -> engine default. RGB and depth for the same camera
 are now pixel-aligned.
 
+### Added: `set_obs_noise` on the MuJoCo backend (sensor-noise parity with Newton)
+
+`set_obs_noise` is a declared `SimEngine` method for additive sensor
+measurement noise (a sim-to-real robustness lever), and the Newton backend
+implemented it, but the default MuJoCo backend inherited the base
+`NotImplementedError`. Robustness code that ran on Newton crashed on MuJoCo -
+the reference backend - and the two engines diverged on a shared contract.
+
+The MuJoCo backend now implements `set_obs_noise(joint_pos_std, joint_vel_std,
+camera_jitter_px, seed)` with the same semantics as Newton: joint-position and
+per-joint-velocity Gaussian noise applied on `get_observation` (positions, the
+`<joint>.vel` entries, and camera frames) and `get_robot_state`, plus integer
+pixel jitter on rendered frames. Values must be finite and non-negative
+(`status=error` otherwise). The noise stream is seedable/reproducible, and the
+default (never-configured) path is an exact no-op, so unconfigured observations
+and renders are byte-for-byte unchanged. `describe()` now advertises the method.
+
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
