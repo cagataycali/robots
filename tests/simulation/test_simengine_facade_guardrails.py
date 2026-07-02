@@ -19,6 +19,7 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
+import pytest
 
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation.base import SimEngine
@@ -149,6 +150,17 @@ def test_evaluate_benchmark_ambiguous_multi_robot_requires_name(monkeypatch):
     assert "arm_a" in text and "arm_b" in text
 
 
+def test_evaluate_benchmark_explicit_unknown_robot_reports_not_found(monkeypatch):
+    """An explicit robot_name absent from the sim is a structured not-found error."""
+    import strands_robots.simulation.benchmark as bench
+
+    monkeypatch.setattr(bench, "get_benchmark", lambda name: object())
+    result = FakeSim(robots=("arm_a", "arm_b")).evaluate_benchmark("any_bench", robot_name="ghost")
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "ghost" in text and "not found" in text
+
+
 def test_evaluate_benchmark_unknown_name_lists_registered():
     """An unregistered benchmark name surfaces the available set."""
     result = FakeSim().evaluate_benchmark("does_not_exist")
@@ -253,3 +265,96 @@ def test_del_swallows_cleanup_errors(caplog):
         del sim
         gc.collect()
     assert any("Cleanup error during __del__" in rec.message for rec in caplog.records)
+
+
+# verify_dataset_episodes - on-disk episode-count verification contract
+
+
+def test_verify_dataset_episodes_rejects_negative_expected():
+    """A negative ``expected`` is a caller error reported as a structured dict."""
+    sim = FakeSim()
+    result = sim.verify_dataset_episodes(-1)
+    assert result["status"] == "error"
+    assert "non-negative int" in result["content"][0]["text"]
+
+
+def test_verify_dataset_episodes_rejects_non_int_expected():
+    """A non-int ``expected`` (e.g. a float) is rejected before touching disk."""
+    sim = FakeSim()
+    result = sim.verify_dataset_episodes(1.5)  # type: ignore[arg-type]
+    assert result["status"] == "error"
+    assert "non-negative int" in result["content"][0]["text"]
+
+
+def test_verify_dataset_episodes_no_active_dataset_is_structured_error():
+    """The base engine records nothing, so there is no dataset root to verify.
+
+    Exercises the base ``_active_dataset_root`` returning ``None`` and the
+    "record one first" guidance the caller gets instead of an exception.
+    """
+    sim = FakeSim()
+    assert sim._active_dataset_root() is None
+    result = sim.verify_dataset_episodes(1)
+    assert result["status"] == "error"
+    assert "no active or recently-recorded dataset" in result["content"][0]["text"]
+
+
+def test_verify_dataset_episodes_missing_parquet_reports_json_diagnostics(monkeypatch):
+    """A missing dataset parquet surfaces as a structured error with diagnostics.
+
+    When ``_active_dataset_root`` points at a location whose parquet cannot be
+    read, the reader raises ``FileNotFoundError``; the facade must convert that
+    into a ``status=error`` dict carrying the machine-readable ``json`` block
+    (expected/actual/root) rather than letting the exception escape.
+    """
+    import strands_robots.dataset_recorder as dr
+
+    class RootedSim(FakeSim):
+        def _active_dataset_root(self) -> str:
+            return "/tmp/does-not-exist-dataset-root"
+
+    def _raise(root):
+        raise FileNotFoundError("meta/info.json not found")
+
+    monkeypatch.setattr(dr, "read_dataset_episode_indices", _raise)
+
+    result = RootedSim().verify_dataset_episodes(3)
+    assert result["status"] == "error"
+    diagnostics = result["content"][1]["json"]
+    assert diagnostics["expected"] == 3
+    assert diagnostics["actual"] == 0
+    assert diagnostics["sources_agree"] is False
+    assert diagnostics["root"] == "/tmp/does-not-exist-dataset-root"
+
+
+def test_verify_dataset_episodes_import_error_is_structured_error(monkeypatch):
+    """A missing optional dep behind the reader degrades to a structured error."""
+    import strands_robots.dataset_recorder as dr
+
+    class RootedSim(FakeSim):
+        def _active_dataset_root(self) -> str:
+            return "/tmp/some-dataset-root"
+
+    def _raise(root):
+        raise ImportError("pandas is required to read dataset episodes")
+
+    monkeypatch.setattr(dr, "read_dataset_episode_indices", _raise)
+
+    result = RootedSim().verify_dataset_episodes(1)
+    assert result["status"] == "error"
+    assert "pandas is required" in result["content"][0]["text"]
+
+
+# Backend hooks the base facade leaves unimplemented
+
+
+def test_set_obs_noise_not_implemented_on_base_facade():
+    """The base engine has no physics, so ``set_obs_noise`` is not implemented."""
+    with pytest.raises(NotImplementedError, match="set_obs_noise"):
+        FakeSim().set_obs_noise(joint_std=0.01)
+
+
+def test_get_contacts_not_implemented_on_base_facade():
+    """Contact queries require a concrete physics backend to override the hook."""
+    with pytest.raises(NotImplementedError, match="get_contacts"):
+        FakeSim().get_contacts()
