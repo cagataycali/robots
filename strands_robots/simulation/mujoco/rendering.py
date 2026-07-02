@@ -996,6 +996,24 @@ class RenderingMixin:
                 names.append(k)
         return names
 
+    def list_cameras(self) -> list[str]:
+        """Return every renderable camera name on this backend.
+
+        The list always starts with the built-in ``"default"`` free view
+        (what ``render()`` / ``render(camera_name="default")`` targets) and is
+        followed by every model-defined and user-added (``add_camera``) camera,
+        deduplicated. This mirrors the Newton backend's :meth:`list_cameras`, so
+        ``describe()["cameras"]`` and this discovery surface are identical across
+        backends and independent of whether the loaded MJCF happens to bake a
+        camera literally named ``"default"`` (which ``render`` shadows with the
+        free view regardless).
+
+        Returns:
+            Camera names accepted by :meth:`render`, with ``"default"`` first.
+        """
+        named = self._list_camera_names()
+        return ["default", *[n for n in named if n != "default"]]
+
     def get_contacts(self) -> dict[str, Any]:
         """Return the list of active geom-geom contacts at the current step.
 

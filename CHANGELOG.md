@@ -186,6 +186,25 @@ pixel jitter on rendered frames. Values must be finite and non-negative
 default (never-configured) path is an exact no-op, so unconfigured observations
 and renders are byte-for-byte unchanged. `describe()` now advertises the method.
 
+### Added: `list_cameras()` on the MuJoCo backend -- camera discovery at backend parity
+
+The Newton backend exposed a public `list_cameras()` and advertised it in
+`describe()`, but the default MuJoCo backend had no such method: `sim.list_cameras()`
+raised `AttributeError`, and `describe()["cameras"]` was built from a raw
+`model.ncam` loop whose contents depended on whether the loaded MJCF happened to
+bake a camera literally named `"default"`. The two backends therefore reported
+different camera sets for the same query, and the built-in `"default"` free view
+that `render()` (its default argument) always accepts could be absent from
+discovery.
+
+`MuJoCoSimEngine.list_cameras()` now returns every renderable camera name --
+`"default"` first, then all model-defined and `add_camera` cameras, deduplicated
+-- mirroring Newton. `describe()["cameras"]` delegates to it (so the two are
+always equal and `"default"` is always advertised), `describe()["methods"]`
+documents it, and `list_cameras` is a dispatchable agent action alongside
+`list_robots` / `list_objects` / `list_bodies`, completing the scene discovery
+surface on the default backend.
+
 
 ## [0.4.1] - 2026-07-01
 

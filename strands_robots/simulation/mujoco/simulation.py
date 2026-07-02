@@ -1239,15 +1239,11 @@ class MuJoCoSimEngine(
         """
         base = super().describe()
 
-        cameras: list[str] = []
-        if self._world is not None and self._world._model is not None:
-            mj = self._mj
-            model = self._world._model
-            for i in range(model.ncam):
-                cam_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, i)
-                if cam_name:
-                    cameras.append(cam_name)
-        base["cameras"] = cameras
+        # Renderable camera names, incl. the built-in "default" free view.
+        # Delegates to list_cameras() so the discovery surface is identical to
+        # the Newton backend and always advertises "default" (which render()
+        # accepts) regardless of the loaded MJCF's own camera names.
+        base["cameras"] = self.list_cameras()
 
         bodies: list[str] = []
         if self._world is not None and self._world._model is not None:
@@ -1268,6 +1264,7 @@ class MuJoCoSimEngine(
             "scene; parent_body mounts it on a moving link (e.g. a wrist cam)"
         )
         base["methods"]["remove_camera"] = "(name: str) -> dict  # remove a camera added via add_camera"
+        base["methods"]["list_cameras"] = "() -> list[str]  # renderable camera names incl. the built-in 'default' view"
         # Rendering siblings of "render" (advertised in tool_spec.json + the
         # action dispatcher) that the base discovery surface omits. Listing
         # them here lets an agent enumerate the full render surface from
@@ -1655,6 +1652,20 @@ class MuJoCoSimEngine(
         lines = ["Objects:\n"]
         for name, obj in self._world.objects.items():
             lines.append(f"  - {name}: {obj.shape} at {obj.position}, {'static' if obj.is_static else f'{obj.mass}kg'}")
+        return {"status": "success", "content": [{"text": "\n".join(lines)}]}
+
+    def list_cameras_info(self) -> dict[str, Any]:
+        """Agent-facing camera listing (tool-result form of :meth:`list_cameras`).
+
+        Completes the discovery surface alongside ``list_robots`` /
+        ``list_objects`` / ``list_bodies`` so an agent can enumerate the
+        renderable cameras (what ``render`` / ``start_recording`` can target)
+        instead of guessing names or triggering a "camera not found" error.
+        """
+        if self._world is None or self._world._model is None:
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+        cams = self.list_cameras()
+        lines = ["Cameras (renderable):\n"] + [f"  - {c}" for c in cams]
         return {"status": "success", "content": [{"text": "\n".join(lines)}]}
 
     # Camera Management
@@ -2389,11 +2400,11 @@ class MuJoCoSimEngine(
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
                 "Same Policy ABC as real robot control - sim and real with zero code changes. "
-                "Actions (65 total): "
+                "Actions (66 total): "
                 "[World] create_world, load_scene, reset, get_state, destroy, export_xml; "
                 "[Robots] add_robot, remove_robot, list_robots, get_robot_state, list_bodies; "
                 "[Objects] add_object, remove_object, move_object, list_objects; "
-                "[Cameras] add_camera, remove_camera; "
+                "[Cameras] add_camera, remove_camera, list_cameras; "
                 "[Policy] run_policy, start_policy, stop_policy, eval_policy, replay_episode, list_policies_running; "
                 "[Rendering] render, render_depth, render_all, open_viewer, close_viewer; "
                 "[Physics] step, set_gravity, set_timestep, set_joint_positions, set_joint_velocities, "
@@ -2984,6 +2995,7 @@ class MuJoCoSimEngine(
     # Action name aliases (tool-action -> method-name)
     _ACTION_ALIASES = {
         "list_robots": "list_robots_info",
+        "list_cameras": "list_cameras_info",
     }
 
     # Input field name -> method parameter name (syntactic sugar for the LLM)

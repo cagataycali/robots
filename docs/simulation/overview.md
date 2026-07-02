@@ -55,14 +55,21 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 |--------|-----------|
 | `add_camera` | `name`, `position`, `target`, `fov=60.0`, `width=640`, `height=480` - no `attach_to`/`fovy`/`lookat` |
 | `remove_camera` | `name` |
+| `list_cameras` | - renderable camera names, `"default"` first, incl. model + user cameras |
 
 Robot-URDF cameras are auto-discovered on `add_robot`.
 
+`sim.list_cameras()` returns every name `render` / `start_recording` accepts -
+the built-in `"default"` free view first, then all model-defined and
+`add_camera` cameras. It equals `sim.describe()["cameras"]` and matches the
+Newton backend, so a rollout rig can be enumerated instead of guessed.
+
 !!! tip "Discover the scene-construction surface"
-    `add_robot`, `add_object`, `remove_object`, `add_camera`, and
-    `remove_camera` are all listed in `sim.describe()["methods"]`, so an agent
-    can learn how to build a scene (robot, manipulanda, camera rig) before a
-    rollout from one `describe()` call instead of guessing method names.
+    `add_robot`, `add_object`, `remove_object`, `add_camera`,
+    `remove_camera`, and `list_cameras` are all listed in
+    `sim.describe()["methods"]`, so an agent can learn how to build a scene
+    (robot, manipulanda, camera rig) before a rollout from one `describe()`
+    call instead of guessing method names.
 
 ## Rendering
 

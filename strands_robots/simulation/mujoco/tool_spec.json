@@ -23,6 +23,7 @@
         "list_objects",
         "add_camera",
         "remove_camera",
+        "list_cameras",
         "run_policy",
         "start_policy",
         "stop_policy",
