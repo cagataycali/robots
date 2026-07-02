@@ -82,6 +82,22 @@ def test_resolve_camera_hz_invalid_disables(fake_robot_with_camera, monkeypatch)
     assert m._resolve_camera_hz() == 0.0
 
 
+@pytest.mark.parametrize("value", ["inf", "-inf", "nan", "1e999"])
+def test_resolve_camera_hz_non_finite_disables(fake_robot_with_camera, monkeypatch, value):
+    """Non-finite env values disable the loop instead of producing a 0s period.
+
+    float() accepts "inf"/"nan" and overflows "1e999" to inf, so these slip
+    past the ValueError guard. A non-finite rate would make _camera_loop
+    compute period = 1.0/hz = 0.0 and busy-spin the render/publish loop with no
+    throttle. They must resolve to 0.0 (disabled) like any other bad value.
+    """
+    from strands_robots.mesh import Mesh
+
+    monkeypatch.setenv("STRANDS_MESH_CAMERA_HZ", value)
+    m = Mesh(fake_robot_with_camera, peer_id="test-cam-nonfinite")
+    assert m._resolve_camera_hz() == 0.0
+
+
 def test_publish_cameras_once_calls_put(fake_robot_with_camera):
     """One frame is read per camera and forwarded via mesh_session.put.
 

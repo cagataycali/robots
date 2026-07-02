@@ -12,6 +12,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import re
 import socket
@@ -1045,6 +1046,12 @@ class Mesh(SensorLoopsMixin):
                 hz = float(env)
             except ValueError:
                 logger.warning("STRANDS_MESH_CAMERA_HZ=%r invalid; camera loop disabled", env)
+                return 0.0
+            if not math.isfinite(hz):
+                # float() accepts "inf"/"nan"/"1e999"; a non-finite rate would
+                # make _camera_loop compute period = 1.0/hz = 0.0 and busy-spin
+                # (or silently disable on nan). Treat it as invalid.
+                logger.warning("STRANDS_MESH_CAMERA_HZ=%r is not finite; camera loop disabled", env)
                 return 0.0
         return hz if hz > 0 else 0.0
 
