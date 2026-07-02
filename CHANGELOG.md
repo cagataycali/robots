@@ -5,6 +5,25 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: registry hot-reload ignored the user-overlay file's mtime
+
+The `robots` registry the read API serves (`get_robot` / `list_robots` /
+`resolve_name`) is the package `robots.json` merged with the user-local overlay
+`$STRANDS_BASE_DIR/user_robots.json` (`loader._merge_user_robots`). The loader's
+mtime hot-reload -- documented to "re-read when the source changes" -- keyed its
+cache on the *package* file's mtime only. `register_robot` / `unregister_robot`
+invalidate the cache explicitly, so the in-process path was fine, but any other
+writer (a second process, a manual edit, or a tool that writes the overlay
+directly) was silently ignored: the merged result stayed stale until the package
+mtime happened to change or `invalidate_cache()` was called by hand.
+
+The cache-validity signature now tracks the mtimes of *both* files for the
+`robots` registry, so external create / modify / delete of `user_robots.json` is
+picked up on the next read -- honoring the hot-reload contract for the overlay
+just as for the package file, while still avoiding a re-read (only two `stat()`
+calls) when nothing changed. A public `registry.user_registry_mtime()` helper
+keeps the overlay path a single source of truth.
+
 
 ### Fixed: `move_object` silently no-op'd on static objects
 

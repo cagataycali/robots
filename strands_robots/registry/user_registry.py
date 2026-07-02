@@ -57,6 +57,21 @@ def _get_user_registry_path() -> Path:
     return get_base_dir() / "user_robots.json"
 
 
+def user_registry_mtime() -> float | None:
+    """Modification time of the user-local robot registry file.
+
+    Returns:
+        The file's ``st_mtime``, or ``None`` when the overlay file does not
+        exist yet. Used by the loader's mtime hot-reload so an external edit to
+        ``user_robots.json`` (a second process or a manual edit) invalidates the
+        merged ``robots`` cache without requiring a manual ``invalidate_cache``.
+    """
+    try:
+        return _get_user_registry_path().stat().st_mtime
+    except (FileNotFoundError, OSError):
+        return None
+
+
 def _load_user_registry() -> dict[str, Any]:
     """Load the user-local robot registry file.
 

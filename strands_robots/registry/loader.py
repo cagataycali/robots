@@ -1,8 +1,17 @@
 """JSON registry loader with mtime-based hot-reload and validation.
 
 Loads robots.json and policies.json from the registry directory,
-re-reading only when the file's mtime changes.  Validates uniqueness of
+re-reading only when the on-disk source changes.  Validates uniqueness of
 aliases, shorthands, and URL patterns on every reload.
+
+The ``robots`` registry is not a single file: its effective contents are the
+package ``robots.json`` merged with the user-local overlay
+(``$STRANDS_BASE_DIR/user_robots.json`` - see :func:`_merge_user_robots`).  The
+hot-reload signature therefore tracks the mtimes of *both* files, so an edit to
+the user overlay made outside this process (a second process, a manual edit, or
+any writer that does not call :func:`invalidate_cache`) is picked up on the next
+read - honoring the "re-read when the source changes" contract for the overlay
+just as for the package file.
 """
 
 import json
@@ -13,11 +22,40 @@ logger = logging.getLogger(__name__)
 
 _REGISTRY_DIR = Path(__file__).parent
 _cache: dict[str, dict] = {}
-_mtimes: dict[str, float] = {}
+# Cache-validity signature per registry (a tuple of mtimes).  For ``robots``
+# the signature is (package_mtime, user_overlay_mtime_or_None); for every other
+# registry it is (package_mtime,).
+_mtimes: dict[str, tuple] = {}
+
+
+def _user_registry_mtime() -> float | None:
+    """Modification time of the user-local robot overlay, or None if absent.
+
+    Kept in :mod:`user_registry` so the overlay path has a single source of
+    truth; imported lazily to avoid an import cycle (``user_registry`` imports
+    :func:`invalidate_cache` from this module).
+    """
+    try:
+        from .user_registry import user_registry_mtime
+    except ImportError:
+        return None
+    return user_registry_mtime()
+
+
+def _registry_signature(name: str, pkg_mtime: float) -> tuple:
+    """Cache-validity signature for a registry.
+
+    The ``robots`` registry merges the user overlay on top of the package JSON,
+    so its signature includes the overlay's mtime - otherwise an external edit
+    to ``user_robots.json`` would never invalidate the cached merge.
+    """
+    if name != "robots":
+        return (pkg_mtime,)
+    return (pkg_mtime, _user_registry_mtime())
 
 
 def _load(name: str) -> dict:
-    """Load a JSON registry file, re-reading only when mtime changes.
+    """Load a JSON registry file, re-reading only when its source changes.
 
     Args:
         name: Base name without extension (e.g. "robots", "policies").
@@ -27,12 +65,13 @@ def _load(name: str) -> dict:
     """
     path = _REGISTRY_DIR / f"{name}.json"
     try:
-        mtime = path.stat().st_mtime
+        pkg_mtime = path.stat().st_mtime
     except FileNotFoundError:
         logger.error("Registry file not found: %s", path)
         return {}
 
-    if name not in _cache or _mtimes.get(name) != mtime:
+    signature = _registry_signature(name, pkg_mtime)
+    if name not in _cache or _mtimes.get(name) != signature:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
@@ -42,7 +81,7 @@ def _load(name: str) -> dict:
 
         _validate(name, data)
         _cache[name] = data
-        _mtimes[name] = mtime
+        _mtimes[name] = signature
         logger.debug("Loaded registry: %s (%d bytes)", path, path.stat().st_size)
 
     return _cache[name]

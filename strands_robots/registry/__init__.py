@@ -58,6 +58,7 @@ from .user_registry import (
     list_user_robots,
     register_robot,
     unregister_robot,
+    user_registry_mtime,
 )
 
 __all__ = [
@@ -86,6 +87,7 @@ __all__ = [
     "register_robot",
     "unregister_robot",
     "list_user_robots",
+    "user_registry_mtime",
     # Utilities
     "reload",
     "invalidate_cache",
