@@ -25,6 +25,7 @@ Pinned behaviour (issue #466 MotionBricks acceptance criteria):
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 import numpy as np
@@ -187,6 +188,67 @@ def test_build_control_signals_velocity_and_heading() -> None:
     # Movement normalised to +y, facing to +x; z dropped.
     assert cs["movement_direction"] == pytest.approx([0.0, 1.0, 0.0])
     assert cs["facing_direction"] == pytest.approx([1.0, 0.0, 0.0])
+
+
+def test_resolve_mode_rejects_non_int_non_str() -> None:
+    # A value that is neither a mode index (int) nor a mode name (str) is a
+    # caller error, not a silent no-op: the wrong type surfaces with the
+    # accepted forms so the call can be corrected (AGENTS.md: raise on fatal).
+    with pytest.raises(ValueError, match="int index or str name"):
+        resolve_mode(1.5, _CLIP_KEYS)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="int index or str name"):
+        resolve_mode([2], _CLIP_KEYS)  # type: ignore[arg-type]
+
+
+def test_allowed_pred_num_tokens_rejects_bad_mode_and_range() -> None:
+    # An out-of-range mode index and a degenerate token range are both fatal:
+    # a wrong horizon mask would silently corrupt the generation window, so
+    # each raises rather than clamping to a plausible-but-wrong value.
+    with pytest.raises(ValueError, match="out of range"):
+        allowed_pred_num_tokens(len(_CLIP_SPECS), _CLIP_SPECS, 6, 16)
+    with pytest.raises(ValueError, match="must be >= min_token"):
+        allowed_pred_num_tokens(0, [None], 16, 6)
+
+
+def test_build_control_signals_rejects_short_direction() -> None:
+    # A single-component target_velocity cannot define a planar direction; the
+    # builder rejects it instead of fabricating a NaN/garbage heading.
+    with pytest.raises(ValueError, match="2 or 3 entries"):
+        build_control_signals(
+            mode_idx=2,
+            clip_token_specs=_CLIP_SPECS,
+            min_token=6,
+            max_token=16,
+            kwargs={"target_velocity": [1.0]},
+        )
+
+
+def test_build_control_signals_zero_velocity_falls_back_to_forward() -> None:
+    # An all-zero command must not yield a NaN direction: it falls back to the
+    # default forward (+x) heading for both movement and facing.
+    cs = build_control_signals(
+        mode_idx=2,
+        clip_token_specs=_CLIP_SPECS,
+        min_token=6,
+        max_token=16,
+        kwargs={"target_velocity": [0.0, 0.0]},
+    )
+    assert cs["movement_direction"] == [1.0, 0.0, 0.0]
+    assert cs["facing_direction"] == [1.0, 0.0, 0.0]
+
+
+def test_build_control_signals_heading_angle_sets_facing() -> None:
+    # target_heading_angle drives facing independently of movement: a 90-degree
+    # heading faces +y while the body still moves along the default +x.
+    cs = build_control_signals(
+        mode_idx=2,
+        clip_token_specs=_CLIP_SPECS,
+        min_token=6,
+        max_token=16,
+        kwargs={"target_heading_angle": math.pi / 2},
+    )
+    assert cs["movement_direction"] == [1.0, 0.0, 0.0]
+    assert cs["facing_direction"] == pytest.approx([0.0, 1.0, 0.0], abs=1e-9)
 
 
 # ---------------------------------------------------------------------------
