@@ -4,6 +4,7 @@ vector dims validated, tool_spec matches method signatures."""
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -513,6 +514,39 @@ class TestRegisterUrdfValidation:
         # Router handles empty string as missing? No - it's a truthy string
         # in the presence test. So we hit our explicit empty guard.
         assert "non-empty" in r["content"][0]["text"] or "requires parameter" in r["content"][0]["text"]
+
+    def test_register_urdf_directory_path_errors(self, sim, tmp_path):
+        # A path that exists but is a directory must be rejected with a
+        # distinct "not a file" message, not the generic "file not found"
+        # (the latter would mislead an agent into thinking the path is wrong
+        # when it is actually pointing at the wrong kind of node).
+        r = sim._dispatch_action(
+            "register_urdf",
+            {"data_config": "my_bot", "urdf_path": str(tmp_path)},
+        )
+        assert r["status"] == "error"
+        assert "not a file" in r["content"][0]["text"].lower()
+
+    def test_register_urdf_unreadable_file_errors(self, sim, tmp_path):
+        # An existing regular file that cannot be opened (permission denied)
+        # is caught up front with an actionable "cannot read" message rather
+        # than deferring to a cryptic MuJoCo load error later.
+        if hasattr(os, "geteuid") and os.geteuid() == 0:
+            pytest.skip("root bypasses filesystem permission checks")
+        urdf = tmp_path / "locked.urdf"
+        urdf.write_text("<mujoco/>")
+        urdf.chmod(0o000)
+        if os.access(urdf, os.R_OK):
+            pytest.skip("filesystem does not enforce read permissions here")
+        try:
+            r = sim._dispatch_action(
+                "register_urdf",
+                {"data_config": "my_bot", "urdf_path": str(urdf)},
+            )
+        finally:
+            urdf.chmod(0o644)
+        assert r["status"] == "error"
+        assert "cannot read" in r["content"][0]["text"].lower()
 
 
 class TestDuplicateCameraName:
