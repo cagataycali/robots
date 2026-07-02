@@ -46,7 +46,7 @@ def _stub() -> Mesh:
     m._estop_lockout = threading.Event()
     m._last_estop_ts = 0.0
     m._published_events = []  # type: ignore[attr-defined]
-    m.publish_safety_event = lambda **kw: m._published_events.append(kw)  # type: ignore[attr-defined]
+    m.publish_safety_event = lambda **kw: m._published_events.append(kw)  # type: ignore[method-assign, attr-defined]
     return m
 
 
