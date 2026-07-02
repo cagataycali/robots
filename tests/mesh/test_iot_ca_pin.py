@@ -386,3 +386,75 @@ class TestEnsureCaV040Followups:
                 # must NOT be overwritten through the symlink.
                 provision._ensure_ca(ca_path)
         assert target.read_text() == "original", "O_NOFOLLOW must prevent write-through the symlink"
+
+
+class TestOperatorPinAllowlist:
+    """``STRANDS_MESH_CA_PINS`` operator-supplied pins are validated, not trusted blindly.
+
+    ``_resolve_ca_pins`` lets a fleet operator stage an extra Amazon Root CA1
+    SHA-256 pin ahead of a code-level rotation. A malformed entry (typo, wrong
+    length, uppercase, a stray comma) must be rejected with a WARNING and
+    skipped rather than silently widening the trust set to a value that can
+    never match -- otherwise a fat-fingered pin would look "applied" while the
+    real download still relies on the built-in pins alone.
+    """
+
+    def test_malformed_operator_pin_is_skipped_with_warning(self, monkeypatch, caplog):
+        import hashlib
+
+        valid = hashlib.sha256(b"operator-staged-ca").hexdigest()  # 64-char lowercase hex
+        # A valid pin, a malformed pin, and a trailing empty entry in one env value.
+        monkeypatch.setenv("STRANDS_MESH_CA_PINS", f"{valid},NOT-A-HEX-PIN,")
+
+        with caplog.at_level("WARNING", logger="strands_robots.mesh.iot.provision"):
+            pins = provision._resolve_ca_pins()
+
+        # The well-formed operator pin is added (additive contract).
+        assert valid in pins
+        # The built-in pins are always retained alongside operator pins.
+        assert set(provision._AMAZON_ROOT_CA1_PINS) <= pins
+        # The malformed entry is rejected in neither its raw nor normalised form.
+        assert "not-a-hex-pin" not in pins
+        assert "NOT-A-HEX-PIN" not in pins
+        # A WARNING attributes the skip so the operator can spot the typo.
+        messages = [rec.getMessage() for rec in caplog.records]
+        assert any("is not a valid 64-char" in m and "NOT-A-HEX-PIN" in m for m in messages)
+
+
+class TestCaDownloadTimeoutDefense:
+    """The CA download bounds wall-clock and fails closed on a slow responder.
+
+    ``_download_with_per_socket_timeout`` guards against a slow-loris responder
+    or hostile proxy that trickles bytes forever. A socket timeout must surface
+    as an actionable ``RuntimeError`` pointing at the break-glass env var; an
+    unrelated (non-timeout) transport error must propagate unchanged so real
+    connectivity failures are not misreported as timeouts.
+    """
+
+    def test_socket_timeout_raises_actionable_runtimeerror(self):
+        import urllib.request
+
+        opener = MagicMock()
+        opener.open.side_effect = TimeoutError("timed out")
+        with patch.object(urllib.request, "build_opener", return_value=opener):
+            with pytest.raises(RuntimeError) as excinfo:
+                provision._download_with_per_socket_timeout("https://example.invalid/ca.pem", 1.0, 4096)
+
+        message = str(excinfo.value)
+        assert "timed out" in message.lower()
+        # The message must point operators at the documented break-glass path.
+        assert "STRANDS_MESH_DISABLE_CA_PIN" in message
+
+    def test_non_timeout_urlerror_propagates_unchanged(self):
+        import urllib.error
+        import urllib.request
+
+        original = urllib.error.URLError(reason=ConnectionRefusedError("connection refused"))
+        opener = MagicMock()
+        opener.open.side_effect = original
+        with patch.object(urllib.request, "build_opener", return_value=opener):
+            with pytest.raises(urllib.error.URLError) as excinfo:
+                provision._download_with_per_socket_timeout("https://example.invalid/ca.pem", 1.0, 4096)
+
+        # A non-timeout transport failure must not be masqueraded as a timeout.
+        assert excinfo.value is original
