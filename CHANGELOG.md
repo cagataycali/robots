@@ -277,6 +277,20 @@ single-action policies. The docstrings now state the clamp semantics so a
 caller does not silently get open-loop chunk execution when expecting a tighter
 re-query interval.
 
+### Fixed: `set_body_properties(mass=...)` left the body's inertia stale
+
+Setting a body's mass at runtime updated `model.body_mass` but not
+`model.body_inertia`, leaving a physically inconsistent body -- heavy in
+translation but retaining the old rotational resistance -- which silently
+corrupted the rotational dynamics. Since `mass` is the only settable property,
+the caller had no way to correct it. Because a rigid body's inertia tracks its
+mass at fixed geometry (a uniform density change scales `I = integral of r^2 dm`
+by the same factor), the inertia tensor is now scaled by `mass / old_mass`,
+matching `randomize(randomize_physics=True)` and the Newton backend. In a
+compound-pendulum check, a mass-only change wrongly shrank the swing period ~2x
+(0.87 s vs 1.76 s); with the fix the period stays mass-invariant as physics
+requires. Massless frames (mass 0) are guarded against division by zero.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
