@@ -1421,7 +1421,10 @@ class SimEngine(ABC):
         ``speed`` is a playback-rate multiplier (1.0 = real time) and must be a
         positive number; a non-positive or non-numeric value is rejected with a
         structured error rather than raising or silently playing back at full
-        speed.
+        speed. ``speed`` scales only the wall-clock playback rate: each recorded
+        frame always advances physics for a full control period (derived from
+        the dataset fps), so a position-servo robot reproduces the recorded
+        trajectory instead of under-integrating it.
 
         Override per backend for optimised replay (e.g. direct ctrl
         writes) only when measured necessary.

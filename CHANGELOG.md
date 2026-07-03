@@ -246,6 +246,23 @@ pipeline (`mj_kinematics` + `mj_comPos`, matching `forward_kinematics`) and
 `inverse_dynamics` / `get_sensor_data`), so both always reflect the current
 `qpos`/`qvel`.
 
+### Fixed: `replay_episode` under-integrated physics (single dt/frame instead of a full control period)
+
+`PolicyRunner.replay` advanced physics by only a single `send_action` default
+`n_substeps=1` (~2 ms) per recorded frame, while each recorded frame represents
+one control step taken at the dataset's fps and the recording itself integrated
+a full `1/fps` control period per action (the substep convention `run()` and
+`evaluate()` already derive via `_control_substeps`). On a position-servo robot
+this meant replay got ~1/17 of the integration time per target at 30 Hz control
+(2 ms physics dt), so the servo could not track the recorded targets: replay
+produced a heavily under-integrated, attenuated trajectory (an SO-101 self-record
+diverged ~0.95 rad from its recording and its joint sweeps were attenuated up to
+11x) that did not reproduce the recording, while still reporting `Frames: N/N`
+and `status="success"` -- a silent record -> replay fidelity gap. Replay now
+derives its physics substeps from the dataset fps and steps a full control
+period per frame, so a recorded episode replays back to the pose it was recorded
+at. `speed` continues to scale only the wall-clock playback rate.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
