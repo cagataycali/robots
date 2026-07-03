@@ -229,6 +229,23 @@ standard "hold this configuration" inverse-dynamics result). It now runs
 `qacc` for the solve, and restores the buffer afterwards, so the result is
 correct and independent of any leftover acceleration.
 
+### Fixed: `get_jacobian` / `get_body_state` returned values for a stale configuration
+
+Both physics-query methods read derived MuJoCo state without first running the
+forward pipeline. `get_jacobian` reads `data.xpos`/`site_xpos`/`geom_xpos`,
+`data.subtree_com` and `data.cdof`; `get_body_state` reads `data.xpos`/`xquat`/
+`xmat`/`xipos` and, via `mj_objectVelocity`, `data.cvel`. All of these are only
+recomputed by a forward pass, so after any state change that did not itself
+forward -- a direct `data.qpos` write, or `set_joint_velocities` (which writes
+`qvel` without forwarding) -- the methods silently returned the Jacobian /
+pose / 6D velocity of an *earlier* state while reporting `status="success"`.
+`get_body_state` even disagreed with its sibling `forward_kinematics` on the
+same body at the same `qpos`. `get_jacobian` now recomputes the position
+pipeline (`mj_kinematics` + `mj_comPos`, matching `forward_kinematics`) and
+`get_body_state` runs a full `mj_forward` (matching `get_mass_matrix` /
+`inverse_dynamics` / `get_sensor_data`), so both always reflect the current
+`qpos`/`qvel`.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

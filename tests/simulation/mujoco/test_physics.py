@@ -144,6 +144,36 @@ class TestJacobians:
         result = sim.get_jacobian(body_name="nonexistent")
         assert result["status"] == "error"
 
+    def test_jacobian_reflects_current_configuration(self, sim):
+        """get_jacobian must be the Jacobian of the CURRENT qpos.
+
+        Regression: it read data.xpos/site_xpos/subtree_com/cdof left by an
+        earlier forward and never re-ran the position pipeline, so after a
+        qpos change that did not itself forward (here a direct data.qpos
+        write) it returned the OLD configuration's Jacobian while reporting
+        success.
+        """
+        model, data = sim._world._model, sim._world._data
+        j_rest = np.array(_extract_json_block(sim.get_jacobian(site_name="end_effector"), 1)["jacp"])
+
+        sh = model.jnt_qposadr[mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "shoulder")]
+        el = model.jnt_qposadr[mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "elbow")]
+        data.qpos[sh] = 0.9
+        data.qpos[el] = -0.7
+        j_after = np.array(_extract_json_block(sim.get_jacobian(site_name="end_effector"), 1)["jacp"])
+
+        # Independent ground truth for the new configuration.
+        mj.mj_kinematics(model, data)
+        mj.mj_comPos(model, data)
+        jacp = np.zeros((3, model.nv))
+        jacr = np.zeros((3, model.nv))
+        sid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, "end_effector")
+        mj.mj_jacSite(model, data, jacp, jacr, sid)
+
+        # fails-before: j_after equalled the stale j_rest, not the new-config truth.
+        assert np.linalg.norm(j_after - jacp) < 1e-9
+        assert np.linalg.norm(j_after - j_rest) > 1e-3
+
 
 class TestEnergy:
     def test_get_energy(self, sim):
@@ -392,6 +422,47 @@ class TestBodyState:
     def test_body_state_invalid(self, sim):
         result = sim.get_body_state(body_name="nonexistent")
         assert result["status"] == "error"
+
+    def test_body_state_pose_reflects_current_qpos(self, sim):
+        """get_body_state pose must reflect the current qpos and agree with
+        forward_kinematics.
+
+        Regression: it read stale data.xpos without forwarding, so after a
+        qpos change (here a direct data.qpos write) it reported the OLD pose
+        while its sibling forward_kinematics reported the new one.
+        """
+        model, data = sim._world._model, sim._world._data
+        sh = model.jnt_qposadr[mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "shoulder")]
+        data.qpos[sh] = 1.0
+
+        pos_bs = _extract_json_block(sim.get_body_state(body_name="link2"), 1)["position"]
+        pos_fk = _extract_json_block(sim.forward_kinematics(body_name="link2"), 1)["position"]
+        # fails-before: get_body_state stale pose != forward_kinematics fresh pose.
+        assert pos_bs == pytest.approx(pos_fk, abs=1e-9)
+
+    def test_body_state_velocity_reflects_current_qvel(self, sim):
+        """get_body_state 6D velocity must reflect the current qvel.
+
+        Regression: it read data.cvel via mj_objectVelocity without
+        forwarding, so a velocity written by set_joint_velocities (which sets
+        qvel but does not forward) was reported as the stale ~zero velocity
+        while the call reported success.
+        """
+        sim.set_joint_velocities(velocities={"shoulder": 2.0, "elbow": -1.5})
+        state = _extract_json_block(sim.get_body_state(body_name="link2"), 1)
+        got = np.array(state["linear_velocity"] + state["angular_velocity"])
+
+        # Independent ground truth (order matches get_body_state: linear then angular).
+        model, data = sim._world._model, sim._world._data
+        mj.mj_forward(model, data)
+        vel = np.zeros(6)
+        bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "link2")
+        mj.mj_objectVelocity(model, data, mj.mjtObj.mjOBJ_BODY, bid, vel, 0)
+        truth = np.concatenate([vel[3:], vel[:3]])
+
+        assert np.linalg.norm(got - truth) < 1e-9
+        # fails-before: stale velocity was ~0 at the freshly-set qvel.
+        assert np.linalg.norm(got) > 1e-2
 
 
 class TestDirectJointControl:

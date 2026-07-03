@@ -401,7 +401,9 @@ class PhysicsMixin:
         The Jacobian maps joint velocities to Cartesian velocities:
             v = J @ dq
 
-        Returns both positional (3×nv) and rotational (3×nv) Jacobians.
+        Returns both positional (3×nv) and rotational (3×nv) Jacobians,
+        computed at the current ``qpos`` (the position pipeline is recomputed
+        first so the result is never a stale earlier configuration).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -413,6 +415,14 @@ class PhysicsMixin:
         jacr = np.zeros((3, model.nv))
 
         with self._lock:
+            # Reflect the CURRENT configuration. mj_jac* read data.xpos/site_xpos/
+            # geom_xpos, data.subtree_com and data.cdof, all of which are stale if
+            # qpos changed since the last forward (e.g. a direct data.qpos write or
+            # set_joint_velocities). Recompute the position pipeline first so the
+            # Jacobian is not silently that of an earlier pose. Matches
+            # forward_kinematics; cheaper than a full mj_forward.
+            mj.mj_kinematics(model, data)
+            mj.mj_comPos(model, data)
             if body_name:
                 obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
                 if obj_id < 0:
@@ -573,7 +583,9 @@ class PhysicsMixin:
     ) -> dict[str, Any]:
         """Get the full state of a body: position, orientation, velocity, acceleration.
 
-        Returns Cartesian pose + 6D spatial velocity (linear + angular).
+        Returns Cartesian pose + 6D spatial velocity (linear + angular),
+        computed at the current ``qpos``/``qvel`` (the forward pipeline is run
+        first so pose and velocity are never a stale earlier state).
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -586,6 +598,14 @@ class PhysicsMixin:
             return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
 
         with self._lock:
+            # Reflect the CURRENT qpos/qvel. This reads data.xpos/xquat/xmat/xipos
+            # (position pipeline) and data.cvel via mj_objectVelocity (velocity
+            # pipeline); both are stale if state changed since the last forward
+            # (e.g. set_joint_velocities writes qvel without forwarding, or a
+            # direct data.qpos write). Run the full pipeline so pose AND 6D
+            # velocity are consistent with the current state. Matches
+            # get_mass_matrix / inverse_dynamics / get_sensor_data.
+            mj.mj_forward(model, data)
             # Position and orientation
             pos = data.xpos[body_id].tolist()
             quat = data.xquat[body_id].tolist()
