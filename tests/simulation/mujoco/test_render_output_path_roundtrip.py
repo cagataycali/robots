@@ -67,7 +67,8 @@ def test_render_output_path_writes_file_and_reports_saved_path(sandbox) -> None:
         assert result["status"] == "success", result
         # The file was actually written and is a decodable PNG.
         assert target.exists()
-        assert Image.open(io.BytesIO(target.read_bytes())).size == (64, 48)
+        decoded_size = Image.open(io.BytesIO(target.read_bytes())).size
+        assert decoded_size == (64, 48)
         # The bytes on disk match the inline image block (same PNG, not re-encoded).
         assert target.read_bytes() == _png_block(result)
 
