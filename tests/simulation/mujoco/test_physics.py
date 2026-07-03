@@ -592,6 +592,85 @@ class TestRuntimeModification:
         assert float(new_size[2]) == pytest.approx(original_tail)
 
 
+    def test_set_geom_size_grow_recomputes_rbound_and_aabb(self, sim):
+        """Growing a size-defined primitive refreshes its collision bounds.
+
+        ``geom_rbound`` (broadphase) and ``geom_aabb`` (mid-phase) are derived
+        from ``geom_size`` at compile time and are not refreshed by the solver.
+        A grown geom whose bounds are left stale is silently culled from
+        broadphase, so other bodies pass through it. The recompute must bring
+        both to the values a fresh compile at the new size would produce.
+        """
+        model = sim._world._model
+        gid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, "box_geom")
+        # box_geom compiles at half-extents 0.1 (rbound ~= 0.1732).
+        assert float(model.geom_rbound[gid]) == pytest.approx(np.linalg.norm([0.1, 0.1, 0.1]))
+
+        result = sim.set_geom_properties(geom_name="box_geom", size=[0.25, 0.25, 0.02])
+        assert result["status"] == "success"
+
+        expected_half = [0.25, 0.25, 0.02]
+        assert float(model.geom_rbound[gid]) == pytest.approx(np.linalg.norm(expected_half))
+        assert model.geom_aabb[gid][3:6].tolist() == pytest.approx(expected_half)
+
+    def test_set_geom_size_capsule_recomputes_rbound(self, sim):
+        """The recompute uses the correct per-type formula (capsule = r + halflen)."""
+        model = sim._world._model
+        gid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, "link1_geom")
+        result = sim.set_geom_properties(geom_name="link1_geom", size=[0.05, 0.2])
+        assert result["status"] == "success"
+        # capsule rbound = radius + half-length; aabb half = [r, r, r + halflen].
+        assert float(model.geom_rbound[gid]) == pytest.approx(0.25)
+        assert model.geom_aabb[gid][3:6].tolist() == pytest.approx([0.05, 0.05, 0.25])
+
+    def test_set_geom_size_grow_lets_object_rest_on_it(self, sim):
+        """Behavioral: a body rests on a grown static geom instead of falling through.
+
+        A small static platform is grown into a wide table via the public API,
+        then a ball offset well beyond the platform's original bounding radius
+        is dropped. With stale collision bounds the broadphase culls the pair
+        and the ball falls to the floor; after the recompute it lands on the
+        grown table.
+        """
+        from strands_robots.simulation.models import SimStatus, SimWorld
+
+        scene = """
+        <mujoco>
+          <option timestep="0.002" gravity="0 0 -9.81"/>
+          <worldbody>
+            <geom name="floor" type="plane" size="5 5 0.1"/>
+            <body name="plat" pos="0 0 0.5">
+              <geom name="platg" type="box" size="0.02 0.02 0.02"/>
+            </body>
+            <body name="ball" pos="0.15 0 0.6">
+              <freejoint/>
+              <geom name="ballg" type="sphere" size="0.03"/>
+            </body>
+          </worldbody>
+        </mujoco>
+        """
+        s = Simulation(tool_name="test_grow", mesh=False)
+        try:
+            s._world = SimWorld()
+            spec = mj.MjSpec.from_string(scene)
+            s._world._backend_state["spec"] = spec
+            s._world._model = spec.compile()
+            s._world._data = mj.MjData(s._world._model)
+            s._world.status = SimStatus.IDLE
+            mj.mj_forward(s._world._model, s._world._data)
+
+            result = s.set_geom_properties(geom_name="platg", size=[0.25, 0.25, 0.02])
+            assert result["status"] == "success"
+
+            model, data = s._world._model, s._world._data
+            for _ in range(2000):
+                mj.mj_step(model, data)
+            ball_z = float(data.body("ball").xpos[2])
+            # Table top is at z = 0.5 + 0.02 = 0.52; ball (r=0.03) rests ~0.55.
+            assert ball_z > 0.5, f"ball fell through the grown table (rest z={ball_z:.4f})"
+        finally:
+            s.cleanup()
+
 class TestContactForces:
     def test_get_contact_forces_after_settling(self, sim):
         # Let box fall and settle

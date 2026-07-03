@@ -307,6 +307,21 @@ compound-pendulum check, a mass-only change wrongly shrank the swing period ~2x
 (0.87 s vs 1.76 s); with the fix the period stays mass-invariant as physics
 requires. Massless frames (mass 0) are guarded against division by zero.
 
+### Fixed: `set_geom_properties(size=...)` left stale collision bounds so grown geoms were passed through
+
+Resizing a primitive geom at runtime wrote the new `geom_size` but never
+refreshed `geom_rbound` (the broadphase bounding-sphere radius) or `geom_aabb`
+(the mid-phase AABB), both of which are derived from `geom_size` at compile time
+and are not recomputed by `mj_forward`/`mj_step`. A geom grown past its original
+bounds was therefore silently culled from the broadphase, so other bodies passed
+straight through it while the call still reported `status="success"`. In a
+repro, a ball dropped onto a small platform grown into a wide table fell through
+to the floor (rest z 0.03) instead of landing on it (rest z 0.55). The bounds
+are now recomputed from `geom_type` + `geom_size` for the size-defined
+primitives (sphere/capsule/cylinder/ellipsoid/box) so a grown geom collides
+correctly, matching a fresh compile at the new size. Mesh/plane/height-field
+geoms take their extent from asset data, so a `size` write stays inert for them.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
