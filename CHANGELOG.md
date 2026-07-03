@@ -5,6 +5,22 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `TrainSpec.learning_rate` was silently ignored by the `lerobot_local` trainer
+
+`learning_rate` was the one universal `TrainSpec` field with zero references in
+`training/lerobot.py`: `build_config()` never wired it into the typed config and
+`build_command()` emitted no `--policy.optimizer_lr` flag, so the policy's
+training preset always won and a caller-set value was silently dropped (every
+other backend honored it). The field is now opt-in like `seed` -- it defaults to
+`None` (use the backend's own default: the policy preset for LeRobot, the
+`FinetuneConfig` default for GR00T, the TOML default for Cosmos), and an
+explicit value is honored everywhere. For LeRobot it maps to
+`policy.optimizer_lr`; a policy with no such field (no Adam-style single LR)
+raises loudly instead of dropping the value. RL trainers (PPO/FastSAC) keep a
+concrete `1e-4` default on `RLTrainSpec`, since from-scratch RL has no preset to
+defer to. The `train_policy` tool's `learning_rate` parameter defaults to `None`
+to match.
+
 ### Added: ROS 2 action support in `use_ros` + goal-level `navigate_to` on `RosBridgedRobot`
 
 `use_ros` gains `list_actions` and `action_send_goal` (in-process `rclpy.action`,
