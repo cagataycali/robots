@@ -339,6 +339,24 @@ primitives (sphere/capsule/cylinder/ellipsoid/box) so a grown geom collides
 correctly, matching a fresh compile at the new size. Mesh/plane/height-field
 geoms take their extent from asset data, so a `size` write stays inert for them.
 
+### Fixed: `raycast`/`multi_raycast` intersected stale geom poses (no forward, no lock)
+
+`mj_ray` intersects a ray against `data.geom_xpos`/`geom_xmat` -- the world-frame
+geom poses, which are derived state populated by kinematics and NOT recomputed on
+a bare `qpos` write. Both `raycast` and `multi_raycast` called `mj_ray` directly
+without refreshing those poses and without holding the sim lock, unlike every
+other physics query (`get_jacobian`, `get_mass_matrix`, `get_body_state`,
+`inverse_dynamics`, `get_sensor_data`), which lock and forward before reading.
+As a result a cast issued after a direct pose change (a planning/IK loop that
+writes `qpos`) silently reported a hit against a geom's *previous* location while
+returning `status=success`, and a cast issued while a per-robot policy thread was
+stepping could tear the read mid-`mj_step`. Both methods now refresh geom world
+poses with `mj_kinematics` (the minimal forward for `mj_ray`, cheaper than a full
+`mj_forward`) and serialize the cast under the sim lock; `multi_raycast` refreshes
+once and holds the lock for the whole batch so all rays sample one consistent
+snapshot.
+
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

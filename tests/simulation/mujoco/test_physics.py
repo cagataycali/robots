@@ -910,3 +910,50 @@ class TestMultiRaycast:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+class TestRaycastReflectsCurrentPose:
+    """raycast / multi_raycast must intersect the CURRENT geom poses.
+
+    ``mj_ray`` reads ``data.geom_xpos``/``geom_xmat`` (world-frame geom poses,
+    derived state). MuJoCo does not recompute those on a bare ``qpos`` write --
+    a planning/IK loop that pokes ``qpos`` (or a policy thread mid-``mj_step``)
+    leaves them stale. The query must refresh kinematics first, exactly like
+    ``get_jacobian``/``get_body_state`` do, or it silently reports a hit against
+    a geom's previous location while returning ``status=success``.
+    """
+
+    @staticmethod
+    def _move_box_far(sim):
+        """Translate the free box off the +z axis via a direct qpos write, no forward."""
+        model, data = sim._world._model, sim._world._data
+        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "box_free")
+        adr = int(model.jnt_qposadr[jid])
+        data.qpos[adr : adr + 3] = [3.0, 0.0, 0.5]  # move box out of the downward ray at x=0
+        data.qpos[adr + 3 : adr + 7] = [1.0, 0.0, 0.0, 0.0]
+        # deliberately NO mj_forward / mj_kinematics here
+
+    def test_raycast_reflects_pose_change_without_forward(self, sim):
+        # Baseline: the downward ray hits the box (nearest) at its top face.
+        base = _extract_json_block(sim.raycast(origin=[0, 0, 2], direction=[0, 0, -1]), 1)
+        assert base["geom_name"] == "box_geom"
+        assert base["distance"] == pytest.approx(1.4, abs=1e-3)
+
+        self._move_box_far(sim)
+
+        # After moving the box (no forward), the downward ray at x=0 must miss
+        # the box and hit the ground plane at z=0 -> distance 2.0. Pre-fix this
+        # reads the stale geom_xpos and still reports box_geom at 1.4.
+        after = _extract_json_block(sim.raycast(origin=[0, 0, 2], direction=[0, 0, -1]), 1)
+        assert after["geom_name"] == "ground"
+        assert after["distance"] == pytest.approx(2.0, abs=1e-3)
+
+    def test_multi_raycast_reflects_pose_change_without_forward(self, sim):
+        dirs = [[0, 0, -1]]
+        base = _extract_json_block(sim.multi_raycast(origin=[0, 0, 2], directions=dirs), 1)["rays"]
+        assert base[0]["distance"] == pytest.approx(1.4, abs=1e-3)  # hits box top
+
+        self._move_box_far(sim)
+
+        after = _extract_json_block(sim.multi_raycast(origin=[0, 0, 2], directions=dirs), 1)["rays"]
+        assert after[0]["distance"] == pytest.approx(2.0, abs=1e-3)  # now hits ground
