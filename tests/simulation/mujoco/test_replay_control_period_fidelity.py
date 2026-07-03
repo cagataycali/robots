@@ -49,9 +49,7 @@ def _arm_qpos(sim: Simulation) -> np.ndarray:
     m = sim.mj_model
     d = sim.mj_data
     assert m is not None and d is not None
-    adrs = [
-        int(m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"so101/{j}")]) for j in range(1, 7)
-    ]
+    adrs = [int(m.jnt_qposadr[mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_JOINT, f"so101/{j}")]) for j in range(1, 7)]
     return d.qpos[adrs].copy()
 
 
