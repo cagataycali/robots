@@ -591,7 +591,6 @@ class TestRuntimeModification:
         assert new_size[0] == pytest.approx(0.2)
         assert float(new_size[2]) == pytest.approx(original_tail)
 
-
     def test_set_geom_size_grow_recomputes_rbound_and_aabb(self, sim):
         """Growing a size-defined primitive refreshes its collision bounds.
 
@@ -670,6 +669,7 @@ class TestRuntimeModification:
             assert ball_z > 0.5, f"ball fell through the grown table (rest z={ball_z:.4f})"
         finally:
             s.cleanup()
+
 
 class TestContactForces:
     def test_get_contact_forces_after_settling(self, sim):
