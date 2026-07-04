@@ -474,6 +474,19 @@ policy types are still rejected.
   than on a rendered caption. The `start_recording` signature in `describe()`
   also now names its `cameras=` dataset-scope parameter, which was omitted.
 
+### Fixed
+
+- The `grasped` benchmark/DSL predicate now matches the grasped body's geoms
+  across the `<body>_g<idx>` LIBERO/robosuite multi-geom convention, not only
+  the exact `body` / `<body>_geom` names. LIBERO objects (a BDDL object
+  `cube_1` owns collision geoms `cube_1_g0` / `cube_1_g1` ...) were never
+  matched, so `(grasped cube_1)` BDDL goals silently resolved to `False` even
+  when the gripper was in contact - a successful grasp was scored as a failure.
+  Body-geom matching now mirrors `_body_contact`'s `<body>_g` prefix so the two
+  contact predicates agree on what counts as a body's geom; strands-native
+  `add_object` (`<body>_geom`) and single-geom scenes are unchanged.
+
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
