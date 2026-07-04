@@ -390,6 +390,22 @@ the reward-model, robot, teleop, and camera surfaces already use. A static
 fallback is kept for the offline case (lerobot not importable). Genuinely unknown
 policy types are still rejected.
 
+### Added
+
+- `evaluate_benchmark(policy_object=..., control_frequency=..., control_substeps=...)`
+  brings the benchmark evaluation entry point to parity with `run_policy` /
+  `eval_policy`. It could previously neither evaluate a pre-built `Policy` (it
+  always ran `create_policy`, forcing a redundant reload of a multi-GB VLA
+  checkpoint) nor set the control-loop rate (physics stepped at a hardcoded
+  50 Hz). A benchmark's `max_steps` maps to a wall-clock episode length that
+  depends on the control frequency, so a policy trained/evaluated at a
+  different rate was scored over a mismatched horizon; `control_frequency`
+  now lets the benchmark run at the policy's rate. The shared
+  `PolicyRunner.evaluate` plumbing already supported these; only the facade
+  exposes them now. A non-positive `control_frequency` is rejected with a
+  structured error, and the `control_frequency` tool parameter is forwarded on
+  the agent-dispatch path.
+
 
 ## [0.4.1] - 2026-07-01
 
