@@ -826,12 +826,18 @@ def lerobot_teleoperate(
 
             return {
                 "status": "success",
-                "content": [{"text": "\n".join(content_lines)}],
-                "session_name": session_name,
-                "pid": pid,
-                "uptime": uptime,
-                "is_running": is_running,
-                **session_info,
+                "content": [
+                    {"text": "\n".join(content_lines)},
+                    {
+                        "json": {
+                            **session_info,
+                            "session_name": session_name,
+                            "pid": pid,
+                            "uptime": uptime,
+                            "is_running": is_running,
+                        }
+                    },
+                ],
             }
 
         elif action == "replay":

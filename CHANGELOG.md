@@ -5,6 +5,20 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: session `status` tool results dropped their telemetry via a `**spread` top-level smuggle
+
+The `status` action of `lerobot_teleoperate` and `lerobot_train` returned the
+session telemetry (`session_name`, `pid`, `uptime`, `is_running`, and every
+key of the persisted `session_info`) as *extra top-level keys* on the result
+dict via `**session_info`. Per the tool-result contract only `status` and
+`content` survive into the agent turn, so an agent that asked for session
+status received only the human-readable text block -- the structured fields
+it needs to decide whether a session is healthy were silently dropped by the
+runtime. The telemetry now rides in a `{"json": {...}}` content block. The
+static contract guard missed this because a `**spread` key made it skip the
+whole dict; it now flags any `**spread` inside a tool-result-shaped dict as a
+violation, closing the smuggling loophole.
+
 ### Fixed: `get_energy` reported the energy of a stale pose after a direct `qpos`/`qvel` write
 
 `get_energy` called `mj_energyPos` / `mj_energyVel` on whatever derived state

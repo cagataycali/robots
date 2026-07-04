@@ -433,7 +433,7 @@ def test_status_running_session_is_ascii(monkeypatch: pytest.MonkeyPatch) -> Non
     mgr.add_session("live", {"pid": os.getpid(), "action": "record", "start_time": 0.0, "robot_type": "so101_follower"})
     result = lerobot_teleoperate(action="status", session_name="live")
     assert result["status"] == "success"
-    assert result["is_running"]
+    assert tool_json(result)["is_running"]
     _assert_ascii(_texts(result))
 
 

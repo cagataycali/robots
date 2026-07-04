@@ -299,8 +299,8 @@ def test_session_lifecycle_round_trips(tmp_path: Path, monkeypatch: pytest.Monke
 
     status = lerobot_train(action="status", dataset_root=str(root), session_name="t1")
     assert status["status"] == "success"
-    assert status["is_running"] is True
-    assert status["pid"] == 9999
+    assert tool_json(status)["is_running"] is True
+    assert tool_json(status)["pid"] == 9999
     _assert_ascii(_texts(status))
 
     # Stop: capture the kill calls instead of touching a real process.
@@ -493,7 +493,7 @@ def test_status_reports_log_tail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(train_mod.psutil, "Process", _RunningProcess)
     result = lerobot_train(action="status", dataset_root="/x", session_name="live")
     assert result["status"] == "success"
-    assert result["is_running"] is True
+    assert tool_json(result)["is_running"] is True
     assert "loss 0.01" in _texts(result)
     assert "Recent Log Output" in _texts(result)
 

@@ -75,6 +75,9 @@ return {
 
 `tests/test_tool_result_contract.py` statically scans every tool-result-shaped
 dict literal in the package and fails if any carries an extra top-level key, so
-the contract cannot regress silently. The `assert_strands_tool_result` helper in
+the contract cannot regress silently. A `**spread` inside a tool-result dict is
+flagged too: it can inject arbitrary top-level keys the runtime drops, so it is
+never valid at the top level (spread the telemetry into a `{"json": {...}}`
+content block instead). The `assert_strands_tool_result` helper in
 `tests/tool_result_contract.py` validates a live result and can be applied in any
 test that exercises a tool method.

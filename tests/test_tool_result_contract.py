@@ -7,7 +7,10 @@ extras are dropped by the agent runtime and never reach ``agent.messages``.
 
 The repo-wide ``test_no_extra_top_level_keys`` test is the standing guard: it
 statically scans every tool-result-shaped dict literal in the package and
-fails if any carries extra top-level keys. The remaining tests apply
+fails if any carries extra top-level keys. A ``**spread`` inside such a dict is
+itself a violation: it can inject arbitrary top-level keys that the runtime
+drops, and it previously let smuggled telemetry slip past the scan. The
+remaining tests apply
 ``assert_strands_tool_result`` to live results from representative call sites
 (teleop stats, simulation policy rollout, action dispatch).
 """
@@ -25,17 +28,27 @@ from strands_robots.teleop_mixin import TeleopMixin
 from tests.tool_result_contract import (
     VALID_TOP_LEVEL_KEYS,
     assert_strands_tool_result,
+    tool_json,
 )
 
 _PKG_ROOT = Path(strands_robots.__file__).resolve().parent
 
 
 def _tool_result_violations() -> list[str]:
-    """Statically find tool-result dict literals with extra top-level keys.
+    """Statically find tool-result dict literals that break the top-level contract.
 
     A dict literal counts as tool-result-shaped when it has constant string
-    keys including both ``status`` and ``content``. Any key outside
-    ``{"status", "content", "toolUseId"}`` is a contract violation.
+    keys including both ``status`` and ``content``. Such a dict violates the
+    contract when it carries either:
+
+    * an extra constant key outside ``{"status", "content", "toolUseId"}``, or
+    * a ``**spread`` entry -- a spread can inject arbitrary top-level keys that
+      the runtime silently drops, so it is never valid at the top level of a
+      tool result (telemetry belongs inside a ``content`` json block instead).
+
+    The spread case is the subtle one: a spread key appears in
+    ``ast.Dict.keys`` as ``None``, so a naive "all keys are constant strings"
+    filter skips the whole dict and lets the smuggled keys through.
     """
     violations: list[str] = []
     for path in _PKG_ROOT.rglob("*.py"):
@@ -43,15 +56,18 @@ def _tool_result_violations() -> list[str]:
         for node in ast.walk(tree):
             if not isinstance(node, ast.Dict):
                 continue
-            keys = [k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)]
-            if len(keys) != len(node.keys):  # non-constant / **spread keys present
+            const_keys = {k.value for k in node.keys if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+            if not ({"status", "content"} <= const_keys):
                 continue
-            ks = set(keys)
-            if {"status", "content"} <= ks:
-                extra = ks - set(VALID_TOP_LEVEL_KEYS)
-                if extra:
-                    rel = path.relative_to(_PKG_ROOT.parent)
-                    violations.append(f"{rel}:{node.lineno} extra_keys={sorted(extra)}")
+            problems: list[str] = []
+            extra = const_keys - set(VALID_TOP_LEVEL_KEYS)
+            if extra:
+                problems.append(f"extra_keys={sorted(extra)}")
+            if any(k is None for k in node.keys):  # a **spread entry
+                problems.append("**spread (may inject dropped top-level keys)")
+            if problems:
+                rel = path.relative_to(_PKG_ROOT.parent)
+                violations.append(f"{rel}:{node.lineno} " + " ".join(problems))
     return violations
 
 
@@ -144,3 +160,56 @@ def test_dispatch_action_results_contract(sim):
         ("get_gravity", {}),
     ]:
         assert_strands_tool_result(sim._dispatch_action(action, params))
+
+
+# ---------------------------------------------------------------------------
+# Regression: session "status" tool results must keep telemetry inside a json
+# content block, not as extra top-level keys. These used to smuggle
+# ``session_name/pid/uptime/is_running`` (plus ``**session_info``) at the top
+# level via a ``**spread``, which the static scan skipped and the runtime
+# dropped -- so the agent asked for session status and saw only the text block.
+# ---------------------------------------------------------------------------
+
+
+def test_teleoperate_status_keeps_telemetry_in_json_block(tmp_path, monkeypatch):
+    import os
+
+    import strands_robots.tools.lerobot_teleoperate as tele_mod
+
+    pid = os.getpid()  # a real, running pid so the session is not pruned as dead
+    monkeypatch.setattr(tele_mod, "SESSION_DIR", tmp_path)
+    tele_mod.SessionManager().add_session(
+        "live",
+        {"pid": pid, "action": "record", "start_time": 0.0, "robot_type": "so101_follower"},
+    )
+
+    result = tele_mod.lerobot_teleoperate(action="status", session_name="live")
+
+    assert_strands_tool_result(result)
+    telemetry = tool_json(result)
+    assert telemetry["session_name"] == "live"
+    assert telemetry["pid"] == pid
+    assert telemetry["is_running"] is True
+    assert "uptime" in telemetry
+
+
+def test_train_status_keeps_telemetry_in_json_block(tmp_path, monkeypatch):
+    import os
+
+    import strands_robots.tools.lerobot_train as train_mod
+
+    pid = os.getpid()  # a real, running pid so the session is not pruned as dead
+    monkeypatch.setattr(train_mod, "SESSION_DIR", tmp_path)
+    train_mod.SessionManager().add_session(
+        "live",
+        {"pid": pid, "action": "train", "start_time": 0.0, "policy_type": "act"},
+    )
+
+    result = train_mod.lerobot_train(action="status", dataset_root="/x", session_name="live")
+
+    assert_strands_tool_result(result)
+    telemetry = tool_json(result)
+    assert telemetry["session_name"] == "live"
+    assert telemetry["pid"] == pid
+    assert telemetry["is_running"] is True
+    assert "uptime" in telemetry

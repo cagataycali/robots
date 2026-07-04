@@ -570,12 +570,18 @@ def lerobot_train(
                     lines.append(f"Error reading log: {e}")
             return {
                 "status": "success",
-                "content": [{"text": "\n".join(lines)}],
-                "session_name": session_name,
-                "pid": pid,
-                "uptime": uptime,
-                "is_running": is_running,
-                **session_info,
+                "content": [
+                    {"text": "\n".join(lines)},
+                    {
+                        "json": {
+                            **session_info,
+                            "session_name": session_name,
+                            "pid": pid,
+                            "uptime": uptime,
+                            "is_running": is_running,
+                        }
+                    },
+                ],
             }
 
         else:
