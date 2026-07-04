@@ -57,30 +57,39 @@ class TestTeeWrite:
         tee = _Tee(io.StringIO(), io.StringIO())
         # The io.TextIOBase contract: write() returns the number of characters
         # written. Callers (redirect_stdout consumers) rely on this.
-        assert tee.write("hello") == 5
-        assert tee.write("") == 0
-        assert tee.write("\u2713 unicode") == len("\u2713 unicode")
+        # write() forwards to both streams (a side-effect), so hoist each call
+        # out of assert: assert bodies are discarded under ``python -O``.
+        n_hello = tee.write("hello")
+        assert n_hello == 5
+        n_empty = tee.write("")
+        assert n_empty == 0
+        unicode_text = "\u2713 unicode"
+        n_unicode = tee.write(unicode_text)
+        assert n_unicode == len(unicode_text)
 
     def test_survives_primary_stream_failure(self):
         # The load-bearing property: a broken PRIMARY (live) stream must not stop
         # the SECONDARY (log file) from receiving the write, and must not raise.
         secondary = io.StringIO()
         tee = _Tee(_Boom(), secondary)
-        assert tee.write("world") == 5
+        n = tee.write("world")
+        assert n == 5
         assert secondary.getvalue() == "world"
 
     def test_survives_secondary_stream_failure(self):
         # A broken log file must not stop the live stream or raise.
         primary = io.StringIO()
         tee = _Tee(primary, _Boom())
-        assert tee.write("world") == 5
+        n = tee.write("world")
+        assert n == 5
         assert primary.getvalue() == "world"
 
     def test_survives_both_streams_failing(self):
         # Worst case: both sides broken. write() still returns len(s) and the
         # exception never reaches the training loop.
         tee = _Tee(_Boom(), _Boom())
-        assert tee.write("xyz") == 3
+        n = tee.write("xyz")
+        assert n == 3
 
 
 class TestTeeFlush:
@@ -180,7 +189,10 @@ class TestCallCallable:
     """call_callable runs fn in-process and returns its value, log_path optional."""
 
     def test_returns_value_without_log(self):
-        assert call_callable(lambda x, y: x + y, 2, 3) == 5
+        # call_callable runs fn (a side-effect); hoist it out of assert so the
+        # call is not discarded under ``python -O``.
+        result = call_callable(lambda x, y: x + y, 2, 3)
+        assert result == 5
 
     def test_forwards_args_and_kwargs_through_capture(self, tmp_path):
         log = tmp_path / "run.log"
@@ -189,5 +201,6 @@ class TestCallCallable:
             print(f"CALLED a={a} b={b}")
             return a * b
 
-        assert call_callable(fn, 6, log_path=str(log), b=7) == 42
+        result = call_callable(fn, 6, log_path=str(log), b=7)
+        assert result == 42
         assert "CALLED a=6 b=7" in log.read_text(encoding="utf-8")
