@@ -442,6 +442,21 @@ policy types are still rejected.
   regression test pins that `rtc_async_enabled` can be `True` while
   `supports_rtc` is `False`.
 
+### Fixed: `run_policy`/`eval_policy` rollout video plays back at real time when `fps > control_frequency`
+
+- The MP4 recorder (`video=...`) renders at most one frame per applied control
+  step, so it cannot carry more than `control_frequency` unique frames per
+  second of sim time. When the requested `fps` exceeded `control_frequency` the
+  capture cadence still grabbed every step (it cannot up-sample) but the writer
+  used the requested `fps`, so the video played back FASTER than real time by
+  `fps / control_frequency` (e.g. a 110-step rollout at `control_frequency=15`
+  with the default `fps=30` produced a 3.7 s MP4 for 7.3 s of sim - a silent 2x
+  speed-up). The writer already down-samples to preserve real time when
+  `control_frequency >= fps`; the `fps > control_frequency` case was unhandled.
+  The writer fps is now capped at `control_frequency` (with a warning) so the
+  rollout always plays back at real time; the common default
+  (`control_frequency=50`, `fps=30`) is unchanged.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
