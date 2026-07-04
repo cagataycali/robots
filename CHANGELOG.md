@@ -374,6 +374,22 @@ lifecycle (path validation, camera probe, fps-cadence frame capture) is now a
 single `_RolloutVideoWriter` helper shared by `run` and `evaluate` instead of two
 copies.
 
+### Fixed: LeRobot fine-tuning validation discovers policy types from lerobot's live registry
+
+`LerobotTrainer.validate` guarded `extra['policy_type']` against a hardcoded set
+of LeRobot-native types, and gated `relative_actions` against a hardcoded
+`{pi0, pi05, pi0_fast}` set. Both had drifted behind lerobot: the native-type set
+omitted policies lerobot already ships (e.g. `eo1`, `molmoact2`, `vla_jepa`,
+`wall_x`, and newer additions), so validation wrongly rejected them as "not
+LeRobot-native" even though `make_policy_config` builds them and the inference
+side resolves their classes; and `groot` now exposes `use_relative_actions`, so a
+valid `groot` + relative-actions run was wrongly rejected. Both gates now read
+lerobot's live `PreTrainedConfig` ChoiceRegistry (the relative-action check is
+probed off each config class), matching the zero-maintenance dynamic discovery
+the reward-model, robot, teleop, and camera surfaces already use. A static
+fallback is kept for the offline case (lerobot not importable). Genuinely unknown
+policy types are still rejected.
+
 
 ## [0.4.1] - 2026-07-01
 
