@@ -112,6 +112,17 @@ class TestACLFileLoader:
         with pytest.raises(ValueError, match="not valid JSON5"):
             ac.resolve_acl("strands")
 
+    def test_invalid_utf8_rejected(self, monkeypatch, tmp_path):
+        # A non-UTF-8 ACL file must fail closed with an operator-facing
+        # error naming the file, not a raw UnicodeDecodeError from deep
+        # in the loader. Byte-level sibling of the oversize/invalid-JSON
+        # rejections above.
+        path = tmp_path / "latin1.json"
+        path.write_bytes(b'{"enabled": true, "note": "\xff\xfe not utf-8"}')
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
+        with pytest.raises(ValueError, match="not valid UTF-8"):
+            ac.resolve_acl("strands")
+
     def test_missing_required_field_rejected(self, monkeypatch, tmp_path):
         path = tmp_path / "incomplete.json"
         path.write_text(json.dumps({"enabled": True, "default_permission": "deny", "rules": []}))
@@ -519,6 +530,24 @@ class TestJSON5DepSwap:
         result = ac._parse_json5('{"foo": "bar"}', Path("/dev/null"))
         assert result == {"foo": "bar"}
 
+    def test_json5_missing_raises_actionable_import_error(self, monkeypatch, tmp_path):
+        """When json5 is not installed, the loader surfaces an actionable
+        ImportError naming the [mesh] extra rather than a bare
+        ModuleNotFoundError from deep in the parser. The dep is optional
+        (only paid when an ACL file is actually parsed), so the operator
+        needs to know exactly what to install."""
+
+        def _no_json5(*args, **kwargs):
+            raise ImportError("No module named 'json5'")
+
+        monkeypatch.setattr("strands_robots.utils.require_optional", _no_json5)
+        path = tmp_path / "acl.json5"
+        path.write_text('{"enabled": true}')
+        monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
+        ac._clear_acl_cache_for_test()
+        with pytest.raises(ImportError, match="json5 is required"):
+            ac.resolve_acl("strands")
+
 
 # ---------------------------------------------------------------------
 # the prior fix-1: bare except on permissive-ACL warning narrowed
@@ -749,3 +778,36 @@ class TestACLShapeValidation:
         data["policies"][0]["subjects"] = ["ghost"]
         with pytest.raises(ValueError, match=r"references unknown subject id 'ghost'"):
             self._resolve(monkeypatch, tmp_path, data)
+
+
+class TestACLLoadCacheBounded:
+    """The identity-keyed ACL load cache is capped so an attacker who can
+    rewrite the ACL file repeatedly cannot inflate process memory by
+    forcing an unbounded number of distinct cache entries.
+    """
+
+    @staticmethod
+    def _good_acl() -> dict:
+        return {
+            "enabled": True,
+            "default_permission": "deny",
+            "rules": [],
+            "subjects": [{"id": "x", "interfaces": ["lo"], "cert_common_names": ["foo-*"]}],
+            "policies": [],
+        }
+
+    def test_cache_evicts_beyond_four_entries(self, monkeypatch, tmp_path):
+        # Load six DISTINCT ACL files (distinct identity tuples). The cache
+        # is capped at four entries, so the oldest are evicted rather than
+        # the map growing without bound.
+        ac._clear_acl_cache_for_test()
+        try:
+            for i in range(6):
+                path = tmp_path / f"acl_{i}.json"
+                path.write_text(json.dumps(self._good_acl()))
+                monkeypatch.setenv("STRANDS_MESH_ACL_FILE", str(path))
+                loaded = ac.resolve_acl("strands")
+                assert loaded["enabled"] is True
+            assert len(ac._ACL_CACHE) <= 4
+        finally:
+            ac._clear_acl_cache_for_test()
