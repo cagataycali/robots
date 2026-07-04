@@ -423,6 +423,25 @@ policy types are still rejected.
   the agent-dispatch path.
 
 
+### Docs: `run_policy(async_rtc=...)` no longer claims SmolVLA/MolmoAct2 blend the chunk seam internally
+
+- The `PolicyRunner.run` `async_rtc` docstring stated that "RTC-capable
+  policies (pi0, pi0.5, SmolVLA, MolmoAct2) blend the seam internally through
+  their own prev-chunk state (`rtc_config.execution_horizon`)". That conflates
+  two independent things and is wrong for the checkpoints most users load.
+  The async OVERLAP (latency masking) auto-enables for *any* chunk-emitting
+  policy via `is_chunk_emitting()`; RTC SEAM BLENDING is a separate,
+  checkpoint-level property (`supports_rtc`) that requires an enabled
+  `rtc_config`. The public `lerobot/smolvla_base` checkpoint ships
+  `rtc_config=None` and MolmoAct2 has no `rtc_config` at all, so both report
+  `supports_rtc=False`: they get the overlap but a plain chunk swap at the
+  seam, not a blended one. Reading the old text, a user would deploy
+  `smolvla_base` expecting a smoothly-joined trajectory and instead get a
+  velocity discontinuity at every chunk boundary. The docstring now describes
+  overlap and seam-blending as the two distinct capabilities they are, and a
+  regression test pins that `rtc_async_enabled` can be `True` while
+  `supports_rtc` is `False`.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

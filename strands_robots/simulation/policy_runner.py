@@ -719,11 +719,18 @@ class PolicyRunner:
                 latency is at most the chunk's execution time then pays
                 (almost) zero visible stall at the chunk seam - the same way an
                 async real-time controller hides inference latency on real
-                hardware. RTC-capable policies (pi0, pi0.5, SmolVLA, MolmoAct2)
-                blend the seam internally through their own prev-chunk state
-                (``rtc_config.execution_horizon``); this flag only schedules the
-                overlap and never touches the policy's RTC machinery, so it is
-                provider-agnostic. ``False`` keeps the historical
+                hardware. Whether the chunk SEAM is additionally blended is a
+                separate, checkpoint-level property (``supports_rtc``): a policy
+                loaded from a checkpoint with an enabled ``rtc_config`` (e.g.
+                pi0 / pi0.5, or a SmolVLA checkpoint configured for RTC) carries
+                prev-chunk state across the seam and joins consecutive chunks
+                smoothly, whereas a chunk-emitting policy WITHOUT an
+                ``rtc_config`` - MolmoAct2, ACT, diffusion, and the public
+                ``lerobot/smolvla_base`` checkpoint - gets the overlap (latency
+                masking) but a plain chunk swap at the seam. This flag only
+                schedules the overlap; it never enables or touches the policy's
+                RTC machinery, so it is provider-agnostic. ``False`` keeps the
+                historical
                 synchronous chunk-then-drain loop, which is correct for
                 single-step policies and any policy whose ``get_actions`` reads
                 live sim state. ``None`` (default) auto-resolves the flag from
