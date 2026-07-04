@@ -702,6 +702,92 @@ class TestRuntimeModification:
         finally:
             s.cleanup()
 
+    _PRIMITIVE_BOUNDS_SCENE = """
+    <mujoco>
+      <worldbody>
+        <geom name="ground" type="plane" size="5 5 0.1"/>
+        <body name="b_sphere" pos="0 0 1"><freejoint/>
+          <geom name="sphere_g" type="sphere" size="0.1"/></body>
+        <body name="b_cylinder" pos="1 0 1"><freejoint/>
+          <geom name="cylinder_g" type="cylinder" size="0.1 0.2"/></body>
+        <body name="b_ellipsoid" pos="2 0 1"><freejoint/>
+          <geom name="ellipsoid_g" type="ellipsoid" size="0.1 0.2 0.3"/></body>
+      </worldbody>
+    </mujoco>
+    """
+
+    def _primitive_bounds_sim(self):
+        from strands_robots.simulation.models import SimStatus, SimWorld
+
+        s = Simulation(tool_name="test_primitive_bounds", mesh=False)
+        s._world = SimWorld()
+        spec = mj.MjSpec.from_string(self._PRIMITIVE_BOUNDS_SCENE)
+        s._world._backend_state["spec"] = spec
+        s._world._model = spec.compile()
+        s._world._data = mj.MjData(s._world._model)
+        s._world.status = SimStatus.IDLE
+        mj.mj_forward(s._world._model, s._world._data)
+        return s
+
+    @pytest.mark.parametrize(
+        "geom, new_size, expected_rbound, expected_half",
+        [
+            # sphere: rbound = radius; aabb half = [r, r, r].
+            ("sphere_g", [0.3], 0.3, [0.3, 0.3, 0.3]),
+            # cylinder: rbound = hypot(radius, half-length); aabb half = [r, r, hl].
+            ("cylinder_g", [0.2, 0.5], float(np.hypot(0.2, 0.5)), [0.2, 0.2, 0.5]),
+            # ellipsoid: rbound = max semi-axis; aabb half = the three semi-axes.
+            ("ellipsoid_g", [0.15, 0.25, 0.4], 0.4, [0.15, 0.25, 0.4]),
+        ],
+    )
+    def test_set_geom_size_recomputes_bounds_per_primitive_type(self, geom, new_size, expected_rbound, expected_half):
+        """Each size-defined primitive gets its own broadphase/mid-phase formula.
+
+        ``geom_rbound`` (broadphase bounding sphere) and ``geom_aabb`` (mid-phase
+        box) are compiled from ``geom_size`` and are not refreshed by the solver,
+        so a runtime size write must recompute them with the primitive's own
+        extent formula - a shared or wrong formula would silently cull the grown
+        geom from collision detection. This pins the per-type formula for the
+        sphere, cylinder, and ellipsoid branches to a fresh compile's values.
+        """
+        s = self._primitive_bounds_sim()
+        try:
+            model = s._world._model
+            gid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, geom)
+            result = s.set_geom_properties(geom_name=geom, size=new_size)
+            assert result["status"] == "success"
+            assert float(model.geom_rbound[gid]) == pytest.approx(expected_rbound)
+            assert model.geom_aabb[gid][3:6].tolist() == pytest.approx(expected_half)
+        finally:
+            s.cleanup()
+
+    def test_set_geom_size_inert_bounds_for_non_size_defined_geom(self):
+        """A plane's extent comes from asset/type data, not ``geom_size``.
+
+        For mesh/plane/height-field/SDF geoms the size write still lands in
+        ``geom_size`` (callers may rely on the stored value), but the collision
+        bounds must be left untouched because recomputing them from ``geom_size``
+        would be meaningless. This pins the inert branch: bounds unchanged, size
+        written.
+        """
+        s = self._primitive_bounds_sim()
+        try:
+            model = s._world._model
+            gid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, "ground")
+            rbound_before = float(model.geom_rbound[gid])
+            aabb_before = model.geom_aabb[gid].tolist()
+
+            result = s.set_geom_properties(geom_name="ground", size=[8.0, 8.0, 0.1])
+            assert result["status"] == "success"
+
+            # Bounds untouched (recompute reported the type as non-size-defined).
+            assert float(model.geom_rbound[gid]) == pytest.approx(rbound_before)
+            assert model.geom_aabb[gid].tolist() == pytest.approx(aabb_before)
+            # ...but the requested size still landed in the live model.
+            assert model.geom_size[gid][:2].tolist() == pytest.approx([8.0, 8.0])
+        finally:
+            s.cleanup()
+
 
 class TestContactForces:
     def test_get_contact_forces_after_settling(self, sim):
