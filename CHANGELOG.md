@@ -5,6 +5,22 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `get_energy` reported the energy of a stale pose after a direct `qpos`/`qvel` write
+
+`get_energy` called `mj_energyPos` / `mj_energyVel` on whatever derived state
+happened to be in `data`, without first recomputing the forward pipeline.
+Potential energy is a function of `data.xipos` (inertial body positions in the
+world frame) and kinetic energy of the config-dependent inertia `data.qM`, all
+of which are position-stage derived state that a bare `qpos`/`qvel` write does
+not refresh -- so after a direct `data.qpos` write (a planning/IK loop) or
+`set_joint_velocities`, `get_energy` silently returned the energy of the
+*previous* configuration. It now runs `mj_forward` under the sim lock before
+reading, matching the defensive forward already in `get_mass_matrix` and
+`inverse_dynamics`. The explicit `mj_energyPos`/`mj_energyVel` calls are kept
+because `mj_forward` only recomputes `data.energy` when `mjENBL_ENERGY` is
+enabled (it is not by default), whereas the explicit calls populate it
+unconditionally.
+
 ### Added: `run_policy(policy_object=...)` on the hardware `Robot` -- sim parity for pre-built policies
 
 The simulation side has a one-call rollout for a policy constructed in-process
