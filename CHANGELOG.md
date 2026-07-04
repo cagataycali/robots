@@ -487,6 +487,22 @@ policy types are still rejected.
   `add_object` (`<body>_geom`) and single-geom scenes are unchanged.
 
 
+### Fixed: `CooperativeStop` from an `on_frame` hook crashed `eval_policy` / `evaluate_benchmark` instead of stopping gracefully
+
+`CooperativeStop` is the documented signal an `on_frame` hook raises to stop a
+rollout early, and it inherits `BaseException` (not `Exception`) specifically so
+a hook author's broad `except Exception` cannot swallow it. `run()` honors it
+(clean stopped-early success), but the two evaluation paths (`eval_policy`'s
+legacy `success_fn` loop and the `evaluate_benchmark` spec loop) only caught
+`except Exception` around the hook -- so a `CooperativeStop` propagated *uncaught*
+out of the eval and crashed the whole evaluation, contradicting the `on_frame`
+docstring's "never aborts the eval" contract. Both eval loops now catch
+`CooperativeStop` and end the evaluation gracefully after the episodes completed
+so far, exactly like `run()`. The eval result payload gains `stopped_early`
+(bool) and `episodes_completed` (int, `<= n_episodes`); aggregate metrics are
+computed over the completed episodes when a stop fires. Normal evaluations are
+unchanged (`stopped_early=False`, `episodes_completed == n_episodes`).
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

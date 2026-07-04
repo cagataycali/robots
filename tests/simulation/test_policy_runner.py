@@ -195,6 +195,59 @@ def test_cooperative_stop_is_normal_success():
     assert "stopped" in result["content"][0]["text"].lower()
 
 
+def test_evaluate_cooperative_stop_ends_eval_gracefully():
+    """An on_frame hook raising ``CooperativeStop`` stops eval gracefully.
+
+    ``CooperativeStop`` (a ``BaseException``) is the documented signal an
+    on_frame hook raises to stop a run early; ``run()`` honors it. The eval
+    path must too - returning a normal success result over the episodes
+    completed so far with ``stopped_early=True``, instead of crashing with an
+    uncaught ``BaseException`` (the pre-fix behaviour).
+    """
+    sim = FakeSim()
+    policy = MockPolicy()
+    policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+
+    # global_step is monotonic across episodes. With max_steps=3 each episode
+    # spans 3 steps: ep0 -> global 0,1,2 (completes), ep1 -> global 3 then 4
+    # raises. So exactly one episode completes before the stop.
+    def hook(step: int, obs, action) -> None:
+        if step >= 4:
+            raise CooperativeStop("user stopped eval")
+
+    result = PolicyRunner(sim).evaluate(
+        "fake_robot",
+        policy,
+        n_episodes=5,
+        max_steps=3,
+        success_fn=lambda obs: False,
+        on_frame=hook,
+    )
+
+    assert result["status"] == "success"
+    payload = next(c["json"] for c in result["content"] if isinstance(c, dict) and "json" in c)
+    assert payload["stopped_early"] is True
+    # One episode fully completed before the mid-episode stop.
+    assert payload["episodes_completed"] == 1
+    assert len(payload["episodes"]) == 1
+    # Requested count is preserved for reference.
+    assert payload["n_episodes"] == 5
+
+
+def test_evaluate_without_cooperative_stop_is_not_flagged():
+    """A normal eval reports ``stopped_early=False`` and completes every episode."""
+    sim = FakeSim()
+    policy = MockPolicy()
+    policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+
+    result = PolicyRunner(sim).evaluate("fake_robot", policy, n_episodes=3, max_steps=4)
+
+    payload = next(c["json"] for c in result["content"] if isinstance(c, dict) and "json" in c)
+    assert payload["stopped_early"] is False
+    assert payload["episodes_completed"] == 3
+    assert payload["n_episodes"] == 3
+
+
 def test_evaluate_calls_reset_per_episode():
     """evaluate() resets before every episode."""
     sim = FakeSim()

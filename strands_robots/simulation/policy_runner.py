@@ -408,9 +408,11 @@ class CooperativeStop(BaseException):
     """Raised by an ``on_frame`` hook to cooperatively stop a run.
 
     Inherits ``BaseException`` (not ``Exception``) so hook authors don't
-    accidentally swallow it with a broad ``except Exception``. Re-raised
-    by ``PolicyRunner.run`` and caught at the top of the loop to return
-    a normal stopped-early success result.
+    accidentally swallow it with a broad ``except Exception``. Honored by
+    ``PolicyRunner.run`` and by the ``evaluate``/``evaluate_benchmark``
+    paths: it is caught at the episode loop to return a normal
+    stopped-early success result (``stopped_early=True``) rather than
+    propagating as an uncaught exception.
     """
 
 
@@ -1618,8 +1620,12 @@ class PolicyRunner:
                 fired per applied control step on the eval thread, after
                 ``sim.send_action``. Forwarded on BOTH the ``spec=`` and the
                 legacy ``success_fn`` paths; ``step`` is a monotonic index
-                that continues across episode boundaries. A hook exception is
-                logged at WARN and never aborts the eval. Use this for
+                that continues across episode boundaries. A non-
+                ``CooperativeStop`` hook exception is logged at WARN and never
+                aborts the eval; raising :class:`CooperativeStop` stops the
+                evaluation gracefully after the episodes completed so far
+                (the result carries ``stopped_early=True`` and
+                ``episodes_completed``), matching :meth:`run`. Use this for
                 synchronous recording when the eval runs on a thread distinct
                 from the script main (e.g. Strands ``Agent`` tool dispatch
                 under asyncio) - see #191 and
@@ -1672,6 +1678,13 @@ class PolicyRunner:
             reported ``success_rate`` is a hard ``0.0`` that measures nothing
             (no episode can be marked successful without a criterion), and a
             warning is logged - check this flag before trusting ``success_rate``.
+
+            The payload also carries ``episodes_completed`` (episodes that ran
+            to completion) and ``stopped_early`` (bool). When an ``on_frame``
+            hook raises :class:`CooperativeStop`, the eval ends gracefully after
+            the completed episodes: ``stopped_early=True`` and the aggregate
+            metrics are computed over ``episodes_completed`` (which may be less
+            than the requested ``n_episodes``).
         """
         if spec is not None and success_fn is not None:
             return {
@@ -1824,109 +1837,130 @@ class PolicyRunner:
             if on_frame is not None:
                 try:
                     on_frame(global_step, obs, action)
+                except CooperativeStop:
+                    # Documented graceful early-stop (the same signal run()
+                    # honors). Propagate to the episode loop; never swallow
+                    # it as a best-effort telemetry failure.
+                    raise
                 except Exception as e:  # noqa: BLE001 - hook is best-effort telemetry
                     logger.warning("on_frame hook failed at global_step=%d: %s", global_step, e)
             global_step += 1
 
-        for ep in range(n_episodes):
-            self.sim.reset()
-            success = False
-            steps = 0
+        stopped_early = False
+        try:
+            for ep in range(n_episodes):
+                self.sim.reset()
+                success = False
+                steps = 0
 
-            # Per-episode MP4 (foo_ep{i}.mp4). Validation + camera probe happen
-            # here; a bad path/camera fails the eval up-front (on ep 0) instead
-            # of running N episodes and writing nothing.
-            ep_vcfg = self.sim._episode_video_config(video, ep)
-            current_vwriter, _video_err = _RolloutVideoWriter.open(self.sim, ep_vcfg, control_frequency)
-            if _video_err is not None:
-                return _video_err
+                # Per-episode MP4 (foo_ep{i}.mp4). Validation + camera probe happen
+                # here; a bad path/camera fails the eval up-front (on ep 0) instead
+                # of running N episodes and writing nothing.
+                ep_vcfg = self.sim._episode_video_config(video, ep)
+                current_vwriter, _video_err = _RolloutVideoWriter.open(self.sim, ep_vcfg, control_frequency)
+                if _video_err is not None:
+                    return _video_err
 
-            if async_rtc:
-                # Opt-in async overlap: a single background worker computes the
-                # next chunk while the current one drains, so a chunk-emitting
-                # policy is evaluated under the realistic inference latency it
-                # faces in deployment. The pipeline only ever calls the policy
-                # off-thread; the sim is stepped solely here, so there is no
-                # data race. The context manager joins the worker on exit even
-                # when we break mid-chunk on success.
-                pipeline = _ChunkPipeline(
-                    _query_chunk,
-                    _observation_fn,
-                    async_rtc=True,
-                    rtc_inference_timeout_s=rtc_inference_timeout_s,
-                )
-                with pipeline as chunks:
-                    for _observation, action_dict in chunks:
-                        if steps >= max_steps:
+                if async_rtc:
+                    # Opt-in async overlap: a single background worker computes the
+                    # next chunk while the current one drains, so a chunk-emitting
+                    # policy is evaluated under the realistic inference latency it
+                    # faces in deployment. The pipeline only ever calls the policy
+                    # off-thread; the sim is stepped solely here, so there is no
+                    # data race. The context manager joins the worker on exit even
+                    # when we break mid-chunk on success.
+                    pipeline = _ChunkPipeline(
+                        _query_chunk,
+                        _observation_fn,
+                        async_rtc=True,
+                        rtc_inference_timeout_s=rtc_inference_timeout_s,
+                    )
+                    with pipeline as chunks:
+                        for _observation, action_dict in chunks:
+                            if steps >= max_steps:
+                                break
+                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                            _fire_on_frame(_observation, action_dict, steps)
+                            steps += 1
+                            # Check success against the LIVE post-action observation
+                            # (mirrors the synchronous path / _evaluate_with_spec).
+                            if resolved_check is not None and resolved_check(_observation_fn()):
+                                success = True
+                                break
+                    rtc_chunks_acquired += pipeline.chunks_acquired
+                    rtc_prefetch_hits += pipeline.prefetch_hits
+                    rtc_prefetch_blocks += pipeline.prefetch_blocks
+                else:
+                    while steps < max_steps:
+                        observation = _observation_fn()
+                        chunk = _query_chunk(observation, 0)
+                        rtc_chunks_acquired += 1
+
+                        if not chunk:
+                            # Policy returned nothing - still advance one physics
+                            # step so episodes don't hang on degenerate policies,
+                            # then check the post-step observation (same post-action
+                            # semantics as the chunk branch below).
+                            self.sim.step(n_steps=1)
+                            steps += 1
+                            if resolved_check is not None and resolved_check(_observation_fn()):
+                                success = True
+                                break
+                            continue
+
+                        for action_dict in chunk:
+                            if steps >= max_steps:
+                                break
+                            self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
+                            _fire_on_frame(observation, action_dict, steps)
+                            steps += 1
+                            # Check success against the LIVE post-action observation,
+                            # not the stale pre-action obs. Checking the pre-action
+                            # obs detects success one step late and never records a
+                            # task that completes on the final step -> under-reported
+                            # success_rate / inflated avg_steps. Mirrors
+                            # _evaluate_with_spec's post-send is_success.
+                            if resolved_check is not None and resolved_check(_observation_fn()):
+                                success = True
+                                break
+                        if success:
                             break
-                        self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
-                        _fire_on_frame(_observation, action_dict, steps)
-                        steps += 1
-                        # Check success against the LIVE post-action observation
-                        # (mirrors the synchronous path / _evaluate_with_spec).
-                        if resolved_check is not None and resolved_check(_observation_fn()):
-                            success = True
-                            break
-                rtc_chunks_acquired += pipeline.chunks_acquired
-                rtc_prefetch_hits += pipeline.prefetch_hits
-                rtc_prefetch_blocks += pipeline.prefetch_blocks
-            else:
-                while steps < max_steps:
-                    observation = _observation_fn()
-                    chunk = _query_chunk(observation, 0)
-                    rtc_chunks_acquired += 1
 
-                    if not chunk:
-                        # Policy returned nothing - still advance one physics
-                        # step so episodes don't hang on degenerate policies,
-                        # then check the post-step observation (same post-action
-                        # semantics as the chunk branch below).
-                        self.sim.step(n_steps=1)
-                        steps += 1
-                        if resolved_check is not None and resolved_check(_observation_fn()):
-                            success = True
-                            break
-                        continue
+                results.append({"episode": ep, "steps": steps, "success": success})
+                # #708 - roll the attached recorder over to a new episode so the
+                # dataset records per-episode boundaries rather than collapsing
+                # every rollout into one mega-episode.
+                self._finalize_recorder_episode()
 
-                    for action_dict in chunk:
-                        if steps >= max_steps:
-                            break
-                        self.sim.send_action(action_dict, robot_name=robot_name, n_substeps=n_substeps)
-                        _fire_on_frame(observation, action_dict, steps)
-                        steps += 1
-                        # Check success against the LIVE post-action observation,
-                        # not the stale pre-action obs. Checking the pre-action
-                        # obs detects success one step late and never records a
-                        # task that completes on the final step -> under-reported
-                        # success_rate / inflated avg_steps. Mirrors
-                        # _evaluate_with_spec's post-send is_success.
-                        if resolved_check is not None and resolved_check(_observation_fn()):
-                            success = True
-                            break
-                    if success:
-                        break
+                if current_vwriter is not None:
+                    current_vwriter.close()
+                    if current_vwriter.frame_count > 0 and os.path.exists(current_vwriter.path):
+                        video_paths.append(current_vwriter.path)
+                    else:
+                        logger.warning(
+                            "eval_policy episode %d: video requested but wrote 0 frames to %s",
+                            ep,
+                            current_vwriter.path,
+                        )
+                    current_vwriter = None
 
-            results.append({"episode": ep, "steps": steps, "success": success})
-            # #708 - roll the attached recorder over to a new episode so the
-            # dataset records per-episode boundaries rather than collapsing
-            # every rollout into one mega-episode.
-            self._finalize_recorder_episode()
-
+        except CooperativeStop:
+            # A user/backend on_frame hook requested a graceful stop (the
+            # same signal run() honors). End the evaluation over the episodes
+            # completed so far instead of crashing with an uncaught
+            # BaseException. Close any in-progress episode video cleanly.
+            stopped_early = True
+            logger.info(
+                "on_frame requested a cooperative stop; ending evaluation after %d completed episode(s)",
+                len(results),
+            )
             if current_vwriter is not None:
                 current_vwriter.close()
-                if current_vwriter.frame_count > 0 and os.path.exists(current_vwriter.path):
-                    video_paths.append(current_vwriter.path)
-                else:
-                    logger.warning(
-                        "eval_policy episode %d: video requested but wrote 0 frames to %s",
-                        ep,
-                        current_vwriter.path,
-                    )
                 current_vwriter = None
-
+        n_completed = len(results)
         n_success = sum(1 for r in results if r["success"])
-        success_rate = n_success / max(n_episodes, 1)
-        avg_steps = sum(r["steps"] for r in results) / max(n_episodes, 1)
+        success_rate = n_success / max(n_completed, 1)
+        avg_steps = sum(r["steps"] for r in results) / max(n_completed, 1)
         _n_infer = len(inference_ms)
         rtc_telemetry = {
             "rtc_async_enabled": bool(async_rtc),
@@ -1943,8 +1977,9 @@ class PolicyRunner:
                 {
                     "text": (
                         f"Evaluation: {type(policy).__name__} on '{robot_name}'\n"
-                        f"Episodes: {n_episodes} | Success: {n_success}/{n_episodes} "
-                        f"({success_rate:.1%})"
+                        f"Episodes: {n_completed}"
+                        + (f" of {n_episodes} (stopped early)" if stopped_early else "")
+                        + f" | Success: {n_success}/{n_completed} ({success_rate:.1%})"
                         + ("" if success_measured else " [no success criterion - not measured]")
                         + "\n"
                         f"Avg steps: {avg_steps:.0f}/{max_steps}"
@@ -1955,6 +1990,8 @@ class PolicyRunner:
                         "success_rate": round(success_rate, 4),
                         "success_measured": success_measured,
                         "n_episodes": n_episodes,
+                        "episodes_completed": n_completed,
+                        "stopped_early": stopped_early,
                         "n_success": n_success,
                         "avg_steps": round(avg_steps, 1),
                         "max_steps": max_steps,
@@ -2062,142 +2099,177 @@ class PolicyRunner:
                 spec_instruction,
             )
 
-        for ep in range(n_episodes):
-            self.sim.reset()
-            # Per-episode seeded RNG - deterministic given the master seed
-            # and the episode index.
-            episode_seed = master_rng.randint(0, 2**31 - 1)
-            episode_rng = random.Random(episode_seed)
+        stopped_early = False
+        try:
+            for ep in range(n_episodes):
+                self.sim.reset()
+                # Per-episode seeded RNG - deterministic given the master seed
+                # and the episode index.
+                episode_seed = master_rng.randint(0, 2**31 - 1)
+                episode_rng = random.Random(episode_seed)
 
-            # #179 - re-seed Python / NumPy / torch / cuDNN at the start
-            # of EACH episode (not just once before the loop). Without
-            # the per-episode reseed, every torch op draws from a global
-            # RNG state that mutates across episodes, so the diffusion
-            # sampler in policies like ``nvidia/GR00T-N1.7-LIBERO`` produces
-            # different action chunks per re-run even at the same
-            # ``seed=42``. With the per-episode reseed, episode N always
-            # starts from the same RNG state regardless of what happened
-            # in episodes 0..N-1.
-            #
-            # Validated on libero-10/SCENE5: pre-#179 5-ep eval ranged
-            # 0.40-1.00 across runs; post-#179 the same eval is bit-stable
-            # (same successes list every run).
-            set_eval_seed(episode_seed)
+                # #179 - re-seed Python / NumPy / torch / cuDNN at the start
+                # of EACH episode (not just once before the loop). Without
+                # the per-episode reseed, every torch op draws from a global
+                # RNG state that mutates across episodes, so the diffusion
+                # sampler in policies like ``nvidia/GR00T-N1.7-LIBERO`` produces
+                # different action chunks per re-run even at the same
+                # ``seed=42``. With the per-episode reseed, episode N always
+                # starts from the same RNG state regardless of what happened
+                # in episodes 0..N-1.
+                #
+                # Validated on libero-10/SCENE5: pre-#179 5-ep eval ranged
+                # 0.40-1.00 across runs; post-#179 the same eval is bit-stable
+                # (same successes list every run).
+                set_eval_seed(episode_seed)
 
-            # #187 - for SERVICE-mode policies (e.g. Gr00tPolicy over
-            # ZMQ), set_eval_seed only seeds the client process. The
-            # remote inference server has its own torch/CUDA RNG that
-            # drifts across calls. Forward the per-episode seed via
-            # policy.reset(seed=...) so server-side state can be
-            # re-initialised. Default Policy.reset is a no-op; concrete
-            # policies override (Gr00tPolicy forwards to the server's
-            # `reset` endpoint).
-            try:
-                policy.reset(seed=episode_seed)
-            except Exception as e:  # noqa: BLE001 - reset is best-effort
-                logger.warning(
-                    "policy.reset(seed=%d) raised %s; continuing without per-episode reset",
-                    episode_seed,
-                    e,
-                )
-
-            try:
-                spec.on_episode_start(self.sim, episode_rng)
-            except BenchmarkCompatibilityError as e:
-                # Surface the structured error with the supported list -
-                # agents can fix this without retrying.
-                return {
-                    "status": "error",
-                    "content": [
-                        {
-                            "text": (
-                                f"Benchmark compatibility error: robot '{e.robot_name}' "
-                                f"has data_config={e.data_config!r}, but benchmark "
-                                f"{spec_name} supports {e.supported}."
-                            )
-                        }
-                    ],
-                }
-            except Exception as e:  # noqa: BLE001 - surface as structured error
-                logger.exception("on_episode_start failed")
-                return {
-                    "status": "error",
-                    "content": [{"text": f"on_episode_start failed in {spec_name}: {e}"}],
-                }
-
-            success = False
-            failure = False
-            steps = 0
-            cumulative_reward = 0.0
-            last_info: dict[str, Any] = {}
-
-            for _ in range(max_steps):
-                observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
-                # Hook: benchmarks may bridge the sim's observation schema
-                # (typically joint-space) to whatever the policy was trained
-                # on (e.g. LIBERO's Cartesian state.x/y/z/roll/pitch/yaw/gripper).
-                # Default impl on BenchmarkProtocol is identity. Failures
-                # surface as structured errors rather than silent fall-through
-                # since "policy got the wrong obs schema" is a common bug
-                # source.
+                # #187 - for SERVICE-mode policies (e.g. Gr00tPolicy over
+                # ZMQ), set_eval_seed only seeds the client process. The
+                # remote inference server has its own torch/CUDA RNG that
+                # drifts across calls. Forward the per-episode seed via
+                # policy.reset(seed=...) so server-side state can be
+                # re-initialised. Default Policy.reset is a no-op; concrete
+                # policies override (Gr00tPolicy forwards to the server's
+                # `reset` endpoint).
                 try:
-                    observation = spec.augment_observation(self.sim, observation)
-                except Exception as e:  # noqa: BLE001
-                    logger.exception("augment_observation failed in %s", spec_name)
+                    policy.reset(seed=episode_seed)
+                except Exception as e:  # noqa: BLE001 - reset is best-effort
+                    logger.warning(
+                        "policy.reset(seed=%d) raised %s; continuing without per-episode reset",
+                        episode_seed,
+                        e,
+                    )
+
+                try:
+                    spec.on_episode_start(self.sim, episode_rng)
+                except BenchmarkCompatibilityError as e:
+                    # Surface the structured error with the supported list -
+                    # agents can fix this without retrying.
                     return {
                         "status": "error",
-                        "content": [{"text": f"augment_observation failed in {spec_name}: {e}"}],
-                    }
-                coro_or_result = policy.get_actions(observation, effective_instruction, **(policy_kwargs or {}))
-                actions = _resolve_coroutine(coro_or_result)
-
-                # #168: consume up to ``action_horizon`` actions
-                # per inference. Default ``action_horizon=8`` matches NVIDIA's
-                # upstream GR00T LIBERO eval (``MultiStepWrapper`` with
-                # ``n_action_steps=8``) - the GR00T-N1.7-LIBERO checkpoints
-                # were trained against an 8-step open-loop chunk replay.
-                # The earlier ``=1`` default (closed-loop OpenVLA
-                # convention) put eval out-of-distribution from training
-                # and was a contributing factor to ``success_rate=0``.
-                # Set to ``1`` for closed-loop receding-horizon control.
-                # ``on_step`` and success/failure checks run after EACH
-                # applied action so per-step rewards / early termination
-                # work whether action_horizon is 1 or 8.
-                action_applied: dict[str, Any] = {}
-                stop_episode = False
-                if not actions:
-                    # Degenerate policy - advance physics so loop terminates.
-                    self.sim.step(n_steps=1)
-                else:
-                    _chunk = resolve_chunk_length(policy, action_horizon)
-                    for action_in_chunk in actions[:_chunk]:
-                        if steps >= max_steps:
-                            break
-                        action_applied = dict(action_in_chunk)
-                        self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=n_substeps)
-                        # #191 - synchronous on_frame hook fires on the
-                        # eval thread, after send_action + before
-                        # on_step's reward bookkeeping. Use this for
-                        # synchronous frame recording when the eval is
-                        # dispatched from a thread distinct from the
-                        # script main (e.g. Strands Agent worker thread
-                        # under asyncio); the daemon-thread recorder
-                        # races mjData mutations on the eval thread and
-                        # produces 2-3% frame-capture rates with greenish
-                        # GL clear-colour artifacts. See
-                        # ``Simulation.start_cameras_recording_synchronous``
-                        # for the recorder side of this contract.
-                        if on_frame is not None:
-                            try:
-                                on_frame(global_step, observation, action_applied)
-                            except Exception as e:  # noqa: BLE001 - hook is best-effort
-                                logger.warning(
-                                    "on_frame hook failed at global_step=%d (ep=%d, ep_step=%d): %s",
-                                    global_step,
-                                    ep,
-                                    steps,
-                                    e,
+                        "content": [
+                            {
+                                "text": (
+                                    f"Benchmark compatibility error: robot '{e.robot_name}' "
+                                    f"has data_config={e.data_config!r}, but benchmark "
+                                    f"{spec_name} supports {e.supported}."
                                 )
+                            }
+                        ],
+                    }
+                except Exception as e:  # noqa: BLE001 - surface as structured error
+                    logger.exception("on_episode_start failed")
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"on_episode_start failed in {spec_name}: {e}"}],
+                    }
+
+                success = False
+                failure = False
+                steps = 0
+                cumulative_reward = 0.0
+                last_info: dict[str, Any] = {}
+
+                for _ in range(max_steps):
+                    observation = self.sim.get_observation(robot_name=robot_name, skip_images=_skip_images)
+                    # Hook: benchmarks may bridge the sim's observation schema
+                    # (typically joint-space) to whatever the policy was trained
+                    # on (e.g. LIBERO's Cartesian state.x/y/z/roll/pitch/yaw/gripper).
+                    # Default impl on BenchmarkProtocol is identity. Failures
+                    # surface as structured errors rather than silent fall-through
+                    # since "policy got the wrong obs schema" is a common bug
+                    # source.
+                    try:
+                        observation = spec.augment_observation(self.sim, observation)
+                    except Exception as e:  # noqa: BLE001
+                        logger.exception("augment_observation failed in %s", spec_name)
+                        return {
+                            "status": "error",
+                            "content": [{"text": f"augment_observation failed in {spec_name}: {e}"}],
+                        }
+                    coro_or_result = policy.get_actions(observation, effective_instruction, **(policy_kwargs or {}))
+                    actions = _resolve_coroutine(coro_or_result)
+
+                    # #168: consume up to ``action_horizon`` actions
+                    # per inference. Default ``action_horizon=8`` matches NVIDIA's
+                    # upstream GR00T LIBERO eval (``MultiStepWrapper`` with
+                    # ``n_action_steps=8``) - the GR00T-N1.7-LIBERO checkpoints
+                    # were trained against an 8-step open-loop chunk replay.
+                    # The earlier ``=1`` default (closed-loop OpenVLA
+                    # convention) put eval out-of-distribution from training
+                    # and was a contributing factor to ``success_rate=0``.
+                    # Set to ``1`` for closed-loop receding-horizon control.
+                    # ``on_step`` and success/failure checks run after EACH
+                    # applied action so per-step rewards / early termination
+                    # work whether action_horizon is 1 or 8.
+                    action_applied: dict[str, Any] = {}
+                    stop_episode = False
+                    if not actions:
+                        # Degenerate policy - advance physics so loop terminates.
+                        self.sim.step(n_steps=1)
+                    else:
+                        _chunk = resolve_chunk_length(policy, action_horizon)
+                        for action_in_chunk in actions[:_chunk]:
+                            if steps >= max_steps:
+                                break
+                            action_applied = dict(action_in_chunk)
+                            self.sim.send_action(action_applied, robot_name=robot_name, n_substeps=n_substeps)
+                            # #191 - synchronous on_frame hook fires on the
+                            # eval thread, after send_action + before
+                            # on_step's reward bookkeeping. Use this for
+                            # synchronous frame recording when the eval is
+                            # dispatched from a thread distinct from the
+                            # script main (e.g. Strands Agent worker thread
+                            # under asyncio); the daemon-thread recorder
+                            # races mjData mutations on the eval thread and
+                            # produces 2-3% frame-capture rates with greenish
+                            # GL clear-colour artifacts. See
+                            # ``Simulation.start_cameras_recording_synchronous``
+                            # for the recorder side of this contract.
+                            if on_frame is not None:
+                                try:
+                                    on_frame(global_step, observation, action_applied)
+                                except CooperativeStop:
+                                    # Documented graceful early-stop; propagate
+                                    # to the episode loop instead of swallowing.
+                                    raise
+                                except Exception as e:  # noqa: BLE001 - hook is best-effort
+                                    logger.warning(
+                                        "on_frame hook failed at global_step=%d (ep=%d, ep_step=%d): %s",
+                                        global_step,
+                                        ep,
+                                        steps,
+                                        e,
+                                    )
+                            steps += 1
+                            global_step += 1
+                            try:
+                                info = spec.on_step(self.sim, observation, action_applied)
+                            except Exception as e:  # noqa: BLE001
+                                logger.exception("on_step failed in %s", spec_name)
+                                return {
+                                    "status": "error",
+                                    "content": [{"text": f"on_step failed in {spec_name}: {e}"}],
+                                }
+                            cumulative_reward += float(info.reward)
+                            last_info = dict(info.info) if info.info else {}
+                            if info.done:
+                                stop_episode = True
+                                break
+                            if spec.is_failure(self.sim):
+                                failure = True
+                                stop_episode = True
+                                break
+                            if spec.is_success(self.sim):
+                                success = True
+                                stop_episode = True
+                                break
+                    if stop_episode:
+                        break
+                    if not actions:
+                        # Degenerate-policy branch already advanced steps via
+                        # sim.step(n_steps=1); count it like an applied step
+                        # so the outer loop terminates.
                         steps += 1
                         global_step += 1
                         try:
@@ -2211,62 +2283,44 @@ class PolicyRunner:
                         cumulative_reward += float(info.reward)
                         last_info = dict(info.info) if info.info else {}
                         if info.done:
-                            stop_episode = True
                             break
                         if spec.is_failure(self.sim):
                             failure = True
-                            stop_episode = True
                             break
                         if spec.is_success(self.sim):
                             success = True
-                            stop_episode = True
                             break
-                if stop_episode:
-                    break
-                if not actions:
-                    # Degenerate-policy branch already advanced steps via
-                    # sim.step(n_steps=1); count it like an applied step
-                    # so the outer loop terminates.
-                    steps += 1
-                    global_step += 1
-                    try:
-                        info = spec.on_step(self.sim, observation, action_applied)
-                    except Exception as e:  # noqa: BLE001
-                        logger.exception("on_step failed in %s", spec_name)
-                        return {
-                            "status": "error",
-                            "content": [{"text": f"on_step failed in {spec_name}: {e}"}],
-                        }
-                    cumulative_reward += float(info.reward)
-                    last_info = dict(info.info) if info.info else {}
-                    if info.done:
-                        break
-                    if spec.is_failure(self.sim):
-                        failure = True
-                        break
-                    if spec.is_success(self.sim):
-                        success = True
-                        break
 
-            results.append(
-                {
-                    "episode": ep,
-                    "steps": steps,
-                    "success": success,
-                    "failure": failure,
-                    "cumulative_reward": round(cumulative_reward, 4),
-                    "seed": episode_seed,
-                    "info": last_info,
-                }
+                results.append(
+                    {
+                        "episode": ep,
+                        "steps": steps,
+                        "success": success,
+                        "failure": failure,
+                        "cumulative_reward": round(cumulative_reward, 4),
+                        "seed": episode_seed,
+                        "info": last_info,
+                    }
+                )
+                # #708 - same per-episode recorder boundary as evaluate().
+                self._finalize_recorder_episode()
+
+        except CooperativeStop:
+            # A user/backend on_frame hook requested a graceful stop (the
+            # same signal run() honors). End the benchmark over the episodes
+            # completed so far instead of crashing with an uncaught
+            # BaseException.
+            stopped_early = True
+            logger.info(
+                "on_frame requested a cooperative stop; ending benchmark after %d completed episode(s)",
+                len(results),
             )
-            # #708 - same per-episode recorder boundary as evaluate().
-            self._finalize_recorder_episode()
-
+        n_completed = len(results)
         n_success = sum(1 for r in results if r["success"])
         n_failure = sum(1 for r in results if r["failure"])
-        success_rate = n_success / max(n_episodes, 1)
-        avg_steps = sum(r["steps"] for r in results) / max(n_episodes, 1)
-        avg_reward = sum(r["cumulative_reward"] for r in results) / max(n_episodes, 1)
+        success_rate = n_success / max(n_completed, 1)
+        avg_steps = sum(r["steps"] for r in results) / max(n_completed, 1)
+        avg_reward = sum(r["cumulative_reward"] for r in results) / max(n_completed, 1)
 
         return {
             "status": "success",
@@ -2274,8 +2328,9 @@ class PolicyRunner:
                 {
                     "text": (
                         f"Benchmark: {spec_name} | policy {type(policy).__name__} on '{robot_name}'\n"
-                        f"Episodes: {n_episodes} | Success: {n_success} | Failure: {n_failure} "
-                        f"({success_rate:.1%} success)\n"
+                        f"Episodes: {n_completed}"
+                        + (f" of {n_episodes} (stopped early)" if stopped_early else "")
+                        + f" | Success: {n_success} | Failure: {n_failure} ({success_rate:.1%} success)\n"
                         f"Avg reward: {avg_reward:.2f} | Avg steps: {avg_steps:.0f}/{max_steps}"
                     )
                 },
@@ -2284,6 +2339,8 @@ class PolicyRunner:
                         "success_rate": round(success_rate, 4),
                         "success_measured": True,
                         "n_episodes": n_episodes,
+                        "episodes_completed": n_completed,
+                        "stopped_early": stopped_early,
                         "n_success": n_success,
                         "n_failure": n_failure,
                         "avg_steps": round(avg_steps, 1),

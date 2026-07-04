@@ -1505,8 +1505,12 @@ class SimEngine(ABC):
         monotonic index that continues across episode boundaries. Use it to
         record frames or stream telemetry synchronously on the eval thread
         (e.g. paired with ``start_cameras_recording_synchronous``) so a
-        daemon-thread recorder does not race ``mjData`` mutations. A hook
-        exception is logged at WARN and never aborts the eval.
+        daemon-thread recorder does not race ``mjData`` mutations. A non-
+        ``CooperativeStop`` hook exception is logged at WARN and never aborts
+        the eval; raising :class:`~strands_robots.simulation.policy_runner.CooperativeStop`
+        stops the evaluation gracefully after the episodes completed so far
+        (the result carries ``stopped_early=True`` and ``episodes_completed``),
+        matching :meth:`run_policy`.
 
         ``n_episodes`` and ``max_steps`` must be positive integers and
         ``control_frequency`` must be ``> 0``; a non-positive value is

@@ -29,7 +29,7 @@ from strands_robots.simulation.benchmark import (
     StepInfo,
     register_benchmark,
 )
-from strands_robots.simulation.policy_runner import PolicyRunner
+from strands_robots.simulation.policy_runner import CooperativeStop, PolicyRunner
 
 # Fixtures
 
@@ -1436,3 +1436,41 @@ class TestDegeneratePolicyInBenchmarkLoop:
         assert result["status"] == "error"
         assert "on_step failed" in result["content"][0]["text"]
         assert "on_step boom" in result["content"][0]["text"]
+
+
+class TestCooperativeStop:
+    """A CooperativeStop from on_frame ends a benchmark eval gracefully."""
+
+    def test_spec_cooperative_stop_ends_gracefully(self):
+        sim = FakeSim()
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+
+        def hook(step, obs, action):
+            if step >= 4:
+                raise CooperativeStop("user stopped benchmark")
+
+        result = PolicyRunner(sim).evaluate(
+            "fake_robot",
+            policy,
+            spec=_CountingBenchmark(),
+            n_episodes=5,
+            on_frame=hook,
+        )
+        # Pre-fix: uncaught CooperativeStop propagated out and crashed the eval.
+        assert result["status"] == "success"
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert payload["stopped_early"] is True
+        # _CountingBenchmark runs 20 steps/episode, so the stop fires during
+        # episode 0 -> no episode fully completed.
+        assert payload["episodes_completed"] == 0
+        assert payload["n_episodes"] == 5
+
+    def test_spec_without_cooperative_stop_not_flagged(self):
+        sim = FakeSim()
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, spec=_CountingBenchmark(), n_episodes=2)
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert payload["stopped_early"] is False
+        assert payload["episodes_completed"] == 2
