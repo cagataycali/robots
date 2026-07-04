@@ -119,12 +119,6 @@ def set_eval_seed(seed: int) -> None:
         pass
 
 
-# Backward-compatibility alias for the pre-#179 private name. Internal
-# callers (this module's :class:`PolicyRunner`) still use it; the public
-# :func:`set_eval_seed` is the supported entry point.
-_set_eval_seed = set_eval_seed
-
-
 # Hook signature: called every control step after send_action.
 # on_frame(step_idx, observation, action) -> None
 OnFrame = Callable[[int, dict[str, Any], dict[str, Any]], None]
@@ -1996,7 +1990,7 @@ class PolicyRunner:
         # Per-episode reproducibility still flows through ``episode_rng``
         # below for the spec's per-episode RNG-driven init / jitter.
         if seed is not None:
-            _set_eval_seed(seed)
+            set_eval_seed(seed)
         master_rng = random.Random(seed)
         spec_name = type(spec).__name__
         max_steps = spec.max_steps
