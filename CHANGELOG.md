@@ -457,6 +457,23 @@ policy types are still rejected.
   rollout always plays back at real time; the common default
   (`control_frequency=50`, `fps=30`) is unchanged.
 
+### Added: `describe()` advertises the physics-introspection / grounding surface
+
+- `MuJoCoSimEngine.describe()` -- the single-call discovery surface an agent
+  reads first to learn the engine's contract -- taught how to build a scene, run
+  a policy, and record a dataset, but listed no way to READ the physics result.
+  An agent that ran a rollout could not discover how to verify it (read a body's
+  world pose, check gripper-object contact, query a sensor) without guessing
+  method names, even though `get_body_state`, `forward_kinematics`,
+  `get_contacts`, `get_contact_forces`, `get_sensor_data`, `get_energy`,
+  `get_mass_matrix`, `inverse_dynamics`, `get_jacobian`, `get_total_mass`,
+  `raycast`, and `multi_raycast` are all public methods the tool spec and action
+  dispatcher already dispatch. `describe()` now advertises this read/verify
+  surface alongside the act/record surface, so one call reveals how to ground a
+  claim on a body-state delta (the documented way to verify a rollout) rather
+  than on a rendered caption. The `start_recording` signature in `describe()`
+  also now names its `cameras=` dataset-scope parameter, which was omitted.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
