@@ -24,7 +24,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from strands_robots.mesh.core import _extract_sample_source_zid, init_mesh
+from strands_robots.mesh import core
 
 
 def _zid_obj(zid_str: str) -> Any:
@@ -63,7 +63,7 @@ def test_init_mesh_rejects_peer_id_with_trailing_newline(peer_id: str) -> None:
     newline lands in ``strands/{peer_id}/cmd`` MQTT topics.
     """
     with pytest.raises(ValueError, match="invalid characters"):
-        init_mesh(MagicMock(), peer_id=peer_id)
+        core.init_mesh(MagicMock(), peer_id=peer_id)
 
 
 def test_init_mesh_accepts_clean_peer_id_is_not_broken_by_the_fix(
@@ -75,21 +75,19 @@ def test_init_mesh_accepts_clean_peer_id_is_not_broken_by_the_fix(
     Mesh constructor to a no-op so the test exercises only the allowlist and
     never touches Zenoh.
     """
-    import strands_robots.mesh.core as core_module
-
-    monkeypatch.setattr(core_module, "Mesh", lambda *a, **k: MagicMock(alive=False))
+    monkeypatch.setattr(core, "Mesh", lambda *a, **k: MagicMock(alive=False))
     # Should not raise: a clean id passes the tightened anchor.
-    init_mesh(MagicMock(), peer_id="robot-1.arm_2")
+    core.init_mesh(MagicMock(), peer_id="robot-1.arm_2")
 
 
 def test_init_mesh_still_rejects_reserved_and_embedded_unsafe_chars() -> None:
     """Pin the surrounding allowlist contract (reserved names + MQTT chars)."""
     for reserved in ("broadcast", "safety"):
         with pytest.raises(ValueError, match="reserved"):
-            init_mesh(MagicMock(), peer_id=reserved)
+            core.init_mesh(MagicMock(), peer_id=reserved)
     for bad in ("a/b", "a+b", "a#b", "a\x00b", ".leadingdot", "a" * 130):
         with pytest.raises(ValueError, match="invalid characters"):
-            init_mesh(MagicMock(), peer_id=bad)
+            core.init_mesh(MagicMock(), peer_id=bad)
 
 
 @pytest.mark.parametrize(
@@ -99,10 +97,10 @@ def test_init_mesh_still_rejects_reserved_and_embedded_unsafe_chars() -> None:
 def test_extract_source_zid_rejects_trailing_newline(zid: str) -> None:
     """A wire ZID that differs from the hex shape only by a trailing newline
     is rejected (returns None) instead of being accepted as a valid identity."""
-    assert _extract_sample_source_zid(_make_sample(zid)) is None
+    assert core._extract_sample_source_zid(_make_sample(zid)) is None
 
 
 def test_extract_source_zid_accepts_clean_hex_is_not_broken_by_the_fix() -> None:
     """The tightened anchor must still accept a well-formed 32-hex ZID."""
     clean = "0123456789abcdef0123456789abcdef"
-    assert _extract_sample_source_zid(_make_sample(clean)) == clean
+    assert core._extract_sample_source_zid(_make_sample(clean)) == clean
