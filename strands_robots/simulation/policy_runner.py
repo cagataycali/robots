@@ -141,8 +141,12 @@ def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
     ``{"image": {"format": "png", "source": {"bytes": <str|bytes>}}}``.
     The ``bytes`` field may contain raw bytes (legacy) or a base64-encoded
     string (current). This helper walks that structure, decodes the PNG,
-    and returns a (H, W, 3|4) numpy array. Returns ``None`` if no image is
-    found - the recorder then skips the frame rather than aborting the rollout.
+    and returns a contiguous (H, W, 3) RGB numpy array - the source is
+    always run through ``PIL.Image.convert("RGB")`` so any alpha channel
+    is dropped and the shape is a fixed 3-channel array. Returns ``None``
+    if no decodable image is found (missing/malformed content blocks, an
+    empty ``bytes`` field, or a PNG that fails to decode) - the recorder
+    then skips the frame rather than aborting the rollout.
     """
     if not isinstance(render_result, dict):
         return None
