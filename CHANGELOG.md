@@ -552,6 +552,23 @@ omitting `video` records nothing (opt-in). The agent-tool router folds the flat
 `output_path`/`fps`/`camera_name` keys into `video` for `evaluate_benchmark`
 too.
 
+### Added: `verify-dataset` flags a truncated / partial-encode video (fewer frames than recorded)
+
+`verify_dataset` (`strands-robots verify-dataset`) already flagged missing and
+empty per-episode video files, but a *present, non-empty* MP4 whose decoded
+frame count is fewer than the frames the parquet maps into it passed silently -
+correct episode counts, a real file, but missing pixels (the encoder crashed
+mid-episode, the file was partially synced, or the write was interrupted). Check
+5 now also compares each video file's frame count, read from the container
+header via PyAV (`av`) without decoding, against the sum of the `length` of
+every episode packed into that file (LeRobot v3 concatenates whole episodes into
+one shared file per camera). The comparison is best-effort: it is skipped when
+`av` is unavailable, when a packed episode carries no `length`, or when the
+codec header omits the frame count, so it never yields a false positive on a
+header it cannot read - it reports only a confidently-read mismatch. This is the
+frame-count sibling of the existing missing/empty-video and dead-column
+integrity checks. Disable with `--no-check-videos`.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

@@ -314,6 +314,138 @@ class TestVideoFileIntegrity:
         assert verify_main([str(tmp_path), "--no-check-videos"]) == 0  # opt out passes
 
 
+def _write_real_mp4(path: Path, n_frames: int, width: int = 64, height: int = 64) -> None:
+    """Encode a real ``n_frames``-frame H.264 MP4 whose container header carries
+    the frame count (so :func:`_video_frame_count` can read it back).
+    """
+    import av
+    import numpy as np
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("libx264", rate=30)
+        stream.width = width
+        stream.height = height
+        stream.pix_fmt = "yuv420p"
+        for i in range(n_frames):
+            arr = np.full((height, width, 3), (i * 17) % 256, dtype=np.uint8)
+            frame = av.VideoFrame.from_ndarray(arr, format="rgb24")
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():  # flush the encoder
+            container.mux(packet)
+
+
+class TestVideoFrameCountIntegrity:
+    """Check 5 (frame-count sub-check): a present, non-empty video whose decoded
+    frame count is fewer than the parquet records is a truncated / partial
+    encode - correct episode counts, a real file, but missing pixels. Pins that
+    the verifier catches it, that the count is compared against the SUM of the
+    lengths of every episode packed into a shared file (the real LeRobot v3
+    layout), and that it never false-positives when the count can't be read.
+    """
+
+    def test_matching_frame_count_passes(self, tmp_path: Path) -> None:
+        pytest.importorskip("av")
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0],
+            video_keys=["observation.images.cam1"],
+            frames_per_episode=[5],
+            write_files=set(),  # write the real MP4 ourselves below
+        )
+        _write_real_mp4(
+            tmp_path / "videos/observation.images.cam1/chunk-000/file-000.mp4",
+            n_frames=5,
+        )
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "success", report["problems"]
+        assert report["video_files_checked"] == 1
+
+    def test_truncated_video_fails(self, tmp_path: Path) -> None:
+        pytest.importorskip("av")
+        # Parquet records a 5-frame episode; the MP4 holds only 2 frames.
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0],
+            video_keys=["observation.images.cam1"],
+            frames_per_episode=[5],
+            write_files=set(),
+        )
+        _write_real_mp4(
+            tmp_path / "videos/observation.images.cam1/chunk-000/file-000.mp4",
+            n_frames=2,
+        )
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "error"
+        # The episode-count check still passes - only the frame count is wrong.
+        assert report["total_episodes"] == 1
+        assert any("2 frame(s)" in p and "maps 5 frame(s)" in p and "truncated" in p for p in report["problems"]), (
+            report["problems"]
+        )
+
+    def test_packed_multi_episode_file_sums_lengths(self, tmp_path: Path) -> None:
+        pytest.importorskip("av")
+        # Real recorder layout: two whole episodes packed into ONE shared file
+        # per camera. The file must hold length[0] + length[1] = 3 + 4 = 7.
+        ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+        ep_dir.mkdir(parents=True, exist_ok=True)
+        vk = "observation.images.cam1"
+        columns = {
+            "episode_index": [0, 1],
+            "length": [3, 4],
+            f"videos/{vk}/chunk_index": [0, 0],
+            f"videos/{vk}/file_index": [0, 0],  # both episodes -> file 0
+        }
+        pq.write_table(pa.table(columns), ep_dir / "episodes_000.parquet")
+        info = {
+            "total_episodes": 2,
+            "total_frames": 7,
+            "features": {vk: {"dtype": "video", "shape": [3, 64, 64], "names": ["channels", "height", "width"]}},
+            "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+        }
+        (tmp_path / "meta" / "info.json").write_text(json.dumps(info), encoding="utf-8")
+        rel = tmp_path / "videos/observation.images.cam1/chunk-000/file-000.mp4"
+
+        _write_real_mp4(rel, n_frames=7)  # exactly the summed length
+        assert verify_dataset(tmp_path)["status"] == "success"
+
+        _write_real_mp4(rel, n_frames=6)  # one frame short of the packed total
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "error"
+        assert any("6 frame(s)" in p and "maps 7 frame(s)" in p for p in report["problems"]), report["problems"]
+
+    def test_missing_length_column_skips_frame_check(self, tmp_path: Path) -> None:
+        pytest.importorskip("av")
+        # No ``length`` column -> expected frames are unknown, so the frame-count
+        # comparison is skipped even though the MP4 is "wrong" (2 frames).
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0],
+            video_keys=["observation.images.cam1"],
+            frames_per_episode=None,
+            write_files=set(),
+        )
+        _write_real_mp4(
+            tmp_path / "videos/observation.images.cam1/chunk-000/file-000.mp4",
+            n_frames=2,
+        )
+        assert verify_dataset(tmp_path)["status"] == "success"
+
+    def test_unreadable_header_does_not_false_positive(self, tmp_path: Path) -> None:
+        # A non-empty file whose frame count can't be read (placeholder bytes /
+        # a codec header without nb_frames) must NOT be flagged - the check is
+        # best-effort and only reports a confidently-read mismatch.
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0],
+            video_keys=["observation.images.cam1"],
+            frames_per_episode=[5],  # real count is unknowable from placeholder bytes
+        )
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "success", report["problems"]
+
+
 class TestMetadataEdgeCases:
     """Metadata-side validation paths beyond count/drift on a healthy dataset.
 
