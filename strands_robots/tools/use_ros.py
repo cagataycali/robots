@@ -60,6 +60,7 @@ Examples:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 import time
@@ -75,6 +76,43 @@ logger = logging.getLogger(__name__)
 # unexpected characters into the rclpy graph API or type-resolution layer.
 _NAME_RE = re.compile(r"^[A-Za-z0-9_/~{}]+$")
 _TYPE_RE = re.compile(r"^[A-Za-z0-9_]+/[A-Za-z0-9_]+/[A-Za-z0-9_]+$")
+
+# Security: topics blocked from LLM-initiated publish. Safety-critical command
+# and sensor topics that should not be written to without explicit operator
+# authorization. Configurable via STRANDS_ROS2_PUBLISH_BLOCKLIST (comma-separated).
+_DEFAULT_PUBLISH_BLOCKLIST = frozenset({
+    '/cmd_vel', '/cmd_vel_unstamped',
+    '/joint_command', '/joint_trajectory',
+    '/joint_trajectory_controller/joint_trajectory',
+    '/emergency_stop', '/e_stop',
+    '/motor_enable', '/enable_motor', '/disable_motor',
+    '/navigate_to_pose', '/follow_path',
+})
+
+_PUBLISH_BLOCKLIST_ENV = 'STRANDS_ROS2_PUBLISH_BLOCKLIST'
+
+
+def _is_publish_blocked(topic: str) -> str | None:
+    """Return an error message if topic is blocked for publish, else None."""
+    env_override = os.environ.get(_PUBLISH_BLOCKLIST_ENV)
+    if env_override is not None:
+        blocked = frozenset(t.strip() for t in env_override.split(',') if t.strip())
+    else:
+        blocked = _DEFAULT_PUBLISH_BLOCKLIST
+
+    # Check exact match and also strip robot namespace prefix
+    # e.g. /my_robot/cmd_vel should match /cmd_vel in the blocklist
+    parts = topic.rsplit('/', 1)
+    base_topic = '/' + parts[-1] if len(parts) > 1 else topic
+
+    if topic in blocked or base_topic in blocked:
+        return (
+            f"Topic {topic!r} is blocked for publish (safety-critical command surface). "
+            f"Set {_PUBLISH_BLOCKLIST_ENV} to customize, or use an empty value to disable."
+        )
+    return None
+
+
 
 _INSTALL_HINT = (
     "rclpy is not importable - source a ROS 2 distro before launching the agent "
@@ -496,6 +534,12 @@ def use_ros(
                 return _ok(f"echo {topic} ({msg_type}):\n{json.dumps(samples, indent=2, default=str)}")
 
             if action == "publish":
+                # Security: check publish blocklist before proceeding
+                if topic:
+                    block_err = _is_publish_blocked(topic)
+                    if block_err:
+                        return {"status": "error", "content": [{"text": block_err}]}
+
                 if not topic or not type:
                     return _err("publish requires topic and type")
                 _publish(topic, type, fields, count, rate)
