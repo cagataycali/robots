@@ -803,3 +803,112 @@ def test_dagger_dispatch_starts_session(monkeypatch: pytest.MonkeyPatch) -> None
     _assert_ascii(_texts(result))
     listed = lerobot_teleoperate(action="list")
     assert "dagger_test" in tool_json(listed)["sessions"]
+
+
+# ---------------------------------------------------------------------------
+# Degrade + error contracts: the dispatcher must return a structured
+# ``{"status": "error"}`` (never raise past dispatch) for missing arguments,
+# command-build failures, and unexpected internal faults, and the SessionManager
+# must survive an unreadable/unwritable store and a vanished process.
+# ---------------------------------------------------------------------------
+class _RaisingProcessPsutil:
+    """psutil stand-in whose ``Process`` lookup raises ``NoSuchProcess``.
+
+    Models the race where ``pid_exists`` is briefly true but the process is
+    reaped before ``Process()`` inspects it - the prune loop must drop the
+    session rather than propagate the exception.
+    """
+
+    NoSuchProcess = Exception  # replaced below with the real class handles
+    AccessDenied = Exception
+
+    @staticmethod
+    def pid_exists(pid: int) -> bool:
+        return True
+
+    @staticmethod
+    def Process(pid: int):  # noqa: N802 - mirror psutil.Process
+        raise _RaisingProcessPsutil.NoSuchProcess(pid)
+
+
+def test_load_sessions_drops_process_that_vanished_mid_prune(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A session whose process disappears between ``pid_exists`` and
+    ``Process()`` is pruned, not surfaced, and does not raise."""
+    mgr = SessionManager()
+    mgr.sessions_file.write_text(json.dumps({"racy": {"pid": 4242}}))
+    _RaisingProcessPsutil.NoSuchProcess = tele_mod.psutil.NoSuchProcess
+    _RaisingProcessPsutil.AccessDenied = tele_mod.psutil.AccessDenied
+    monkeypatch.setattr(tele_mod, "psutil", _RaisingProcessPsutil)
+    assert mgr.list_sessions() == {}
+
+
+def test_save_sessions_swallows_oserror(tmp_path, caplog: pytest.LogCaptureFixture) -> None:
+    """``_save_sessions`` logs and returns when the store path is unwritable
+    (parent directory missing) instead of raising."""
+    mgr = SessionManager()
+    mgr.sessions_file = tmp_path / "missing_dir" / "active_sessions.json"
+    with caplog.at_level("ERROR"):
+        mgr._save_sessions({"s": {"pid": 1}})  # must not raise
+    assert any("Error saving sessions" in r.message for r in caplog.records)
+
+
+def test_start_without_session_name_autogenerates_one(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Omitting ``session_name`` on start mints a ``teleop_<ts>`` name so the
+    session is still trackable via ``list``."""
+    monkeypatch.setattr(tele_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(pid=os.getpid()))
+    result = lerobot_teleoperate(action="start", robot_type="so101_follower", auto_accept_calibration=False)
+    assert result["status"] == "success"
+    names = list(tool_json(lerobot_teleoperate(action="list"))["sessions"])
+    assert any(n.startswith("teleop_") for n in names)
+
+
+def test_start_command_build_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A raising command builder degrades to a structured error naming the
+    build step, not an uncaught exception."""
+    monkeypatch.setattr(tele_mod, "build_lerobot_command", lambda **k: (_ for _ in ()).throw(ValueError("bad opts")))
+    result = lerobot_teleoperate(action="start", session_name="s", auto_accept_calibration=False)
+    assert result["status"] == "error"
+    assert "Command build failed" in _texts(result)
+    _assert_ascii(_texts(result))
+
+
+def test_replay_command_build_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The replay branch reports its own build-failure message distinctly from
+    the start branch."""
+    monkeypatch.setattr(tele_mod, "build_lerobot_command", lambda **k: (_ for _ in ()).throw(ValueError("bad opts")))
+    result = lerobot_teleoperate(action="replay", dataset_repo_id="user/cubes")
+    assert result["status"] == "error"
+    assert "Replay command build failed" in _texts(result)
+    _assert_ascii(_texts(result))
+
+
+def test_status_without_name_errors() -> None:
+    """Status needs a session name; omitting it is a structured error."""
+    result = lerobot_teleoperate(action="status")
+    assert result["status"] == "error"
+    assert "Session name required" in _texts(result)
+
+
+def test_status_log_tail_read_error_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the recorded log path exists but cannot be read (here it is a
+    directory), status still succeeds and folds the read error into the body
+    instead of aborting."""
+    log_dir = tele_mod.SESSION_DIR / "unreadable.log"
+    log_dir.mkdir()  # exists() is true but open() raises IsADirectoryError
+    SessionManager().add_session("withbadlog", {"pid": os.getpid(), "start_time": 0.0, "log_file": str(log_dir)})
+    result = lerobot_teleoperate(action="status", session_name="withbadlog")
+    assert result["status"] == "success"
+    assert "Error reading log" in _texts(result)
+    _assert_ascii(_texts(result))
+
+
+def test_unexpected_internal_failure_is_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An unexpected fault inside dispatch is caught and returned as a tool
+    error - the tool contract forbids raising past dispatch."""
+    monkeypatch.setattr(
+        tele_mod.SessionManager, "list_sessions", lambda self: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
+    result = lerobot_teleoperate(action="list")
+    assert result["status"] == "error"
+    assert "Tool execution failed" in _texts(result)
+    _assert_ascii(_texts(result))
