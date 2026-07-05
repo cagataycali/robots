@@ -17,7 +17,7 @@ weights and lives in the gated integration suite.
 
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -183,5 +183,37 @@ class TestWBCTorqueController:
         assert abs((float(data.time) - t0) - expected_dt) < 1e-6
 
         # At least one driven actuator received a finite torque command.
+        ctrls = np.array([float(data.ctrl[ai]) for ai in ctrl.leg_waist_actuator_ids])
+        assert np.all(np.isfinite(ctrls))
+
+    def test_apply_non_numeric_action_value_holds_previous_target(self) -> None:
+        # One malformed action value (e.g. a NaN string leaking from a policy)
+        # must degrade to holding that joint's previous target, not abort the
+        # whole control step - the remaining joints still track their commands.
+        from strands_robots.policies.wbc import (
+            WBC_G1_LEG_WAIST_JOINTS,
+            install_wbc_torque_control,
+        )
+
+        model, data = _build_min_g1()
+        ns = _namespace_for(model)
+        sim = _FakeSim(_FakeWorld(model, data, ns))
+        policy = _g1_policy()
+        ctrl = install_wbc_torque_control(cast(SimEngine, sim), policy, "unitree_g1")
+
+        stance = {name: float(policy.default_angles[i]) for i, name in enumerate(WBC_G1_LEG_WAIST_JOINTS)}
+        ctrl.apply(stance, model, data, "unitree_g1")
+        held = float(ctrl._target_q[0])
+
+        # Poison joint 0 with a non-numeric value; give joint 1 a fresh command.
+        corrupt: dict[str, Any] = dict(stance)
+        corrupt[WBC_G1_LEG_WAIST_JOINTS[0]] = "not-a-number"
+        corrupt[WBC_G1_LEG_WAIST_JOINTS[1]] = 0.123
+        ctrl.apply(corrupt, model, data, "unitree_g1")
+
+        # Bad key held its prior target; the good key still updated.
+        assert float(ctrl._target_q[0]) == held
+        assert abs(float(ctrl._target_q[1]) - 0.123) < 1e-12
+        # And the step still produced finite torques (no abort / NaN spill).
         ctrls = np.array([float(data.ctrl[ai]) for ai in ctrl.leg_waist_actuator_ids])
         assert np.all(np.isfinite(ctrls))

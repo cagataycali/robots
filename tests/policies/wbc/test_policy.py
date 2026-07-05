@@ -176,6 +176,22 @@ class TestControlMath:
         with pytest.raises(ValueError, match="zero norm"):
             quat_rotate_inverse(np.array([0.0, 0, 0, 0]), np.array([1.0, 0, 0]))
 
+    def test_compute_targets_shape_mismatch_raises(self) -> None:
+        # A raw action of the wrong length must not silently broadcast into a
+        # wrong-shape target; it is a fatal config/model mismatch.
+        with pytest.raises(ValueError, match="must match"):
+            compute_targets(np.array([0.1, 0.2]), np.array([0.04, -0.04, 0.01]), 0.25)
+
+    def test_quat_rotate_inverse_bad_quat_length_raises(self) -> None:
+        # A 3-vector is not a quaternion; reject rather than index past the end.
+        with pytest.raises(ValueError, match=r"length-4 \[w,x,y,z\]"):
+            quat_rotate_inverse(np.array([1.0, 0.0, 0.0]), np.array([1.0, 0.0, 0.0]))
+
+    def test_quat_rotate_inverse_bad_vec_length_raises(self) -> None:
+        # The vector to rotate must be 3-D; a 2-vector is a caller bug.
+        with pytest.raises(ValueError, match="length-3"):
+            quat_rotate_inverse(np.array([1.0, 0.0, 0.0, 0.0]), np.array([1.0, 0.0]))
+
 
 # ---------------------------------------------------------------------------
 # Observation layout
