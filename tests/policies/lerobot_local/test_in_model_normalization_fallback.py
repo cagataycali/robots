@@ -24,6 +24,7 @@ synthetic OLD-FORMAT checkpoint on disk (real safetensors buffers + a real
 from __future__ import annotations
 
 import builtins
+import importlib
 
 import pytest
 import torch
@@ -39,8 +40,8 @@ from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 # failure so an unrelated lerobot defect does not fail collection here (the
 # production fallback degrades to passthrough for the same failure modes).
 try:
-    import lerobot.policies  # noqa: F401
-    import lerobot.processor.migrate_policy_normalization  # noqa: F401
+    importlib.import_module("lerobot.policies")
+    importlib.import_module("lerobot.processor.migrate_policy_normalization")
 except Exception as exc:  # noqa: BLE001 - mirror the production best-effort guard
     pytest.skip(
         f"lerobot migration helpers unimportable: {exc}",
