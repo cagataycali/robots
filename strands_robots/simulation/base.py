@@ -1617,6 +1617,7 @@ class SimEngine(ABC):
         control_frequency: float = 50.0,
         control_substeps: int | None = None,
         policy_object: Policy | None = None,
+        video: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run a registered :class:`BenchmarkProtocol` against the current sim.
 
@@ -1698,11 +1699,22 @@ class SimEngine(ABC):
                 per process instead of reloading it on every benchmark call.
                 When ``None`` the policy is built from ``policy_provider`` /
                 ``policy_config``.
+            video: Optional per-episode rollout MP4 config (same dict schema as
+                :meth:`run_policy` / :meth:`eval_policy`: ``path`` enables it,
+                plus ``fps`` / ``camera`` / ``width`` / ``height``). One file
+                per episode with ``_ep{i}`` inserted into the filename so a
+                benchmark eval can be WATCHED to see why episodes fail, not just
+                read as an aggregate success_rate. Frames are captured
+                synchronously on the eval thread (render is read-only over
+                ``mjData``), so recording does not perturb the bit-stable
+                benchmark rollout. Written paths are returned in the result
+                json ``video_paths``. ``None`` (default) records nothing.
 
         Returns:
             Standard status dict. On success, carries per-episode cumulative
             reward + aggregate success_rate / avg_reward / avg_steps in the
-            JSON payload.
+            JSON payload, plus ``video_paths`` (the per-episode MP4s written
+            when ``video`` is set).
         """
         from strands_robots.policies import create_policy
         from strands_robots.simulation.benchmark import get_benchmark
@@ -1782,6 +1794,7 @@ class SimEngine(ABC):
             control_substeps=control_substeps,
             on_frame=on_frame,
             policy_kwargs=policy_kwargs,
+            video=video,
         )
 
     def list_benchmarks(self) -> dict[str, Any]:

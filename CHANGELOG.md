@@ -536,6 +536,22 @@ malformed embodiment *spec* still raises loudly. Behaviour is unchanged for a
 correctly-configured policy and for a checkpoint that genuinely ships no
 processor configs.
 
+### Added: `evaluate_benchmark(video=...)` records a per-episode rollout MP4
+
+`eval_policy` could already record one rollout MP4 per episode, but
+`evaluate_benchmark` (the spec/benchmark eval path) could not - the spec route
+hard-rejected `video`, so a benchmark evaluation could only be read as an
+aggregate `success_rate` and never watched to see *why* episodes fail.
+`evaluate_benchmark` now accepts the same `video={"path", "fps", "camera",
+"width", "height"}` config as `run_policy` / `eval_policy` and writes one MP4
+per episode (`_ep{i}` filename templating), returning the written paths in the
+result JSON `video_paths`. Frames are captured synchronously on the eval thread
+at the `on_frame` point (render is read-only over `mjData`), so recording does
+not perturb the bit-stable benchmark rollout. Bad path/camera fails up-front;
+omitting `video` records nothing (opt-in). The agent-tool router folds the flat
+`output_path`/`fps`/`camera_name` keys into `video` for `evaluate_benchmark`
+too.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
