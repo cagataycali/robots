@@ -340,6 +340,10 @@ class LerobotLocalPolicy(Policy):
         self.load_time_s: float = 0.0
         self.load_cache_hit: bool = False
         self._processor_bridge: ProcessorBridge | None = None
+        # Set True when the pipeline loaded and was active but the caller's
+        # embodiment / image_keys were incompatible with the model's declared
+        # features, so the bridge was discarded (see _load_processor_bridge).
+        self._embodiment_config_failed = False
         self._tokenizer: Any = None
         self._tokenizer_max_length: int = tokenizer_max_length
         self._tokenizer_padding_side: str = tokenizer_padding_side
@@ -798,34 +802,92 @@ class LerobotLocalPolicy(Policy):
                     action_dim - 1,
                 )
 
-        # Load processor pipeline (preprocessor + postprocessor)
-        if self.use_processor and self.pretrained_name_or_path:
-            try:
-                self._processor_bridge = ProcessorBridge.from_pretrained(
-                    self.pretrained_name_or_path,
-                    device=str(self._device) if self._device else None,
-                    overrides=self.processor_overrides or {},
-                    policy_type=self.policy_type,
-                )
-                if self._processor_bridge.is_active:
-                    logger.info("Processor bridge loaded: %s", self._processor_bridge)
-                    # SOLUTION.md: configure the declarative embodiment map into
-                    # the pipeline ONCE (rename_map + pack-state step), validated
-                    # fail-fast against the model's declared features. After this,
-                    # the hot path feeds RAW obs straight to preprocess().
+        # Load processor pipeline (preprocessor + postprocessor), configure the
+        # declarative embodiment map, and emit load-time diagnostics.
+        self._load_processor_bridge()
+
+        # Initialize RTC if supported by this policy
+        self._init_rtc()
+
+    def _load_processor_bridge(self) -> None:
+        """Load the processor pipeline, configure the embodiment, and emit load-time diagnostics.
+
+        Two distinct failure modes were previously conflated into one silent,
+        debug-level discard of the whole pipeline:
+
+        * ``ProcessorBridge.from_pretrained`` raises (no processor configs are
+          shipped, or an optional import is missing): the checkpoint legitimately
+          has no pipeline, so fall back to the raw obs/action flow. This is a
+          common, benign shape - logged at debug, and the missing-postprocessor
+          warning below still fires so a raw-action checkpoint is not mistaken for
+          a frozen policy.
+        * ``_configure_embodiment`` raises ``ValueError``: the pipeline loaded and
+          was ACTIVE, but the caller's embodiment / ``image_keys`` are incompatible
+          with the model's declared features. Discarding it silently degrades a
+          WORKING normalization pipeline to the raw flow AND misdirects the
+          downstream "no policy_postprocessor.json" diagnostic (the checkpoint
+          shipped one - it was discarded here). Surface the real cause as a
+          warning, or raise when ``processor_overrides`` were given (mirroring the
+          from_pretrained path).
+
+        A malformed embodiment *spec* (bad name / dict) raises ``RuntimeError``
+        from ``load_embodiment`` and is intentionally NOT caught here - that is a
+        caller error that should abort the load loudly.
+        """
+        self._embodiment_config_failed = False
+        if not (self.use_processor and self.pretrained_name_or_path):
+            return
+
+        try:
+            self._processor_bridge = ProcessorBridge.from_pretrained(
+                self.pretrained_name_or_path,
+                device=str(self._device) if self._device else None,
+                overrides=self.processor_overrides or {},
+                policy_type=self.policy_type,
+            )
+        except (FileNotFoundError, ValueError, ImportError) as exc:
+            # Processor bridge is optional - models work without it via the raw
+            # obs/action flow. Fail-fast only if the caller requested overrides.
+            if self.processor_overrides:
+                raise RuntimeError(
+                    f"Processor bridge failed to load but processor_overrides were specified: {exc}"
+                ) from exc
+            logger.debug("Processor bridge not loaded: %s", exc)
+            self._processor_bridge = None
+        else:
+            if self._processor_bridge.is_active:
+                logger.info("Processor bridge loaded: %s", self._processor_bridge)
+                # SOLUTION.md: configure the declarative embodiment map into the
+                # pipeline ONCE (rename_map + pack-state step), validated fail-fast
+                # against the model's declared features. After this, the hot path
+                # feeds RAW obs straight to preprocess().
+                try:
                     self._configure_embodiment()
-                else:
+                except ValueError as exc:
+                    # The pipeline loaded and was active, but the embodiment /
+                    # image_keys do not match the model's declared features. Do NOT
+                    # swallow this at debug: discarding an otherwise-working
+                    # normalization pipeline is a silent behaviour change, and the
+                    # missing-postprocessor warning below would misattribute it to a
+                    # checkpoint lacking a policy_postprocessor.json.
+                    if self.processor_overrides:
+                        raise RuntimeError(
+                            f"Embodiment configuration failed but processor_overrides were specified: {exc}"
+                        ) from exc
+                    logger.warning(
+                        "lerobot_local: %s loaded an ACTIVE processor pipeline but its "
+                        "embodiment could not be configured (%s). The pipeline (including "
+                        "normalization) was discarded and the policy falls back to the raw "
+                        "obs/action flow -- align the embodiment / image_keys with the "
+                        "model's declared input/output features.",
+                        self.pretrained_name_or_path or "<model>",
+                        exc,
+                    )
                     self._processor_bridge = None
-                    logger.debug("No processor configs found, using raw obs/action flow")
-            except (FileNotFoundError, ValueError, ImportError) as exc:
-                # Processor bridge is optional - models work without it via raw obs/action flow.
-                # Fail-fast only if the user explicitly requested processor overrides.
-                if self.processor_overrides:
-                    raise RuntimeError(
-                        f"Processor bridge failed to load but processor_overrides were specified: {exc}"
-                    ) from exc
-                logger.debug("Processor bridge not loaded: %s", exc)
+                    self._embodiment_config_failed = True
+            else:
                 self._processor_bridge = None
+                logger.debug("No processor configs found, using raw obs/action flow")
 
         # Action unnormalization only happens when a postprocessor pipeline is
         # present (get_actions: ``if self._processor_bridge.has_postprocessor``).
@@ -833,7 +895,10 @@ class LerobotLocalPolicy(Policy):
         # normalized actions (~[-1, 1] or z-scored) straight to the robot. Fed
         # to a radian-joint sim those are micro-motions and the arm barely
         # moves. Warn once at load so this isn't debugged as a frozen policy.
-        if self.use_processor:
+        # Skipped when the pipeline was discarded by an embodiment-config failure
+        # above (already warned with the accurate cause), so we do not emit the
+        # misleading "no policy_postprocessor.json" message for that case.
+        if self.use_processor and not self._embodiment_config_failed:
             bridge = self._processor_bridge
             if bridge is None or not bridge.has_postprocessor:
                 logger.warning(
@@ -875,9 +940,6 @@ class LerobotLocalPolicy(Policy):
                         self.pretrained_name_or_path or "<model>",
                         inert,
                     )
-
-        # Initialize RTC if supported by this policy
-        self._init_rtc()
 
     def _auto_detect_actions_per_step(self) -> None:
         """Select the inference regime the loaded checkpoint was trained for.

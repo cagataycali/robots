@@ -517,6 +517,25 @@ so far, exactly like `run()`. The eval result payload gains `stopped_early`
 computed over the completed episodes when a stop fires. Normal evaluations are
 unchanged (`stopped_early=False`, `episodes_completed == n_episodes`).
 
+### Fixed: an incompatible embodiment silently discarded a working normalization pipeline and misdirected the diagnostic
+
+When a `lerobot_local` policy's processor pipeline loaded and was *active* but
+its declarative embodiment / `image_keys` did not match the model's declared
+features, `_configure_embodiment` raised a `ValueError` that was swallowed at
+`debug` level: the entire (working) preprocessor + postprocessor -- including
+normalization -- was silently discarded and the policy fell back to the raw
+obs/action flow. The load-time diagnostic below then fired the generic
+"loaded WITHOUT an action postprocessor (no `policy_postprocessor.json`)"
+warning, which is *false* for these checkpoints (they ship a postprocessor; it
+was discarded here) and sends the user down the wrong debugging path when the
+arm barely moves. The embodiment-configuration failure is now surfaced as a
+warning that names the real cause (or raised as a `RuntimeError` when
+`processor_overrides` were supplied, mirroring the bridge-load path), and the
+misleading missing-postprocessor message is suppressed for that case. A
+malformed embodiment *spec* still raises loudly. Behaviour is unchanged for a
+correctly-configured policy and for a checkpoint that genuinely ships no
+processor configs.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
