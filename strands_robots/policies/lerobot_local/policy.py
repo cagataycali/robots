@@ -844,6 +844,7 @@ class LerobotLocalPolicy(Policy):
                 device=str(self._device) if self._device else None,
                 overrides=self.processor_overrides or {},
                 policy_type=self.policy_type,
+                policy_config=getattr(self._policy, "config", None),
             )
         except (FileNotFoundError, ValueError, ImportError) as exc:
             # Processor bridge is optional - models work without it via the raw

@@ -1,0 +1,127 @@
+"""Regression tests for the OLD-FORMAT in-model normalization fallback.
+
+Covers :meth:`ProcessorBridge._load_in_model_normalization_fallback` and its
+wiring into :meth:`ProcessorBridge.from_pretrained` via ``policy_config``.
+
+The bug these guard against: pre-processor-era lerobot checkpoints (the
+canonical zoo -- ``act_aloha_*``, ``diffusion_pusht``, tdmpc/vqbet entries)
+store their Normalize modules *inside* the policy, so ``model.safetensors``
+carries ``normalize_inputs.*`` / ``unnormalize_outputs.*`` buffers and
+``config.json`` carries ``normalization_mapping``, with no processor JSON.
+Current lerobot no longer registers those modules, so
+``PreTrainedPolicy.from_pretrained`` drops the buffers as "unexpected keys"
+(only a ``WARNING:root`` is logged) and the policy runs with normalization
+dropped. For a MEAN_STD checkpoint this makes the arm FLAIL (raw z-scored
+actions applied as robot units), not merely under-move.
+
+The fix reconstructs the pre/post pipelines from those same buffers using
+lerobot's own ``extract_normalization_stats`` + ``make_pre_post_processors``,
+so the checkpoint runs normalized with zero user action. These tests build a
+synthetic OLD-FORMAT checkpoint on disk (real safetensors buffers + a real
+``ACTConfig``) and drive the real lerobot machinery -- no mocks.
+"""
+
+from __future__ import annotations
+
+import pytest
+import torch
+from safetensors.torch import save_file
+
+from strands_robots.policies.lerobot_local.processor import ProcessorBridge
+
+# The reconstruction rides lerobot's migration helper + factory; skip cleanly on
+# an install that predates them (the fallback itself degrades to passthrough).
+pytest.importorskip("lerobot.processor.migrate_policy_normalization")
+pytest.importorskip("lerobot.policies")
+
+
+def _act_config():
+    """Minimal real ACTConfig with STATE+ACTION MEAN_STD features."""
+    from lerobot.configs.types import FeatureType, NormalizationMode, PolicyFeature
+    from lerobot.policies.act.configuration_act import ACTConfig
+
+    return ACTConfig(
+        input_features={"observation.state": PolicyFeature(FeatureType.STATE, (4,))},
+        output_features={"action": PolicyFeature(FeatureType.ACTION, (4,))},
+        normalization_mapping={
+            "STATE": NormalizationMode.MEAN_STD,
+            "ACTION": NormalizationMode.MEAN_STD,
+        },
+        device="cpu",
+    )
+
+
+def _write_old_format_checkpoint(path, *, with_norm_buffers: bool = True) -> None:
+    """Write a synthetic single-file checkpoint (in-model norm buffers, no JSON)."""
+    state_dict = {"model.core.weight": torch.zeros(2, 2)}
+    if with_norm_buffers:
+        state_dict.update(
+            {
+                "normalize_inputs.buffer_observation_state.mean": torch.arange(4.0),
+                "normalize_inputs.buffer_observation_state.std": torch.ones(4),
+                "normalize_targets.buffer_action.mean": torch.tensor([2.0, 3.0, 4.0, 5.0]),
+                "normalize_targets.buffer_action.std": torch.ones(4),
+                "unnormalize_outputs.buffer_action.mean": torch.tensor([2.0, 3.0, 4.0, 5.0]),
+                "unnormalize_outputs.buffer_action.std": torch.ones(4),
+            }
+        )
+    save_file(state_dict, str(path / "model.safetensors"))
+
+
+def _action_unnorm_mean(postprocessor):
+    """Return the postprocessor's ``action`` unnormalization mean, or None."""
+    for step in postprocessor.steps:
+        stats = getattr(step, "stats", None) or getattr(step, "_stats", None)
+        if stats and "action" in stats and "mean" in stats["action"]:
+            return stats["action"]["mean"]
+    return None
+
+
+def test_reconstructs_postprocessor_from_in_model_buffers(tmp_path):
+    """An OLD-FORMAT checkpoint (no processor JSON) gets its pipelines rebuilt.
+
+    Fails before the fix: ``from_pretrained`` had no ``policy_config`` parameter,
+    so this call raised ``TypeError`` and no reconstruction happened.
+    """
+    _write_old_format_checkpoint(tmp_path, with_norm_buffers=True)
+
+    bridge = ProcessorBridge.from_pretrained(str(tmp_path), policy_config=_act_config(), device="cpu")
+
+    assert bridge.has_postprocessor, "postprocessor should be reconstructed"
+    assert bridge.has_preprocessor, "preprocessor should be reconstructed"
+    mean = _action_unnorm_mean(bridge._postprocessor)
+    assert mean is not None, "reconstructed postprocessor must carry action stats"
+    # The exact in-model unnormalize_outputs.buffer_action.mean must survive.
+    assert torch.allclose(mean.cpu().float(), torch.tensor([2.0, 3.0, 4.0, 5.0]))
+    # And those stats cover the action key -> not reported as inert.
+    assert "action" not in bridge.inert_normalization_features()
+
+
+def test_reconstruction_requires_policy_config(tmp_path):
+    """Without a policy config the fallback is skipped (stays a passthrough).
+
+    Guards backward compatibility: callers that never pass ``policy_config``
+    keep the old passthrough behaviour rather than reconstructing from a config
+    the bridge does not have.
+    """
+    _write_old_format_checkpoint(tmp_path, with_norm_buffers=True)
+
+    bridge = ProcessorBridge.from_pretrained(str(tmp_path), policy_config=None, device="cpu")
+
+    assert not bridge.has_postprocessor
+    assert not bridge.has_preprocessor
+
+
+def test_no_buffers_stays_passthrough(tmp_path):
+    """A checkpoint with no in-model norm buffers is not touched by the fallback.
+
+    Ensures the reconstruction only fires for genuine OLD-FORMAT checkpoints and
+    never fabricates a pipeline for a modern checkpoint that legitimately ships
+    none (which must remain a passthrough so the caller's diagnostic fires).
+    """
+    _write_old_format_checkpoint(tmp_path, with_norm_buffers=False)
+
+    bridge = ProcessorBridge.from_pretrained(str(tmp_path), policy_config=_act_config(), device="cpu")
+
+    assert not bridge.has_postprocessor
+    assert not bridge.has_preprocessor
