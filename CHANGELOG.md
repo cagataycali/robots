@@ -669,6 +669,25 @@ telemetry flag (surfaced in the `run_policy` / `eval_policy` result alongside
 `generic_state_keys_used`). Robots whose keys are all present (e.g. `so101`)
 are unaffected.
 
+### Fixed: warn when an action value is clamped by a ctrl-limited actuator
+
+`send_action` (and therefore `replay_episode`) wrote an action value verbatim
+to `data.ctrl` for an actuator addressed by name. When that actuator is
+`ctrllimited` and the value falls outside its `ctrlrange`, MuJoCo clamps it
+inside `mj_step` -- so the commanded value is silently NOT reproduced for that
+actuator while the call still reports success. Replaying a dataset whose action
+units differ from the target robot's actuator ctrl units hit this hard: a
+normalized gripper action (e.g. the ALOHA convention, values in `[0.19, 1.12]`)
+replayed onto a joint-position gripper whose ctrlrange is `[0.002, 0.037]`
+clamps every value to the maximum, pinning the gripper fully open and silently
+destroying the grasp channel while `replay_episode` reports `Frames: N/N`. The
+direct-actuator ctrl write now warns once per `(prefix, key)` when the value is
+meaningfully outside the actuator's `ctrlrange`, naming the actuator and range
+so the unit mismatch is actionable instead of silent. A small tolerance absorbs
+boundary rounding; unlimited actuators (which never clamp) are skipped; the
+warning is de-duplicated so a 50Hz control loop never spams the log. No
+trajectory behaviour changes.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

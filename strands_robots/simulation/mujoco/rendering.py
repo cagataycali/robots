@@ -479,7 +479,9 @@ class RenderingMixin:
         for key, value in action_dict.items():
             act_id = _lookup(mj.mjtObj.mjOBJ_ACTUATOR, key)
             if act_id >= 0:
-                data.ctrl[act_id] = float(value)
+                fval = float(value)
+                self._warn_ctrl_clamp(model, act_id, pfx, key, fval, mj)
+                data.ctrl[act_id] = fval
                 continue
 
             # Fallback: key is a joint name. Find the actuator that drives
@@ -543,6 +545,59 @@ class RenderingMixin:
             pfx,
             reason,
             hint,
+        )
+
+    def _warn_ctrl_clamp(self, model: Any, act_id: int, pfx: str, key: str, value: float, mj: Any) -> None:
+        """Warn once when a value written to a ctrl-limited actuator is out of range.
+
+        The direct-actuator branch of :meth:`_apply_action_by_name` writes the
+        action value verbatim to ``data.ctrl``. When that actuator is
+        ``ctrllimited`` and the value falls outside its ``ctrlrange``, MuJoCo
+        clamps it inside ``mj_step`` - so the commanded trajectory is silently
+        NOT reproduced for that actuator while the call still reports success.
+
+        This is exactly the failure mode of replaying a dataset whose action
+        units differ from this robot's actuator ctrl units (e.g. a normalized
+        gripper action in ``[0, 1]`` replayed onto a joint-position gripper
+        whose ctrlrange is a few radians), or of a policy emitting
+        out-of-distribution commands. Surface it once per ``(prefix, key)`` so
+        a 50Hz control loop never spams the log. A small tolerance absorbs
+        boundary rounding, and unlimited actuators (which never clamp) are
+        skipped.
+        """
+        try:
+            if not bool(model.actuator_ctrllimited[act_id]):
+                return
+            lo = float(model.actuator_ctrlrange[act_id][0])
+            hi = float(model.actuator_ctrlrange[act_id][1])
+        except (IndexError, TypeError, ValueError):
+            return
+        if hi <= lo:
+            # [0, 0] sentinel or degenerate range: not a meaningful limit.
+            return
+        tol = (hi - lo) * 0.01
+        if lo - tol <= value <= hi + tol:
+            return
+        warned = getattr(self, "_warned_ctrl_clamp_keys", None)
+        if warned is None:
+            warned = set()
+            self._warned_ctrl_clamp_keys = warned
+        dedup = (pfx, key)
+        if dedup in warned:
+            return
+        warned.add(dedup)
+        logger.warning(
+            "[sim] action value %.4g for ctrl-limited actuator %r (prefix=%r) is outside "
+            "its ctrlrange [%.4g, %.4g]; MuJoCo will clamp it, so the commanded value is "
+            "NOT reproduced for this actuator. This usually means the action units do not "
+            "match the actuator - e.g. a normalized gripper action replayed onto a "
+            "joint-position gripper, or an out-of-distribution policy command. Rescale the "
+            "action to the actuator's units (or pass a matching action_key_map to replay).",
+            value,
+            key,
+            pfx,
+            lo,
+            hi,
         )
 
     def _get_valid_action_keys(self, pfx: str) -> list[str]:
