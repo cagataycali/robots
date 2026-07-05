@@ -5,8 +5,8 @@ Architecture notes (honest version, see GH #118)
 The ``Simulation`` class uses multiple-inheritance to compose four mixins
 (``PhysicsMixin``, ``RenderingMixin``, ``RecordingMixin``, ``RandomizationMixin``)
 on top of the ``SimEngine`` ABC and the Strands ``AgentTool`` base. The
-split keeps each file navigable (physics.py ~1150 lines, rendering.py ~730,
-etc.) but the mixin boundaries describe *where code lives*, NOT the
+split keeps each module navigable (:mod:`physics` ~1150 lines,
+:mod:`rendering` ~730, etc.) but the mixin boundaries describe *where code lives*, NOT the
 coupling graph.
 
 Every mixin reaches back into this class for the same shared state:
@@ -331,7 +331,7 @@ class MuJoCoSimEngine(
         rather than silently truncated.
 
         Thread-safety: acquires self._lock around ctrl writes + mj_step,
-        as documented in base.py's SimEngine contract. Concurrent calls
+        as documented in the :class:`~strands_robots.simulation.base.SimEngine` contract. Concurrent calls
         from the agent's dispatch thread and a PolicyRunner worker are
         serialized here.
 
@@ -623,7 +623,7 @@ class MuJoCoSimEngine(
         Stashes the live ``MjSpec`` in ``_backend_state["spec"]`` so every
         subsequent scene mutation uses ``spec.recompile(model, data)`` in
         place - that preserves existing joint state automatically, replacing
-        the legacy XML-round-trip helpers in ``scene_ops.py``.
+        the legacy XML-round-trip helpers in :mod:`scene_ops`.
 
         Also exports ``spec.to_xml()`` to ``_backend_state["xml"]`` for any
         consumer that still reads the raw MJCF string (e.g. ``load_scene``
@@ -658,7 +658,7 @@ class MuJoCoSimEngine(
         This is the "nuke and pave" path used when the world config changes
         in a way that can't be expressed as a spec mutation (e.g. clearing
         every body). For incremental changes (add/remove body, camera),
-        prefer ``_recompile_preserving_state`` in ``scene_ops.py`` which
+        prefer ``_recompile_preserving_state`` in :mod:`scene_ops` which
         goes through ``spec.recompile(model, data)`` and preserves joint
         state.
         """

@@ -22,7 +22,7 @@ Public API:
 
 Every function takes a ``SimWorld`` whose ``_backend_state["spec"]`` holds the
 live ``MjSpec``. They return ``True`` on success, ``False`` on failure (matching
-the legacy API) so call sites in ``simulation.py`` don't need to change.
+the legacy API) so call sites in :mod:`simulation` don't need to change.
 """
 
 from __future__ import annotations

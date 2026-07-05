@@ -26,10 +26,10 @@ class RecordingMixin(DatasetRecordingMixin):
     ``start_recording`` reads the live ``MjModel`` to enumerate joints and
     cameras (with their real render resolutions) before creating/resuming the
     LeRobotDataset. Per-step frames are fed by the ``on_frame`` hook built in
-    ``simulation.py``. Separately, ``start_cameras_recording`` dumps raw
+    :mod:`simulation`. Separately, ``start_cameras_recording`` dumps raw
     per-camera MP4s.
 
-    **Coupling** (see simulation.py top-level docstring): mixin reaches
+    **Coupling** (see the :mod:`simulation` top-level docstring): mixin reaches
     into ``self._world`` (trajectory buffer + dataset_recorder live in
     ``_world._backend_state``). ``TYPE_CHECKING`` stub below exists so mypy
     accepts the ``_world`` lookup; it is a documentary contract, not an

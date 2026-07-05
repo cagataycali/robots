@@ -95,7 +95,7 @@ class RenderingMixin:
     Owns ``render``, ``render_depth``, ``render_all``, ``get_contacts``, and
     the low-level ``_apply_sim_action`` (MuJoCo ``ctrl[]`` write + mj_step).
 
-    **Coupling** (see simulation.py top-level docstring): mixin reaches
+    **Coupling** (see the :mod:`simulation` top-level docstring): mixin reaches
     into ``self._world``, ``self._renderer_tls``, ``self._renderer_model``,
     ``self.default_width`` / ``self.default_height``, ``self._lock`` and
     ``self._viewer_handle``. ``TYPE_CHECKING`` stubs below exist so mypy
@@ -1567,7 +1567,7 @@ class RenderingMixin:
         distinct from the script main).
 
         Symptoms of the daemon-thread bug this fixes (#191):
-        ``run_mujoco_agent.py --policy=groot`` measured 2-3% frame
+        a threaded MuJoCo agent driver measured 2-3% frame
         capture rate vs the programmatic single-thread driver, with
         visible greenish GL clear-colour gradient frames at episode
         boundaries. The synchronous mode trades the daemon thread for a
