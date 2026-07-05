@@ -137,6 +137,43 @@ def test_extract_zid_rejects_overlong_string():
     assert _extract_sample_source_zid(sample) is None
 
 
+def test_extract_zid_returns_none_when_source_id_missing():
+    """A sample that attaches ``source_info`` but no ``source_id`` (a partial
+    SourceInfo from a transport shim) degrades to None rather than crashing
+    the safety handler."""
+    sample = SimpleNamespace(
+        payload=SimpleNamespace(to_bytes=lambda: b"{}"),
+        source_info=SimpleNamespace(source_id=None),
+    )
+    assert _extract_sample_source_zid(sample) is None
+
+
+def test_extract_zid_returns_none_when_zid_missing():
+    """A ``source_id`` present but carrying no ``zid`` (an incomplete
+    EntityGlobalId) yields None, not an empty/garbage identity."""
+    sample = SimpleNamespace(
+        payload=SimpleNamespace(to_bytes=lambda: b"{}"),
+        source_info=SimpleNamespace(source_id=SimpleNamespace(zid=None)),
+    )
+    assert _extract_sample_source_zid(sample) is None
+
+
+def test_extract_zid_returns_none_when_extraction_raises():
+    """Defence in depth: if stringifying the zid raises (a hostile or broken
+    sample object), the extractor treats it as \"no zid available\" and
+    returns None instead of propagating into the safety handler."""
+
+    class _ExplodingZid:
+        def __str__(self) -> str:
+            raise TypeError("zid str() blew up")
+
+    sample = SimpleNamespace(
+        payload=SimpleNamespace(to_bytes=lambda: b"{}"),
+        source_info=SimpleNamespace(source_id=SimpleNamespace(zid=_ExplodingZid())),
+    )
+    assert _extract_sample_source_zid(sample) is None
+
+
 # Receiver-side: estop ----------------------------------------------------
 
 
