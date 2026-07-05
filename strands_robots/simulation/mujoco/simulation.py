@@ -1650,7 +1650,9 @@ class MuJoCoSimEngine(
         Two paths, transparent to the caller:
 
         * **Dynamic objects** (``is_static=False``, created with a freejoint)
-          are moved cheaply by writing ``data.qpos`` + a forward pass.
+          are moved cheaply by writing ``data.qpos`` + a forward pass. The
+          object is placed **at rest** at the new pose (its freejoint velocity
+          is zeroed), consistent with ``add_object`` and ``reset``.
         * **Static objects** (``is_static=True``, welded to the worldbody with
           no DOF) cannot be moved through ``data.qpos``; they are repositioned
           by editing the spec body pose and recompiling the scene (preserving
@@ -1676,12 +1678,27 @@ class MuJoCoSimEngine(
             # Dynamic object: a freejoint carries its pose, so move it cheaply
             # through data.qpos + a forward pass (no recompile).
             qpos_addr = model.jnt_qposadr[jnt_id]
+            moved = False
             if position:
                 data.qpos[qpos_addr : qpos_addr + 3] = position
                 self._world.objects[name].position = position
+                moved = True
             if orientation:
                 data.qpos[qpos_addr + 3 : qpos_addr + 7] = orientation
                 self._world.objects[name].orientation = orientation
+                moved = True
+            if moved:
+                # Place the object AT REST at the new pose. A freejoint retains
+                # its 6-DOF linear+angular velocity across a bare data.qpos
+                # write, so without this a repositioned object keeps its prior
+                # momentum: a settling object teleports and immediately shoots
+                # off, and an eval/benchmark loop that repositions objects
+                # between episodes starts each episode with the object drifting
+                # (silently non-reproducible). This matches add_object (spawns
+                # at rest), reset (zeroes velocities), and the Newton backend
+                # (rebuilds from the builder at rest).
+                dof_addr = model.jnt_dofadr[jnt_id]
+                data.qvel[dof_addr : dof_addr + 6] = 0.0
             mj.mj_forward(model, data)
         elif position is not None or orientation is not None:
             # Static object: welded to the worldbody with no freejoint, so it

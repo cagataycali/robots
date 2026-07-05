@@ -579,6 +579,21 @@ purpose. Each row now carries an ASCII marker: `[ok]` when the robot's assets
 are present, `[--]` when missing. The summary count line and cache path are
 unchanged.
 
+### Fixed: `move_object` retained a dynamic object's velocity, so a repositioned object kept its prior momentum
+
+The dynamic-object path of `move_object` (objects with a freejoint) wrote the
+new pose into `data.qpos` but never touched the freejoint's 6 velocity DOF, so
+a bare position/orientation write left the object's prior linear and angular
+velocity intact. A repositioned object therefore kept whatever momentum it had:
+a settling object teleported to its new pose and immediately shot off, and an
+eval/benchmark loop that repositions objects between episodes started each
+episode with the object drifting from its "placed" pose (silently
+non-reproducible). The dynamic path now zeroes the freejoint velocity so the
+object is placed **at rest** at the new pose, matching `add_object` (spawns at
+rest), `reset` (zeroes velocities), and the Newton backend (rebuilds from the
+builder at rest). A `move_object` call with neither `position` nor `orientation`
+remains a true no-op and leaves velocity untouched.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
