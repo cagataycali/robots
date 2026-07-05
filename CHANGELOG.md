@@ -647,6 +647,28 @@ factory is imported from its canonical module `lerobot.policies.factory`
 the `lerobot.policies` top-level re-export, which is not stable across
 lerobot releases.
 
+### Fixed: a partial `robot_state_keys` mismatch silently mis-aligned `observation.state`
+
+When the configured `robot_state_keys` are keyed by a robot's actuator names
+but some of those names are absent from `get_observation()` -- the canonical
+case being a mimic/tendon gripper whose actuator (`left/gripper` /
+`right/gripper` on aloha) is not among the observation's finger-joint names
+while the arm joints are -- both state-build paths in the `lerobot_local`
+provider iterated the resolved key order and appended only the keys present in
+the observation. An absent key was therefore *dropped*, shifting every
+following joint value up one index before the trailing zero-pad, so the model
+received a garbage `observation.state` while the run reported success. On a real
+MuJoCo aloha sim this shifted 8 of the 14 state dims (the entire right arm slid
+into the wrong slots and both gripper dims landed wrong). `_resolve_state_order`
+already made the *all*-missing case loud (#897); the *partial*-missing case was
+still silent. A missing key is now zero-filled IN PLACE via a shared
+`_collect_state_values` helper, so present joints keep their model index, and
+the degradation is surfaced -- `strict_keys=True` raises naming the missing
+keys; otherwise it warns once and sets the new `missing_state_keys_used`
+telemetry flag (surfaced in the `run_policy` / `eval_policy` result alongside
+`generic_state_keys_used`). Robots whose keys are all present (e.g. `so101`)
+are unaffected.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

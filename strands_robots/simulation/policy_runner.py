@@ -1319,6 +1319,7 @@ class PolicyRunner:
             # Defaults False for policies without the attribute (e.g. MockPolicy).
             "positional_fallback_used": bool(getattr(policy, "positional_fallback_used", False)),
             "generic_state_keys_used": bool(getattr(policy, "generic_state_keys_used", False)),
+            "missing_state_keys_used": bool(getattr(policy, "missing_state_keys_used", False)),
             # Process RSS (MB) at result time: confirms a heavy model is resident
             # and, across a loop, that it stays resident instead of oscillating
             # as it would on a per-episode reload. None when unmeasurable.
@@ -1988,6 +1989,7 @@ class PolicyRunner:
                         "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
                         "positional_fallback_used": bool(getattr(policy, "positional_fallback_used", False)),
                         "generic_state_keys_used": bool(getattr(policy, "generic_state_keys_used", False)),
+                        "missing_state_keys_used": bool(getattr(policy, "missing_state_keys_used", False)),
                         **rtc_telemetry,
                         "policy_resident_rss_mb": process_rss_mb(),
                         "episodes": results,
@@ -2387,6 +2389,7 @@ class PolicyRunner:
                         "policy_load_cache_hit": bool(getattr(policy, "load_cache_hit", False)),
                         "positional_fallback_used": bool(getattr(policy, "positional_fallback_used", False)),
                         "generic_state_keys_used": bool(getattr(policy, "generic_state_keys_used", False)),
+                        "missing_state_keys_used": bool(getattr(policy, "missing_state_keys_used", False)),
                         "policy_resident_rss_mb": process_rss_mb(),
                         "episodes": results,
                         "video_paths": video_paths,

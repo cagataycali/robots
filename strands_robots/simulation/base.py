@@ -837,7 +837,7 @@ class SimEngine(ABC):
             carries the rollout facts as typed fields (``n_steps``,
             ``elapsed_s``, ``stopped_early``, ``action_errors``, ``video_path``,
             ``video_frames``, ``positional_fallback_used``,
-            ``generic_state_keys_used``, ...) so callers can self-correct
+            ``generic_state_keys_used``, ``missing_state_keys_used``, ...) so callers can self-correct
             programmatically without parsing the text. The two routing-
             degradation flags are True when the driving policy could not bind
             the observation to the model's inputs by name and silently fell
