@@ -44,15 +44,20 @@ def _load_checkpoint_state_dict(pretrained_name_or_path: str) -> dict[str, Any] 
     import os
 
     try:
+        from safetensors import SafetensorError
         from safetensors.torch import load_file
     except ImportError:
         return None
 
+    # A truncated / corrupt model.safetensors (e.g. an interrupted Hub download)
+    # raises safetensors' own SafetensorError, which is NOT an OSError/ValueError.
+    # Catch it too so the best-effort loader degrades to passthrough instead of
+    # crashing the ACT/diffusion load path (see the module and function docstring).
     local = os.path.join(pretrained_name_or_path, "model.safetensors")
     if os.path.isfile(local):
         try:
             return load_file(local)
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, SafetensorError) as exc:
             logger.debug("Could not read %s: %s", local, exc)
             return None
 
@@ -64,8 +69,8 @@ def _load_checkpoint_state_dict(pretrained_name_or_path: str) -> dict[str, Any] 
         return load_file(path)
     except ImportError:
         return None
-    except (HfHubHTTPError, OSError, ValueError) as exc:
-        # No single-file weights on the Hub (sharded), offline, or unreadable.
+    except (HfHubHTTPError, OSError, ValueError, SafetensorError) as exc:
+        # No single-file weights on the Hub (sharded), offline, corrupt, or unreadable.
         logger.debug("No single-file model.safetensors for %s: %s", pretrained_name_or_path, exc)
         return None
 
