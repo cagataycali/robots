@@ -198,17 +198,31 @@ class Gr00tInferenceClient:
         # Older / custom servers may return the bare action dict.
         return response
 
+    def _teardown(self):
+        """Best-effort ZMQ socket + context teardown.
+
+        Extracted from ``__del__`` so the destructor stays one line - CodeQL
+        flags non-trivial logic in ``__del__`` because exceptions raised
+        during interpreter shutdown are swallowed silently and can mask
+        resource leaks.
+
+        The socket is created with ``LINGER=0`` (see ``_init_socket``) so
+        ``close()`` discards any undelivered request immediately instead of
+        blocking to flush it to a dead sidecar; ``term()`` then returns once
+        the (now-closed) socket is gone. Without the zero linger, a request
+        queued to an unreachable server would hang teardown - and the GC that
+        drives ``__del__`` / interpreter shutdown - indefinitely.
+        """
+        try:
+            if hasattr(self, "socket"):
+                self.socket.close()
+            if hasattr(self, "context"):
+                self.context.term()
+        except Exception:  # noqa: BLE001
+            pass
+
     def __del__(self):
-        # The socket is created with LINGER=0 (see _init_socket) so close()
-        # discards any undelivered request immediately rather than blocking to
-        # flush it to a dead sidecar; term() then returns once the closed
-        # socket is gone. Without the zero linger a request queued to an
-        # unreachable server hangs the GC that drives __del__ (and interpreter
-        # shutdown) indefinitely.
-        if hasattr(self, "socket"):
-            self.socket.close()
-        if hasattr(self, "context"):
-            self.context.term()
+        self._teardown()
 
 
 __all__ = [

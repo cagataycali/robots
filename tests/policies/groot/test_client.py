@@ -378,7 +378,7 @@ class TestClientTeardownNonBlocking:
         try:
             assert client.socket.getsockopt(zmq.LINGER) == 0
         finally:
-            client.__del__()
+            client._teardown()
 
     def test_teardown_bounded_with_queued_request_to_dead_server(self):
         import threading
@@ -391,7 +391,7 @@ class TestClientTeardownNonBlocking:
         done = threading.Event()
 
         def _run() -> None:
-            client.__del__()
+            client._teardown()
             done.set()
 
         worker = threading.Thread(target=_run, daemon=True)
