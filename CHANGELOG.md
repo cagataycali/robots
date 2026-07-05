@@ -569,6 +569,16 @@ header it cannot read - it reports only a confidently-read mismatch. This is the
 frame-count sibling of the existing missing/empty-video and dead-column
 integrity checks. Disable with `--no-check-videos`.
 
+### Fixed: `download_assets(action="status")` marks each robot available or missing
+
+The per-row availability marker in the `status` listing was an empty-both
+`'' if r['available'] else ''` ternary (a fossil of an emoji marker that was
+stripped), so downloaded and missing robots rendered identically and the
+per-row output conveyed no availability information -- defeating the action's
+purpose. Each row now carries an ASCII marker: `[ok]` when the robot's assets
+are present, `[--]` when missing. The summary count line and cache path are
+unchanged.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
