@@ -2345,7 +2345,6 @@ class PolicyRunner:
             # BaseException. Close any in-progress episode video cleanly.
             if current_vwriter is not None:
                 current_vwriter.close()
-                current_vwriter = None
             stopped_early = True
             logger.info(
                 "on_frame requested a cooperative stop; ending benchmark after %d completed episode(s)",

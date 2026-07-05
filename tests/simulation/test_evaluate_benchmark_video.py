@@ -93,6 +93,9 @@ def sim_and_bench(tmp_path):
         try:
             unregister_benchmark(name)
         except Exception:
+            # Best-effort teardown: the benchmark may already be gone if the
+            # test body failed before/after registration. Never mask the real
+            # test failure with a cleanup error.
             pass
         sim.cleanup(policy_stop_timeout=0.5)
 
