@@ -159,7 +159,12 @@ def test_reconstruction_degrades_when_lerobot_import_raises_non_import_error(mon
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "lerobot.policies" or name.startswith("lerobot.processor.migrate_policy_normalization"):
+        # Match the two imports the reconstruction performs:
+        # ``from lerobot.policies.factory import make_pre_post_processors`` and
+        # ``from lerobot.processor.migrate_policy_normalization import ...``.
+        if name.startswith("lerobot.policies.factory") or name.startswith(
+            "lerobot.processor.migrate_policy_normalization"
+        ):
             raise TypeError("non-default argument 'backbone_cfg' follows default argument")
         return real_import(name, *args, **kwargs)
 

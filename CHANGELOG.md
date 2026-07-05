@@ -641,7 +641,11 @@ reconstruction also degrades to passthrough when the lerobot recovery
 helpers cannot be imported for any reason (not only `ImportError`): an
 unrelated broken sibling policy module -- e.g. a dataclass that fails at
 definition time while importing the `lerobot.policies` package -- must not
-crash an ACT/diffusion checkpoint load.
+crash an ACT/diffusion checkpoint load. The `make_pre_post_processors`
+factory is imported from its canonical module `lerobot.policies.factory`
+(where lerobot's own `migrate_policy_normalization` sources it) rather than
+the `lerobot.policies` top-level re-export, which is not stable across
+lerobot releases.
 
 ## [0.4.1] - 2026-07-01
 

@@ -456,7 +456,7 @@ class ProcessorBridge:
             ``(None, None)``.
         """
         try:
-            from lerobot.policies import make_pre_post_processors
+            from lerobot.policies.factory import make_pre_post_processors
             from lerobot.processor.migrate_policy_normalization import (
                 extract_normalization_stats,
             )
