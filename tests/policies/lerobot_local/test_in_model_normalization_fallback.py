@@ -23,6 +23,8 @@ synthetic OLD-FORMAT checkpoint on disk (real safetensors buffers + a real
 
 from __future__ import annotations
 
+import builtins
+
 import pytest
 import torch
 from safetensors.torch import save_file
@@ -30,9 +32,20 @@ from safetensors.torch import save_file
 from strands_robots.policies.lerobot_local.processor import ProcessorBridge
 
 # The reconstruction rides lerobot's migration helper + factory; skip cleanly on
-# an install that predates them (the fallback itself degrades to passthrough).
-pytest.importorskip("lerobot.processor.migrate_policy_normalization")
-pytest.importorskip("lerobot.policies")
+# an install where they cannot be imported. ``pytest.importorskip`` only catches
+# ImportError, but these modules can also fail at definition time -- e.g. a
+# broken dataclass in an unrelated sibling policy module (lerobot.policies.groot)
+# raises TypeError while importing the policies package. Skip on any import-time
+# failure so an unrelated lerobot defect does not fail collection here (the
+# production fallback degrades to passthrough for the same failure modes).
+try:
+    import lerobot.policies  # noqa: F401
+    import lerobot.processor.migrate_policy_normalization  # noqa: F401
+except Exception as exc:  # noqa: BLE001 - mirror the production best-effort guard
+    pytest.skip(
+        f"lerobot migration helpers unimportable: {exc}",
+        allow_module_level=True,
+    )
 
 
 def _act_config():
@@ -125,3 +138,35 @@ def test_no_buffers_stays_passthrough(tmp_path):
 
     assert not bridge.has_postprocessor
     assert not bridge.has_preprocessor
+
+
+def test_reconstruction_degrades_when_lerobot_import_raises_non_import_error(monkeypatch, tmp_path):
+    """A definition-time failure while importing the lerobot helpers degrades to
+    passthrough instead of crashing the load.
+
+    The reconstruction imports ``lerobot.policies`` (for ``make_pre_post_processors``)
+    and ``lerobot.processor.migrate_policy_normalization``. An unrelated broken
+    sibling policy module -- e.g. a dataclass with a non-default field after a
+    default one in ``lerobot.policies.groot`` -- raises ``TypeError`` (not
+    ``ImportError``) while importing the policies package. The fallback must
+    treat that as "recovery unavailable" and return ``(None, None)`` so an
+    unrelated lerobot defect cannot take down an ACT/diffusion checkpoint load.
+    """
+    _write_old_format_checkpoint(tmp_path, with_norm_buffers=True)
+    policy_config = _act_config()
+
+    real_import = builtins.__import__
+
+    def fake_import(name, *args, **kwargs):
+        if name == "lerobot.policies" or name.startswith("lerobot.processor.migrate_policy_normalization"):
+            raise TypeError("non-default argument 'backbone_cfg' follows default argument")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", fake_import)
+
+    pre, post = ProcessorBridge._load_in_model_normalization_fallback(
+        str(tmp_path), policy_config=policy_config, device="cpu"
+    )
+
+    assert pre is None
+    assert post is None

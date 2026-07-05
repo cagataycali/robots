@@ -636,7 +636,12 @@ pre/post pipelines from those same in-model buffers using lerobot's own
 machinery of `migrate_policy_normalization`), so an old-format checkpoint runs
 normalized with zero user action. The reconstruction is best-effort and only
 fires when a checkpoint ships no processor configs, no `norm_stats.json`, but
-does carry in-model buffers -- modern checkpoints are untouched.
+does carry in-model buffers -- modern checkpoints are untouched. The
+reconstruction also degrades to passthrough when the lerobot recovery
+helpers cannot be imported for any reason (not only `ImportError`): an
+unrelated broken sibling policy module -- e.g. a dataclass that fails at
+definition time while importing the `lerobot.policies` package -- must not
+crash an ACT/diffusion checkpoint load.
 
 ## [0.4.1] - 2026-07-01
 

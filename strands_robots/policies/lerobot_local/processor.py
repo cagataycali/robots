@@ -460,8 +460,13 @@ class ProcessorBridge:
             from lerobot.processor.migrate_policy_normalization import (
                 extract_normalization_stats,
             )
-        except ImportError as exc:
-            # Older lerobot without the migration helpers: cannot reconstruct.
+        except Exception as exc:  # noqa: BLE001 - recovery is best-effort
+            # The helpers may be genuinely absent (older lerobot -> ImportError)
+            # or unimportable because an unrelated sibling policy module fails at
+            # definition time (e.g. a broken dataclass in lerobot.policies.groot
+            # raises TypeError while importing the policies package). Either way
+            # reconstruction is impossible, so degrade to passthrough instead of
+            # letting an unrelated lerobot defect crash ACT/diffusion loads.
             logger.debug("In-model normalization recovery unavailable: %s", exc)
             return None, None
 
