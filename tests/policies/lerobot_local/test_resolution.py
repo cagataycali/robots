@@ -720,6 +720,89 @@ def test_directory_scan_rejects_python_keyword_dirnames(tmp_path, monkeypatch):
         resolution._ensure_policy_configs_registered.cache_clear()
 
 
+def test_missing_lerobot_policies_degrades_to_noop(monkeypatch):
+    """A lerobot install whose ``lerobot.policies`` cannot be imported must
+    degrade to a clean no-op, never a crash.
+
+    ``_ensure_policy_configs_registered`` runs ahead of every resolution
+    strategy. When ``lerobot.policies`` is genuinely unimportable -- lerobot
+    absent entirely, or a partial / namespace-conflicted install that survives
+    ``_ensure_lerobot_policies_importable`` -- the helper must swallow the
+    ``ImportError`` and return, letting resolution fall through to the manual
+    ``config.json`` path and its clean, actionable error. If this branch instead
+    let the ``ImportError`` propagate, importing the policy provider on a machine
+    with a broken lerobot would raise from deep inside config registration rather
+    than surfacing the documented resolution error.
+    """
+    import sys
+
+    from strands_robots.policies.lerobot_local import resolution
+
+    snapshot = _snapshot_lerobot_modules()
+    _purge_lerobot_modules(snapshot)
+    # Neutralise the stub installer so it cannot repair the import: we want to
+    # exercise the "lerobot.policies stays unimportable" branch itself.
+    monkeypatch.setattr(resolution, "_ensure_lerobot_policies_importable", lambda: None)
+    # A ``None`` entry in sys.modules is CPython's sentinel for "known missing":
+    # ``import lerobot.policies`` then raises ImportError without touching disk,
+    # simulating an absent or broken-partial lerobot.
+    monkeypatch.setitem(sys.modules, "lerobot.policies", None)
+    resolution._ensure_policy_configs_registered.cache_clear()
+    try:
+        # Must return cleanly (no exception); config registration is a no-op
+        # when there is no importable lerobot.policies to walk.
+        assert resolution._ensure_policy_configs_registered() is None
+    finally:
+        _purge_lerobot_modules(_snapshot_lerobot_modules())
+        sys.modules.update(snapshot)
+        resolution._ensure_policy_configs_registered.cache_clear()
+
+
+def test_unenumerable_path_entry_does_not_abort_walk(monkeypatch, caplog):
+    """An un-enumerable ``__path__`` entry (zip-imported lerobot, stale path)
+    must be skipped, not crash the walk.
+
+    The on-disk directory scan is the ground truth for PEP 420 namespace
+    subpackages, but a ``__path__`` entry can be non-listable -- e.g. a
+    zip-imported lerobot or a stale directory that no longer exists. Calling
+    ``Path(entry).iterdir()`` then raises an ``OSError`` (``FileNotFoundError``
+    is a subclass). The walk must swallow it and continue with whatever
+    ``pkgutil.iter_modules`` already produced, rather than letting the whole
+    policy-config registration abort on one bad path entry.
+    """
+    import logging
+    import sys
+    import types
+
+    from strands_robots.policies.lerobot_local import resolution
+
+    # A fake lerobot.policies whose sole __path__ entry does not exist, so
+    # iter_modules yields nothing and Path(entry).iterdir() raises OSError.
+    stale_dir = "/nonexistent/lerobot/policies/stale/path"
+    fake_policies = types.ModuleType("lerobot.policies")
+    fake_policies.__path__ = [stale_dir]
+    fake_policies.__package__ = "lerobot.policies"
+    fake_policies.__name__ = "lerobot.policies"
+
+    snapshot = _snapshot_lerobot_modules()
+    _purge_lerobot_modules(snapshot)
+    monkeypatch.setattr(resolution, "_ensure_lerobot_policies_importable", lambda: None)
+    monkeypatch.setitem(sys.modules, "lerobot.policies", fake_policies)
+    resolution._ensure_policy_configs_registered.cache_clear()
+    try:
+        with caplog.at_level(logging.DEBUG, logger=resolution.logger.name):
+            # Must not raise despite the un-enumerable path entry.
+            assert resolution._ensure_policy_configs_registered() is None
+        assert any("cannot scan" in rec.message for rec in caplog.records), (
+            "expected a debug log recording the skipped un-enumerable "
+            f"__path__ entry; got: {[r.message for r in caplog.records]}"
+        )
+    finally:
+        _purge_lerobot_modules(_snapshot_lerobot_modules())
+        sys.modules.update(snapshot)
+        resolution._ensure_policy_configs_registered.cache_clear()
+
+
 class TestResolvePolicyClassFromHub:
     """Behavioral tests for the public ``resolve_policy_class_from_hub`` entry.
 
