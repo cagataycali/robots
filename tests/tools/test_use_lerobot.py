@@ -190,6 +190,24 @@ def test_describe_separates_properties_from_methods() -> None:
     assert "find_cameras" not in info.get("methods", [])
 
 
+def test_describe_class_without_introspectable_init_omits_params() -> None:
+    """A class whose ``__init__`` exposes no introspectable signature (as some
+    C-extension-backed lerobot types do) is still described: the method list is
+    populated and ``init_params`` is simply omitted rather than the whole
+    describe call raising."""
+
+    class NoInitSignature:
+        # Accessing the class attribute yields the property descriptor itself,
+        # which ``inspect.signature`` cannot introspect (raises TypeError) -- the
+        # same failure mode as a builtin ``__init__`` slot wrapper.
+        __init__ = property(lambda self: None)
+
+    info = M._describe_object(NoInitSignature)
+    assert info["name"] == "NoInitSignature"
+    assert "methods" in info
+    assert "init_params" not in info
+
+
 # ----------------------------------------------------------------------------
 # serializer -- totality under hostile input
 # ----------------------------------------------------------------------------
@@ -236,6 +254,26 @@ def test_serializer_survives_hostile_repr() -> None:
     # Must not raise -- the tool stays alive even on pathological objects.
     out = M._serialize_result({"x": Hostile()})
     assert isinstance(out, str)
+
+
+def test_serializer_falls_back_when_dataclass_expansion_fails() -> None:
+    """A dataclass whose fields cannot be expanded (``asdict`` raises while
+    deep-copying a hostile field) degrades to a repr string instead of
+    propagating the error -- the serializer stays total on config-like objects."""
+    import dataclasses
+
+    class Uncopyable:
+        def __deepcopy__(self, memo: dict) -> Uncopyable:
+            raise RuntimeError("cannot copy")
+
+    @dataclasses.dataclass
+    class Config:
+        field: object
+
+    out = M._serialize_value(Config(field=Uncopyable()))
+    # asdict blew up, so no structured __dataclass__ wrapper -- but no raise either.
+    assert isinstance(out, str)
+    assert "Config" in out
 
 
 def test_serializer_depth_guard() -> None:
