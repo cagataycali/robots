@@ -8,7 +8,7 @@ The Cosmos 3 ``policy`` action mode takes ``image + instruction`` and returns an
 contract. We talk to the Cosmos Framework RoboLab WebSocket policy server
 (``cosmos_framework.scripts.action_policy_server_robolab``) over a
 self-contained msgpack+NumPy WebSocket protocol (no ``openpi-client``
-dependency - see ``client.py``), mirroring
+dependency - see :mod:`strands_robots.policies.cosmos3.client`), mirroring
 :class:`~strands_robots.policies.groot.Gr00tPolicy` service mode.
 
 Observation flow

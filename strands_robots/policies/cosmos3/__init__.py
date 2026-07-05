@@ -4,7 +4,7 @@ Wraps the Cosmos 3 Generator *action* surface (e.g.
 ``nvidia/Cosmos3-Nano-Policy-DROID``) as a robots :class:`Policy`. Service mode
 speaks to the Cosmos Framework RoboLab WebSocket policy server using a
 self-contained msgpack+NumPy wire client (no ``openpi-client`` dependency
-- see ``client.py`` for the rationale).
+- see :mod:`strands_robots.policies.cosmos3.client` for the rationale).
 
 Quickstart::
 
@@ -36,7 +36,8 @@ In MuJoCo (the ``droid`` embodiment drives a Franka/DROID-class arm - use the
                    control_frequency=15.0)
 
 See ``examples/cosmos3_sim_rollout.py`` for a complete, runnable rollout +
-recording. Available embodiments: droid, umi, av, bridge (see ``embodiments.py``).
+recording. Available embodiments: droid, umi, av, bridge
+(see :mod:`strands_robots.policies.cosmos3.embodiments`).
 """
 
 from .action_decode import decode_pose_trajectory, denormalize_quantile, load_action_stats
