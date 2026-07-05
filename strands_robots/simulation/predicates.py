@@ -18,6 +18,12 @@ backend does not support them. A predicate that silently evaluates to
 ``False`` because of an unimplemented backend call is a bug in the
 predicate, not the benchmark - file an issue.
 
+When the backend *does* support a lookup but the referenced ``body`` /
+``joint`` name cannot be resolved (almost always a spec typo), the term still
+degrades to a constant (``False`` / ``0.0``) but the offending name is logged
+once at ``WARNING`` (see :func:`_warn_unresolved`), so a broken spec surfaces
+instead of silently preventing episode success or emitting a dead reward.
+
 Available predicates (bool):
 
     body_above_z(body, z)
@@ -56,6 +62,45 @@ logger = logging.getLogger(__name__)
 BoolPredicate = Callable[["SimEngine"], bool]
 RewardTerm = Callable[["SimEngine"], float]
 PredicateFactory = Callable[..., Callable[["SimEngine"], Any]]
+
+
+# Names the DSL has already warned about, so a broken spec cannot spam the
+# reward/eval hot loop. Keyed by (kind, name); process-global and deduplicated.
+_RESOLUTION_WARNED: set[tuple[str, str]] = set()
+
+
+def _warn_unresolved(kind: str, name: str, tried: tuple[str, ...] = ()) -> None:
+    """Warn once that a spec references an entity the sim cannot resolve.
+
+    Called from the body/joint lookup helpers only when the backend *supports*
+    the lookup (``get_body_state`` / ``get_observation`` present) but the named
+    ``body``/``joint`` is not found - almost always a spec typo. The offending
+    term then degrades to a constant (a bool predicate to ``False``, a reward
+    term to ``0.0``), which silently prevents episode success or yields a dead,
+    return-inflating reward. Surfacing the name once turns that silent
+    corruption into an actionable log line without changing any returned value.
+    A missing lookup *method* (unsupported backend) is a capability gap, not a
+    typo, and stays silent.
+    """
+    key = (kind, name)
+    if key in _RESOLUTION_WARNED:
+        return
+    _RESOLUTION_WARNED.add(key)
+    extra = f" (tried {list(tried)})" if len(tried) > 1 else ""
+    logger.warning(
+        "predicate/reward DSL: %s %r is not present in the simulation%s; the "
+        "referencing term degrades to a constant (bool predicate -> False, "
+        "reward -> 0.0), which silently prevents success / yields a dead reward. "
+        "Check the name against the loaded scene / benchmark spec.",
+        kind,
+        name,
+        extra,
+    )
+
+
+def _reset_resolution_warnings() -> None:
+    """Clear the one-time-warning dedup cache (test isolation)."""
+    _RESOLUTION_WARNED.clear()
 
 
 # Helpers for digging values out of the structured ``{"status", "content"}``
@@ -121,10 +166,13 @@ def _body_position(sim: SimEngine, body: str) -> list[float] | None:
     # 2. LIBERO ``<name>_main`` convention (the root body of
     # procedurally-generated objects). Skip if the name already has
     # the suffix to avoid double-suffixing on retries.
+    tried = [body]
     if not body.endswith("_main"):
+        tried.append(f"{body}_main")
         pos = _try(f"{body}_main")
         if pos is not None:
             return pos
+    _warn_unresolved("body", body, tuple(tried))
     return None
 
 
@@ -146,6 +194,11 @@ def _joint_position(sim: SimEngine, joint: str) -> float | None:
     val = obs.get(joint)
     if isinstance(val, (int, float)) and not isinstance(val, bool):
         return float(val)
+    # The backend produced an observation but this joint is not in it: almost
+    # always a spec typo (an empty obs is a backend/capability gap, not a name
+    # error, so stay silent there).
+    if obs and joint not in obs:
+        _warn_unresolved("joint", joint)
     return None
 
 
@@ -159,17 +212,35 @@ def _body_quaternion(sim: SimEngine, body: str) -> list[float] | None:
     get_body_state = getattr(sim, "get_body_state", None)
     if get_body_state is None:
         return None
-    try:
-        result = get_body_state(body_name=body)
-    except Exception as e:  # noqa: BLE001 - defensive
-        logger.debug("body_quaternion(%r) failed: %s", body, e)
+
+    def _try(name: str) -> list[float] | None:
+        try:
+            result = get_body_state(body_name=name)
+        except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
+            logger.debug("body_quaternion(%r) failed: %s", name, e)
+            return None
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return None
+        payload = _extract_json(result)
+        quat = payload.get("quaternion")
+        if isinstance(quat, list) and len(quat) == 4 and all(isinstance(c, (int, float)) for c in quat):
+            return [float(c) for c in quat]
         return None
-    if not isinstance(result, dict) or result.get("status") != "success":
-        return None
-    payload = _extract_json(result)
-    quat = payload.get("quaternion")
-    if isinstance(quat, list) and len(quat) == 4 and all(isinstance(c, (int, float)) for c in quat):
-        return [float(c) for c in quat]
+
+    # Mirror _body_position's resolution: bare BDDL name first, then the LIBERO
+    # ``<name>_main`` root-body convention (#176). Without the fallback,
+    # body_upright(<bddl_name>) resolved to None -> silently False for every
+    # procedurally-generated LIBERO object, whose MJCF root body is _main-suffixed.
+    quat = _try(body)
+    if quat is not None:
+        return quat
+    tried = [body]
+    if not body.endswith("_main"):
+        tried.append(f"{body}_main")
+        quat = _try(f"{body}_main")
+        if quat is not None:
+            return quat
+    _warn_unresolved("body", body, tuple(tried))
     return None
 
 

@@ -594,6 +594,25 @@ rest), `reset` (zeroes velocities), and the Newton backend (rebuilds from the
 builder at rest). A `move_object` call with neither `position` nor `orientation`
 remains a true no-op and leaves velocity untouched.
 
+### Fixed: benchmark/reward DSL silently swallowed unresolvable body/joint names
+
+A typo (or otherwise unresolvable name) in a benchmark success predicate or a
+reward-term body/joint used to be completely silent. On a backend that
+*supports* the lookup (`get_body_state` / `get_observation`), an unresolvable
+name made the term degrade to a constant with no diagnostic: a bool predicate
+to `False` (the episode silently never succeeds, indistinguishable from a
+failing policy) and a `distance_neg` / `joint_progress` reward to `0.0` -- which
+is that term's *maximum* (`-w * dist <= 0`), so a dead term pins at its ceiling
+and inflates the reported return. During a multi-hour RL run or a benchmark
+eval this quietly corrupts success rates and reward signals. The lookup helpers
+now log the unresolvable name once at `WARNING` (deduplicated so the hot loop
+never spams); returned values are unchanged. A missing lookup *method*
+(unsupported backend) stays silent -- that is a capability gap, not a spec typo.
+Additionally, `body_upright` now resolves the LIBERO `<name>_main` root-body
+convention (the `_body_position` fallback was never mirrored to the quaternion
+path), so `(upright X)` on a procedurally-generated LIBERO object no longer
+silently evaluates to `False`.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
