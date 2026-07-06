@@ -688,6 +688,32 @@ boundary rounding; unlimited actuators (which never clamp) are skipped; the
 warning is de-duplicated so a 50Hz control loop never spams the log. No
 trajectory behaviour changes.
 
+### Fixed: the `aloha` embodiment mis-aligned `observation.state` and mapped gripper actions onto non-actuators
+
+The declarative-embodiment state builder (`PackStateProcessorStep.observation()`)
+appended a value only for `state_keys` *found* in the observation and skipped the
+absent ones, so a missing key DROPPED its slot and shifted every following joint
+up one index before the trailing pad -- the embodiment-path analog of the
+generic-path fix from "a partial `robot_state_keys` mismatch silently mis-aligned
+`observation.state`" above. A missing `state_key` is now zero-filled IN PLACE so
+the present joints keep their model index, with a one-time warning naming the
+absent keys.
+
+The `aloha` config compounded this: it declared the 16 finger-JOINT names
+(`left/left_finger`, `left/right_finger`, ...) for both `state_keys` and
+`action_keys`, but the model's 14 ACTUATORS follow the canonical gym-aloha /
+LeRobot ACT convention `[6 arm + 1 gripper] x 2` (`left/gripper` / `right/gripper`
+at indices 6 and 13, each driving both fingers). Against a canonical 14-D ACT the
+16-key state build raised `observation.state dim 16 > model expected 14`, and the
+finger-joint `action_keys` mapped the policy's gripper command onto non-actuators
+(the gripper was never driven). The config now uses the 14 actuator keys, so the
+action maps 1:1 onto actuators and the arm proprioception is index-aligned; the
+two gripper STATE slots -- absent from the sim observation, which exposes finger
+joints -- are zero-filled in place (a units-correct finger->gripper state mapping
+is a checkpoint-specific follow-up). Loading the canonical
+`lerobot/act_aloha_sim_transfer_cube_human` through `embodiment="aloha"` now runs
+a rollout instead of crashing.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
