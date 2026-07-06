@@ -1109,3 +1109,98 @@ class TestLearningRate:
         )
         with pytest.raises(ValueError, match="optimizer_lr"):
             LerobotTrainer(device="cpu").build_config(spec)
+
+
+class TestOfflineRegistryFallbacks:
+    """Graceful degradation when lerobot's config ChoiceRegistry is unavailable.
+
+    Type/field discovery reads live off lerobot's draccus registries, which are
+    populated as an import side effect of ``lerobot.policies`` / ``lerobot.rewards``.
+    When those imports fail (lerobot not installed, or lerobot < 0.5.2 with no
+    ``lerobot.rewards``), discovery must fall back to the documented static sets
+    instead of raising, so ``validate`` still produces an actionable message
+    offline. Import failure is simulated by binding the submodule to ``None`` in
+    ``sys.modules`` (makes ``import`` raise ``ImportError``).
+    """
+
+    def test_policy_registry_is_none_when_lerobot_policies_unimportable(self, monkeypatch):
+        import sys
+
+        from strands_robots.training import lerobot as mod
+
+        monkeypatch.setitem(sys.modules, "lerobot.policies", None)
+        assert mod._policy_registry() is None
+
+    def test_policy_types_use_static_fallback_offline(self, monkeypatch):
+        import sys
+
+        from strands_robots.training import lerobot as mod
+
+        monkeypatch.setitem(sys.modules, "lerobot.policies", None)
+        assert mod._lerobot_policy_types() == set(mod._LEROBOT_POLICY_TYPES_FALLBACK)
+
+    def test_relative_action_support_uses_static_fallback_offline(self, monkeypatch):
+        import sys
+
+        from strands_robots.training import lerobot as mod
+
+        monkeypatch.setitem(sys.modules, "lerobot.policies", None)
+        # The pi0 family is in the documented fallback set; act is not.
+        assert mod._policy_supports_relative_actions("pi0") is True
+        assert mod._policy_supports_relative_actions("act") is False
+
+    def test_reward_registry_is_none_when_lerobot_rewards_unimportable(self, monkeypatch):
+        import sys
+
+        from strands_robots.training import lerobot as mod
+
+        monkeypatch.setitem(sys.modules, "lerobot.rewards", None)
+        assert mod._reward_registry() is None
+
+    def test_reward_model_types_use_static_fallback_offline(self, monkeypatch):
+        import sys
+
+        from strands_robots.training import lerobot as mod
+
+        monkeypatch.setitem(sys.modules, "lerobot.rewards", None)
+        assert mod._reward_model_types() == set(mod._REWARD_MODEL_TYPES_FALLBACK)
+
+
+class TestRunTypeLabel:
+    """``_run_type_label`` distinguishes a reward-model run from a policy run."""
+
+    def test_labels_reward_model_run(self):
+        spec = TrainSpec(extra={"reward_model": {"type": "sarm"}})
+        assert LerobotTrainer(device="cpu")._run_type_label(spec) == "reward_model:sarm"
+
+    def test_labels_policy_run(self):
+        spec = TrainSpec(extra={"policy_type": "diffusion"})
+        assert LerobotTrainer(device="cpu")._run_type_label(spec) == "policy:diffusion"
+
+
+class TestValSplitEpisodesFallthrough:
+    """The held-out split is a no-op (use the full dataset) when it can't be computed.
+
+    ``_val_split_episodes`` returns ``None`` -- meaning "train on every episode" --
+    rather than raising or emitting a malformed ``episodes`` range when the episode
+    count is unknown (no readable ``meta/info.json``) or the requested holdout is
+    not strictly inside ``(0, total)``.
+    """
+
+    def test_no_op_when_episode_count_unknown(self, tmp_path):
+        # dataset_root set but no meta/info.json -> total unknown -> no split.
+        spec = TrainSpec(dataset_root=str(tmp_path), val_episodes=2)
+        assert LerobotTrainer(device="cpu")._val_split_episodes(spec) is None
+
+    def test_no_op_when_holdout_not_smaller_than_total(self, dataset_root):
+        # info.json reports total_episodes=10; a holdout >= total is out of range.
+        spec = TrainSpec(dataset_root=dataset_root, val_episodes=10)
+        assert LerobotTrainer(device="cpu")._val_split_episodes(spec) is None
+
+
+class TestHardwareFloor:
+    """``hardware_floor`` advertises the advisory minimum compute for LeRobot tuning."""
+
+    def test_advisory_single_consumer_gpu(self):
+        floor = LerobotTrainer(device="cpu").hardware_floor
+        assert floor == {"min_gpus": 1, "min_vram_gb": 8, "multinode": False}
