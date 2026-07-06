@@ -30,7 +30,6 @@ import pytest
 pytest.importorskip("lerobot")
 
 import strands_robots.policies.lerobot_local.embodiment as E
-from strands_robots.policies.lerobot_local.embodiment import load_embodiment, register_pack_state_step
 
 # The aloha bimanual actuator convention: 6 arm + 1 gripper actuator per side,
 # gripper actuators interspersed at indices 6 and 13.
@@ -74,7 +73,7 @@ def _sim_obs_no_gripper() -> dict[str, float]:
 
 
 def _step(state_keys, expected_dim, **kw):
-    Step = register_pack_state_step()
+    Step = E.register_pack_state_step()
     assert Step is not None, "lerobot processor framework unavailable"
     return Step(state_keys=list(state_keys), expected_dim=expected_dim, dim_policy=kw.pop("dim_policy", "pad"), **kw)
 
@@ -132,7 +131,7 @@ class TestAlohaEmbodimentActuatorConvention:
         """The shipped aloha embodiment uses the 14 actuator convention (matching
         the model's actuators / robot_action_keys), not the 16 finger-JOINT
         names that crash/mis-align a canonical 14-D ACT."""
-        emb = load_embodiment("aloha")
+        emb = E.load_embodiment("aloha")
         assert emb.state_keys == ALOHA_14
         assert emb.action_keys == ALOHA_14
         # the old 16-finger-joint layout is gone
@@ -143,7 +142,7 @@ class TestAlohaEmbodimentActuatorConvention:
         """End-to-end: build observation.state from a gripper-less sim obs through
         the real aloha embodiment config; arm stays aligned, grippers zero-filled."""
         E._WARNED_MISSING_STATE_KEYS.clear()
-        emb = load_embodiment("aloha")
+        emb = E.load_embodiment("aloha")
         step = _step(emb.state_keys, 14, dim_policy=emb.dim_policy)
         state = step.observation(_sim_obs_no_gripper())["observation.state"].numpy()
         expected = LEFT_ARM + [0.0] + RIGHT_ARM + [0.0]
