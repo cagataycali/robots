@@ -161,7 +161,7 @@ extras you need:
 | `sim-mujoco` | MuJoCo, robot_descriptions, imageio | Simulation (recommended starting point) |
 | `sim-newton` | Newton, Warp, MuJoCo-Warp, trimesh | GPU-native simulation (NVIDIA GPU; batched envs, headless ray-traced render) |
 | `lerobot` | LeRobot | Real hardware, local VLA inference, dataset recording |
-| `molmoact2` | LeRobot + transformers, peft, scipy | MolmoAct2 transformers-native VLA (needs lerobot from source until PyPI >= 0.5.2) |
+| `molmoact2` | LeRobot + transformers, peft, scipy | MolmoAct2 transformers-native VLA (resolves from PyPI via lerobot >= 0.6) |
 | `groot-service` | pyzmq, msgpack | NVIDIA GR00T inference client |
 | `cosmos3-service` | websockets, msgpack | NVIDIA Cosmos 3 policy-server client |
 | `curobo` | _(empty; install cuRobo from source)_ | In-process collision-aware motion planning (CUDA GPU) |
@@ -180,9 +180,8 @@ uv pip install "strands-robots[sim-mujoco]"
 # Real hardware + local policies:
 uv pip install "strands-robots[sim-mujoco,lerobot]"
 
-# MolmoAct2 VLA (lerobot from source until a PyPI >= 0.5.2 ships PR #3604):
-uv pip install "strands-robots[molmoact2]" \
-    "lerobot[feetech] @ git+https://github.com/huggingface/lerobot.git"
+# MolmoAct2 VLA (transformers-native; resolves from PyPI via lerobot >= 0.6):
+uv pip install "strands-robots[molmoact2]"
 
 # Everything:
 uv pip install "strands-robots[all]"

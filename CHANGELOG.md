@@ -734,6 +734,26 @@ is a checkpoint-specific follow-up). Loading the canonical
 `lerobot/act_aloha_sim_transfer_cube_human` through `embodiment="aloha"` now runs
 a rollout instead of crashing.
 
+### Changed: track lerobot 0.6 -- require `lerobot>=0.6.0` and drop the 0.5.1-era torch/torchcodec overrides
+
+The `[lerobot]` / `[molmoact2]` extras now require `lerobot>=0.6.0,<0.7.0`
+(was `>=0.5.0,<0.6.0`). lerobot 0.6 ships mature, platform-correct dependency
+markers -- `torch>=2.7,<2.12` with a `torchcodec>=0.11,<0.12` marker on linux
+aarch64 -- so the codec/decoder stack now resolves ABI-consistently
+(torch 2.11 + torchcodec 0.11.x + torchvision 0.26) on linux x86_64/aarch64 and
+macOS arm64 without any strands override. The per-platform torchcodec pins in
+the `[lerobot]` extra and the `torch`/`torchvision` entries in
+`[tool.uv].override-dependencies` -- all added to compensate for lerobot 0.5.1's
+deficient markers (its `torch<2.11` cap that skipped the NVIDIA Thor/Jetson
+sm_110 cuBLAS fix, and its torchcodec marker that excluded linux aarch64) -- are
+removed; the sole remaining uv override is the diffusers security floor. The
+aarch64 torch 2.11 requirement (the Thor sm_110 fix) now falls out of lerobot
+0.6's own torchcodec marker rather than a strands override, and the previously
+unbounded aarch64 `torchcodec>=0.11` pin (which resolved a torch-ABI-mismatched
+torchcodec 0.14) is bounded by lerobot 0.6's `<0.12`. `MolmoAct2Policy` (added
+to lerobot after the 0.5.1 PyPI release) now resolves straight from PyPI via the
+`[molmoact2]` extra -- the "install lerobot from source" step is gone.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
