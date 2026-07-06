@@ -754,6 +754,20 @@ torchcodec 0.14) is bounded by lerobot 0.6's `<0.12`. `MolmoAct2Policy` (added
 to lerobot after the 0.5.1 PyPI release) now resolves straight from PyPI via the
 `[molmoact2]` extra -- the "install lerobot from source" step is gone.
 
+### Docs: correct post-lerobot-0.6 VLA install guidance
+
+The `lerobot>=0.6.0` requirement obsoleted a body of pre-0.6 install lore that
+survived in the `train_policy` tool docstring and the training / lerobot-local
+docs: `pip install 'lerobot[smolvla]==0.5.1'`, a `transformers==5.3.0` pin, the
+"a newer transformers crashes the VLA import (`backbone_cfg`)" note, and
+"MolmoAct2 requires lerobot from source". lerobot 0.6's `[smolvla]`/`[pi]`/
+`[molmoact2]` extras now require `transformers>=5.4.0,<5.6.0`, so the old
+`transformers==5.3.0` pin is a hard resolution conflict rather than a fix, and
+`strands-robots[molmoact2]` resolves `MolmoAct2Policy` straight from PyPI (no
+git-from-source). The guidance now matches the declared extras; a regression
+test pins the docs to the pyproject requirements so the stale lore cannot
+return.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
