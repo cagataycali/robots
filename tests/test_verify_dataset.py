@@ -15,6 +15,7 @@ truth. Each test asserts observable behaviour - the report's ``status`` /
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -24,7 +25,7 @@ pytest.importorskip("pyarrow")
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from strands_robots.verify_dataset import _verify_feature_stats, verify_dataset
+from strands_robots.verify_dataset import _verify_feature_stats, _video_frame_count, verify_dataset
 from strands_robots.verify_dataset import main as verify_main
 
 
@@ -444,6 +445,48 @@ class TestVideoFrameCountIntegrity:
         )
         report = verify_dataset(tmp_path)
         assert report["status"] == "success", report["problems"]
+
+
+class TestVideoFrameCountOptionalDependency:
+    """The frame-count sub-check reads video headers via PyAV (``av``), an
+    optional dependency. When ``av`` is not installed it must degrade to
+    "cannot confirm" (return ``None``) rather than crash or report a truncated
+    encode, so :func:`verify_dataset` stays usable as a CI integrity gate in the
+    common environment where the video-decode extra is absent.
+    """
+
+    def test_frame_count_returns_none_when_av_missing(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A ``None`` entry in sys.modules makes ``import av`` raise ImportError,
+        # simulating an environment without the optional video-decode extra.
+        monkeypatch.setitem(sys.modules, "av", None)
+        placeholder = tmp_path / "file-000.mp4"
+        placeholder.write_bytes(b"\x00" * 64)
+        assert _video_frame_count(placeholder) is None
+
+    def test_verify_does_not_false_flag_truncation_without_av(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        pytest.importorskip("av")  # needed only to author the real short MP4
+        # Parquet records a 5-frame episode; the MP4 holds only 2 - a genuine
+        # truncated encode that IS flagged when av is present.
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0],
+            video_keys=["observation.images.cam1"],
+            frames_per_episode=[5],
+            write_files=set(),
+        )
+        _write_real_mp4(
+            tmp_path / "videos/observation.images.cam1/chunk-000/file-000.mp4",
+            n_frames=2,
+        )
+        # With av unavailable the frame count cannot be read, so the check
+        # degrades to "cannot confirm" and the dataset passes instead of
+        # false-flagging - no crash, no spurious truncation problem.
+        monkeypatch.setitem(sys.modules, "av", None)
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "success", report["problems"]
+        assert not any("truncated" in p for p in report["problems"]), report["problems"]
 
 
 class TestMetadataEdgeCases:
