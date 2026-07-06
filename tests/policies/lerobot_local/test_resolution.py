@@ -929,6 +929,77 @@ class TestResolvePolicyClassFromHub:
         with pytest.raises(_WeirdError):
             resolution.resolve_policy_class_from_hub("weird/repo")
 
+    def test_draccus_decoding_error_name_falls_back_to_manual_config(self, monkeypatch):
+        """A draccus decode error surfaces as an exception that is NOT a
+        subclass of the ``(AttributeError, RuntimeError, TypeError, ValueError)``
+        tuple -- draccus' own ``DecodingError`` inherits from ``DraccusException``
+        -> ``Exception``. The broad handler recognises it by class name and must
+        route to the manual ``config.json`` fallback rather than re-raising, so a
+        third-party repo draccus cannot decode still resolves."""
+        from strands_robots.policies.lerobot_local import resolution
+
+        class DecodingError(Exception):
+            """Stand-in for ``draccus.utils.DecodingError`` (name-matched)."""
+
+        class _FakeCustomPolicy:
+            pass
+
+        def _boom(_path, revision=None):
+            raise DecodingError("draccus could not decode this config")
+
+        monkeypatch.setattr(
+            "lerobot.configs.policies.PreTrainedConfig.from_pretrained",
+            staticmethod(_boom),
+        )
+        monkeypatch.setattr(resolution, "_ensure_policy_configs_registered", lambda: None)
+        monkeypatch.setattr(resolution, "_read_policy_type_from_config", lambda _p, revision=None: "custom_type")
+        monkeypatch.setattr(
+            resolution,
+            "resolve_policy_class_by_name",
+            lambda policy_type: _FakeCustomPolicy if policy_type == "custom_type" else None,
+        )
+
+        policy_class, policy_type = resolution.resolve_policy_class_from_hub("third/party-repo")
+
+        assert policy_class is _FakeCustomPolicy
+        assert policy_type == "custom_type"
+
+    def test_draccus_module_error_falls_back_to_manual_config(self, monkeypatch):
+        """The broad handler also recognises a draccus error by its defining
+        module (``type(exc).__module__`` contains ``"draccus"``), not only by the
+        ``DecodingError`` class name. A draccus ``ParsingError``-style exception
+        raised from a ``draccus.*`` module must likewise degrade to the manual
+        ``config.json`` fallback instead of propagating."""
+        from strands_robots.policies.lerobot_local import resolution
+
+        class _ParsingError(Exception):
+            """Stand-in for a draccus error identified by module, not name."""
+
+        _ParsingError.__module__ = "draccus.parsing"
+
+        class _FakeCustomPolicy:
+            pass
+
+        def _boom(_path, revision=None):
+            raise _ParsingError("malformed draccus config")
+
+        monkeypatch.setattr(
+            "lerobot.configs.policies.PreTrainedConfig.from_pretrained",
+            staticmethod(_boom),
+        )
+        monkeypatch.setattr(resolution, "_ensure_policy_configs_registered", lambda: None)
+        monkeypatch.setattr(resolution, "_read_policy_type_from_config", lambda _p, revision=None: "custom_type")
+        monkeypatch.setattr(
+            resolution,
+            "resolve_policy_class_by_name",
+            lambda policy_type: _FakeCustomPolicy if policy_type == "custom_type" else None,
+        )
+
+        policy_class, policy_type = resolution.resolve_policy_class_from_hub("third/party-repo")
+
+        assert policy_class is _FakeCustomPolicy
+        assert policy_type == "custom_type"
+
 
 class TestReadPolicyTypeFromConfig:
     """Behavioral tests for ``_read_policy_type_from_config`` -- the manual
@@ -1467,3 +1538,104 @@ def test_ensure_lerobot_policies_importable_falls_back_to_stub_when_init_fails()
     )
     assert result.returncode == 0, f"subprocess failed:\n{result.stderr}"
     assert "STUB_FALLBACK_INSTALLED" in result.stdout
+
+
+def test_ensure_lerobot_policies_importable_no_stub_when_policies_dir_absent():
+    """When the real ``__init__`` fails AND lerobot has no ``policies/`` dir on
+    disk, the helper must NOT install a stub.
+
+    The ``__path__``-only stub only makes sense when there is a real directory
+    for it to point at so individual policy subpackages remain importable. With
+    no such directory there is nothing to stub, so the helper returns leaving
+    ``lerobot.policies`` unregistered rather than installing a dangling stub
+    whose ``__path__`` points at a non-existent location.
+    """
+    result = _run_resolution_subprocess(
+        """
+        import importlib
+        import sys
+        import tempfile
+        import types
+
+        from strands_robots.policies.lerobot_local.resolution import (
+            _ensure_lerobot_policies_importable,
+        )
+
+        # A fake lerobot whose policies/ dir does NOT exist on disk.
+        _tmp = tempfile.mkdtemp()  # note: no 'policies' subdir created
+        _fake_lerobot = types.ModuleType("lerobot")
+        _fake_lerobot.__path__ = [_tmp]
+        sys.modules["lerobot"] = _fake_lerobot
+
+        for _name in [m for m in list(sys.modules) if m == "lerobot.policies"]:
+            del sys.modules[_name]
+
+        _real_import_module = importlib.import_module
+
+        def _fake_import_module(name, package=None):
+            if name == "lerobot.policies":
+                raise ImportError("simulated heavy __init__ failure")
+            return _real_import_module(name, package)
+
+        importlib.import_module = _fake_import_module
+
+        _ensure_lerobot_policies_importable()
+
+        assert sys.modules.get("lerobot.policies") is None, (
+            "no stub should be installed when lerobot has no policies/ directory"
+        )
+        print("NO_STUB_WITHOUT_DIR")
+        """
+    )
+    assert result.returncode == 0, f"subprocess failed:\n{result.stderr}"
+    assert "NO_STUB_WITHOUT_DIR" in result.stdout
+
+
+def test_ensure_lerobot_policies_importable_swallows_stub_install_error():
+    """A failure while building the fallback stub must be swallowed, not raised.
+
+    The helper is best-effort: if the real ``__init__`` fails and constructing
+    the ``__path__``-only stub itself errors (here lerobot exposes an empty
+    ``__path__`` so ``lerobot.__path__[0]`` raises ``IndexError``), the helper
+    must return cleanly and leave ``lerobot.policies`` unregistered rather than
+    let the stub-build exception escape into policy resolution.
+    """
+    result = _run_resolution_subprocess(
+        """
+        import importlib
+        import sys
+        import types
+
+        from strands_robots.policies.lerobot_local.resolution import (
+            _ensure_lerobot_policies_importable,
+        )
+
+        # A fake lerobot with an EMPTY __path__: Path(lerobot.__path__[0]) raises
+        # IndexError inside the stub-build block, which the helper must swallow.
+        _fake_lerobot = types.ModuleType("lerobot")
+        _fake_lerobot.__path__ = []
+        sys.modules["lerobot"] = _fake_lerobot
+
+        for _name in [m for m in list(sys.modules) if m == "lerobot.policies"]:
+            del sys.modules[_name]
+
+        _real_import_module = importlib.import_module
+
+        def _fake_import_module(name, package=None):
+            if name == "lerobot.policies":
+                raise ImportError("simulated heavy __init__ failure")
+            return _real_import_module(name, package)
+
+        importlib.import_module = _fake_import_module
+
+        # Must not raise.
+        _ensure_lerobot_policies_importable()
+
+        assert sys.modules.get("lerobot.policies") is None, (
+            "a failed stub build must leave lerobot.policies unregistered"
+        )
+        print("STUB_BUILD_ERROR_SWALLOWED")
+        """
+    )
+    assert result.returncode == 0, f"subprocess failed:\n{result.stderr}"
+    assert "STUB_BUILD_ERROR_SWALLOWED" in result.stdout
