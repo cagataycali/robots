@@ -765,6 +765,47 @@ class TestRelativeActions:
             assert LerobotTrainer().validate(spec) == []
 
 
+class TestExpertOnlyMethod:
+    """expert_only training method -> policy.train_expert_only on the built config.
+
+    ``method="expert_only"`` trains only the action expert of a VLA while the
+    (V)LM backbone stays frozen - the standard cheap-finetune recipe for the pi0
+    family. build_command emits ``--policy.train_expert_only=true`` for the CLI
+    launch path, but an in-process run consumes the ``build_config`` object
+    directly, so the flag must also be applied to the policy config there.
+    Before this was pinned only the CLI path was exercised; a build_config
+    regression that dropped the flag would silently full-finetune the backbone
+    (a far more expensive, different run) while reporting success.
+    """
+
+    def _expert_spec(self, dataset_root, tmp_path, ptype="pi0"):
+        return TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            steps=200,
+            method="expert_only",
+            extra={"policy_type": ptype},
+        )
+
+    def test_build_config_sets_train_expert_only(self, dataset_root, tmp_path):
+        cfg = LerobotTrainer(device="cpu").build_config(self._expert_spec(dataset_root, tmp_path))
+        assert cfg.policy.train_expert_only is True
+
+    def test_default_method_leaves_train_expert_only_at_preset(self, dataset_root, tmp_path):
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "out"),
+            steps=200,
+            extra={"policy_type": "pi0"},
+        )
+        assert spec.method == "full"
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # A plain (non-expert_only) run must not silently flip the flag on.
+        assert cfg.policy.train_expert_only is False
+
+
 class TestSampleWeightingRABC:
     """RA-BC sample-weighting wiring: extra['sample_weighting'] -> nested SampleWeightingConfig.
 
