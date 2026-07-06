@@ -768,6 +768,21 @@ git-from-source). The guidance now matches the declared extras; a regression
 test pins the docs to the pyproject requirements so the stale lore cannot
 return.
 
+### Fixed: `build_command` dropped `--peft.lora_alpha`, diverging from the LoRA config it trains
+
+`LerobotTrainer.build_command` is the argv-parity helper that documents the
+draccus CLI equivalent to the typed `TrainPipelineConfig` that `train(cfg)`
+consumes in-process, and it powers the native-parity drift check. Its LoRA
+branch emitted `--peft.method_type`, `--peft.r`, and `--peft.target_modules`
+but omitted `--peft.lora_alpha`, even though `build_config` wires
+`spec.lora_alpha` into `PeftConfig.lora_alpha`. `lora_alpha` sets the LoRA
+scaling numerator (scaling = `lora_alpha / r`), so the documented "equivalent
+command" for a LoRA fine-tune silently trained with lerobot's default alpha
+rather than the requested one -- a real behavioral divergence between the CLI
+description and the in-process run, and a hole in the parity guard. It is now
+emitted (only when set, mirroring `--peft.r` / `--peft.target_modules`), and a
+regression test pins the emitted flag to `cfg.peft.lora_alpha`.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

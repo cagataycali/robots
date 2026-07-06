@@ -96,11 +96,24 @@ class TestBuildCommand:
     def test_lora_flags(self, spec):
         spec.method = "lora"
         spec.lora_r = 16
+        spec.lora_alpha = 32
         spec.lora_target_modules = "q_proj,v_proj"
         cmd = LerobotTrainer(device="cpu").build_command(spec)
         assert "--peft.method_type=LORA" in cmd
         assert "--peft.r=16" in cmd
+        # lora_alpha (the LoRA scaling numerator; scaling = lora_alpha / r) is a
+        # real PeftConfig field that build_config wires; the argv-parity helper
+        # must emit it too or the documented "equivalent CLI" trains with a
+        # different LoRA scale than the in-process train(cfg).
+        assert "--peft.lora_alpha=32" in cmd
         assert "--peft.target_modules=q_proj,v_proj" in cmd
+
+    def test_lora_alpha_omitted_when_unset(self, spec):
+        # Only emitted when requested, mirroring --peft.r / --peft.target_modules.
+        spec.method = "lora"
+        spec.lora_r = 16
+        cmd = LerobotTrainer(device="cpu").build_command(spec)
+        assert not any(c.startswith("--peft.lora_alpha") for c in cmd)
 
     def test_expert_only_flag(self, spec):
         spec.method = "expert_only"
@@ -335,6 +348,26 @@ class TestBuildConfigAdditionalBranches:
         cfg = LerobotTrainer(device="cpu").build_config(spec)
         assert cfg.peft.r == 8
         assert cfg.peft.lora_alpha == 32
+
+    def test_lora_alpha_build_command_matches_build_config(self, spec):
+        """build_command's argv-parity for --peft.lora_alpha must agree with the
+        value build_config wires into cfg.peft.lora_alpha (drift guard, the
+        contract build_command exists to uphold)."""
+        pytest.importorskip("lerobot")
+        import dataclasses
+
+        from lerobot.configs.default import PeftConfig
+
+        if "lora_alpha" not in {f.name for f in dataclasses.fields(PeftConfig)}:
+            pytest.skip("installed lerobot PeftConfig has no lora_alpha field")
+        spec.method = "lora"
+        spec.lora_r = 8
+        spec.lora_alpha = 32
+        trainer = LerobotTrainer(device="cpu")
+        cmd = trainer.build_command(spec)
+        cfg = trainer.build_config(spec)
+        emitted = [c for c in cmd if c.startswith("--peft.lora_alpha=")]
+        assert emitted == [f"--peft.lora_alpha={cfg.peft.lora_alpha}"]
 
     def test_unsupported_lora_option_raises_actionable_error(self, spec, monkeypatch):
         """A LoRA option the installed PeftConfig rejects must raise a clear
