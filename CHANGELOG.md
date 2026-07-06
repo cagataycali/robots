@@ -688,6 +688,26 @@ boundary rounding; unlimited actuators (which never clamp) are skipped; the
 warning is de-duplicated so a 50Hz control loop never spams the log. No
 trajectory behaviour changes.
 
+### Added: `add_robot(keyframe=...)` spawns a robot in its canonical home pose
+
+MuJoCo Menagerie robots ship a canonical start pose in a MJCF `<keyframe>`
+(panda/ur5e/fr3/kuka `home`, aloha `neutral_pose`, quadruped/humanoid standing
+`home`). `add_robot` and `reset` ran `mj_resetData` -- the all-zero
+configuration -- so that shipped pose was unreachable outside the LIBERO
+benchmark adapter, and a robot spawned folded/collapsed rather than in its
+ready pose. A policy trained from the home pose then saw an out-of-distribution
+start that measurably suppressed its rollout. `add_robot(keyframe="home")` (or
+an integer index) now reads the named keyframe from the robot's source model,
+applies its `qpos` to the robot's joints by name at spawn, and records it so
+`reset()` restores it -- a keyframe spawn is sticky across resets, mirroring how
+a benchmark restores its canonical start each episode. `keyframe=None` (the
+default) keeps the historical zero-pose spawn byte-for-byte; an unknown
+keyframe name/index is a hard error that names the available keyframes rather
+than silently falling back to zeros. Newton `add_robot` accepts the argument
+for signature parity and rejects a non-`None` value with a clear
+not-yet-supported error. Exposed on the `simulation` agent tool as a `keyframe`
+string.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

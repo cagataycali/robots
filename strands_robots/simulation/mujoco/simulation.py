@@ -123,6 +123,15 @@ def _drop_unrecorded_cameras(observation: dict[str, Any], recorded: set[str] | N
     }
 
 
+def _jnt_qpos_width(mj: Any, jnt_type: int) -> int:
+    """qpos slice width for a MuJoCo joint type (free=7, ball=4, slide/hinge=1)."""
+    if jnt_type == int(mj.mjtJoint.mjJNT_FREE):
+        return 7
+    if jnt_type == int(mj.mjtJoint.mjJNT_BALL):
+        return 4
+    return 1
+
+
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
 # Tool schema is 357 lines of JSON. `tool_spec` property is on the LLM hot path
@@ -852,6 +861,7 @@ class MuJoCoSimEngine(
         data_config: str | None = None,
         position: list[float] | None = None,
         orientation: list[float] | None = None,
+        keyframe: str | int | None = None,
     ) -> dict[str, Any]:
         """Add a robot to the simulation via XML round-trip composition.
 
@@ -866,6 +876,12 @@ class MuJoCoSimEngine(
         URDF filename), with a numeric suffix appended if that label is already
         taken -- so ``add_robot(data_config="so101")`` twice yields ``so101``
         and ``so101_2`` instead of erroring.
+
+        ``keyframe`` (name ``str`` or index ``int``) spawns the robot in a
+        canonical pose declared by a ``<keyframe>`` in its source model
+        (e.g. panda ``"home"``) instead of the all-zero configuration, and the
+        pose is restored by ``reset()``. An unknown keyframe is a hard error
+        naming the available keyframes; ``None`` (default) keeps the zero pose.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -954,6 +970,16 @@ class MuJoCoSimEngine(
                 self._world.robots.pop(name, None)
                 return mesh_err
 
+            # Resolve the requested spawn keyframe from the robot's SOURCE
+            # model BEFORE mutating the scene, so an unknown keyframe fails
+            # cleanly (naming the available keyframes) without leaving a
+            # half-added robot behind.
+            home_by_short: dict[str, list[float]] | None = None
+            if keyframe is not None:
+                home_by_short, kf_err = self._keyframe_home_qpos(resolved_path, keyframe)
+                if kf_err is not None:
+                    return kf_err
+
             # Register the robot BEFORE attach so scene_ops can re-discover
             # its joint/actuator IDs inside the merged model.
             self._world.robots[name] = robot
@@ -997,15 +1023,16 @@ class MuJoCoSimEngine(
                         origin_robot=name,
                     )
 
-            # leave the freshly-added robot in a clean, deterministic
-            # zero state (qpos=qvel=ctrl=0) rather than silently settling
-            # under gravity for 100 steps. Callers that want a pre-settled
-            # pose should call step()/reset() explicitly. This makes
-            # `add_robot` -> `get_robot_state` observations meaningful for
-            # learning pipelines that expect t=0 to be a canonical start.
+            # Leave the freshly-added robot in a clean, deterministic state:
+            # the zero configuration by default, or -- when a spawn keyframe was
+            # requested -- that keyframe's canonical home pose. Either way t=0 is
+            # a well-defined start for learning/eval pipelines (no silent settle
+            # under gravity). Callers that want a pre-settled pose call step().
             mj.mj_resetData(self._world._model, self._world._data)
             self._world.sim_time = 0.0
             self._world.step_count = 0
+            if home_by_short:
+                self._apply_home_qpos_to_robot(robot, home_by_short)
             mj.mj_forward(self._world._model, self._world._data)
 
             # Attach the robot to the mesh as its own peer so the agent can
@@ -1044,6 +1071,120 @@ class MuJoCoSimEngine(
             self._world.robots.pop(name, None)
             logger.error("Failed to add robot '%s': %s", name, e)
             return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
+
+    def _keyframe_home_qpos(
+        self, resolved_path: str, keyframe: str | int
+    ) -> tuple[dict[str, list[float]] | None, dict[str, Any] | None]:
+        """Read a robot's ``<keyframe>`` home pose from its SOURCE model.
+
+        Returns ``(home_by_short_joint, None)`` mapping each source joint's
+        short name to its qpos slice, or ``(None, error_result)`` when the
+        source model cannot be compiled or the keyframe name/index is unknown
+        (the error names the available keyframes so the caller can fix it).
+        """
+        mj = self._mj
+        fname = os.path.basename(resolved_path)
+        # ``bool`` is an ``int`` subclass; reject it explicitly so True/False is
+        # never silently taken as keyframe index 1/0.
+        if isinstance(keyframe, bool):
+            return None, {
+                "status": "error",
+                "content": [{"text": "keyframe must be a keyframe name (str) or index (int), not a bool."}],
+            }
+        try:
+            src = mj.MjModel.from_xml_path(resolved_path)
+        except Exception as e:  # noqa: BLE001 - surface any compile failure to the caller
+            return None, {
+                "status": "error",
+                "content": [{"text": f"Cannot read keyframe from '{fname}': {e}"}],
+            }
+        names = [mj.mj_id2name(src, mj.mjtObj.mjOBJ_KEY, i) for i in range(src.nkey)]
+        if src.nkey == 0:
+            return None, {
+                "status": "error",
+                "content": [{"text": f"Model '{fname}' declares no <keyframe>; cannot apply keyframe={keyframe!r}."}],
+            }
+        if isinstance(keyframe, int):
+            if keyframe < 0 or keyframe >= src.nkey:
+                return None, {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"keyframe index {keyframe} out of range; '{fname}' has "
+                                f"{src.nkey} keyframe(s): {names}."
+                            )
+                        }
+                    ],
+                }
+            idx = keyframe
+        else:
+            if keyframe not in names:
+                avail = ", ".join(repr(n) for n in names)
+                return None, {
+                    "status": "error",
+                    "content": [{"text": f"Keyframe {keyframe!r} not found in '{fname}'. Available: {avail}."}],
+                }
+            idx = names.index(keyframe)
+        kq = src.key_qpos[idx]
+        home: dict[str, list[float]] = {}
+        for j in range(src.njnt):
+            jn = mj.mj_id2name(src, mj.mjtObj.mjOBJ_JOINT, j)
+            if not jn:
+                continue
+            adr = int(src.jnt_qposadr[j])
+            width = _jnt_qpos_width(mj, int(src.jnt_type[j]))
+            home[jn] = [float(x) for x in kq[adr : adr + width]]
+        return home, None
+
+    def _apply_home_qpos_to_robot(self, robot: SimRobot, home_by_short: dict[str, list[float]]) -> None:
+        """Write ``home_by_short`` onto ``robot``'s joints in the live model and
+        record the applied pose (keyed by namespaced joint name) on the robot so
+        :meth:`reset` can restore it. The caller runs ``mj_forward`` afterwards.
+        """
+        mj = self._mj
+        assert self._world is not None and self._world._model is not None and self._world._data is not None
+        model = self._world._model
+        data = self._world._data
+        pfx = robot.namespace or ""
+        stored: dict[str, list[float]] = {}
+        for j in range(model.njnt):
+            jn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, j)
+            if not jn:
+                continue
+            short = jn[len(pfx) :] if pfx and jn.startswith(pfx) else jn
+            vals = home_by_short.get(short)
+            if vals is None:
+                continue
+            adr = int(model.jnt_qposadr[j])
+            width = _jnt_qpos_width(mj, int(model.jnt_type[j]))
+            if len(vals) != width:
+                # width mismatch (unexpected for a matching source model): skip
+                # defensively rather than corrupt an adjacent joint's slice.
+                continue
+            data.qpos[adr : adr + width] = vals
+            stored[jn] = vals
+        robot.home_qpos = stored
+
+    def _restore_home_poses(self) -> None:
+        """Re-apply every robot's captured keyframe home pose onto the live
+        ``qpos`` (a no-op for robots spawned without a keyframe). The caller
+        holds the model lock and runs ``mj_forward`` afterwards.
+        """
+        mj = self._mj
+        assert self._world is not None and self._world._model is not None and self._world._data is not None
+        model = self._world._model
+        data = self._world._data
+        for robot in self._world.robots.values():
+            hq = getattr(robot, "home_qpos", None)
+            if not hq:
+                continue
+            for jn, vals in hq.items():
+                jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jn)
+                if jid < 0:
+                    continue
+                adr = int(model.jnt_qposadr[jid])
+                data.qpos[adr : adr + len(vals)] = vals
 
     def remove_robot(self, name: str) -> dict[str, Any]:
         """Remove a robot and every element it injected (bodies, actuators,
@@ -2033,6 +2174,12 @@ class MuJoCoSimEngine(
             # here so reset() leaves a fully consistent, render-ready state,
             # matching the mj_resetData -> mj_forward idiom used by
             # _compile_world and load_scene.
+            #
+            # Re-apply any per-robot keyframe home pose captured at add_robot
+            # time (mj_resetData alone drops it back to the zero configuration),
+            # so a keyframe spawn is sticky across resets -- mirroring how a
+            # benchmark restores its canonical start pose each episode.
+            self._restore_home_poses()
             mj.mj_forward(self._world._model, self._world._data)
             self._world.sim_time = 0.0
             self._world.step_count = 0

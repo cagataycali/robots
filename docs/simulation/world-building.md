@@ -25,6 +25,25 @@ sim.add_camera(name="overhead", position=[0.0, 0.0, 1.5], target=[0.0, 0.0, 0.0]
 | Procedural scene | loop over `add_object` |
 | Raw MJCF tweak without recompile | `patch_scene_mjcf(ops)` |
 
+## Spawn pose (keyframes)
+
+By default a robot spawns at the all-zero joint configuration. Many MuJoCo
+Menagerie models ship a canonical ready pose in a MJCF `<keyframe>` (panda,
+ur5e, fr3, kuka `home`; aloha `neutral_pose`; quadrupeds/humanoids a standing
+`home`). Pass `keyframe=` to spawn in that pose instead - important when a
+policy was trained from the home pose, since the zero configuration is
+out-of-distribution:
+
+```python
+sim.add_robot(name="panda", data_config="panda", keyframe="home")  # or keyframe=0
+```
+
+The pose is applied to the robot's joints by name and is restored by `reset()`,
+so a keyframe spawn is sticky across episodes. An unknown keyframe name/index
+is an error that lists the model's available keyframes. `keyframe=None` (the
+default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
+`keyframe=` as not-yet-supported.)
+
 ## Procedural objects
 
 ```python

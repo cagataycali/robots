@@ -214,7 +214,10 @@ class SimEngine(ABC):
         first action, so a backend that leaves derived state stale would feed
         the policy's first inference of every episode a degenerate observation.
         The MuJoCo backend enforces this by running ``mj_forward`` after
-        ``mj_resetData`` (which alone zeroes all derived quantities).
+        ``mj_resetData`` (which alone zeroes all derived quantities). It also
+        re-applies any per-robot home pose captured from an
+        ``add_robot(keyframe=...)`` spawn, so a keyframe pose survives a reset
+        instead of collapsing to the zero configuration.
         """
         ...
 
@@ -238,8 +241,21 @@ class SimEngine(ABC):
         data_config: str | None = None,
         position: list[float] | None = None,
         orientation: list[float] | None = None,
+        keyframe: str | int | None = None,
     ) -> dict[str, Any]:
-        """Add a robot to the simulation."""
+        """Add a robot to the simulation.
+
+        ``keyframe`` optionally spawns the robot in a canonical pose declared
+        by a ``<keyframe>`` in its source model (e.g. panda ``"home"``, aloha
+        ``"neutral_pose"``) instead of the default all-zero configuration.
+        Pass the keyframe name (``str``) or index (``int``). The pose is
+        applied to the robot's joints by name and stored so :meth:`reset`
+        restores it (a keyframe spawn is sticky across resets, matching how a
+        benchmark restores its canonical start each episode). ``None`` (the
+        default) keeps the historical zero-pose spawn. An unknown keyframe
+        name/index is a hard error that names the available keyframes; it
+        never silently falls back to zeros.
+        """
         ...
 
     @abstractmethod

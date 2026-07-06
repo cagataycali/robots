@@ -317,6 +317,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         data_config: str | None = None,
         position: list[float] | None = None,
         orientation: list[float] | None = None,
+        keyframe: str | int | None = None,
         source: str | None = None,
     ) -> dict[str, Any]:
         """Add a robot to the world from a registered name, MJCF, or URDF.
@@ -342,6 +343,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 the registry; ``"robot_descriptions"`` resolves the URDF directly
                 via ``robot_descriptions.<name>_description.URDF_PATH``. See
                 :func:`~strands_robots.registry.discovery.list_urdf_discoverable`.
+            keyframe: Canonical spawn pose. Not yet supported on the Newton
+                backend (the MuJoCo backend applies a source ``<keyframe>``);
+                passing a non-``None`` value is a clean error rather than a
+                silent ignore.
 
         Returns:
             Status dict including the resolved joint names.
@@ -358,6 +363,18 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                         "text": (
                             f"Unknown source {source!r}. "
                             f"Valid: {[s for s in _ROBOT_SOURCES if s is not None]} or None (default)."
+                        )
+                    }
+                ],
+            }
+        if keyframe is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "keyframe= is not yet supported on the Newton backend; "
+                            "spawn keyframe home poses are a MuJoCo-backend feature."
                         )
                     }
                 ],
