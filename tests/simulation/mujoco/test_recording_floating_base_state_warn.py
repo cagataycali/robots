@@ -106,6 +106,7 @@ def sim():
     try:
         s.cleanup()
     except Exception:
+        # Best-effort teardown: cleanup failures must not mask the test result.
         pass
 
 
