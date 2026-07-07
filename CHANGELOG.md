@@ -799,6 +799,23 @@ liable to conflict with the pinned floor. The hints now point at a plain PyPI
 runtime-error counterpart of the docstring/docs guidance corrected in the
 post-0.6 dependency-guidance pass, which left these `.py` strings stale.
 
+### Fixed: mobile-base observation dropped all base state when the floating base is an unnamed free joint
+
+`get_observation` surfaces floating-base IMU-style signals (`base_quat`,
+`base_ang_vel`) only when the free joint was found while iterating
+`robot.joint_names`. That holds for a humanoid whose base joint is named (e.g.
+the Unitree G1's `floating_base_joint`), but a mobile manipulator such as
+LeKiwi carries its base on an **unnamed** `<freejoint/>` that is not in
+`joint_names` (those are the actuated wheel/arm joints). Such a robot was
+silently observed as a fixed-base arm -- its observation carried no base
+orientation or angular velocity -- so a locomotion/navigation controller (or a
+recorder configured to log base state) could not sense the base heading or turn
+rate. The base free joint is now recovered from the kinematic tree (walk
+up from an actuated joint to its ancestor base body), so any floating base
+surfaces base state regardless of whether its free joint is named. A sibling
+free-jointed task object (a cube) is never mistaken for the base, and a
+fixed-base arm still surfaces no base state.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

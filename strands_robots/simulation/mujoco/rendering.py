@@ -248,6 +248,34 @@ class RenderingMixin:
             return None
         return state.get("viz_option")
 
+    def _robot_base_free_joint(self, model: Any, robot: Any, pfx: str) -> int:
+        """Return the id of the robot's floating-base free joint, or ``-1``.
+
+        Fallback for a floating base that is NOT a named entry in
+        ``robot.joint_names`` (e.g. a mobile base whose ``<freejoint>`` is
+        unnamed). Resolves the robot's first actuated joint, then walks up the
+        body tree and returns the free joint attached to an ancestor body. This
+        matches only the robot's OWN base: a sibling task object (a free-jointed
+        cube) is never on the ancestor chain of an actuated joint, and a
+        fixed-base arm has no ancestor free joint (returns ``-1``).
+        """
+        mj = _ensure_mujoco()
+        for jnt_name in robot.joint_names:
+            lookup = pfx + jnt_name if pfx else jnt_name
+            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
+            if jnt_id < 0 and pfx:
+                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            if jnt_id < 0:
+                continue
+            body = int(model.jnt_bodyid[jnt_id])
+            while body > 0:
+                for j in range(model.njnt):
+                    if int(model.jnt_bodyid[j]) == body and model.jnt_type[j] == mj.mjtJoint.mjJNT_FREE:
+                        return j
+                body = int(model.body_parentid[body])
+            break
+        return -1
+
     def _get_sim_observation(self, robot_name: str, *, skip_images: bool = False) -> dict[str, Any]:
         """Get observation from sim: joint state + cameras (unless skipped).
 
@@ -289,9 +317,18 @@ class RenderingMixin:
                 # velocity-feedback controllers (WBC) read it to close the loop.
                 obs[f"{jnt_name}.vel"] = float(data.qvel[model.jnt_dofadr[jnt_id]])
 
+        # A floating base that is NOT a named entry in ``robot.joint_names``
+        # (e.g. a mobile base whose ``<freejoint>`` is unnamed, like LeKiwi) is
+        # missed by the loop above. Recover it from the kinematic tree so a
+        # mobile manipulator surfaces base state instead of being silently
+        # treated as a fixed-base arm.
+        if free_jnt_id < 0:
+            free_jnt_id = self._robot_base_free_joint(model, robot, pfx)
+
         # Floating-base IMU-style signals from the free joint, when present.
         # WBC and other locomotion controllers consume ``base_quat`` (the base
-        # orientation, w,x,y,z) and ``base_ang_vel`` (rad/s). Both are additive
+        # orientation, w,x,y,z) and ``base_ang_vel`` (rad/s); a mobile
+        # manipulator uses them as its base heading/turn-rate. Both are additive
         # and absent for fixed-base robots (arms), so non-locomotion callers
         # never see them.
         if free_jnt_id >= 0:
