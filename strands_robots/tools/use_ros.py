@@ -67,6 +67,7 @@ import time
 from typing import Any
 
 from strands import tool
+from strands.types.tools import ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -78,8 +79,9 @@ _NAME_RE = re.compile(r"^[A-Za-z0-9_/~{}]+$")
 _TYPE_RE = re.compile(r"^[A-Za-z0-9_]+/[A-Za-z0-9_]+/[A-Za-z0-9_]+$")
 
 # Security: topics blocked from LLM-initiated publish. Safety-critical command
-# and sensor topics that should not be written to without explicit operator
-# authorization. Configurable via STRANDS_ROS2_PUBLISH_BLOCKLIST (comma-separated).
+# topics gated by a human-in-the-loop (HIL) interrupt. An operator can
+# pre-approve individual topics via STRANDS_ROS2_PUBLISH_ALLOW (comma-separated)
+# or bypass the gate entirely with BYPASS_TOOL_CONSENT=true.
 _DEFAULT_PUBLISH_BLOCKLIST = frozenset({
     '/cmd_vel', '/cmd_vel_unstamped',
     '/joint_command', '/joint_trajectory',
@@ -89,27 +91,80 @@ _DEFAULT_PUBLISH_BLOCKLIST = frozenset({
     '/navigate_to_pose', '/follow_path',
 })
 
-_PUBLISH_BLOCKLIST_ENV = 'STRANDS_ROS2_PUBLISH_BLOCKLIST'
+_PUBLISH_ALLOW_ENV = 'STRANDS_ROS2_PUBLISH_ALLOW'
+_BYPASS_CONSENT_ENV = 'BYPASS_TOOL_CONSENT'
+
+_APPROVE_RESPONSES = frozenset({"y", "yes", "approve", "approved"})
+
+
+def _approve_response(response: object) -> bool:
+    """Accept affirmative operator responses from the HIL interrupt."""
+    return isinstance(response, str) and response.strip().lower() in _APPROVE_RESPONSES
+
+
+def _match_blocklist(topic: str, blocked: frozenset[str]) -> bool:
+    """Check exact match and namespace-stripped match against a topic set."""
+    parts = topic.rsplit('/', 1)
+    base_topic = '/' + parts[-1] if len(parts) > 1 else topic
+    return topic in blocked or base_topic in blocked
 
 
 def _is_publish_blocked(topic: str) -> str | None:
-    """Return an error message if topic is blocked for publish, else None."""
-    env_override = os.environ.get(_PUBLISH_BLOCKLIST_ENV)
-    if env_override is not None:
-        blocked = frozenset(t.strip() for t in env_override.split(',') if t.strip())
-    else:
-        blocked = _DEFAULT_PUBLISH_BLOCKLIST
+    """Return an error message if topic is in the default blocklist, else None."""
+    if _match_blocklist(topic, _DEFAULT_PUBLISH_BLOCKLIST):
+        return f"Topic {topic!r} is blocked for publish (safety-critical command surface)."
+    return None
 
-    # Check exact match and also strip robot namespace prefix
-    # e.g. /my_robot/cmd_vel should match /cmd_vel in the blocklist
-    parts = topic.rsplit('/', 1)
-    base_topic = '/' + parts[-1] if len(parts) > 1 else topic
 
-    if topic in blocked or base_topic in blocked:
-        return (
-            f"Topic {topic!r} is blocked for publish (safety-critical command surface). "
-            f"Set {_PUBLISH_BLOCKLIST_ENV} to customize, or use an empty value to disable."
+def _gate_publish(topic: str, tool_context: ToolContext | None) -> dict[str, Any] | None:
+    """HIL gate for publish to blocked topics.
+
+    Returns an error dict to halt the publish, or None to proceed.
+    Three modes:
+    - STRANDS_ROS2_PUBLISH_ALLOW contains the topic -> allow silently
+    - BYPASS_TOOL_CONSENT=true -> allow with WARNING log
+    - Otherwise -> prompt the operator via tool_context.interrupt()
+    """
+    block_msg = _is_publish_blocked(topic)
+    if block_msg is None:
+        return None
+
+    allow_raw = os.environ.get(_PUBLISH_ALLOW_ENV)
+    if allow_raw is not None:
+        allowed = frozenset(t.strip() for t in allow_raw.split(',') if t.strip())
+        if _match_blocklist(topic, allowed):
+            logger.debug("publish to %s allowed via %s", topic, _PUBLISH_ALLOW_ENV)
+            return None
+
+    if os.environ.get(_BYPASS_CONSENT_ENV, "").lower() == "true":
+        logger.warning("BYPASS_TOOL_CONSENT: allowing publish to blocked topic %s", topic)
+        return None
+
+    if tool_context is None:
+        return _err(
+            f"{block_msg} No tool_context available for operator approval. "
+            f"Set {_PUBLISH_ALLOW_ENV} or {_BYPASS_CONSENT_ENV}=true to allow in headless mode."
         )
+
+    try:
+        response = tool_context.interrupt(
+            "use_ros-publish-approval",
+            reason={
+                "action": "publish",
+                "topic": topic,
+                "warning": f"{block_msg} Reply 'y' to approve, anything else to deny.",
+            },
+        )
+    except RuntimeError as exc:
+        return _err(
+            f"publish to {topic!r} requires operator approval, "
+            f"but interrupts are not available: {exc}"
+        )
+
+    if not _approve_response(response):
+        return _err(f"publish to {topic!r} was declined by the operator.")
+
+    logger.info("publish to %s approved via operator interrupt", topic)
     return None
 
 
@@ -434,9 +489,10 @@ def _action_send_goal(
         client.destroy()
 
 
-@tool
+@tool(context=True)
 def use_ros(
     action: str,
+    tool_context: ToolContext | None = None,
     topic: str | None = None,
     service: str | None = None,
     action_name: str | None = None,
@@ -534,11 +590,10 @@ def use_ros(
                 return _ok(f"echo {topic} ({msg_type}):\n{json.dumps(samples, indent=2, default=str)}")
 
             if action == "publish":
-                # Security: check publish blocklist before proceeding
                 if topic:
-                    block_err = _is_publish_blocked(topic)
-                    if block_err:
-                        return {"status": "error", "content": [{"text": block_err}]}
+                    gate_err = _gate_publish(topic, tool_context)
+                    if gate_err:
+                        return gate_err
 
                 if not topic or not type:
                     return _err("publish requires topic and type")

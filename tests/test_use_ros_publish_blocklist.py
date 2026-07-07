@@ -1,10 +1,17 @@
-"""Regression tests for use_ros publish topic blocklist."""
+"""Regression tests for use_ros publish topic blocklist + HIL gate."""
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
 
-from strands_robots.tools.use_ros import _is_publish_blocked
+from strands_robots.tools.use_ros import (
+    _approve_response,
+    _gate_publish,
+    _is_publish_blocked,
+    _match_blocklist,
+)
 
 
 class TestIsPublishBlocked:
@@ -66,13 +73,65 @@ class TestIsPublishBlocked:
         err = _is_publish_blocked("/joint_trajectory_controller/joint_trajectory")
         assert err is not None
 
-    def test_env_override_disables(self, monkeypatch):
-        """Empty STRANDS_ROS2_PUBLISH_BLOCKLIST disables the blocklist entirely."""
-        monkeypatch.setenv("STRANDS_ROS2_PUBLISH_BLOCKLIST", "")
-        assert _is_publish_blocked("/cmd_vel") is None
 
-    def test_env_override_custom_list(self, monkeypatch):
-        monkeypatch.setenv("STRANDS_ROS2_PUBLISH_BLOCKLIST", "/custom_danger,/other_bad")
-        assert _is_publish_blocked("/custom_danger") is not None
-        # Default blocklist item should now pass
-        assert _is_publish_blocked("/cmd_vel") is None
+class TestGatePublish:
+    """Pin the HIL gate contract: allowlist, bypass, interrupt, decline."""
+
+    def test_non_blocked_topic_passes(self):
+        assert _gate_publish("/my_topic", None) is None
+
+    def test_blocked_topic_no_context_returns_error(self):
+        result = _gate_publish("/cmd_vel", None)
+        assert result is not None
+        assert result["status"] == "error"
+        assert "approval" in result["content"][0]["text"].lower()
+
+    def test_allowlist_skips_gate(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_ROS2_PUBLISH_ALLOW", "/cmd_vel")
+        assert _gate_publish("/cmd_vel", None) is None
+
+    def test_allowlist_namespaced(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_ROS2_PUBLISH_ALLOW", "/cmd_vel")
+        assert _gate_publish("/my_robot/cmd_vel", None) is None
+
+    def test_allowlist_does_not_cover_other_topics(self, monkeypatch):
+        monkeypatch.setenv("STRANDS_ROS2_PUBLISH_ALLOW", "/cmd_vel")
+        result = _gate_publish("/emergency_stop", None)
+        assert result is not None
+        assert result["status"] == "error"
+
+    def test_bypass_consent_allows(self, monkeypatch):
+        monkeypatch.setenv("BYPASS_TOOL_CONSENT", "true")
+        assert _gate_publish("/cmd_vel", None) is None
+
+    def test_interrupt_approved(self):
+        ctx = MagicMock()
+        ctx.interrupt.return_value = "y"
+        assert _gate_publish("/cmd_vel", ctx) is None
+        ctx.interrupt.assert_called_once()
+        reason = ctx.interrupt.call_args[1]["reason"]
+        assert reason["action"] == "publish"
+        assert reason["topic"] == "/cmd_vel"
+
+    def test_interrupt_declined(self):
+        ctx = MagicMock()
+        ctx.interrupt.return_value = "no"
+        result = _gate_publish("/cmd_vel", ctx)
+        assert result is not None
+        assert result["status"] == "error"
+        assert "declined" in result["content"][0]["text"]
+
+    def test_interrupt_runtime_error_fails_closed(self):
+        ctx = MagicMock()
+        ctx.interrupt.side_effect = RuntimeError("no agent loop")
+        result = _gate_publish("/cmd_vel", ctx)
+        assert result is not None
+        assert result["status"] == "error"
+
+    @pytest.mark.parametrize("response", ["y", "Y", "yes", "YES", "approve", "Approved"])
+    def test_approve_response_affirmative(self, response):
+        assert _approve_response(response) is True
+
+    @pytest.mark.parametrize("response", ["n", "no", "nope", "", 42, None])
+    def test_approve_response_negative(self, response):
+        assert _approve_response(response) is False
