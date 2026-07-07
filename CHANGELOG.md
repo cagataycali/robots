@@ -24,6 +24,26 @@ is forwarded per request and applied server-side before chunk-seam blending.
 Install with `pip install 'strands-robots[inference]'` (pulls only
 `websockets`). See `docs/inference/remote.md`.
 
+### Added: regression guard that the lerobot policy resolver covers every registered policy family
+
+The `lerobot_local` policy-class resolver enumerates policy types dynamically:
+`_ensure_policy_configs_registered` walks `lerobot.policies` at import time and
+lets each `@PreTrainedConfig.register_subclass("<type>")` decorator populate
+lerobot's draccus choice registry, which `list_policy_types()` reports. This
+means a new policy family a future lerobot release ships is picked up with no
+strands-side edit -- but nothing pinned that the dynamic walk actually reaches
+every registered family, so a future lerobot layout change that made the walk
+under-populate would surface only as a runtime `create_policy(policy_type=...)`
+resolver miss for a user. A new version-agnostic test derives the ground-truth
+set of families directly from the installed lerobot source (the
+`register_subclass` decorator arguments under
+`lerobot/policies/*/configuration_*.py`) and asserts `list_policy_types()`
+covers all of them. It never hard-codes a policy count or name list, so it
+tracks whatever lerobot the environment resolves (currently 19 families in
+lerobot 0.6.x). Verified the resolver already covers the full lerobot 0.6.x
+roster; `rtc` (an inference-time action-chunking wrapper, `RTCProcessor`) is
+correctly excluded because it is not a `PreTrainedPolicy` and registers no
+config.
 
 ### Fixed: session `status` tool results dropped their telemetry via a `**spread` top-level smuggle
 
