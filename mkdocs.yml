@@ -54,7 +54,9 @@ nav:
   - Overview: training/overview.md
   - VLA-on-G1 Workflow: training/vla_workflow.md
   - Reinforcement Learning: training/rl.md
-- Recording & Datasets: recording.md
+- Datasets:
+  - Recording: recording.md
+  - Steerable Annotation: data/annotation.md
 - Remote Inference: inference/remote.md
 - Examples:
   - Overview: examples/overview.md
