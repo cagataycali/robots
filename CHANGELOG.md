@@ -783,6 +783,22 @@ description and the in-process run, and a hole in the parity guard. It is now
 emitted (only when set, mirroring `--peft.r` / `--peft.target_modules`), and a
 regression test pins the emitted flag to `cfg.peft.lora_alpha`.
 
+### Fixed: lerobot "too old / absent" install hints recommended a from-source install after the `>=0.6.0` bump
+
+The user-facing error hints for a missing/too-old lerobot -- MolmoAct2's
+`_LEROBOT_VERSION_HINT` and the `lerobot.rewards` gates in `training.reward` /
+`LerobotTrainer.validate` -- still claimed lerobot was "not yet on PyPI (latest
+release 0.5.1)" and told the caller to install it from source
+(`lerobot @ git+https://github.com/huggingface/lerobot.git`). Since the core
+dependency is now pinned to `lerobot[feetech,dataset]>=0.6.0`, lerobot 0.6 --
+including `MolmoAct2Policy` (lerobot PR #3604) and the `lerobot.rewards`
+package -- ships straight from PyPI through the `strands-robots[lerobot]` /
+`[molmoact2]` extras, so a from-source `git+` install is both unnecessary and
+liable to conflict with the pinned floor. The hints now point at a plain PyPI
+(re)install of the extra and name the correct `>= 0.6.0` floor. This is the
+runtime-error counterpart of the docstring/docs guidance corrected in the
+post-0.6 dependency-guidance pass, which left these `.py` strings stale.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

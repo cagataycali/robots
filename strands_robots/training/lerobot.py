@@ -572,7 +572,7 @@ class LerobotTrainer(Trainer):
         if importlib.util.find_spec("lerobot.rewards") is None:
             problems.append(
                 "the installed lerobot has no reward-model support (no 'lerobot.rewards'); "
-                "requires lerobot >= 0.5.2 (install from source)"
+                "requires lerobot >= 0.6.0 -- reinstall 'strands-robots[lerobot]'"
             )
         return problems
 
