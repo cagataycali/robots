@@ -1404,6 +1404,83 @@ class TestRTCInit:
         assert policy._rtc_enabled is False
 
 
+class TestRTCConfigSchemaContract:
+    """Pin RTC config-reading against lerobot's REAL ``RTCConfig`` schema.
+
+    :meth:`LerobotLocalPolicy._init_rtc` auto-detects RTC from a loaded
+    checkpoint's ``config.rtc_config`` and reads three fields off it:
+    ``enabled``, ``execution_horizon`` and ``max_guidance_weight``. The rest of
+    the RTC test-suite mocks ``rtc_config`` with a bare ``MagicMock``, which
+    auto-provides *any* attribute name; if lerobot renamed or dropped one of
+    those fields in a future release, ``_init_rtc`` would silently fall back to
+    its defaults (disabling RTC or mis-sizing the re-query interval) while the
+    MagicMock-based tests kept passing. These tests exercise the same code path
+    against lerobot's genuine ``RTCConfig`` so a schema drift fails loudly here
+    instead of silently in production. They self-skip when lerobot is absent.
+    """
+
+    def _real_rtc_config(self, **overrides):
+        rtc_cfg_mod = pytest.importorskip("lerobot.policies.rtc.configuration_rtc")
+        return rtc_cfg_mod.RTCConfig(**overrides)
+
+    def test_lerobot_rtc_config_exposes_the_fields_init_rtc_reads(self):
+        """lerobot's RTCConfig must keep the fields ``_init_rtc`` reads by name.
+
+        Drift guard: a rename/removal of any of these upstream is invisible to a
+        ``getattr(rtc_config, name, default)`` read (it just returns the default),
+        so assert the real dataclass still carries every field the policy relies
+        on. Fails the moment lerobot changes the contract.
+        """
+        cfg = self._real_rtc_config()
+        for field in ("enabled", "execution_horizon", "max_guidance_weight"):
+            assert hasattr(cfg, field), (
+                f"lerobot RTCConfig no longer exposes '{field}'; "
+                "LerobotLocalPolicy._init_rtc reads it by name and would "
+                "silently fall back to a default. Update _init_rtc for the new schema."
+            )
+
+    def test_init_rtc_reads_execution_horizon_from_real_config(self):
+        """A real 0.6-format ``RTCConfig(enabled=True, ...)`` propagates verbatim.
+
+        The MagicMock variants only prove the read logic; this proves the read
+        keys match lerobot's actual field names by feeding the genuine dataclass
+        through ``_init_rtc`` and asserting the values land on the policy.
+        """
+        cfg = self._real_rtc_config(enabled=True, execution_horizon=15, max_guidance_weight=8.0)
+        policy = _make_policy()
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk = MagicMock()
+        mock_policy.config.rtc_config = cfg
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = None  # auto-detect from the real config
+
+        policy._init_rtc()
+
+        assert policy._rtc_enabled is True
+        assert policy.supports_rtc is True
+        assert policy._rtc_execution_horizon == 15
+        assert policy._rtc_max_guidance_weight == 8.0
+        # execution_horizon is the re-query interval the SIM drives RTC at.
+        assert policy.execution_horizon == 15
+
+    def test_init_rtc_disabled_config_stays_off_with_real_config(self):
+        """A real ``RTCConfig(enabled=False)`` leaves auto-detected RTC disabled."""
+        cfg = self._real_rtc_config(enabled=False)
+        policy = _make_policy()
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk = MagicMock()
+        mock_policy.config.rtc_config = cfg
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = None  # auto-detect from the real config
+
+        policy._init_rtc()
+
+        assert policy._rtc_enabled is False
+        assert policy.supports_rtc is False
+
+
 class TestRTCInference:
     """Tests for RTC inference path."""
 
