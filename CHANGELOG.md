@@ -869,6 +869,21 @@ are now built from Newton's authoritative per-joint coordinate/DOF starts
 fixed-base arm (all revolute joints) is unaffected -- its indices are already
 the joint ordinals.
 
+### Fixed: remote inference server rejected every image observation over 1 MiB
+
+`PolicyServer` opened its WebSocket with `serve(...)` at the library default
+1 MiB (`2**20`) frame limit, while `RemotePolicy` correctly passes
+`max_size=None` to `connect(...)`. A real VLA observation carries camera
+frames -- a single 640x480 RGB frame base64-encodes to ~1.2 MiB and a
+multi-camera observation is several MiB -- so the server closed the
+connection with `1009 (message too big)` on the first image-carrying
+`get_actions` request, before the wrapped policy ever ran. The whole remote
+path was therefore usable only with an image-free policy. The server now
+passes `max_size=None` (and, matching the client, `compression=None`) to both
+`serve(...)` call sites so large multi-camera observations stream in. Verified
+end to end by serving a SmolVLA policy over the wire and driving a MuJoCo
+rollout to a recorded LeRobotDataset.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
