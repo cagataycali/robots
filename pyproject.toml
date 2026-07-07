@@ -292,6 +292,14 @@ vera-sim = [
 ollama = [
     "strands-agents[ollama]>=1.0.0,<2.0.0",
 ]
+# Remote policy inference (client/server split): stream observations from a
+# CPU/edge robot host to a remote GPU PolicyServer and receive action chunks
+# back over a portable WS-JSON WebSocket protocol. Pulls only `websockets`
+# (numpy-version agnostic, so it composes with lerobot's numpy>=2). See
+# strands_robots/inference/ and docs/inference/remote.md.
+inference = [
+    "websockets>=12.0",
+]
 all = [
     "strands-robots[groot-service]",
     "strands-robots[moveit2]",
@@ -304,6 +312,7 @@ all = [
     "strands-robots[motionbricks]",
     "strands-robots[molmoact2]",
     "strands-robots[ollama]",
+    "strands-robots[inference]",
 ]
 dev = [
     "pytest>=6.0,<10.0.0",

@@ -43,6 +43,7 @@ nav:
   - MotionBricks (G1 generative motion): policies/motionbricks.md
   - LeRobot Local: policies/lerobot-local.md
   - MolmoAct2 (SO-100/101): policies/molmoact2.md
+  - Remote (WebSocket inference): policies/remote.md
   - Camera Naming: policies/camera-naming.md
   - Custom Policies: policies/custom-policies.md
 - Real Hardware:
@@ -54,6 +55,7 @@ nav:
   - VLA-on-G1 Workflow: training/vla_workflow.md
   - Reinforcement Learning: training/rl.md
 - Recording & Datasets: recording.md
+- Remote Inference: inference/remote.md
 - Examples:
   - Overview: examples/overview.md
 - Architecture: architecture.md

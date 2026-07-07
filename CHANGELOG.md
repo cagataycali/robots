@@ -5,6 +5,26 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: remote policy inference (client/server split) for edge robots + remote GPU
+
+A resource-constrained robot host (edge device / laptop CPU) often cannot run a
+large VLA (pi0, SmolVLA, MolmoAct2) at control rate. The new
+`strands_robots.inference` package splits inference across two machines over a
+portable WS-JSON WebSocket protocol: `PolicyServer` wraps ANY `Policy` and
+serves it (run it on the GPU box), and `RemotePolicy` is a drop-in `Policy` that
+forwards observations to the server and returns the action chunk (construct it
+on the robot host). `RemotePolicy` is wired into `create_policy` as the `remote`
+provider, so `create_policy("remote", endpoint="ws://gpu-box:8765")` -- or the
+smart string `create_policy("ws://gpu-box:8765")` -- yields one, usable anywhere
+a local policy is (`run_policy`, `eval_policy`, hardware loops). The client
+mirrors the server policy's `requires_images` / `execution_horizon` /
+`actions_per_step` / `supports_rtc` metadata, and the Real-Time Chunking
+contract is preserved end to end: the runner-counted `rtc_observed_delay_steps`
+is forwarded per request and applied server-side before chunk-seam blending.
+Install with `pip install 'strands-robots[inference]'` (pulls only
+`websockets`). See `docs/inference/remote.md`.
+
+
 ### Fixed: session `status` tool results dropped their telemetry via a `**spread` top-level smuggle
 
 The `status` action of `lerobot_teleoperate` and `lerobot_train` returned the
