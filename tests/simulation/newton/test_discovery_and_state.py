@@ -63,6 +63,99 @@ class TestGetRobotState:
         assert engine_so100.get_robot_state("ghost")["status"] == "error"
 
 
+# A minimal floating-base model: a free-jointed root body carrying two hinge
+# children. The root's free joint spans 7 coordinates (xyz + quaternion) and 6
+# DOFs, so ``j1``/``j2`` live at coordinate indices 7/8 and DOF indices 6/7 -
+# NOT the ordinal 1/2 a naive per-joint offset would assign. Kept inline (no
+# downloaded asset) so the test runs anywhere Newton is importable.
+_FLOATER_MJCF = """<mujoco model="floater">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="base" pos="0 0 0.5">
+      <freejoint name="root"/>
+      <geom type="box" size="0.1 0.1 0.05" mass="1"/>
+      <body name="link1" pos="0.1 0 0">
+        <joint name="j1" type="hinge" axis="0 0 1"/>
+        <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" mass="0.2"/>
+        <body name="link2" pos="0.2 0 0">
+          <joint name="j2" type="hinge" axis="0 1 0"/>
+          <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.02" mass="0.2"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>"""
+
+
+@pytest.fixture
+def engine_floater(engine, tmp_path):
+    """Real Newton build of the inline floating-base model above."""
+    path = tmp_path / "floater.xml"
+    path.write_text(_FLOATER_MJCF)
+    assert engine.add_robot("floater", urdf_path=str(path))["status"] == "success"
+    return engine
+
+
+class TestFloatingBaseJointIndices:
+    """A free-jointed root must not shift every child joint's state reading.
+
+    Regression for the Newton index maps: ``_joint_coord_index`` /
+    ``_joint_dof_index`` were built from a per-joint ordinal offset (one
+    coordinate and one DOF per joint), which is wrong once a robot has a
+    multi-coordinate joint. A floating base (free joint: 7 coordinates, 6 DOFs)
+    made every child joint read the base's coordinates instead of its own, so
+    get_robot_state / get_observation reported garbage for a humanoid's leg and
+    arm joints (and the policy observation path saw the same garbage).
+    """
+
+    def test_index_maps_use_authoritative_joint_starts(self, engine_floater):
+        model = engine_floater._model
+        q_start = model.joint_q_start.numpy()
+        qd_start = model.joint_qd_start.numpy()
+        names = engine_floater._world.robots["floater"].joint_names
+        assert names == ["root", "j1", "j2"]
+        for i, jname in enumerate(names):
+            assert engine_floater._joint_coord_index[("floater", jname)] == int(q_start[i])
+            assert engine_floater._joint_dof_index[("floater", jname)] == int(qd_start[i])
+        # The hinges live past the free joint's 7 coordinates / 6 DOFs, not at
+        # the ordinal 1/2 that the buggy mapping produced.
+        assert engine_floater._joint_coord_index[("floater", "j1")] == 7
+        assert engine_floater._joint_dof_index[("floater", "j1")] == 6
+        assert engine_floater._joint_coord_index[("floater", "j2")] == 8
+        assert engine_floater._joint_dof_index[("floater", "j2")] == 7
+
+    def _set_position_sentinels(self, engine_floater):
+        """Write joint_q[i] = 100 + i so each position value encodes its coord index."""
+        q = engine_floater._state_0.joint_q.numpy().copy()
+        for i in range(len(q)):
+            q[i] = 100.0 + i
+        engine_floater._state_0.joint_q.assign(q)
+        return engine_floater._model.joint_q_start.numpy()
+
+    def test_get_robot_state_reads_hinge_coordinates_past_free_joint(self, engine_floater):
+        q_start = self._set_position_sentinels(engine_floater)
+        state = engine_floater.get_robot_state("floater")["content"][1]["json"]["state"]
+        # Each hinge must report the sentinel at ITS own coordinate index, not
+        # the base coordinate a per-joint offset would read.
+        assert state["j1"]["position"] == pytest.approx(100.0 + int(q_start[1]))
+        assert state["j2"]["position"] == pytest.approx(100.0 + int(q_start[2]))
+
+    def test_get_observation_reads_hinge_coordinates_past_free_joint(self, engine_floater):
+        q_start = self._set_position_sentinels(engine_floater)
+        obs = engine_floater.get_observation("floater", skip_images=True)
+        assert obs["j1"] == pytest.approx(100.0 + int(q_start[1]))
+        assert obs["j2"] == pytest.approx(100.0 + int(q_start[2]))
+
+    def test_fixed_base_arm_index_maps_are_the_identity(self, engine_so100):
+        # A robot with no multi-coordinate joint (an all-revolute arm) must be
+        # unchanged: coordinate/DOF index == ordinal position.
+        names = engine_so100._world.robots["so100"].joint_names
+        coords = [engine_so100._joint_coord_index[("so100", j)] for j in names]
+        dofs = [engine_so100._joint_dof_index[("so100", j)] for j in names]
+        assert coords == list(range(len(names)))
+        assert dofs == list(range(len(names)))
+
+
 class TestListBodies:
     def test_scoped_lists_only_robot_bodies_with_gripper(self, engine_so100):
         result = engine_so100.list_bodies("so100")

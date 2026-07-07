@@ -833,6 +833,22 @@ base information at all. The free joint is now surfaced under a structured
 unnamed, with the `quaternion` / `angular_velocity` matching `get_observation`.
 A fixed-base arm still reports only its scalar joints (no `base` entry).
 
+### Fixed: Newton `get_observation` / `get_robot_state` shifted every joint after a floating base
+
+The Newton backend built its per-joint coordinate/DOF index maps
+(`_joint_coord_index` / `_joint_dof_index`) from a per-joint ordinal offset --
+one coordinate and one DOF per joint. That assumption breaks for any robot with
+a multi-coordinate joint: a floating base (a free joint) spans 7 coordinates
+(xyz + quaternion) and 6 DOFs, so every child joint after it was read from the
+wrong index. A humanoid whose root is a free joint (e.g. Unitree G1/H1) reported
+a base coordinate for its first leg joint and shifted the reading of every joint
+after -- so `get_robot_state` and the policy-facing `get_observation` returned
+garbage joint positions/velocities for the entire floating-base robot. The maps
+are now built from Newton's authoritative per-joint coordinate/DOF starts
+(`joint_q_start` / `joint_qd_start`), so each joint reads its own value. A
+fixed-base arm (all revolute joints) is unaffected -- its indices are already
+the joint ordinals.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

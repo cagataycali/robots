@@ -1762,8 +1762,6 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         self._robot_body_map = {}
 
         for robot_name, robot in self._world.robots.items():
-            coord_before = builder.joint_coord_count
-            dof_before = builder.joint_dof_count
             label_before = len(builder.joint_label)
             body_before = builder.body_count
             xform = wp.transform(
@@ -1778,12 +1776,26 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             else:
                 builder.add_mjcf(model_path, xform=xform, collapse_fixed_joints=True)
             new_labels = builder.joint_label[label_before:]
+            # Map each joint to its coordinate index in joint_q and its DOF index
+            # in joint_qd. These are NOT the joint's ordinal position: a floating
+            # base (a free joint) spans 7 coordinates (xyz + quaternion) and 6
+            # DOFs, a ball joint 4/3, while a revolute/prismatic joint spans 1/1.
+            # So once a robot has a multi-coordinate joint (e.g. a humanoid whose
+            # root is a free joint), every joint after it is offset. Read the
+            # authoritative per-joint coordinate/DOF starts the builder tracks
+            # (joint_q_start / joint_qd_start) instead of assuming one coordinate
+            # and one DOF per joint - otherwise get_observation and
+            # get_robot_state report the base coordinates for the first child
+            # joint and shift the reading of every joint after it.
+            q_start = builder.joint_q_start
+            qd_start = builder.joint_qd_start
             short_names: list[str] = []
             for offset, label in enumerate(new_labels):
                 short = _short_joint_name(label)
                 short_names.append(short)
-                self._joint_coord_index[(robot_name, short)] = coord_before + offset
-                self._joint_dof_index[(robot_name, short)] = dof_before + offset
+                joint_index = label_before + offset
+                self._joint_coord_index[(robot_name, short)] = int(q_start[joint_index])
+                self._joint_dof_index[(robot_name, short)] = int(qd_start[joint_index])
             self._robot_joint_map[robot_name] = short_names
             self._robot_body_map[robot_name] = list(builder.body_label[body_before:])
 
