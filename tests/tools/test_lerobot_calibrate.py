@@ -18,7 +18,6 @@ from typing import Any
 
 import pytest
 
-import strands_robots.tools.lerobot_calibrate as calib_mod
 from strands_robots.tools.lerobot_calibrate import (
     LeRobotCalibrationManager,
     lerobot_calibrate,
@@ -210,7 +209,9 @@ def test_structure_skips_absent_device_type_directory(tmp_path: Path) -> None:
 
 def test_backup_default_location_is_timestamped_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Backup with no explicit output_dir writes to a timestamped default dir."""
-    monkeypatch.setattr(calib_mod, "BACKUP_DIR", tmp_path / "default_backups")
+    monkeypatch.setattr(
+        "strands_robots.tools.lerobot_calibrate.BACKUP_DIR", tmp_path / "default_backups"
+    )
     mgr = LeRobotCalibrationManager(tmp_path / "src")
     mgr.save_calibration("robots", "so101_follower", "arm1", _calib(2))
 
