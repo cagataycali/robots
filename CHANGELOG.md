@@ -816,6 +816,23 @@ surfaces base state regardless of whether its free joint is named. A sibling
 free-jointed task object (a cube) is never mistaken for the base, and a
 fixed-base arm still surfaces no base state.
 
+### Fixed: `get_robot_state` misreported a floating base's free joint as a scalar joint
+
+For a robot with a floating base (a 6-DoF free joint), `get_robot_state` read
+`qpos[jnt_qposadr]` as a scalar joint "position" and `qvel[jnt_dofadr]` as a
+"velocity". A free joint's qpos is `[xyz(3) + quat(4)]` and qvel is
+`[linvel(3) + angvel(3)]`, so this reported the base's x-coordinate as a joint
+angle and silently dropped the orientation and the rest of the twist -- while
+`get_observation` (its policy-facing counterpart) already surfaces the base
+correctly as `base_quat` / `base_ang_vel`. A humanoid's named
+`floating_base_joint` hit the wrong-scalar path; a mobile base's unnamed
+`<freejoint/>` (e.g. LeKiwi) was skipped entirely, so `get_robot_state` had no
+base information at all. The free joint is now surfaced under a structured
+`base` entry -- `position` (xyz), `quaternion` (w,x,y,z), `linear_velocity`,
+`angular_velocity` -- recovered from the kinematic tree when the free joint is
+unnamed, with the `quaternion` / `angular_velocity` matching `get_observation`.
+A fixed-base arm still reports only its scalar joints (no `base` entry).
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

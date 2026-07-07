@@ -144,3 +144,117 @@ def test_fixed_base_arm_has_no_base_state(sim):
     assert "base_quat" not in obs
     assert "base_ang_vel" not in obs
     assert "j0" in obs and "j0.vel" in obs
+
+
+# Floating base whose free joint IS named and therefore enumerated in
+# ``robot.joint_names`` (like a humanoid's ``floating_base_joint``). This is the
+# case where get_robot_state previously misread the 6-DoF free joint as a scalar
+# hinge - reporting the base x-coordinate as a joint "position".
+NAMED_BASE_XML = """
+<mujoco model="test_named_base">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002"/>
+  <worldbody>
+    <light name="main" pos="0 0 3" dir="0 0 -1"/>
+    <geom name="ground" type="plane" size="5 5 0.01" rgba="0.9 0.9 0.9 1"/>
+    <body name="pelvis" pos="0 0 0.8">
+      <freejoint name="floating_base_joint"/>
+      <geom type="box" size="0.1 0.1 0.1" rgba="0.3 0.3 0.8 1"/>
+      <body name="thigh" pos="0 0 -0.1">
+        <geom type="capsule" size="0.03" fromto="0 0 0 0 0 -0.3" rgba="0.8 0.3 0.3 1"/>
+        <joint name="hip" type="hinge" axis="0 1 0" range="-1.5 1.5"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <motor name="hip_act" joint="hip"/>
+  </actuator>
+</mujoco>
+"""
+
+
+def _set_free_joint(sim, robot, qpos7, qvel6):
+    """Set a robot's (only) free joint pose+twist and forward the model."""
+    import mujoco
+
+    model, data = sim._world._model, sim._world._data
+    jid = -1
+    for j in range(model.njnt):
+        if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE:
+            name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) or ""
+            if name.startswith(f"{robot}/") or name in ("floating_base_joint", f"{robot}/floating_base_joint"):
+                jid = j
+                break
+    assert jid >= 0, "expected a free joint on the robot"
+    qadr = int(model.jnt_qposadr[jid])
+    vadr = int(model.jnt_dofadr[jid])
+    data.qpos[qadr : qadr + 7] = qpos7
+    data.qvel[vadr : vadr + 6] = qvel6
+    mujoco.mj_forward(model, data)
+
+
+def test_get_robot_state_named_free_base_reports_base_pose_not_scalar(sim):
+    """A floating base's NAMED free joint (``floating_base_joint``, enumerated in
+    joint_names) must NOT be reported as a scalar joint. Its qpos is [xyz+quat],
+    so reading qpos[jnt_qposadr] as a joint "position" reports the base
+    x-coordinate and silently drops the orientation. get_robot_state must
+    instead surface a structured ``base`` entry with the full 6-DoF pose+twist."""
+    sim.add_robot("humanoid", urdf_path=_write(NAMED_BASE_XML))
+    assert "floating_base_joint" in sim._world.robots["humanoid"].joint_names
+
+    # Distinctive base pose so a scalar misread (base-x as a joint angle) is
+    # unmistakable: x=0.3, y=0.4, z=0.9, 90-deg-about-z quat, and a full twist.
+    _set_free_joint(sim, "humanoid", [0.3, 0.4, 0.9, 0.70710678, 0.0, 0.0, 0.70710678], [1.1, 2.2, 3.3, 4.4, 5.5, 6.6])
+
+    result = sim.get_robot_state(robot_name="humanoid")
+    assert result["status"] == "success"
+    payload = result["content"][1]["json"]
+
+    # The free joint is NOT a scalar joint entry (no misread base-x as "position").
+    assert "floating_base_joint" not in payload["state"]
+    # The scalar hinge is still reported as usual.
+    assert "hip" in payload["state"] and isinstance(payload["state"]["hip"]["position"], float)
+
+    # A structured base entry carries the full 6-DoF pose + twist.
+    base = payload["base"]
+    assert base["position"] == pytest.approx([0.3, 0.4, 0.9], abs=1e-3)
+    assert base["quaternion"] == pytest.approx([0.7071, 0.0, 0.0, 0.7071], abs=1e-3)
+    assert base["linear_velocity"] == pytest.approx([1.1, 2.2, 3.3], abs=1e-3)
+    assert base["angular_velocity"] == pytest.approx([4.4, 5.5, 6.6], abs=1e-3)
+
+
+def test_get_robot_state_unnamed_free_base_reports_base(sim):
+    """A mobile base whose free joint is UNNAMED (not in joint_names, like
+    LeKiwi) still surfaces a ``base`` entry - recovered from the kinematic tree,
+    never the sibling free-jointed task cube."""
+    sim.add_robot("mob", urdf_path=_write(MOBILE_BASE_XML))
+    assert sim._world.robots["mob"].joint_names == ["shoulder"]
+
+    payload = sim.get_robot_state(robot_name="mob")["content"][1]["json"]
+    base = payload["base"]
+    # base is the base_plate (identity quat), NOT the task_cube (~[0.707,0,0,0.707]).
+    assert base["quaternion"][0] == pytest.approx(1.0, abs=1e-3)
+    assert base["quaternion"][3] == pytest.approx(0.0, abs=1e-3)
+    assert len(base["position"]) == 3 and len(base["linear_velocity"]) == 3
+
+
+def test_get_robot_state_base_matches_get_observation(sim):
+    """The base orientation/angular-velocity from get_robot_state agree with
+    get_observation's base_quat / base_ang_vel for the same robot - the two
+    state paths are consistent."""
+    sim.add_robot("humanoid", urdf_path=_write(NAMED_BASE_XML))
+    _set_free_joint(sim, "humanoid", [0.1, 0.2, 0.7, 0.70710678, 0.0, 0.0, 0.70710678], [0.5, 0.0, 0.0, 0.0, 0.0, 1.5])
+
+    base = sim.get_robot_state(robot_name="humanoid")["content"][1]["json"]["base"]
+    obs = sim.get_observation(robot_name="humanoid", skip_images=True)
+    assert base["quaternion"] == obs["base_quat"]
+    assert base["angular_velocity"] == obs["base_ang_vel"]
+
+
+def test_get_robot_state_fixed_base_arm_has_no_base_entry(sim):
+    """A fixed-base arm (no free joint) reports scalar joints and NO ``base``
+    entry - the floating-base detection must not false-positive."""
+    sim.add_robot("arm", urdf_path=_write(FIXED_ARM_XML))
+    payload = sim.get_robot_state(robot_name="arm")["content"][1]["json"]
+    assert "base" not in payload
+    assert "j0" in payload["state"] and isinstance(payload["state"]["j0"]["position"], float)

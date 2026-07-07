@@ -1500,9 +1500,22 @@ class MuJoCoSimEngine(
         return base
 
     def get_robot_state(self, robot_name: str | None = None) -> dict[str, Any]:
-        """canonical name parameter is ``robot_name``. The router
-        accepts ``name`` as an alias (bidirectional) so legacy LLM calls
-        keep working, but new tool specs should document only robot_name."""
+        """Return a robot's per-joint position/velocity, plus base pose for a floating base.
+
+        The canonical name parameter is ``robot_name``. The router accepts
+        ``name`` as an alias (bidirectional) so legacy LLM calls keep working,
+        but new tool specs should document only robot_name.
+
+        The ``json`` payload carries ``{"state": {joint: {"position", "velocity"}}}``
+        for the scalar (hinge/slide) joints. A robot with a floating base (a
+        6-DoF free joint - a humanoid's named ``floating_base_joint`` or a mobile
+        base's unnamed ``<freejoint/>`` like LeKiwi) additionally carries a
+        ``"base"`` entry with ``position`` (xyz), ``quaternion`` (w,x,y,z),
+        ``linear_velocity`` and ``angular_velocity``. The free joint is NOT
+        reported as a scalar joint (its qpos is [xyz+quat], not a single angle),
+        and the base ``quaternion``/``angular_velocity`` match get_observation's
+        ``base_quat``/``base_ang_vel`` for the same robot.
+        """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         try:
@@ -1519,26 +1532,68 @@ class MuJoCoSimEngine(
         # Namespace-aware joint lookup (see add_robot / _apply_sim_action).
         pfx = robot.namespace or ""
         state = {}
+        free_jnt_id = -1  # the robot's floating-base free joint, if any
         for jnt_name in robot.joint_names:
             jnt_id = -1
             if pfx:
                 jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
             if jnt_id < 0:
                 jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
-            if jnt_id >= 0:
-                state[jnt_name] = {
-                    "position": float(data.qpos[model.jnt_qposadr[jnt_id]]),
-                    "velocity": float(data.qvel[model.jnt_dofadr[jnt_id]]),
-                }
+            if jnt_id < 0:
+                continue
+            # A FREE joint (6-DoF floating base, e.g. a humanoid's named
+            # ``floating_base_joint``) has no scalar hinge/slide value: its qpos
+            # is [xyz(3) + quat(4)] and qvel is [linvel(3) + angvel(3)]. Reading
+            # qpos[jnt_qposadr] as a "position" reports the base x-coordinate as a
+            # joint angle and silently drops the orientation, so record it and
+            # surface a structured ``base`` entry below instead.
+            if model.jnt_type[jnt_id] == mj.mjtJoint.mjJNT_FREE:
+                free_jnt_id = jnt_id
+                continue
+            state[jnt_name] = {
+                "position": float(data.qpos[model.jnt_qposadr[jnt_id]]),
+                "velocity": float(data.qvel[model.jnt_dofadr[jnt_id]]),
+            }
 
-        # Additive sensor noise (set_obs_noise); no-op when unconfigured.
+        # Additive sensor noise (set_obs_noise); no-op when unconfigured. Runs
+        # over the scalar joints only; the floating-base pose/twist below is left
+        # un-noised, matching get_observation's base_quat / base_ang_vel contract.
         state = self._apply_state_noise(state)
+
+        # Floating base: surface the full 6-DoF pose + twist under a ``base`` key,
+        # consistent with get_observation's base_quat / base_ang_vel. Recovered
+        # from the kinematic tree when the free joint is unnamed and therefore
+        # absent from ``joint_names`` (e.g. a mobile base like LeKiwi).
+        if free_jnt_id < 0:
+            free_jnt_id = self._robot_base_free_joint(model, robot, pfx)
+        base: dict[str, list[float]] | None = None
+        if free_jnt_id >= 0:
+            qadr = int(model.jnt_qposadr[free_jnt_id])
+            vadr = int(model.jnt_dofadr[free_jnt_id])
+            base = {
+                "position": [float(v) for v in data.qpos[qadr : qadr + 3]],
+                "quaternion": [float(v) for v in data.qpos[qadr + 3 : qadr + 7]],
+                "linear_velocity": [float(v) for v in data.qvel[vadr : vadr + 3]],
+                "angular_velocity": [float(v) for v in data.qvel[vadr + 3 : vadr + 6]],
+            }
 
         text = f"'{robot_name}' state (t={self._world.sim_time:.3f}s):\n"
         for jnt, vals in state.items():
             text += f"{jnt}: pos={vals['position']:.4f}, vel={vals['velocity']:.4f}\n"
+        if base is not None:
+            p_, q_ = base["position"], base["quaternion"]
+            lv_, av_ = base["linear_velocity"], base["angular_velocity"]
+            text += (
+                f"base: pos=[{p_[0]:.4f}, {p_[1]:.4f}, {p_[2]:.4f}], "
+                f"quat=[{q_[0]:.4f}, {q_[1]:.4f}, {q_[2]:.4f}, {q_[3]:.4f}], "
+                f"lin_vel=[{lv_[0]:.4f}, {lv_[1]:.4f}, {lv_[2]:.4f}], "
+                f"ang_vel=[{av_[0]:.4f}, {av_[1]:.4f}, {av_[2]:.4f}]\n"
+            )
 
-        return {"status": "success", "content": [{"text": text}, {"json": {"state": state}}]}
+        json_payload: dict[str, Any] = {"state": state}
+        if base is not None:
+            json_payload["base"] = base
+        return {"status": "success", "content": [{"text": text}, {"json": json_payload}]}
 
     def list_bodies(self, robot_name: str | None = None) -> dict[str, Any]:
         """List MuJoCo body names available as camera/sensor mount points.
