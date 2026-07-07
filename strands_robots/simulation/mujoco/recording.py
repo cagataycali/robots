@@ -46,6 +46,9 @@ class RecordingMixin(DatasetRecordingMixin):
         def robot_action_keys(self, robot_name: str) -> list[str]:
             """Actuator-ordered action keys for ``robot_name`` (concrete on SimEngine)."""
 
+        def _robot_free_base_joint_id(self, model: Any, robot: Any) -> int:
+            """Free-base joint id for ``robot`` or -1 (concrete on RenderingMixin)."""
+
     def start_recording(
         self,
         repo_id: str = "local/sim_recording",
@@ -189,6 +192,20 @@ class RecordingMixin(DatasetRecordingMixin):
                 robot_type = robot.data_config or rname
 
             mj = _ensure_mujoco()
+            # Doctrine: warn loudly, never silently surprise. A floating-base
+            # robot (humanoid/mobile) has base orientation + angular velocity
+            # surfaced by get_observation (base_quat/base_ang_vel), but the
+            # observation.state schema above is derived from scalar joint names,
+            # so those base signals are dropped from the recorded dataset. Flag
+            # it at recording start rather than yielding a silently base-blind
+            # training set. (Non-breaking: the schema is unchanged.)
+            floating_base_robots = [
+                rname
+                for rname, robot in self._world.robots.items()
+                if self._robot_free_base_joint_id(self._world._model, robot) >= 0
+            ]
+            self._warn_floating_base_state_dropped(floating_base_robots)
+
             # Declare each camera in the dataset schema at the SAME
             # resolution it actually renders at. Cameras added via add_camera
             # carry their own width/height (e.g. 256x256 for a LIBERO VLA),

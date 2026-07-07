@@ -936,6 +936,26 @@ surfaced, and `get_observation` gains `base_quat` / `base_ang_vel`. Newton
 stores the free joint's coordinates as `[xyz, quat_xyzw]`, so the quaternion is
 reordered `xyzw -> wxyz` to match the MuJoCo (w,x,y,z) contract.
 
+### Fixed: warn when a floating base's orientation + angular velocity are dropped from a recorded dataset
+
+`get_observation` surfaces `base_quat` (orientation, w,x,y,z) and `base_ang_vel`
+(rad/s) for a floating-base robot -- a humanoid's named `floating_base_joint` or
+a mobile base's unnamed `<freejoint>` -- so a locomotion / whole-body-control
+policy can read its base state. But `start_recording` derives the LeRobotDataset
+`observation.state` schema from the robot's scalar joint names, so those base
+signals never reached the dataset: the free base contributed only a single
+scalar slot (its x-position) when its joint was named, and nothing at all when
+it was unnamed. A dataset recorded from a humanoid/mobile rollout was therefore
+silently base-blind, and a policy trained on it would be missing the exact
+orientation/angular-velocity signals a locomotion controller needs. Both
+backends (MuJoCo and Newton) now warn once at `start_recording` when a
+floating-base robot is being recorded, naming the affected robot(s) and the
+dropped signals, per the project's "no silent data loss" contract. The dataset
+schema is intentionally unchanged (existing datasets are stable); this surfaces
+the omission instead of dropping it silently. A new shared
+`_robot_free_base_joint_id` helper centralizes the named+unnamed free-joint
+detection.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

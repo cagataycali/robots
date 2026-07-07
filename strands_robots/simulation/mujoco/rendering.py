@@ -276,6 +276,28 @@ class RenderingMixin:
             break
         return -1
 
+    def _robot_free_base_joint_id(self, model: Any, robot: Any) -> int:
+        """Return the id of ``robot``'s floating-base free joint, or ``-1``.
+
+        Combined detection shared by observation surfacing and dataset
+        recording: first scans ``robot.joint_names`` for a NAMED free joint (a
+        humanoid's ``floating_base_joint``), then falls back to the
+        kinematic-tree walk (:meth:`_robot_base_free_joint`) for an UNNAMED
+        ``<freejoint>`` (a mobile base like LeKiwi). A fixed-base arm has
+        neither and returns ``-1``. Mirrors the free-joint detection inlined in
+        :meth:`_get_sim_observation`.
+        """
+        mj = _ensure_mujoco()
+        pfx = robot.namespace or ""
+        for jnt_name in robot.joint_names:
+            lookup = pfx + jnt_name if pfx else jnt_name
+            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
+            if jnt_id < 0 and pfx:
+                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            if jnt_id >= 0 and model.jnt_type[jnt_id] == mj.mjtJoint.mjJNT_FREE:
+                return int(jnt_id)
+        return self._robot_base_free_joint(model, robot, pfx)
+
     def _get_sim_observation(self, robot_name: str, *, skip_images: bool = False) -> dict[str, Any]:
         """Get observation from sim: joint state + cameras (unless skipped).
 
