@@ -921,6 +921,21 @@ passes `max_size=None` (and, matching the client, `compression=None`) to both
 end to end by serving a SmolVLA policy over the wire and driving a MuJoCo
 rollout to a recorded LeRobotDataset.
 
+### Fixed: Newton backend surfaces a floating base as a structured pose, not a garbage scalar
+
+On the Newton backend, `get_robot_state` reported a floating-base robot's free
+root joint (a humanoid's named `floating_base_joint`) as a scalar joint
+`{position, velocity}` -- reading its base x-coordinate as a "position" and
+linear-velocity-x as a "velocity", silently dropping the orientation and the
+rest of the twist -- and `get_observation` never surfaced the base at all. A
+real `unitree_g1` therefore reported garbage for its base and no orientation to
+a WBC / locomotion controller. Both now mirror the MuJoCo backend: the free
+joint is excluded from the scalar `state` map and a structured `base` entry
+(`position`, `quaternion` w,x,y,z, `linear_velocity`, `angular_velocity`) is
+surfaced, and `get_observation` gains `base_quat` / `base_ang_vel`. Newton
+stores the free joint's coordinates as `[xyz, quat_xyzw]`, so the quaternion is
+reordered `xyzw -> wxyz` to match the MuJoCo (w,x,y,z) contract.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
