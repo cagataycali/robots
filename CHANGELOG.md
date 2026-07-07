@@ -25,6 +25,23 @@ Install with `pip install 'strands-robots[inference]'` (pulls only
 `websockets`). See `docs/inference/remote.md`.
 
 
+### Fixed: remote inference delivered read-only observation arrays to the wrapped policy
+
+`RemotePolicy` / `PolicyServer` decoded NumPy observations (camera frames, the
+state vector) with `np.frombuffer` over the immutable `bytes` returned by
+`base64.b64decode`, so every array handed to the server-side policy was
+read-only. That silently diverged from the local-inference path, where a freshly
+rendered observation is always writable: a VLA preprocessor that normalizes the
+image/state in place (`image /= 255`, joint rescaling) raised
+`ValueError: output array is read-only`, and `torch.from_numpy(obs)` (zero-copy,
+as pi0/SmolVLA/MolmoAct2 pipelines do) produced a tensor whose in-place mutation
+is undefined behavior. Decoding now wraps the bytes in a mutable `bytearray` so
+the reconstructed array is writable (one allocation, no extra copy, still
+byte-exact), making the remote path transparent to the wrapped policy. The
+MuJoCo rollout test used a `MockPolicy` (`requires_images=False`) so it never
+decoded an observation array and missed this.
+
+
 ### Fixed: session `status` tool results dropped their telemetry via a `**spread` top-level smuggle
 
 The `status` action of `lerobot_teleoperate` and `lerobot_train` returned the
