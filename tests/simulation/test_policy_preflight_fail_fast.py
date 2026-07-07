@@ -42,6 +42,7 @@ class _PreflightRejectPolicy(MockPolicy):
         raise ValueError(_REJECT_MESSAGE)
 
     def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         raise AssertionError("policy must not be constructed when preflight rejects")
 
 
