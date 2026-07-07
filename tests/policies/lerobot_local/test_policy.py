@@ -289,6 +289,54 @@ class TestResolveTokenizer:
         result = policy._resolve_tokenizer()
         assert result is None
 
+    def test_returns_none_before_model_loaded(self):
+        """Preload guard: probing the tokenizer before load() returns None.
+
+        Language-token capability can be queried before a model is loaded (e.g.
+        during policy setup); the resolver must return None rather than
+        dereference the unset policy handle.
+        """
+        policy = _make_policy()  # _load_model patched out -> _loaded stays False
+        assert policy._loaded is False
+        assert policy._resolve_tokenizer() is None
+
+    def test_tokenizer_name_resolves_via_autotokenizer_and_short_circuits(self):
+        """Strategy 1 wins: a resolvable ``tokenizer_name`` is loaded through
+        ``AutoTokenizer`` and the built-in processor (Strategy 3) is never
+        consulted.
+
+        The resolved tokenizer is cached, stamped with the config's padding
+        side, and the config's ``tokenizer_max_length`` override is captured. A
+        stand-in ``transformers`` module makes the success path deterministic
+        whether or not transformers is installed.
+        """
+        policy = _make_loaded_policy()
+        policy._policy.config = MagicMock(
+            tokenizer_name="some-org/some-tokenizer",
+            vlm_model_name="should-not-be-used",
+            tokenizer_max_length=77,
+            tokenizer_padding_side="left",
+        )
+        # Strategy 3 target: must NOT be returned when Strategy 1 succeeds.
+        sentinel_processor_tok = MagicMock(name="processor_tokenizer")
+        policy._policy.processor = MagicMock()
+        policy._policy.processor.tokenizer = sentinel_processor_tok
+
+        resolved_tok = MagicMock(name="autotokenizer")
+        fake_transformers = types.ModuleType("transformers")
+        fake_transformers.AutoTokenizer = MagicMock()
+        fake_transformers.AutoTokenizer.from_pretrained.return_value = resolved_tok
+
+        with patch.dict("sys.modules", {"transformers": fake_transformers}):
+            result = policy._resolve_tokenizer()
+
+        assert result is resolved_tok
+        assert policy._tokenizer is resolved_tok  # cached for reuse
+        assert result is not sentinel_processor_tok  # Strategy 3 skipped
+        fake_transformers.AutoTokenizer.from_pretrained.assert_called_once_with("some-org/some-tokenizer")
+        assert resolved_tok.padding_side == "left"  # stamped from config
+        assert policy._tokenizer_max_length == 77  # config override captured
+
 
 class TestTokenizeInstruction:
     def test_returns_none_without_tokenizer(self):
