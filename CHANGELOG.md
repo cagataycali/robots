@@ -500,21 +500,21 @@ the reward-model, robot, teleop, and camera surfaces already use. A static
 fallback is kept for the offline case (lerobot not importable). Genuinely unknown
 policy types are still rejected.
 
-### Added
+### Added: `evaluate_benchmark` honors `policy_object` + control frequency (parity with `run_policy` / `eval_policy`)
 
-- `evaluate_benchmark(policy_object=..., control_frequency=..., control_substeps=...)`
-  brings the benchmark evaluation entry point to parity with `run_policy` /
-  `eval_policy`. It could previously neither evaluate a pre-built `Policy` (it
-  always ran `create_policy`, forcing a redundant reload of a multi-GB VLA
-  checkpoint) nor set the control-loop rate (physics stepped at a hardcoded
-  50 Hz). A benchmark's `max_steps` maps to a wall-clock episode length that
-  depends on the control frequency, so a policy trained/evaluated at a
-  different rate was scored over a mismatched horizon; `control_frequency`
-  now lets the benchmark run at the policy's rate. The shared
-  `PolicyRunner.evaluate` plumbing already supported these; only the facade
-  exposes them now. A non-positive `control_frequency` is rejected with a
-  structured error, and the `control_frequency` tool parameter is forwarded on
-  the agent-dispatch path.
+`evaluate_benchmark(policy_object=..., control_frequency=..., control_substeps=...)`
+brings the benchmark evaluation entry point to parity with `run_policy` /
+`eval_policy`. It could previously neither evaluate a pre-built `Policy` (it
+always ran `create_policy`, forcing a redundant reload of a multi-GB VLA
+checkpoint) nor set the control-loop rate (physics stepped at a hardcoded
+50 Hz). A benchmark's `max_steps` maps to a wall-clock episode length that
+depends on the control frequency, so a policy trained/evaluated at a
+different rate was scored over a mismatched horizon; `control_frequency`
+now lets the benchmark run at the policy's rate. The shared
+`PolicyRunner.evaluate` plumbing already supported these; only the facade
+exposes them now. A non-positive `control_frequency` is rejected with a
+structured error, and the `control_frequency` tool parameter is forwarded on
+the agent-dispatch path.
 
 
 ### Docs: `run_policy(async_rtc=...)` no longer claims SmolVLA/MolmoAct2 blend the chunk seam internally
@@ -568,17 +568,17 @@ policy types are still rejected.
   than on a rendered caption. The `start_recording` signature in `describe()`
   also now names its `cameras=` dataset-scope parameter, which was omitted.
 
-### Fixed
+### Fixed: the `grasped` predicate missed LIBERO/robosuite multi-geom bodies (a successful grasp scored as a failure)
 
-- The `grasped` benchmark/DSL predicate now matches the grasped body's geoms
-  across the `<body>_g<idx>` LIBERO/robosuite multi-geom convention, not only
-  the exact `body` / `<body>_geom` names. LIBERO objects (a BDDL object
-  `cube_1` owns collision geoms `cube_1_g0` / `cube_1_g1` ...) were never
-  matched, so `(grasped cube_1)` BDDL goals silently resolved to `False` even
-  when the gripper was in contact - a successful grasp was scored as a failure.
-  Body-geom matching now mirrors `_body_contact`'s `<body>_g` prefix so the two
-  contact predicates agree on what counts as a body's geom; strands-native
-  `add_object` (`<body>_geom`) and single-geom scenes are unchanged.
+The `grasped` benchmark/DSL predicate now matches the grasped body's geoms
+across the `<body>_g<idx>` LIBERO/robosuite multi-geom convention, not only
+the exact `body` / `<body>_geom` names. LIBERO objects (a BDDL object
+`cube_1` owns collision geoms `cube_1_g0` / `cube_1_g1` ...) were never
+matched, so `(grasped cube_1)` BDDL goals silently resolved to `False` even
+when the gripper was in contact - a successful grasp was scored as a failure.
+Body-geom matching now mirrors `_body_contact`'s `<body>_g` prefix so the two
+contact predicates agree on what counts as a body's geom; strands-native
+`add_object` (`<body>_geom`) and single-geom scenes are unchanged.
 
 
 ### Fixed: `CooperativeStop` from an `on_frame` hook crashed `eval_policy` / `evaluate_benchmark` instead of stopping gracefully
