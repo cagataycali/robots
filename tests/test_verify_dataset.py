@@ -416,6 +416,46 @@ class TestVideoFrameCountIntegrity:
         assert report["status"] == "error"
         assert any("6 frame(s)" in p and "maps 7 frame(s)" in p for p in report["problems"]), report["problems"]
 
+    def test_packed_file_with_one_null_length_skips_frame_check(self, tmp_path: Path) -> None:
+        pytest.importorskip("av")
+        # Two episodes packed into ONE shared file, but the second episode's
+        # ``length`` is null (some writers omit it per-row). The packed file's
+        # expected frame count is therefore only partially known (3 from ep0,
+        # unknown from ep1), so the total the parquet "maps" to the file cannot
+        # be computed confidently. The verifier must SKIP the frame-count
+        # comparison for that file rather than compare the real 5-frame video
+        # against the partial expected 3 and cry truncation. Removing that
+        # skip guard turns this into a false-positive "5 frame(s) but maps
+        # 3 frame(s)" error, so this pins the guard.
+        ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+        ep_dir.mkdir(parents=True, exist_ok=True)
+        vk = "observation.images.cam1"
+        columns = {
+            "episode_index": [0, 1],
+            "length": [3, None],  # ep1 carries no length -> partial expected
+            f"videos/{vk}/chunk_index": [0, 0],
+            f"videos/{vk}/file_index": [0, 0],  # both episodes -> file 0
+        }
+        pq.write_table(pa.table(columns), ep_dir / "episodes_000.parquet")
+        info = {
+            "total_episodes": 2,
+            "total_frames": 3,
+            "features": {vk: {"dtype": "video", "shape": [3, 64, 64], "names": ["channels", "height", "width"]}},
+            "video_path": "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4",
+        }
+        (tmp_path / "meta" / "info.json").write_text(json.dumps(info), encoding="utf-8")
+        rel = tmp_path / "videos/observation.images.cam1/chunk-000/file-000.mp4"
+        # A frame count that would mismatch the partial expected (3) if compared.
+        _write_real_mp4(rel, n_frames=5)
+
+        # min_frames=0 disables the unrelated per-episode length check (the null
+        # length reads as a 0-frame episode) so this isolates the video
+        # frame-count path: the packed file's partial expected count must not be
+        # compared against the real 5-frame video.
+        report = verify_dataset(tmp_path, min_frames=0)
+        assert report["status"] == "success", report
+        assert not any("frame(s)" in p for p in report["problems"]), report["problems"]
+
     def test_missing_length_column_skips_frame_check(self, tmp_path: Path) -> None:
         pytest.importorskip("av")
         # No ``length`` column -> expected frames are unknown, so the frame-count
