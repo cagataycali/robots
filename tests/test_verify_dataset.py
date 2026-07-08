@@ -489,6 +489,76 @@ class TestVideoFrameCountOptionalDependency:
         assert not any("truncated" in p for p in report["problems"]), report["problems"]
 
 
+def _write_audio_only_container(path: Path) -> None:
+    """Encode a valid container that opens cleanly but carries NO video stream.
+
+    Simulates a file whose extension/magic looks like an MP4 but whose only
+    stream is audio (e.g. a truncated recorder run that muxed audio before the
+    video track was added, or a wrong file swapped into the dataset). The
+    container opens without error, so the frame-count probe reaches the
+    ``streams.video`` check rather than the corrupt-header ``except`` path.
+    """
+    import av
+    import numpy as np
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with av.open(str(path), mode="w") as container:
+        stream = container.add_stream("aac", rate=44100)
+        stream.layout = "mono"
+        nsamp = 1024
+        for i in range(4):
+            samples = np.zeros((1, nsamp), dtype=np.float32)
+            frame = av.AudioFrame.from_ndarray(samples, format="fltp", layout="mono")
+            frame.sample_rate = 44100
+            frame.pts = i * nsamp
+            for packet in stream.encode(frame):
+                container.mux(packet)
+        for packet in stream.encode():  # flush the encoder
+            container.mux(packet)
+
+
+class TestVideoFrameCountNoVideoStream:
+    """A present, readable container with no video stream must degrade to
+    "cannot confirm" (return ``None``) - the third guard of the frame-count
+    probe alongside the av-missing and corrupt-header cases. It reaches the
+    ``if not container.streams.video`` branch: the file opens fine, so it is
+    neither missing/empty nor an unreadable header, yet no frame count exists.
+    Treating it as "cannot confirm" keeps the verifier from false-flagging a
+    truncated encode on a file that simply carries no video track.
+    """
+
+    def test_frame_count_returns_none_for_audio_only_container(self, tmp_path: Path) -> None:
+        pytest.importorskip("av")
+        path = tmp_path / "audio-only-000.mp4"
+        _write_audio_only_container(path)
+        # Sanity: the file opens and truly has zero video streams (so the None
+        # comes from the no-video-stream guard, not a decode error).
+        import av
+
+        with av.open(str(path)) as container:
+            assert len(container.streams.video) == 0
+        assert _video_frame_count(path) is None
+
+    def test_verify_does_not_false_flag_no_video_stream(self, tmp_path: Path) -> None:
+        pytest.importorskip("av")
+        # Parquet records a 5-frame episode; the on-disk file is a valid but
+        # video-less container. The frame count cannot be confirmed, so the
+        # check must NOT report a truncated encode.
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0],
+            video_keys=["observation.images.cam1"],
+            frames_per_episode=[5],
+            write_files=set(),
+        )
+        _write_audio_only_container(
+            tmp_path / "videos/observation.images.cam1/chunk-000/file-000.mp4",
+        )
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "success", report["problems"]
+        assert not any("truncated" in p for p in report["problems"]), report["problems"]
+
+
 class TestMetadataEdgeCases:
     """Metadata-side validation paths beyond count/drift on a healthy dataset.
 
