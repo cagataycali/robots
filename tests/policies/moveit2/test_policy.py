@@ -151,16 +151,26 @@ class TestMoveIt2InferenceClient:
         """
         client = MoveIt2InferenceClient(host="127.0.0.1", port=9999)
         old_socket = client.socket
-        old_socket.close = MagicMock()
+        # wraps= records the call for the assertion while still running the real
+        # close(). A bare MagicMock would stub close() out entirely, orphaning a
+        # live ZMQ socket on the still-open context - which raises
+        # PytestUnraisableExceptionWarning when the GC finally reaps it (and, if
+        # it is collected before the context, hangs context.term() forever).
+        old_socket.close = MagicMock(wraps=old_socket.close)
 
         client.reconnect()
 
         old_socket.close.assert_called_once()
+        # reconnect() must genuinely close the old socket, not merely call a
+        # method named close - assert the socket is really shut, so a
+        # regression that stops closing it (leaking the fd) is caught.
+        assert old_socket.closed is True
         assert client.socket is not old_socket
         # New socket is usable for a round-trip (send/recv wired by _init_socket).
         client.socket.send = MagicMock()
         client.socket.recv = MagicMock(return_value=MsgSerializer.to_bytes({"status": "ok"}))
         assert client.ping() is True
+        client._teardown()
 
     def test_reconnect_ignores_errors_closing_a_broken_socket(self):
         """A close() that raises must not stop reconnect from rebuilding.
@@ -170,11 +180,16 @@ class TestMoveIt2InferenceClient:
         """
         client = MoveIt2InferenceClient(host="127.0.0.1", port=9999)
         old_socket = client.socket
+        real_close = old_socket.close
         old_socket.close = MagicMock(side_effect=RuntimeError("already dead"))
 
         client.reconnect()  # must not propagate
 
         assert client.socket is not old_socket
+        # The stubbed close() raised, so the real socket is still open; close it
+        # for real (and tear the client down) so no live ZMQ handle is orphaned.
+        real_close()
+        client._teardown()
 
     def test_teardown_swallows_socket_close_errors(self):
         """_teardown() is best-effort: a raising close()/term() never propagates.
@@ -184,9 +199,15 @@ class TestMoveIt2InferenceClient:
         so the method itself must never raise.
         """
         client = MoveIt2InferenceClient(host="127.0.0.1", port=9999)
+        real_close = client.socket.close
+        real_term = client.context.term
         client.socket.close = MagicMock(side_effect=RuntimeError("boom"))
         client.context.term = MagicMock(side_effect=RuntimeError("boom"))
         client._teardown()  # must not raise
+        # The stubbed close()/term() raised, so the real socket and context are
+        # still live; release them for real so nothing is orphaned to the GC.
+        real_close()
+        real_term()
 
     def test_plan_helper_omits_optional_fields_when_unset(self):
         """plan() should not send ``target_pose`` / ``world_update`` keys when
