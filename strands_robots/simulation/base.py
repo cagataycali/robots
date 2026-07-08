@@ -46,6 +46,49 @@ from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 logger = logging.getLogger(__name__)
 
 
+# Robot-setup keyword arguments that identify a caller who confused a backend
+# *constructor* with the robot-setup entry points. A constructor builds only an
+# empty engine; a robot is added afterwards via ``add_robot`` (or in one step by
+# the ``Robot(name, mode="sim")`` factory). Backend constructors accept
+# ``**kwargs`` for cross-backend forward compatibility - so a single call can
+# carry GPU-backend options such as ``num_envs`` / ``device`` that non-GPU
+# backends simply drop - but that sink must not silently swallow an argument
+# that names a *robot to set up*. Matching the "no silent swallow of unknown
+# kwargs" contract already enforced for ``add_object``, these are rejected
+# loudly instead of being dropped and failing far downstream with an unrelated
+# "No world" error.
+_SETUP_KWARGS: tuple[str, ...] = ("robot_name", "robot")
+
+
+def reject_setup_kwargs(kwargs: Mapping[str, Any]) -> None:
+    """Reject robot-setup keyword arguments passed to a backend constructor.
+
+    A backend ``__init__`` accepts ``**kwargs`` only as a forward-compatibility
+    sink for backend-specific options. Passing ``robot_name`` (or ``robot``)
+    there is always a mistake: the constructor creates an empty engine, so the
+    argument is meaningless and would otherwise be silently dropped, leaving a
+    robot-less engine that fails later with a confusing "No world" error.
+
+    Args:
+        kwargs: The residual keyword arguments a backend ``__init__`` is about
+            to drop into its forward-compatibility sink.
+
+    Raises:
+        TypeError: If ``kwargs`` names a robot-setup argument. The message
+            points at the ``Robot(name, mode="sim")`` factory (one-step setup)
+            and the ``create_world()`` + ``add_robot(name)`` sequence.
+    """
+    offending = [k for k in _SETUP_KWARGS if k in kwargs]
+    if not offending:
+        return
+    names = ", ".join(repr(k) for k in offending)
+    raise TypeError(
+        f"Simulation backend constructor does not accept {names}: a constructor "
+        'builds an empty engine, not a robot. Use Robot("so101", mode="sim") for '
+        'one-step setup, or create_world() then add_robot("so101").'
+    )
+
+
 class SimEngine(ABC):
     """Abstract base class for simulation engines.
 

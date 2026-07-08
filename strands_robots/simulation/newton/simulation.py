@@ -37,7 +37,7 @@ import numpy as np
 
 from strands_robots.assets import resolve_model_path, resolve_robot_name
 from strands_robots.registry.discovery import discover_urdf_path, list_urdf_discoverable
-from strands_robots.simulation.base import SimEngine
+from strands_robots.simulation.base import SimEngine, reject_setup_kwargs
 from strands_robots.simulation.model_registry import (
     list_available_models,
     resolve_model,
@@ -145,11 +145,14 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ``None`` selects Warp's default device (GPU when available).
             default_width: Default render width in pixels.
             default_height: Default render height in pixels.
-            **kwargs: Ignored; accepted for forward compatibility.
+            **kwargs: Ignored; accepted for forward compatibility. Robot-setup
+                arguments (``robot_name`` / ``robot``) are rejected rather than
+                dropped - use ``Robot("so101", mode="sim")`` or ``add_robot``.
 
         Raises:
             ValueError: If ``solver`` is not a known solver name.
         """
+        reject_setup_kwargs(kwargs)
         super().__init__()
         # State that teardown (destroy/cleanup/__del__) touches must be set
         # before any fallible construction step. Otherwise a partially built

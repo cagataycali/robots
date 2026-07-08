@@ -16,6 +16,19 @@ sim.add_object(name="table", shape="box", size=[0.5, 0.5, 0.02],
 sim.add_camera(name="overhead", position=[0.0, 0.0, 1.5], target=[0.0, 0.0, 0.0])
 ```
 
+## Setup entry points
+
+`Robot("so100")` is the one-step way to get a ready-to-drive engine: it builds
+the world and adds the named robot for you. Constructing a backend directly -
+`create_simulation("mujoco")` or `Simulation()` - gives an **empty** engine; you
+then call `create_world()` and `add_robot("so100")` yourself.
+
+`robot_name` therefore belongs to `Robot(...)` and `add_robot(...)`, never to a
+backend constructor. Passing it to the constructor
+(`Simulation(robot_name="so100")`) is rejected with a `TypeError` rather than
+silently ignored, so the mistake is caught up front instead of surfacing later
+as an unrelated `No world` error.
+
 ## Strategies
 
 | Need | Approach |

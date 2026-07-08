@@ -58,7 +58,7 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
-from strands_robots.simulation.base import SimEngine
+from strands_robots.simulation.base import SimEngine, reject_setup_kwargs
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
@@ -203,8 +203,12 @@ class MuJoCoSimEngine(
                 GPU backends) so an identical call resolves across backends.
                 Mirrors ``NewtonSimEngine``'s forward-compatible contract. Note
                 they are NOT passed to ``super().__init__()`` (``AgentTool``
-                takes no constructor arguments).
+                takes no constructor arguments). Robot-setup arguments
+                (``robot_name`` / ``robot``) are rejected here rather than
+                dropped - a constructor builds an empty engine, so use
+                ``Robot("so101", mode="sim")`` or ``add_robot`` instead.
         """
+        reject_setup_kwargs(kwargs)
         super().__init__()
         self._init_ros_bridge(ros2_bridge=ros2_bridge, ros2_domain=ros2_domain)
         self.tool_name_str = tool_name
