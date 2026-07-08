@@ -59,6 +59,11 @@ class RemotePolicy(Policy):
         connect_timeout: Seconds to wait for the WebSocket handshake.
         request_timeout: Seconds to wait for a reply to each request.
 
+    Unrecognized kwargs are ignored (for forward-compatible ``policy_config``
+    passthrough via :func:`~strands_robots.policies.create_policy`) but logged
+    at WARNING, since a mistyped connection kwarg (e.g. ``uri=``) would
+    otherwise leave the client silently connected to the default endpoint.
+
     Raises:
         ConnectionError: On first use, if the server cannot be reached.
     """
@@ -71,11 +76,32 @@ class RemotePolicy(Policy):
         port: int = 8765,
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
-        **_ignored: Any,
+        **ignored_kwargs: Any,
     ) -> None:
         self.uri = endpoint if endpoint else f"ws://{host}:{port}"
         if not self.uri.startswith(("ws://", "wss://")):
             self.uri = f"ws://{self.uri}"
+        # A remote client forwards a shared policy_config superset (via
+        # create_policy), so unrecognized kwargs are tolerated rather than
+        # rejected - the cross-provider "ignore unknown constructor kwargs"
+        # contract. But dropping them SILENTLY hides a connection
+        # misconfiguration: the server endpoint is set via ``endpoint`` (with
+        # a ``host``/``port`` fallback), and passing it under any other name
+        # (e.g. ``uri=`` - also this object's own attribute name, an easy
+        # slip) leaves the client silently pointed at the default
+        # ws://127.0.0.1:8765, surfacing only as a confusing "connection
+        # refused" to a port the user never chose. Warn so the endpoint
+        # actually in use is visible (mirrors the #317 no-silent-localhost
+        # -default fix for cosmos3:// URLs).
+        if ignored_kwargs:
+            logger.warning(
+                "RemotePolicy ignoring unexpected constructor kwarg(s) %s; "
+                "connecting to %s. Set the server endpoint via endpoint= "
+                "(or host=/port=); server-side policy config belongs on the "
+                "PolicyServer, not the client.",
+                sorted(ignored_kwargs),
+                self.uri,
+            )
         self.connect_timeout = connect_timeout
         self.request_timeout = request_timeout
 

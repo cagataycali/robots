@@ -7,6 +7,7 @@ observation->chunk round-trip, config/reset/RTC forwarding, and loud error
 propagation - not internal state.
 """
 
+import logging
 import socket
 from typing import Any
 
@@ -231,6 +232,36 @@ def test_create_policy_named_remote_provider_with_endpoint():
     policy = create_policy("remote", endpoint="wss://secure-box:9000")
     assert isinstance(policy, RemotePolicy)
     assert policy.uri == "wss://secure-box:9000"
+
+
+def test_wrong_named_endpoint_kwarg_warns_instead_of_silently_defaulting(caplog):
+    """A connection endpoint passed under the wrong kwarg name is tolerated (the
+    cross-provider ignore-unknown-constructor-kwargs contract) but MUST NOT be
+    dropped silently: the client would otherwise connect to the default
+    ws://127.0.0.1:8765 with no hint that the intended endpoint never took
+    effect, surfacing only as a confusing "connection refused" to a port the
+    user never chose (cf. the #317 no-silent-localhost-default fix). ``uri`` is
+    this object's own attribute name -> the single most likely such slip.
+    """
+    with caplog.at_level(logging.WARNING, logger="strands_robots.inference.client"):
+        policy = RemotePolicy(uri="ws://gpu-box:9000")
+    # The mistyped endpoint was ignored -> the client fell back to the default.
+    assert policy.uri == "ws://127.0.0.1:8765"
+    # ...but the drop is now surfaced, naming the offending kwarg + the endpoint.
+    warnings = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
+    assert any("uri" in m and "ws://127.0.0.1:8765" in m for m in warnings), warnings
+
+
+def test_known_constructor_kwargs_do_not_warn(caplog):
+    """The warning fires only for genuinely-unrecognized kwargs; the documented
+    endpoint/host/port/timeout kwargs stay quiet so the diagnostic is high-signal
+    (the normal ``create_policy("ws://...")`` path passes only known kwargs)."""
+    with caplog.at_level(logging.WARNING, logger="strands_robots.inference.client"):
+        policy = RemotePolicy(endpoint="ws://gpu-box:9000", connect_timeout=2.0, request_timeout=5.0)
+    assert policy.uri == "ws://gpu-box:9000"
+    assert not any("ignoring unexpected constructor" in r.getMessage() for r in caplog.records), [
+        r.getMessage() for r in caplog.records
+    ]
 
 
 def test_policy_server_requires_exactly_one_policy_source():

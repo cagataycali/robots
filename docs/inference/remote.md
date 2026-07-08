@@ -77,6 +77,12 @@ policy = create_policy("remote", endpoint="ws://gpu-box:8765")
 policy = create_policy("ws://gpu-box:8765")
 ```
 
+The server endpoint is set via `endpoint=` (with a `host=`/`port=` fallback).
+`RemotePolicy` tolerates unrecognized kwargs so a shared `policy_config` can be
+forwarded unchanged, but passing the endpoint under any other name (e.g. `uri=`)
+logs a WARNING naming the ignored kwarg and the endpoint actually in use, rather
+than silently connecting to the default `ws://127.0.0.1:8765`.
+
 Then drive it exactly like a local policy. In simulation:
 
 ```python

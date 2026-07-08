@@ -1054,6 +1054,22 @@ both backends (already consistent); the frame of each base signal is now
 documented on both backends' `get_observation`.
 
 
+### Fixed: surface a mistyped RemotePolicy connection endpoint instead of silently defaulting to localhost
+
+`RemotePolicy` (the `remote` inference client) tolerates unrecognized
+constructor kwargs so a shared `policy_config` superset can be forwarded through
+`create_policy` unchanged -- the cross-provider ignore-unknown-kwargs contract.
+But it dropped them SILENTLY, so passing the server endpoint under the wrong
+name (e.g. `RemotePolicy(uri=...)` -- `uri` is the object's own attribute name,
+an easy slip) left the client connected to the default `ws://127.0.0.1:8765`
+with no hint that the intended endpoint never took effect; the only symptom was
+a confusing "connection refused" to a port the user never chose. `RemotePolicy`
+now logs a WARNING naming the ignored kwarg(s) and the endpoint actually in use,
+so the misconfiguration is visible at construction. Unknown kwargs are still
+tolerated (no behavioural break); the normal `endpoint=`/`host=`/`port=` and
+smart-string (`create_policy("ws://...")`) paths stay silent. Mirrors the
+earlier no-silent-localhost-default fix for `cosmos3://` URLs.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
