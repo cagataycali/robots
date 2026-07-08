@@ -192,19 +192,24 @@ class RecordingMixin(DatasetRecordingMixin):
                 robot_type = robot.data_config or rname
 
             mj = _ensure_mujoco()
-            # Doctrine: warn loudly, never silently surprise. A floating-base
-            # robot (humanoid/mobile) has base orientation + angular velocity
-            # surfaced by get_observation (base_quat/base_ang_vel), but the
-            # observation.state schema above is derived from scalar joint names,
-            # so those base signals are dropped from the recorded dataset. Flag
-            # it at recording start rather than yielding a silently base-blind
-            # training set. (Non-breaking: the schema is unchanged.)
-            floating_base_robots = [
-                rname
-                for rname, robot in self._world.robots.items()
-                if self._robot_free_base_joint_id(self._world._model, robot) >= 0
-            ]
-            self._warn_floating_base_state_dropped(floating_base_robots)
+            # A floating-base robot (humanoid / mobile) exposes base orientation
+            # (base_quat, w,x,y,z) and angular velocity (base_ang_vel, rad/s) via
+            # get_observation, but the observation.state schema above is derived
+            # from scalar joint names, so those base signals would be dropped.
+            # Preserve them as per-component scalar columns so a locomotion /
+            # whole-body-control policy trained on the dataset is not base-blind.
+            # Detected via the shared free-base joint finder; multi-robot base
+            # columns are prefixed like joint ids (``alice__base_quat.w``) to
+            # match the prefixed observation keys the recording hook emits.
+            base_state_specs: list[tuple[str, list[str]]] = []
+            for rname, robot in self._world.robots.items():
+                if self._robot_free_base_joint_id(self._world._model, robot) >= 0:
+                    prefix = f"{rname}__" if multi_robot else ""
+                    base_state_specs.append((f"{prefix}base_quat", ["w", "x", "y", "z"]))
+                    base_state_specs.append((f"{prefix}base_ang_vel", ["x", "y", "z"]))
+            # Full observation.state schema names (scalar joints + expanded base
+            # components) - used to validate a resumed dataset's on-disk schema.
+            state_names_full = list(joint_names) + [f"{src}.{c}" for src, comps in base_state_specs for c in comps]
 
             # Declare each camera in the dataset schema at the SAME
             # resolution it actually renders at. Cameras added via add_camera
@@ -320,7 +325,7 @@ class RecordingMixin(DatasetRecordingMixin):
                 # a camera resolution between episodes would otherwise yield a
                 # cryptic per-feature shape error on the next add_frame. Compare
                 # up front and raise a clear schema-diff instead.
-                self._verify_resume_schema(resumed, joint_names, camera_keys, camera_dims, action_names)
+                self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, action_names)
                 self._world._backend_state["dataset_recorder"] = resumed
             else:
                 self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
@@ -329,6 +334,7 @@ class RecordingMixin(DatasetRecordingMixin):
                     robot_type=robot_type,
                     joint_names=joint_names,
                     action_names=action_names,
+                    extra_state_specs=base_state_specs,
                     camera_keys=camera_keys,
                     camera_dims=camera_dims,
                     task=task,

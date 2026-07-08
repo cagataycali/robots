@@ -956,6 +956,26 @@ the omission instead of dropping it silently. A new shared
 `_robot_free_base_joint_id` helper centralizes the named+unnamed free-joint
 detection.
 
+### Fixed: preserve a floating base's orientation + angular velocity in recorded datasets
+
+`get_observation` surfaces a floating-base robot's `base_quat` (orientation,
+w,x,y,z) and `base_ang_vel` (rad/s), but `start_recording` derived the
+`observation.state` schema from scalar joint names only, so those base signals
+were dropped from every recorded frame - a humanoid's named `floating_base_joint`
+contributed just one scalar slot (its x-position) and a mobile base's unnamed
+`<freejoint>` contributed nothing. A locomotion / whole-body-control policy
+trained on the resulting dataset was base-blind. `start_recording` (MuJoCo
+backend) now writes the base orientation + angular velocity as per-component
+scalar columns (`base_quat.w`.. `base_ang_vel.z`), so a recorded G1/mobile-base
+episode carries the base state a WBC policy needs (verified end to end: the
+recorded columns read back byte-for-byte after `LeRobotDataset` reopen). This
+supersedes the earlier drop-warning (#1169): the base state `get_observation`
+surfaces is now recorded, not merely flagged. A fixed-base arm is unaffected
+(no base columns, no schema growth); multi-robot base columns are prefixed like
+joint ids (`alice__base_quat.w`). `DatasetRecorder.create` gains an optional
+`extra_state_specs` to declare per-component vector state columns whose source
+key is read from the observation and flattened in schema order.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
