@@ -1101,6 +1101,27 @@ decode was the lone site left aliasing the recv buffer. It now copies to a
 writable, owning array, matching both -- round-trip dtype/shape/value fidelity
 is unchanged.
 
+### Added: base_velocity velocity-tracking reward term for the predicate/reward DSL
+
+The declarative predicate/reward DSL (`strands_robots.simulation.predicates`,
+consumed by `DeclarativeBenchmark` specs and RL `SimEnv` reward stacks) grew a
+`base_velocity(vx, vy, wz, weight=1.0, robot=None)` reward term -- the canonical
+dense locomotion reward, previously impossible to express because the DSL could
+only reference body positions, quaternions and scalar joint positions, never a
+floating base's velocity.
+
+It rewards a floating-base robot for matching a commanded BODY-frame velocity
+(`vx` forward, `vy` lateral in the robot's own heading, `wz` yaw rate) as
+`-weight * ||(v_body_x, v_body_y, w_body_z) - (vx, vy, wz)||`. It consumes the
+floating-base observation surfaced by `get_observation`: `base_lin_vel` (world
+frame) is rotated into the base frame via `base_quat`, and `base_ang_vel` is
+already body-frame, so the tracked velocity is heading-relative -- matching the
+IsaacLab / legged_gym locomotion-command convention rather than a fixed world
+axis. On a fixed-base arm (no floating base) the term degrades to `0.0` and logs
+the missing base once, consistent with the DSL's other name-resolution
+degradation. Works on both the MuJoCo and Newton backends (both surface the base
+twist with the same frame convention).
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
