@@ -293,7 +293,9 @@ _BASE_COLS = [
 
 
 def _recorder_state_names(engine: NewtonSimEngine) -> tuple[list[str], tuple[int, ...] | None]:
-    rec = engine._world._backend_state["dataset_recorder"]
+    world = engine._world
+    assert world is not None
+    rec = world._backend_state["dataset_recorder"]
     feat = rec.dataset.features.get("observation.state", {})
     names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
     shape = feat.get("shape") if isinstance(feat, dict) else getattr(feat, "shape", None)
