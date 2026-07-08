@@ -282,6 +282,29 @@ those views, names may be given in raw or schema-safe (`/` -> `__`) form, and
 an unknown name fails loudly listing the available cameras. `dataset_cameras`
 now behaves identically on both engines.
 
+### Fixed: the Newton recorder dropped a floating base's state from the dataset
+
+A floating-base robot (a humanoid or a mobile base) exposes its full base
+kinematics via `get_observation` on both backends -- position (`base_pos`,
+world x/y/z including height), orientation (`base_quat`, w/x/y/z), linear
+velocity (`base_lin_vel`, m/s) and angular velocity (`base_ang_vel`, rad/s).
+The MuJoCo recorder preserves these as per-component `observation.state`
+columns, but the Newton recorder derived its schema from scalar joint names
+only and merely *warned* that the base state was being dropped -- so a
+dataset recorded on the Newton backend was silently base-blind, and a
+locomotion / velocity-tracking / whole-body-control policy trained on it was
+missing exactly the base state it needs.
+
+`NewtonSimEngine.start_recording` now preserves the floating base as the same
+per-component scalar columns (`base_pos.x` .. `base_ang_vel.z`) as the MuJoCo
+backend, reusing the `DatasetRecorder` `extra_state_specs` machinery that
+flattens the vector observation keys into `observation.state` each frame.
+Multi-robot base columns are namespaced (`alice__base_quat.w`) to match the
+recorded observation keys, a resumed dataset is validated against the full
+(joints + base) schema, and a fixed-base arm gains no base columns (the schema
+is unchanged). The now-superseded base-state-dropped warning is removed from
+both backends.
+
 ### Fixed: `render_depth` ignored a camera's configured resolution
 
 `render()` and `render_all()` honor a named camera's configured resolution
