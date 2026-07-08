@@ -5,6 +5,21 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: scene mutations silently swallowed a cached-XML refresh failure
+
+Every MuJoCo scene mutation keeps a legacy XML string in
+`_backend_state["xml"]` in sync with the live `MjSpec` so the `load_scene` +
+`add_robot` round-trip can read it. That refresh calls `spec.to_xml()`, which
+can fail on specs MuJoCo cannot serialise. Two of the four mutation paths
+(`replace_scene_mjcf` and `patch_scene_mjcf`) wrapped it in a bare
+`except Exception: pass`, so a failure left the cache stale and diverged from
+the live spec with no diagnostic -- a subsequent XML-cache reader would see
+outdated scene contents and nothing explained why. The other two paths
+(`add_object`/recompile and `eject_robot_from_scene`) already logged the reason.
+All four now funnel through one `_sync_cached_xml` helper that logs the failure
+at debug and leaves the prior cache intact: still never fatal (the live
+model/spec are already updated), but no longer silent.
+
 ### Added: remote policy inference (client/server split) for edge robots + remote GPU
 
 A resource-constrained robot host (edge device / laptop CPU) often cannot run a
