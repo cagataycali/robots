@@ -907,6 +907,74 @@ def test_reset_empty_buffer_during_recording_does_not_create_episode(sim_with_on
     assert ds.meta.total_frames == 5
 
 
+def test_reset_surfaces_save_episode_failure_without_resetting(sim_with_one_robot, tmp_path):
+    """A ``reset()`` that auto-flushes a pending episode must SURFACE a flush
+    failure and leave the world untouched - not silently reset into an
+    undefined state.
+
+    ``reset()`` flushes buffered recording frames as an episode boundary before
+    teleporting the world (see
+    :func:`test_reset_flushes_pending_recording_episode`). If that flush fails,
+    the facade ``save_episode`` has already marked the recorder poisoned and
+    cleared the recording flag; ``reset()`` must propagate that error and abort
+    the reset rather than run ``mj_resetData`` on top of a half-written episode.
+    Otherwise a data-integrity failure would masquerade as a clean reset and the
+    caller would keep collecting into a broken dataset.
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    sim = sim_with_one_robot
+    root = str(tmp_path / "reset_flush_fail")
+    assert sim.start_recording(repo_id="local/reset_flush_fail", fps=20, root=root, overwrite=True)["status"] == (
+        "success"
+    )
+
+    # Buffer a real rollout so reset() takes the flush path (episode_frame_count > 0).
+    rp = sim.run_policy(
+        robot_name="arm",
+        policy_provider="mock",
+        n_steps=5,
+        control_frequency=20.0,
+        fast_mode=True,
+    )
+    assert rp["status"] == "success", rp
+
+    recorder = sim._world._backend_state["dataset_recorder"]
+    assert recorder is not None
+    assert getattr(recorder, "episode_frame_count", 0) > 0, "expected a non-empty buffer to flush"
+
+    # Force the underlying flush to fail. The facade save_episode turns a
+    # recorder error dict into a cleared-recording error return, which reset()
+    # must propagate verbatim.
+    def _boom() -> dict:
+        return {"status": "error", "message": "simulated lerobot flush failure"}
+
+    recorder.save_episode = _boom  # type: ignore[method-assign]
+
+    # Capture pre-reset world bookkeeping; a fail-fast reset must not touch it.
+    step_count_before = sim._world.step_count
+    sim_time_before = sim._world.sim_time
+    assert step_count_before > 0, "rollout should have advanced the step counter"
+
+    rr = sim.reset()
+
+    # 1. The failure is surfaced, not swallowed.
+    assert rr["status"] == "error", rr
+    assert "save_episode failed" in rr["content"][0]["text"]
+    assert "simulated lerobot flush failure" in rr["content"][0]["text"]
+
+    # 2. The world was NOT reset - no mj_resetData ran, so time/step survive.
+    assert sim._world.step_count == step_count_before
+    assert sim._world.sim_time == sim_time_before
+
+    # 3. The poisoned recorder was dropped so callers cannot append into it.
+    assert sim._world._backend_state.get("recording") is False
+    assert sim._world._backend_state.get("dataset_recorder") is None
+
+
 def test_start_recording_existing_empty_root_records(sim_with_two_robots, tmp_path):
     """An EXISTING empty ``root`` (e.g. from tempfile.mkdtemp()) must record.
 
