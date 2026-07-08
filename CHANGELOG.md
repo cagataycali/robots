@@ -1085,6 +1085,22 @@ tolerated (no behavioural break); the normal `endpoint=`/`host=`/`port=` and
 smart-string (`create_policy("ws://...")`) paths stay silent. Mirrors the
 earlier no-silent-localhost-default fix for `cosmos3://` URLs.
 
+### Fixed: Cosmos 3 msgpack decode returned read-only, buffer-aliasing arrays
+
+The vendored NumPy msgpack codec the Cosmos 3 RoboLab client uses to unpack the
+server's action chunk (and any returned observation) reconstructed each array
+with `np.ndarray(buffer=<recv bytes>, ...)`. Because msgpack hands back an
+immutable `bytes` object, that array is **read-only** and does **not own its
+data** -- it aliases the transient wire buffer. Normalizing a decoded array in
+place (e.g. `image /= 255`) then raises `output array is read-only`, and handing
+it to `torch.from_numpy` (zero-copy) trips torch's "given NumPy array is not
+writable ... undefined behavior" hazard. The sibling VERA packer
+(`policies/vera/_msgpack_numpy.py`) already copies for exactly this reason, and
+the remote-inference protocol decodes into a writable `bytearray`; the Cosmos 3
+decode was the lone site left aliasing the recv buffer. It now copies to a
+writable, owning array, matching both -- round-trip dtype/shape/value fidelity
+is unchanged.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
