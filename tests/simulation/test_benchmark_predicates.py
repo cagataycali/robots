@@ -15,8 +15,10 @@ import pytest
 
 from strands_robots.simulation.predicates import (
     PREDICATE_REGISTRY,
+    StatefulRewardTerm,
     _extract_json,
     _reset_resolution_warnings,
+    _StagedReward,
     make_predicate,
     register_predicate,
 )
@@ -910,3 +912,127 @@ class TestUnresolvedNameSurfacing:
             term(sim)
         warnings = [r for r in caplog.records if r.levelno == logging.WARNING and "ghost_dedup_5" in r.getMessage()]
         assert len(warnings) == 1  # deduped across the hot loop
+
+
+class TestStagedReward:
+    """Behavioural tests for the ``staged_reward`` phase-machine primitive.
+
+    Exercises the declarative phase machine end to end via the closed-registry
+    ``make_predicate`` path (no ``eval``): stage-local shaping reward, one-time
+    transition bonus, monotonic (forward-only) advancement, ``reset()``, and
+    every factory validation error.
+    """
+
+    @staticmethod
+    def _spec():
+        # Stage 0: dense reward 1.0 while below; advance once cube clears z=0.5,
+        # awarding a one-time bonus of 10.0. Stage 1 (final) pays a flat 2.0.
+        return [
+            {
+                "reward": {"predicate": "constant", "value": 1.0},
+                "advance_when": {"predicate": "body_above_z", "body": "cube", "z": 0.5},
+                "bonus": 10.0,
+            },
+            {"reward": {"predicate": "constant", "value": 2.0}},
+        ]
+
+    def test_make_predicate_returns_stateful_term(self):
+        term = make_predicate("staged_reward", stages=self._spec())
+        # Consumers duck-type on ``reset``; the concrete type must honour the
+        # StatefulRewardTerm contract so SimEnv/benchmark resets it per episode.
+        assert isinstance(term, StatefulRewardTerm)
+        assert hasattr(term, "reset")
+        assert term.phase == 0
+
+    def test_advances_on_gate_with_one_time_bonus(self):
+        sim = _BodyStateSim({"cube": [0.0, 0.0, 0.0]})
+        term = make_predicate("staged_reward", stages=self._spec())
+
+        # Gate closed -> stage 0 dense reward only, no advance.
+        assert term(sim) == pytest.approx(1.0)
+        assert term.phase == 0
+
+        # Gate fires -> emit stage-0 reward + one-time bonus, then advance.
+        sim._pos["cube"] = [0.0, 0.0, 1.0]
+        assert term(sim) == pytest.approx(1.0 + 10.0)
+        assert term.phase == 1
+
+        # Final stage: flat reward, bonus is NOT paid again.
+        assert term(sim) == pytest.approx(2.0)
+        assert term.phase == 1
+
+    def test_phase_is_monotonic_no_regression(self):
+        sim = _BodyStateSim({"cube": [0.0, 0.0, 1.0]})
+        term = make_predicate("staged_reward", stages=self._spec())
+        term(sim)  # advance to stage 1
+        assert term.phase == 1
+        # Gate condition reverses; the machine must not fall back to stage 0.
+        sim._pos["cube"] = [0.0, 0.0, 0.0]
+        assert term(sim) == pytest.approx(2.0)
+        assert term.phase == 1
+
+    def test_reset_returns_to_first_stage(self):
+        sim = _BodyStateSim({"cube": [0.0, 0.0, 1.0]})
+        term = make_predicate("staged_reward", stages=self._spec())
+        term(sim)
+        assert term.phase == 1
+        term.reset()
+        assert term.phase == 0
+        # After reset it re-earns the transition bonus on the next gate hit.
+        assert term(sim) == pytest.approx(1.0 + 10.0)
+
+    def test_empty_stages_yields_zero_reward(self):
+        # The factory rejects empty stages, but the term itself must be a safe
+        # no-op if ever constructed empty by a consumer.
+        term = _StagedReward([])
+        assert term(_BodyStateSim({})) == 0.0
+
+    def test_factory_rejects_non_list_or_empty_stages(self):
+        with pytest.raises(ValueError, match="non-empty list"):
+            make_predicate("staged_reward", stages=[])
+        with pytest.raises(ValueError, match="non-empty list"):
+            make_predicate("staged_reward", stages="not-a-list")
+
+    def test_factory_rejects_non_dict_stage(self):
+        with pytest.raises(ValueError, match=r"stage\[0\] must be a dict"):
+            make_predicate("staged_reward", stages=["oops"])
+
+    def test_factory_rejects_unknown_stage_keys(self):
+        bad = [{"reward": {"predicate": "constant", "value": 1.0}, "typo": 3}]
+        with pytest.raises(ValueError, match="unknown keys"):
+            make_predicate("staged_reward", stages=bad)
+
+    def test_factory_rejects_missing_or_malformed_reward(self):
+        with pytest.raises(ValueError, match="reward must be a predicate-call dict"):
+            make_predicate("staged_reward", stages=[{"advance_when": None}])
+        with pytest.raises(ValueError, match="reward must be a predicate-call dict"):
+            make_predicate("staged_reward", stages=[{"reward": {"value": 1.0}}])
+
+    def test_factory_requires_advance_when_on_non_final_stage(self):
+        two = [
+            {"reward": {"predicate": "constant", "value": 1.0}},
+            {"reward": {"predicate": "constant", "value": 2.0}},
+        ]
+        with pytest.raises(ValueError, match="must declare"):
+            make_predicate("staged_reward", stages=two)
+
+    def test_factory_rejects_malformed_advance_when(self):
+        bad = [
+            {
+                "reward": {"predicate": "constant", "value": 1.0},
+                "advance_when": {"body": "cube", "z": 0.5},
+            },
+            {"reward": {"predicate": "constant", "value": 2.0}},
+        ]
+        with pytest.raises(ValueError, match="advance_when must be a predicate-call dict"):
+            make_predicate("staged_reward", stages=bad)
+
+    def test_factory_rejects_non_numeric_bonus(self):
+        base = {
+            "reward": {"predicate": "constant", "value": 1.0},
+            "advance_when": {"predicate": "body_above_z", "body": "cube", "z": 0.5},
+        }
+        for bad_bonus in ("lots", True):
+            spec = [{**base, "bonus": bad_bonus}, {"reward": {"predicate": "constant", "value": 2.0}}]
+            with pytest.raises(ValueError, match="bonus must be a number"):
+                make_predicate("staged_reward", stages=spec)
