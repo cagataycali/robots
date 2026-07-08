@@ -352,8 +352,10 @@ class RenderingMixin:
         # angvel(3)], so we surface the full base pose + twist:
         #   base_pos     - world position x,y,z (incl. HEIGHT, m)
         #   base_quat    - orientation w,x,y,z
-        #   base_lin_vel - linear velocity x,y,z (m/s)
-        #   base_ang_vel - angular velocity x,y,z (rad/s)
+        #   base_lin_vel - linear velocity x,y,z (m/s, WORLD frame)
+        #   base_ang_vel - angular velocity x,y,z (rad/s, BODY frame; MuJoCo's
+        #                  free-joint qvel angular block is local, matching the
+        #                  IMU-gyro frame WBC/locomotion controllers consume)
         # WBC / locomotion / velocity-tracking / mobile-manip controllers need
         # base_pos (height for fall/height tracking) and base_lin_vel (the
         # tracked quantity in a velocity-tracking reward) in addition to the

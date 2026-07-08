@@ -89,6 +89,28 @@ def _short_joint_name(label: str) -> str:
     return label.rsplit("/", 1)[-1]
 
 
+def _quat_rotate_inverse_wxyz(quat_wxyz: list[float], vec: list[float]) -> list[float]:
+    """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
+
+    Computes ``R(q)^T @ vec`` (the standard "rotate by the inverse"), used to
+    turn Newton's world-frame free-joint angular velocity into the BODY frame so
+    ``base_ang_vel`` matches the MuJoCo backend and the IMU-gyro convention WBC /
+    locomotion controllers consume. The quaternion is normalised internally; a
+    ~zero-norm quaternion returns ``vec`` unchanged.
+    """
+    q = np.asarray(quat_wxyz, dtype=np.float64)
+    norm = float(np.linalg.norm(q))
+    if norm < 1e-8:
+        return [float(v) for v in vec]
+    w, x, y, z = q / norm
+    v = np.asarray(vec, dtype=np.float64)
+    q_vec = np.array([x, y, z], dtype=np.float64)
+    a = v * (2.0 * w * w - 1.0)
+    b = np.cross(q_vec, v) * (w * 2.0)
+    c = q_vec * (float(np.dot(q_vec, v)) * 2.0)
+    return [float(t) for t in (a - b + c)]
+
+
 class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine):
     """GPU-native simulation backend built on Newton (Warp / MuJoCo-Warp).
 
@@ -625,9 +647,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             entry per registered camera (name -> RGB ndarray) when
             ``skip_images`` is False. A robot with a floating base additionally
             carries ``base_pos`` (world x,y,z incl. height), ``base_quat``
-            (orientation, w,x,y,z), ``base_lin_vel`` (m/s) and ``base_ang_vel``
-            (rad/s) for locomotion controllers. Empty when no world exists or
-            the robot is unknown.
+            (orientation, w,x,y,z), ``base_lin_vel`` (m/s, WORLD frame) and
+            ``base_ang_vel`` (rad/s, BODY frame - matching the MuJoCo backend and
+            the IMU-gyro frame WBC / locomotion controllers consume) for
+            locomotion controllers. Empty when no world exists or the robot is
+            unknown.
         """
         if self._world is None or self._model is None:
             return {}
@@ -1292,12 +1316,15 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
         For a robot whose root is a free joint (a humanoid's named
         ``floating_base_joint``), returns a dict with ``position`` (xyz),
-        ``quaternion`` (w,x,y,z), ``linear_velocity`` and ``angular_velocity``,
-        mirroring the MuJoCo backend's ``base`` entry. Newton stores the free
-        joint's coordinates as ``[xyz, quat_xyzw]`` and its DOFs as
-        ``[linear(3), angular(3)]``, so the quaternion is reordered
-        ``xyzw -> wxyz`` to match the MuJoCo (w,x,y,z) contract while the twist
-        slots map directly. Returns None for a fixed-base robot (an arm).
+        ``quaternion`` (w,x,y,z), ``linear_velocity`` (world frame) and
+        ``angular_velocity`` (BODY frame), mirroring the MuJoCo backend's
+        ``base`` entry. Newton stores the free joint's coordinates as
+        ``[xyz, quat_xyzw]`` and its DOFs as ``[linear(3), angular(3)]`` in the
+        WORLD frame, so the quaternion is reordered ``xyzw -> wxyz`` to match the
+        MuJoCo (w,x,y,z) contract, the linear velocity maps directly (world on
+        both backends), and the angular velocity is rotated world -> body so it
+        matches MuJoCo's body-frame convention (the IMU-gyro frame WBC /
+        locomotion controllers consume). Returns None for a fixed-base robot.
 
         Args:
             robot_name: The robot to query.
@@ -1314,16 +1341,24 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         d = self._joint_dof_index.get((robot_name, base_jname))
         if q is None or d is None or q + 7 > len(joint_q) or d + 6 > len(joint_qd):
             return None
+        quat_wxyz = [
+            float(joint_q[q + 6]),
+            float(joint_q[q + 3]),
+            float(joint_q[q + 4]),
+            float(joint_q[q + 5]),
+        ]
+        # Newton stores the free joint's angular velocity in the WORLD frame,
+        # while the MuJoCo backend reports it in the BODY frame (MuJoCo's
+        # free-joint qvel angular block is local) - the IMU-gyro convention WBC /
+        # locomotion controllers consume via get_observation's base_ang_vel.
+        # Rotate world -> body so base_ang_vel agrees across both backends; the
+        # linear velocity stays world-frame on both, so it maps directly.
+        ang_world = [float(joint_qd[d + 3]), float(joint_qd[d + 4]), float(joint_qd[d + 5])]
         return {
             "position": [float(v) for v in joint_q[q : q + 3]],
-            "quaternion": [
-                float(joint_q[q + 6]),
-                float(joint_q[q + 3]),
-                float(joint_q[q + 4]),
-                float(joint_q[q + 5]),
-            ],
+            "quaternion": quat_wxyz,
             "linear_velocity": [float(v) for v in joint_qd[d : d + 3]],
-            "angular_velocity": [float(v) for v in joint_qd[d + 3 : d + 6]],
+            "angular_velocity": _quat_rotate_inverse_wxyz(quat_wxyz, ang_world),
         }
 
     def get_robot_state(self, robot_name: str | None = None) -> dict[str, Any]:
@@ -1342,7 +1377,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         and ``angular_velocity``. The free joint is NOT reported as a scalar
         joint (its coordinates are [xyz + quat], not a single angle), and the
         base ``quaternion``/``angular_velocity`` match get_observation's
-        ``base_quat``/``base_ang_vel`` for the same robot.
+        ``base_quat``/``base_ang_vel`` for the same robot (``angular_velocity``
+        is in the BODY frame, ``linear_velocity`` in the WORLD frame, matching
+        the MuJoCo backend).
 
         Args:
             robot_name: Robot to query. ``None`` resolves to the sole robot

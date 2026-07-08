@@ -165,7 +165,10 @@ class TestFloatingBaseSurfacing:
     x-coordinate as a scalar joint value. The 6-DoF base pose + twist is
     surfaced instead, with the quaternion reordered from Newton's native xyzw to
     the MuJoCo (w,x,y,z) contract and the free-joint scalar removed from
-    get_robot_state's per-joint ``state`` map.
+    get_robot_state's per-joint ``state`` map. The base angular velocity is
+    reported in the BODY frame (Newton stores it world-frame; it is rotated
+    by the base orientation) so ``base_ang_vel`` matches the MuJoCo backend
+    and the IMU-gyro convention WBC / locomotion controllers consume.
     """
 
     # A distinctive base pose (+90deg about Z) and twist; hinge sentinels.
@@ -200,7 +203,11 @@ class TestFloatingBaseSurfacing:
         # Quaternion is reordered xyzw -> wxyz to match the MuJoCo contract.
         assert base["quaternion"] == pytest.approx([self._S, 0.0, 0.0, self._S], abs=1e-4)
         assert base["linear_velocity"] == pytest.approx([1.1, 2.2, 3.3], abs=1e-4)
-        assert base["angular_velocity"] == pytest.approx([4.4, 5.5, 6.6], abs=1e-4)
+        # angular_velocity is in the BODY frame (MuJoCo parity / IMU-gyro
+        # convention). Newton stores it world-frame; at the +90deg-about-Z base
+        # the world twist [4.4, 5.5, 6.6] expressed in the body frame is
+        # R(quat)^T @ [4.4, 5.5, 6.6] == [5.5, -4.4, 6.6].
+        assert base["angular_velocity"] == pytest.approx([5.5, -4.4, 6.6], abs=1e-4)
         # Child hinges still read their own coordinates (not shifted / dropped).
         assert state["j1"]["position"] == pytest.approx(0.55, abs=1e-4)
         assert state["j2"]["position"] == pytest.approx(-0.22, abs=1e-4)
@@ -214,7 +221,40 @@ class TestFloatingBaseSurfacing:
         assert obs["base_pos"] == pytest.approx([0.3, 0.4, 0.9], abs=1e-4)
         assert obs["base_quat"] == pytest.approx([self._S, 0.0, 0.0, self._S], abs=1e-4)
         assert obs["base_lin_vel"] == pytest.approx([1.1, 2.2, 3.3], abs=1e-4)
-        assert obs["base_ang_vel"] == pytest.approx([4.4, 5.5, 6.6], abs=1e-4)
+        # base_ang_vel is BODY-frame (MuJoCo parity); the world twist
+        # [4.4, 5.5, 6.6] rotated into the +90deg-about-Z body frame is
+        # [5.5, -4.4, 6.6]. See test_base_ang_vel_is_body_frame_matching_mujoco.
+        assert obs["base_ang_vel"] == pytest.approx([5.5, -4.4, 6.6], abs=1e-4)
+
+    def test_base_ang_vel_is_body_frame_matching_mujoco(self, engine_floater):
+        """base_ang_vel is the body-frame angular velocity, not the raw world twist.
+
+        Newton stores a free joint's angular velocity in the WORLD frame, but the
+        MuJoCo backend (and the IMU-gyro convention the WBC / locomotion
+        observation builder consumes) reports it in the BODY frame. For a base
+        yawed +90deg about Z spinning about WORLD x, the body frame sees that as
+        a spin about body -y, so base_ang_vel must be [0, -w, 0], NOT the raw
+        [w, 0, 0]. An identity-oriented base leaves world == body unchanged.
+        """
+        S = self._S
+        q = engine_floater._state_0.joint_q.numpy().copy()
+        q[0:3] = [0.0, 0.0, 0.9]
+        q[3:7] = [0.0, 0.0, S, S]  # xyzw: +90 about Z
+        engine_floater._state_0.joint_q.assign(q)
+        qd = engine_floater._state_0.joint_qd.numpy().copy()
+        qd[:] = 0.0
+        qd[3:6] = [2.0, 0.0, 0.0]  # pure WORLD-x angular velocity
+        engine_floater._state_0.joint_qd.assign(qd)
+        obs = engine_floater.get_observation("floater", skip_images=True)
+        assert obs["base_ang_vel"] == pytest.approx([0.0, -2.0, 0.0], abs=1e-4)
+
+        # Identity orientation: world frame == body frame, value passes through.
+        q[3:7] = [0.0, 0.0, 0.0, 1.0]  # xyzw identity
+        engine_floater._state_0.joint_q.assign(q)
+        qd[3:6] = [0.3, 0.4, 0.5]
+        engine_floater._state_0.joint_qd.assign(qd)
+        obs2 = engine_floater.get_observation("floater", skip_images=True)
+        assert obs2["base_ang_vel"] == pytest.approx([0.3, 0.4, 0.5], abs=1e-4)
 
     def test_fixed_base_arm_has_no_base_entry(self, engine_so100):
         # A fixed-base arm (no free root) must be unchanged: no base pose, no

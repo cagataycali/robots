@@ -1033,6 +1033,27 @@ rejected atomically with an actionable message naming the offending key - on bot
 the MuJoCo and Newton backends. Scalars, numeric strings and `numpy` float
 scalars are accepted unchanged.
 
+### Fixed: Newton reported a floating base's angular velocity in the world frame, not the body frame
+
+`get_observation` / `get_robot_state` are a cross-backend contract, but the two
+backends surfaced a floating base's `base_ang_vel` in different frames for the
+same physical motion. The MuJoCo backend returns it in the BODY frame (its
+free-joint `qvel` angular block is local) - the IMU-gyro convention a WBC /
+locomotion controller consumes (the WBC observation builder feeds `base_ang_vel`
+straight in alongside a body-frame projected-gravity cue). The Newton backend
+returned the RAW world-frame angular velocity, so once the base yawed away from
+identity the two backends disagreed by up to the full magnitude of the signal
+(a base spinning about world-X at 2 rad/s reads `[2, 0, 0]` on Newton vs
+`[0, -2, 0]` on MuJoCo at a 90-degree yaw). A humanoid/mobile policy evaluated
+across backends - or a G1 WBC controller driven on Newton - was silently fed a
+mis-framed gyro signal that destabilises the gait as the base turns. Newton's
+`_free_base_pose` now rotates the angular velocity world -> body via the base
+quaternion so `base_ang_vel` matches MuJoCo (verified equal to 1e-6 across a
+0-90 degree yaw sweep on a real G1). The linear velocity stays world-frame on
+both backends (already consistent); the frame of each base signal is now
+documented on both backends' `get_observation`.
+
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
