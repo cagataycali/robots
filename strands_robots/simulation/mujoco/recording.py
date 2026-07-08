@@ -192,11 +192,13 @@ class RecordingMixin(DatasetRecordingMixin):
                 robot_type = robot.data_config or rname
 
             mj = _ensure_mujoco()
-            # A floating-base robot (humanoid / mobile) exposes base orientation
-            # (base_quat, w,x,y,z) and angular velocity (base_ang_vel, rad/s) via
-            # get_observation, but the observation.state schema above is derived
-            # from scalar joint names, so those base signals would be dropped.
-            # Preserve them as per-component scalar columns so a locomotion /
+            # A floating-base robot (humanoid / mobile) exposes full base
+            # kinematics via get_observation - position (base_pos, world x,y,z
+            # incl. height), orientation (base_quat, w,x,y,z), linear velocity
+            # (base_lin_vel, m/s) and angular velocity (base_ang_vel, rad/s) -
+            # but the observation.state schema above is derived from scalar joint
+            # names, so those base signals would be dropped. Preserve them as
+            # per-component scalar columns so a locomotion / velocity-tracking /
             # whole-body-control policy trained on the dataset is not base-blind.
             # Detected via the shared free-base joint finder; multi-robot base
             # columns are prefixed like joint ids (``alice__base_quat.w``) to
@@ -205,7 +207,9 @@ class RecordingMixin(DatasetRecordingMixin):
             for rname, robot in self._world.robots.items():
                 if self._robot_free_base_joint_id(self._world._model, robot) >= 0:
                     prefix = f"{rname}__" if multi_robot else ""
+                    base_state_specs.append((f"{prefix}base_pos", ["x", "y", "z"]))
                     base_state_specs.append((f"{prefix}base_quat", ["w", "x", "y", "z"]))
+                    base_state_specs.append((f"{prefix}base_lin_vel", ["x", "y", "z"]))
                     base_state_specs.append((f"{prefix}base_ang_vel", ["x", "y", "z"]))
             # Full observation.state schema names (scalar joints + expanded base
             # components) - used to validate a resumed dataset's on-disk schema.

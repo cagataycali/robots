@@ -1,14 +1,16 @@
 """Regression tests: start_recording preserves a floating base's orientation +
 angular velocity in the recorded observation.state.
 
-``get_observation`` surfaces ``base_quat`` (orientation, w,x,y,z) and
-``base_ang_vel`` (rad/s) for a floating-base robot (a humanoid's named
-``floating_base_joint`` or a mobile base's unnamed ``<freejoint>``). Those base
-signals used to be dropped from the LeRobotDataset ``observation.state`` schema
-(derived from scalar joint names only), leaving a locomotion / whole-body-control
-policy trained on the dataset base-blind. They are now written as per-component
-scalar columns (``base_quat.w``.. ``base_ang_vel.z``); a fixed-base arm is
-unchanged (no base columns, no schema growth).
+``get_observation`` surfaces the full floating-base kinematics -- ``base_pos``
+(world x,y,z incl. height), ``base_quat`` (orientation, w,x,y,z), ``base_lin_vel``
+(m/s) and ``base_ang_vel`` (rad/s) -- for a floating-base robot (a humanoid's
+named ``floating_base_joint`` or a mobile base's unnamed ``<freejoint>``). Those
+base signals used to be dropped from the LeRobotDataset ``observation.state``
+schema (derived from scalar joint names only), leaving a locomotion /
+velocity-tracking / whole-body-control policy trained on the dataset base-blind.
+They are now written as per-component scalar columns (``base_pos.x``..
+``base_ang_vel.z``); a fixed-base arm is unchanged (no base columns, no schema
+growth).
 """
 
 import tempfile
@@ -85,10 +87,16 @@ FIXED_ARM_XML = """
 """
 
 _BASE_COLS = [
+    "base_pos.x",
+    "base_pos.y",
+    "base_pos.z",
     "base_quat.w",
     "base_quat.x",
     "base_quat.y",
     "base_quat.z",
+    "base_lin_vel.x",
+    "base_lin_vel.y",
+    "base_lin_vel.z",
     "base_ang_vel.x",
     "base_ang_vel.y",
     "base_ang_vel.z",
@@ -171,7 +179,7 @@ def test_fixed_arm_has_no_base_columns(sim):
     res, _ = _start(sim, "arm", FIXED_ARM_XML)
     assert res["status"] == "success"
     names, _shape = _state_names(sim)
-    assert not any(n.startswith("base_quat") or n.startswith("base_ang_vel") for n in names), (
+    assert not any(n.startswith(("base_pos", "base_quat", "base_lin_vel", "base_ang_vel")) for n in names), (
         "fixed-base arm must NOT gain floating-base columns"
     )
     sim.stop_recording()
@@ -189,10 +197,14 @@ def test_recorded_base_values_round_trip(sim):
     rec = sim._world._backend_state["dataset_recorder"]
     m, d = sim._world._model, sim._world._data
     qadr, vadr = _free_joint_addrs(sim)
+    known_pos = [0.11, -0.22, 0.83]  # world x, y, HEIGHT
     known_quat = [0.7071068, 0.0, 0.7071068, 0.0]  # +90deg about Y
+    known_linvel = [0.41, -0.52, 0.63]
     known_angvel = [0.13, 0.24, 0.37]
     for _ in range(3):
+        d.qpos[qadr : qadr + 3] = known_pos
         d.qpos[qadr + 3 : qadr + 7] = known_quat
+        d.qvel[vadr : vadr + 3] = known_linvel
         d.qvel[vadr + 3 : vadr + 6] = known_angvel
         mj.mj_forward(m, d)
         obs = sim.get_observation("humanoid", skip_images=True)
@@ -206,9 +218,13 @@ def test_recorded_base_values_round_trip(sim):
     names = ds.features["observation.state"]["names"]
     idx = {n: i for i, n in enumerate(names)}
     state = np.asarray(ds[0]["observation.state"], dtype=np.float32)
+    got_pos = [float(state[idx[f"base_pos.{c}"]]) for c in "xyz"]
     got_quat = [float(state[idx[f"base_quat.{c}"]]) for c in "wxyz"]
+    got_linvel = [float(state[idx[f"base_lin_vel.{c}"]]) for c in "xyz"]
     got_angvel = [float(state[idx[f"base_ang_vel.{c}"]]) for c in "xyz"]
+    assert np.allclose(got_pos, known_pos, atol=1e-3), f"base_pos not preserved: {got_pos}"
     assert np.allclose(got_quat, known_quat, atol=1e-3), f"base_quat not preserved: {got_quat}"
+    assert np.allclose(got_linvel, known_linvel, atol=1e-3), f"base_lin_vel not preserved: {got_linvel}"
     assert np.allclose(got_angvel, known_angvel, atol=1e-3), f"base_ang_vel not preserved: {got_angvel}"
 
 

@@ -205,11 +205,15 @@ class TestFloatingBaseSurfacing:
         assert state["j1"]["position"] == pytest.approx(0.55, abs=1e-4)
         assert state["j2"]["position"] == pytest.approx(-0.22, abs=1e-4)
 
-    def test_get_observation_surfaces_base_quat_and_ang_vel(self, engine_floater):
+    def test_get_observation_surfaces_full_base_kinematics(self, engine_floater):
         self._set_base_and_hinges(engine_floater)
         obs = engine_floater.get_observation("floater", skip_images=True)
-        # Orientation (w,x,y,z) and angular velocity (rad/s) for locomotion.
+        # Full base pose + twist for locomotion / velocity tracking: position
+        # (world x,y,z incl. height), orientation (w,x,y,z), linear velocity
+        # (m/s) and angular velocity (rad/s). Parity with the MuJoCo backend.
+        assert obs["base_pos"] == pytest.approx([0.3, 0.4, 0.9], abs=1e-4)
         assert obs["base_quat"] == pytest.approx([self._S, 0.0, 0.0, self._S], abs=1e-4)
+        assert obs["base_lin_vel"] == pytest.approx([1.1, 2.2, 3.3], abs=1e-4)
         assert obs["base_ang_vel"] == pytest.approx([4.4, 5.5, 6.6], abs=1e-4)
 
     def test_fixed_base_arm_has_no_base_entry(self, engine_so100):
@@ -220,6 +224,8 @@ class TestFloatingBaseSurfacing:
         obs = engine_so100.get_observation("so100", skip_images=True)
         assert "base_quat" not in obs
         assert "base_ang_vel" not in obs
+        assert "base_pos" not in obs
+        assert "base_lin_vel" not in obs
 
 
 class TestListBodies:

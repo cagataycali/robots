@@ -347,16 +347,24 @@ class RenderingMixin:
         if free_jnt_id < 0:
             free_jnt_id = self._robot_base_free_joint(model, robot, pfx)
 
-        # Floating-base IMU-style signals from the free joint, when present.
-        # WBC and other locomotion controllers consume ``base_quat`` (the base
-        # orientation, w,x,y,z) and ``base_ang_vel`` (rad/s); a mobile
-        # manipulator uses them as its base heading/turn-rate. Both are additive
-        # and absent for fixed-base robots (arms), so non-locomotion callers
-        # never see them.
+        # Floating-base signals from the free joint, when present. A free
+        # joint's qpos is [xyz(3), quat(4)] and its qvel is [linvel(3),
+        # angvel(3)], so we surface the full base pose + twist:
+        #   base_pos     - world position x,y,z (incl. HEIGHT, m)
+        #   base_quat    - orientation w,x,y,z
+        #   base_lin_vel - linear velocity x,y,z (m/s)
+        #   base_ang_vel - angular velocity x,y,z (rad/s)
+        # WBC / locomotion / velocity-tracking / mobile-manip controllers need
+        # base_pos (height for fall/height tracking) and base_lin_vel (the
+        # tracked quantity in a velocity-tracking reward) in addition to the
+        # orientation + turn rate. All four are additive and absent for
+        # fixed-base robots (arms), so non-locomotion callers never see them.
         if free_jnt_id >= 0:
             qadr = model.jnt_qposadr[free_jnt_id]
             vadr = model.jnt_dofadr[free_jnt_id]
+            obs["base_pos"] = [float(v) for v in data.qpos[qadr : qadr + 3]]
             obs["base_quat"] = [float(v) for v in data.qpos[qadr + 3 : qadr + 7]]
+            obs["base_lin_vel"] = [float(v) for v in data.qvel[vadr : vadr + 3]]
             obs["base_ang_vel"] = [float(v) for v in data.qvel[vadr + 3 : vadr + 6]]
 
         if skip_images:

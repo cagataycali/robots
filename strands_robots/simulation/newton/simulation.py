@@ -624,7 +624,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             Mapping of short joint name to joint position (float), plus one
             entry per registered camera (name -> RGB ndarray) when
             ``skip_images`` is False. A robot with a floating base additionally
-            carries ``base_quat`` (orientation, w,x,y,z) and ``base_ang_vel``
+            carries ``base_pos`` (world x,y,z incl. height), ``base_quat``
+            (orientation, w,x,y,z), ``base_lin_vel`` (m/s) and ``base_ang_vel``
             (rad/s) for locomotion controllers. Empty when no world exists or
             the robot is unknown.
         """
@@ -663,7 +664,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # MuJoCo backend's contract.
         base = self._free_base_pose(robot_name, joint_q, joint_qd)
         if base is not None:
+            obs_out["base_pos"] = base["position"]
             obs_out["base_quat"] = base["quaternion"]
+            obs_out["base_lin_vel"] = base["linear_velocity"]
             obs_out["base_ang_vel"] = base["angular_velocity"]
         if not skip_images:
             from strands_robots.simulation.policy_runner import _extract_frame_ndarray

@@ -976,6 +976,25 @@ joint ids (`alice__base_quat.w`). `DatasetRecorder.create` gains an optional
 `extra_state_specs` to declare per-component vector state columns whose source
 key is read from the observation and flattened in schema order.
 
+### Fixed: surface a floating base's full position + linear velocity (not just orientation + turn rate)
+
+`get_observation` surfaced a floating-base robot's `base_quat` (orientation) and
+`base_ang_vel` (turn rate) but not its `base_pos` (world x,y,z, including
+HEIGHT) or `base_lin_vel` (m/s) - the two signals a locomotion, velocity-tracking
+or mobile-manipulation controller most needs: you cannot detect a fall or track a
+height target without base height, nor compute a velocity-tracking reward without
+base linear velocity. A free joint's `qpos` is `[xyz, quat]` and its `qvel` is
+`[linvel, angvel]`, so both were already available; only the orientation half was
+being read. `get_observation` now surfaces the full 6-DoF base pose + twist -
+`base_pos`, `base_quat`, `base_lin_vel`, `base_ang_vel` - on both the MuJoCo and
+Newton backends, and `start_recording` (MuJoCo) preserves all four as
+per-component scalar columns (`base_pos.x`.. `base_ang_vel.z`) so a recorded
+humanoid/mobile-base episode is no longer base-blind (verified end to end: a
+known base position + linear velocity read back byte-for-byte after
+`LeRobotDataset` reopen). All four keys are additive and absent for fixed-base
+arms (no schema growth); multi-robot base columns are prefixed like joint ids
+(`alice__base_pos.x`). Completes the base-state surfacing begun in #1134/#1172.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
