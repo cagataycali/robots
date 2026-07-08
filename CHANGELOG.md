@@ -995,6 +995,21 @@ known base position + linear velocity read back byte-for-byte after
 arms (no schema growth); multi-robot base columns are prefixed like joint ids
 (`alice__base_pos.x`). Completes the base-state surfacing begun in #1134/#1172.
 
+### Fixed: `send_action` crashed on a non-scalar dict action value instead of returning an error
+
+`send_action` returns a structured `{"status": "error", ...}` for every other
+malformed input (a wrong-length vector, a non-numeric vector entry, a scalar, a
+string, unresolved keys, no world), but a `{name: value}` mapping whose value was
+non-scalar - a list / tuple / multi-element array, exactly what a policy emitting
+a vector-valued key such as `base_velocity: [vx, vy, omega]` produces - slipped
+past the contract and raised an unhandled `TypeError` deep in the actuator-apply
+loop (`float(value)`), crashing the caller mid-rollout after already writing
+`data.ctrl` for the earlier keys. The shared `_coerce_action` now validates that
+every mapping value coerces to a scalar float up front, so the whole action is
+rejected atomically with an actionable message naming the offending key - on both
+the MuJoCo and Newton backends. Scalars, numeric strings and `numpy` float
+scalars are accepted unchanged.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
