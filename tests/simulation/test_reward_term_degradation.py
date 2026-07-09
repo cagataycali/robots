@@ -54,6 +54,8 @@ class _NonDictEngine:
     [
         ("base_velocity", {"vx": 0.5}),
         ("base_height", {"target": 0.74}),
+        ("base_lin_vel_z", {}),
+        ("base_ang_vel_xy", {}),
     ],
 )
 def test_reward_term_degrades_to_zero_when_observation_raises(term_name, kwargs):
@@ -67,6 +69,8 @@ def test_reward_term_degrades_to_zero_when_observation_raises(term_name, kwargs)
     [
         ("base_velocity", {"vx": 0.5}),
         ("base_height", {"target": 0.74}),
+        ("base_lin_vel_z", {}),
+        ("base_ang_vel_xy", {}),
     ],
 )
 @pytest.mark.parametrize("bad_obs", [None, [1, 2, 3], "not-a-dict"])

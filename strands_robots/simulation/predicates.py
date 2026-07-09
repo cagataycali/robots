@@ -319,6 +319,48 @@ def _base_twist(sim: SimEngine, robot: str | None) -> tuple[float, float, float]
     return float(v_body[0]), float(v_body[1]), float(ang[2])
 
 
+def _base_body_velocity(sim: SimEngine, robot: str | None) -> tuple[list[float], list[float]] | None:
+    """Return a floating base's BODY-frame ``(linear_velocity, angular_velocity)``, or None.
+
+    Reads ``get_observation``'s floating-base signals and expresses BOTH twists
+    in the base (body) frame - the frame a legged controller regularizes: the
+    world-frame ``base_lin_vel`` is rotated into the base frame via ``base_quat``
+    (so its z is the vertical velocity along the base's OWN up-axis), and
+    ``base_ang_vel`` is already body-frame (the IMU-gyro convention on both
+    backends) so its xy are the roll/pitch rates directly. Returns None (and
+    warns once) when the robot exposes no floating base - almost always a spec
+    referencing a base term on a fixed-base arm. Shared by the two uncommanded-
+    base-velocity regularizer terms (``base_lin_vel_z`` / ``base_ang_vel_xy``).
+    """
+    try:
+        obs = sim.get_observation(robot_name=robot, skip_images=True)
+    except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
+        logger.debug("base motion get_observation(%r) failed: %s", robot, e)
+        return None
+    if not isinstance(obs, dict):
+        return None
+    lin = obs.get("base_lin_vel")
+    quat = obs.get("base_quat")
+    ang = obs.get("base_ang_vel")
+    if not (
+        isinstance(lin, list)
+        and len(lin) == 3
+        and isinstance(quat, list)
+        and len(quat) == 4
+        and isinstance(ang, list)
+        and len(ang) == 3
+    ):
+        # A floating base surfaces all three; their absence means this robot has
+        # no floating base (a fixed-base arm) - almost always a spec error.
+        _warn_unresolved("robot base", robot or "<sole robot>")
+        return None
+    v_body = _quat_rotate_inverse_wxyz(quat, lin)
+    return (
+        [float(v_body[0]), float(v_body[1]), float(v_body[2])],
+        [float(ang[0]), float(ang[1]), float(ang[2])],
+    )
+
+
 def _base_position(sim: SimEngine, robot: str | None) -> list[float] | None:
     """Return a floating base's WORLD position ``[x, y, z]`` (incl. height), or None.
 
@@ -886,6 +928,77 @@ def _base_orientation(weight: float = 1.0, robot: str | None = None) -> RewardTe
     return term
 
 
+def _base_lin_vel_z(weight: float = 1.0, robot: str | None = None) -> RewardTerm:
+    """Negative squared vertical base velocity - a locomotion-regularizer reward.
+
+    Penalises a floating-base robot for moving vertically (bouncing):
+    ``-weight * v_body_z ** 2`` where ``v_body_z`` is the base's linear velocity
+    along its OWN up-axis (the world-frame ``base_lin_vel`` rotated into the base
+    frame via ``base_quat``). 0 when the base holds a constant height, growing
+    more negative the faster it bounces. This is the standard legged_gym /
+    IsaacLab ``lin_vel_z`` term, and it complements ``base_height``:
+    ``base_height`` penalises a base-height OFFSET (a static crouch) while
+    ``base_lin_vel_z`` directly damps vertical bouncing whose mean height error
+    can be ~0 - a velocity-tracking policy that porpoises around the target
+    height is caught by this term but not by ``base_height`` alone. One of the
+    two uncommanded-base-velocity regularizers (with ``base_ang_vel_xy``) that a
+    viable velocity-tracking reward adds to ``base_velocity`` + ``base_height`` +
+    ``base_orientation`` (the default-nonzero legged_gym reward set).
+
+    Reads ``get_observation``'s ``base_lin_vel`` + ``base_quat``. Requires a
+    robot with a floating base; a fixed-base arm has no base velocity, so the
+    term degrades to ``0.0`` and the missing base is logged once. ``robot``
+    selects the robot in a multi-robot scene (default: the sole robot).
+    """
+    w = float(weight)
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        motion = _base_body_velocity(sim, rname)
+        if motion is None:
+            return 0.0
+        vz = motion[0][2]
+        return -w * vz * vz
+
+    return term
+
+
+def _base_ang_vel_xy(weight: float = 1.0, robot: str | None = None) -> RewardTerm:
+    """Negative squared roll/pitch angular velocity - a locomotion-regularizer reward.
+
+    Penalises a floating-base robot for rolling/pitching (wobbling):
+    ``-weight * (w_body_x ** 2 + w_body_y ** 2)`` where ``(w_body_x, w_body_y)``
+    are the base's roll and pitch RATES (body-frame ``base_ang_vel``, the
+    IMU-gyro reading). 0 when the base is not tipping, growing more negative the
+    faster it wobbles. This is the standard legged_gym / IsaacLab ``ang_vel_xy``
+    term, and it complements ``base_orientation``: ``base_orientation`` penalises
+    a tilt OFFSET (a static lean) while ``base_ang_vel_xy`` directly damps
+    oscillatory roll/pitch whose mean tilt can be ~0. Crucially it is INVARIANT
+    to the yaw rate (``w_body_z``): a walking policy may turn freely, only
+    roll/pitch RATE is penalised. One of the two uncommanded-base-velocity
+    regularizers (with ``base_lin_vel_z``) that a viable velocity-tracking reward
+    adds to ``base_velocity`` + ``base_height`` + ``base_orientation`` (the
+    default-nonzero legged_gym reward set).
+
+    Reads ``get_observation``'s ``base_ang_vel`` (already body-frame on both
+    backends). Requires a robot with a floating base; a fixed-base arm has no
+    base velocity, so the term degrades to ``0.0`` and the missing base is
+    logged once. ``robot`` selects the robot in a multi-robot scene (default:
+    the sole robot).
+    """
+    w = float(weight)
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        motion = _base_body_velocity(sim, rname)
+        if motion is None:
+            return 0.0
+        wx, wy = motion[1][0], motion[1][1]
+        return -w * (wx * wx + wy * wy)
+
+    return term
+
+
 # Stateful reward terms (declarative phase machine)
 #
 # A plain RewardTerm is stateless: ``(SimEngine) -> float``. Some rewards need
@@ -1063,6 +1176,8 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "base_velocity": _base_velocity,
     "base_height": _base_height,
     "base_orientation": _base_orientation,
+    "base_lin_vel_z": _base_lin_vel_z,
+    "base_ang_vel_xy": _base_ang_vel_xy,
     "constant": _constant,
     # stateful (phase machine)
     "staged_reward": _staged_reward,

@@ -1167,6 +1167,27 @@ walking upright, only roll/pitch off level is penalised. On a fixed-base arm (no
 floating base) the term degrades to `0.0` and logs the missing base once,
 consistent with the DSL's other name-resolution degradation.
 
+### Added: base_lin_vel_z / base_ang_vel_xy locomotion-regularizer reward terms for the predicate/reward DSL
+
+The dense-reward DSL grew the two remaining pure-observation legged_gym /
+IsaacLab locomotion regularizers -- the ones that damp a floating base's
+UNCOMMANDED velocity (both default-nonzero scales in `LeggedRobotCfg`):
+`base_lin_vel_z` = `-weight * v_body_z ** 2` (penalise vertical bouncing) and
+`base_ang_vel_xy` = `-weight * (w_body_x ** 2 + w_body_y ** 2)` (penalise
+roll/pitch wobble). Both read the base twist from `get_observation`: the
+world-frame `base_lin_vel` is rotated into the base frame via `base_quat` for the
+vertical velocity, and the already-body-frame `base_ang_vel` supplies the
+roll/pitch rates (`base_ang_vel_xy` is invariant to the yaw rate, so a policy may
+turn freely). They complete the minimal velocity-tracking reward set alongside
+`base_velocity` (planar + yaw tracking), `base_height` (crouch regularizer) and
+`base_orientation` (tilt regularizer): the height/orientation terms penalise a
+static OFFSET, while these two directly damp the RATE. A policy that porpoises
+around the exact target height, or oscillates around level, has ~0 mean offset --
+`base_height`/`base_orientation` read 0 -- yet is caught by `base_lin_vel_z` /
+`base_ang_vel_xy`. On a fixed-base arm (no floating base) both terms degrade to
+`0.0` and log the missing base once, consistent with the DSL's other
+name-resolution degradation.
+
 ### Fixed:
 
 - `lerobot_local`: observation-history policies (Diffusion `n_obs_steps=2`, VQBeT `n_obs_steps=5`) crashed with `AssertionError` when run through `Simulation.run_policy`. `_auto_detect_actions_per_step` adopted the model's `n_action_steps` chunk and routed inference to `predict_action_chunk()`, whose offline branch stacks a single live observation frame as `n_obs_steps=1`; LeRobot's `generate_actions()` then trips `assert n_obs_steps == config.n_obs_steps`. These checkpoints now keep `actions_per_step=1` so inference runs through `select_action()`, which maintains the required observation-history queue and still replays the model's `n_action_steps` chunk from its internal queue (open-loop chunk replay is preserved). Single-history policies (ACT, SmolVLA, pi0, MolmoAct2) are unaffected.
