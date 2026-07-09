@@ -12,6 +12,12 @@ from .loader import _load
 
 logger = logging.getLogger(__name__)
 
+# Recognised filter values for ``list_robots(mode=...)``. Any other value is
+# rejected with a ``ValueError`` rather than silently returning every robot,
+# so a typo or an unsupported filter fails loudly instead of yielding a
+# misleading unfiltered list (e.g. ``mode="hardware"`` returning sim-only arms).
+LIST_ROBOTS_MODES = ("all", "sim", "real", "both")
+
 
 def _build_alias_map() -> dict[str, str]:
     """Build alias → canonical name mapping from robot entries.
@@ -103,11 +109,23 @@ def list_robots(mode: str = "all") -> list[dict[str, Any]]:
     """List available robots, optionally filtered.
 
     Args:
-        mode: Filter - "all", "sim", "real", or "both" (has sim AND real).
+        mode: Filter, one of :data:`LIST_ROBOTS_MODES`:
+
+            - ``"all"``: every registered robot (no filter).
+            - ``"sim"``: robots with a simulation asset (``has_sim``).
+            - ``"real"``: robots with a hardware backend (``has_real``).
+            - ``"both"``: robots that have BOTH sim and real.
 
     Returns:
-        List of dicts with name, description, has_sim, has_real.
+        List of dicts with name, description, category, joints, has_sim, has_real.
+
+    Raises:
+        ValueError: If ``mode`` is not one of :data:`LIST_ROBOTS_MODES`. An
+            unrecognized filter is rejected loudly instead of silently
+            returning the full, unfiltered list.
     """
+    if mode not in LIST_ROBOTS_MODES:
+        raise ValueError(f"Unknown list_robots mode {mode!r}. Valid modes: {', '.join(LIST_ROBOTS_MODES)}.")
     reg = _load("robots")
     results = []
     for name, info in sorted(reg.get("robots", {}).items()):

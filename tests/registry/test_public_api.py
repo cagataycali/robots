@@ -6,6 +6,7 @@ from strands_robots.registry import get_policy_provider, list_policy_providers, 
 from strands_robots.registry.loader import _load, _validate, reload
 from strands_robots.registry.policies import build_policy_kwargs, import_policy_class
 from strands_robots.registry.robots import (
+    LIST_ROBOTS_MODES,
     format_robot_table,
     get_hardware_type,
     get_robot,
@@ -394,6 +395,28 @@ class TestRobotRegistry:
         assert "lekiwi" in names  # sim + real
         assert "reachy2" not in names
         assert "ur5e" not in names
+
+    def test_list_robots_unknown_mode_raises(self):
+        # A plausible-but-unsupported filter (hardware-capable robots) must not
+        # silently return the full, unfiltered list - that would mislead a
+        # caller into thinking every robot is hardware-backed. It raises instead.
+        with pytest.raises(ValueError, match="Unknown list_robots mode 'hardware'"):
+            list_robots("hardware")
+
+    def test_list_robots_typo_mode_raises_and_lists_valid_modes(self):
+        # A typo is rejected loudly, and the message enumerates the valid modes
+        # so the caller can self-correct without reading the source.
+        with pytest.raises(ValueError) as excinfo:
+            list_robots("sims")
+        msg = str(excinfo.value)
+        for valid in ("all", "sim", "real", "both"):
+            assert valid in msg
+
+    def test_list_robots_all_documented_modes_accepted(self):
+        # Every value advertised in LIST_ROBOTS_MODES must be accepted without
+        # raising, guarding the constant and the validation set against drift.
+        for mode in LIST_ROBOTS_MODES:
+            assert isinstance(list_robots(mode), list)
 
     def test_list_robots_by_category(self):
         by_cat = list_robots_by_category()

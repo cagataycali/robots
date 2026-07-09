@@ -44,6 +44,7 @@ from .policies import (
     resolve_policy,
 )
 from .robots import (
+    LIST_ROBOTS_MODES,
     format_robot_table,
     get_hardware_type,
     get_robot,
@@ -69,6 +70,7 @@ __all__ = [
     "has_hardware",
     "get_hardware_type",
     "list_robots",
+    "LIST_ROBOTS_MODES",
     "list_robots_by_category",
     "list_aliases",
     "format_robot_table",
