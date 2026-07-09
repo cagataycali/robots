@@ -2,8 +2,10 @@
 
 The predicate/reward DSL grew the minimal legged_gym / IsaacLab velocity-tracking
 reward set - ``base_velocity`` (heading-relative twist tracking), ``base_height``
-(crouch regularizer) and ``base_orientation`` (flat-orientation regularizer). All
-three read a floating base's 6-DoF pose + twist from ``get_observation``
+(crouch regularizer), ``base_orientation`` (flat-orientation regularizer) and the
+two uncommanded-base-velocity regularizers ``base_lin_vel_z`` (anti-bounce) and
+``base_ang_vel_xy`` (anti-wobble). All read a floating base's 6-DoF pose + twist
+from ``get_observation``
 (``base_pos`` / ``base_quat`` / ``base_lin_vel`` / ``base_ang_vel``), and their
 correctness rests on a fragile, hard-won FRAME contract that must hold IDENTICALLY
 on both simulation backends:
@@ -275,4 +277,115 @@ def test_reward_terms_degrade_to_zero_on_newton_fixed_base_arm():
     assert make_predicate("base_velocity", vx=1.0, vy=0.0, wz=0.0)(eng) == 0.0
     assert make_predicate("base_height", target=0.5)(eng) == 0.0
     assert make_predicate("base_orientation", weight=2.0)(eng) == 0.0
+    assert make_predicate("base_lin_vel_z", weight=2.0)(eng) == 0.0
+    assert make_predicate("base_ang_vel_xy", weight=2.0)(eng) == 0.0
     eng.destroy()
+
+
+# ---- uncommanded-base-velocity regularizers (base_lin_vel_z / base_ang_vel_xy) ----
+#
+# base_lin_vel_z and base_ang_vel_xy landed after the cross-backend pin above and
+# complete the minimal legged_gym reward set by damping the base's UNCOMMANDED
+# velocity. They lean on the SAME frame contract as base_velocity - base_lin_vel
+# is WORLD (rotated into the base frame via base_quat for the vertical velocity)
+# and base_ang_vel is BODY (the roll/pitch RATES read directly) - but on axes the
+# moving-base state above leaves at zero (that base glides horizontally and spins
+# about +z, so its vertical velocity and roll/pitch rate are both 0). These
+# dedicated states drive those axes non-zero on BOTH backends and pin that the
+# same physical base state yields the same reward on each.
+
+# base_lin_vel_z: a base ROLLED 30deg about +x moving straight UP in the world at
+# 0.7 m/s. World +z is NOT the base's own up-axis once rolled, so the term must
+# rotate world->body via base_quat: v_body_z = 0.7 * cos(30) and base_lin_vel_z =
+# -(0.7 * cos30)^2. A term that read the raw WORLD vertical velocity would give
+# -0.49 instead; the gap proves the body-frame rotation on each backend.
+_LIN_ROLL_DEG = 30.0
+_LIN_VZ = 0.7
+_EXP_V_BODY_Z = _LIN_VZ * math.cos(math.radians(_LIN_ROLL_DEG))
+_EXP_LIN_VEL_Z = -(_EXP_V_BODY_Z**2)
+
+# base_ang_vel_xy: a LEVEL base (identity orientation, so world == body, which lets
+# the existing world-frame Newton qd writer set a body-frame rate verbatim)
+# tipping at wx=0.3 (roll) / wy=-0.5 (pitch) while ALSO spinning fast about yaw
+# (wz=2.0). base_ang_vel_xy = -(0.3^2 + 0.5^2) = -0.34 and MUST ignore the 2.0
+# yaw rate (a walking policy may turn freely).
+_ANG_IDENT = [1.0, 0.0, 0.0, 0.0]
+_ANG_ROLL_RATE, _ANG_PITCH_RATE, _ANG_YAW_RATE = 0.3, -0.5, 2.0
+_EXP_ANG_VEL_XY = -(_ANG_ROLL_RATE**2 + _ANG_PITCH_RATE**2)
+
+
+def test_base_lin_vel_z_body_frame_correct_on_mujoco():
+    """base_lin_vel_z rotates the world vertical velocity into the base frame (MuJoCo)."""
+    sim = _build_mujoco(_FLOATER_MJCF)
+    _set_mujoco(sim, _roll_quat(_LIN_ROLL_DEG), _Z, [0.0, 0.0, _LIN_VZ], [0.0, 0.0, 0.0])
+    assert make_predicate("base_lin_vel_z")(sim) == pytest.approx(_EXP_LIN_VEL_Z, abs=1e-4)
+    # Decisive: the body-frame value is NOT the naive raw-world-z penalty.
+    assert make_predicate("base_lin_vel_z")(sim) != pytest.approx(-(_LIN_VZ**2), abs=1e-3)
+    # No roll/pitch RATE in this state -> the wobble term reads zero.
+    assert make_predicate("base_ang_vel_xy")(sim) == pytest.approx(0.0, abs=1e-4)
+    sim.cleanup()
+
+
+@pytest.mark.skipif(not _HAS_NEWTON, reason="newton/warp not installed")
+def test_base_lin_vel_z_body_frame_correct_on_newton():
+    """The SAME rolled-and-rising base yields the SAME base_lin_vel_z through Newton."""
+    eng = _build_newton(_FLOATER_MJCF)
+    _set_newton(eng, _roll_quat(_LIN_ROLL_DEG), _Z, [0.0, 0.0, _LIN_VZ], [0.0, 0.0, 0.0])
+    assert make_predicate("base_lin_vel_z")(eng) == pytest.approx(_EXP_LIN_VEL_Z, abs=1e-4)
+    assert make_predicate("base_ang_vel_xy")(eng) == pytest.approx(0.0, abs=1e-4)
+    eng.destroy()
+
+
+def test_base_ang_vel_xy_yaw_invariant_correct_on_mujoco():
+    """base_ang_vel_xy penalises the roll/pitch RATE and ignores the yaw rate (MuJoCo)."""
+    sim = _build_mujoco(_FLOATER_MJCF)
+    _set_mujoco(sim, _ANG_IDENT, _Z, [0.0, 0.0, 0.0], [_ANG_ROLL_RATE, _ANG_PITCH_RATE, _ANG_YAW_RATE])
+    assert make_predicate("base_ang_vel_xy")(sim) == pytest.approx(_EXP_ANG_VEL_XY, abs=1e-4)
+    # No vertical velocity in this state -> the bounce term reads zero.
+    assert make_predicate("base_lin_vel_z")(sim) == pytest.approx(0.0, abs=1e-4)
+    sim.cleanup()
+
+
+@pytest.mark.skipif(not _HAS_NEWTON, reason="newton/warp not installed")
+def test_base_ang_vel_xy_yaw_invariant_correct_on_newton():
+    """The SAME roll/pitch/yaw rate yields the SAME base_ang_vel_xy through Newton."""
+    eng = _build_newton(_FLOATER_MJCF)
+    _set_newton(eng, _ANG_IDENT, _Z, [0.0, 0.0, 0.0], [_ANG_ROLL_RATE, _ANG_PITCH_RATE, _ANG_YAW_RATE])
+    assert make_predicate("base_ang_vel_xy")(eng) == pytest.approx(_EXP_ANG_VEL_XY, abs=1e-4)
+    assert make_predicate("base_lin_vel_z")(eng) == pytest.approx(0.0, abs=1e-4)
+    eng.destroy()
+
+
+@pytest.mark.skipif(not _HAS_NEWTON, reason="newton/warp not installed")
+def test_uncommanded_velocity_terms_identical_across_backends():
+    """MuJoCo == Newton for base_lin_vel_z / base_ang_vel_xy on the same base state.
+
+    The guard the per-backend tests cannot give: the two uncommanded-velocity
+    regularizers, fed the SAME physical base state, must return the SAME value on
+    both engines. A frame flip or a dropped base key on either backend (the class
+    the base linear/angular velocity surfacing was hardened against) makes them
+    diverge here even while the per-backend value tests still pass.
+    """
+    # base_lin_vel_z on the rolled-and-rising base.
+    mj = _build_mujoco(_FLOATER_MJCF)
+    _set_mujoco(mj, _roll_quat(_LIN_ROLL_DEG), _Z, [0.0, 0.0, _LIN_VZ], [0.0, 0.0, 0.0])
+    nt = _build_newton(_FLOATER_MJCF)
+    _set_newton(nt, _roll_quat(_LIN_ROLL_DEG), _Z, [0.0, 0.0, _LIN_VZ], [0.0, 0.0, 0.0])
+    mj_lz = make_predicate("base_lin_vel_z", weight=2.0)(mj)
+    nt_lz = make_predicate("base_lin_vel_z", weight=2.0)(nt)
+    assert mj_lz == pytest.approx(2.0 * _EXP_LIN_VEL_Z, abs=1e-4)
+    assert nt_lz == pytest.approx(mj_lz, abs=1e-4)
+    mj.cleanup()
+    nt.destroy()
+
+    # base_ang_vel_xy on the wobbling-and-yawing base.
+    mj = _build_mujoco(_FLOATER_MJCF)
+    _set_mujoco(mj, _ANG_IDENT, _Z, [0.0, 0.0, 0.0], [_ANG_ROLL_RATE, _ANG_PITCH_RATE, _ANG_YAW_RATE])
+    nt = _build_newton(_FLOATER_MJCF)
+    _set_newton(nt, _ANG_IDENT, _Z, [0.0, 0.0, 0.0], [_ANG_ROLL_RATE, _ANG_PITCH_RATE, _ANG_YAW_RATE])
+    mj_axy = make_predicate("base_ang_vel_xy", weight=2.0)(mj)
+    nt_axy = make_predicate("base_ang_vel_xy", weight=2.0)(nt)
+    assert mj_axy == pytest.approx(2.0 * _EXP_ANG_VEL_XY, abs=1e-4)
+    assert nt_axy == pytest.approx(mj_axy, abs=1e-4)
+    mj.cleanup()
+    nt.destroy()
