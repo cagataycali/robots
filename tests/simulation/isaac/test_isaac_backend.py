@@ -20,6 +20,7 @@ real Isaac Sim + a CUDA device.
 
 from __future__ import annotations
 
+import importlib
 import sys
 
 import pytest
@@ -85,7 +86,7 @@ class TestPackageLazyExport:
     """
 
     def test_isaac_config_resolves_through_package_getattr(self):
-        import strands_robots.simulation.isaac as isaac_pkg
+        isaac_pkg = importlib.import_module("strands_robots.simulation.isaac")
         from strands_robots.simulation.isaac.config import IsaacConfig as ConfigViaSubmodule
 
         # Attribute access on the package triggers __getattr__ -> _lazy_isaac_config.
@@ -93,7 +94,7 @@ class TestPackageLazyExport:
         assert isaac_pkg.IsaacConfig.__module__ == "strands_robots.simulation.isaac.config"
 
     def test_isaac_simulation_resolves_through_package_getattr(self):
-        import strands_robots.simulation.isaac as isaac_pkg
+        isaac_pkg = importlib.import_module("strands_robots.simulation.isaac")
         from strands_robots.simulation.isaac.simulation import IsaacSimulation as SimViaSubmodule
 
         # Attribute access triggers __getattr__ -> _lazy_isaac_simulation; still
@@ -102,7 +103,7 @@ class TestPackageLazyExport:
         assert not any(m.startswith("omni") or m.startswith("isaacsim") for m in sys.modules)
 
     def test_public_names_match_all(self):
-        import strands_robots.simulation.isaac as isaac_pkg
+        isaac_pkg = importlib.import_module("strands_robots.simulation.isaac")
 
         # Everything promised by __all__ is resolvable through the package.
         assert set(isaac_pkg.__all__) == {"IsaacSimulation", "IsaacConfig"}
@@ -110,7 +111,7 @@ class TestPackageLazyExport:
             assert getattr(isaac_pkg, name) is not None
 
     def test_unknown_attribute_raises_attribute_error(self):
-        import strands_robots.simulation.isaac as isaac_pkg
+        isaac_pkg = importlib.import_module("strands_robots.simulation.isaac")
 
         with pytest.raises(AttributeError, match="no attribute 'NotAName'"):
             isaac_pkg.NotAName
