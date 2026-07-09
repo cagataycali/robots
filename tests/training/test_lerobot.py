@@ -49,6 +49,29 @@ class TestValidate:
     def test_clean(self, spec):
         assert LerobotTrainer().validate(spec) == []
 
+    @pytest.mark.parametrize("mode", ["absent", "probe_raises"])
+    def test_flags_missing_lerobot_install(self, spec, monkeypatch, mode):
+        """validate() must surface an actionable problem when lerobot itself is
+        not importable, rather than deferring the failure to the training launch.
+
+        Both an absent module (find_spec returns None) and a broken probe
+        (find_spec raises) resolve to the same actionable message.
+        """
+        import importlib.util as importlib_util
+
+        real_find_spec = importlib_util.find_spec
+
+        def fake_find_spec(name, *args, **kwargs):
+            if name == "lerobot.scripts.lerobot_train":
+                if mode == "probe_raises":
+                    raise ImportError("boom")
+                return None
+            return real_find_spec(name, *args, **kwargs)
+
+        monkeypatch.setattr(importlib_util, "find_spec", fake_find_spec)
+        problems = LerobotTrainer().validate(spec)
+        assert any("lerobot is not installed" in problem for problem in problems)
+
     def test_non_native_policy_type(self, spec):
         spec.extra["policy_type"] = "openvla"
         problems = LerobotTrainer().validate(spec)
@@ -210,6 +233,25 @@ class TestParseLog:
         m = LerobotTrainer(device="cpu")._parse_log(str(log))
         assert m["latest_step"] == 2
         assert m["latest_loss"] == 0.5
+
+    def test_parses_metric_line_with_logging_prefix(self, tmp_path):
+        """A captured lerobot log prefixes the metric line with the logging
+        formatter's level/timestamp/logger tokens; the parser must skip those
+        colon-free tokens and still read the metrics. The MetricsTracker's bare
+        ``str`` is emitted via ``logging.info``, so the line actually written to
+        the log file carries this prefix - not the bare form.
+        """
+        log = tmp_path / "run.log"
+        log.write_text(
+            "INFO 2026-06-23 12:00:00 lerobot_train.py:210 "
+            "step:1.2K smpl:4.9K ep:8 epch:2.00 loss:0.123 grad_norm:0.5\n"
+        )
+        m = LerobotTrainer(device="cpu")._parse_log(str(log))
+        assert m["latest_step"] == 1200  # prefix tokens ignored, K-expanded
+        assert abs(m["latest_loss"] - 0.123) < 1e-9
+        assert m["latest_epoch"] == 2.00
+        assert m["learning"] is True
+        assert m["liveness_ok"] is True
 
     def test_no_metrics_line_means_not_live(self, tmp_path):
         log = tmp_path / "run.log"
