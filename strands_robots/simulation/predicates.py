@@ -38,6 +38,7 @@ Available predicates (bool):
     body_inside(body, container, xy_tol=0.15, z_tol=0.15)
     body_upright(body, tol=0.15)
     grasped(body, gripper_prefix)
+    base_tipped(tol=0.15, robot=None)
 
 Available reward terms (float):
 
@@ -771,6 +772,57 @@ def _grasped(body: str, gripper_prefix: str) -> BoolPredicate:
     return check
 
 
+def _base_tipped(tol: float = 0.15, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base has tilted more than ``tol`` from level.
+
+    The failure-clause counterpart of the ``base_orientation`` reward term: while
+    ``base_orientation`` *penalises* tilt in ``dense_reward`` (a dense shaping
+    signal), ``base_tipped`` *terminates* the episode when the base falls over -
+    the canonical legged_gym / IsaacLab locomotion fall-over termination. Put it
+    in a ``failure`` clause
+    (``failure: {any: [{predicate: base_tipped, tol: 0.7}]}``) so a
+    velocity-tracking rollout ends the instant the robot topples instead of
+    flailing on the ground to ``max_steps``.
+
+    Reads ``get_observation``'s ``base_quat`` - the same embodiment-agnostic
+    floating-base surface the ``base_*`` reward terms read, so it needs no base
+    body name (it works on a mobile base whose free joint is unnamed) and is
+    identical across the MuJoCo and Newton backends, unlike ``body_upright``
+    which resolves a specific body by name. The tilt test is the exact
+    complement of ``body_upright``'s upright check applied to the base
+    quaternion (MuJoCo/Newton layout ``(w, x, y, z)``) - the fall-over
+    counterpart of ``body_upright``'s ``2*(x**2+y**2) < tol`` upright test:
+
+        R[2,2] = 1 - 2 * (x ** 2 + y ** 2)  ->  tipped when 2 * (x ** 2 + y ** 2) > tol
+
+    monotonic in how far the base is tipped, so ``tol`` is the maximum tilt the
+    base may reach before it counts as fallen. ``tol`` shares ``body_upright``'s
+    scale: ``2 * (x ** 2 + y ** 2) = 1 - cos(theta)`` for a roll/pitch of
+    ``theta``, so ``tol=0.15`` trips at ~32 deg (a tight "leaning" bound) and
+    ``tol=1.0`` trips at 90 deg (fully on its side) - a fall-over termination
+    typically uses a larger ``tol`` (~0.7-1.0) than the default.
+
+    Requires a robot with a floating base; a fixed-base arm has no base
+    orientation, so the predicate degrades to ``False`` (never tipped) and the
+    missing base is logged once. ``robot`` selects the robot in a multi-robot
+    scene (default: the sole robot).
+    """
+    t = float(tol)
+    if t < 0:
+        raise ValueError(f"base_tipped: 'tol' must be >= 0, got {t}")
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        quat = _base_quaternion(sim, rname)
+        if quat is None:
+            return False
+        # base_quat layout is (w, x, y, z) on both backends.
+        _, x, y, _ = quat
+        return 2.0 * (x * x + y * y) > t
+
+    return check
+
+
 # Reward terms (float-valued)
 
 
@@ -1181,6 +1233,7 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "body_inside": _body_inside,
     "body_upright": _body_upright,
     "grasped": _grasped,
+    "base_tipped": _base_tipped,
     # float-valued
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,

@@ -5,6 +5,10 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `base_tipped` locomotion fall-over predicate for the benchmark/reward DSL
+
+The predicate DSL grew a `base_tipped(tol, robot)` BOOL predicate on the floating-base `get_observation` surface (the same `base_quat` the `base_*` reward terms read): True when the base has tilted more than `tol` from level. It is the failure-clause counterpart of the `base_orientation` reward term - `base_orientation` penalises tilt in `dense_reward`, `base_tipped` terminates the episode on a fall in a `failure` clause - which is the canonical legged_gym / IsaacLab locomotion fall-over termination. Previously a locomotion spec could not express "the robot fell over, end the episode": the DSL has no `not` to negate `body_upright`, and `body_upright` reaches the base only by an embodiment-specific body name (unavailable for a mobile base whose free joint is unnamed). `base_tipped` needs no body name and is identical across the MuJoCo and Newton backends.
+
 ### Fixed: norm-stats FeatureNormalizer silently passed values through on an unrecognized mode
 
 `FeatureNormalizer.normalize` / `.unnormalize`
