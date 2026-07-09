@@ -22,6 +22,7 @@ The acceptance criteria pin:
 from __future__ import annotations
 
 import asyncio
+import logging
 
 import pytest
 
@@ -1010,3 +1011,124 @@ class TestCuroboGoalValidationErrorBranches:
     def test_non_numeric_joint_value_rejected(self) -> None:
         with pytest.raises(ValueError, match="must be a number"):
             CuroboPolicy._validate_target_joints({"j0": "not-a-number"})
+
+
+# ---------------------------------------------------------------------------
+# Degradation + hard-fail contracts for minimal / non-solving planners
+# ---------------------------------------------------------------------------
+
+
+class TestCuroboPolicyDegradationContracts:
+    """Pin the policy's behaviour at each caller-injected-planner seam.
+
+    A planner passed via ``motion_gen=`` may be a partial stand-in that omits
+    optional hooks, or a real planner that finds no solution / returns a result
+    the extractor cannot read. Each seam has a defined contract: fail *soft*
+    (log + continue) where the hook is optional, and fail *loud* (a clear
+    ``RuntimeError`` carrying goal context) where waypoints cannot be produced.
+    Pin both so a refactor cannot turn a graceful degradation into an opaque
+    ``AttributeError`` or a silent no-op.
+    """
+
+    def test_reset_without_reset_hook_still_clears_cache(self) -> None:
+        """A planner exposing no ``reset()`` must not break the policy's own
+        ``reset()``: the local trajectory cache is cleared regardless, so the
+        next ``get_actions`` re-plans."""
+
+        class _NoResetPlanner(_StubMotionGen):
+            reset = None  # type: ignore[assignment]
+
+        stub = _NoResetPlanner(ndof=6, horizon=20)
+        p = CuroboPolicy(motion_gen=stub, action_horizon=4)
+        asyncio.run(
+            p.get_actions(
+                {"observation.state": [0.0] * 6},
+                "",
+                target_pose=[0.4, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
+            )
+        )
+        p.reset(seed=0)  # planner has no reset() -> must not raise
+        asyncio.run(
+            p.get_actions(
+                {"observation.state": [0.0] * 6},
+                "",
+                target_pose=[0.5, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
+            )
+        )
+        # Cache was cleared despite the missing planner hook -> re-plan happened.
+        assert len(stub.plan_calls) == 2
+
+    def test_world_update_without_scene_hooks_ignored_with_warning(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A planner exposing neither ``update_scene`` nor ``update_world``
+        cannot accept a per-call collision-scene refresh. The policy must warn
+        and *ignore* the update (fail-soft) rather than crash - planning still
+        proceeds and yields an action chunk."""
+
+        class _NoSceneHookPlanner(_NewApiStubMotionPlanner):
+            update_scene = None  # type: ignore[assignment]
+            update_world = None  # type: ignore[assignment]
+
+        stub = _NoSceneHookPlanner(ndof=7, horizon=8)
+        p = CuroboPolicy(motion_gen=stub, action_horizon=4)
+        scene = {"cuboid": {"box": {"dims": [0.1, 0.1, 0.1]}}}
+        with caplog.at_level(logging.WARNING):
+            actions = asyncio.run(
+                p.get_actions(
+                    {"observation.state": [0.0] * 7},
+                    "",
+                    target_pose=[0.5, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
+                    world_update=scene,
+                )
+            )
+        assert actions  # planning proceeded despite the missing scene hook
+        assert stub.plan_calls  # a plan was actually requested
+        assert stub.world_updates == []  # the update was not forwarded anywhere
+        assert "neither update_scene() nor update_world()" in caplog.text
+
+    def test_planner_returning_no_solution_raises_runtime_error(self) -> None:
+        """cuRobo's ``main`` API returns ``None`` from ``plan_pose`` / ``plan_js``
+        on an unreachable goal (not a ``success=False`` result). The policy must
+        surface a clear ``RuntimeError`` naming the goal, not an opaque failure
+        downstream."""
+
+        class _NoSolutionPlanner(_NewApiStubMotionPlanner):
+            def plan_pose(self, goal: object, start_state: object) -> None:  # type: ignore[override]
+                self.plan_calls.append(("plan_pose", start_state, goal))
+                return None
+
+        stub = _NoSolutionPlanner(ndof=7, horizon=8)
+        p = CuroboPolicy(motion_gen=stub, action_horizon=4)
+        with pytest.raises(RuntimeError, match="no solution"):
+            asyncio.run(
+                p.get_actions(
+                    {"observation.state": [0.0] * 7},
+                    "",
+                    target_pose=[0.5, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
+                )
+            )
+
+    def test_result_without_trajectory_or_interpolated_plan_raises(self) -> None:
+        """A result object that exposes neither ``trajectory`` (stub path) nor
+        ``get_interpolated_plan`` (real path) cannot yield waypoints. The
+        extractor must raise a descriptive ``RuntimeError`` instead of an
+        ``AttributeError``."""
+
+        class _BlankResult:
+            success = True
+            status = "ok"
+
+        class _BlankResultPlanner(_NewApiStubMotionPlanner):
+            def plan_pose(self, goal: object, start_state: object) -> _BlankResult:  # type: ignore[override]
+                self.plan_calls.append(("plan_pose", start_state, goal))
+                return _BlankResult()
+
+        stub = _BlankResultPlanner(ndof=7, horizon=8)
+        p = CuroboPolicy(motion_gen=stub, action_horizon=4)
+        with pytest.raises(RuntimeError, match="get_interpolated_plan"):
+            asyncio.run(
+                p.get_actions(
+                    {"observation.state": [0.0] * 7},
+                    "",
+                    target_pose=[0.5, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
+                )
+            )
