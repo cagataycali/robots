@@ -1,32 +1,49 @@
 ---
-description: The Policy ABC and the providers that ship - MockPolicy, Gr00tPolicy, LerobotLocalPolicy, Cosmos3Policy, CuroboPolicy, MoveIt2Policy.
+description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, cosmos3, vera, remote, curobo, moveit2, wbc, wbc_gait, motionbricks.
 ---
 
 # Policy providers
 
+`strands_robots` ships several policy providers. The registry is the ground
+truth - list every provider that `create_policy("<name>")` accepts with:
+
+```bash
+python -c 'from strands_robots.policies import list_providers; print(list_providers())'
+# ['cosmos3', 'curobo', 'groot', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']
+```
+
 ```python
 from strands_robots.policies import create_policy, list_policy_types, list_providers
 
-print(list_providers())   # sorted: ['cosmos3', 'curobo', 'groot', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']
+print(list_providers())     # sorted provider names (registry ground truth)
 print(list_policy_types())  # lerobot_local policy_type strings: ['act', 'diffusion', 'smolvla', ...]
 
 policy = create_policy("mock")                                                     # always works, no model
 policy = create_policy("groot", port=5555, data_config="so100_dualcam")
 policy = create_policy("lerobot_local", pretrained_name_or_path="lerobot/pi0_so100")
 policy = create_policy("cosmos3", embodiment="droid", port=8000)
+policy = create_policy("remote", endpoint="ws://gpu-box:8765")
 ```
 
 ## Providers
 
+Every row below is a registered provider (`create_policy("<name>")`). The table
+is kept in sync with `list_providers()` by a regression test
+(`tests/test_docs_policy_coverage.py`), so it can never silently drift.
+
 | Provider | Class | Install extra | When to use |
 |----------|-------|---------------|-------------|
-| `mock` | `MockPolicy` | _(core)_ | Tests, smoke checks; sinusoidal joints, no GPU |
-| `groot` | `Gr00tPolicy` | `groot-service` | NVIDIA GR00T N1.5/N1.6/N1.7 over ZMQ |
-| `lerobot_local` | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, …) |
-| `cosmos3` | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 VLA over WebSocket |
-| `vera` | `VeraPolicy` | `vera` | MIT VERA video-to-action (DFoT/WAN planner + Jacobian IDM) over a containerized GPU server |
-| `curobo` | `CuroboPolicy` | `curobo` | NVIDIA cuRobo collision-aware planning, in-process CUDA |
-| `moveit2` | `MoveIt2Policy` | `moveit2` | MoveIt2 motion planning over a ROS 2 sidecar (ZMQ), no in-venv ROS 2 deps |
+| [`mock`](custom-policies.md) | `MockPolicy` | _(core)_ | Tests, smoke checks; sinusoidal joints, no GPU. Reference minimal `Policy` (documented inline + custom-policies) |
+| [`groot`](groot.md) | `Gr00tPolicy` | `groot-service` | NVIDIA GR00T N1.5/N1.6/N1.7 over ZMQ |
+| [`lerobot_local`](lerobot-local.md) | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, MolmoAct2, ...) |
+| [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |
+| [`vera`](vera.md) | `VeraPolicy` | `vera` | MIT VERA video-to-action (DFoT/WAN planner + Jacobian IDM) over a containerized GPU server |
+| [`remote`](remote.md) | `RemotePolicy` | `inference` | Offload a large policy to a GPU box: forward observations to a remote `PolicyServer` over WebSocket, get back action chunks. Edge-device inference |
+| [`curobo`](curobo.md) | `CuroboPolicy` | `curobo` | NVIDIA cuRobo collision-aware motion planning, in-process CUDA (non-VLA) |
+| [`moveit2`](moveit2.md) | `MoveIt2Policy` | `moveit2` | MoveIt2 motion planning over a ROS 2 sidecar (ZMQ), no in-venv ROS 2 deps (non-VLA) |
+| [`wbc`](wbc.md) | `WBCPolicy` | `wbc` | NVIDIA GR00T Whole-Body-Control (SONIC) Unitree G1 humanoid locomotion, in-process ONNX, no GPU (non-VLA) |
+| [`wbc_gait`](wbc_gait.md) | `WBCGaitPolicy` | `wbc` | WBC gait-clock variant: single ONNX policy, 95-dim obs + bipedal phase clock (non-VLA) |
+| [`motionbricks`](motionbricks.md) | `MotionBricksPolicy` | `motionbricks` | Generative kinematic Unitree G1 motion (style-driven: walk/stealth_walk/...), in-process torch (non-VLA) |
 
 ## Policy ABC
 
@@ -79,8 +96,14 @@ sim.run_policy(robot_name="so100", instruction="pick up the cube",
 
 - [GR00T](groot.md) - ZMQ server, 27 embodiments, container lifecycle.
 - [LeRobot Local](lerobot-local.md) - in-process HF models, RTC.
+- [MolmoAct2 (SO-100/101)](molmoact2.md) - action/observation contract for the SO-arm checkpoints.
 - [Persistent worker](persistent-worker.md) - load once, reuse across rollouts; cache controls + telemetry.
 - [Cosmos 3](cosmos3.md) - NVIDIA Cosmos 3 omnimodal VLA.
+- [VERA](vera.md) - MIT video-to-action planner + Jacobian IDM over a GPU server.
+- [Remote](remote.md) - forward observations to a remote `PolicyServer` over WebSocket (edge offload).
 - [cuRobo](curobo.md) - in-process collision-aware motion planning (non-VLA, GPU).
 - [MoveIt2](moveit2.md) - ROS 2 sidecar collision-aware planning (non-VLA, no in-venv ROS 2).
+- [WBC](wbc.md) - GR00T Whole-Body-Control (SONIC) G1 locomotion (non-VLA, in-process ONNX).
+- [WBC gait-clock variant](wbc_gait.md) - single-ONNX gait-clock G1 controller (non-VLA).
+- [MotionBricks](motionbricks.md) - generative kinematic G1 motion (non-VLA, in-process torch).
 - [Custom policies](custom-policies.md) - implement the ABC.
