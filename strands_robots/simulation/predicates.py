@@ -44,6 +44,11 @@ Available reward terms (float):
     distance_neg(body_a, body_b, weight=1.0)
     joint_progress(joint, target, weight=1.0)
     base_velocity(vx=0.0, vy=0.0, wz=0.0, weight=1.0, robot=None)
+    base_height(target, weight=1.0, robot=None)
+    base_orientation(weight=1.0, robot=None)
+    base_lin_vel_z(weight=1.0, robot=None)
+    base_ang_vel_xy(weight=1.0, robot=None)
+    staged_reward(stages)
     constant(value)
 
 Register custom predicates with :func:`register_predicate`.
