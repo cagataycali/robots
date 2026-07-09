@@ -1142,6 +1142,12 @@ def _staged_reward(stages: list[Any]) -> RewardTerm:
                     "like {predicate: distance_less_than, body_a: ..., body_b: ..., threshold: ...}"
                 )
             advance_name = advance_call["predicate"]
+            if isinstance(advance_name, str) and predicate_kind(advance_name) == "float":
+                raise ValueError(
+                    f"staged_reward: stage[{i}].advance_when predicate {advance_name!r} is a "
+                    "reward term (float-valued); advance_when gates the stage transition and "
+                    "must be a bool predicate. Reward terms belong in the stage's 'reward' field."
+                )
             advance_kwargs = {k: v for k, v in advance_call.items() if k != "predicate"}
             advance_fn = make_predicate(advance_name, **advance_kwargs)
 
@@ -1236,6 +1242,38 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
     return factory(**kwargs)
 
 
+def predicate_kind(name: str) -> str:
+    """Classify a registered predicate as ``"bool"`` or ``"float"``.
+
+    Success / failure clauses require a ``"bool"`` predicate; ``dense_reward``
+    terms are ``"float"``. The kind is read from the factory's
+    ``-> BoolPredicate`` / ``-> RewardTerm`` return annotation, so it stays in
+    lock-step with the registry with no separate table to drift. A predicate
+    registered via :func:`register_predicate` without a recognizable return
+    annotation classifies as ``"unknown"`` and is exempt from kind validation
+    (the caller opted in by registering it).
+
+    Args:
+        name: A predicate name. Must be registered in :data:`PREDICATE_REGISTRY`.
+
+    Returns:
+        ``"bool"``, ``"float"``, or ``"unknown"``.
+
+    Raises:
+        ValueError: If ``name`` is not registered (mirrors :func:`make_predicate`).
+    """
+    factory = PREDICATE_REGISTRY.get(name)
+    if factory is None:
+        valid = sorted(PREDICATE_REGISTRY.keys())
+        raise ValueError(f"Unknown predicate '{name}'. Valid: {valid}")
+    annotation = str(getattr(factory, "__annotations__", {}).get("return", ""))
+    if "Bool" in annotation:
+        return "bool"
+    if "Reward" in annotation:
+        return "float"
+    return "unknown"
+
+
 __all__ = [
     "PREDICATE_REGISTRY",
     "BoolPredicate",
@@ -1243,5 +1281,6 @@ __all__ = [
     "RewardTerm",
     "StatefulRewardTerm",
     "make_predicate",
+    "predicate_kind",
     "register_predicate",
 ]
