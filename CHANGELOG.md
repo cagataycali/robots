@@ -1150,6 +1150,10 @@ and stilting cost the same. On a fixed-base arm (no floating base) the term
 degrades to `0.0` and logs the missing base once, consistent with the DSL's
 other name-resolution degradation.
 
+### Fixed:
+
+- `lerobot_local`: observation-history policies (Diffusion `n_obs_steps=2`, VQBeT `n_obs_steps=5`) crashed with `AssertionError` when run through `Simulation.run_policy`. `_auto_detect_actions_per_step` adopted the model's `n_action_steps` chunk and routed inference to `predict_action_chunk()`, whose offline branch stacks a single live observation frame as `n_obs_steps=1`; LeRobot's `generate_actions()` then trips `assert n_obs_steps == config.n_obs_steps`. These checkpoints now keep `actions_per_step=1` so inference runs through `select_action()`, which maintains the required observation-history queue and still replays the model's `n_action_steps` chunk from its internal queue (open-loop chunk replay is preserved). Single-history policies (ACT, SmolVLA, pi0, MolmoAct2) are unaffected.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

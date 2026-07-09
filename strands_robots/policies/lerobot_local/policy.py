@@ -978,12 +978,22 @@ class LerobotLocalPolicy(Policy):
             Many policies declare ``config.n_action_steps`` - the number of
             actions emitted per inference that the model was trained to replay
             open-loop before requerying observation (e.g. MolmoAct2 SO-100/101 =
-            30, ACT = 100, Diffusion = 32). The default ``actions_per_step=1`` is
+            30, ACT = 100). The default ``actions_per_step=1`` is
             a closed-loop convention that re-queries every step; for a chunk-
             trained model that is out of distribution and the shift compounds
             every chunk. When left at the default ``1`` we adopt
             ``n_action_steps`` so the chunk is consumed as trained. An explicit
             ``actions_per_step > 1`` from the caller is respected here.
+
+        Observation history (``config.n_obs_steps > 1``):
+            Diffusion (2) and VQBeT (5) consume a short observation history and
+            MUST run through ``select_action()`` (it maintains the obs-history
+            queue). Their ``predict_action_chunk()`` offline branch stacks a
+            single live frame as ``n_obs_steps=1`` and ``generate_actions()``
+            asserts, so the ``actions_per_step > 1`` regime crashes them. We keep
+            ``actions_per_step=1`` for these checkpoints; ``select_action()``
+            still replays the ``n_action_steps`` chunk from its internal queue,
+            so open-loop chunk replay is preserved - just correctly.
 
         Logged at INFO so the active regime is always visible.
         """
@@ -1015,6 +1025,29 @@ class LerobotLocalPolicy(Policy):
             return
         if self.actions_per_step != 1:
             return  # caller pinned an explicit horizon - never override it
+        # Observation-history policies (``n_obs_steps > 1``, e.g. Diffusion=2,
+        # VQBeT=5) MUST be driven per-step through ``select_action()``. That path
+        # maintains the required ``n_obs_steps`` observation queue AND still
+        # caches the model's ``n_action_steps`` chunk internally (re-querying the
+        # model only when the queue drains - the same open-loop chunk replay,
+        # done correctly). The ``actions_per_step > 1`` regime instead calls
+        # ``predict_action_chunk()`` on a SINGLE live observation frame; its
+        # offline branch stacks that lone frame as ``n_obs_steps=1``, so
+        # ``generate_actions()`` trips ``assert n_obs_steps == config.n_obs_steps``
+        # and crashes. Keep ``actions_per_step=1`` for these checkpoints so the
+        # per-step ``select_action()`` path is used.
+        n_obs_steps = getattr(config, "n_obs_steps", 1)
+        if isinstance(n_obs_steps, int) and n_obs_steps > 1:
+            logger.info(
+                "lerobot_local: %s consumes an observation history "
+                "(n_obs_steps=%d) - driving per-step via select_action() (which "
+                "keeps the obs-history queue and still replays the model's "
+                "n_action_steps chunk from its internal queue). Keeping "
+                "actions_per_step=1.",
+                type(self._policy).__name__,
+                n_obs_steps,
+            )
+            return
         n_action_steps = getattr(config, "n_action_steps", None)
         if isinstance(n_action_steps, int) and n_action_steps > 1:
             self.actions_per_step = n_action_steps
