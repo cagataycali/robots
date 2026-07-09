@@ -360,6 +360,27 @@ class TestWorldLifecycle:
         result = sim.load_scene("/nonexistent/path.xml")
         assert result["status"] == "error"
 
+    def test_load_scene_malformed_mjcf_returns_error(self, sim, tmp_path):
+        """A syntactically-present but semantically-invalid MJCF must resolve to
+        a structured error dict, not an escaped exception.
+
+        ``load_scene`` guards the missing-file case up front, but a file that
+        exists and passes that guard can still fail deep in the MuJoCo compile
+        (bad attribute value, inconsistent joints, unknown element). That failure
+        must be converted into the ``{"status": "error"}`` contract every facade
+        method upholds so a caller/agent never has to catch a raw compile
+        exception mid-dispatch.
+        """
+        bad = tmp_path / "malformed.xml"
+        bad.write_text(
+            '<mujoco model="bad"><worldbody><body><geom type="box" size="not-a-number"/></body></worldbody></mujoco>'
+        )
+
+        result = sim.load_scene(str(bad))
+
+        assert result["status"] == "error"
+        assert "Failed to load scene" in result["content"][0]["text"]
+
 
 # Object Management
 

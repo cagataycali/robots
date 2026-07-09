@@ -13,8 +13,8 @@ Usage::
     # Explicit backend
     sim = create_simulation("mujoco", timestep=0.001)
 
-    # Future backends
-    sim = create_simulation("isaac", gpu_id=0)
+    # GPU-native built-in backends
+    sim = create_simulation("isaac", num_envs=1, headless=True)
     sim = create_simulation("newton")
 
     # Custom backend (runtime-registered)
@@ -310,7 +310,7 @@ def create_simulation(
     Resolution order for ``backend``:
 
     1. Runtime-registered backends (see ``register_backend``).
-    2. Built-in backends (currently ``mujoco``, ``newton``). Built-ins always
+    2. Built-in backends (currently ``mujoco``, ``newton``, ``isaac``). Built-ins always
        win over entry-point plugins of the same name, so a third-party
        plugin can never accidentally shadow a built-in backend.
     3. Entry-point plugins. Third-party packages (e.g.
@@ -320,7 +320,6 @@ def create_simulation(
        ``pyproject.toml``::
 
            [project.entry-points."strands_robots.backends"]
-           isaac = "strands_robots_sim.isaac.simulation:IsaacSimulation"
            newton = "strands_robots_sim.newton.simulation:NewtonSimulation"
            warp = "strands_robots_sim.newton.simulation:NewtonSimulation"
 
@@ -363,8 +362,8 @@ def create_simulation(
         # Pass kwargs to backend constructor
         sim = create_simulation("mujoco", tool_name="my_sim")
 
-        # Entry-point plugin (requires strands-robots-sim installed)
-        sim = create_simulation("isaac", gpu_id=0)
+        # GPU-native built-in backend (requires strands-robots[sim-isaac])
+        sim = create_simulation("isaac", num_envs=1, headless=True)
     """
     canonical = _resolve_name(backend)
     logger.info("Creating simulation: %s (resolved from %r)", canonical, backend)
