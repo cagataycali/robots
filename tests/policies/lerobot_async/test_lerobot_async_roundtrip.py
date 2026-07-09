@@ -89,6 +89,70 @@ def test_missing_checkpoint_raises() -> None:
         create_policy("lerobot_async", server_address="h:1", policy_type="act")
 
 
+def test_server_address_accepts_url_with_scheme() -> None:
+    """A ``scheme://host:port`` server_address has its scheme stripped.
+
+    The gRPC channel target is a bare ``host:port``; passing a full URL (e.g.
+    copied from a dashboard) must not leak the ``grpc://`` scheme into the
+    channel address.
+    """
+    policy = create_policy(
+        "lerobot_async",
+        server_address="grpc://gpu-box:9000",
+        policy_type="act",
+        pretrained_name_or_path="x/y",
+    )
+    assert isinstance(policy, LerobotAsyncPolicy)
+    assert policy.server_address == "gpu-box:9000"
+
+
+def test_unexpected_constructor_kwargs_warn_not_raise(caplog: pytest.LogCaptureFixture) -> None:
+    """Unknown constructor kwargs are tolerated with a warning, never fatal.
+
+    ``create_policy`` forwards a shared kwargs bag to every provider; the async
+    client must ignore server-side config it does not own (and say so) rather
+    than crash the caller.
+    """
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        policy = create_policy(
+            "lerobot_async",
+            server_address="h:1",
+            policy_type="act",
+            pretrained_name_or_path="x/y",
+            temperature=0.7,  # server-side policy config, not a client kwarg
+        )
+    assert isinstance(policy, LerobotAsyncPolicy)
+    assert any("ignoring unexpected constructor kwarg" in r.message for r in caplog.records)
+    assert "temperature" in caplog.text
+
+
+def test_chunk_decode_rejects_empty_state_keys_and_empty_chunk() -> None:
+    """``_chunk_to_action_dicts`` guards both undeclared keys and an empty chunk.
+
+    These are defensive contracts on the decode path: without declared state
+    keys the index->joint mapping is undefined, and an empty decoded chunk must
+    raise rather than silently return no actions.
+    """
+    policy = create_policy(
+        "lerobot_async",
+        server_address="h:1",
+        policy_type="act",
+        pretrained_name_or_path="x/y",
+    )
+    assert isinstance(policy, LerobotAsyncPolicy)
+
+    # No state keys declared -> undefined index mapping.
+    with pytest.raises(RuntimeError, match="robot_state_keys is empty"):
+        policy._chunk_to_action_dicts([])
+
+    # Keys declared but the server chunk decoded to nothing -> never fabricate.
+    policy.set_robot_state_keys(STATE_KEYS)
+    with pytest.raises(RuntimeError, match="empty action chunk"):
+        policy._chunk_to_action_dicts([])
+
+
 # -- Full gRPC round-trip against a real in-process AsyncInference server ------
 
 grpc = pytest.importorskip("grpc")
@@ -276,5 +340,55 @@ def test_unreachable_server_raises_connectionerror() -> None:
     )
     policy.set_robot_state_keys(STATE_KEYS)
     with pytest.raises(ConnectionError, match="could not reach a lerobot PolicyServer"):
+        policy.get_actions_sync(_observation(), "task")
+    policy.close()
+
+
+def test_reset_recalls_ready_and_reconnect_is_idempotent(running_server) -> None:
+    """reset() re-runs the server Ready handshake; a second call reuses the channel.
+
+    The client keeps the loaded policy resident across episodes: reset() flushes
+    server-side per-episode state via ``Ready`` (without a reconnect), and the
+    already-open channel is reused on subsequent inference (no duplicate dial).
+    """
+    servicer, address = running_server
+    policy = _client(
+        address,
+        policy_type="act",
+        pretrained_name_or_path="lerobot/act_so101",
+        device="cpu",
+        actions_per_chunk=CHUNK_LEN,
+    )
+    policy.set_robot_state_keys(STATE_KEYS)
+
+    # First inference connects (one Ready during the connect handshake).
+    policy.get_actions_sync(_observation(), "task")
+    assert servicer.ready_calls == 1
+
+    # reset() re-runs Ready on the live stub to clear the server episode state.
+    policy.reset()
+    assert servicer.ready_calls == 2
+
+    # A second inference reuses the open channel (no third Ready handshake).
+    policy.get_actions_sync(_observation(), "task")
+    assert servicer.ready_calls == 2
+    policy.close()
+
+
+def test_inference_without_state_keys_raises(running_server) -> None:
+    """Connecting then inferring without declared state keys raises, never guesses.
+
+    The feature spec sent to the server is built from the joint state keys; with
+    none declared the client must refuse rather than send an empty spec.
+    """
+    servicer, address = running_server
+    policy = _client(
+        address,
+        policy_type="act",
+        pretrained_name_or_path="x/y",
+        device="cpu",
+    )
+    # set_robot_state_keys intentionally not called.
+    with pytest.raises(RuntimeError, match="robot_state_keys is empty"):
         policy.get_actions_sync(_observation(), "task")
     policy.close()
