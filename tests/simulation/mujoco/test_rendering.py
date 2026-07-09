@@ -1113,6 +1113,77 @@ def test_get_contacts_output_is_ascii_only() -> None:
         sim.destroy()
 
 
+def test_get_contacts_resolves_geom_names_via_geom_body_id_ladder(tmp_path: Path) -> None:
+    """get_contacts() labels each contacting geom via a three-step ladder.
+
+    For every contact pair the backend resolves a stable, human-readable
+    identifier so an agent inspecting contacts sees meaningful names instead
+    of raw integer geom ids:
+
+    1. the geom's own MJCF name, when it has one (``"floor"``, ``"box_geom"``);
+    2. else ``"<parent_body>/geom_<id>"`` when the geom is unnamed but its
+       parent body is named (``"anon_box/geom_2"``), so the geom is still
+       traceable to the body it belongs to;
+    3. else ``"geom_<id>"`` as a last resort, when neither the geom nor its
+       parent body carries a name.
+
+    The scene drops three boxes onto a named ground plane: one with a named
+    geom, one whose geom is unnamed under a named body, and one whose geom is
+    unnamed under an unnamed body - exercising all three rungs of the ladder
+    in a single settled contact snapshot.
+    """
+    from strands_robots.simulation import Simulation
+
+    scene_xml = """
+<mujoco model="contact_name_ladder">
+  <option timestep="0.002"/>
+  <worldbody>
+    <light pos="0 0 3" dir="0 0 -1"/>
+    <geom name="floor" type="plane" size="5 5 0.01"/>
+    <body name="named_box" pos="0 0 0.03">
+      <freejoint/>
+      <geom name="box_geom" type="box" size="0.02 0.02 0.02"/>
+    </body>
+    <body name="anon_box" pos="0.4 0 0.03">
+      <freejoint/>
+      <geom type="box" size="0.02 0.02 0.02"/>
+    </body>
+    <body pos="0.8 0 0.03">
+      <freejoint/>
+      <geom type="box" size="0.02 0.02 0.02"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+    scene_path = tmp_path / "contact_name_ladder.xml"
+    scene_path.write_text(scene_xml)
+
+    sim = Simulation()
+    try:
+        assert sim.load_scene(str(scene_path))["status"] == "success"
+        # Let all three boxes settle onto the floor so contacts are active.
+        sim.step(n_steps=400)
+
+        result = sim.get_contacts()
+        assert result["status"] == "success", result
+        contacts = result["content"][1]["json"]["contacts"]
+        assert contacts, "expected active contacts for the settled boxes"
+
+        names = {name for c in contacts for name in (c["geom1"], c["geom2"])}
+        # Rung 1: named geoms resolve to their own MJCF name.
+        assert "floor" in names
+        assert "box_geom" in names
+        # Rung 2: an unnamed geom under a named body -> "<body>/geom_<id>".
+        assert any(n.startswith("anon_box/geom_") for n in names), names
+        # Rung 3: an unnamed geom under an unnamed body -> bare "geom_<id>".
+        assert any(n.startswith("geom_") for n in names), names
+        # No pair ever leaks a raw integer id in place of a resolved name.
+        for c in contacts:
+            assert isinstance(c["geom1"], str) and isinstance(c["geom2"], str)
+    finally:
+        sim.destroy()
+
+
 def test_render_depth_output_is_ascii_only(monkeypatch) -> None:
     """render_depth() summary + ARB_clip_control warning must be ASCII.
 
