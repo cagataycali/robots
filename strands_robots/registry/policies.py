@@ -76,6 +76,9 @@ def resolve_policy(policy: str, **extra_kwargs) -> tuple[str, dict[str, Any]]:
         resolve_policy("zmq://localhost:5555")
         # → ("groot", {"host": "localhost", "port": 5555})
 
+        resolve_policy("grpc://gpu-box:8080")
+        # → ("lerobot_async", {"server_address": "gpu-box:8080"})
+
         resolve_policy("mock")
         # → ("mock", {})
     """

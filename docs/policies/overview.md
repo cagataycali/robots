@@ -1,5 +1,5 @@
 ---
-description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, cosmos3, vera, remote, curobo, moveit2, wbc, wbc_gait, motionbricks.
+description: The Policy ABC and every provider that ships - mock, groot, lerobot_local, lerobot_async, cosmos3, vera, remote, curobo, moveit2, wbc, wbc_gait, motionbricks.
 ---
 
 # Policy providers
@@ -9,7 +9,7 @@ truth - list every provider that `create_policy("<name>")` accepts with:
 
 ```bash
 python -c 'from strands_robots.policies import list_providers; print(list_providers())'
-# ['cosmos3', 'curobo', 'groot', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']
+# ['cosmos3', 'curobo', 'groot', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']
 ```
 
 ```python
@@ -36,6 +36,7 @@ is kept in sync with `list_providers()` by a regression test
 | [`mock`](custom-policies.md) | `MockPolicy` | _(core)_ | Tests, smoke checks; sinusoidal joints, no GPU. Reference minimal `Policy` (documented inline + custom-policies) |
 | [`groot`](groot.md) | `Gr00tPolicy` | `groot-service` | NVIDIA GR00T N1.5/N1.6/N1.7 over ZMQ |
 | [`lerobot_local`](lerobot-local.md) | `LerobotLocalPolicy` | `lerobot` | HF LeRobot in-process (ACT, Pi0, SmolVLA, MolmoAct2, ...) |
+| [`lerobot_async`](lerobot-async.md) | `LerobotAsyncPolicy` | `lerobot-async` | Offload a LeRobot policy to a GPU box over lerobot's native async-inference gRPC transport; the robot host stays light. Edge-device inference |
 | [`cosmos3`](cosmos3.md) | `Cosmos3Policy` | `cosmos3-service` | NVIDIA Cosmos 3 omnimodal VLA over WebSocket |
 | [`vera`](vera.md) | `VeraPolicy` | `vera` | MIT VERA video-to-action (DFoT/WAN planner + Jacobian IDM) over a containerized GPU server |
 | [`remote`](remote.md) | `RemotePolicy` | `inference` | Offload a large policy to a GPU box: forward observations to a remote `PolicyServer` over WebSocket, get back action chunks. Edge-device inference |
@@ -96,6 +97,7 @@ sim.run_policy(robot_name="so100", instruction="pick up the cube",
 
 - [GR00T](groot.md) - ZMQ server, 27 embodiments, container lifecycle.
 - [LeRobot Local](lerobot-local.md) - in-process HF models, RTC.
+- [LeRobot Async](lerobot-async.md) - offload a LeRobot policy to a gRPC `PolicyServer` (edge offload).
 - [MolmoAct2 (SO-100/101)](molmoact2.md) - action/observation contract for the SO-arm checkpoints.
 - [Persistent worker](persistent-worker.md) - load once, reuse across rollouts; cache controls + telemetry.
 - [Cosmos 3](cosmos3.md) - NVIDIA Cosmos 3 omnimodal VLA.

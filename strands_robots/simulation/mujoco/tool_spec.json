@@ -190,7 +190,7 @@
     },
     "policy_provider": {
       "type": "string",
-      "description": "Policy provider name (e.g. groot, lerobot_local, cosmos3, mock). See list_providers()."
+      "description": "Policy provider name (e.g. groot, lerobot_local, lerobot_async, cosmos3, mock). See list_providers()."
     },
     "instruction": {
       "type": "string"
