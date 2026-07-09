@@ -1122,6 +1122,21 @@ the missing base once, consistent with the DSL's other name-resolution
 degradation. Works on both the MuJoCo and Newton backends (both surface the base
 twist with the same frame convention).
 
+### Added: base_height locomotion-regularizer reward term for the predicate/reward DSL
+
+The dense-reward DSL grew a `base_height` term: `-weight * (base_z - target) ** 2`,
+where `base_z` is a floating base's world height from `get_observation`'s
+`base_pos` signal. It is the standard legged_gym / IsaacLab companion to the
+`base_velocity` velocity-tracking reward: velocity tracking alone is a degenerate
+locomotion objective -- a policy can dive or crouch to maximise forward velocity
+-- so a viable velocity-tracking reward pairs the two in one `dense_reward` list
+(the terms sum per step), penalising the base for leaving its target torso/pelvis
+height. `target` is the desired height in metres (task-specific: a G1 pelvis
+~0.74 m, a Go2 trunk ~0.34 m); the penalty is symmetric (squared) so crouching
+and stilting cost the same. On a fixed-base arm (no floating base) the term
+degrades to `0.0` and logs the missing base once, consistent with the DSL's
+other name-resolution degradation.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

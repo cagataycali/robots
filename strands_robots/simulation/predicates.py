@@ -319,6 +319,31 @@ def _base_twist(sim: SimEngine, robot: str | None) -> tuple[float, float, float]
     return float(v_body[0]), float(v_body[1]), float(ang[2])
 
 
+def _base_position(sim: SimEngine, robot: str | None) -> list[float] | None:
+    """Return a floating base's WORLD position ``[x, y, z]`` (incl. height), or None.
+
+    Reads ``get_observation``'s ``base_pos`` floating-base signal - the base
+    body's world-frame position, whose z component is the base height a
+    locomotion controller regularizes (torso/pelvis height above the ground).
+    Returns None (and warns once) when the robot exposes no floating base -
+    almost always a spec referencing a base term on a fixed-base arm.
+    """
+    try:
+        obs = sim.get_observation(robot_name=robot, skip_images=True)
+    except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
+        logger.debug("base_height get_observation(%r) failed: %s", robot, e)
+        return None
+    if not isinstance(obs, dict):
+        return None
+    pos = obs.get("base_pos")
+    if not (isinstance(pos, list) and len(pos) == 3):
+        # A floating base surfaces base_pos; its absence means this robot has no
+        # floating base (a fixed-base arm) - almost always a spec error.
+        _warn_unresolved("robot base", robot or "<sole robot>")
+        return None
+    return [float(pos[0]), float(pos[1]), float(pos[2])]
+
+
 # Predicate factories
 
 
@@ -766,6 +791,40 @@ def _base_velocity(
     return term
 
 
+def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -> RewardTerm:
+    """Negative squared base-height error - a locomotion-regularizer reward.
+
+    Rewards a floating-base robot for keeping its base (torso/pelvis) near a
+    target WORLD height: ``-weight * (base_z - target) ** 2`` - 0 at the target
+    and growing more negative as the base deviates. Composed alongside
+    ``base_velocity`` in a ``dense_reward`` list, it is the standard regularizer
+    that stops a velocity-tracking policy from cheating the forward-velocity
+    reward by crouching or diving (the legged_gym / IsaacLab ``base_height``
+    term). ``base_velocity`` alone is degenerate for locomotion - a policy can
+    dive forward to maximise it - so a viable velocity-tracking reward pairs the
+    two.
+
+    Reads ``get_observation``'s ``base_pos`` (world frame). ``target`` is the
+    desired base height in metres (task-specific: a G1 pelvis ~0.74 m, a Go2
+    trunk ~0.34 m). Requires a robot with a floating base; a fixed-base arm has
+    no base position, so the term degrades to ``0.0`` and the missing base is
+    logged once. ``robot`` selects the robot in a multi-robot scene (default:
+    the sole robot).
+    """
+    w = float(weight)
+    tgt = float(target)
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        pos = _base_position(sim, rname)
+        if pos is None:
+            return 0.0
+        d = pos[2] - tgt
+        return -w * d * d
+
+    return term
+
+
 # Stateful reward terms (declarative phase machine)
 #
 # A plain RewardTerm is stateless: ``(SimEngine) -> float``. Some rewards need
@@ -941,6 +1000,7 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,
     "base_velocity": _base_velocity,
+    "base_height": _base_height,
     "constant": _constant,
     # stateful (phase machine)
     "staged_reward": _staged_reward,
