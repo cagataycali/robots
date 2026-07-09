@@ -344,6 +344,30 @@ def _base_position(sim: SimEngine, robot: str | None) -> list[float] | None:
     return [float(pos[0]), float(pos[1]), float(pos[2])]
 
 
+def _base_quaternion(sim: SimEngine, robot: str | None) -> list[float] | None:
+    """Return a floating base's orientation quaternion ``[w, x, y, z]``, or None.
+
+    Reads ``get_observation``'s ``base_quat`` floating-base signal (MuJoCo and
+    Newton both report ``[w, x, y, z]``). Returns None (and warns once) when the
+    robot exposes no floating base (a fixed-base arm) - almost always a spec
+    referencing a base term on a robot that has no base orientation.
+    """
+    try:
+        obs = sim.get_observation(robot_name=robot, skip_images=True)
+    except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
+        logger.debug("base_orientation get_observation(%r) failed: %s", robot, e)
+        return None
+    if not isinstance(obs, dict):
+        return None
+    quat = obs.get("base_quat")
+    if not (isinstance(quat, list) and len(quat) == 4):
+        # A floating base surfaces base_quat; its absence means this robot has
+        # no floating base (a fixed-base arm) - almost always a spec error.
+        _warn_unresolved("robot base", robot or "<sole robot>")
+        return None
+    return [float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])]
+
+
 # Predicate factories
 
 
@@ -825,6 +849,43 @@ def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -
     return term
 
 
+def _base_orientation(weight: float = 1.0, robot: str | None = None) -> RewardTerm:
+    """Negative flat-orientation error - the locomotion base-orientation regularizer.
+
+    Penalises a floating-base robot for tilting (roll/pitch) away from level:
+    ``-weight * (g_x ** 2 + g_y ** 2)`` where ``(g_x, g_y, g_z)`` is the world
+    gravity direction expressed in the base frame (the "projected gravity" a
+    legged controller reads). When the base is level the projected gravity is
+    ``(0, 0, -1)`` so the penalty is 0; a roll or pitch of ``theta`` makes the xy
+    magnitude ``sin(theta)`` so the penalty grows as ``-weight * sin(theta) ** 2``.
+    This is the standard legged_gym / IsaacLab ``orientation`` term and the third
+    piece of a minimal velocity-tracking reward: ``base_velocity`` alone is
+    degenerate (a policy can crouch OR lean to cheat the forward-velocity
+    reward), so a viable locomotion reward pairs it with ``base_height`` (which
+    stops crouch-cheating) AND ``base_orientation`` (which stops lean/tilt-
+    cheating) in one ``dense_reward`` list.
+
+    Crucially the penalty is invariant to YAW (heading): a robot may turn freely
+    while walking upright, only roll/pitch off level is penalised. Reads
+    ``get_observation``'s ``base_quat`` (``[w, x, y, z]`` on both backends).
+    Requires a robot with a floating base; a fixed-base arm has no base
+    orientation, so the term degrades to ``0.0`` and the missing base is logged
+    once. ``robot`` selects the robot in a multi-robot scene (default: the sole
+    robot).
+    """
+    w = float(weight)
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        quat = _base_quaternion(sim, rname)
+        if quat is None:
+            return 0.0
+        gx, gy, _gz = _quat_rotate_inverse_wxyz(quat, [0.0, 0.0, -1.0])
+        return -w * float(gx * gx + gy * gy)
+
+    return term
+
+
 # Stateful reward terms (declarative phase machine)
 #
 # A plain RewardTerm is stateless: ``(SimEngine) -> float``. Some rewards need
@@ -1001,6 +1062,7 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "joint_progress": _joint_progress,
     "base_velocity": _base_velocity,
     "base_height": _base_height,
+    "base_orientation": _base_orientation,
     "constant": _constant,
     # stateful (phase machine)
     "staged_reward": _staged_reward,
