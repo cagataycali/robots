@@ -82,17 +82,25 @@ _TYPE_RE = re.compile(r"^[A-Za-z0-9_]+/[A-Za-z0-9_]+/[A-Za-z0-9_]+$")
 # topics gated by a human-in-the-loop (HIL) interrupt. An operator can
 # pre-approve individual topics via STRANDS_ROS2_PUBLISH_ALLOW (comma-separated)
 # or bypass the gate entirely with BYPASS_TOOL_CONSENT=true.
-_DEFAULT_PUBLISH_BLOCKLIST = frozenset({
-    '/cmd_vel', '/cmd_vel_unstamped',
-    '/joint_command', '/joint_trajectory',
-    '/joint_trajectory_controller/joint_trajectory',
-    '/emergency_stop', '/e_stop',
-    '/motor_enable', '/enable_motor', '/disable_motor',
-    '/navigate_to_pose', '/follow_path',
-})
+_DEFAULT_PUBLISH_BLOCKLIST = frozenset(
+    {
+        "/cmd_vel",
+        "/cmd_vel_unstamped",
+        "/joint_command",
+        "/joint_trajectory",
+        "/joint_trajectory_controller/joint_trajectory",
+        "/emergency_stop",
+        "/e_stop",
+        "/motor_enable",
+        "/enable_motor",
+        "/disable_motor",
+        "/navigate_to_pose",
+        "/follow_path",
+    }
+)
 
-_PUBLISH_ALLOW_ENV = 'STRANDS_ROS2_PUBLISH_ALLOW'
-_BYPASS_CONSENT_ENV = 'BYPASS_TOOL_CONSENT'
+_PUBLISH_ALLOW_ENV = "STRANDS_ROS2_PUBLISH_ALLOW"
+_BYPASS_CONSENT_ENV = "BYPASS_TOOL_CONSENT"
 
 _APPROVE_RESPONSES = frozenset({"y", "yes", "approve", "approved"})
 
@@ -104,8 +112,8 @@ def _approve_response(response: object) -> bool:
 
 def _match_blocklist(topic: str, blocked: frozenset[str]) -> bool:
     """Check exact match and namespace-stripped match against a topic set."""
-    parts = topic.rsplit('/', 1)
-    base_topic = '/' + parts[-1] if len(parts) > 1 else topic
+    parts = topic.rsplit("/", 1)
+    base_topic = "/" + parts[-1] if len(parts) > 1 else topic
     return topic in blocked or base_topic in blocked
 
 
@@ -131,7 +139,7 @@ def _gate_publish(topic: str, tool_context: ToolContext | None) -> dict[str, Any
 
     allow_raw = os.environ.get(_PUBLISH_ALLOW_ENV)
     if allow_raw is not None:
-        allowed = frozenset(t.strip() for t in allow_raw.split(',') if t.strip())
+        allowed = frozenset(t.strip() for t in allow_raw.split(",") if t.strip())
         if _match_blocklist(topic, allowed):
             logger.debug("publish to %s allowed via %s", topic, _PUBLISH_ALLOW_ENV)
             return None
@@ -156,17 +164,13 @@ def _gate_publish(topic: str, tool_context: ToolContext | None) -> dict[str, Any
             },
         )
     except RuntimeError as exc:
-        return _err(
-            f"publish to {topic!r} requires operator approval, "
-            f"but interrupts are not available: {exc}"
-        )
+        return _err(f"publish to {topic!r} requires operator approval, but interrupts are not available: {exc}")
 
     if not _approve_response(response):
         return _err(f"publish to {topic!r} was declined by the operator.")
 
     logger.info("publish to %s approved via operator interrupt", topic)
     return None
-
 
 
 _INSTALL_HINT = (
