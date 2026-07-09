@@ -13,6 +13,7 @@ from strands_robots.policies import (
     UntrustedRemoteCodeError,
     create_policy,
     list_providers,
+    preflight_policy,
     register_policy,
 )
 
@@ -241,3 +242,76 @@ class _KwargCapture(Policy):
     @property
     def provider_name(self):
         return "kwarg_test"
+
+
+class _PreflightPolicy(MockPolicy):
+    """Test helper -- a provider that overrides the class-level ``preflight``
+    hook to reject a runtime observation missing a required camera key.
+
+    Records every ``preflight`` invocation so tests can assert the observation
+    keys and provider kwargs were forwarded verbatim.
+    """
+
+    preflight_calls: list[tuple[set[str], dict]] = []
+
+    @classmethod
+    def preflight(cls, observation_keys: set[str], **policy_config: object) -> None:
+        cls.preflight_calls.append((set(observation_keys), dict(policy_config)))
+        if "camera_top" not in observation_keys:
+            raise ValueError("preflight: required image source 'camera_top' is absent")
+
+
+class TestPreflightPolicy:
+    """``preflight_policy`` is the fail-fast seam ``run_policy`` / ``eval_policy``
+    call BEFORE ``create_policy`` downloads weights. It must: resolve a provider
+    without instantiating it, invoke the class ``preflight`` hook only when the
+    provider overrides it, propagate that hook's ``ValueError``, and swallow
+    resolution failures (the authoritative error comes later from
+    ``create_policy``).
+    """
+
+    @pytest.fixture(autouse=True)
+    def _reset_preflight_calls(self):
+        _PreflightPolicy.preflight_calls.clear()
+        yield
+        _PreflightPolicy.preflight_calls.clear()
+
+    def test_noop_when_provider_does_not_override_preflight(self):
+        """A provider using the default no-op ``preflight`` (e.g. ``mock``) must
+        pass silently -- no exception, no hook side effects."""
+        assert preflight_policy("mock", {"joint_0", "joint_1"}) is None
+
+    def test_propagates_valueerror_from_overridden_preflight(self):
+        """When the resolved provider overrides ``preflight`` and rejects the
+        observation keys, ``preflight_policy`` must surface that ``ValueError``
+        (this is the whole point of the fail-fast seam)."""
+        register_policy("preflight_reject", loader=lambda: _PreflightPolicy)
+        with pytest.raises(ValueError, match="camera_top"):
+            preflight_policy("preflight_reject", {"joint_0"})
+
+    def test_passes_when_overridden_preflight_accepts_keys(self):
+        """A satisfied override returns ``None`` -- and was actually invoked."""
+        register_policy("preflight_accept", loader=lambda: _PreflightPolicy)
+        assert preflight_policy("preflight_accept", {"joint_0", "camera_top"}) is None
+        assert len(_PreflightPolicy.preflight_calls) == 1
+
+    def test_forwards_observation_keys_and_policy_config(self):
+        """The runtime observation keys and provider kwargs must reach the hook
+        unchanged -- a dropped kwarg would defeat config-dependent validation."""
+        register_policy("preflight_capture", loader=lambda: _PreflightPolicy)
+        preflight_policy(
+            "preflight_capture",
+            {"camera_top", "joint_0"},
+            image_key="camera_top",
+            temperature=0.5,
+        )
+        assert len(_PreflightPolicy.preflight_calls) == 1
+        keys, config = _PreflightPolicy.preflight_calls[0]
+        assert keys == {"camera_top", "joint_0"}
+        assert config == {"image_key": "camera_top", "temperature": 0.5}
+
+    def test_swallows_resolution_failure(self):
+        """An unresolvable provider must NOT raise here: resolution errors are
+        surfaced authoritatively by the subsequent ``create_policy`` call, so
+        the preflight seam degrades to a no-op instead of masking that error."""
+        assert preflight_policy("nonexistent_provider_xyz_123", {"joint_0"}) is None
