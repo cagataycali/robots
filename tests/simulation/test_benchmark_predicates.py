@@ -581,6 +581,13 @@ class TestDegradationContract:
         term = make_predicate("joint_progress", joint="elbow", target=1.0)
         assert term(sim) == 0.0
 
+    def test_base_orientation_reward_zero_when_observation_raises(self):
+        # _base_quaternion: get_observation raises -> None -> the floating-base
+        # orientation regularizer degrades to 0.0 rather than crashing the eval.
+        sim = _RaisingBodyStateSim()
+        term = make_predicate("base_orientation", weight=1.0)
+        assert term(sim) == 0.0
+
     def test_contact_between_swallows_get_contacts_exception(self):
         sim = _RaisingContactSim()
         pred = make_predicate("contact_between", geom_a="g1", geom_b="g2")
@@ -773,6 +780,13 @@ class TestPayloadShapeGuards:
         sim = _NonDictObsSim()
         pred = make_predicate("joint_above", joint="elbow", value=0.0)
         assert pred(sim) is False
+
+    def test_base_orientation_reward_zero_when_observation_is_not_a_dict(self):
+        # _base_quaternion: get_observation returns a list -> guarded to None ->
+        # the base-orientation reward term degrades to 0.0.
+        sim = _NonDictObsSim()
+        term = make_predicate("base_orientation", weight=1.0)
+        assert term(sim) == 0.0
 
     def test_body_upright_false_when_backend_lacks_get_body_state(self):
         # _body_quaternion: backend exposes no get_body_state -> None -> the

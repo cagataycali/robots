@@ -15,7 +15,12 @@ from __future__ import annotations
 import pytest
 
 from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
-from strands_robots.simulation.predicates import make_predicate, predicate_kind
+from strands_robots.simulation.predicates import (
+    PREDICATE_REGISTRY,
+    make_predicate,
+    predicate_kind,
+    register_predicate,
+)
 
 
 def _spec(**overrides):
@@ -38,6 +43,22 @@ class TestPredicateKind:
     def test_unknown_name_raises(self):
         with pytest.raises(ValueError, match="Unknown predicate"):
             predicate_kind("totally_made_up")
+
+    def test_custom_predicate_without_return_annotation_classifies_as_unknown(self):
+        # A predicate registered without a recognizable BoolPredicate /
+        # RewardTerm return annotation classifies as "unknown" and is exempt
+        # from kind validation - it may sit in a bool "success" clause without
+        # the reward-term rejection firing (the caller opted in by registering).
+        def factory():  # deliberately no -> annotation
+            return lambda _sim: True
+
+        try:
+            register_predicate("unannotated_probe", factory)
+            assert predicate_kind("unannotated_probe") == "unknown"
+            bench = DeclarativeBenchmark.from_dict(_spec(success={"all": [{"predicate": "unannotated_probe"}]}))
+            assert bench is not None
+        finally:
+            PREDICATE_REGISTRY.pop("unannotated_probe", None)
 
 
 class TestRewardTermRejectedInBoolClause:
