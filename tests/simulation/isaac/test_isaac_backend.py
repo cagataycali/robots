@@ -69,6 +69,53 @@ class TestLazyImport:
         assert not any(m.startswith("omni") or m.startswith("isaacsim") for m in sys.modules)
 
 
+class TestPackageLazyExport:
+    """The package-level public export surface resolves via PEP 562 ``__getattr__``.
+
+    ``strands_robots/simulation/isaac/__init__.py`` documents
+
+        from strands_robots.simulation.isaac import IsaacSimulation, IsaacConfig
+
+    as the public entry point and re-exports both names lazily through
+    ``__getattr__`` (so importing the subpackage never pulls omni/isaacsim).
+    The other tests reach the classes through their defining submodules
+    (``...isaac.config`` / ``...isaac.simulation``), which bypasses the
+    package accessor - these pin the accessor itself so a regression in the
+    lazy re-export (wrong name check, wrong target) is caught.
+    """
+
+    def test_isaac_config_resolves_through_package_getattr(self):
+        import strands_robots.simulation.isaac as isaac_pkg
+        from strands_robots.simulation.isaac.config import IsaacConfig as ConfigViaSubmodule
+
+        # Attribute access on the package triggers __getattr__ -> _lazy_isaac_config.
+        assert isaac_pkg.IsaacConfig is ConfigViaSubmodule
+        assert isaac_pkg.IsaacConfig.__module__ == "strands_robots.simulation.isaac.config"
+
+    def test_isaac_simulation_resolves_through_package_getattr(self):
+        import strands_robots.simulation.isaac as isaac_pkg
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation as SimViaSubmodule
+
+        # Attribute access triggers __getattr__ -> _lazy_isaac_simulation; still
+        # no omni/isaacsim import (heavy imports live inside methods).
+        assert isaac_pkg.IsaacSimulation is SimViaSubmodule
+        assert not any(m.startswith("omni") or m.startswith("isaacsim") for m in sys.modules)
+
+    def test_public_names_match_all(self):
+        import strands_robots.simulation.isaac as isaac_pkg
+
+        # Everything promised by __all__ is resolvable through the package.
+        assert set(isaac_pkg.__all__) == {"IsaacSimulation", "IsaacConfig"}
+        for name in isaac_pkg.__all__:
+            assert getattr(isaac_pkg, name) is not None
+
+    def test_unknown_attribute_raises_attribute_error(self):
+        import strands_robots.simulation.isaac as isaac_pkg
+
+        with pytest.raises(AttributeError, match="no attribute 'NotAName'"):
+            isaac_pkg.NotAName
+
+
 class TestIsaacConfig:
     def test_defaults(self):
         from strands_robots.simulation.isaac.config import IsaacConfig
