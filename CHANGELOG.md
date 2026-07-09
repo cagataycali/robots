@@ -5,6 +5,19 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: norm-stats FeatureNormalizer silently passed values through on an unrecognized mode
+
+`FeatureNormalizer.normalize` / `.unnormalize`
+(`strands_robots.policies.lerobot_local.norm_stats`) fell through to an identity
+`else` branch for any mode outside the five recognized ones (`none`,
+`mean_std`, `min_max`, `q01_q99`, `q10_q90`), returning the input unchanged.
+That is exactly the silent-passthrough failure this module exists to prevent:
+un-normalized state reaching the policy and un-unnormalized actions reaching the
+motors, with no error to explain the off-policy motion. `from_stats` already
+rejected unknown modes, but a directly-constructed or future-mode normalizer
+bypassed that guard. Both transforms now raise `ValueError` on an unrecognized
+mode instead of degrading to identity. The five valid modes are unaffected.
+
 ### Fixed: scene mutations silently swallowed a cached-XML refresh failure
 
 Every MuJoCo scene mutation keeps a legacy XML string in

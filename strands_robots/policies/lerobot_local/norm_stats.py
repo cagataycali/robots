@@ -92,7 +92,9 @@ class FeatureNormalizer:
     normalization modes. ``normalize`` maps raw robot units into the model's
     normalized space; ``unnormalize`` inverts it. Both preserve the input
     container type (numpy in -> numpy out, tensor in -> tensor out on the same
-    device/dtype).
+    device/dtype). An unrecognized ``mode`` raises :class:`ValueError` in both
+    directions rather than silently passing values through un-normalized (the
+    passthrough failure this module exists to prevent).
     """
 
     def __init__(
@@ -176,7 +178,12 @@ class FeatureNormalizer:
         raise ValueError(f"Unsupported robot normalization mode {mode!r}.")
 
     def normalize(self, x: Any) -> Any:
-        """Map raw values into the model's normalized space."""
+        """Map raw values into the model's normalized space.
+
+        Raises:
+            ValueError: If ``mode`` is not a recognized normalization mode
+                (refusing to send un-normalized state to the policy).
+        """
         arr = _to_array(x)
         if arr is None:
             return None
@@ -192,7 +199,11 @@ class FeatureNormalizer:
             assert self.q_low is not None and self.q_high is not None
             normed = 2.0 * (arr - self.q_low) / np.maximum(self.q_high - self.q_low, _EPS) - 1.0
         else:
-            normed = arr
+            raise ValueError(
+                f"FeatureNormalizer.normalize: unsupported mode {self.mode!r}. Refusing to "
+                "pass state through un-normalized -- silent passthrough sends un-normalized "
+                "state to the policy (the single biggest cause of off-policy arm motion)."
+            )
         if self.mode in {"min_max", "q01_q99", "q10_q90"}:
             normed = np.clip(normed, -1.0, 1.0)
         if self.mask is not None:
@@ -202,7 +213,12 @@ class FeatureNormalizer:
         return self._restore_like(normed, x)
 
     def unnormalize(self, x: Any) -> Any:
-        """Invert :meth:`normalize`, mapping normalized values back to robot units."""
+        """Invert :meth:`normalize`, mapping normalized values back to robot units.
+
+        Raises:
+            ValueError: If ``mode`` is not a recognized normalization mode
+                (refusing to send un-unnormalized actions to the motors).
+        """
         arr = _to_array(x)
         if arr is None:
             return None
@@ -220,7 +236,11 @@ class FeatureNormalizer:
             assert self.q_low is not None and self.q_high is not None
             out = (arr + 1.0) * (self.q_high - self.q_low) / 2.0 + self.q_low
         else:
-            out = arr
+            raise ValueError(
+                f"FeatureNormalizer.unnormalize: unsupported mode {self.mode!r}. Refusing to "
+                "pass actions through un-unnormalized -- silent passthrough sends "
+                "un-unnormalized actions to the motors."
+            )
         if self.mask is not None:
             out = np.where(self.mask, out, arr)
         return self._restore_like(out, x)
