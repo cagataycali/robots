@@ -264,6 +264,37 @@ def test_known_constructor_kwargs_do_not_warn(caplog):
     ]
 
 
+def test_bare_host_port_endpoint_gets_ws_scheme_prepended():
+    """A ``host:port`` endpoint with no scheme is normalized to ``ws://``.
+
+    ``RemotePolicy("gpu-box:8765")`` (and the ``create_policy`` smart-string
+    path that forwards it) must reach ``ws://gpu-box:8765``, not fail or connect
+    to a schemeless URI the websockets client would reject. The scheme prefix is
+    added rather than demanded, so a caller need not know the transport spelling.
+    """
+    policy = RemotePolicy("gpu-box:8765")
+    assert policy.uri == "ws://gpu-box:8765"
+
+
+def test_bare_host_only_endpoint_gets_ws_scheme_prepended():
+    """A scheme-less host with no explicit port is still normalized to ``ws://``.
+
+    The ``host``/``port`` keyword fallback already yields a ``ws://`` URI, so the
+    only way to reach a schemeless value is a positional ``endpoint``; both the
+    ``host:port`` and bare-``host`` spellings take the prepend branch.
+    """
+    policy = RemotePolicy("gpu-box")
+    assert policy.uri == "ws://gpu-box"
+
+
+def test_wss_endpoint_scheme_is_preserved():
+    """An explicit secure scheme is left intact - the prepend fires only when a
+    recognized (``ws://``/``wss://``) scheme is absent, never double-prefixing.
+    """
+    policy = RemotePolicy("wss://secure-box:9000")
+    assert policy.uri == "wss://secure-box:9000"
+
+
 def test_policy_server_requires_exactly_one_policy_source():
     with pytest.raises(ValueError, match="exactly one"):
         PolicyServer()
