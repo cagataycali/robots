@@ -135,6 +135,30 @@ def test_monotonic_no_regression() -> None:
     assert term.phase == 1
 
 
+def test_advances_at_most_one_stage_per_step() -> None:
+    # A single ``__call__`` advances the phase machine by AT MOST one stage,
+    # even when a later stage's ``advance_when`` gate is already satisfiable on
+    # the same step. Here one step simultaneously satisfies BOTH the stage-0
+    # gate (gripper on cube: distance < 0.1) AND the stage-1 gate (cube above
+    # z=0.4). The machine must land in phase 1 (not skip straight to phase 2),
+    # award only stage-0's one-time bonus (5.0, not 5.0 + 10.0), and emit
+    # stage-0's dense reward. This is the curriculum-monotonicity contract: a
+    # phase is never skipped and its bonus never awarded before the machine has
+    # actually spent a step in it, so a fast trajectory that trips two gates in
+    # one control period cannot double-award or emit the wrong stage's reward.
+    # Guards against a regression to a per-step ``while`` advance loop.
+    eng = _ScriptedEngine()
+    term = make_predicate("staged_reward", stages=PICK_PLACE_STAGES)
+    eng.set("cube", [1.0, 0.0, 0.45])  # stage-1 gate would also fire: cube z=0.45 > 0.4
+    eng.set("gripper", [1.0, 0.0, 0.45])  # stage-0 gate fires too: dist(gripper, cube) = 0 < 0.1
+    r = term(eng)
+    # Advanced exactly one stage (0 -> 1), NOT two (0 -> 2).
+    assert term.phase == 1
+    # Emitted stage-0 reward (distance_neg gripper<->cube = 0.0) + stage-0 bonus
+    # only. The stage-1 bonus (10.0) is NOT awarded this step.
+    assert r == pytest.approx(5.0)
+
+
 def test_reset_clears_phase() -> None:
     eng = _ScriptedEngine()
     term = make_predicate("staged_reward", stages=PICK_PLACE_STAGES)
