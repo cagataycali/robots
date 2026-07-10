@@ -167,7 +167,7 @@ def test_echo_unresolvable_type_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_publish_requires_topic_and_type() -> None:
-    assert use_ros(action="publish", topic="/cmd_vel")["status"] == "error"
+    assert use_ros(action="publish", topic="/my_topic")["status"] == "error"
 
 
 def test_service_call_requires_service_and_type() -> None:
@@ -185,13 +185,13 @@ def test_publish_dispatches_with_real_dict(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.setattr(ros_mod, "_publish", fake_publish)
     result = use_ros(
         action="publish",
-        topic="/turtle1/cmd_vel",
+        topic="/turtle1/relay",
         type="geometry_msgs/msg/Twist",
         fields={"linear": {"x": 2.0}, "enabled": True, "tag": None},
         count=3,
     )
     assert result["status"] == "success"
-    assert "published 3 message(s) to /turtle1/cmd_vel" in _texts(result)
+    assert "published 3 message(s) to /turtle1/relay" in _texts(result)
     # The payload reaches the rclpy helper as a real Python dict with types intact.
     assert captured["fields"] == {"linear": {"x": 2.0}, "enabled": True, "tag": None}
 
