@@ -46,6 +46,7 @@ Available reward terms (float):
     distance_neg(body_a, body_b, weight=1.0)
     joint_progress(joint, target, weight=1.0)
     base_velocity(vx=0.0, vy=0.0, wz=0.0, weight=1.0, robot=None)
+    base_velocity_tracking(vx=0.0, vy=0.0, wz=0.0, lin_weight=1.0, ang_weight=0.5, tracking_sigma=0.25, robot=None)
     base_height(target, weight=1.0, robot=None)
     base_orientation(weight=1.0, robot=None)
     base_lin_vel_z(weight=1.0, robot=None)
@@ -59,6 +60,7 @@ Register custom predicates with :func:`register_predicate`.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -959,6 +961,71 @@ def _base_velocity(
     return term
 
 
+def _base_velocity_tracking(
+    vx: float = 0.0,
+    vy: float = 0.0,
+    wz: float = 0.0,
+    lin_weight: float = 1.0,
+    ang_weight: float = 0.5,
+    tracking_sigma: float = 0.25,
+    robot: str | None = None,
+) -> RewardTerm:
+    """Bounded exponential-kernel velocity-tracking reward - the canonical legged_gym primary locomotion reward.
+
+    The standard legged_gym / IsaacLab velocity-tracking reward: a POSITIVE,
+    BOUNDED signal that peaks when the base matches a commanded BODY-frame
+    velocity ``(vx, vy, wz)`` (``vx`` forward, ``vy`` lateral in m/s, ``wz`` yaw
+    rate in rad/s) and decays smoothly to 0 as the error grows::
+
+        lin_weight * exp(-((v_body_x - vx)**2 + (v_body_y - vy)**2) / tracking_sigma)
+      + ang_weight * exp(-(w_body_z - wz)**2 / tracking_sigma)
+
+    the sum of legged_gym's ``tracking_lin_vel`` (planar velocity) and
+    ``tracking_ang_vel`` (yaw rate) terms with their canonical default weights
+    (1.0 / 0.5) and kernel width (``tracking_sigma`` 0.25). It is bounded to
+    ``[0, lin_weight + ang_weight]`` and maximal (``lin_weight + ang_weight``) at
+    perfect tracking.
+
+    This is the exp-kernel counterpart of :func:`_base_velocity`, which is an
+    UNBOUNDED negative-L2 error (``-weight * ||twist - command||``). The
+    difference matters for RL: an unbounded negative error is dominated by the
+    large initial tracking error and can swamp the bounded regularizer terms
+    (``base_height`` / ``base_orientation`` / ``base_lin_vel_z`` /
+    ``base_ang_vel_xy``), whereas this bounded kernel saturates near the command
+    and stays well-scaled against those regularizers - the reason legged_gym /
+    IsaacLab use an exponential kernel for the primary tracking reward and why a
+    faithful velocity-tracking reward for #873 pairs it with those regularizers.
+    It also weights planar-velocity tracking and yaw-rate tracking separately
+    (``lin_weight`` / ``ang_weight``), which the single combined ``base_velocity``
+    norm cannot express.
+
+    Reads the floating-base twist from ``get_observation`` exactly like
+    ``base_velocity``: ``base_lin_vel`` (world frame) is rotated into the base
+    frame via ``base_quat`` and ``base_ang_vel`` is already body-frame, so the
+    tracked quantity is heading-relative. Requires a robot with a floating base;
+    a fixed-base arm has no base twist, so the term degrades to ``0.0`` and the
+    missing base is logged once. ``robot`` selects the robot in a multi-robot
+    scene (default: the sole robot).
+    """
+    tvx, tvy, twz = float(vx), float(vy), float(wz)
+    lw, aw = float(lin_weight), float(ang_weight)
+    sigma = float(tracking_sigma)
+    if sigma <= 0:
+        raise ValueError(f"base_velocity_tracking: 'tracking_sigma' must be > 0, got {sigma}")
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        twist = _base_twist(sim, rname)
+        if twist is None:
+            return 0.0
+        bvx, bvy, bwz = twist
+        lin_err = (bvx - tvx) ** 2 + (bvy - tvy) ** 2
+        ang_err = (bwz - twz) ** 2
+        return lw * math.exp(-lin_err / sigma) + aw * math.exp(-ang_err / sigma)
+
+    return term
+
+
 def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -> RewardTerm:
     """Negative squared base-height error - a locomotion-regularizer reward.
 
@@ -1284,6 +1351,7 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,
     "base_velocity": _base_velocity,
+    "base_velocity_tracking": _base_velocity_tracking,
     "base_height": _base_height,
     "base_orientation": _base_orientation,
     "base_lin_vel_z": _base_lin_vel_z,
