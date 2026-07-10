@@ -151,6 +151,20 @@ class TestIsaacConfig:
         with pytest.raises(ValueError, match="physics_dt"):
             IsaacConfig(physics_dt=0.0)
 
+    def test_rejects_nonpositive_rendering_dt(self):
+        from strands_robots.simulation.isaac.config import IsaacConfig
+
+        with pytest.raises(ValueError, match="rendering_dt"):
+            IsaacConfig(rendering_dt=0.0)
+
+    def test_rejects_nonpositive_camera_dimensions(self):
+        from strands_robots.simulation.isaac.config import IsaacConfig
+
+        with pytest.raises(ValueError, match="camera dimensions"):
+            IsaacConfig(camera_width=0)
+        with pytest.raises(ValueError, match="camera dimensions"):
+            IsaacConfig(camera_height=-1)
+
     def test_env_headless_override(self, monkeypatch):
         from strands_robots.simulation.isaac.config import IsaacConfig
 
