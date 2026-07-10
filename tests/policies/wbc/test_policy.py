@@ -243,6 +243,77 @@ class TestObservationLayout:
                 prev_action=np.zeros(_N),
             )
 
+    def test_layout_overflow_raises_when_single_obs_dim_too_small(self) -> None:
+        # single_obs_dim is a stored scalar, NOT cross-checked against the
+        # command/joint/action dims by WBCConfig.__post_init__ - a stale or
+        # miscopied value (e.g. paired with the wrong checkpoint) would silently
+        # under-size the frame. build_single_frame catches it: the layout needs
+        # command_dim + 6 + 2*n_obs_joints + num_actions = 3+6+2+1 = 12 slots,
+        # but the config declares only 10, so it must raise rather than write
+        # past the frame or silently drop the action block.
+        cfg = _make_config(
+            num_actions=1,
+            n_obs_joints=1,
+            command_dim=3,
+            single_obs_dim=10,
+            default_angles=[0.0],
+            kps=[1.0],
+            kds=[1.0],
+        )
+        with pytest.raises(ValueError, match="observation layout needs 12 values"):
+            build_single_frame(
+                cfg,
+                command=np.zeros(3),
+                base_ang_vel=np.zeros(3),
+                proj_gravity=np.zeros(3),
+                qj=np.zeros(1),
+                dqj=np.zeros(1),
+                prev_action=np.zeros(1),
+            )
+
+    def test_wrong_base_ang_vel_length_raises(self) -> None:
+        # base_ang_vel/proj_gravity are the fixed-3 sensor sub-vectors; a length
+        # mismatch is a caller wiring bug (e.g. feeding a quaternion where an
+        # angular velocity is expected). _require_len rejects it by name rather
+        # than mis-slotting the value into the frame.
+        cfg = _make_config()
+        with pytest.raises(ValueError, match="base_ang_vel must have length 3, got 2"):
+            build_single_frame(
+                cfg,
+                command=np.zeros(3),
+                base_ang_vel=np.zeros(2),
+                proj_gravity=np.zeros(3),
+                qj=np.zeros(_NO),
+                dqj=np.zeros(_NO),
+                prev_action=np.zeros(_N),
+            )
+
+    def test_wrong_qj_length_raises(self) -> None:
+        # qj/dqj span ALL observed joints (n_obs_joints=29), NOT the controlled
+        # subset (num_actions=15). Passing 15-wide qj is the exact mistake the
+        # module docstring warns about ("Using 15 for qj/dqj would populate only
+        # 58 and misplace the data"); it must raise, not silently truncate.
+        cfg = _make_config()
+        with pytest.raises(ValueError, match=f"qj must have length {_NO}, got {_N}"):
+            build_single_frame(
+                cfg,
+                command=np.zeros(3),
+                base_ang_vel=np.zeros(3),
+                proj_gravity=np.zeros(3),
+                qj=np.zeros(_N),
+                dqj=np.zeros(_NO),
+                prev_action=np.zeros(_N),
+            )
+
+    def test_history_push_wrong_frame_width_raises(self) -> None:
+        # ObservationHistory.push feeds directly into the network input stack; a
+        # frame that is not exactly single_obs_dim wide would desync the stacked
+        # layout for every subsequent tick. Reject at push time rather than
+        # producing a mis-shaped num_obs vector downstream.
+        hist = ObservationHistory(_make_config())
+        with pytest.raises(ValueError, match="frame must have length single_obs_dim=86, got 85"):
+            hist.push(np.zeros(85))
+
     def test_history_zero_warm_start_and_width(self) -> None:
         """Upstream warm-start: the deque is pre-filled with ZERO frames, so the
         first push yields [zeros .. zeros, frame] (oldest-first), NOT copies of
