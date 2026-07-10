@@ -141,3 +141,55 @@ def test_main_serves_constructed_provider(monkeypatch):
     server_mod.main(["--provider", "mock", "--host", "127.0.0.1", "--port", "9123"])
 
     assert served == {"provider": "mock", "host": "127.0.0.1", "port": 9123}
+
+
+def _capture_port_when_bound(server_cls):
+    """Return a ``server_cls`` subclass that snapshots ``.port`` at the instant
+    ``_server`` first becomes non-None (i.e. the moment the instance is
+    published as "bound")."""
+    captured: dict[str, int] = {}
+
+    class _Capturing(server_cls):
+        def __setattr__(self, name, value):
+            if name == "_server" and value is not None and "port" not in captured:
+                captured["port"] = self.port
+            super().__setattr__(name, value)
+
+    return _Capturing, captured
+
+
+def test_serve_publishes_port_before_marking_bound():
+    """``serve()`` sets ``.port`` before publishing ``_server``.
+
+    A background caller uses ``_server is not None`` as the "server is bound"
+    signal and then reads ``.port``. If ``serve()`` published ``_server`` first
+    and the port second, that caller could observe the constructor default
+    ``0`` in the window between the two writes. Capture the port at the exact
+    instant ``_server`` becomes non-None and assert it is already the real
+    bound port. Regression for a publish-ordering race.
+    """
+    capturing_cls, captured = _capture_port_when_bound(PolicyServer)
+    server = capturing_cls(policy_provider="mock", port=0)
+    thread = threading.Thread(target=server.serve, daemon=True)
+    thread.start()
+    try:
+        assert _wait_until(lambda: server._server is not None), "serve() never bound"
+        assert captured.get("port", 0) > 0, "port was still 0 when _server was published as bound"
+    finally:
+        if server._server is not None:
+            server._server.shutdown()
+    thread.join(timeout=5.0)
+    assert not thread.is_alive()
+
+
+def test_start_publishes_port_before_marking_bound():
+    """``start()`` sets ``.port`` before publishing ``_server`` too, so the
+    same non-None-``_server``-implies-real-port invariant holds for the
+    background-thread entry point."""
+    capturing_cls, captured = _capture_port_when_bound(PolicyServer)
+    server = capturing_cls(policy_provider="mock", port=0).start()
+    try:
+        assert captured.get("port", 0) > 0, "port was still 0 when _server was published as bound"
+        assert server.port == captured["port"]
+    finally:
+        server.stop()

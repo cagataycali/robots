@@ -1238,6 +1238,10 @@ name-resolution degradation.
 
 - The reward DSL had `base_velocity`, a floating base's heading-relative twist tracked as an UNBOUNDED negative-L2 error (`-weight * ||twist - command||`). For an RL locomotion reward that error term is dominated by the large initial tracking error and can swamp the bounded regularizer terms (`base_height` / `base_orientation` / `base_lin_vel_z` / `base_ang_vel_xy`), which is why legged_gym / IsaacLab express the primary velocity-tracking reward as a POSITIVE, BOUNDED exponential kernel instead. `base_velocity_tracking(vx, vy, wz, lin_weight=1.0, ang_weight=0.5, tracking_sigma=0.25, robot=None)` is that canonical term: `lin_weight * exp(-lin_err / tracking_sigma) + ang_weight * exp(-ang_err / tracking_sigma)` -- the sum of legged_gym's `tracking_lin_vel` (planar) and `tracking_ang_vel` (yaw-rate) kernels with their standard defaults. It reads the same body-frame twist `base_velocity` does (heading-relative), is bounded to `[0, lin_weight + ang_weight]` and peaks at perfect tracking, and weights planar-velocity and yaw-rate tracking separately (which the single combined `base_velocity` norm cannot). It degrades to `0.0` (and warns once) on a fixed-base arm. Composed with the base regularizer terms it is a faithful, well-scaled velocity-tracking reward for a locomotion spec.
 
+### Fixed: PolicyServer published its bound socket before its port, racing background pollers
+
+- `PolicyServer.serve()` (and the background-thread `start()`) set `self._server` to the bound server *before* reading the OS-assigned port into `self.port`. A caller that treats `_server is not None` as the "server is bound, port is readable" signal (the documented contract for reading back a `port=0` OS-assigned port) could observe the constructor default `0` in the window between the two writes -- an intermittent race under load. Both entry points now publish the port *before* publishing `_server`, so any thread that sees a non-None `_server` always reads the real bound port.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
