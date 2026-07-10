@@ -16,6 +16,11 @@ happy-path adapter tests do not exercise:
 * ``_action_controller_remediation`` returns the generic robosuite hint
   for an unrelated install failure (the numba/coverage clash branch is
   covered by the happy-path suite).
+* The MuJoCo-state lifecycle helpers (``prewarm``, ``_forward_mj_data``,
+  ``_apply_canonical_state``) skip without raising when ``mujoco`` is not
+  importable, so a non-MuJoCo backend can host the adapter.
+* ``_first_named`` returns ``None`` (rather than propagating) when a
+  ``mj_name2id`` lookup raises mid-walk - name resolution is never fatal.
 """
 
 from __future__ import annotations
@@ -24,6 +29,8 @@ import random
 import sys
 import types
 from typing import Any, cast
+
+import numpy as np
 
 from strands_robots.benchmarks.libero import LiberoAdapter
 from strands_robots.benchmarks.libero.adapter import _extract_init_targets
@@ -141,3 +148,60 @@ def test_action_controller_remediation_generic_hint() -> None:
     hint = LiberoAdapter._action_controller_remediation(RuntimeError("unrelated failure"))
     assert "robosuite" in hint
     assert "numba" not in hint
+
+
+class _RaisesIfReached:
+    """Sim stub whose ``_world`` access raises - used to prove a helper
+    returned at its ``mujoco``-import guard (which runs BEFORE the
+    ``getattr(sim, "_world", ...)`` lookup) rather than at a later branch.
+    """
+
+    @property
+    def _world(self) -> object:
+        raise AssertionError("_world reached: the mujoco-import guard did not fire")
+
+
+class TestMujocoUnavailableDegradation:
+    """The MuJoCo-state lifecycle helpers must skip (never raise) when the
+    ``mujoco`` module is not importable, so a non-MuJoCo backend can host a
+    ``LiberoAdapter`` without the init-state / forward / canonical-state steps
+    crashing the eval. Each helper documents this as a best-effort contract;
+    the ``import mujoco`` probe is the first thing each runs after its own
+    cheap precondition checks.
+    """
+
+    def test_forward_mj_data_skips_when_mujoco_unimportable(self, monkeypatch) -> None:
+        # Setting the module entry to None makes `import mujoco` raise ImportError.
+        monkeypatch.setitem(sys.modules, "mujoco", None)
+        # _world raises if reached -> proves we returned at the import guard,
+        # which is the very first statement of the method.
+        _adapter()._forward_mj_data(cast(SimEngine, _RaisesIfReached()))
+
+    def test_prewarm_skips_when_mujoco_unimportable(self, monkeypatch) -> None:
+        adapter = _adapter()
+        # init_states must be present + non-empty to get past the "no
+        # init_states" early return and reach the mujoco-probe guard.
+        adapter._init_states = np.zeros((1, 5), dtype=np.float64)
+        monkeypatch.setitem(sys.modules, "mujoco", None)
+        adapter.prewarm(cast(SimEngine, _RaisesIfReached()))
+
+    def test_apply_canonical_state_skips_when_mujoco_unimportable(self, monkeypatch) -> None:
+        # _apply_canonical_state inspects world._model / world._data before the
+        # import guard, so a populated world is required to reach it; both being
+        # present means the import guard is the branch that returns.
+        world = types.SimpleNamespace(_model=object(), _data=object())
+        sim = types.SimpleNamespace(_world=world, _lock=None)
+        monkeypatch.setitem(sys.modules, "mujoco", None)
+        _adapter()._apply_canonical_state(cast(SimEngine, sim))
+
+
+def test_first_named_returns_none_when_name2id_raises() -> None:
+    # mj_name2id raising mid-walk must degrade to None rather than propagating -
+    # name resolution is never fatal.
+    class _RaisingMj:
+        @staticmethod
+        def mj_name2id(model: object, obj: int, name: str) -> int:
+            raise RuntimeError("name2id boom")
+
+    result = LiberoAdapter._first_named(_RaisingMj(), object(), names=["a", "b"], obj=0)
+    assert result is None
