@@ -175,6 +175,13 @@ A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and `rtc
 `eval_policy` accepts the same `video={...}` recording config as `run_policy` (`path` enables it, plus `fps` / `camera` / `width` / `height`), but writes **one MP4 per episode** with `_ep{i}` inserted into the filename (`eval.mp4` -> `eval_ep0.mp4`, `eval_ep1.mp4`, ...), so a multi-episode evaluation can be *watched* to see why episodes fail rather than only read as an aggregate `success_rate`. The written files are listed in the result json `video_paths`; the output path is validated and the camera probed up-front, so a bad camera fails the eval immediately instead of after N episodes of empty MP4s. `evaluate_benchmark` accepts the same `video={...}` config and records one MP4 per episode too, so a benchmark evaluation can be watched to see why episodes fail. Frames are captured synchronously on the eval thread (render is read-only over `mjData`), so recording does not perturb the bit-stable benchmark rollout.
 | `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |
 
+!!! tip "Discover the benchmark scoring surface"
+    `evaluate_benchmark`, `list_benchmarks`, and `register_benchmark_from_file`
+    are listed in `sim.describe()["methods"]`, so an agent that can run a
+    policy from one `describe()` call can also discover how to score it
+    against a success/failure/dense_reward benchmark - and author a new
+    benchmark spec at runtime - without guessing the method names.
+
 ## Recording
 
 | Action | Notes |

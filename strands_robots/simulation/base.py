@@ -2053,6 +2053,23 @@ class SimEngine(ABC):
                     "max_steps=300, success_fn=None, ...) -> dict  # multi-episode "
                     "success-rate evaluation (the rollout sibling of run_policy)"
                 ),
+                "evaluate_benchmark": (
+                    "(benchmark_name: str, robot_name=None, policy_provider='mock', "
+                    "n_episodes=1, seed=None, video=None, ...) -> dict  # score a "
+                    "registered benchmark's success/failure/dense-reward DSL over a "
+                    "rollout (max_steps comes from the benchmark, not a parameter); "
+                    "the DSL-scored sibling of eval_policy's success_fn"
+                ),
+                "list_benchmarks": (
+                    "() -> dict  # enumerate registered benchmarks (names, "
+                    "supported robots, default robot, max_steps) - the source of the "
+                    "benchmark_name evaluate_benchmark expects"
+                ),
+                "register_benchmark_from_file": (
+                    "(benchmark_name: str, spec_path: str) -> dict  # author a "
+                    "declarative benchmark (success/failure/dense_reward predicate "
+                    "DSL) as YAML/JSON at runtime and register it under benchmark_name"
+                ),
                 "replay_episode": (
                     "(repo_id: str, robot_name=None, episode=0, root=None, "
                     "speed=1.0, action_key_map=None) -> dict  # replay a recorded "

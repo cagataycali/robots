@@ -200,6 +200,28 @@ class TestDescribeABC:
         assert "urdf_path" in methods["add_robot"]
         assert "shape" in methods["add_object"]
 
+    def test_describe_lists_benchmark_family_methods(self):
+        """describe() advertises the DSL-driven benchmark scoring surface.
+
+        ``run_policy``/``eval_policy`` were discoverable, but their DSL-scored
+        siblings were not: ``evaluate_benchmark`` (score a registered
+        success/failure/dense_reward benchmark over a rollout),
+        ``list_benchmarks`` (enumerate the registered benchmark names it
+        accepts), and ``register_benchmark_from_file`` (author a benchmark spec
+        as YAML/JSON at runtime). These are concrete backend-agnostic facades on
+        the base engine, so a caller enumerating ``describe()["methods"]`` could
+        run a policy but could not discover how to score it against a benchmark
+        without guessing the names.
+        """
+        engine = _make_minimal_engine()
+        methods = engine.describe()["methods"]
+        for name in ("evaluate_benchmark", "list_benchmarks", "register_benchmark_from_file"):
+            assert name in methods, f"describe() omits benchmark-family method {name!r}"
+        # Advertised signatures name the real distinguishing parameters so a
+        # caller can invoke them without reading the source.
+        assert "benchmark_name" in methods["evaluate_benchmark"]
+        assert "spec_path" in methods["register_benchmark_from_file"]
+
 
 @pytest.mark.skipif(
     not pytest.importorskip("mujoco", reason="MuJoCo not installed"),

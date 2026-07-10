@@ -1680,6 +1680,20 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
                 "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
                 "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, ...) -> dict",
+                "evaluate_benchmark": (
+                    "(benchmark_name: str, robot_name=None, policy_provider='mock', "
+                    "n_episodes=1, seed=None, video=None, ...) -> dict  (score a registered "
+                    "success/failure/dense_reward benchmark over a rollout; max_steps comes "
+                    "from the benchmark, not a parameter)"
+                ),
+                "list_benchmarks": (
+                    "() -> dict  (enumerate registered benchmarks -- names, supported robots, "
+                    "default robot, max_steps -- the source of the benchmark_name evaluate_benchmark expects)"
+                ),
+                "register_benchmark_from_file": (
+                    "(benchmark_name: str, spec_path: str) -> dict  (author a declarative "
+                    "success/failure/dense_reward benchmark spec as YAML/JSON at runtime and register it)"
+                ),
                 "list_robots_info": "() -> dict (pretty robot listing)",
                 "list_bodies": "(robot_name: str | None = None) -> dict (body labels + gripper_body)",
                 "list_objects": "() -> dict",

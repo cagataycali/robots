@@ -362,3 +362,20 @@ class TestDescribeSurface:
         assert described["cameras"] == ["default"]
         assert described["bodies"]
         assert described["world_created"] is True
+
+    def test_describe_lists_benchmark_family_methods(self, engine_so100):
+        """describe() advertises the DSL-driven benchmark scoring family.
+
+        ``evaluate_benchmark`` / ``list_benchmarks`` /
+        ``register_benchmark_from_file`` are concrete facades on the base
+        engine that Newton inherits as real callables, so the Newton discovery
+        surface must name them too - otherwise a caller enumerating
+        ``describe()["methods"]`` could run a policy but not discover how to
+        score it against a benchmark.
+        """
+        methods = engine_so100.describe()["methods"]
+        for name in ("evaluate_benchmark", "list_benchmarks", "register_benchmark_from_file"):
+            assert name in methods, f"describe() omits benchmark-family method {name!r}"
+            assert callable(getattr(engine_so100, name, None))
+        assert "benchmark_name" in methods["evaluate_benchmark"]
+        assert "spec_path" in methods["register_benchmark_from_file"]
