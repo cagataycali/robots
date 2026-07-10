@@ -141,3 +141,67 @@ def test_main_serves_constructed_provider(monkeypatch):
     server_mod.main(["--provider", "mock", "--host", "127.0.0.1", "--port", "9123"])
 
     assert served == {"provider": "mock", "host": "127.0.0.1", "port": 9123}
+
+
+def test_serve_publishes_port_before_exposing_server(monkeypatch):
+    """``serve()`` must bind the port before exposing ``._server``.
+
+    ``._server is not None`` is the server's readiness flag: callers (and the
+    context manager) treat a non-None ``._server`` as "bound, ``.port`` is
+    valid". If the handle were published before the OS port is read back, a
+    background observer could see ``._server`` set while ``.port`` is still the
+    pre-bind placeholder (0). This pins the publish ordering deterministically
+    by blocking inside ``getsockname`` and asserting the handle is not yet
+    visible at that instant.
+    """
+    import websockets.sync.server as ws_server
+
+    getsockname_entered = threading.Event()
+    port_release = threading.Event()
+    shutdown_event = threading.Event()
+
+    class _FakeSocket:
+        def getsockname(self):
+            # serve() has reached the port readback; hold here so the test can
+            # probe the window before the real port is assigned.
+            getsockname_entered.set()
+            port_release.wait(2.0)
+            return ("127.0.0.1", 54321)
+
+    class _FakeServer:
+        def __init__(self):
+            self.socket = _FakeSocket()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def serve_forever(self):
+            shutdown_event.wait(3.0)
+
+        def shutdown(self):
+            shutdown_event.set()
+
+    monkeypatch.setattr(ws_server, "serve", lambda *a, **k: _FakeServer())
+
+    server = PolicyServer(policy_provider="mock", port=0)
+    thread = threading.Thread(target=server.serve, daemon=True)
+    thread.start()
+    try:
+        # Wait until serve() is blocked inside getsockname (port not yet read).
+        assert getsockname_entered.wait(2.0), "serve() never reached port readback"
+        # The handle must NOT be visible while the port is still unbound.
+        assert server._server is None, "._server exposed before port was bound"
+        assert server.port == 0
+
+        # Release the port readback; now the server becomes visible WITH a port.
+        port_release.set()
+        assert _wait_until(lambda: server._server is not None)
+        assert server.port == 54321
+    finally:
+        port_release.set()
+        shutdown_event.set()
+        thread.join(timeout=5.0)
+    assert not thread.is_alive()

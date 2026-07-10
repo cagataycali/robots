@@ -193,11 +193,15 @@ class PolicyServer:
         # frame limit must be lifted or the server 1009-closes every real image
         # observation. Compression is disabled too (base64 binary barely compresses
         # and deflate wastes CPU at control rate); the client already opts out.
-        self._server = serve(self._handle, self.host, self.port, max_size=None, compression=None)
-        # Read back the OS-assigned port when the caller passed 0.
-        self.port = self._server.socket.getsockname()[1]
+        server = serve(self._handle, self.host, self.port, max_size=None, compression=None)
+        # Read back the OS-assigned port (when the caller passed 0) and publish
+        # it BEFORE exposing ``self._server``, so ``self._server is not None``
+        # implies ``self.port`` already holds the real bound port for any
+        # observer (matching serve()'s ordering).
+        self.port = server.socket.getsockname()[1]
+        self._server = server
         self._thread = threading.Thread(
-            target=self._server.serve_forever,
+            target=server.serve_forever,
             name=f"policy-server-{self.port}",
             daemon=True,
         )
@@ -225,8 +229,14 @@ class PolicyServer:
         # See start(): lift the default 1 MiB frame limit (and disable compression)
         # so large multi-camera observations stream in, matching the client.
         with serve(self._handle, self.host, self.port, max_size=None, compression=None) as server:
-            self._server = server
+            # Read back the OS-assigned port BEFORE publishing ``self._server``.
+            # ``self._server is not None`` is the server's readiness flag; a
+            # background observer that sees it set immediately reads ``self.port``
+            # (see start()'s contract). Publishing the handle first would expose
+            # a window where the server exists but ``port`` is still the pre-bind
+            # placeholder (0), so the observer reads a bogus port.
             self.port = server.socket.getsockname()[1]
+            self._server = server
             logger.info("PolicyServer serving on ws://%s:%d", self.host, self.port)
             try:
                 server.serve_forever()
