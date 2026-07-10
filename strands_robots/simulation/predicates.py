@@ -40,6 +40,7 @@ Available predicates (bool):
     grasped(body, gripper_prefix)
     base_tipped(tol=0.15, robot=None)
     base_below_z(z, robot=None)
+    base_beyond_x(x, robot=None)
 
 Available reward terms (float):
 
@@ -870,6 +871,63 @@ def _base_below_z(z: float, robot: str | None = None) -> BoolPredicate:
     return check
 
 
+def _base_beyond_x(x: float, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base's world x-position has passed forward of ``x``.
+
+    The forward-progress SUCCESS counterpart of the base-fall termination
+    predicates (:func:`_base_tipped` / :func:`_base_below_z`): those FAIL a
+    velocity-tracking episode when the base topples or collapses, while
+    ``base_beyond_x`` SUCCEEDS it once the base has actually walked forward past
+    ``x`` metres. It is the missing success half of a walk-forward locomotion
+    task - the reward terms (``base_velocity_tracking`` + the base regularizers)
+    shape *how* to walk, the fall predicates end a *bad* rollout, and this
+    predicate scores the *goal* ("the base reached forward distance ``x``"). Put
+    it in a ``success`` clause next to the fall predicates in ``failure``::
+
+        success:
+          all:
+            - {predicate: base_beyond_x, x: 2.0}
+        failure:
+          any:
+            - {predicate: base_tipped, tol: 0.7}
+            - {predicate: base_below_z, z: 0.3}
+
+    Reads ``get_observation``'s ``base_pos`` x (world frame) - the same
+    embodiment-agnostic floating-base surface the ``base_*`` reward terms,
+    ``base_tipped``, and ``base_below_z`` read - so it needs no base body name
+    and works on a mobile base whose free joint is unnamed, unlike
+    ``inside_region`` which resolves a specific body by name (a name a mobile
+    base's unnamed free joint does not expose).
+
+    ``x`` is an ABSOLUTE world x-threshold in metres, not a displacement: the
+    canonical walk-forward scene spawns the base near the origin facing +x
+    (identity orientation -> world +x is forward), so ``base_beyond_x(x=D)``
+    reads "walked ~D metres forward". The author sets ``x`` relative to the
+    known spawn x, exactly as ``base_below_z`` sets its collapse height relative
+    to the known standing height; a base that starts already past ``x`` reads
+    True immediately. It is a pure x-position test - height and orientation do
+    not affect it (a base that walked forward but then toppled still reads True
+    on x, so pair it with the fall predicates in a ``failure`` clause to reject
+    that outcome).
+
+    Requires a robot with a floating base; a fixed-base arm has no base
+    position, so the predicate degrades to ``False`` (never made forward
+    progress -> never spuriously succeeds) and the missing base is logged once.
+    ``robot`` selects the robot in a multi-robot scene (default: the sole
+    robot).
+    """
+    xt = float(x)
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        pos = _base_position(sim, rname)
+        if pos is None:
+            return False
+        return pos[0] > xt
+
+    return check
+
+
 # Reward terms (float-valued)
 
 
@@ -1347,6 +1405,7 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "grasped": _grasped,
     "base_tipped": _base_tipped,
     "base_below_z": _base_below_z,
+    "base_beyond_x": _base_beyond_x,
     # float-valued
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,
