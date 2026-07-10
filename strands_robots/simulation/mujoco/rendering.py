@@ -582,7 +582,18 @@ class RenderingMixin:
             # transmission is a tendon (gripper ctrlrange is e.g. [0, 255]
             # tendon units, not a finger-joint position). Direct JOINT
             # actuators keep the raw value (positions/torques in joint units).
-            data.ctrl[ai] = self._scale_ctrl_for_actuator(model, ai, float(value), mj)
+            ctrl_value = self._scale_ctrl_for_actuator(model, ai, float(value), mj)
+            # A direct JOINT actuator writes the value verbatim, so an
+            # out-of-ctrlrange joint-addressed command is silently clamped by
+            # MuJoCo exactly as the actuator-addressed branch above is - apply
+            # the same no-silent-clamp warning here so the contract does not
+            # depend on whether the caller keyed by actuator or by joint name.
+            # Tendon drives are skipped: _scale_ctrl_for_actuator has already
+            # mapped/clamped the command into the ctrlrange on purpose, so a
+            # clamp warning would be spurious.
+            if int(model.actuator_trntype[ai]) != int(mj.mjtTrn.mjTRN_TENDON):
+                self._warn_ctrl_clamp(model, ai, pfx, key, ctrl_value, mj)
+            data.ctrl[ai] = ctrl_value
 
         return unresolved
 
