@@ -294,6 +294,35 @@ class TestDescribeMuJoCo:
         finally:
             sim.destroy()
 
+    def test_describe_lists_scene_and_object_manipulation_siblings(self):
+        """describe() advertises load_scene and the object-manipulation siblings.
+
+        describe() advertised add_object / remove_object and add_robot, but
+        omitted the alternative scene-construction entry point (load_scene), the
+        object siblings that complete the add/remove pair (list_objects,
+        move_object), and the domain-randomization facade (randomize) -- all
+        first-class public methods the tool spec + action dispatcher already
+        expose. An agent enumerating how to build and vary a scene from
+        describe() alone could not discover them and had to guess method names.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in ("load_scene", "list_objects", "move_object", "randomize"):
+                assert name in methods, f"describe() omits scene/object method {name!r}"
+            # Advertised signatures name the real distinguishing parameters so a
+            # caller can invoke them without reading the source.
+            assert "scene_path" in methods["load_scene"]
+            assert "orientation" in methods["move_object"]
+            assert "randomize_physics" in methods["randomize"]
+        finally:
+            sim.destroy()
+
     def test_describe_lists_physics_introspection_methods(self):
         """describe() advertises the read/verify surface, not just act/record.
 

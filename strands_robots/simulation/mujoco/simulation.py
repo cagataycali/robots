@@ -1400,6 +1400,33 @@ class MuJoCoSimEngine(
                     bodies.append(body_name)
         base["bodies"] = bodies
         base["methods"]["list_bodies"] = "(robot_name: str | None = None) -> dict (camera mount points)"
+        # Scene-construction + object-manipulation siblings that the base
+        # discovery surface omits. describe() already advertises add_object /
+        # remove_object and add_robot, but an agent enumerating how to build
+        # and vary a scene from describe() alone could not discover the
+        # alternative scene entry point (load_scene), the object siblings
+        # (list_objects / move_object), or domain randomization - all
+        # first-class facades it would otherwise have to guess by name.
+        base["methods"]["load_scene"] = (
+            "(scene_path: str) -> dict  # load a complete scene from an MJCF "
+            "(or URDF) file; the alternative scene-construction entry point to "
+            "add_robot - downstream add_object/add_camera/add_robot then mutate "
+            "the loaded scene"
+        )
+        base["methods"]["list_objects"] = (
+            "() -> dict  # enumerate objects added to the scene (the object sibling of list_robots / list_cameras)"
+        )
+        base["methods"]["move_object"] = (
+            "(name: str, position=None, orientation=None) -> dict  # reposition "
+            "an existing object; position is [x, y, z] meters, orientation is a "
+            "[w, x, y, z] quaternion (either may be omitted to leave it unchanged)"
+        )
+        base["methods"]["randomize"] = (
+            "(randomize_colors=True, randomize_lighting=True, "
+            "randomize_physics=False, randomize_positions=False, "
+            "position_noise=0.02, seed=None, ...) -> dict  # domain randomization "
+            "(each axis opt-in; no flags = no-op). Destructive - recompile to undo"
+        )
         # Scene-construction cameras: the SO-101 rollout rig is built with
         # add_camera before run_policy, so the discovery surface must name it
         # (and its inverse) rather than leave a caller to guess.
