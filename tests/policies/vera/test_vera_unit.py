@@ -51,6 +51,44 @@ class TestConfig:
         assert env["VERA_CKPT_ROOT"] == "/data/ckpts"
         assert env["VERA_TRACKER_BACKEND"] == "cotracker"
 
+    def test_server_env_overlay_forwards_wan_ckpt_and_dynamics_run(self):
+        """server_env() must forward every checkpoint/tracker knob the server
+        subprocess reads, including the frozen WAN base and the IDM run id."""
+        c = VeraConfig(
+            embodiment="mimicgen",
+            wan_ckpt_root="/data/wan",
+            dynamics_run_id="idm-run-42",
+        )
+        env = c.server_env()
+        assert env["VERA_WAN_CKPT_ROOT"] == "/data/wan"
+        assert env["VERA_DYNAMICS_RUN_ID"] == "idm-run-42"
+
+    def test_malformed_numeric_env_degrades_to_defaults(self, monkeypatch):
+        """A non-numeric env override must be ignored, not crash construction.
+
+        Deploy/CI environments frequently carry typo'd or empty numeric knobs
+        (e.g. VERA_SERVER_PORT=""). The int/float env parsers swallow the
+        ValueError and return None so config falls back to the per-embodiment
+        default instead of raising on import of the policy.
+        """
+        monkeypatch.setenv("VERA_SERVER_PORT", "not-a-port")
+        monkeypatch.setenv("VERA_VIS_PORT", "xyz")
+        monkeypatch.setenv("VERA_RENDER_WIDTH", "wide")
+        monkeypatch.setenv("VERA_SAMPLE_STEPS", "ten")
+        monkeypatch.setenv("VERA_N_ACTION_STEPS", "")
+        monkeypatch.setenv("VERA_MOTION_PLAN_SCALE", "fast")
+
+        c = VeraConfig(embodiment="pusht")
+
+        # Non-numeric int knobs fall back to the pusht per-embodiment defaults.
+        assert c.server_port == 8820
+        assert c.vis_port == 8821
+        assert c.render_width == 252  # pusht per-embodiment default
+        # Non-numeric optional knobs stay unset (planner yaml decides).
+        assert c.sample_steps is None
+        assert c.n_action_steps is None
+        assert c.motion_plan_scale is None
+
 
 # --------------------------------------------------------------------------- #
 # Factory registration

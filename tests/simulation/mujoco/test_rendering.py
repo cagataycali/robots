@@ -12,10 +12,7 @@ import pytest
 
 pytest.importorskip("mujoco")
 
-_requires_mujoco = pytest.mark.skipif(
-    os.environ.get("CI") == "true" and not os.environ.get("ROBOT_TEST_MUJOCO"),
-    reason="requires OpenGL; opt-in via ROBOT_TEST_MUJOCO=1",
-)
+from tests.simulation.mujoco._gl_probe import requires_gl as _requires_mujoco  # noqa: E402
 
 
 @_requires_mujoco
@@ -1053,6 +1050,71 @@ def test_render_depth_without_clip_warning_caches_empty(monkeypatch) -> None:
         sim.destroy()
 
 
+def test_render_depth_forwards_genuine_stderr_and_suppresses_arb(monkeypatch) -> None:
+    """Depth-render stderr hygiene: a genuine (non-ARB) stderr line emitted by
+    the offscreen renderer is forwarded verbatim to the real console so real
+    errors never silently vanish, while the benign one-time ARB_clip_control
+    notice is dropped from the console (it is surfaced in the response text
+    instead, so it is not lost either).
+    """
+    import io
+
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        # The renderer emits BOTH a benign ARB notice and a genuine GL error.
+        noisy = _FakeDepthRenderer(
+            np.full((2, 2), 0.4, dtype=np.float32),
+            stderr_text=("WARNING: ARB_clip_control not supported\nERROR: GLXBadContext: framebuffer incomplete\n"),
+        )
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: noisy)
+
+        # Capture what render_depth forwards to the real console (sys.__stderr__).
+        forwarded = io.StringIO()
+        monkeypatch.setattr(sys, "__stderr__", forwarded)
+
+        r = sim.render_depth(width=2, height=2)
+        assert r["status"] == "success", r
+
+        console = forwarded.getvalue()
+        # The genuine error is forwarded verbatim ...
+        assert "GLXBadContext: framebuffer incomplete" in console
+        # ... but the benign ARB line is suppressed from the console (it would
+        # be duplicate noise -- it is surfaced in the response text below).
+        assert "ARB_clip_control" not in console
+        # The ARB notice is still surfaced to the caller in the response text.
+        assert "ARB_clip_control" in r["content"][0]["text"]
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_stderr_forward_is_best_effort_when_console_closed(monkeypatch) -> None:
+    """Forwarding genuine stderr is best-effort: when the real console is closed
+    or detached (its write raises ValueError/OSError, e.g. under teardown or a
+    swapped-out stream), render_depth swallows the forward failure and still
+    returns the depth map rather than propagating the write error.
+    """
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        noisy = _FakeDepthRenderer(
+            np.full((2, 2), 0.4, dtype=np.float32),
+            stderr_text="ERROR: genuine GL failure\n",
+        )
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: noisy)
+
+        class _ClosedStderr:
+            def write(self, _data: str) -> int:
+                raise ValueError("I/O operation on closed file")
+
+        monkeypatch.setattr(sys, "__stderr__", _ClosedStderr())
+
+        r = sim.render_depth(width=2, height=2)
+        assert r["status"] == "success", r
+    finally:
+        sim.destroy()
+
+
 def test_render_depth_renderer_failure_returns_error(monkeypatch) -> None:
     """A renderer that raises during render() surfaces a structured error dict
     rather than propagating the exception."""
@@ -1112,6 +1174,77 @@ def test_get_contacts_output_is_ascii_only() -> None:
         assert r["content"][1]["json"]["contacts"], "expected active contacts for this regression"
         for text in _iter_text_blocks(r):
             assert text.isascii(), f"non-ASCII in get_contacts output: {text!r}"
+    finally:
+        sim.destroy()
+
+
+def test_get_contacts_resolves_geom_names_via_geom_body_id_ladder(tmp_path: Path) -> None:
+    """get_contacts() labels each contacting geom via a three-step ladder.
+
+    For every contact pair the backend resolves a stable, human-readable
+    identifier so an agent inspecting contacts sees meaningful names instead
+    of raw integer geom ids:
+
+    1. the geom's own MJCF name, when it has one (``"floor"``, ``"box_geom"``);
+    2. else ``"<parent_body>/geom_<id>"`` when the geom is unnamed but its
+       parent body is named (``"anon_box/geom_2"``), so the geom is still
+       traceable to the body it belongs to;
+    3. else ``"geom_<id>"`` as a last resort, when neither the geom nor its
+       parent body carries a name.
+
+    The scene drops three boxes onto a named ground plane: one with a named
+    geom, one whose geom is unnamed under a named body, and one whose geom is
+    unnamed under an unnamed body - exercising all three rungs of the ladder
+    in a single settled contact snapshot.
+    """
+    from strands_robots.simulation import Simulation
+
+    scene_xml = """
+<mujoco model="contact_name_ladder">
+  <option timestep="0.002"/>
+  <worldbody>
+    <light pos="0 0 3" dir="0 0 -1"/>
+    <geom name="floor" type="plane" size="5 5 0.01"/>
+    <body name="named_box" pos="0 0 0.03">
+      <freejoint/>
+      <geom name="box_geom" type="box" size="0.02 0.02 0.02"/>
+    </body>
+    <body name="anon_box" pos="0.4 0 0.03">
+      <freejoint/>
+      <geom type="box" size="0.02 0.02 0.02"/>
+    </body>
+    <body pos="0.8 0 0.03">
+      <freejoint/>
+      <geom type="box" size="0.02 0.02 0.02"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+    scene_path = tmp_path / "contact_name_ladder.xml"
+    scene_path.write_text(scene_xml)
+
+    sim = Simulation()
+    try:
+        assert sim.load_scene(str(scene_path))["status"] == "success"
+        # Let all three boxes settle onto the floor so contacts are active.
+        sim.step(n_steps=400)
+
+        result = sim.get_contacts()
+        assert result["status"] == "success", result
+        contacts = result["content"][1]["json"]["contacts"]
+        assert contacts, "expected active contacts for the settled boxes"
+
+        names = {name for c in contacts for name in (c["geom1"], c["geom2"])}
+        # Rung 1: named geoms resolve to their own MJCF name.
+        assert "floor" in names
+        assert "box_geom" in names
+        # Rung 2: an unnamed geom under a named body -> "<body>/geom_<id>".
+        assert any(n.startswith("anon_box/geom_") for n in names), names
+        # Rung 3: an unnamed geom under an unnamed body -> bare "geom_<id>".
+        assert any(n.startswith("geom_") for n in names), names
+        # No pair ever leaks a raw integer id in place of a resolved name.
+        for c in contacts:
+            assert isinstance(c["geom1"], str) and isinstance(c["geom2"], str)
     finally:
         sim.destroy()
 

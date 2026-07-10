@@ -593,3 +593,33 @@ class TestProcessorStepEdgeCases:
         pre, _ = ns.build_norm_stats_processors(_load_fixture())
         obs = {"observation.images.top": "frame"}
         assert pre.steps[0].observation(obs) == obs
+
+
+class TestUnknownModeRaises:
+    """An unrecognized mode must raise, never silently pass values through.
+
+    Silent passthrough is the exact failure this module exists to prevent:
+    un-normalized state reaching the policy and un-unnormalized actions reaching
+    the motors. ``from_stats`` already rejects unknown modes; these guard the
+    public transform hot-path (a directly-constructed or future-mode normalizer)
+    so it fails loudly instead of degrading to identity.
+    """
+
+    def test_normalize_raises_on_unknown_mode(self):
+        fn = ns.FeatureNormalizer(mode="totally-bogus")
+        with pytest.raises(ValueError, match="unsupported mode"):
+            fn.normalize(np.array([1.0, 2.0], dtype=np.float32))
+
+    def test_unnormalize_raises_on_unknown_mode(self):
+        fn = ns.FeatureNormalizer(mode="totally-bogus")
+        with pytest.raises(ValueError, match="unsupported mode"):
+            fn.unnormalize(np.array([0.0, 0.5], dtype=np.float32))
+
+    def test_none_and_recognized_modes_still_transform(self):
+        # Regression fence: the raise must not leak into the five valid modes.
+        none_fn = ns.FeatureNormalizer.from_stats({"mean": [1.0]}, "none")
+        x = np.array([7.0], dtype=np.float32)
+        assert np.allclose(none_fn.normalize(x), x)
+        assert np.allclose(none_fn.unnormalize(x), x)
+        mm = ns.FeatureNormalizer.from_stats({"min": [0.0], "max": [10.0]}, "min_max")
+        assert np.allclose(mm.unnormalize(mm.normalize(np.array([5.0], dtype=np.float32))), [5.0], atol=1e-5)

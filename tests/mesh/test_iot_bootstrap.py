@@ -508,6 +508,80 @@ class TestEnsureProvisioningTemplateCreate:
         iot.create_provisioning_template.assert_not_called()
         assert f"iot-prov-template:{PROVISIONING_TEMPLATE}" in a.skipped
 
+    def test_retries_role_propagation_race_then_raises(self, _no_sleep):
+        """Role propagation races the IoT AssumeRole check: create_provisioning_template
+        keeps raising ``cannot be assumed``. After exhausting the retry budget the
+        helper must surface a RuntimeError (never hang or swallow the failure)."""
+        from strands_robots.mesh.iot.bootstrap import (
+            BootstrappedAccount,
+            _ensure_provisioning_template,
+        )
+
+        class _NotFound(Exception):
+            pass
+
+        class _InvalidRequest(Exception):
+            pass
+
+        iot = MagicMock()
+        iot.exceptions = MagicMock()
+        iot.exceptions.ResourceNotFoundException = _NotFound
+        iot.exceptions.InvalidRequestException = _InvalidRequest
+        iot.describe_provisioning_template.side_effect = _NotFound()
+        iot.create_provisioning_template.side_effect = _InvalidRequest(
+            "Role arn:aws:iam::123:role/x cannot be assumed by AWS IoT"
+        )
+
+        a = BootstrappedAccount(region="us-west-2", account_id="123")
+        with (
+            patch(
+                "strands_robots.mesh.iot.bootstrap._ensure_provisioning_role",
+                return_value="arn:iam:provisioning",
+            ),
+            pytest.raises(RuntimeError, match="after retries"),
+        ):
+            _ensure_provisioning_template(iot, a)
+
+        # The loop retries the full budget (6 attempts) before giving up, and
+        # the resource is never recorded as created.
+        assert iot.create_provisioning_template.call_count == 6
+        assert not any("iot-prov-template" in entry for entry in a.created)
+
+    def test_reraises_non_role_invalid_request_immediately(self, _no_sleep):
+        """A non-role InvalidRequestException (e.g. a malformed body) is a real
+        error, not an eventual-consistency race: it must propagate on the first
+        attempt rather than being retried."""
+        from strands_robots.mesh.iot.bootstrap import (
+            BootstrappedAccount,
+            _ensure_provisioning_template,
+        )
+
+        class _NotFound(Exception):
+            pass
+
+        class _InvalidRequest(Exception):
+            pass
+
+        iot = MagicMock()
+        iot.exceptions = MagicMock()
+        iot.exceptions.ResourceNotFoundException = _NotFound
+        iot.exceptions.InvalidRequestException = _InvalidRequest
+        iot.describe_provisioning_template.side_effect = _NotFound()
+        iot.create_provisioning_template.side_effect = _InvalidRequest("Template body is malformed")
+
+        a = BootstrappedAccount(region="us-west-2", account_id="123")
+        with (
+            patch(
+                "strands_robots.mesh.iot.bootstrap._ensure_provisioning_role",
+                return_value="arn:iam:provisioning",
+            ),
+            pytest.raises(_InvalidRequest, match="malformed"),
+        ):
+            _ensure_provisioning_template(iot, a)
+
+        # Non-retryable: raised on the first attempt, no backoff retries.
+        assert iot.create_provisioning_template.call_count == 1
+
 
 class TestEnsureProvisioningRoleCreate:
     def test_creates_role_with_provisioning_policy(self, _no_sleep, monkeypatch):

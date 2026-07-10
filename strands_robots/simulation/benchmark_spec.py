@@ -16,12 +16,13 @@ Spec schema (top-level keys)::
     default_robot: string                 # required - registry data_config
     scene: string                         # optional MJCF/URDF path for sim.load_scene()
     success:
-      all: [<predicate_call>, ...]        # all must be true
-      any: [<predicate_call>, ...]        # at least one must be true
+      all: [<bool predicate_call>, ...]   # all must be true (reward terms rejected)
+      any: [<bool predicate_call>, ...]   # at least one must be true
     failure:
-      all: [<predicate_call>, ...]
-      any: [<predicate_call>, ...]
-    dense_reward: [<predicate_call>, ...] # summed per step
+      all: [<bool predicate_call>, ...]
+      any: [<bool predicate_call>, ...]
+    dense_reward: [<predicate_call>, ...] # reward terms summed per step (a bool
+                                          #   predicate here contributes a sparse 0/1)
 
 A ``<predicate_call>`` is a dict with a ``predicate`` key naming the
 predicate and any remaining keys forwarded as kwargs::
@@ -64,7 +65,7 @@ from strands_robots.simulation.benchmark import (
     StepInfo,
     register_benchmark,
 )
-from strands_robots.simulation.predicates import make_predicate
+from strands_robots.simulation.predicates import PREDICATE_REGISTRY, make_predicate, predicate_kind
 from strands_robots.utils import require_optional
 
 if TYPE_CHECKING:
@@ -122,8 +123,8 @@ def _compile_bool_group(
     if unknown:
         raise ValueError(f"{context}: unknown keys {sorted(unknown)}; allowed: ['all', 'any']")
 
-    all_calls = [_compile_call(c, context=f"{context}.all") for c in (clause.get("all") or [])]
-    any_calls = [_compile_call(c, context=f"{context}.any") for c in (clause.get("any") or [])]
+    all_calls = [_compile_call(c, context=f"{context}.all", require_kind="bool") for c in (clause.get("all") or [])]
+    any_calls = [_compile_call(c, context=f"{context}.any", require_kind="bool") for c in (clause.get("any") or [])]
 
     if not all_calls and not any_calls:
         return lambda _sim: default
@@ -138,13 +139,28 @@ def _compile_bool_group(
     return check
 
 
-def _compile_call(entry: Any, *, context: str) -> Callable[[SimEngine], Any]:
-    """Compile one ``{predicate: <name>, **kwargs}`` entry to a callable."""
+def _compile_call(entry: Any, *, context: str, require_kind: str | None = None) -> Callable[[SimEngine], Any]:
+    """Compile one ``{predicate: <name>, **kwargs}`` entry to a callable.
+
+    ``require_kind="bool"`` (success / failure clauses) rejects a float-valued
+    reward term up front: used as a success predicate it is read as
+    ``bool(<term(sim)>)`` - a reward term returns a (usually nonzero) float, so
+    that is almost always ``True``, silently making the benchmark report instant
+    success. Reward terms belong in ``dense_reward``.
+    """
     if not isinstance(entry, dict):
         raise ValueError(f"{context}: expected a dict like {{predicate: <name>, ...}}, got {type(entry).__name__}")
     pred_name = entry.get("predicate")
     if not isinstance(pred_name, str) or not pred_name:
         raise ValueError(f"{context}: each entry must have a non-empty 'predicate' string")
+    if require_kind == "bool" and predicate_kind(pred_name) == "float":
+        bool_preds = sorted(n for n in PREDICATE_REGISTRY if predicate_kind(n) == "bool")
+        raise ValueError(
+            f"{context}: predicate {pred_name!r} is a reward term (float-valued) but a success / "
+            "failure clause requires a bool predicate - used here it is read as bool(<nonzero "
+            f"float>) and silently reports instant success. Move it to dense_reward. Bool "
+            f"predicates: {bool_preds}"
+        )
     kwargs = {k: v for k, v in entry.items() if k != "predicate"}
     try:
         return make_predicate(pred_name, **kwargs)
@@ -380,8 +396,13 @@ def register_benchmark_from_file(
     if not isinstance(name, str) or not name:
         raise ValueError(f"register_benchmark_from_file: name must be a non-empty string, got {name!r}")
     spec_dict = _load_spec_file(spec_path)
-    # Spec-internal name is informational; the registry name always wins.
-    spec_dict.setdefault("name", name)
+    # The registry name always wins: unconditionally override any spec-internal
+    # ``name`` so the instance's ``.name`` matches the key it is registered under
+    # (the documented contract). ``setdefault`` was insufficient - a spec that
+    # declared its own ``name`` kept it, so the same spec registered under two
+    # keys produced two instances that both reported the spec-internal name and
+    # neither matched its registry key.
+    spec_dict["name"] = name
     benchmark = DeclarativeBenchmark.from_dict(spec_dict)
     register_benchmark(name, benchmark)
     return benchmark

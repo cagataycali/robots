@@ -18,6 +18,12 @@ backend does not support them. A predicate that silently evaluates to
 ``False`` because of an unimplemented backend call is a bug in the
 predicate, not the benchmark - file an issue.
 
+When the backend *does* support a lookup but the referenced ``body`` /
+``joint`` name cannot be resolved (almost always a spec typo), the term still
+degrades to a constant (``False`` / ``0.0``) but the offending name is logged
+once at ``WARNING`` (see :func:`_warn_unresolved`), so a broken spec surfaces
+instead of silently preventing episode success or emitting a dead reward.
+
 Available predicates (bool):
 
     body_above_z(body, z)
@@ -32,11 +38,20 @@ Available predicates (bool):
     body_inside(body, container, xy_tol=0.15, z_tol=0.15)
     body_upright(body, tol=0.15)
     grasped(body, gripper_prefix)
+    base_tipped(tol=0.15, robot=None)
+    base_below_z(z, robot=None)
 
 Available reward terms (float):
 
     distance_neg(body_a, body_b, weight=1.0)
     joint_progress(joint, target, weight=1.0)
+    base_velocity(vx=0.0, vy=0.0, wz=0.0, weight=1.0, robot=None)
+    base_velocity_tracking(vx=0.0, vy=0.0, wz=0.0, lin_weight=1.0, ang_weight=0.5, tracking_sigma=0.25, robot=None)
+    base_height(target, weight=1.0, robot=None)
+    base_orientation(weight=1.0, robot=None)
+    base_lin_vel_z(weight=1.0, robot=None)
+    base_ang_vel_xy(weight=1.0, robot=None)
+    staged_reward(stages)
     constant(value)
 
 Register custom predicates with :func:`register_predicate`.
@@ -45,6 +60,7 @@ Register custom predicates with :func:`register_predicate`.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
@@ -56,6 +72,45 @@ logger = logging.getLogger(__name__)
 BoolPredicate = Callable[["SimEngine"], bool]
 RewardTerm = Callable[["SimEngine"], float]
 PredicateFactory = Callable[..., Callable[["SimEngine"], Any]]
+
+
+# Names the DSL has already warned about, so a broken spec cannot spam the
+# reward/eval hot loop. Keyed by (kind, name); process-global and deduplicated.
+_RESOLUTION_WARNED: set[tuple[str, str]] = set()
+
+
+def _warn_unresolved(kind: str, name: str, tried: tuple[str, ...] = ()) -> None:
+    """Warn once that a spec references an entity the sim cannot resolve.
+
+    Called from the body/joint lookup helpers only when the backend *supports*
+    the lookup (``get_body_state`` / ``get_observation`` present) but the named
+    ``body``/``joint`` is not found - almost always a spec typo. The offending
+    term then degrades to a constant (a bool predicate to ``False``, a reward
+    term to ``0.0``), which silently prevents episode success or yields a dead,
+    return-inflating reward. Surfacing the name once turns that silent
+    corruption into an actionable log line without changing any returned value.
+    A missing lookup *method* (unsupported backend) is a capability gap, not a
+    typo, and stays silent.
+    """
+    key = (kind, name)
+    if key in _RESOLUTION_WARNED:
+        return
+    _RESOLUTION_WARNED.add(key)
+    extra = f" (tried {list(tried)})" if len(tried) > 1 else ""
+    logger.warning(
+        "predicate/reward DSL: %s %r is not present in the simulation%s; the "
+        "referencing term degrades to a constant (bool predicate -> False, "
+        "reward -> 0.0), which silently prevents success / yields a dead reward. "
+        "Check the name against the loaded scene / benchmark spec.",
+        kind,
+        name,
+        extra,
+    )
+
+
+def _reset_resolution_warnings() -> None:
+    """Clear the one-time-warning dedup cache (test isolation)."""
+    _RESOLUTION_WARNED.clear()
 
 
 # Helpers for digging values out of the structured ``{"status", "content"}``
@@ -121,10 +176,13 @@ def _body_position(sim: SimEngine, body: str) -> list[float] | None:
     # 2. LIBERO ``<name>_main`` convention (the root body of
     # procedurally-generated objects). Skip if the name already has
     # the suffix to avoid double-suffixing on retries.
+    tried = [body]
     if not body.endswith("_main"):
+        tried.append(f"{body}_main")
         pos = _try(f"{body}_main")
         if pos is not None:
             return pos
+    _warn_unresolved("body", body, tuple(tried))
     return None
 
 
@@ -146,6 +204,11 @@ def _joint_position(sim: SimEngine, joint: str) -> float | None:
     val = obs.get(joint)
     if isinstance(val, (int, float)) and not isinstance(val, bool):
         return float(val)
+    # The backend produced an observation but this joint is not in it: almost
+    # always a spec typo (an empty obs is a backend/capability gap, not a name
+    # error, so stay silent there).
+    if obs and joint not in obs:
+        _warn_unresolved("joint", joint)
     return None
 
 
@@ -159,17 +222,35 @@ def _body_quaternion(sim: SimEngine, body: str) -> list[float] | None:
     get_body_state = getattr(sim, "get_body_state", None)
     if get_body_state is None:
         return None
-    try:
-        result = get_body_state(body_name=body)
-    except Exception as e:  # noqa: BLE001 - defensive
-        logger.debug("body_quaternion(%r) failed: %s", body, e)
+
+    def _try(name: str) -> list[float] | None:
+        try:
+            result = get_body_state(body_name=name)
+        except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
+            logger.debug("body_quaternion(%r) failed: %s", name, e)
+            return None
+        if not isinstance(result, dict) or result.get("status") != "success":
+            return None
+        payload = _extract_json(result)
+        quat = payload.get("quaternion")
+        if isinstance(quat, list) and len(quat) == 4 and all(isinstance(c, (int, float)) for c in quat):
+            return [float(c) for c in quat]
         return None
-    if not isinstance(result, dict) or result.get("status") != "success":
-        return None
-    payload = _extract_json(result)
-    quat = payload.get("quaternion")
-    if isinstance(quat, list) and len(quat) == 4 and all(isinstance(c, (int, float)) for c in quat):
-        return [float(c) for c in quat]
+
+    # Mirror _body_position's resolution: bare BDDL name first, then the LIBERO
+    # ``<name>_main`` root-body convention (#176). Without the fallback,
+    # body_upright(<bddl_name>) resolved to None -> silently False for every
+    # procedurally-generated LIBERO object, whose MJCF root body is _main-suffixed.
+    quat = _try(body)
+    if quat is not None:
+        return quat
+    tried = [body]
+    if not body.endswith("_main"):
+        tried.append(f"{body}_main")
+        quat = _try(f"{body}_main")
+        if quat is not None:
+            return quat
+    _warn_unresolved("body", body, tuple(tried))
     return None
 
 
@@ -179,6 +260,163 @@ def _euclidean_distance(a: list[float], b: list[float]) -> float:
     dy = a[1] - b[1]
     dz = a[2] - b[2]
     return float((dx * dx + dy * dy + dz * dz) ** 0.5)
+
+
+def _quat_rotate_inverse_wxyz(quat_wxyz: list[float], vec: list[float]) -> list[float]:
+    """Express a WORLD-frame 3-vector in the body frame given a (w,x,y,z) quaternion.
+
+    Computes ``R(q)^T @ vec`` - the standard "rotate by the inverse". Pure Python
+    (no numpy) so predicates stay dependency-free. A near-zero-norm quaternion
+    returns ``vec`` unchanged. Matches the Newton backend's
+    ``_quat_rotate_inverse_wxyz`` used to body-frame the base angular velocity.
+    """
+    w, x, y, z = (float(c) for c in quat_wxyz)
+    norm = (w * w + x * x + y * y + z * z) ** 0.5
+    if norm < 1e-8:
+        return [float(v) for v in vec]
+    w, x, y, z = w / norm, x / norm, y / norm, z / norm
+    vx, vy, vz = (float(c) for c in vec)
+    two_w = 2.0 * w
+    s = 2.0 * w * w - 1.0
+    # b = cross(q_vec, v); term = v * s - b * 2w + q_vec * (q_vec . v) * 2
+    cx = y * vz - z * vy
+    cy = z * vx - x * vz
+    cz = x * vy - y * vx
+    d = 2.0 * (x * vx + y * vy + z * vz)
+    return [
+        vx * s - cx * two_w + x * d,
+        vy * s - cy * two_w + y * d,
+        vz * s - cz * two_w + z * d,
+    ]
+
+
+def _base_twist(sim: SimEngine, robot: str | None) -> tuple[float, float, float] | None:
+    """Return a floating base's BODY-frame planar twist ``(vx, vy, wz)``, or None.
+
+    Reads ``get_observation``'s floating-base signals: ``base_lin_vel`` (world
+    frame) is rotated into the base frame via ``base_quat`` so ``vx``/``vy`` are
+    the forward/lateral velocity in the robot's own heading; ``base_ang_vel`` is
+    already body-frame (the IMU-gyro convention on both backends) so its z
+    component is the yaw rate directly. This is the frame a locomotion velocity
+    command is expressed against (IsaacLab / legged_gym convention). Returns None
+    (and warns once) when the robot exposes no floating base - almost always a
+    spec referencing ``base_velocity`` on a fixed-base arm.
+    """
+    try:
+        obs = sim.get_observation(robot_name=robot, skip_images=True)
+    except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
+        logger.debug("base_velocity get_observation(%r) failed: %s", robot, e)
+        return None
+    if not isinstance(obs, dict):
+        return None
+    lin = obs.get("base_lin_vel")
+    quat = obs.get("base_quat")
+    ang = obs.get("base_ang_vel")
+    if not (
+        isinstance(lin, list)
+        and len(lin) == 3
+        and isinstance(quat, list)
+        and len(quat) == 4
+        and isinstance(ang, list)
+        and len(ang) == 3
+    ):
+        # A floating base surfaces all three; their absence means this robot has
+        # no floating base (a fixed-base arm) - almost always a spec error.
+        _warn_unresolved("robot base", robot or "<sole robot>")
+        return None
+    v_body = _quat_rotate_inverse_wxyz(quat, lin)
+    return float(v_body[0]), float(v_body[1]), float(ang[2])
+
+
+def _base_body_velocity(sim: SimEngine, robot: str | None) -> tuple[list[float], list[float]] | None:
+    """Return a floating base's BODY-frame ``(linear_velocity, angular_velocity)``, or None.
+
+    Reads ``get_observation``'s floating-base signals and expresses BOTH twists
+    in the base (body) frame - the frame a legged controller regularizes: the
+    world-frame ``base_lin_vel`` is rotated into the base frame via ``base_quat``
+    (so its z is the vertical velocity along the base's OWN up-axis), and
+    ``base_ang_vel`` is already body-frame (the IMU-gyro convention on both
+    backends) so its xy are the roll/pitch rates directly. Returns None (and
+    warns once) when the robot exposes no floating base - almost always a spec
+    referencing a base term on a fixed-base arm. Shared by the two uncommanded-
+    base-velocity regularizer terms (``base_lin_vel_z`` / ``base_ang_vel_xy``).
+    """
+    try:
+        obs = sim.get_observation(robot_name=robot, skip_images=True)
+    except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
+        logger.debug("base motion get_observation(%r) failed: %s", robot, e)
+        return None
+    if not isinstance(obs, dict):
+        return None
+    lin = obs.get("base_lin_vel")
+    quat = obs.get("base_quat")
+    ang = obs.get("base_ang_vel")
+    if not (
+        isinstance(lin, list)
+        and len(lin) == 3
+        and isinstance(quat, list)
+        and len(quat) == 4
+        and isinstance(ang, list)
+        and len(ang) == 3
+    ):
+        # A floating base surfaces all three; their absence means this robot has
+        # no floating base (a fixed-base arm) - almost always a spec error.
+        _warn_unresolved("robot base", robot or "<sole robot>")
+        return None
+    v_body = _quat_rotate_inverse_wxyz(quat, lin)
+    return (
+        [float(v_body[0]), float(v_body[1]), float(v_body[2])],
+        [float(ang[0]), float(ang[1]), float(ang[2])],
+    )
+
+
+def _base_position(sim: SimEngine, robot: str | None) -> list[float] | None:
+    """Return a floating base's WORLD position ``[x, y, z]`` (incl. height), or None.
+
+    Reads ``get_observation``'s ``base_pos`` floating-base signal - the base
+    body's world-frame position, whose z component is the base height a
+    locomotion controller regularizes (torso/pelvis height above the ground).
+    Returns None (and warns once) when the robot exposes no floating base -
+    almost always a spec referencing a base term on a fixed-base arm.
+    """
+    try:
+        obs = sim.get_observation(robot_name=robot, skip_images=True)
+    except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
+        logger.debug("base_height get_observation(%r) failed: %s", robot, e)
+        return None
+    if not isinstance(obs, dict):
+        return None
+    pos = obs.get("base_pos")
+    if not (isinstance(pos, list) and len(pos) == 3):
+        # A floating base surfaces base_pos; its absence means this robot has no
+        # floating base (a fixed-base arm) - almost always a spec error.
+        _warn_unresolved("robot base", robot or "<sole robot>")
+        return None
+    return [float(pos[0]), float(pos[1]), float(pos[2])]
+
+
+def _base_quaternion(sim: SimEngine, robot: str | None) -> list[float] | None:
+    """Return a floating base's orientation quaternion ``[w, x, y, z]``, or None.
+
+    Reads ``get_observation``'s ``base_quat`` floating-base signal (MuJoCo and
+    Newton both report ``[w, x, y, z]``). Returns None (and warns once) when the
+    robot exposes no floating base (a fixed-base arm) - almost always a spec
+    referencing a base term on a robot that has no base orientation.
+    """
+    try:
+        obs = sim.get_observation(robot_name=robot, skip_images=True)
+    except Exception as e:  # noqa: BLE001 - defensive: predicates never raise
+        logger.debug("base_orientation get_observation(%r) failed: %s", robot, e)
+        return None
+    if not isinstance(obs, dict):
+        return None
+    quat = obs.get("base_quat")
+    if not (isinstance(quat, list) and len(quat) == 4):
+        # A floating base surfaces base_quat; its absence means this robot has
+        # no floating base (a fixed-base arm) - almost always a spec error.
+        _warn_unresolved("robot base", robot or "<sole robot>")
+        return None
+    return [float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3])]
 
 
 # Predicate factories
@@ -537,6 +775,101 @@ def _grasped(body: str, gripper_prefix: str) -> BoolPredicate:
     return check
 
 
+def _base_tipped(tol: float = 0.15, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base has tilted more than ``tol`` from level.
+
+    The failure-clause counterpart of the ``base_orientation`` reward term: while
+    ``base_orientation`` *penalises* tilt in ``dense_reward`` (a dense shaping
+    signal), ``base_tipped`` *terminates* the episode when the base falls over -
+    the canonical legged_gym / IsaacLab locomotion fall-over termination. Put it
+    in a ``failure`` clause
+    (``failure: {any: [{predicate: base_tipped, tol: 0.7}]}``) so a
+    velocity-tracking rollout ends the instant the robot topples instead of
+    flailing on the ground to ``max_steps``.
+
+    Reads ``get_observation``'s ``base_quat`` - the same embodiment-agnostic
+    floating-base surface the ``base_*`` reward terms read, so it needs no base
+    body name (it works on a mobile base whose free joint is unnamed) and is
+    identical across the MuJoCo and Newton backends, unlike ``body_upright``
+    which resolves a specific body by name. The tilt test is the exact
+    complement of ``body_upright``'s upright check applied to the base
+    quaternion (MuJoCo/Newton layout ``(w, x, y, z)``) - the fall-over
+    counterpart of ``body_upright``'s ``2*(x**2+y**2) < tol`` upright test:
+
+        R[2,2] = 1 - 2 * (x ** 2 + y ** 2)  ->  tipped when 2 * (x ** 2 + y ** 2) > tol
+
+    monotonic in how far the base is tipped, so ``tol`` is the maximum tilt the
+    base may reach before it counts as fallen. ``tol`` shares ``body_upright``'s
+    scale: ``2 * (x ** 2 + y ** 2) = 1 - cos(theta)`` for a roll/pitch of
+    ``theta``, so ``tol=0.15`` trips at ~32 deg (a tight "leaning" bound) and
+    ``tol=1.0`` trips at 90 deg (fully on its side) - a fall-over termination
+    typically uses a larger ``tol`` (~0.7-1.0) than the default.
+
+    Requires a robot with a floating base; a fixed-base arm has no base
+    orientation, so the predicate degrades to ``False`` (never tipped) and the
+    missing base is logged once. ``robot`` selects the robot in a multi-robot
+    scene (default: the sole robot).
+    """
+    t = float(tol)
+    if t < 0:
+        raise ValueError(f"base_tipped: 'tol' must be >= 0, got {t}")
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        quat = _base_quaternion(sim, rname)
+        if quat is None:
+            return False
+        # base_quat layout is (w, x, y, z) on both backends.
+        _, x, y, _ = quat
+        return 2.0 * (x * x + y * y) > t
+
+    return check
+
+
+def _base_below_z(z: float, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base's world height has dropped below ``z``.
+
+    The height counterpart of :func:`_base_tipped`, and the second half of a
+    complete floating-base fall termination: ``base_tipped`` fires when the base
+    *topples* (rolls/pitches off level) and ``base_below_z`` fires when the base
+    *collapses* (its torso/pelvis sinks to the ground). Put both in a ``failure``
+    clause so a velocity-tracking rollout ends the instant the robot either
+    falls over OR drops to the floor, instead of flailing on the ground to
+    ``max_steps``::
+
+        failure:
+          any:
+            - {predicate: base_tipped, tol: 0.7}
+            - {predicate: base_below_z, z: 0.3}
+
+    Reads ``get_observation``'s ``base_pos`` z (world frame) - the same
+    embodiment-agnostic floating-base surface the ``base_*`` reward terms and
+    ``base_tipped`` read - so it needs no base body name and works on a mobile
+    base whose free joint is unnamed, unlike ``body_below_z`` which resolves a
+    specific body by name (a name a mobile base's unnamed free joint does not
+    expose). It is the base-surface, name-free analogue of
+    ``body_below_z(<base body>, z)``.
+
+    ``z`` is the collapse height in metres; a fall termination sets it well
+    below the standing base height (a G1 pelvis stands ~0.74 m, so ``z=0.3``
+    catches a collapse). Requires a robot with a floating base; a fixed-base arm
+    has no base position, so the predicate degrades to ``False`` (never
+    collapsed -> never spuriously fails an episode) and the missing base is
+    logged once. ``robot`` selects the robot in a multi-robot scene (default:
+    the sole robot).
+    """
+    zt = float(z)
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        pos = _base_position(sim, rname)
+        if pos is None:
+            return False
+        return pos[2] < zt
+
+    return check
+
+
 # Reward terms (float-valued)
 
 
@@ -582,6 +915,255 @@ def _constant(value: float) -> RewardTerm:
 
     def term(_sim: SimEngine) -> float:
         return v
+
+    return term
+
+
+def _base_velocity(
+    vx: float = 0.0,
+    vy: float = 0.0,
+    wz: float = 0.0,
+    weight: float = 1.0,
+    robot: str | None = None,
+) -> RewardTerm:
+    """Negative base velocity-tracking error - the canonical locomotion reward.
+
+    Rewards a floating-base robot for matching a commanded BODY-frame velocity
+    ``(vx, vy, wz)``: ``vx`` forward, ``vy`` lateral (both in the robot's own
+    heading, m/s) and ``wz`` the yaw rate (rad/s). The reward is
+    ``-weight * ||(v_body_x, v_body_y, w_body_z) - (vx, vy, wz)||`` so it is 0 at
+    perfect tracking and grows more negative with error - a dense, monotonic
+    signal for a velocity-tracking / locomotion task (G1, Go2, T1, mobile bases),
+    directly composable in a :class:`DeclarativeBenchmark` spec or an RL
+    ``SimEnv`` reward.
+
+    Reads the floating-base twist from ``get_observation``: ``base_lin_vel``
+    (world frame) is rotated into the base frame via ``base_quat``, and
+    ``base_ang_vel`` is already body-frame, so the tracked quantity is
+    heading-relative (walking "forward at vx" tracks the robot's own +x, not a
+    fixed world axis). Requires a robot with a floating base; a fixed-base arm
+    has no base twist, so the term degrades to ``0.0`` and the missing base is
+    logged once. ``robot`` selects the robot in a multi-robot scene (default:
+    the sole robot).
+    """
+    w = float(weight)
+    tvx, tvy, twz = float(vx), float(vy), float(wz)
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        twist = _base_twist(sim, rname)
+        if twist is None:
+            return 0.0
+        bvx, bvy, bwz = twist
+        dvx, dvy, dwz = bvx - tvx, bvy - tvy, bwz - twz
+        return -w * float((dvx * dvx + dvy * dvy + dwz * dwz) ** 0.5)
+
+    return term
+
+
+def _base_velocity_tracking(
+    vx: float = 0.0,
+    vy: float = 0.0,
+    wz: float = 0.0,
+    lin_weight: float = 1.0,
+    ang_weight: float = 0.5,
+    tracking_sigma: float = 0.25,
+    robot: str | None = None,
+) -> RewardTerm:
+    """Bounded exponential-kernel velocity-tracking reward - the canonical legged_gym primary locomotion reward.
+
+    The standard legged_gym / IsaacLab velocity-tracking reward: a POSITIVE,
+    BOUNDED signal that peaks when the base matches a commanded BODY-frame
+    velocity ``(vx, vy, wz)`` (``vx`` forward, ``vy`` lateral in m/s, ``wz`` yaw
+    rate in rad/s) and decays smoothly to 0 as the error grows::
+
+        lin_weight * exp(-((v_body_x - vx)**2 + (v_body_y - vy)**2) / tracking_sigma)
+      + ang_weight * exp(-(w_body_z - wz)**2 / tracking_sigma)
+
+    the sum of legged_gym's ``tracking_lin_vel`` (planar velocity) and
+    ``tracking_ang_vel`` (yaw rate) terms with their canonical default weights
+    (1.0 / 0.5) and kernel width (``tracking_sigma`` 0.25). It is bounded to
+    ``[0, lin_weight + ang_weight]`` and maximal (``lin_weight + ang_weight``) at
+    perfect tracking.
+
+    This is the exp-kernel counterpart of :func:`_base_velocity`, which is an
+    UNBOUNDED negative-L2 error (``-weight * ||twist - command||``). The
+    difference matters for RL: an unbounded negative error is dominated by the
+    large initial tracking error and can swamp the bounded regularizer terms
+    (``base_height`` / ``base_orientation`` / ``base_lin_vel_z`` /
+    ``base_ang_vel_xy``), whereas this bounded kernel saturates near the command
+    and stays well-scaled against those regularizers - the reason legged_gym /
+    IsaacLab use an exponential kernel for the primary tracking reward and why a
+    faithful velocity-tracking reward for #873 pairs it with those regularizers.
+    It also weights planar-velocity tracking and yaw-rate tracking separately
+    (``lin_weight`` / ``ang_weight``), which the single combined ``base_velocity``
+    norm cannot express.
+
+    Reads the floating-base twist from ``get_observation`` exactly like
+    ``base_velocity``: ``base_lin_vel`` (world frame) is rotated into the base
+    frame via ``base_quat`` and ``base_ang_vel`` is already body-frame, so the
+    tracked quantity is heading-relative. Requires a robot with a floating base;
+    a fixed-base arm has no base twist, so the term degrades to ``0.0`` and the
+    missing base is logged once. ``robot`` selects the robot in a multi-robot
+    scene (default: the sole robot).
+    """
+    tvx, tvy, twz = float(vx), float(vy), float(wz)
+    lw, aw = float(lin_weight), float(ang_weight)
+    sigma = float(tracking_sigma)
+    if sigma <= 0:
+        raise ValueError(f"base_velocity_tracking: 'tracking_sigma' must be > 0, got {sigma}")
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        twist = _base_twist(sim, rname)
+        if twist is None:
+            return 0.0
+        bvx, bvy, bwz = twist
+        lin_err = (bvx - tvx) ** 2 + (bvy - tvy) ** 2
+        ang_err = (bwz - twz) ** 2
+        return lw * math.exp(-lin_err / sigma) + aw * math.exp(-ang_err / sigma)
+
+    return term
+
+
+def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -> RewardTerm:
+    """Negative squared base-height error - a locomotion-regularizer reward.
+
+    Rewards a floating-base robot for keeping its base (torso/pelvis) near a
+    target WORLD height: ``-weight * (base_z - target) ** 2`` - 0 at the target
+    and growing more negative as the base deviates. Composed alongside
+    ``base_velocity`` in a ``dense_reward`` list, it is the standard regularizer
+    that stops a velocity-tracking policy from cheating the forward-velocity
+    reward by crouching or diving (the legged_gym / IsaacLab ``base_height``
+    term). ``base_velocity`` alone is degenerate for locomotion - a policy can
+    dive forward to maximise it - so a viable velocity-tracking reward pairs the
+    two.
+
+    Reads ``get_observation``'s ``base_pos`` (world frame). ``target`` is the
+    desired base height in metres (task-specific: a G1 pelvis ~0.74 m, a Go2
+    trunk ~0.34 m). Requires a robot with a floating base; a fixed-base arm has
+    no base position, so the term degrades to ``0.0`` and the missing base is
+    logged once. ``robot`` selects the robot in a multi-robot scene (default:
+    the sole robot).
+    """
+    w = float(weight)
+    tgt = float(target)
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        pos = _base_position(sim, rname)
+        if pos is None:
+            return 0.0
+        d = pos[2] - tgt
+        return -w * d * d
+
+    return term
+
+
+def _base_orientation(weight: float = 1.0, robot: str | None = None) -> RewardTerm:
+    """Negative flat-orientation error - the locomotion base-orientation regularizer.
+
+    Penalises a floating-base robot for tilting (roll/pitch) away from level:
+    ``-weight * (g_x ** 2 + g_y ** 2)`` where ``(g_x, g_y, g_z)`` is the world
+    gravity direction expressed in the base frame (the "projected gravity" a
+    legged controller reads). When the base is level the projected gravity is
+    ``(0, 0, -1)`` so the penalty is 0; a roll or pitch of ``theta`` makes the xy
+    magnitude ``sin(theta)`` so the penalty grows as ``-weight * sin(theta) ** 2``.
+    This is the standard legged_gym / IsaacLab ``orientation`` term and the third
+    piece of a minimal velocity-tracking reward: ``base_velocity`` alone is
+    degenerate (a policy can crouch OR lean to cheat the forward-velocity
+    reward), so a viable locomotion reward pairs it with ``base_height`` (which
+    stops crouch-cheating) AND ``base_orientation`` (which stops lean/tilt-
+    cheating) in one ``dense_reward`` list.
+
+    Crucially the penalty is invariant to YAW (heading): a robot may turn freely
+    while walking upright, only roll/pitch off level is penalised. Reads
+    ``get_observation``'s ``base_quat`` (``[w, x, y, z]`` on both backends).
+    Requires a robot with a floating base; a fixed-base arm has no base
+    orientation, so the term degrades to ``0.0`` and the missing base is logged
+    once. ``robot`` selects the robot in a multi-robot scene (default: the sole
+    robot).
+    """
+    w = float(weight)
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        quat = _base_quaternion(sim, rname)
+        if quat is None:
+            return 0.0
+        gx, gy, _gz = _quat_rotate_inverse_wxyz(quat, [0.0, 0.0, -1.0])
+        return -w * float(gx * gx + gy * gy)
+
+    return term
+
+
+def _base_lin_vel_z(weight: float = 1.0, robot: str | None = None) -> RewardTerm:
+    """Negative squared vertical base velocity - a locomotion-regularizer reward.
+
+    Penalises a floating-base robot for moving vertically (bouncing):
+    ``-weight * v_body_z ** 2`` where ``v_body_z`` is the base's linear velocity
+    along its OWN up-axis (the world-frame ``base_lin_vel`` rotated into the base
+    frame via ``base_quat``). 0 when the base holds a constant height, growing
+    more negative the faster it bounces. This is the standard legged_gym /
+    IsaacLab ``lin_vel_z`` term, and it complements ``base_height``:
+    ``base_height`` penalises a base-height OFFSET (a static crouch) while
+    ``base_lin_vel_z`` directly damps vertical bouncing whose mean height error
+    can be ~0 - a velocity-tracking policy that porpoises around the target
+    height is caught by this term but not by ``base_height`` alone. One of the
+    two uncommanded-base-velocity regularizers (with ``base_ang_vel_xy``) that a
+    viable velocity-tracking reward adds to ``base_velocity`` + ``base_height`` +
+    ``base_orientation`` (the default-nonzero legged_gym reward set).
+
+    Reads ``get_observation``'s ``base_lin_vel`` + ``base_quat``. Requires a
+    robot with a floating base; a fixed-base arm has no base velocity, so the
+    term degrades to ``0.0`` and the missing base is logged once. ``robot``
+    selects the robot in a multi-robot scene (default: the sole robot).
+    """
+    w = float(weight)
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        motion = _base_body_velocity(sim, rname)
+        if motion is None:
+            return 0.0
+        vz = motion[0][2]
+        return -w * vz * vz
+
+    return term
+
+
+def _base_ang_vel_xy(weight: float = 1.0, robot: str | None = None) -> RewardTerm:
+    """Negative squared roll/pitch angular velocity - a locomotion-regularizer reward.
+
+    Penalises a floating-base robot for rolling/pitching (wobbling):
+    ``-weight * (w_body_x ** 2 + w_body_y ** 2)`` where ``(w_body_x, w_body_y)``
+    are the base's roll and pitch RATES (body-frame ``base_ang_vel``, the
+    IMU-gyro reading). 0 when the base is not tipping, growing more negative the
+    faster it wobbles. This is the standard legged_gym / IsaacLab ``ang_vel_xy``
+    term, and it complements ``base_orientation``: ``base_orientation`` penalises
+    a tilt OFFSET (a static lean) while ``base_ang_vel_xy`` directly damps
+    oscillatory roll/pitch whose mean tilt can be ~0. Crucially it is INVARIANT
+    to the yaw rate (``w_body_z``): a walking policy may turn freely, only
+    roll/pitch RATE is penalised. One of the two uncommanded-base-velocity
+    regularizers (with ``base_lin_vel_z``) that a viable velocity-tracking reward
+    adds to ``base_velocity`` + ``base_height`` + ``base_orientation`` (the
+    default-nonzero legged_gym reward set).
+
+    Reads ``get_observation``'s ``base_ang_vel`` (already body-frame on both
+    backends). Requires a robot with a floating base; a fixed-base arm has no
+    base velocity, so the term degrades to ``0.0`` and the missing base is
+    logged once. ``robot`` selects the robot in a multi-robot scene (default:
+    the sole robot).
+    """
+    w = float(weight)
+    rname = robot
+
+    def term(sim: SimEngine) -> float:
+        motion = _base_body_velocity(sim, rname)
+        if motion is None:
+            return 0.0
+        wx, wy = motion[1][0], motion[1][1]
+        return -w * (wx * wx + wy * wy)
 
     return term
 
@@ -729,6 +1311,12 @@ def _staged_reward(stages: list[Any]) -> RewardTerm:
                     "like {predicate: distance_less_than, body_a: ..., body_b: ..., threshold: ...}"
                 )
             advance_name = advance_call["predicate"]
+            if isinstance(advance_name, str) and predicate_kind(advance_name) == "float":
+                raise ValueError(
+                    f"staged_reward: stage[{i}].advance_when predicate {advance_name!r} is a "
+                    "reward term (float-valued); advance_when gates the stage transition and "
+                    "must be a bool predicate. Reward terms belong in the stage's 'reward' field."
+                )
             advance_kwargs = {k: v for k, v in advance_call.items() if k != "predicate"}
             advance_fn = make_predicate(advance_name, **advance_kwargs)
 
@@ -757,9 +1345,17 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "body_inside": _body_inside,
     "body_upright": _body_upright,
     "grasped": _grasped,
+    "base_tipped": _base_tipped,
+    "base_below_z": _base_below_z,
     # float-valued
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,
+    "base_velocity": _base_velocity,
+    "base_velocity_tracking": _base_velocity_tracking,
+    "base_height": _base_height,
+    "base_orientation": _base_orientation,
+    "base_lin_vel_z": _base_lin_vel_z,
+    "base_ang_vel_xy": _base_ang_vel_xy,
     "constant": _constant,
     # stateful (phase machine)
     "staged_reward": _staged_reward,
@@ -818,6 +1414,38 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
     return factory(**kwargs)
 
 
+def predicate_kind(name: str) -> str:
+    """Classify a registered predicate as ``"bool"`` or ``"float"``.
+
+    Success / failure clauses require a ``"bool"`` predicate; ``dense_reward``
+    terms are ``"float"``. The kind is read from the factory's
+    ``-> BoolPredicate`` / ``-> RewardTerm`` return annotation, so it stays in
+    lock-step with the registry with no separate table to drift. A predicate
+    registered via :func:`register_predicate` without a recognizable return
+    annotation classifies as ``"unknown"`` and is exempt from kind validation
+    (the caller opted in by registering it).
+
+    Args:
+        name: A predicate name. Must be registered in :data:`PREDICATE_REGISTRY`.
+
+    Returns:
+        ``"bool"``, ``"float"``, or ``"unknown"``.
+
+    Raises:
+        ValueError: If ``name`` is not registered (mirrors :func:`make_predicate`).
+    """
+    factory = PREDICATE_REGISTRY.get(name)
+    if factory is None:
+        valid = sorted(PREDICATE_REGISTRY.keys())
+        raise ValueError(f"Unknown predicate '{name}'. Valid: {valid}")
+    annotation = str(getattr(factory, "__annotations__", {}).get("return", ""))
+    if "Bool" in annotation:
+        return "bool"
+    if "Reward" in annotation:
+        return "float"
+    return "unknown"
+
+
 __all__ = [
     "PREDICATE_REGISTRY",
     "BoolPredicate",
@@ -825,5 +1453,6 @@ __all__ = [
     "RewardTerm",
     "StatefulRewardTerm",
     "make_predicate",
+    "predicate_kind",
     "register_predicate",
 ]

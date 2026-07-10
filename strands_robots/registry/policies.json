@@ -81,6 +81,34 @@
         "class": "LerobotTrainer"
       }
     },
+    "lerobot_async": {
+      "module": "strands_robots.policies.lerobot_async",
+      "class": "LerobotAsyncPolicy",
+      "description": "Remote lerobot inference over gRPC - forwards observations to a lerobot async_inference PolicyServer and returns action chunks",
+      "requires": [
+        "policy_type",
+        "pretrained_name_or_path"
+      ],
+      "config_keys": [
+        "server_address",
+        "host",
+        "port",
+        "policy_type",
+        "pretrained_name_or_path",
+        "device",
+        "actions_per_chunk",
+        "actions_per_step",
+        "connect_timeout",
+        "request_timeout"
+      ],
+      "defaults": {},
+      "shorthands": [
+        "lerobot_async"
+      ],
+      "url_patterns": [
+        "^grpc://"
+      ]
+    },
     "cosmos3": {
       "module": "strands_robots.policies.cosmos3",
       "class": "Cosmos3Policy",
@@ -271,6 +299,26 @@
       "shorthands": [
         "motionbricks",
         "motion_bricks"
+      ]
+    },
+    "remote": {
+      "module": "strands_robots.inference.client",
+      "class": "RemotePolicy",
+      "description": "Remote inference over WebSocket (WS-JSON) - forwards observations to a PolicyServer and returns action chunks",
+      "requires": [],
+      "config_keys": [
+        "endpoint",
+        "host",
+        "port",
+        "connect_timeout",
+        "request_timeout"
+      ],
+      "defaults": {},
+      "shorthands": [
+        "remote"
+      ],
+      "url_patterns": [
+        "^wss?://"
       ]
     }
   }

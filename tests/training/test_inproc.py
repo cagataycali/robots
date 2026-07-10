@@ -15,9 +15,17 @@ Covers :mod:`strands_robots.training._inproc`:
   ``log_path is None`` (the non-rank-0 worker path, so only rank 0 writes the
   shared log).
 
-Deliberately NOT covered here: :func:`elastic_launch_callable` (needs
-``torch.distributed`` + a real process spawn - a separate concern with its own
-heavy fixtures). And these tests intentionally assert only on stdout/stderr
+:func:`elastic_launch_callable` - the shell-free ``torchrun`` replacement: it
+drives torch's programmatic elastic agent to spawn ``nproc_per_node`` workers,
+calls the given Python callable in each with arguments passed as Python objects
+(no argv to assemble or inject into), and returns a ``{local_rank: worker_return}``
+mapping. The tests spawn real single-node workers (``start_method="spawn"``, so
+the worker fn is module-level and picklable) and assert both the return-mapping
+shape and that each worker sees the ``RANK`` / ``LOCAL_RANK`` / ``WORLD_SIZE``
+that the agent injects - the contract HF ``TrainingArguments`` / lerobot
+``accelerate`` read.
+
+These tests intentionally assert only on stdout/stderr
 tee-ing and the handler lifecycle, never on which *logging records* reach the
 file: record visibility is governed by the ambient root-logger level and, under
 pytest, by the log-capture plugin's handlers - global mutable state that would
@@ -29,7 +37,28 @@ from __future__ import annotations
 import io
 import logging
 
-from strands_robots.training._inproc import _Tee, call_callable, capture_to_file
+from strands_robots.training._inproc import (
+    _Tee,
+    call_callable,
+    capture_to_file,
+    elastic_launch_callable,
+)
+
+
+def _rank_env_worker(marker_dir: str) -> int:
+    """elastic_launch worker (module-level so ``spawn`` can pickle it).
+
+    Records the torch-injected distributed env (``LOCAL_RANK``/``WORLD_SIZE``) to
+    a per-rank marker file and returns a value derived from this worker's global
+    ``RANK`` so the caller can assert the ``{local_rank: worker_return}`` mapping.
+    """
+    import os
+    from pathlib import Path
+
+    rank = int(os.environ["RANK"])
+    marker = Path(marker_dir) / f"rank_{rank}.txt"
+    marker.write_text(f"{os.environ['LOCAL_RANK']},{os.environ['WORLD_SIZE']}", encoding="utf-8")
+    return rank * 10
 
 
 class _Boom:
@@ -204,3 +233,32 @@ class TestCallCallable:
         result = call_callable(fn, 6, log_path=str(log), b=7)
         assert result == 42
         assert "CALLED a=6 b=7" in log.read_text(encoding="utf-8")
+
+
+class TestElasticLaunchCallable:
+    """elastic_launch_callable spawns workers and returns their rank-keyed results.
+
+    This is the in-process, shell-free replacement for ``torchrun
+    --nproc_per_node=N``: torch's elastic agent spawns the workers and the
+    callable receives Python objects, so there is no command line to build or
+    inject into. The tests run real single-node spawns (CPU-only; c10d needs no
+    CUDA), which is why the worker is a module-level function.
+    """
+
+    def test_single_worker_returns_rank_mapping_and_injects_dist_env(self, tmp_path):
+        # One worker: elastic_launch returns {local_rank: worker_return}. The
+        # worker (global RANK 0) returns rank * 10 == 0.
+        out = elastic_launch_callable(_rank_env_worker, nproc_per_node=1, fn_args=(str(tmp_path),))
+        assert out == {0: 0}
+        # The worker saw the torch-injected distributed env - no argv, no
+        # torchrun binary: LOCAL_RANK=0 in a WORLD_SIZE=1 group.
+        assert (tmp_path / "rank_0.txt").read_text(encoding="utf-8") == "0,1"
+
+    def test_spawns_one_worker_per_nproc_with_distinct_ranks(self, tmp_path):
+        # nproc_per_node=2 spawns exactly two workers with distinct global ranks
+        # (0, 1), each keyed by its local rank in the returned mapping.
+        out = elastic_launch_callable(_rank_env_worker, nproc_per_node=2, fn_args=(str(tmp_path),))
+        assert out == {0: 0, 1: 10}
+        # Both workers share WORLD_SIZE=2 and carry their own LOCAL_RANK.
+        assert (tmp_path / "rank_0.txt").read_text(encoding="utf-8") == "0,2"
+        assert (tmp_path / "rank_1.txt").read_text(encoding="utf-8") == "1,2"

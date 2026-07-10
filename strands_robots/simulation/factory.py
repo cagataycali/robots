@@ -13,8 +13,8 @@ Usage::
     # Explicit backend
     sim = create_simulation("mujoco", timestep=0.001)
 
-    # Future backends
-    sim = create_simulation("isaac", gpu_id=0)
+    # GPU-native built-in backends
+    sim = create_simulation("isaac", num_envs=1, headless=True)
     sim = create_simulation("newton")
 
     # Custom backend (runtime-registered)
@@ -53,8 +53,10 @@ _BUILTIN_BACKENDS: dict[str, tuple[str, str]] = {
         "strands_robots.simulation.newton.simulation",
         "NewtonSimEngine",
     ),
-    # Future:
-    # "isaac": ("strands_robots.simulation.isaac.simulation", "IsaacSimulation"),
+    "isaac": (
+        "strands_robots.simulation.isaac.simulation",
+        "IsaacSimulation",
+    ),
 }
 
 _BUILTIN_ALIASES: dict[str, str] = {
@@ -62,9 +64,9 @@ _BUILTIN_ALIASES: dict[str, str] = {
     "mjc": "mujoco",
     "mjx": "mujoco",
     "nt": "newton",
-    # "isaac_sim": "isaac",
-    # "isaacsim": "isaac",
-    # "nvidia": "isaac",
+    "isaac_sim": "isaac",
+    "isaacsim": "isaac",
+    "nvidia": "isaac",
 }
 
 DEFAULT_BACKEND = "mujoco"
@@ -74,8 +76,7 @@ DEFAULT_BACKEND = "mujoco"
 # ``strands-robots-sim`` plugin package. Keyed by the entry-point name a
 # plugin is expected to register.
 _PLUGIN_INSTALL_HINTS: dict[str, str] = {
-    "isaac": "pip install 'strands-robots-sim[isaac]'",
-    "newton": "pip install 'strands-robots-sim[newton]'",
+    "newton": "pip install 'strands-robots[sim-newton]'",
     # The warp-lang based GPU-parallel MuJoCo path is the built-in ``newton``
     # backend; ``warp`` and ``mjwarp`` are common names users reach for, so map
     # both to the same actionable install hint instead of a bare "unknown
@@ -108,16 +109,40 @@ def _load_plugin_backends() -> dict[str, type[SimEngine]]:
     is logged and skipped rather than crashing the factory, so a single bad
     plugin can't take down ``create_simulation`` for the working backends.
 
+    A plugin whose entry-point name collides with a **built-in** backend name
+    or alias is skipped entirely (never loaded into the cache) so that:
+
+    * the built-in always wins - a stale ``strands-robots-sim`` still on the
+      ``PYTHONPATH`` after a backend has been absorbed in-tree (e.g. ``isaac``
+      once it lands as a builtin) can neither shadow nor duplicate-register
+      the builtin, and
+    * the plugin's (often heavy - Isaac Sim, Newton) module import is avoided
+      up front when the builtin will be used anyway.
+
+    This skip is the backward-compat guarantee for the robots-sim -> in-tree
+    migration: resolution prefers the builtin and no conflict is ever raised.
+
     Returns:
-        Mapping of entry-point name -> backend class. Aliases are expressed
-        as multiple entry-point names pointing at the same class (e.g.
-        ``newton`` and ``warp`` both resolve to ``NewtonSimulation``); no
-        dedup is applied so whichever requested name resolves cleanly.
+        Mapping of entry-point name -> backend class, excluding any name that
+        collides with a built-in. Aliases are expressed as multiple
+        entry-point names pointing at the same class (e.g. ``newton`` and
+        ``warp`` both resolve to ``NewtonSimulation``); no dedup is applied
+        among plugins so whichever requested name resolves cleanly.
     """
     global _PLUGIN_BACKENDS_CACHE
     if _PLUGIN_BACKENDS_CACHE is None:
         cache: dict[str, type[SimEngine]] = {}
         for ep in entry_points(group=_ENTRY_POINT_GROUP):
+            # Built-ins win over plugins of the same name/alias. Skip the
+            # plugin before ``ep.load()`` so a stale sibling package can never
+            # shadow an absorbed-in-tree backend, and its heavy import is
+            # avoided entirely.
+            if ep.name in _BUILTIN_BACKENDS or ep.name in _BUILTIN_ALIASES:
+                logger.debug(
+                    "Skipping simulation backend plugin %r: shadowed by built-in of the same name.",
+                    ep.name,
+                )
+                continue
             try:
                 cache[ep.name] = ep.load()
             except Exception as exc:  # noqa: BLE001 - one bad plugin must not break the factory
@@ -241,7 +266,7 @@ def _import_backend_class(name: str) -> type[SimEngine]:
             module = importlib.import_module(module_path)
         except ModuleNotFoundError as exc:
             # Map backend names to their pip extras (extras use "sim-" prefix)
-            _BACKEND_EXTRAS = {"mujoco": "sim-mujoco", "newton": "sim-newton"}
+            _BACKEND_EXTRAS = {"mujoco": "sim-mujoco", "newton": "sim-newton", "isaac": "sim-isaac"}
             extra = _BACKEND_EXTRAS.get(name, f"sim-{name}")
             raise ImportError(
                 f"Simulation backend {name!r} is declared in the built-in registry "
@@ -257,8 +282,10 @@ def _import_backend_class(name: str) -> type[SimEngine]:
         return backend_cls
 
     # 3. Entry-point plugins (third-party packages, e.g. strands-robots-sim).
-    #    Built-ins win over plugins of the same name (checked above), so a
-    #    conflicting plugin can never shadow "mujoco".
+    #    Built-ins win over plugins of the same name: the built-in registry is
+    #    checked above, and ``_load_plugin_backends`` additionally drops any
+    #    plugin whose name/alias collides with a built-in, so a conflicting
+    #    plugin can never shadow "mujoco" (or an absorbed-in-tree "isaac").
     plugins = _load_plugin_backends()
     if name in plugins:
         plugin_cls = plugins[name]
@@ -283,7 +310,7 @@ def create_simulation(
     Resolution order for ``backend``:
 
     1. Runtime-registered backends (see ``register_backend``).
-    2. Built-in backends (currently ``mujoco``, ``newton``). Built-ins always
+    2. Built-in backends (currently ``mujoco``, ``newton``, ``isaac``). Built-ins always
        win over entry-point plugins of the same name, so a third-party
        plugin can never accidentally shadow a built-in backend.
     3. Entry-point plugins. Third-party packages (e.g.
@@ -293,7 +320,6 @@ def create_simulation(
        ``pyproject.toml``::
 
            [project.entry-points."strands_robots.backends"]
-           isaac = "strands_robots_sim.isaac.simulation:IsaacSimulation"
            newton = "strands_robots_sim.newton.simulation:NewtonSimulation"
            warp = "strands_robots_sim.newton.simulation:NewtonSimulation"
 
@@ -336,8 +362,8 @@ def create_simulation(
         # Pass kwargs to backend constructor
         sim = create_simulation("mujoco", tool_name="my_sim")
 
-        # Entry-point plugin (requires strands-robots-sim installed)
-        sim = create_simulation("isaac", gpu_id=0)
+        # GPU-native built-in backend (requires strands-robots[sim-isaac])
+        sim = create_simulation("isaac", num_envs=1, headless=True)
     """
     canonical = _resolve_name(backend)
     logger.info("Creating simulation: %s (resolved from %r)", canonical, backend)

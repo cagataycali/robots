@@ -592,3 +592,86 @@ def test_stats_clean_run_reports_success():
     assert host._teleop_frames > 0
     assert host._teleop_errors == 0
     assert res["status"] == "success"
+
+
+# ---------------------------------------------------------------------------
+# attach from a type string (Teleoperator factory path) + block-mode teardown
+# ---------------------------------------------------------------------------
+
+
+def test_attach_from_type_string_builds_via_factory(monkeypatch: pytest.MonkeyPatch):
+    """attach_teleop(<type-string>) builds the device via the Teleoperator
+    factory, forwarding only the extra **kwargs, and registers it.
+
+    This is the primary documented usage
+    (``robot.attach_teleop("so101_leader", port=...)``): a caller names a
+    teleop type rather than pre-building a device. The keyword-only args
+    (``name``/``method``/``map_fn``) must NOT leak into the factory kwargs,
+    the method must be inferred from the type string, and the call stays
+    chainable.
+    """
+    import strands_robots.teleoperator as teleop_mod
+
+    built: dict[str, object] = {}
+
+    def fake_factory(spec: str, **kwargs: object):
+        built["spec"] = spec
+        built["kwargs"] = dict(kwargs)
+        return FakeTeleop({"j.pos": 1.0}, name=spec)
+
+    monkeypatch.setattr(teleop_mod, "Teleoperator", fake_factory)
+
+    host = FakeHost()
+    out = host.attach_teleop("so101_leader", port="/dev/ttyACM0")
+
+    assert out is host  # chainable
+    # The type string reaches the factory; only extra kwargs are forwarded
+    # (name/method/map_fn are consumed by attach_teleop, not the factory).
+    assert built["spec"] == "so101_leader"
+    assert built["kwargs"] == {"port": "/dev/ttyACM0"}
+    # Registered under the built device's name; method inferred from the type.
+    att = host._teleops["so101_leader"]
+    assert att.method == "arm"
+    assert att.device.get_action() == {"j.pos": 1.0}
+
+
+def test_teleoperate_block_keyboard_interrupt_tears_down(monkeypatch: pytest.MonkeyPatch):
+    """block=True catches Ctrl+C and tears down to the same clean state as
+    stop_teleoperate: the session is marked stopped and every connected
+    device is disconnected, so a subsequent teleoperate() starts fresh.
+    """
+    host = FakeHost()
+    dev = FakeTeleop({"a.pos": 1.0})
+    host.attach_teleop(dev, name="leader")
+
+    def interrupt(*_a: object, **_k: object):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(host, "_teleop_loop", interrupt)
+
+    res = host.teleoperate(hz=100, block=True)
+
+    # Ctrl+C is swallowed (not propagated); a 0-frame/0-error session is idle.
+    assert res["status"] == "success"
+    assert "completed" in res["content"][0]["text"]
+    assert host._teleop_running is False
+    assert dev.is_connected is False  # torn down on the way out
+
+
+def test_teleoperate_block_publish_reports_mesh_publisher_count(monkeypatch: pytest.MonkeyPatch):
+    """A blocking session that started mesh publishers reports how many in the
+    completion summary (and in telemetry.publish_count).
+    """
+    host = FakePublishHost()
+    arm = FakeTeleop({"a.pos": 1.0})
+    host.attach_teleop(arm, name="arm", method="arm")
+
+    # Return immediately so the blocking call completes without spinning.
+    monkeypatch.setattr(host, "_teleop_loop", lambda *_a, **_k: None)
+
+    res = host.teleoperate(hz=100, block=True, publish=True)
+
+    assert res["status"] == "success"
+    assert "Mesh publishers started: 1" in res["content"][0]["text"]
+    assert tool_json(res)["publish_count"] == 1
+    assert len(host.publish_calls) == 1

@@ -135,16 +135,24 @@ class TestRobotFactory:
         assert sig.parameters["mode"].default == "sim"
 
     def test_isaac_backend_routes_to_factory_install_hint(self):
-        """A non-mujoco backend resolves through ``create_simulation`` rather
-        than a blanket ``NotImplementedError``. ``isaac`` ships in the
-        out-of-tree ``strands-robots-sim`` plugin, so when it is absent the
-        factory's actionable install hint surfaces (a ``ValueError`` listing
-        available backends + a ``pip install`` pointer), not a dead-end
-        "on the roadmap" message."""
-        with pytest.raises(ValueError, match="strands-robots-sim") as exc_info:
+        """``isaac`` is now a vendored built-in backend (#1145), resolved through
+        ``create_simulation`` like ``newton``. When Isaac Sim itself is not
+        installed (it ships out-of-band via Omniverse / Isaac Lab / the NGC
+        docker image, never via pip), constructing the sim succeeds but
+        ``create_world()`` surfaces the backend's own actionable install hint -
+        a ``RuntimeError`` naming Isaac Sim + its install paths - not a blanket
+        NotImplementedError or a dead-end "on the roadmap" message.
+
+        Skipped when Isaac Sim IS importable (a GPU box with Omniverse), where
+        world creation would actually proceed."""
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        ok, _ = IsaacSimulation.is_available()
+        if ok:
+            pytest.skip("Isaac Sim is installed; the not-available install-hint path is not exercised.")
+        with pytest.raises(RuntimeError, match="Isaac Sim") as exc_info:
             Robot("so100", mode="sim", backend="isaac")
         msg = str(exc_info.value)
-        assert "pip install" in msg
         # The misleading legacy framing must be gone.
         assert "not yet implemented" not in msg
         assert "roadmap" not in msg
@@ -1270,18 +1278,31 @@ class TestHardwareConfigV040Followups:
             "the bare except Exception on plugin registration must be gone (#291)"
         )
 
-    def test_lerobot_extra_pins_torchcodec_on_aarch64(self):
-        """#378: the public [lerobot] extra must carry the aarch64 torchcodec
-        pin so a `pip install strands-robots[lerobot]` on Thor/Jetson gets a
-        working video decoder (not just the hatch dev env)."""
+    def test_lerobot_extra_provides_aarch64_video_decoder(self):
+        """#378: a `pip install strands-robots[lerobot]` on Thor/Jetson must get a
+        working aarch64 video decoder (torchcodec), not the removed
+        `torchvision.io.VideoReader`.
+
+        The [lerobot] extra used to carry an explicit aarch64 torchcodec pin
+        because lerobot 0.5.1's own marker excluded aarch64. lerobot 0.6 fixed
+        that upstream (its `torchcodec>=0.11,<0.12; aarch64` marker pulls the
+        torch-ABI-matched decoder), so the strands override was dropped and the
+        guarantee now rides on the `lerobot>=0.6.0` floor. This pins that floor
+        so a revert below 0.6 -- which would resurrect the missing-decoder bug
+        without the removed override -- fails here."""
         import tomllib
         from pathlib import Path
+
+        from packaging.requirements import Requirement
+        from packaging.version import Version
 
         root = Path(__file__).resolve().parents[1]
         data = tomllib.load(open(root / "pyproject.toml", "rb"))
         lerobot_extra = data["project"]["optional-dependencies"]["lerobot"]
-        assert any("torchcodec" in dep and "aarch64" in dep for dep in lerobot_extra), (
-            f"[lerobot] extra must pin torchcodec on linux+aarch64 (#378); got {lerobot_extra}"
+        lerobot_req = next(Requirement(d) for d in lerobot_extra if Requirement(d).name == "lerobot")
+        assert Version("0.6.0") in lerobot_req.specifier and Version("0.5.9") not in lerobot_req.specifier, (
+            f"[lerobot] extra must floor lerobot at >=0.6.0 so aarch64 gets torchcodec (#378); "
+            f"got {lerobot_req.specifier}"
         )
 
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 from strands_robots.mesh.transport.bridge_transport import (
@@ -1016,3 +1016,105 @@ class TestShouldBridgeHeadTraversal:
 
         # response/<turn_id> is the legitimate prefix-walk case
         assert _should_bridge("strands/robot-a/response/turn-123", set(), frozenset({"response"})) is True
+
+
+class _CapturingTransport:
+    """Minimal transport double that captures the wrapped handler.
+
+    ``BridgeTransport.declare_subscriber`` wraps the caller's handler in the
+    ``_filtered`` dedup closure and hands that closure to each live transport's
+    own ``declare_subscriber``. Capturing it here lets a test drive the *real*
+    closure with crafted samples, exercising the runtime dedup + fallback paths
+    rather than grepping the source.
+    """
+
+    def __init__(self, alive: bool = True) -> None:
+        self._alive = alive
+        self.captured_handler: Any | None = None
+
+    def is_alive(self) -> bool:
+        return self._alive
+
+    def declare_subscriber(self, key_expr: str, handler: Any) -> Any:
+        self.captured_handler = handler
+        return MagicMock()  # non-None sub handle
+
+
+class _NoKeyExprSample:
+    """Sample whose ``key_expr`` attribute is absent (contract drift)."""
+
+    def __init__(self, data: dict[str, Any]) -> None:
+        self.payload = MagicMock()
+        self.payload.to_bytes.return_value = json.dumps(data).encode()
+
+
+class TestFilteredDedupHandlerRuntime:
+    """Runtime pins for the real ``_filtered`` dedup closure.
+
+    Every other bridge-dedup pin either greps ``inspect.getsource(...)`` or
+    reconstructs the dedup call inline; none invokes the closure that
+    ``declare_subscriber`` actually installs on the transports. These tests
+    build a ``BridgeTransport`` with a capturing zenoh double, pull out the
+    installed ``_filtered`` handler, and drive it with real samples so the
+    delivered-topic keying, duplicate-drop, and missing-``key_expr``
+    warn-once fallback are behaviorally exercised.
+    """
+
+    @staticmethod
+    def _bridge_with_capturing_zenoh() -> tuple[BridgeTransport, _CapturingTransport, list[Any]]:
+        zenoh = _CapturingTransport(alive=True)
+        iot = _CapturingTransport(alive=False)
+        bridge = BridgeTransport(zenoh=cast(Any, zenoh), iot=cast(Any, iot))
+        delivered: list[Any] = []
+        bridge.declare_subscriber("strands/+/cmd", delivered.append)
+        assert zenoh.captured_handler is not None, "zenoh side must install the _filtered closure"
+        return bridge, zenoh, delivered
+
+    def test_wellformed_sample_delivered_without_warning(self, caplog):
+        import logging
+
+        _bridge, zenoh, delivered = self._bridge_with_capturing_zenoh()
+        sample = _FakeSample({"sender_id": "a", "turn_id": "t1", "command": {"action": "move"}})
+        with caplog.at_level(logging.WARNING):
+            zenoh.captured_handler(sample)
+        assert delivered == [sample], "a well-formed, non-duplicate sample must be delivered once"
+        assert not [r for r in caplog.records if "key_expr" in r.message], (
+            "a sample with key_expr present must not emit the fallback warning"
+        )
+
+    def test_duplicate_on_same_topic_dropped(self):
+        _bridge, zenoh, delivered = self._bridge_with_capturing_zenoh()
+        payload = {"sender_id": "a", "turn_id": "dup", "command": {"action": "stop"}}
+        first, second = _FakeSample(payload), _FakeSample(payload)
+        # Both arrive on the same delivered topic (default _FakeSample.key_expr).
+        zenoh.captured_handler(first)
+        zenoh.captured_handler(second)
+        assert delivered == [first], "the second identical sample on the same topic must be deduplicated away"
+
+    def test_distinct_wildcard_topics_not_aliased_at_runtime(self):
+        _bridge, zenoh, delivered = self._bridge_with_capturing_zenoh()
+        payload = {"sender_id": "op", "turn_id": "t9", "command": {"action": "go"}}
+        a, b = _FakeSample(payload), _FakeSample(payload)
+        a.key_expr = "strands/robot-a/cmd"
+        b.key_expr = "strands/robot-b/cmd"
+        zenoh.captured_handler(a)
+        zenoh.captured_handler(b)
+        assert delivered == [a, b], (
+            "same payload delivered on two concrete topics under one wildcard "
+            "must both be delivered (dedup keys on the delivered topic)"
+        )
+
+    def test_missing_key_expr_warns_once_and_still_delivers(self, caplog):
+        import logging
+
+        _bridge, zenoh, delivered = self._bridge_with_capturing_zenoh()
+        s1 = _NoKeyExprSample({"sender_id": "a", "turn_id": "m1", "command": {"action": "move"}})
+        s2 = _NoKeyExprSample({"sender_id": "a", "turn_id": "m2", "command": {"action": "move"}})
+        with caplog.at_level(logging.WARNING):
+            zenoh.captured_handler(s1)
+            zenoh.captured_handler(s2)
+        assert delivered == [s1, s2], "samples missing key_expr must still be delivered via the fallback"
+        warnings = [r for r in caplog.records if r.levelno >= logging.WARNING and "key_expr" in r.message]
+        assert len(warnings) == 1, (
+            f"the missing-key_expr warning must fire exactly once per subscription (gated), got {len(warnings)}"
+        )

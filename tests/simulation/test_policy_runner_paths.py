@@ -9,8 +9,10 @@ Covers:
 * ``replay()`` with actions that have ``.numpy()`` and ``.tolist()`` methods
   (tensor-backed dataset frames)
 * ``_extract_frame_ndarray`` handles render blocks without images
-* ``_resolve_success_fn`` "contact" - raise, missing-hook, and positive
-  (n_contacts / contacts-list) detection paths
+* ``_resolve_success_fn`` "contact" - raise (NotImplementedError),
+  missing-hook, positive (n_contacts / contacts-list) detection, and the
+  degradation branches: an unexpected error, a zero-contact negative, and a
+  non-dict result all resolve to False without propagating
 * ``_maybe_sim_time`` get_state() fallback (nested ``content[].json.sim_time``)
 * ``evaluate()`` "never-succeeds" default path (no success_fn)
 """
@@ -460,5 +462,54 @@ def test_contact_success_fn_false_when_no_get_contacts():
         get_contacts = None
 
     sim = _NoContactsSim(robots=["r0"])
+    fn = PolicyRunner(sim)._resolve_success_fn("contact")
+    assert fn({}) is False
+
+
+def test_contact_success_fn_false_on_unexpected_get_contacts_error():
+    """A generic (non-NotImplementedError) error from ``get_contacts`` must
+    degrade the contact probe to False, never propagate.
+
+    The NotImplementedError case (backend genuinely lacks contact support) is
+    the expected miss, but a best-effort success probe must also swallow an
+    unexpected fault (a transient backend/state error) rather than aborting the
+    whole evaluation. This pins the ``except Exception`` fail-safe branch.
+    """
+
+    class _BrokenContactSim(_MinimalSim):
+        def get_contacts(self):
+            raise RuntimeError("contact query blew up mid-episode")
+
+    sim = _BrokenContactSim(robots=["r0"])
+    fn = PolicyRunner(sim)._resolve_success_fn("contact")
+    assert fn is not None
+    assert fn({}) is False
+
+
+def test_contact_success_fn_false_on_zero_contacts():
+    """When ``get_contacts`` reports zero contacts, the probe returns False.
+
+    A dict with ``n_contacts == 0`` and no populated ``contacts`` list is the
+    genuine "nothing is touching" negative - it must not be mistaken for
+    success. This pins the correct-negative return that the positive-detection
+    tests do not reach (they return early on the True branch).
+    """
+    sim = _MinimalSim(robots=["r0"])  # default get_contacts -> {"n_contacts": 0}
+    fn = PolicyRunner(sim)._resolve_success_fn("contact")
+    assert fn is not None
+    assert fn({}) is False
+
+
+def test_contact_success_fn_false_on_non_dict_result():
+    """A ``get_contacts`` that returns a non-dict (e.g. a bare list or None)
+    is treated as no-success rather than crashing on ``.get``. Pins the final
+    fallthrough return for an unrecognised result shape.
+    """
+
+    class _ListResultSim(_MinimalSim):
+        def get_contacts(self):
+            return ["unexpected", "shape"]
+
+    sim = _ListResultSim(robots=["r0"])
     fn = PolicyRunner(sim)._resolve_success_fn("contact")
     assert fn({}) is False
