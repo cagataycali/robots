@@ -627,6 +627,45 @@ class TestStreamDispatch:
         assert captured["instruction"] == "go"
         hw.cleanup()
 
+    def test_stream_never_raises_past_dispatch_on_handler_error(self):
+        # Tool contract: a handler blowing up must surface as a structured
+        # {"status": "error"} event, never propagate out of the async
+        # generator (which the agent runtime cannot recover from).
+        hw = _make_robot()
+
+        def _boom():
+            raise RuntimeError("kaboom")
+
+        hw.get_task_status = _boom  # type: ignore[assignment]
+        events = _drain(hw.stream({"toolUseId": "t6", "input": {"action": "status"}}, {}))
+        result = events[-1].tool_result
+        assert result["status"] == "error"
+        assert "kaboom" in result["content"][0]["text"]
+        hw.cleanup()
+
+
+class TestCleanupFailSoft:
+    def test_cleanup_continues_when_stop_teleoperate_raises(self):
+        # A teleop teardown failure must not abort the rest of cleanup: the
+        # mesh (and every later teardown step) still has to run so the process
+        # does not leak a live transport when teleop happens to be flaky.
+        hw = _make_robot()
+        hw._teleop_running = True
+
+        def _raise_teleop():
+            raise RuntimeError("teleop teardown failed")
+
+        hw.stop_teleoperate = _raise_teleop  # type: ignore[assignment]
+
+        stopped: list[str] = []
+        hw.mesh = types.SimpleNamespace(stop=lambda: stopped.append("mesh"))
+
+        # Must not raise despite stop_teleoperate blowing up...
+        hw.cleanup()
+
+        # ...and cleanup must have continued past the failure to tear the mesh down.
+        assert stopped == ["mesh"]
+
 
 # ---------------------------------------------------------------------------
 # Status / spec surface
