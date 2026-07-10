@@ -180,6 +180,43 @@ def test_gait_frame_rejects_single_obs_dim_too_small():
         )
 
 
+def test_gait_frame_rejects_overlong_command():
+    # A command wider than command_dim can't be laid into the fixed command
+    # slot without silently truncating a caller's intent, so it is rejected.
+    cfg = _gait_config()
+    with pytest.raises(ValueError, match="exceeds command_dim"):
+        build_gait_frame(
+            cfg,
+            command=np.zeros(GAIT_COMMAND_DIM + 1),
+            base_ang_vel=np.zeros(3),
+            proj_gravity=np.zeros(3),
+            qj=np.zeros(_NO),
+            dqj=np.zeros(_NO),
+            prev_action=np.zeros(_N),
+            clock=np.zeros(2),
+        )
+
+
+def test_gait_frame_zero_pads_short_command():
+    # A command narrower than command_dim is right-padded with zeros so a
+    # caller may omit trailing slots (height / freq / rpy) and still get a
+    # well-formed frame - the supplied prefix lands verbatim, the rest is zero.
+    cfg = _gait_config()
+    command = np.array([1.0, 2.0, 3.0, 4.0, 5.0])  # 5 of 8 slots supplied
+    frame = build_gait_frame(
+        cfg,
+        command=command,
+        base_ang_vel=np.zeros(3),
+        proj_gravity=np.zeros(3),
+        qj=np.zeros(_NO),
+        dqj=np.zeros(_NO),
+        prev_action=np.zeros(_N),
+        clock=np.zeros(2),
+    )
+    np.testing.assert_array_equal(frame[0:5], command)
+    np.testing.assert_array_equal(frame[5:GAIT_COMMAND_DIM], np.zeros(GAIT_COMMAND_DIM - 5))
+
+
 # ---------------------------------------------------------------------------
 # GaitClock - bipedal phase generator
 # ---------------------------------------------------------------------------
@@ -250,6 +287,15 @@ def test_gait_clock_rejects_nonpositive_freq():
     for bad in (0.0, -1.0, float("nan"), float("inf")):
         with pytest.raises(ValueError, match="freq"):
             clk.update(np.zeros(3), freq=bad)
+
+
+def test_gait_clock_rejects_short_velocity():
+    # update() needs the full [vx, vy, omega] triple to compute the command
+    # norm that gates the walk/static switch; a shorter vector is rejected
+    # rather than read past its end.
+    clk = GaitClock()
+    with pytest.raises(ValueError, match="at least 3"):
+        clk.update(np.zeros(2), freq=1.0)
 
 
 def test_gait_clock_reset_restores_initial_state():
@@ -344,6 +390,25 @@ def test_gait_policy_frequency_precedence():
     p2 = WBCGaitPolicy(allow_missing_models=True)
     cmd3, _ = p2._resolve_command({"target_velocity": [0.5, 0.0, 0.0]})
     assert cmd3[4] == pytest.approx(0.75)
+
+
+def test_gait_policy_resolve_command_falls_back_to_constructor_velocity():
+    # With no per-call target_velocity, the command uses the constructor
+    # default_command (scaled into the velocity slots), so a policy configured
+    # once keeps driving without repeating the velocity every tick.
+    p = WBCGaitPolicy(allow_missing_models=True, target_velocity=[0.3, 0.0, 0.0])
+    command, raw = p._resolve_command({"gait_frequency": 1.0})
+    np.testing.assert_array_equal(raw, [0.3, 0.0, 0.0])
+    assert command[0] == pytest.approx(0.3 * p.config.cmd_scale[0])
+
+
+def test_gait_policy_resolve_command_defaults_to_zero_velocity():
+    # No per-call kwarg and no constructor default -> a standing command
+    # (zero velocity), not a crash or an unset value.
+    p = WBCGaitPolicy(allow_missing_models=True)
+    command, raw = p._resolve_command({"gait_frequency": 1.0})
+    np.testing.assert_array_equal(raw, [0.0, 0.0, 0.0])
+    np.testing.assert_array_equal(command[0:3], np.zeros(3))
 
 
 def test_gait_policy_reset_clears_clock():
