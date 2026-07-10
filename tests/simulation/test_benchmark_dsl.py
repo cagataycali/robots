@@ -285,7 +285,12 @@ success:
         assert ".toml" in str(exc.value) or "extension" in str(exc.value)
 
     def test_spec_name_internal_overridden_by_registry_name(self, tmp_path):
-        """Registry name wins over any ``name`` declared inside the spec file."""
+        """Registry name wins over any ``name`` declared inside the spec file.
+
+        The override applies to the instance's ``.name`` too, not just the
+        registry key - the documented contract is that the registry name wins,
+        and ``DeclarativeBenchmark.name`` is what error/log messages report.
+        """
         p = tmp_path / "s.json"
         p.write_text(
             json.dumps(
@@ -296,10 +301,36 @@ success:
                 }
             )
         )
-        register_benchmark_from_file("external-name", str(p))
-        assert get_benchmark("external-name") is not None
+        bench = register_benchmark_from_file("external-name", str(p))
+        assert get_benchmark("external-name") is bench
         # The spec's internal name doesn't end up in the registry.
         assert get_benchmark("internal-name") is None
+        # The instance reports the registry name, not the stale spec-internal one.
+        assert bench.name == "external-name"
+
+    def test_same_spec_registered_under_multiple_names(self, tmp_path):
+        """The documented use case: one spec file, many registry names.
+
+        Each registration must yield an instance whose ``.name`` matches its own
+        registry key so the two are distinguishable - a spec that declares its
+        own ``name`` must not make every registration report that one name.
+        """
+        p = tmp_path / "s.json"
+        p.write_text(
+            json.dumps(
+                {
+                    "name": "declared-in-spec",
+                    "default_robot": "so100",
+                    "supported_robots": ["so100"],
+                }
+            )
+        )
+        first = register_benchmark_from_file("task-a", str(p))
+        second = register_benchmark_from_file("task-b", str(p))
+        assert first.name == "task-a"
+        assert second.name == "task-b"
+        assert get_benchmark("task-a").name == "task-a"
+        assert get_benchmark("task-b").name == "task-b"
 
     def test_rejects_empty_name(self, tmp_path):
         p = tmp_path / "s.json"

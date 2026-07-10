@@ -396,8 +396,13 @@ def register_benchmark_from_file(
     if not isinstance(name, str) or not name:
         raise ValueError(f"register_benchmark_from_file: name must be a non-empty string, got {name!r}")
     spec_dict = _load_spec_file(spec_path)
-    # Spec-internal name is informational; the registry name always wins.
-    spec_dict.setdefault("name", name)
+    # The registry name always wins: unconditionally override any spec-internal
+    # ``name`` so the instance's ``.name`` matches the key it is registered under
+    # (the documented contract). ``setdefault`` was insufficient - a spec that
+    # declared its own ``name`` kept it, so the same spec registered under two
+    # keys produced two instances that both reported the spec-internal name and
+    # neither matched its registry key.
+    spec_dict["name"] = name
     benchmark = DeclarativeBenchmark.from_dict(spec_dict)
     register_benchmark(name, benchmark)
     return benchmark

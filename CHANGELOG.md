@@ -5,6 +5,22 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: benchmark registered from a spec file reported the spec-internal name, not the registry name
+
+`register_benchmark_from_file(name, spec_path)` documents that the registry
+`name` "overrides any name declared inside the spec (so the same spec file can
+be registered under multiple names)", but it merged the name with
+`spec_dict.setdefault("name", name)` - which only applies when the spec omits a
+`name`. A spec that declared its own `name` kept it, so the resulting
+`DeclarativeBenchmark` instance reported the stale spec-internal name (the value
+`DeclarativeBenchmark.name` returns, which its own error/log messages quote),
+not the key it was registered under. Registering the same spec under two names
+then produced two instances that both reported the one spec-internal name and
+neither matched its registry key. The registry name now unconditionally
+overrides the spec-internal `name`, so an instance's `.name` always matches the
+key it is registered and looked up under. Specs that omit `name`, and the direct
+`DeclarativeBenchmark.from_dict` path, are unaffected.
+
 ### Added: `base_tipped` locomotion fall-over predicate for the benchmark/reward DSL
 
 The predicate DSL grew a `base_tipped(tol, robot)` BOOL predicate on the floating-base `get_observation` surface (the same `base_quat` the `base_*` reward terms read): True when the base has tilted more than `tol` from level. It is the failure-clause counterpart of the `base_orientation` reward term - `base_orientation` penalises tilt in `dense_reward`, `base_tipped` terminates the episode on a fall in a `failure` clause - which is the canonical legged_gym / IsaacLab locomotion fall-over termination. Previously a locomotion spec could not express "the robot fell over, end the episode": the DSL has no `not` to negate `body_upright`, and `body_upright` reaches the base only by an embodiment-specific body name (unavailable for a mobile base whose free joint is unnamed). `base_tipped` needs no body name and is identical across the MuJoCo and Newton backends.
