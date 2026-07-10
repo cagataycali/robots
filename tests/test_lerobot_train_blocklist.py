@@ -117,6 +117,21 @@ class TestNormalizeHydraKey:
 class TestGateExtraFlags:
     """Pin the HIL gate contract: allowlist, bypass, interrupt, decline."""
 
+    @pytest.fixture(autouse=True)
+    def _hermetic_gate_env(self, monkeypatch):
+        """Neutralize ambient env that short-circuits the gate.
+
+        Both BYPASS_TOOL_CONSENT and STRANDS_TRAIN_EXTRA_FLAGS_ALLOW cause the
+        gate to allow blocked flags without prompting. A developer or CI shell
+        that exports BYPASS_TOOL_CONSENT=true (common in agent/automation
+        contexts) would otherwise make the no-context, allowlist, and interrupt
+        cases pass silently and fail their assertions. Clearing both per-test
+        makes each case deterministic regardless of the ambient environment;
+        tests that exercise those paths opt in explicitly via monkeypatch.setenv.
+        """
+        monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
+        monkeypatch.delenv("STRANDS_TRAIN_EXTRA_FLAGS_ALLOW", raising=False)
+
     def test_benign_flags_pass(self):
         assert _gate_extra_flags({"lr": "1e-4"}, None) is None
 
