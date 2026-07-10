@@ -88,6 +88,21 @@ class TestIsPublishBlocked:
 class TestGatePublish:
     """Pin the HIL gate contract: allowlist, bypass, interrupt, decline."""
 
+    @pytest.fixture(autouse=True)
+    def _hermetic_gate_env(self, monkeypatch):
+        """Neutralize ambient env that short-circuits the gate.
+
+        Both BYPASS_TOOL_CONSENT and STRANDS_ROS2_PUBLISH_ALLOW cause the gate
+        to allow blocked topics without prompting. A developer or CI shell that
+        exports BYPASS_TOOL_CONSENT=true (common in agent/automation contexts)
+        would otherwise make the no-context, allowlist, and interrupt cases pass
+        silently and fail their assertions. Clearing both per-test makes each
+        case deterministic regardless of the ambient environment; tests that
+        exercise those paths opt in explicitly via monkeypatch.setenv.
+        """
+        monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
+        monkeypatch.delenv("STRANDS_ROS2_PUBLISH_ALLOW", raising=False)
+
     def test_non_blocked_topic_passes(self):
         assert _gate_publish("/my_topic", None) is None
 
