@@ -1050,6 +1050,71 @@ def test_render_depth_without_clip_warning_caches_empty(monkeypatch) -> None:
         sim.destroy()
 
 
+def test_render_depth_forwards_genuine_stderr_and_suppresses_arb(monkeypatch) -> None:
+    """Depth-render stderr hygiene: a genuine (non-ARB) stderr line emitted by
+    the offscreen renderer is forwarded verbatim to the real console so real
+    errors never silently vanish, while the benign one-time ARB_clip_control
+    notice is dropped from the console (it is surfaced in the response text
+    instead, so it is not lost either).
+    """
+    import io
+
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        # The renderer emits BOTH a benign ARB notice and a genuine GL error.
+        noisy = _FakeDepthRenderer(
+            np.full((2, 2), 0.4, dtype=np.float32),
+            stderr_text=("WARNING: ARB_clip_control not supported\nERROR: GLXBadContext: framebuffer incomplete\n"),
+        )
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: noisy)
+
+        # Capture what render_depth forwards to the real console (sys.__stderr__).
+        forwarded = io.StringIO()
+        monkeypatch.setattr(sys, "__stderr__", forwarded)
+
+        r = sim.render_depth(width=2, height=2)
+        assert r["status"] == "success", r
+
+        console = forwarded.getvalue()
+        # The genuine error is forwarded verbatim ...
+        assert "GLXBadContext: framebuffer incomplete" in console
+        # ... but the benign ARB line is suppressed from the console (it would
+        # be duplicate noise -- it is surfaced in the response text below).
+        assert "ARB_clip_control" not in console
+        # The ARB notice is still surfaced to the caller in the response text.
+        assert "ARB_clip_control" in r["content"][0]["text"]
+    finally:
+        sim.destroy()
+
+
+def test_render_depth_stderr_forward_is_best_effort_when_console_closed(monkeypatch) -> None:
+    """Forwarding genuine stderr is best-effort: when the real console is closed
+    or detached (its write raises ValueError/OSError, e.g. under teardown or a
+    swapped-out stream), render_depth swallows the forward failure and still
+    returns the depth map rather than propagating the write error.
+    """
+    np = pytest.importorskip("numpy")
+    sim = _depth_world()
+    try:
+        noisy = _FakeDepthRenderer(
+            np.full((2, 2), 0.4, dtype=np.float32),
+            stderr_text="ERROR: genuine GL failure\n",
+        )
+        monkeypatch.setattr(sim, "_get_renderer", lambda w, h: noisy)
+
+        class _ClosedStderr:
+            def write(self, _data: str) -> int:
+                raise ValueError("I/O operation on closed file")
+
+        monkeypatch.setattr(sys, "__stderr__", _ClosedStderr())
+
+        r = sim.render_depth(width=2, height=2)
+        assert r["status"] == "success", r
+    finally:
+        sim.destroy()
+
+
 def test_render_depth_renderer_failure_returns_error(monkeypatch) -> None:
     """A renderer that raises during render() surfaces a structured error dict
     rather than propagating the exception."""
