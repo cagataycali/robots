@@ -697,6 +697,52 @@ class TestPrepareObs:
         assert "gripper" not in b["state"]
         assert "single_arm" in b["state"]
 
+    def test_warns_and_zero_fills_when_robot_omits_expected_streams(self, caplog):
+        """Missing mapped streams degrade gracefully: warn per key, then zero-fill.
+
+        A robot may not publish every camera/state stream the checkpoint was
+        trained on (e.g. a head camera is unplugged, or a joint group is absent
+        on this embodiment). The policy must not crash or silently emit a
+        malformed observation. For each mapped robot key absent from the raw
+        observation it logs a WARNING, and the model-side keys are then
+        zero-filled from the modality config so the wire payload keeps the exact
+        shape the model expects.
+        """
+        import logging
+
+        p = _make_policy(
+            obs_mapping=ObservationMapping(
+                video={"cam": "ego_view_bg_crop_pad_res256_freq20"},
+                state={"j": "left_arm"},
+                language_key="task",
+            ),
+            mmc=GR1_MMC,
+        )
+        # Robot publishes neither the mapped camera ("cam") nor the mapped
+        # state stream ("j") this tick.
+        with caplog.at_level(logging.WARNING):
+            b = p._prepare_observation({}, "pick cube")
+
+        messages = [r.message for r in caplog.records]
+        assert any("cam" in m and "missing" in m for m in messages)
+        assert any("j" in m and "missing" in m for m in messages)
+
+        # Video: the absent mapped camera is zero-filled from the modality
+        # config using the default reference shape (no video present to size
+        # against), keeping the (B=1, T=1, H, W, 3) uint8 layout.
+        vid = b["video"]["ego_view_bg_crop_pad_res256_freq20"]
+        assert vid.shape == (1, 1, 256, 256, 3)
+        assert vid.dtype == np.uint8
+        assert not vid.any()
+
+        # State: every model state key is zero-filled at its discovered DOF.
+        for key, dof in (("left_arm", 7), ("right_arm", 7), ("waist", 3)):
+            assert b["state"][key].shape == (1, 1, dof)
+            assert not b["state"][key].any()
+
+        # Language is unaffected by the missing sensor streams.
+        assert b["language"]["task"] == [["pick cube"]]
+
 
 # (section)
 # _unpack_actions
