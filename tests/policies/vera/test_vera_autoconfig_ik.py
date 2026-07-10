@@ -229,3 +229,98 @@ def test_discover_returns_none_when_chain_has_no_leaf():
     sites = []
     model = _install_fake_mujoco(bodies, sites, {0: 1, 1: 0})
     assert ee_frame.discover_ee_frame(model, "robot/") is None
+
+
+def test_set_ik_target_applies_rotation_dim_and_translation_scale_overrides():
+    """set_ik_target stores explicit rotation_dim + translation_scale overrides.
+
+    The embodiment defaults are axis-angle (rotation_dim=3, translation_scale=1.0);
+    a caller driving a rot6d server must be able to override both, and doing so
+    forces the IK bridge to rebuild so the new encoding takes effect.
+    """
+    from strands_robots.policies.vera.provider import VeraPolicy
+
+    class FakeClient:
+        def get_server_metadata(self):
+            return {"action_space": "eef_delta", "view_keys": ["image"]}
+
+        def reset(self, i):
+            pass
+
+        def configure(self, p):
+            return {}
+
+        def close(self):
+            pass
+
+        def infer(self, r):
+            return {"action": np.zeros((1, 7), np.float32)}
+
+    p = VeraPolicy(client=FakeClient(), auto_launch_server=False)
+    # Defaults before any override.
+    assert p._rotation_dim == 3
+    assert p._translation_scale == 1.0
+
+    p.set_ik_target(object(), "hand", "body", rotation_dim=6, translation_scale=2.5)
+
+    assert p._rotation_dim == 6
+    assert p._translation_scale == 2.5
+    assert p._ee_frame_name == "hand"
+    assert p._ee_frame_type == "body"
+    assert p._ik_bridge is None, "set_ik_target must reset the bridge so it rebuilds"
+
+
+def test_autoconfigure_ik_returns_false_without_model():
+    """autoconfigure_ik declines (False) when no MjModel is available yet.
+
+    The sim passes its compiled model into the handshake; before that arrives
+    there is nothing to discover, so auto-config is a no-op rather than an error.
+    """
+    from strands_robots.policies.vera.provider import VeraPolicy
+
+    p = VeraPolicy(client=None, auto_launch_server=False)
+    assert p.autoconfigure_ik(None) is False
+    assert p._ee_frame_name is None
+
+
+def test_autoconfigure_ik_is_idempotent_once_configured():
+    """A second autoconfigure_ik call short-circuits to True without rediscovery.
+
+    Once an ee-frame is set (explicitly or by a prior auto-config) the method is
+    idempotent unless force=True, so repeated sim handshakes do not re-run
+    discovery or clobber an explicit frame.
+    """
+    import importlib
+
+    from strands_robots.policies.vera import ee_frame
+
+    importlib.reload(ee_frame)
+    from strands_robots.policies.vera.provider import VeraPolicy
+
+    p = VeraPolicy(client=None, auto_launch_server=False)
+    p._ee_frame_name = "explicit/tcp"
+    p._ee_frame_type = "site"
+    # A model with no discoverable frame would return False if discovery ran;
+    # idempotency must short-circuit before that, keeping the explicit frame.
+    model = _install_fake_mujoco(["world"], [], {})
+    assert p.autoconfigure_ik(model, "robot/") is True
+    assert p._ee_frame_name == "explicit/tcp", "explicit frame must be preserved"
+
+
+def test_autoconfigure_ik_returns_false_when_discovery_finds_nothing():
+    """autoconfigure_ik returns False when the model exposes no ee-frame.
+
+    A model whose namespace holds no site/body hint and no leaf body yields no
+    discovery result, so auto-config declines and leaves IK unconfigured.
+    """
+    import importlib
+
+    from strands_robots.policies.vera import ee_frame
+
+    importlib.reload(ee_frame)
+    from strands_robots.policies.vera.provider import VeraPolicy
+
+    p = VeraPolicy(client=None, auto_launch_server=False)
+    model = _install_fake_mujoco(["world"], [], {})  # nothing under 'panda/'
+    assert p.autoconfigure_ik(model, "panda/") is False
+    assert p._ee_frame_name is None
