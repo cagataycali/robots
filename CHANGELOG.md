@@ -1201,6 +1201,10 @@ name-resolution degradation.
 
 - The `strands_robots.simulation.predicates` module docstring is the sole discovery surface for the closed benchmark/reward DSL (the spec loader refuses any predicate not in `PREDICATE_REGISTRY`, so a spec author can only use terms they can find listed there). Its "Available reward terms (float)" list had gone stale, naming only 4 of the 9 registered terms: the base-locomotion family (`base_height`, `base_orientation`, `base_lin_vel_z`, `base_ang_vel_xy`) and `staged_reward` were undiscoverable despite being fully implemented and on the velocity-tracking reward path. All 9 are now listed, and a completeness test pins both the bool-predicate and reward-term docstring lists to the registry (grouped by `predicate_kind`) so the discovery surface can no longer drift out of sync with the code.
 
+### Added: `base_below_z` locomotion height-collapse predicate for the benchmark/reward DSL
+
+- The benchmark/reward DSL reads a floating base off the embodiment-agnostic surface `get_observation` exposes (`base_pos`/`base_quat`, which works even when the base sits on an unnamed free joint): `base_height` regularizes base height and `base_tipped` terminates on a topple. But the *collapse* half of a fall termination -- "the torso dropped to the floor, end the episode" -- was inexpressible on that surface. `body_below_z` needs a per-embodiment base body name (unavailable for a mobile base whose free joint is unnamed), and `base_height` is a float-valued reward term, the wrong kind for a `failure` clause. `base_below_z(z, robot=None)` closes the gap: a bool predicate that is `True` when the base world height drops below `z`, reading the same `base_pos` signal `base_height` reads. Paired with `base_tipped` in one `failure` clause it gives a complete locomotion fall termination (topple OR collapse) with no base body name; it degrades to `False` (and warns once) on a fixed-base arm.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

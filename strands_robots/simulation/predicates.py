@@ -39,6 +39,7 @@ Available predicates (bool):
     body_upright(body, tol=0.15)
     grasped(body, gripper_prefix)
     base_tipped(tol=0.15, robot=None)
+    base_below_z(z, robot=None)
 
 Available reward terms (float):
 
@@ -823,6 +824,50 @@ def _base_tipped(tol: float = 0.15, robot: str | None = None) -> BoolPredicate:
     return check
 
 
+def _base_below_z(z: float, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base's world height has dropped below ``z``.
+
+    The height counterpart of :func:`_base_tipped`, and the second half of a
+    complete floating-base fall termination: ``base_tipped`` fires when the base
+    *topples* (rolls/pitches off level) and ``base_below_z`` fires when the base
+    *collapses* (its torso/pelvis sinks to the ground). Put both in a ``failure``
+    clause so a velocity-tracking rollout ends the instant the robot either
+    falls over OR drops to the floor, instead of flailing on the ground to
+    ``max_steps``::
+
+        failure:
+          any:
+            - {predicate: base_tipped, tol: 0.7}
+            - {predicate: base_below_z, z: 0.3}
+
+    Reads ``get_observation``'s ``base_pos`` z (world frame) - the same
+    embodiment-agnostic floating-base surface the ``base_*`` reward terms and
+    ``base_tipped`` read - so it needs no base body name and works on a mobile
+    base whose free joint is unnamed, unlike ``body_below_z`` which resolves a
+    specific body by name (a name a mobile base's unnamed free joint does not
+    expose). It is the base-surface, name-free analogue of
+    ``body_below_z(<base body>, z)``.
+
+    ``z`` is the collapse height in metres; a fall termination sets it well
+    below the standing base height (a G1 pelvis stands ~0.74 m, so ``z=0.3``
+    catches a collapse). Requires a robot with a floating base; a fixed-base arm
+    has no base position, so the predicate degrades to ``False`` (never
+    collapsed -> never spuriously fails an episode) and the missing base is
+    logged once. ``robot`` selects the robot in a multi-robot scene (default:
+    the sole robot).
+    """
+    zt = float(z)
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        pos = _base_position(sim, rname)
+        if pos is None:
+            return False
+        return pos[2] < zt
+
+    return check
+
+
 # Reward terms (float-valued)
 
 
@@ -1234,6 +1279,7 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "body_upright": _body_upright,
     "grasped": _grasped,
     "base_tipped": _base_tipped,
+    "base_below_z": _base_below_z,
     # float-valued
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,
