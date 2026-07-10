@@ -200,7 +200,14 @@ Destructive - writes into model arrays. Recompile scene to undo.
 |--------|-------|
 | `list_urdfs` | Loaded URDFs/MJCFs in current world |
 | `register_urdf(name, path)` | Register additional asset |
-| `get_features(robot_name=None)` | Observation/action feature schema for recording |
+| `get_features(robot_name=None)` | Joint / actuator / camera / robot names of the scene (scoped to one robot with `robot_name`) - the source of truth for the action keys a policy must emit, and the feature schema used for recording |
+
+!!! tip "Discover the expected action keys"
+    `get_features` is listed in `sim.describe()["methods"]`, so an agent can
+    find it from one `describe()` call. When a policy's emitted action keys
+    resolve to no actuator, `run_policy` fails fast with an error that names
+    `get_features(robot_name=...)` as the way to inspect the keys the robot
+    actually expects - the recommended method and the discovery surface agree.
 
 ## See also
 

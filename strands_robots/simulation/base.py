@@ -2059,6 +2059,13 @@ class SimEngine(ABC):
                     "LeRobotDataset episode through the sim"
                 ),
                 "list_robots": "() -> list[str]",
+                "get_features": (
+                    "(robot_name: str | None = None) -> dict  # joint / "
+                    "actuator / camera / robot names of the scene (scoped to "
+                    "one robot when robot_name is given) - the source of truth "
+                    "for the action keys a policy must emit; consult it when "
+                    "run_policy reports unresolved keys"
+                ),
                 "render": "(camera_name='default', width=None, height=None) -> dict",
                 "reset": "() -> dict  # during recording, flushes the buffered rollout as one episode before resetting",
                 "step": "(n_steps: int = 1) -> dict",

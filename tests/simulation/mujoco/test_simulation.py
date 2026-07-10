@@ -776,6 +776,60 @@ class TestListBodies:
         assert "arm1/base" in described["bodies"]
         assert "list_bodies" in described["methods"]
 
+    def test_describe_advertises_get_features_the_action_key_source(self, sim_with_robot):
+        """describe() must advertise get_features -- the joint/actuator/camera-
+        name discovery method that is the source of truth for the action keys a
+        policy must emit. The advertisement is only useful if the method it names
+        is real and returns those names, so assert both: the signature is on the
+        discovery surface, and calling it yields a non-empty actuator listing."""
+        described = sim_with_robot.describe()
+        assert "get_features" in described["methods"]
+        assert "robot_name" in described["methods"]["get_features"]
+
+        feats = sim_with_robot.get_features(robot_name="arm1")
+        assert feats["status"] == "success", feats
+        payload = next(c["json"] for c in feats["content"] if isinstance(c, dict) and "json" in c)
+        assert payload["features"]["actuator_names"], "get_features must list actuator names"
+
+    def test_fail_fast_recommended_method_is_discoverable_via_describe(self, sim_with_robot):
+        """Closed loop: when a policy's action keys resolve to no actuator,
+        run_policy's fail-fast error tells the caller to inspect the expected
+        keys via get_features(robot_name=...). The method that error names must
+        be discoverable on the primary discovery surface (describe), so an agent
+        recovering from the error does not have to scrape a method name out of an
+        error string only to find describe() never listed it."""
+        from strands_robots.policies.base import Policy
+
+        class _WrongKeysPolicy(Policy):
+            @property
+            def provider_name(self) -> str:
+                return "wrong_keys_test"
+
+            @property
+            def requires_images(self) -> bool:
+                return False
+
+            def set_robot_state_keys(self, robot_state_keys):
+                pass
+
+            async def get_actions(self, observation_dict, instruction, **kwargs):
+                # A key no actuator can absorb -> 100% unresolved every step.
+                return [{"definitely_not_a_joint": 0.5}]
+
+        result = sim_with_robot.run_policy(
+            robot_name="arm1",
+            policy_object=_WrongKeysPolicy(),
+            n_steps=50,
+            control_frequency=20.0,
+            fast_mode=True,
+        )
+        assert result["status"] == "error", result
+        err_text = result["content"][0]["text"]
+        # The diagnostic recommends get_features by name...
+        assert "get_features" in err_text
+        # ...and that method is discoverable on describe()'s method surface.
+        assert "get_features" in sim_with_robot.describe()["methods"]
+
     def test_list_bodies_reports_gripper_mount_when_present(self, sim_with_gripper_robot):
         """A robot with a gripper-like body gets its wrist/EEF mount resolved
         automatically. This is the payoff of the discovery surface: the agent
