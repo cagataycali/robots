@@ -5,6 +5,19 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: mypy import-untyped failures from pyarrow dropping its py.typed marker
+
+`pyarrow` 25.0.0 stopped shipping the `py.typed` marker it previously carried,
+so mypy reported `import-untyped` errors for every `import pyarrow.parquet` in
+`dataset_recorder.py` and `verify_dataset.py`. Because the lint gate runs
+`mypy strands_robots tests tests_integ`, this turned the whole type-check red on
+an unchanged first-party codebase (a dependency-drift break, not a code change).
+`pyarrow` / `pyarrow.*` now carry an `ignore_missing_imports` mypy override
+alongside the other untyped runtime dependencies, restoring a clean lint gate. A
+regression test runs mypy on the pyarrow-importing modules and asserts no
+residual import diagnostics, so a future removal of the override is caught here
+instead of in CI.
+
 ### Fixed: benchmark registered from a spec file reported the spec-internal name, not the registry name
 
 `register_benchmark_from_file(name, spec_path)` documents that the registry
