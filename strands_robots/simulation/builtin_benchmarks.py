@@ -9,9 +9,11 @@ reading the embodiment-agnostic floating-base surface from ``get_observation``.
 Those primitives, however, wired into no runnable benchmark:
 :func:`~strands_robots.simulation.benchmark.list_benchmarks` was empty until a
 caller hand-authored a spec (``register_benchmark_from_file``) or loaded the
-LIBERO suite. This module ships a canonical velocity-tracking locomotion
-benchmark composed from those primitives so a floating-base robot has a
-runnable, discoverable eval out of the box.
+LIBERO suite. This module ships canonical velocity-tracking locomotion benchmarks composed
+from those primitives - a quadruped (``go2_walk_forward``) and a humanoid
+(``g1_walk_forward``) - so a floating-base robot has a runnable, discoverable
+eval out of the box, and to show the same embodiment-agnostic DSL transfers
+unchanged across morphologies.
 
 Registration is opt-in - a caller invokes :func:`register_builtin_benchmarks`
 (mirroring how the LIBERO suite registers on demand via
@@ -74,11 +76,60 @@ _GO2_WALK_FORWARD: dict[str, Any] = {
     ],
 }
 
+# ``g1_walk_forward``: the humanoid (bipedal) counterpart of ``go2_walk_forward``
+# for the Unitree G1 - walk the G1 forward at 1 m/s and stay upright. It shows
+# the same floating-base DSL transfers unchanged to a biped; only the thresholds
+# and the regularizer stack differ, both grounded in the G1's real model:
+#
+#   - The G1 stands at base height ~0.79 m (measured; ``add_object``-free spawn),
+#     vs the Go2's ~0.32 m - so ``base_height`` targets 0.78 m and the
+#     height-collapse failure fires below 0.4 m (a fallen humanoid drops the
+#     pelvis well under half its standing height, with wide margin above 0 so a
+#     standing spawn never trips it).
+#   - ``base_tipped`` (tol=0.7, ~53 deg off level) terminates a topple, as for
+#     the quadruped: a walking biped tilts far less, so >53 deg is an
+#     unambiguous fall for either morphology.
+#   - The dense stack adds the ``base_lin_vel_z`` (anti-bounce) and
+#     ``base_ang_vel_xy`` (anti-wobble) regularizers on top of the Go2 stack:
+#     bipedal walking is far more sensitive to vertical bounce and roll/pitch
+#     wobble of the base than a statically-stable quadruped, so those
+#     regularizers (added for exactly this in the DSL) belong in a humanoid task.
+_G1_WALK_FORWARD: dict[str, Any] = {
+    "name": "g1_walk_forward",
+    "default_robot": "unitree_g1",
+    "supported_robots": ["unitree_g1"],
+    "max_steps": 1000,
+    "success": {"all": [{"predicate": "base_beyond_x", "x": 2.0}]},
+    "failure": {
+        "any": [
+            {"predicate": "base_tipped", "tol": 0.7},
+            {"predicate": "base_below_z", "z": 0.4},
+        ]
+    },
+    "dense_reward": [
+        {
+            "predicate": "base_velocity_tracking",
+            "vx": 1.0,
+            "vy": 0.0,
+            "wz": 0.0,
+            "lin_weight": 1.0,
+            "ang_weight": 0.5,
+            "tracking_sigma": 0.25,
+        },
+        {"predicate": "base_height", "target": 0.78, "weight": 0.5},
+        {"predicate": "base_orientation", "weight": 0.5},
+        {"predicate": "base_lin_vel_z", "weight": 0.1},
+        {"predicate": "base_ang_vel_xy", "weight": 0.1},
+    ],
+}
+
+
 # Registry of shipped built-in specs, keyed by their canonical registry name.
-# Extend this dict to ship more (e.g. a humanoid ``g1_walk_forward``); the same
-# floating-base DSL applies with different height/orientation thresholds.
+# Extend this dict to ship more; every entry reuses the same embodiment-agnostic
+# floating-base DSL, differing only in the robot, thresholds, and reward stack.
 _BUILTIN_SPECS: dict[str, dict[str, Any]] = {
     "go2_walk_forward": _GO2_WALK_FORWARD,
+    "g1_walk_forward": _G1_WALK_FORWARD,
 }
 
 

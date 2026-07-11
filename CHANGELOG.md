@@ -145,6 +145,21 @@ tracking + posture regularizers). Registration is opt-in (mirrors the on-demand
 LIBERO suite registration), so importing `strands_robots` mutates no registry;
 `builtin_benchmark_specs()` returns the spec dicts to copy/fork.
 
+### Added: `g1_walk_forward` humanoid locomotion benchmark in `register_builtin_benchmarks()`
+
+`register_builtin_benchmarks()` now also ships `g1_walk_forward`, the humanoid
+(bipedal) counterpart of `go2_walk_forward` for the Unitree G1, so a humanoid has a
+runnable, discoverable velocity-tracking eval out of the box and the same
+floating-base predicate/reward DSL is shown to transfer unchanged from a quadruped
+to a biped. Only the thresholds and the regularizer stack differ, both grounded in
+the G1's real model: the G1 stands at base height ~0.79 m (vs the Go2's ~0.32 m), so
+`base_height` targets 0.78 m and the height-collapse failure fires below 0.4 m (well
+clear of the standing spawn, yet high enough to catch a folded humanoid that the
+Go2's 0.18 m threshold would miss). The dense stack adds the `base_lin_vel_z`
+(anti-bounce) and `base_ang_vel_xy` (anti-wobble) regularizers on top of the Go2
+stack, because bipedal walking is far more sensitive to base vertical bounce and
+roll/pitch wobble than a statically-stable quadruped.
+
 ### Added: `describe()` advertises the benchmark scoring family (`evaluate_benchmark` / `list_benchmarks` / `register_benchmark_from_file`)
 
 `SimEngine.describe()["methods"]` is the single-call discovery surface an agent
