@@ -237,6 +237,25 @@ class TestDescribeABC:
         assert "benchmark_name" in methods["evaluate_benchmark"]
         assert "spec_path" in methods["register_benchmark_from_file"]
 
+    def test_describe_register_builtin_benchmarks_advertises_humanoids(self):
+        """describe() advertises register_builtin_benchmarks as shipping BOTH the
+        quadruped and the humanoid locomotion tasks, not the quadruped alone.
+
+        register_builtin_benchmarks() ships three velocity-tracking tasks -
+        go2_walk_forward (quadruped) plus g1_walk_forward and t1_walk_forward
+        (two humanoids of different scale). The discovery-surface description
+        once named only go2_walk_forward as its example, so an agent enumerating
+        describe()["methods"] to decide whether a runnable HUMANOID locomotion
+        eval exists would be misled into thinking only the quadruped ships. Pin
+        the humanoid tasks into the advertised text so it cannot silently
+        regress to quadruped-only as more built-ins are added.
+        """
+        engine = _make_minimal_engine()
+        blurb = engine.describe()["methods"]["register_builtin_benchmarks"]
+        assert "g1_walk_forward" in blurb
+        assert "t1_walk_forward" in blurb
+        assert "humanoid" in blurb.lower()
+
 
 @pytest.mark.skipif(
     not pytest.importorskip("mujoco", reason="MuJoCo not installed"),

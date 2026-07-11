@@ -2099,9 +2099,10 @@ class SimEngine(ABC):
                     "DSL) as YAML/JSON at runtime and register it under benchmark_name"
                 ),
                 "register_builtin_benchmarks": (
-                    "() -> dict  # register the shipped built-in benchmarks "
-                    "(e.g. the go2_walk_forward velocity-tracking locomotion task) "
-                    "so they appear in list_benchmarks and can be run via evaluate_benchmark"
+                    "() -> dict  # register the shipped built-in velocity-tracking "
+                    "locomotion benchmarks - the go2_walk_forward quadruped task and "
+                    "the g1_walk_forward / t1_walk_forward humanoid tasks - so they "
+                    "appear in list_benchmarks and can be run via evaluate_benchmark"
                 ),
                 "replay_episode": (
                     "(repo_id: str, robot_name=None, episode=0, root=None, "
