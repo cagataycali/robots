@@ -460,6 +460,46 @@ class TestDescribeMuJoCo:
         finally:
             sim.destroy()
 
+    def test_describe_lists_physics_tuning_methods(self):
+        """describe() advertises the physics-tuning / domain-perturbation WRITE surface.
+
+        The complement of the physics-introspection READ family: ``set_gravity``
+        / ``set_timestep`` (retune the engine), ``set_body_properties`` /
+        ``set_geom_properties`` (per-body / per-geom domain randomization), and
+        ``apply_force`` (an external wrench for push-recovery / perturbation
+        testing) are all first-class actions in the MuJoCo tool spec and action
+        dispatcher, and the engine's own guidance points a caller at
+        "set_gravity, set_timestep, etc." -- but the discovery surface listed
+        none of them, so an agent setting up a domain-randomization / sim2real
+        scene had to guess these names. They belong on the discovery surface
+        alongside the randomize() facade and the physics-read surface.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in (
+                "set_gravity",
+                "set_timestep",
+                "set_body_properties",
+                "set_geom_properties",
+                "apply_force",
+            ):
+                assert name in methods, f"describe() omits physics-tuning method {name!r}"
+            # Advertised signatures name the real distinguishing parameters so a
+            # caller can invoke them without reading the source.
+            assert "gravity" in methods["set_gravity"]
+            assert "timestep" in methods["set_timestep"]
+            assert "body_name" in methods["set_body_properties"]
+            assert "friction" in methods["set_geom_properties"]
+            assert "torque" in methods["apply_force"]
+        finally:
+            sim.destroy()
+
     def test_describe_methods_resolve_to_real_attributes(self):
         """Every method MuJoCo describe() advertises must be a real callable.
 

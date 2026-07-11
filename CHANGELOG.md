@@ -25,6 +25,28 @@ engine and Newton (each fails before, passes after), and the existing
 resolve-to-real-attributes guard confirms each advertised name is a live callable
 on the MuJoCo engine.
 
+### Added: `describe()` advertises the physics-tuning / domain-perturbation surface (`set_gravity` / `set_timestep` / `set_body_properties` / `set_geom_properties` / `apply_force`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. It advertised the
+physics-introspection READ family (`get_body_state` / `get_contacts` /
+`get_sensor_data` / ... - how to *verify* a rollout) but omitted the write
+complement: the physics-tuning / domain-perturbation methods that *vary* the
+engine. `set_gravity` and `set_timestep` retune the engine (randomize gravity,
+simulate reduced/zero-g, change the integration step), `set_body_properties` and
+`set_geom_properties` perturb per-body mass or per-geom color/friction/size for
+domain randomization + sim2real, and `apply_force` applies an external wrench for
+push-recovery / disturbance-rejection perturbation testing. All five are
+first-class actions in the MuJoCo tool spec and action dispatcher - the engine's
+own guidance even points a caller at "set_gravity, set_timestep, etc." - yet an
+agent setting up a domain-randomization scene from `describe()` alone had to guess
+them. They are now listed in the MuJoCo backend's `describe()` methods dict as the
+write siblings of the coarse-grained `randomize()` facade and the physics-read
+surface, with signatures naming their distinguishing parameters. A regression test
+asserts the family is advertised (fails before, passes after) and the existing
+resolve-to-real-attributes guard confirms each advertised name is a live callable
+on the engine.
+
 ### Fixed: mypy import-untyped failures from pyarrow dropping its py.typed marker
 
 `pyarrow` 25.0.0 stopped shipping the `py.typed` marker it previously carried,

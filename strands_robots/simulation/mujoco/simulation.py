@@ -1522,6 +1522,44 @@ class MuJoCoSimEngine(
             "exclude_body=-1) -> dict  # batch raycast from one origin (e.g. a lidar fan)"
         )
 
+        # Physics-tuning / domain-perturbation WRITE surface -- the complement
+        # of the physics-introspection READ family above. describe() teaches how
+        # to build a scene, run a policy, read the physics result, and checkpoint
+        # state, but previously listed no way to discover how to VARY the physics
+        # engine itself: randomize gravity or the integration timestep, perturb a
+        # body's mass or a geom's color/friction/size for domain randomization +
+        # sim2real, or apply an external wrench for push-recovery / perturbation
+        # testing. These are public MuJoCo methods the tool spec + action
+        # dispatcher already expose (the engine's own guidance points a caller at
+        # "set_gravity, set_timestep, etc."), and they are the write siblings of
+        # the coarse-grained randomize() facade; listing them here reveals the
+        # physics-write surface from one describe() call instead of by guessing.
+        base["methods"]["set_gravity"] = (
+            "(gravity: list[float] | float | int) -> dict  # set the world "
+            "gravity vector [gx, gy, gz] (a scalar is taken as the -z magnitude); "
+            "domain-randomize gravity or simulate reduced/zero-g"
+        )
+        base["methods"]["set_timestep"] = (
+            "(timestep: float) -> dict  # set the physics integration timestep "
+            "in seconds (smaller = more accurate, slower); the per-action substep "
+            "count run_policy derives from control_frequency rescales with it"
+        )
+        base["methods"]["set_body_properties"] = (
+            "(body_name: str, mass: float | None = None) -> dict  # set a body's "
+            "mass (its inertia scales with the mass); domain-randomize dynamics"
+        )
+        base["methods"]["set_geom_properties"] = (
+            "(geom_name=None, geom_id=None, color=None, friction=None, size=None) "
+            "-> dict  # set a geom's color (RGBA), friction, or size; "
+            "domain-randomize appearance + contact dynamics (identify the geom by "
+            "name or id)"
+        )
+        base["methods"]["apply_force"] = (
+            "(body_name: str, force=None, torque=None, point=None) -> dict  # "
+            "apply an external force/torque wrench to a body for the next step "
+            "(push-recovery / disturbance-rejection perturbation testing)"
+        )
+
         # Sim-state checkpoint + direct pose-setting surface. describe() teaches
         # how to build a scene, run a policy, and read the physics result, but
         # previously gave no way to discover how to CHECKPOINT/RESTORE the whole
