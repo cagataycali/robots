@@ -2739,7 +2739,7 @@ class MuJoCoSimEngine(
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
                 "Same Policy ABC as real robot control - sim and real with zero code changes. "
-                "Actions (66 total): "
+                "Actions (67 total): "
                 "[World] create_world, load_scene, reset, get_state, destroy, export_xml; "
                 "[Robots] add_robot, remove_robot, list_robots, get_robot_state, list_bodies; "
                 "[Objects] add_object, remove_object, move_object, list_objects; "
@@ -2754,7 +2754,7 @@ class MuJoCoSimEngine(
                 "[Recording] start_recording, save_episode, stop_recording, get_recording_status, "
                 "start_cameras_recording, stop_cameras_recording, get_cameras_recording_status; "
                 "[Randomize] randomize; "
-                "[Benchmark] list_benchmarks, register_benchmark_from_file, evaluate_benchmark; "
+                "[Benchmark] list_benchmarks, register_benchmark_from_file, register_builtin_benchmarks, evaluate_benchmark; "
                 "[Registry] list_urdfs, register_urdf, get_features. "
                 "Call destroy() at session end to release resources."
             ),

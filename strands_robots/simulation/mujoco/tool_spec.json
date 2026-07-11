@@ -70,6 +70,7 @@
         "get_cameras_recording_status",
         "list_benchmarks",
         "register_benchmark_from_file",
+        "register_builtin_benchmarks",
         "evaluate_benchmark"
       ]
     },

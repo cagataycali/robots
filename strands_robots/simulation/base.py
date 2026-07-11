@@ -1970,6 +1970,34 @@ class SimEngine(ABC):
             ],
         }
 
+    def register_builtin_benchmarks(self) -> dict[str, Any]:
+        """Register the built-in benchmark specs shipped with strands_robots.
+
+        Wraps :func:`strands_robots.simulation.builtin_benchmarks.register_builtin_benchmarks`
+        so the shipped specs become discoverable via :meth:`list_benchmarks` and
+        runnable via :meth:`evaluate_benchmark` without hand-authoring a spec
+        file. Ships a canonical velocity-tracking locomotion benchmark
+        (``go2_walk_forward``) composed from the floating-base predicate/reward
+        DSL. Opt-in and idempotent (mirrors the on-demand LIBERO suite
+        registration); importing strands_robots performs no registry mutation.
+
+        Returns:
+            A status dict whose JSON payload carries the ``registered`` list of
+            benchmark names now available to :meth:`evaluate_benchmark`.
+        """
+        from strands_robots.simulation.builtin_benchmarks import (
+            register_builtin_benchmarks as _register,
+        )
+
+        names = _register()
+        return {
+            "status": "success",
+            "content": [
+                {"text": f"Registered {len(names)} built-in benchmark(s): {', '.join(names)}"},
+                {"json": {"registered": names}},
+            ],
+        }
+
     def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
         """Override to return an ``on_frame(step, obs, action)`` callable.
 
@@ -2069,6 +2097,11 @@ class SimEngine(ABC):
                     "(benchmark_name: str, spec_path: str) -> dict  # author a "
                     "declarative benchmark (success/failure/dense_reward predicate "
                     "DSL) as YAML/JSON at runtime and register it under benchmark_name"
+                ),
+                "register_builtin_benchmarks": (
+                    "() -> dict  # register the shipped built-in benchmarks "
+                    "(e.g. the go2_walk_forward velocity-tracking locomotion task) "
+                    "so they appear in list_benchmarks and can be run via evaluate_benchmark"
                 ),
                 "replay_episode": (
                     "(repo_id: str, robot_name=None, episode=0, root=None, "

@@ -73,6 +73,10 @@ from strands_robots.simulation.benchmark_spec import (
     DeclarativeBenchmark,
     register_benchmark_from_file,
 )
+from strands_robots.simulation.builtin_benchmarks import (
+    builtin_benchmark_specs,
+    register_builtin_benchmarks,
+)
 from strands_robots.simulation.factory import (
     create_simulation,
     list_backends,
@@ -156,6 +160,8 @@ __all__ = [
     # Declarative DSL + predicates
     "DeclarativeBenchmark",
     "register_benchmark_from_file",
+    "register_builtin_benchmarks",
+    "builtin_benchmark_specs",
     "PREDICATE_REGISTRY",
     "make_predicate",
     "register_predicate",

@@ -5,6 +5,22 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `register_builtin_benchmarks()` ships a canonical velocity-tracking locomotion benchmark (`go2_walk_forward`)
+
+The floating-base predicate/reward DSL (`base_velocity_tracking` / `base_height`
+/ `base_orientation` reward terms and the `base_beyond_x` / `base_tipped` /
+`base_below_z` predicates) was complete but wired into no runnable benchmark:
+`list_benchmarks()` was empty until a caller hand-authored a spec. A new
+`register_builtin_benchmarks()` (module function + `SimEngine` facade + `describe()`
+/ tool-action) compiles and registers the benchmarks shipped with the library so
+they are discoverable via `list_benchmarks()` and runnable via `evaluate_benchmark()`
+out of the box. The first shipped benchmark, `go2_walk_forward`, composes the DSL
+primitives into a canonical legged velocity-tracking task for the Unitree Go2
+(succeed past `x = 2 m`, fail on topple or height-collapse, dense exp-kernel twist
+tracking + posture regularizers). Registration is opt-in (mirrors the on-demand
+LIBERO suite registration), so importing `strands_robots` mutates no registry;
+`builtin_benchmark_specs()` returns the spec dicts to copy/fork.
+
 ### Added: `describe()` advertises the benchmark scoring family (`evaluate_benchmark` / `list_benchmarks` / `register_benchmark_from_file`)
 
 `SimEngine.describe()["methods"]` is the single-call discovery surface an agent

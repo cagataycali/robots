@@ -185,11 +185,23 @@ A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and `rtc
 | `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |
 
 !!! tip "Discover the benchmark scoring surface"
-    `evaluate_benchmark`, `list_benchmarks`, and `register_benchmark_from_file`
-    are listed in `sim.describe()["methods"]`, so an agent that can run a
+    `evaluate_benchmark`, `list_benchmarks`, `register_benchmark_from_file`,
+    and `register_builtin_benchmarks` are listed in `sim.describe()["methods"]`, so an agent that can run a
     policy from one `describe()` call can also discover how to score it
     against a success/failure/dense_reward benchmark - and author a new
     benchmark spec at runtime - without guessing the method names.
+
+**Built-in benchmarks.** `sim.register_builtin_benchmarks()` (or the module
+function `strands_robots.simulation.register_builtin_benchmarks()`) registers
+the benchmarks shipped with the library so they appear in `list_benchmarks()`
+and run via `evaluate_benchmark(...)` without hand-authoring a spec. It ships
+`go2_walk_forward` - a canonical velocity-tracking locomotion task for the
+Unitree Go2: succeed by walking the base past `x = 2 m` (`base_beyond_x`), fail
+on a topple (`base_tipped`) or a height collapse (`base_below_z`), and shape on
+a dense `base_velocity_tracking` (exp-kernel twist tracking) + `base_height` +
+`base_orientation` reward. Registration is opt-in (mirrors the on-demand LIBERO
+suite), so importing the library mutates no registry. `builtin_benchmark_specs()`
+returns the spec dicts to copy/fork as a starting point for your own task.
 
 ## Recording
 
