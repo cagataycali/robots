@@ -1705,6 +1705,50 @@ class MuJoCoSimEngine(
             "writes to output_path when given, else returns the XML inline. The "
             "read sibling of replace_scene_mjcf"
         )
+        # Teleoperation surface (TeleopMixin, shared with the hardware Robot).
+        # describe() teaches how to build a scene and drive it with a policy,
+        # but gave no way to discover the OTHER actuation source: driving a sim
+        # robot from an attached teleoperator (a real leader arm, gamepad, or
+        # keyboard) - the leader->follower / human-demonstration workflow that
+        # feeds data collection. All six are public facade methods on the sim;
+        # without them a caller could not learn from describe() how to attach an
+        # input device, run the teleop loop, or stop it, and had to guess these
+        # names. Listing them here reveals the teleop lifecycle (attach ->
+        # teleoperate -> stop) as the human-driven sibling of run_policy.
+        base["methods"]["attach_teleop"] = (
+            "(device_or_spec, *, name=None, method=None, map_fn=None, **kwargs) "
+            "-> Simulation  # attach a teleoperator (lazy - no hardware touched "
+            "until teleoperate). device_or_spec is a built lerobot Teleoperator "
+            "or a type string ('so101_leader', 'gamepad', 'keyboard'); map_fn "
+            "remaps a real leader's joint names onto the sim robot's actuators. "
+            "Returns self for chaining"
+        )
+        base["methods"]["teleoperate"] = (
+            "(*, names=None, robot_name=None, hz=50.0, publish=False, "
+            "block=False, duration=None) -> dict  # drive the sim from its "
+            "attached teleoperator(s): each tick polls get_action(), applies "
+            "map_fn, merges (last-wins), and send_action()s the result. "
+            "block=False runs a background loop and returns immediately; "
+            "duration stops it after N seconds; publish=True also mirrors the "
+            "stream to the mesh. The human-driven sibling of run_policy"
+        )
+        base["methods"]["stop_teleoperate"] = (
+            "() -> dict  # stop the background teleop loop, any mesh publishers, "
+            "and disconnect every device; frame/error stats. The inverse of teleoperate"
+        )
+        base["methods"]["get_teleoperate_status"] = (
+            "() -> dict  # local teleop-loop status (running, frames, errors, "
+            "actual hz, attached devices); distinct from the mesh teleop status"
+        )
+        base["methods"]["list_teleops"] = (
+            "() -> dict  # attached teleoperators and their connection state "
+            "(the teleop sibling of list_robots / list_cameras)"
+        )
+        base["methods"]["detach_teleop"] = (
+            "(name: str | None = None) -> dict  # detach one teleoperator by "
+            "name, or all when name is None; disconnects each and stops the loop "
+            "if it would be left with no devices. The inverse of attach_teleop"
+        )
 
         if self._world is not None:
             base["sim_time"] = self._world.sim_time

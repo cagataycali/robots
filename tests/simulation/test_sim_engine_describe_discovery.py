@@ -607,6 +607,47 @@ class TestDescribeMuJoCo:
         finally:
             sim.destroy()
 
+    def test_describe_lists_teleop_family(self):
+        """describe() advertises the teleoperation surface, not only run_policy.
+
+        describe() teaches how to build a scene and drive it with a policy
+        (``run_policy`` / ``start_policy``), but the OTHER actuation source --
+        driving a sim robot from an attached teleoperator (a real leader arm,
+        gamepad, or keyboard), the leader->follower / human-demonstration
+        workflow that feeds data collection -- was undiscoverable from
+        describe() alone. The six ``TeleopMixin`` facades (``attach_teleop`` ->
+        ``teleoperate`` -> ``stop_teleoperate``, plus ``detach_teleop`` /
+        ``list_teleops`` / ``get_teleoperate_status``) are public methods on the
+        sim, yet a caller had to guess their names. They belong on the discovery
+        surface as the human-driven sibling of the policy-rollout family.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in (
+                "attach_teleop",
+                "teleoperate",
+                "stop_teleoperate",
+                "get_teleoperate_status",
+                "list_teleops",
+                "detach_teleop",
+            ):
+                assert name in methods, f"describe() omits teleop method {name!r}"
+            # Advertised signatures name the real distinguishing parameters so a
+            # caller can invoke them without reading the source.
+            assert "map_fn" in methods["attach_teleop"]
+            assert "publish" in methods["teleoperate"]
+            assert "duration" in methods["teleoperate"]
+            assert "name" in methods["detach_teleop"]
+        finally:
+            sim.destroy()
+
+
     def test_describe_methods_resolve_to_real_attributes(self):
         """Every method MuJoCo describe() advertises must be a real callable.
 

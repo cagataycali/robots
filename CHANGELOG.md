@@ -5,6 +5,31 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `describe()` advertises the teleoperation surface (`attach_teleop` / `teleoperate` / `stop_teleoperate` / `get_teleoperate_status` / `list_teleops` / `detach_teleop`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. The MuJoCo
+backend advertises how to build a scene and drive it with a policy (`run_policy`
+/ `start_policy`), but gave no way to discover the OTHER actuation source:
+driving a sim robot from an attached teleoperator (a real leader arm, gamepad,
+or keyboard) -- the leader->follower / human-demonstration workflow that feeds
+data collection. The six `TeleopMixin` facades (shared with the hardware
+`Robot`) -- `attach_teleop` -> `teleoperate` -> `stop_teleoperate`, plus
+`detach_teleop` / `list_teleops` / `get_teleoperate_status` -- are public
+methods on the sim, yet a caller enumerating the sim's contract from
+`describe()` alone had to guess their names. They are now advertised in the
+MuJoCo backend's `describe()["methods"]` as the human-driven sibling of the
+policy-rollout family, each with a signature that names its distinguishing
+parameters (`attach_teleop(..., map_fn=...)`, `teleoperate(..., publish=...,
+block=..., duration=...)`). Additive only -- no change to any runtime behavior;
+this purely completes the discovery surface, following the same pattern as the
+recording, physics-introspection, physics-tuning, sim-state, background-policy,
+and robot-registry families. A regression test asserts the six are advertised
+with `map_fn=` / `publish=` / `duration=` / `name=` named (fails before, passes
+after), and the existing `test_describe_methods_resolve_to_real_attributes`
+guard confirms each newly advertised name is a live callable on the engine.
+
+
 ### Added: `describe()` advertises the robot-registry + `remove_robot` surface (`list_urdfs` / `register_urdf` / `remove_robot`)
 
 `SimEngine.describe()["methods"]` is the single-call discovery surface an agent
