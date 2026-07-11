@@ -1463,6 +1463,34 @@ cube on the ground, lifts it via a direct `qpos` write (no forward), and asserts
 the airborne cube no longer appears in `get_contact_forces` (fails before,
 passes after).
 
+### Fixed: `add_robot` reports an actionable error for an unknown/unresolvable model instead of a dead-end
+
+The MuJoCo `add_robot` had two exits with unequal error quality. When a
+caller passed a `data_config` that resolved to no model, the error routed
+through the `_unknown_model_msg` helper -- naming the robot, offering
+difflib close-match suggestions, and pointing at `list_urdfs`. But when a
+caller named a robot positionally (`add_robot("panda_typo")`, the deprecated
+name-as-registry-key short form) or gave an instance label without a model
+source (`add_robot(name="myarm")`), the same unresolvable-model case fell
+through to a dead-end `"Either urdf_path or data_config is required."` that
+never named the robot, offered no suggestion, and did not point at
+discovery -- inconsistent with both the `data_config` exit and the
+top-level `Robot()` factory (which already raises a clean `Unknown robot`).
+An agent (or human) driving the API blind with a mistyped name hit a wall.
+
+`add_robot` now surfaces the actionable `_unknown_model_msg` for any
+caller-supplied `name`/`data_config` that resolves to no model -- naming the
+robot, suggesting close matches, and pointing at `list_urdfs` plus the
+`data_config=`/`urdf_path=` options -- so the error is actionable whether the
+name was a mistyped registry key or an instance label missing its model.
+The bare `"Either urdf_path or data_config is required."` message is
+preserved for the genuine no-name case (`add_robot()` with nothing to
+resolve). The deprecated positional name-as-registry-key fallback still
+resolves a VALID name unchanged. A regression test asserts the positional
+typo and the instance-label cases name the robot + point at `list_urdfs` +
+the model-source options (fails before, passes after), that the no-name case
+keeps the generic message, and that a valid positional name still resolves.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

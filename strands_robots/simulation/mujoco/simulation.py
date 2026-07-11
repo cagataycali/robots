@@ -886,12 +886,23 @@ class MuJoCoSimEngine(
         (e.g. panda ``"home"``) instead of the all-zero configuration, and the
         pose is restored by ``reset()``. An unknown keyframe is a hard error
         naming the available keyframes; ``None`` (default) keeps the zero pose.
+
+        A ``name``/``data_config`` that resolves to no model is reported as an
+        actionable error naming the requested robot, offering close-match
+        suggestions and pointing at ``list_urdfs`` (plus the
+        ``data_config=``/``urdf_path=`` options) -- not a dead-end "supply a
+        model source". The bare model-source message is kept only when no
+        ``name`` was supplied at all.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_robot"):
             return err
 
+        # Remember whether the caller supplied a `name` (vs an auto-derived
+        # label): an explicit name that resolves to no model is a
+        # mistyped/unknown robot, not a 'you forgot a model source' case.
+        explicit_name = name
         # Auto-derive an instance label when the caller didn't supply one.
         # Friction fix: ``name`` used to be required, so a natural
         # ``add_robot(data_config="so101")`` failed with "requires parameter
@@ -950,6 +961,21 @@ class MuJoCoSimEngine(
                 )
 
         if not resolved_path:
+            # A caller-provided `name` that resolves to no model is almost
+            # always a mistyped/unknown robot (the deprecated
+            # name-as-registry-key short form). Surface the same actionable
+            # "no model found (did you mean ...?) / list_urdfs" error the
+            # data_config path and the Robot() factory give, instead of a
+            # dead-end "supply urdf_path or data_config". The bare
+            # "supply a model source" message is kept only for the no-name
+            # case (auto-derived label, nothing to resolve).
+            if explicit_name:
+                msg = self._unknown_model_msg(explicit_name)
+                msg += (
+                    f" Or pass data_config=<registered model> or urdf_path=<file> "
+                    f"to add '{explicit_name}' as an instance under that label."
+                )
+                return {"status": "error", "content": [{"text": msg}]}
             return {"status": "error", "content": [{"text": "Either urdf_path or data_config is required."}]}
         if not os.path.exists(resolved_path):
             return {"status": "error", "content": [{"text": f"File not found: {resolved_path}"}]}
