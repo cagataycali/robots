@@ -25,9 +25,6 @@ from __future__ import annotations
 import copy
 from typing import Any
 
-from strands_robots.simulation.benchmark import register_benchmark
-from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
-
 # ``go2_walk_forward``: the canonical legged-locomotion velocity-tracking task -
 # walk the Unitree Go2 quadruped forward at 1 m/s and stay standing.
 #
@@ -104,6 +101,14 @@ def register_builtin_benchmarks() -> list[str]:
         The sorted list of registered benchmark names, so a caller can
         immediately look them up / evaluate them.
     """
+    # Imported inside the function (not at module scope) so builtin_benchmarks
+    # stays a module-load-time leaf: base.py imports this module lazily, and
+    # benchmark / benchmark_spec reference base only under TYPE_CHECKING, so
+    # deferring these keeps the import-time graph acyclic (satisfies the
+    # py/unsafe-cyclic-import scan by construction). Do NOT hoist to module level.
+    from strands_robots.simulation.benchmark import register_benchmark
+    from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
+
     names: list[str] = []
     for name, spec in _BUILTIN_SPECS.items():
         # from_dict overwrites spec["name"] with the registry key contract, so a
