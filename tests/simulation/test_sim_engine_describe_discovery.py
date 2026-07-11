@@ -15,7 +15,6 @@ from typing import Any
 
 import pytest
 
-
 def _make_minimal_engine():
     """Create a minimal SimEngine with one robot for describe() testing."""
     from strands_robots.simulation.base import SimEngine
@@ -107,7 +106,6 @@ def _make_minimal_engine():
             return {}
 
     return MinimalEngine()
-
 
 class TestDescribeABC:
     """Tests for SimEngine.describe() on the abstract base class."""
@@ -236,7 +234,6 @@ class TestDescribeABC:
         # caller can invoke them without reading the source.
         assert "benchmark_name" in methods["evaluate_benchmark"]
         assert "spec_path" in methods["register_benchmark_from_file"]
-
 
 @pytest.mark.skipif(
     not pytest.importorskip("mujoco", reason="MuJoCo not installed"),
@@ -647,6 +644,36 @@ class TestDescribeMuJoCo:
         finally:
             sim.destroy()
 
+    def test_describe_lists_viewer_family(self):
+        """describe() advertises the interactive-viewer surface.
+
+        describe() taught how to build a scene, drive it with a policy, and read
+        the result, but gave no way to discover how to OPEN a live window on the
+        running model for human inspection (watch a rollout, debug a pose,
+        hand-verify a scene). open_viewer / close_viewer are first-class actions
+        in the tool spec + action dispatcher, so a caller enumerating the sim's
+        contract from describe() alone had to guess their names. The advertised
+        open_viewer signature also documents the headless caveat (needs a local
+        display; render()/render_all() capture frames instead).
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in ("open_viewer", "close_viewer"):
+                assert name in methods, f"describe() omits viewer method {name!r}"
+            # The advertised open_viewer signature warns of the display
+            # requirement so a caller does not blindly invoke it on a headless
+            # host (where render()/render_all() are the right frame source).
+            assert "display" in methods["open_viewer"]
+            assert "render" in methods["open_viewer"]
+        finally:
+            sim.destroy()
+
     def test_describe_methods_resolve_to_real_attributes(self):
         """Every method MuJoCo describe() advertises must be a real callable.
 
@@ -668,7 +695,6 @@ class TestDescribeMuJoCo:
                 )
         finally:
             sim.destroy()
-
 
 class TestNoAlias:
     """Code is the single source of truth: no duplicate-name aliases.

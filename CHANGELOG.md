@@ -56,6 +56,29 @@ and the existing `test_describe_methods_resolve_to_real_attributes` guard
 confirms each newly advertised name is a live callable on the engine.
 
 
+### Added: `describe()` advertises the interactive-viewer family (`open_viewer` / `close_viewer`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. The MuJoCo
+backend advertises how to build a scene, drive it with a policy, and
+read/checkpoint the result, but gave no way to discover how to open a live
+window on the running model for human inspection (watch a rollout, debug a
+pose, hand-verify a scene) -- even though `open_viewer` and `close_viewer` are
+first-class `tool_spec.json` + action-dispatcher actions. A caller enumerating
+the sim's contract from `describe()` alone had to guess their names. Both are
+now advertised in the MuJoCo backend's `describe()["methods"]` as the
+human-inspection sibling of the render family, with `open_viewer`'s signature
+documenting the headless caveat (it launches an interactive OpenGL window via
+`mujoco.viewer.launch_passive`, so it needs a local display and errors on a
+headless host, where `render()` / `render_all()` capture frames instead). The
+two MuJoCo viewer methods also gained the docstrings they lacked. Additive only
+-- no change to the `tool_spec.json` enum, the action dispatcher, or any runtime
+behavior; this purely completes the discovery surface. A regression test asserts
+the pair is advertised with the display caveat named (fails before, passes
+after), and the existing `test_describe_methods_resolve_to_real_attributes`
+guard confirms each newly advertised name is a live callable on the engine.
+
+
 ### Added: `describe()` advertises the plain-MP4 camera-recording family (`start_cameras_recording` / `stop_cameras_recording` / `get_cameras_recording_status`)
 
 `SimEngine.describe()["methods"]` is the single-call discovery surface an agent

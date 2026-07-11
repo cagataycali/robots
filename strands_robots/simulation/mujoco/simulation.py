@@ -1750,6 +1750,28 @@ class MuJoCoSimEngine(
             "if it would be left with no devices. The inverse of attach_teleop"
         )
 
+        # Live interactive viewer. describe() teaches how to build a scene, drive
+        # it with a policy, and read/checkpoint the result, but gave no way to
+        # discover how to OPEN a live window on the running model for human
+        # inspection (watch a rollout, debug a pose, hand-verify a scene). Both
+        # are first-class actions in the tool spec + action dispatcher, so a
+        # caller enumerating the sim's contract from describe() alone had to
+        # guess their names. open_viewer launches a passive MuJoCo viewer (an
+        # interactive OpenGL window that requires a local display -- it errors on
+        # a headless host, where render()/render_all() capture frames instead)
+        # and close_viewer is its teardown, completing the discovery surface with
+        # the human-inspection sibling of the render family.
+        base["methods"]["open_viewer"] = (
+            "() -> dict  # launch a passive interactive MuJoCo viewer window bound "
+            "to the running model (mujoco.viewer.launch_passive); requires a local "
+            "display -- errors on a headless host, where render()/render_all() "
+            "capture frames instead. Idempotent ('Viewer already open' if one is up)"
+        )
+        base["methods"]["close_viewer"] = (
+            "() -> dict  # close the interactive viewer opened by open_viewer; "
+            "idempotent (succeeds even if none is open). The inverse of open_viewer"
+        )
+
         if self._world is not None:
             base["sim_time"] = self._world.sim_time
             base["world_created"] = True
@@ -2623,6 +2645,19 @@ class MuJoCoSimEngine(
     # Viewer
 
     def open_viewer(self) -> dict[str, Any]:
+        """Launch a passive interactive MuJoCo viewer window bound to the running model.
+
+        Opens ``mujoco.viewer.launch_passive`` on the live model/data so a human
+        can watch a rollout, debug a pose, or hand-verify a scene. The viewer is
+        an interactive OpenGL window and therefore **requires a local display**:
+        on a headless host it fails with a viewer error, where
+        :meth:`render` / :meth:`render_all` capture frames instead. Idempotent --
+        succeeds with "Viewer already open" if one is already up. The inverse is
+        :meth:`close_viewer`.
+
+        Returns:
+            Agent-tool ``status``/``content`` dict.
+        """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": "No simulation to view."}]}
         from strands_robots.simulation.mujoco.backend import _mujoco_viewer
@@ -2646,6 +2681,14 @@ class MuJoCoSimEngine(
             self._viewer_handle = None
 
     def close_viewer(self) -> dict[str, Any]:
+        """Close the interactive viewer opened by :meth:`open_viewer`.
+
+        Idempotent -- succeeds even when no viewer is open. The inverse of
+        :meth:`open_viewer`.
+
+        Returns:
+            Agent-tool ``status``/``content`` dict.
+        """
         self._close_viewer()
         return {"status": "success", "content": [{"text": "Viewer closed."}]}
 
