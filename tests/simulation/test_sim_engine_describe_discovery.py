@@ -568,6 +568,45 @@ class TestDescribeMuJoCo:
         finally:
             sim.destroy()
 
+    def test_describe_lists_scene_lifecycle_methods(self):
+        """describe() advertises the world-lifecycle + MJCF-editing surface.
+
+        describe() taught how to build a scene, run a policy, and read the
+        result, but previously omitted the world lifecycle itself (create_world,
+        the fresh-world entry point that precedes add_robot; destroy, which the
+        tool-spec guidance explicitly asks callers to run at session end) and the
+        MJCF-editing family (patch_scene_mjcf / replace_scene_mjcf, export_xml).
+        All five are first-class actions in the tool spec + action dispatcher, so
+        a caller enumerating how to create, edit, and tear down a scene from
+        describe() alone had to guess these names. (The URDF/model registry trio
+        -- register_urdf / list_urdfs / remove_robot -- is covered by
+        test_describe_lists_robot_registry_family.)
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in (
+                "create_world",
+                "destroy",
+                "patch_scene_mjcf",
+                "replace_scene_mjcf",
+                "export_xml",
+            ):
+                assert name in methods, f"describe() omits scene-lifecycle method {name!r}"
+            # Advertised signatures name the real distinguishing parameters so a
+            # caller can invoke them without reading the source.
+            assert "ground_plane" in methods["create_world"]
+            assert "ops" in methods["patch_scene_mjcf"]
+            assert "xml" in methods["replace_scene_mjcf"]
+            assert "output_path" in methods["export_xml"]
+        finally:
+            sim.destroy()
+
     def test_describe_methods_resolve_to_real_attributes(self):
         """Every method MuJoCo describe() advertises must be a real callable.
 

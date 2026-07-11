@@ -1664,6 +1664,44 @@ class MuJoCoSimEngine(
             "(inspect concurrent-policy state when driving two or more arms in one scene)"
         )
 
+        # Scene / world lifecycle + MJCF editing surface. describe() teaches how
+        # to build a scene (add_robot/add_object/add_camera/load_scene), run a
+        # policy, and read/checkpoint the result, but previously gave no way to
+        # discover the world lifecycle itself -- create_world (the fresh-world
+        # entry point that precedes add_robot) and destroy (release resources at
+        # session end, which the tool-spec guidance explicitly asks callers to
+        # do) -- or the MJCF-editing family: patch or wholesale-replace the live
+        # MJCF and serialize the scene back to XML. All five are first-class
+        # actions in the tool spec + action dispatcher; listing them completes
+        # the discovery surface with the world-lifecycle and MJCF-authoring
+        # operations alongside the build / act / read surfaces. (The URDF/model
+        # registry trio -- register_urdf / list_urdfs / remove_robot -- is
+        # advertised with the robot-registry family earlier in describe().)
+        base["methods"]["create_world"] = (
+            "(timestep=None, gravity=None, ground_plane=True) -> dict  # create a "
+            "fresh empty simulation world; the lifecycle entry point that precedes "
+            "add_robot/add_object (gravity is [gx,gy,gz], ground_plane adds a floor)"
+        )
+        base["methods"]["destroy"] = (
+            "() -> dict  # tear down the world and release all resources (joins any "
+            "running background policy first); call at session end. The inverse of create_world"
+        )
+        base["methods"]["patch_scene_mjcf"] = (
+            "(ops: list[dict]) -> dict  # apply a list of structured edit ops to the "
+            "live MJCF spec atomically then recompile (add/remove/set-attr on "
+            "bodies/geoms/joints); surgical scene editing without a full replace"
+        )
+        base["methods"]["replace_scene_mjcf"] = (
+            "(xml: str) -> dict  # atomically replace the entire scene with "
+            "agent-authored MJCF (compiled + validated before it takes effect; "
+            "errors leave the old scene intact). The wholesale sibling of patch_scene_mjcf"
+        )
+        base["methods"]["export_xml"] = (
+            "(output_path=None) -> dict  # serialize the current scene as canonical "
+            "MJCF via spec.to_xml() (round-trips a scene built with "
+            "add_robot/add_object/patch_scene_mjcf; writes to output_path or returns the XML)"
+        )
+
         if self._world is not None:
             base["sim_time"] = self._world.sim_time
             base["world_created"] = True
@@ -2566,6 +2604,13 @@ class MuJoCoSimEngine(
     # URDF Registry
 
     def list_urdfs(self) -> dict[str, Any]:
+        """List every robot/URDF known to the registry (built-in + user-registered).
+
+        The names returned here are exactly the identifiers ``add_robot`` and
+        ``load_scene`` accept; ``register_urdf`` adds a new one. This is the
+        discovery entry point an agent uses to learn what it can spawn without
+        guessing a model name.
+        """
         return {"status": "success", "content": [{"text": list_available_models()}]}
 
     def register_urdf(self, data_config: str, urdf_path: str) -> dict[str, Any]:

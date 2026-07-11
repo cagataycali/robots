@@ -54,6 +54,33 @@ before, passes after), and the existing `test_describe_methods_resolve_to_real_a
 guard confirms each newly advertised name is a live callable on the engine.
 
 
+### Added: `describe()` advertises the world-lifecycle + MJCF-editing family (`create_world` / `destroy` / `patch_scene_mjcf` / `replace_scene_mjcf` / `export_xml`)
+
+`SimEngine.describe()["methods"]` teaches an agent how to build a scene
+(`add_robot` / `add_object` / `add_camera` / `load_scene`), run a policy, and
+read or checkpoint the result, but previously gave no way to discover the world
+lifecycle itself or the MJCF-editing operations -- so a caller enumerating how
+to create, edit, and tear down a scene from `describe()` alone had to guess
+these names. Five first-class MuJoCo `tool_spec.json` + action-dispatcher
+actions are now advertised in the backend's `describe()["methods"]`, each with a
+signature that names its distinguishing parameters: `create_world` (the
+fresh-world entry point that precedes `add_robot`), `destroy` (release all
+resources at session end, which the tool-spec guidance already asks callers to
+run), and the MJCF-editing family `patch_scene_mjcf` / `replace_scene_mjcf`
+(surgical vs wholesale live-MJCF editing) and `export_xml` (serialize the scene
+back to canonical MJCF). The URDF/model registry trio (`register_urdf` /
+`list_urdfs` / `remove_robot`) is advertised separately with the robot-registry
+family. `list_urdfs` -- which had no docstring -- also gains one so the method
+is self-describing. Additive only: no change to the `tool_spec.json` enum, the
+action dispatcher, or any runtime behavior; this purely completes the discovery
+surface with the world-lifecycle and MJCF-authoring operations alongside the
+existing build / act / read / record families. A regression test asserts the
+five are advertised with `ground_plane=` / `ops` / `xml` / `output_path` named
+(fails before, passes after), and the existing
+`test_describe_methods_resolve_to_real_attributes` guard confirms each newly
+advertised name is a live callable on the engine.
+
+
 ### Added: `register_builtin_benchmarks()` ships a canonical velocity-tracking locomotion benchmark (`go2_walk_forward`)
 
 The floating-base predicate/reward DSL (`base_velocity_tracking` / `base_height`
