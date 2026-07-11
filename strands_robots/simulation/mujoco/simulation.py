@@ -1687,19 +1687,23 @@ class MuJoCoSimEngine(
             "running background policy first); call at session end. The inverse of create_world"
         )
         base["methods"]["patch_scene_mjcf"] = (
-            "(ops: list[dict]) -> dict  # apply a list of structured edit ops to the "
-            "live MJCF spec atomically then recompile (add/remove/set-attr on "
-            "bodies/geoms/joints); surgical scene editing without a full replace"
+            "(ops: list[dict]) -> dict  # apply structured edits to the live "
+            "MjSpec atomically then recompile once (rolled back if any op fails). "
+            "ops: add_body/add_geom/add_site/set_body_pos/set_body_quat/delete_body. "
+            "The fast iterative-edit sibling of replace_scene_mjcf"
         )
         base["methods"]["replace_scene_mjcf"] = (
-            "(xml: str) -> dict  # atomically replace the entire scene with "
-            "agent-authored MJCF (compiled + validated before it takes effect; "
-            "errors leave the old scene intact). The wholesale sibling of patch_scene_mjcf"
+            "(xml: str) -> dict  # atomically replace the whole scene with "
+            "agent-authored MJCF (compiled + validated; MuJoCo's compiler error "
+            "returned verbatim on failure). Escape hatch when add_robot/add_object "
+            "cannot express an element; leaves world.robots/objects/cameras "
+            "registries untouched (caller reconciles)"
         )
         base["methods"]["export_xml"] = (
-            "(output_path=None) -> dict  # serialize the current scene as canonical "
-            "MJCF via spec.to_xml() (round-trips a scene built with "
-            "add_robot/add_object/patch_scene_mjcf; writes to output_path or returns the XML)"
+            "(output_path: str | None = None) -> dict  # serialise the current "
+            "scene (incl. runtime mutations) to canonical MJCF via spec.to_xml(); "
+            "writes to output_path when given, else returns the XML inline. The "
+            "read sibling of replace_scene_mjcf"
         )
 
         if self._world is not None:
