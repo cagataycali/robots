@@ -2069,6 +2069,12 @@ class SimEngine(ABC):
                 "render": "(camera_name='default', width=None, height=None) -> dict",
                 "reset": "() -> dict  # during recording, flushes the buffered rollout as one episode before resetting",
                 "step": "(n_steps: int = 1) -> dict",
+                "get_state": (
+                    "() -> dict  # snapshot of the live world: sim time, step "
+                    "count, timestep, gravity, and robot / object / camera / "
+                    "body / joint / actuator counts (the whole-world sibling of "
+                    "get_robot_state / get_observation)"
+                ),
             },
             "note": (
                 "robot_name defaults to the sole robot when only one exists "

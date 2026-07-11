@@ -1677,6 +1677,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ),
                 "remove_object": "(name: str) -> dict  (remove a previously added object)",
                 "get_robot_state": "(robot_name: str | None = None) -> dict (per-joint position + velocity)",
+                "get_state": (
+                    "() -> dict (whole-world snapshot: sim time, step count, timestep, gravity, "
+                    "robot / object / camera / body / joint / actuator counts)"
+                ),
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
                 "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
                 "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, ...) -> dict",

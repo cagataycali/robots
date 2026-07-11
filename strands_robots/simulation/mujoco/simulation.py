@@ -1522,6 +1522,36 @@ class MuJoCoSimEngine(
             "exclude_body=-1) -> dict  # batch raycast from one origin (e.g. a lidar fan)"
         )
 
+        # Sim-state checkpoint + direct pose-setting surface. describe() teaches
+        # how to build a scene, run a policy, and read the physics result, but
+        # previously gave no way to discover how to CHECKPOINT/RESTORE the whole
+        # physics state or teleport the robot to a pose without stepping the
+        # actuators -- so an agent setting up a deterministic initial condition
+        # (or A/B-testing two rollouts from the same start) had to guess these
+        # names. All four are first-class actions in the tool spec + action
+        # dispatcher; listing them here reveals the state-management surface
+        # alongside the act / read surfaces.
+        base["methods"]["save_state"] = (
+            "(name='default') -> dict  # checkpoint the full physics state "
+            "(qpos/qvel/act/ctrl + sim time + step count) under a name; restore "
+            "it later with load_state"
+        )
+        base["methods"]["load_state"] = (
+            "(name='default') -> dict  # restore a checkpoint saved by save_state "
+            "(errors if the name is unknown or a policy is running)"
+        )
+        base["methods"]["set_joint_positions"] = (
+            "(positions: dict[str, float] | list[float], robot_name=None) -> dict "
+            "# write qpos directly and run forward kinematics (teleport / set an "
+            "initial pose, bypassing the actuators). dict is per-joint; list is "
+            "ordered and must match one robot's joint count (see get_features)"
+        )
+        base["methods"]["set_joint_velocities"] = (
+            "(velocities: dict[str, float] | list[float], robot_name=None) -> dict "
+            "# write qvel directly (set an initial dynamic state); dict or "
+            "ordered-list form mirrors set_joint_positions"
+        )
+
         if self._world is not None:
             base["sim_time"] = self._world.sim_time
             base["world_created"] = True

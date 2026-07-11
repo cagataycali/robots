@@ -348,6 +348,7 @@ class TestDescribeSurface:
         methods = described["methods"]
         for name in (
             "get_robot_state",
+            "get_state",
             "list_bodies",
             "move_object",
             "get_features",

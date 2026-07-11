@@ -200,6 +200,21 @@ class TestDescribeABC:
         assert "urdf_path" in methods["add_robot"]
         assert "shape" in methods["add_object"]
 
+    def test_describe_lists_get_state(self):
+        """describe() advertises get_state, the whole-world snapshot method.
+
+        ``get_state`` is an abstract method every backend implements and a
+        first-class action in the tool spec, but the discovery surface listed
+        only the per-robot readers (``get_robot_state`` / ``get_observation``)
+        - so a caller enumerating ``describe()["methods"]`` could not learn how
+        to read the world-level snapshot (sim time, step count, entity counts)
+        without guessing the name. It belongs on the base contract alongside
+        the other read methods.
+        """
+        engine = _make_minimal_engine()
+        methods = engine.describe()["methods"]
+        assert "get_state" in methods, "describe() omits the base get_state method"
+
 
 @pytest.mark.skipif(
     not pytest.importorskip("mujoco", reason="MuJoCo not installed"),
@@ -383,6 +398,43 @@ class TestDescribeMuJoCo:
         sim = Simulation()
         try:
             assert "cameras" in sim.describe()["methods"]["start_recording"]
+        finally:
+            sim.destroy()
+
+    def test_describe_lists_sim_state_family(self):
+        """describe() advertises the sim-state checkpoint + pose-setting family.
+
+        ``save_state`` / ``load_state`` (checkpoint and restore the whole
+        physics state) and ``set_joint_positions`` / ``set_joint_velocities``
+        (write qpos/qvel directly to teleport the robot to a pose or set an
+        initial dynamic state) are first-class actions in the MuJoCo tool spec
+        and action dispatcher, plus ``get_state`` from the base contract. But
+        the discovery surface listed none of them -- so an agent setting up a
+        deterministic initial condition, or A/B-testing two rollouts from the
+        same checkpoint, had to guess these names. They belong on the discovery
+        surface alongside the act / read surfaces.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in (
+                "save_state",
+                "load_state",
+                "set_joint_positions",
+                "set_joint_velocities",
+                "get_state",
+            ):
+                assert name in methods, f"describe() omits sim-state method {name!r}"
+            # Advertised signatures name the real distinguishing parameters so a
+            # caller can invoke them without reading the source.
+            assert "name" in methods["save_state"]
+            assert "positions" in methods["set_joint_positions"]
+            assert "velocities" in methods["set_joint_velocities"]
         finally:
             sim.destroy()
 

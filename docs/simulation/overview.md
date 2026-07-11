@@ -102,8 +102,17 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `inverse_dynamics` | - (compensation torques to hold the current `qpos`/`qvel`) |
 | `forward_kinematics` | `body_name` (optional) |
 | `save_state` / `load_state` | snapshot/restore full physics |
+| `set_joint_positions` | `positions` (dict or ordered list), `robot_name` (optional) - write `qpos` directly + run FK (teleport / set an initial pose, bypassing actuators) |
+| `set_joint_velocities` | `velocities` (dict or ordered list), `robot_name` (optional) - write `qvel` directly (set an initial dynamic state) |
 | `get_energy` | - |
 | `get_sensor_data` | `sensor_name` (optional) |
+
+!!! tip "Discover the sim-state surface"
+    `get_state` plus the checkpoint (`save_state` / `load_state`) and
+    direct pose-setting (`set_joint_positions` / `set_joint_velocities`)
+    methods are all listed in `sim.describe()["methods"]`, so an agent can
+    learn how to snapshot/restore the world and set a deterministic initial
+    condition from one `describe()` call - no method-name guessing.
 
 ## Actions
 
