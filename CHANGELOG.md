@@ -5,6 +5,26 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `describe()` advertises the benchmark scoring family (`evaluate_benchmark` / `list_benchmarks` / `register_benchmark_from_file`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. It advertised the
+rollout family (`run_policy` / `start_policy` / `eval_policy` / `replay_episode`)
+but omitted the DSL-driven benchmark scoring family - the three concrete
+backend-agnostic facades `evaluate_benchmark` (score a registered
+success/failure/dense_reward benchmark over a rollout), `list_benchmarks`
+(enumerate the registered benchmark names it accepts), and
+`register_benchmark_from_file` (author a benchmark spec as YAML/JSON at runtime).
+So an agent enumerating `describe()` could run a policy but could not discover how
+to score it against a benchmark, dead-ending the predicate/reward DSL those
+methods drive behind names it had to already know. They are now listed in the base
+`describe()` (which the MuJoCo backend inherits) and in the Newton backend's own
+`describe()` methods dict, with signatures that name their distinguishing
+parameters. Regression tests assert the family is advertised on both the base
+engine and Newton (each fails before, passes after), and the existing
+resolve-to-real-attributes guard confirms each advertised name is a live callable
+on the MuJoCo engine.
+
 ### Fixed: mypy import-untyped failures from pyarrow dropping its py.typed marker
 
 `pyarrow` 25.0.0 stopped shipping the `py.typed` marker it previously carried,
