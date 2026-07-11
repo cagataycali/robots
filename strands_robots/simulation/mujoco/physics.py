@@ -1168,8 +1168,17 @@ class PhysicsMixin:
     def get_contact_forces(self) -> dict[str, Any]:
         """Get detailed contact forces for all active contacts.
 
-        Uses mj_contactForce for each active contact pair.
-        Returns normal and friction forces.
+        Uses ``mj_contactForce`` for each active contact pair; returns
+        normal and friction forces.
+
+        Runs ``mj_forward`` first (under the sim lock) so the contact list
+        AND the constraint forces reflect the current ``qpos``/``qvel`` --
+        exactly like :meth:`get_contacts`. Without it, a manual ``qpos``
+        write (planning/IK loop), a pose set immediately after ``reset`` /
+        ``add_robot``, or a policy thread mid-``mj_step`` leaves
+        ``data.ncon`` / ``data.contact[]`` / ``data.efc_force`` stale, and
+        this method would silently report phantom contacts with fabricated
+        forces while still returning ``status=success``.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1179,6 +1188,10 @@ class PhysicsMixin:
 
         contacts = []
         with self._lock:
+            # Refresh contacts + constraint forces to the current qpos/qvel
+            # (mirrors get_contacts). mj_contactForce reads data.efc_force,
+            # which only the forward's constraint solve populates.
+            mj.mj_forward(model, data)
             for i in range(data.ncon):
                 c = data.contact[i]
                 g1 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom1) or f"geom_{c.geom1}"

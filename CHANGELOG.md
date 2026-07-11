@@ -1443,6 +1443,26 @@ name-resolution degradation.
 
 - `PolicyServer.serve()` (and the background-thread `start()`) set `self._server` to the bound server *before* reading the OS-assigned port into `self.port`. A caller that treats `_server is not None` as the "server is bound, port is readable" signal (the documented contract for reading back a `port=0` OS-assigned port) could observe the constructor default `0` in the window between the two writes -- an intermittent race under load. Both entry points now publish the port *before* publishing `_server`, so any thread that sees a non-None `_server` always reads the real bound port.
 
+### Fixed: `get_contact_forces` reported stale contacts + fabricated forces after a pose change
+
+`Simulation.get_contact_forces()` iterated `data.contact[]` / `data.ncon` and
+called `mj_contactForce` (which reads `data.efc_force`) without first running
+`mj_forward`. Those are all *derived* state that MuJoCo only recomputes on
+`mj_forward` / `mj_step`, so after a manual `qpos` write (a planning/IK loop),
+a pose set immediately after `reset` / `add_robot`, or a concurrent policy
+thread's `mj_step`, the query silently reported the *previous* configuration's
+contacts -- complete with fabricated normal/friction forces -- while still
+returning `status=success` (e.g. a 2.5 N ground contact on a cube already
+lifted 1 m into the air). Its sibling `get_contacts` already forwards for
+exactly this reason ("stale contacts from the previous step / uninitialised
+memory can appear as phantom penetrations"), so the two contact-query APIs
+disagreed. `get_contact_forces` now runs `mj_forward` under the sim lock before
+reading (matching `get_contacts`), so the reported contacts and forces reflect
+the current `qpos`/`qvel` and the two APIs agree. A regression test settles a
+cube on the ground, lifts it via a direct `qpos` write (no forward), and asserts
+the airborne cube no longer appears in `get_contact_forces` (fails before,
+passes after).
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
