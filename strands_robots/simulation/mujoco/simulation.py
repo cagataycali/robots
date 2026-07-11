@@ -1664,6 +1664,52 @@ class MuJoCoSimEngine(
             "(inspect concurrent-policy state when driving two or more arms in one scene)"
         )
 
+        # Multi-robot rollout + per-robot action/joint introspection. describe()
+        # advertises run_policy (drive ONE robot with a created policy) and the
+        # background start/stop/list lifecycle, but omits run_multi_policy -- the
+        # facade that drives SEVERAL robots, each with its OWN Policy, in one
+        # synchronized control loop that co-observes every robot into one merged
+        # frame per timestep (the correct path for bimanual / handover / multi-
+        # agent data collection; independent start_policy threads instead
+        # interleave single-robot frames into a shared recorder). A caller
+        # assembling its {robot_name: Policy} map also has to know exactly what
+        # each robot's policy must emit, so this block advertises the two
+        # per-robot introspection primitives alongside it: robot_action_keys
+        # (the actuator short-names send_action resolves -- NOT always the joint
+        # names, since passive/mimic fingers have no actuator and a tendon
+        # gripper is an actuator with no joint) and robot_joint_names (the
+        # ordered observation.state joint vector). Without these three an agent
+        # could drive one robot from describe() but had to guess how to drive
+        # many, or key a multi-robot policy by joint name and watch tendon/mimic
+        # DOFs silently no-op. (get_features exposes the whole-scene view; these
+        # return the exact per-robot lists a policy is keyed on. Newton exposes
+        # the same trio and has the same gap; deferred to keep this diff
+        # MuJoCo-scoped like the sibling describe() families.)
+        base["methods"]["run_multi_policy"] = (
+            "(policies: dict[str, Policy], instructions='' | dict, duration=10.0, "
+            "control_frequency=50.0, action_horizon=8 | dict, n_steps=None, "
+            "max_steps=None) -> dict  # drive MULTIPLE robots, each with its own "
+            "Policy, in one synchronized loop that records ALL robots into ONE "
+            "merged frame per timestep (prefixed state/action, e.g. "
+            "'alice__shoulder_pan'); the concurrent multi-robot sibling of "
+            "run_policy for bimanual / handover / multi-agent data collection. "
+            "policies keys and action_horizon dict keys are robot names from the "
+            "'robots' list; per-robot instructions/horizon are supported"
+        )
+        base["methods"]["robot_action_keys"] = (
+            "(robot_name: str) -> list[str]  # the actuator short-names a policy "
+            "should emit as its action-dict keys for robot_name -- the exact keys "
+            "send_action resolves. NOT always the joint names: passive/mimic "
+            "fingers have no driving actuator and a tendon gripper is an actuator "
+            "with no joint, so keying by robot_joint_names makes those DOFs "
+            "silently no-op. Use this to key each policy in a run_multi_policy map"
+        )
+        base["methods"]["robot_joint_names"] = (
+            "(robot_name: str) -> list[str]  # the ordered joint names for "
+            "robot_name -- the names of the observation.state vector a policy "
+            "reads (the observation sibling of robot_action_keys' action side)"
+        )
+
         # Scene / world lifecycle + MJCF editing surface. describe() teaches how
         # to build a scene (add_robot/add_object/add_camera/load_scene), run a
         # policy, and read/checkpoint the result, but previously gave no way to
