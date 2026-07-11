@@ -64,12 +64,6 @@ from strands.tools.decorator import tool
 logger = logging.getLogger(__name__)
 
 
-def _ok(text: str, **extra: Any) -> dict[str, Any]:
-    out: dict[str, Any] = {"status": "success", "content": [{"text": text}]}
-    out.update(extra)
-    return out
-
-
 def _err(text: str) -> dict[str, Any]:
     return {"status": "error", "content": [{"text": text}]}
 
