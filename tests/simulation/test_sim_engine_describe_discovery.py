@@ -535,6 +535,44 @@ class TestDescribeMuJoCo:
         finally:
             sim.destroy()
 
+    def test_describe_lists_scene_mjcf_authoring_methods(self):
+        """describe() advertises the raw-MJCF / URDF scene-authoring escape hatch.
+
+        The structured add_robot / add_object / add_camera / load_scene surface
+        covers the common vocabulary, but ``replace_scene_mjcf`` /
+        ``patch_scene_mjcf`` (author or iteratively edit raw MJCF, incl.
+        elements the dataclasses can't express), ``export_xml`` (serialise the
+        live scene back to MJCF), and ``register_urdf`` / ``list_urdfs`` (add
+        and enumerate URDFs the built-in registry does not ship) are all
+        first-class actions in the MuJoCo tool spec and action dispatcher --
+        yet the discovery surface listed none of them, so an agent authoring a
+        scene beyond the structured vocabulary had to guess these names.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in (
+                "replace_scene_mjcf",
+                "patch_scene_mjcf",
+                "export_xml",
+                "register_urdf",
+                "list_urdfs",
+            ):
+                assert name in methods, f"describe() omits scene-authoring method {name!r}"
+            # Advertised signatures name the real distinguishing parameters so a
+            # caller can invoke them without reading the source.
+            assert "xml" in methods["replace_scene_mjcf"]
+            assert "ops" in methods["patch_scene_mjcf"]
+            assert "output_path" in methods["export_xml"]
+            assert "data_config" in methods["register_urdf"]
+            assert "urdf_path" in methods["register_urdf"]
+        finally:
+            sim.destroy()
     def test_describe_methods_resolve_to_real_attributes(self):
         """Every method MuJoCo describe() advertises must be a real callable.
 

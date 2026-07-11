@@ -1437,6 +1437,44 @@ class MuJoCoSimEngine(
         )
         base["methods"]["remove_camera"] = "(name: str) -> dict  # remove a camera added via add_camera"
         base["methods"]["list_cameras"] = "() -> list[str]  # renderable camera names incl. the built-in 'default' view"
+        # Raw-MJCF / URDF scene-authoring escape hatch. The structured
+        # add_robot / add_object / add_camera / load_scene surface covers the
+        # common vocabulary, but an agent that needs an element those
+        # dataclasses can't express (<tendon>, <equality>, <pair>, ...), a fast
+        # iterative spec edit, a serialised snapshot of the live scene, or a
+        # URDF the built-in registry does not ship had no way to discover the
+        # authoring surface from describe() alone -- it had to guess these
+        # names. All five are first-class actions in the MuJoCo tool spec +
+        # action dispatcher; listing them completes the scene-construction
+        # surface with its raw-MJCF complement.
+        base["methods"]["replace_scene_mjcf"] = (
+            "(xml: str) -> dict  # atomically replace the whole scene with "
+            "agent-authored MJCF (compiled + validated; MuJoCo's compiler error "
+            "returned verbatim on failure). Escape hatch when add_robot/add_object "
+            "cannot express an element; leaves world.robots/objects/cameras "
+            "registries untouched (caller reconciles)"
+        )
+        base["methods"]["patch_scene_mjcf"] = (
+            "(ops: list[dict]) -> dict  # apply structured edits to the live "
+            "MjSpec atomically then recompile once (rolled back if any op fails). "
+            "ops: add_body/add_geom/add_site/set_body_pos/set_body_quat/delete_body. "
+            "The fast iterative-edit sibling of replace_scene_mjcf"
+        )
+        base["methods"]["export_xml"] = (
+            "(output_path: str | None = None) -> dict  # serialise the current "
+            "scene (incl. runtime mutations) to canonical MJCF via spec.to_xml(); "
+            "writes to output_path when given, else returns the XML inline. The "
+            "read sibling of replace_scene_mjcf"
+        )
+        base["methods"]["register_urdf"] = (
+            "(data_config: str, urdf_path: str) -> dict  # register a URDF file "
+            "on disk under a data_config name so add_robot can then instantiate "
+            "it; validates the path is a readable file before registering"
+        )
+        base["methods"]["list_urdfs"] = (
+            "() -> dict  # enumerate the model / URDF names resolvable by "
+            "add_robot (built-in registry entries + those added via register_urdf)"
+        )
         # Rendering siblings of "render" (advertised in tool_spec.json + the
         # action dispatcher) that the base discovery surface omits. Listing
         # them here lets an agent enumerate the full render surface from
