@@ -7,7 +7,7 @@ runnable benchmark: :func:`list_benchmarks` was empty until a caller
 hand-authored a spec. :func:`register_builtin_benchmarks` ships a canonical
 velocity-tracking locomotion benchmark (``go2_walk_forward``) composed from
 those primitives so a floating-base robot has a discoverable, runnable eval out
-of the box.
+of the box; g1_walk_forward and t1_walk_forward are the humanoid counterparts.
 
 These tests (1) pin that ``register_builtin_benchmarks`` puts ``go2_walk_forward``
 into the registry with the right metadata, (2) drive the compiled
@@ -83,10 +83,10 @@ def sim():
 @pytest.fixture(autouse=True)
 def _clean_registry():
     """Keep the module-global benchmark registry clean around each test."""
-    for _n in ("go2_walk_forward", "g1_walk_forward"):
+    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward"):
         unregister_benchmark(_n)
     yield
-    for _n in ("go2_walk_forward", "g1_walk_forward"):
+    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward"):
         unregister_benchmark(_n)
 
 
@@ -290,6 +290,96 @@ def test_g1_walk_forward_dense_reward_is_finite(sim):
     bench = get_benchmark("g1_walk_forward")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
     _set_base_pose(sim, x=0.0, z=0.78)
+    info = bench.on_step(sim, {}, {})
+    assert math.isfinite(info.reward)
+    assert info.done is False
+
+
+# ---------------------------------------------------------------------------
+# t1_walk_forward: a second humanoid - same biped DSL, T1-scale thresholds
+# ---------------------------------------------------------------------------
+def test_register_builtin_benchmarks_ships_go2_g1_and_t1():
+    """register_builtin_benchmarks ships the quadruped AND both humanoid tasks;
+    t1_walk_forward is absent until registered, then discoverable with the T1's
+    own metadata."""
+    assert "t1_walk_forward" not in list_benchmarks()
+    names = register_builtin_benchmarks()
+    assert set(names) >= {"go2_walk_forward", "g1_walk_forward", "t1_walk_forward"}
+    assert names == sorted(names)  # returned sorted
+    snap = list_benchmarks()
+    meta = snap["t1_walk_forward"]
+    assert meta["class"] == "DeclarativeBenchmark"
+    assert meta["supported_robots"] == ["booster_t1"]
+    assert meta["default_robot"] == "booster_t1"
+    assert meta["max_steps"] == 1000
+
+
+def test_builtin_specs_include_t1_with_its_own_biped_thresholds():
+    """The shipped t1 spec uses the T1's own measured stance thresholds (~0.665 m
+    standing), distinct from the taller G1 (~0.79 m), while carrying the same
+    biped anti-bounce / anti-wobble regularizer stack. Grounding each biped in
+    its own stance is why they are separate specs, not one shared humanoid spec."""
+    specs = builtin_benchmark_specs()
+    t1 = specs["t1_walk_forward"]
+    # height-collapse failure below the ~0.665 m stance, well above 0, and
+    # distinct from the G1's 0.4 m line (grounded in the T1's own geometry)
+    collapse = next(p for p in t1["failure"]["any"] if p["predicate"] == "base_below_z")
+    assert collapse["z"] == 0.35
+    height = next(r for r in t1["dense_reward"] if r["predicate"] == "base_height")
+    assert height["target"] == 0.66
+    # distinct from the G1's taller stance
+    g1_height = next(r for r in specs["g1_walk_forward"]["dense_reward"] if r["predicate"] == "base_height")
+    assert height["target"] != g1_height["target"]
+    # the biped-specific regularizers carry over from the G1 (Go2 lacks them)
+    reward_terms = {r["predicate"] for r in t1["dense_reward"]}
+    assert {"base_lin_vel_z", "base_ang_vel_xy"} <= reward_terms
+
+
+def test_t1_walk_forward_success_fires_on_forward_progress(sim):
+    """success = base_beyond_x(2.0): False until the base walks past x=2 m."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("t1_walk_forward")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_pose(sim, x=0.0, z=0.66)
+    assert bench.is_success(sim) is False
+    _set_base_pose(sim, x=1.5, z=0.66)
+    assert bench.is_success(sim) is False  # short of the 2 m line
+    _set_base_pose(sim, x=3.0, z=0.66)
+    assert bench.is_success(sim) is True
+
+
+def test_t1_walk_forward_failure_fires_on_topple(sim):
+    """failure includes base_tipped(0.7): a level humanoid base continues, a
+    toppled one terminates the episode."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("t1_walk_forward")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_pose(sim, x=0.0, z=0.66, quat_wxyz=[1.0, 0.0, 0.0, 0.0])
+    assert bench.is_failure(sim) is False
+    _set_base_pose(sim, x=0.0, z=0.66, quat_wxyz=_quat_pitch(90.0))  # on its side
+    assert bench.is_failure(sim) is True
+
+
+def test_t1_walk_forward_failure_fires_on_height_collapse(sim):
+    """failure includes base_below_z(0.35): the ~0.665 m standing T1 continues, a
+    collapsed pelvis (below 0.35 m) terminates. The threshold is grounded in the
+    T1's own stance, distinct from the taller G1's 0.4 m line."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("t1_walk_forward")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_pose(sim, x=0.0, z=0.66)  # nominal T1 stance
+    assert bench.is_failure(sim) is False
+    _set_base_pose(sim, x=0.0, z=0.25)  # collapsed below 0.35
+    assert bench.is_failure(sim) is True
+
+
+def test_t1_walk_forward_dense_reward_is_finite(sim):
+    """on_step sums the full biped stack (velocity tracking + height +
+    orientation + lin_vel_z + ang_vel_xy) into a finite dense reward."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("t1_walk_forward")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_pose(sim, x=0.0, z=0.66)
     info = bench.on_step(sim, {}, {})
     assert math.isfinite(info.reward)
     assert info.done is False

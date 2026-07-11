@@ -10,10 +10,11 @@ Those primitives, however, wired into no runnable benchmark:
 :func:`~strands_robots.simulation.benchmark.list_benchmarks` was empty until a
 caller hand-authored a spec (``register_benchmark_from_file``) or loaded the
 LIBERO suite. This module ships canonical velocity-tracking locomotion benchmarks composed
-from those primitives - a quadruped (``go2_walk_forward``) and a humanoid
-(``g1_walk_forward``) - so a floating-base robot has a runnable, discoverable
-eval out of the box, and to show the same embodiment-agnostic DSL transfers
-unchanged across morphologies.
+from those primitives - a quadruped (``go2_walk_forward``) and two humanoids
+(``g1_walk_forward``, ``t1_walk_forward``) - so a floating-base robot has a
+runnable, discoverable eval out of the box, and to show the same
+embodiment-agnostic DSL transfers unchanged across morphologies and across two
+bipeds of different scale.
 
 Registration is opt-in - a caller invokes :func:`register_builtin_benchmarks`
 (mirroring how the LIBERO suite registers on demand via
@@ -123,6 +124,56 @@ _G1_WALK_FORWARD: dict[str, Any] = {
     ],
 }
 
+# ``t1_walk_forward``: a second humanoid velocity-tracking task, for the Booster
+# T1 (a 23-actuator biped, distinct from the G1). Shipping two bipeds of
+# different scale - not just G1 and Go2 - is the point: it proves the shared
+# floating-base DSL and the humanoid reward stack are not tuned to a single
+# robot's geometry but scale with the embodiment's own measured stance. Only the
+# height thresholds differ from ``g1_walk_forward``; the reward-term set,
+# velocity command, and topple threshold are identical (both are bipeds walking
+# forward at 1 m/s):
+#
+#   - The T1 stands at base height ~0.665 m (measured from its shipped home
+#     keyframe), between the Go2's ~0.32 m and the G1's ~0.79 m. So
+#     ``base_height`` targets 0.66 m and the height-collapse failure fires below
+#     0.35 m - roughly half the standing height, well under the stance so a
+#     standing spawn never trips it, and well above 0. The G1's 0.4 m collapse
+#     line is close but tuned to the taller G1; grounding each biped in its own
+#     measured stance is exactly why a per-robot spec (not one shared humanoid
+#     spec) is the right shape here.
+#   - ``base_tipped`` (tol=0.7, ~53 deg off level) and the full anti-bounce /
+#     anti-wobble dense stack carry over unchanged from the G1: both are bipeds,
+#     so the vertical-bounce and roll/pitch-wobble sensitivities that motivated
+#     those regularizers apply identically.
+_T1_WALK_FORWARD: dict[str, Any] = {
+    "name": "t1_walk_forward",
+    "default_robot": "booster_t1",
+    "supported_robots": ["booster_t1"],
+    "max_steps": 1000,
+    "success": {"all": [{"predicate": "base_beyond_x", "x": 2.0}]},
+    "failure": {
+        "any": [
+            {"predicate": "base_tipped", "tol": 0.7},
+            {"predicate": "base_below_z", "z": 0.35},
+        ]
+    },
+    "dense_reward": [
+        {
+            "predicate": "base_velocity_tracking",
+            "vx": 1.0,
+            "vy": 0.0,
+            "wz": 0.0,
+            "lin_weight": 1.0,
+            "ang_weight": 0.5,
+            "tracking_sigma": 0.25,
+        },
+        {"predicate": "base_height", "target": 0.66, "weight": 0.5},
+        {"predicate": "base_orientation", "weight": 0.5},
+        {"predicate": "base_lin_vel_z", "weight": 0.1},
+        {"predicate": "base_ang_vel_xy", "weight": 0.1},
+    ],
+}
+
 
 # Registry of shipped built-in specs, keyed by their canonical registry name.
 # Extend this dict to ship more; every entry reuses the same embodiment-agnostic
@@ -130,6 +181,7 @@ _G1_WALK_FORWARD: dict[str, Any] = {
 _BUILTIN_SPECS: dict[str, dict[str, Any]] = {
     "go2_walk_forward": _GO2_WALK_FORWARD,
     "g1_walk_forward": _G1_WALK_FORWARD,
+    "t1_walk_forward": _T1_WALK_FORWARD,
 }
 
 
