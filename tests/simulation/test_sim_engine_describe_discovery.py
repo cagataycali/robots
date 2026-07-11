@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+
 def _make_minimal_engine():
     """Create a minimal SimEngine with one robot for describe() testing."""
     from strands_robots.simulation.base import SimEngine
@@ -106,6 +107,7 @@ def _make_minimal_engine():
             return {}
 
     return MinimalEngine()
+
 
 class TestDescribeABC:
     """Tests for SimEngine.describe() on the abstract base class."""
@@ -234,6 +236,7 @@ class TestDescribeABC:
         # caller can invoke them without reading the source.
         assert "benchmark_name" in methods["evaluate_benchmark"]
         assert "spec_path" in methods["register_benchmark_from_file"]
+
 
 @pytest.mark.skipif(
     not pytest.importorskip("mujoco", reason="MuJoCo not installed"),
@@ -695,6 +698,7 @@ class TestDescribeMuJoCo:
                 )
         finally:
             sim.destroy()
+
 
 class TestNoAlias:
     """Code is the single source of truth: no duplicate-name aliases.
