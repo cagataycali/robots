@@ -1139,6 +1139,37 @@ class TestPolicyExecution:
         result = sim_with_world.start_policy("ghost")
         assert result["status"] == "error"
 
+    def test_describe_advertises_background_policy_lifecycle(self, sim_with_robot):
+        """describe() advertises the whole start/stop/list background-policy
+        lifecycle, not just start_policy.
+
+        The MuJoCo backend overrides start_policy to run in a background thread
+        (non-blocking), unlike the base engine's synchronous passthrough, and
+        provides stop_policy + list_policies_running to manage it. describe()
+        already advertised start_policy (inherited from the base surface), but
+        omitted its lifecycle siblings -- so an agent that discovered
+        start_policy here and launched a rollout could not learn how to stop it
+        or inspect what is running without guessing the names, a resource-leak
+        trap. Both are first-class actions in the tool spec + dispatcher and
+        belong on the discovery surface alongside start_policy.
+        """
+        methods = sim_with_robot.describe()["methods"]
+        for name in ("start_policy", "stop_policy", "list_policies_running"):
+            assert name in methods, f"describe() omits policy-lifecycle method {name!r}"
+        # Advertised signatures name the real parameters / return shape so a
+        # caller can invoke them without reading the source.
+        assert "robot_name" in methods["stop_policy"]
+        assert "-> dict" in methods["list_policies_running"]
+
+        # The advertisement is only useful if the methods it names are real and
+        # invocable: list before start reports none, stop is idempotent.
+        listed = sim_with_robot.list_policies_running()
+        assert listed["status"] == "success"
+        assert "No policies running" in listed["content"][0]["text"]
+        idempotent = sim_with_robot.stop_policy("arm1")
+        assert idempotent["status"] == "success"
+        assert "Was not running" in idempotent["content"][0]["text"]
+
 
 # Action Dispatch
 

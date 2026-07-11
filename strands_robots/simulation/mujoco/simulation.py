@@ -1552,6 +1552,24 @@ class MuJoCoSimEngine(
             "ordered-list form mirrors set_joint_positions"
         )
 
+        # Background-policy lifecycle. MuJoCo overrides start_policy to run in a
+        # background thread (non-blocking), unlike the base engine's synchronous
+        # passthrough -- so an agent that discovers start_policy here and launches
+        # a rollout has no way to discover how to STOP it or see WHAT is running
+        # without guessing these names. Both are first-class actions in the tool
+        # spec + action dispatcher; listing them completes the start/stop/list
+        # lifecycle on the discovery surface (the resource-management sibling of
+        # run_policy's blocking rollout).
+        base["methods"]["stop_policy"] = (
+            "(robot_name: str) -> dict  # cooperatively stop the background "
+            "policy started by start_policy on robot_name; idempotent (succeeds "
+            "with 'Was not running' when none is active). The inverse of start_policy"
+        )
+        base["methods"]["list_policies_running"] = (
+            "() -> dict  # names of robots currently running a background policy "
+            "(inspect concurrent-policy state when driving two or more arms in one scene)"
+        )
+
         if self._world is not None:
             base["sim_time"] = self._world.sim_time
             base["world_created"] = True
