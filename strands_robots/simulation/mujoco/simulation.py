@@ -1474,6 +1474,32 @@ class MuJoCoSimEngine(
             "status=error on mismatch)"
         )
 
+        # Plain-MP4 camera-recording surface ([sim-mujoco] extra, no lerobot).
+        # The block above advertises the LeRobotDataset recording family
+        # (start_recording -> save_episode -> stop_recording), which needs the
+        # [lerobot] extra and writes a parquet+MP4 dataset. But an agent that
+        # only wants a raw MP4 per camera -- or that lacks lerobot entirely --
+        # had no way to discover the dependency-free recorder from describe()
+        # alone. These three are first-class MuJoCo tool-spec + action-dispatcher
+        # actions; listing them completes the recording surface with the plain
+        # start/stop/status trio alongside the dataset trio.
+        base["methods"]["start_cameras_recording"] = (
+            "(cameras=None, output_dir=None, fps=30, width=None, height=None, "
+            "name=None, max_frames_per_camera=3000) -> dict  # start a "
+            "dependency-free background recorder that writes one MP4 per camera "
+            "(no lerobot / dataset); cameras=None records every camera. The "
+            "raw-MP4 sibling of start_recording's LeRobotDataset"
+        )
+        base["methods"]["stop_cameras_recording"] = (
+            "() -> dict  # stop start_cameras_recording, flush each camera's "
+            "buffer to an MP4, and report per-camera frame counts + paths; "
+            "idempotent. The inverse of start_cameras_recording"
+        )
+        base["methods"]["get_cameras_recording_status"] = (
+            "() -> dict  # inspect an in-progress start_cameras_recording "
+            "(elapsed time, per-camera frame counts); reports idle when none is active"
+        )
+
         # Physics-introspection / grounding surface. The discovery surface
         # teaches how to build a scene, run a policy, and record a dataset, but
         # previously gave no way to discover how to READ the physics result --

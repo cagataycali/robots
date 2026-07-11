@@ -5,6 +5,29 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `describe()` advertises the plain-MP4 camera-recording family (`start_cameras_recording` / `stop_cameras_recording` / `get_cameras_recording_status`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. The MuJoCo
+backend already advertised the LeRobotDataset recording family
+(`start_recording` / `save_episode` / `stop_recording`), which needs the
+`[lerobot]` extra and writes a parquet+MP4 dataset. But the dependency-free
+recorder trio -- `start_cameras_recording` (background capture of one raw MP4
+per camera, no lerobot), `stop_cameras_recording` (flush buffers, report
+per-camera frame counts + paths), and `get_cameras_recording_status` (inspect an
+in-progress recording) -- was undiscoverable from `describe()` alone, even though
+all three are first-class MuJoCo `tool_spec.json` + action-dispatcher actions. An
+agent lacking the `[lerobot]` extra, or wanting a raw MP4 rather than a dataset,
+had to guess these names. They are now advertised in the MuJoCo backend's
+`describe()["methods"]` as the raw-MP4 sibling of the dataset trio, each with a
+signature that names its distinguishing parameters. Additive only -- no change to
+the `tool_spec.json` enum, the action dispatcher, or any runtime behavior; this
+purely completes the recording discovery surface. A regression test asserts the
+trio is advertised with `cameras=` / `max_frames_per_camera=` named (fails
+before, passes after), and the existing `test_describe_methods_resolve_to_real_attributes`
+guard confirms each newly advertised name is a live callable on the engine.
+
+
 ### Added: `register_builtin_benchmarks()` ships a canonical velocity-tracking locomotion benchmark (`go2_walk_forward`)
 
 The floating-base predicate/reward DSL (`base_velocity_tracking` / `base_height`

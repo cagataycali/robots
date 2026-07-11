@@ -500,6 +500,41 @@ class TestDescribeMuJoCo:
         finally:
             sim.destroy()
 
+    def test_describe_lists_cameras_recording_family(self):
+        """describe() advertises the plain-MP4 recorder, not only the dataset one.
+
+        The recording surface already advertises the LeRobotDataset family
+        (``start_recording`` / ``save_episode`` / ``stop_recording``), which
+        needs the ``[lerobot]`` extra and writes a parquet+MP4 dataset. But the
+        dependency-free ``start_cameras_recording`` / ``stop_cameras_recording``
+        / ``get_cameras_recording_status`` trio -- which writes one raw MP4 per
+        camera with no lerobot dependency -- was undiscoverable from describe()
+        alone, even though all three are first-class MuJoCo tool-spec and
+        action-dispatcher actions. An agent lacking lerobot, or wanting a raw
+        MP4, had to guess these names. They belong on the discovery surface as
+        the raw-MP4 sibling of the dataset trio.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in (
+                "start_cameras_recording",
+                "stop_cameras_recording",
+                "get_cameras_recording_status",
+            ):
+                assert name in methods, f"describe() omits cameras-recording method {name!r}"
+            # Advertised signatures name the real distinguishing parameters so a
+            # caller can invoke them without reading the source.
+            assert "cameras" in methods["start_cameras_recording"]
+            assert "max_frames_per_camera" in methods["start_cameras_recording"]
+        finally:
+            sim.destroy()
+
     def test_describe_methods_resolve_to_real_attributes(self):
         """Every method MuJoCo describe() advertises must be a real callable.
 
