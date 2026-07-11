@@ -205,7 +205,7 @@ class TestTransportCaps:
         typo silently fall back to the default cap.
         """
         monkeypatch.setenv("STRANDS_MESH_MAX_SESSIONS", "lots")
-        with pytest.raises(ValueError, match="is not an integer"):
+        with pytest.raises(ValueError, match=r"STRANDS_MESH_MAX_SESSIONS='lots' is not an integer"):
             zc.transport_caps_block()
 
 
@@ -244,7 +244,7 @@ class TestDownsampling:
         cap on a typo.
         """
         monkeypatch.setenv("STRANDS_MESH_CMD_RATE_HZ", "fast")
-        with pytest.raises(ValueError, match="is not a float"):
+        with pytest.raises(ValueError, match=r"STRANDS_MESH_CMD_RATE_HZ='fast' is not a float"):
             zc.downsampling_block()
 
 
@@ -314,6 +314,16 @@ class TestLowPassFilter:
     def test_oversize_cap_rejected(self, monkeypatch):
         monkeypatch.setenv("STRANDS_MESH_MAX_CMD_BYTES", "999999999999")
         with pytest.raises(ValueError):
+            zc.low_pass_filter_block()
+
+    def test_non_integer_byte_cap_rejected(self, monkeypatch):
+        """A non-numeric byte-cap env var raises an actionable
+        "is not an integer" ValueError at config-build time, naming the
+        env var and offending value, rather than an opaque failure deeper
+        in ``zenoh.open()``.
+        """
+        monkeypatch.setenv("STRANDS_MESH_MAX_CMD_BYTES", "big")
+        with pytest.raises(ValueError, match=r"STRANDS_MESH_MAX_CMD_BYTES='big' is not an integer"):
             zc.low_pass_filter_block()
 
 
