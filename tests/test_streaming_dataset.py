@@ -485,6 +485,28 @@ def test_has_streaming_dataset_does_not_negatively_cache(monkeypatch):
     assert sd.has_streaming_dataset() is True
 
 
+def test_has_streaming_dataset_positively_caches(monkeypatch):
+    """A successful availability probe is memoized: once the streaming symbol
+    resolves, later calls short-circuit and never re-import lerobot.
+
+    The mirror of :func:`test_has_streaming_dataset_does_not_negatively_cache`.
+    Hot-loop callers (agent / eval / replay loops) call this repeatedly, and on
+    Jetson the ``from lerobot.datasets import ...`` probe is expensive (numpy /
+    torch ABI). The contract is proven behaviorally by breaking the import
+    AFTER the first success: a fresh probe of that broken state returns False
+    (see the negative test above), so a warmed cache returning True can only be
+    the memoized short-circuit - not a re-probe.
+    """
+    monkeypatch.setattr(sd, "_HAS_STREAMING_DATASET", [], raising=False)
+    # First probe resolves the symbol and caches the positive result.
+    _install_fake_lerobot_datasets(monkeypatch, with_streaming=True)
+    assert sd.has_streaming_dataset() is True
+    # Break the import. A cold probe of this exact state returns False; the
+    # warmed cache must short-circuit past it and still report True.
+    _install_fake_lerobot_datasets(monkeypatch, with_streaming=False)
+    assert sd.has_streaming_dataset() is True
+
+
 def test_get_streaming_cls_resolves_via_import(monkeypatch):
     """With no test-injected attribute override, _get_streaming_cls falls
     through to the real import and returns the resolved class."""
