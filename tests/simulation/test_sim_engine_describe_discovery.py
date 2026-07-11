@@ -573,6 +573,7 @@ class TestDescribeMuJoCo:
             assert "urdf_path" in methods["register_urdf"]
         finally:
             sim.destroy()
+
     def test_describe_methods_resolve_to_real_attributes(self):
         """Every method MuJoCo describe() advertises must be a real callable.
 
