@@ -2074,6 +2074,12 @@ class SimEngine(ABC):
                     "(checker|gradient|flat) + rgb1/rgb2/texdim, texrepeat [u,v]"
                 ),
                 "remove_object": "(name: str) -> dict  # remove a previously added object",
+                "remove_robot": (
+                    "(name: str) -> dict  # remove a robot (and every scene "
+                    "element it introduced) from the world; the inverse of "
+                    "add_robot, completing the add/remove pair alongside "
+                    "remove_object"
+                ),
                 "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, reset_between=True, ...) -> dict",
                 "start_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
                 "eval_policy": (
@@ -2125,6 +2131,27 @@ class SimEngine(ABC):
                     "count, timestep, gravity, and robot / object / camera / "
                     "body / joint / actuator counts (the whole-world sibling of "
                     "get_robot_state / get_observation)"
+                ),
+                "load_scene": (
+                    "(scene_path: str) -> dict  # load a complete scene from "
+                    "an MJCF/URDF file; the alternative scene-construction "
+                    "entry point to building it up with add_robot / add_object"
+                ),
+                "randomize": (
+                    "(**kwargs) -> dict  # domain randomization (colors, "
+                    "lighting, physics, positions); each backend defines its "
+                    "own opt-in axes - see the backend describe() for the "
+                    "concrete signature"
+                ),
+                "set_obs_noise": (
+                    "(**kwargs) -> dict  # configure additive Gaussian sensor "
+                    "noise on joint observations and rendered frames so a "
+                    "policy is not evaluated on noise-free observations"
+                ),
+                "get_contacts": (
+                    "() -> dict  # active contacts at the current step - the "
+                    "physics-grounding read used to verify a grasp or detect "
+                    "a collision instead of trusting a rendered caption"
                 ),
             },
             "note": (

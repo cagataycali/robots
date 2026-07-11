@@ -256,6 +256,46 @@ class TestDescribeABC:
         assert "t1_walk_forward" in blurb
         assert "humanoid" in blurb.lower()
 
+    def test_describe_lists_scene_mutation_inverse(self):
+        """describe() advertises remove_robot, completing the add/remove pair.
+
+        The base contract advertised ``add_robot`` ("the first
+        scene-construction step") and the object inverse ``remove_object``, but
+        not ``remove_robot`` -- even though it is an abstract method every
+        backend must implement. A caller enumerating ``describe()["methods"]``
+        who built a scene with add_robot could not learn how to tear a robot
+        back out without guessing the name. It belongs on the base discovery
+        surface as the inverse of add_robot, mirroring the add_object /
+        remove_object pair already advertised.
+        """
+        engine = _make_minimal_engine()
+        methods = engine.describe()["methods"]
+        assert "remove_robot" in methods, "describe() omits the base remove_robot method"
+        assert "name" in methods["remove_robot"]
+
+    def test_describe_lists_scene_variation_and_grounding(self):
+        """describe() advertises the scene-variation + physics-grounding facades.
+
+        ``load_scene`` (the alternative scene-construction entry point),
+        ``randomize`` and ``set_obs_noise`` (domain randomization + sensor-noise
+        variation), and ``get_contacts`` (the physics-grounding read used to
+        verify a grasp / detect a collision) are all public methods declared on
+        the base ``SimEngine`` contract, but describe() listed none of them -- so
+        a caller enumerating ``describe()["methods"]`` could build a scene and
+        run a policy, yet could not discover how to load a scene from file, vary
+        it for sim2real, or verify the physics result without guessing the
+        names. They belong on the base discovery surface; each backend documents
+        its concrete signature via its own describe() override.
+        """
+        engine = _make_minimal_engine()
+        methods = engine.describe()["methods"]
+        for name in ("load_scene", "randomize", "set_obs_noise", "get_contacts"):
+            assert name in methods, f"describe() omits base scene/grounding method {name!r}"
+        # Advertised signatures name the real distinguishing details so a caller
+        # can invoke them (or know where to read the concrete backend signature).
+        assert "scene_path" in methods["load_scene"]
+        assert "contact" in methods["get_contacts"].lower()
+
 
 @pytest.mark.skipif(
     not pytest.importorskip("mujoco", reason="MuJoCo not installed"),
