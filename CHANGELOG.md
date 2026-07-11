@@ -5,6 +5,32 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `describe()` advertises the robot-registry + `remove_robot` surface (`list_urdfs` / `register_urdf` / `remove_robot`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. The MuJoCo
+backend's `describe()` calls `add_robot` "the first scene-construction step" and
+advertises the object/camera remove halves (`remove_object` / `remove_camera`),
+but the robot inverse `remove_robot` -- and the registry methods that feed
+`add_robot(name=...)` (`list_urdfs` to enumerate the registered robot
+descriptions, `register_urdf` to register a custom URDF under a `data_config`
+name) -- were undiscoverable from `describe()` alone, even though all three are
+first-class MuJoCo `tool_spec.json` + action-dispatcher actions. A caller who
+built a scene with `add_robot` could not learn how to remove a robot, or how to
+register a custom URDF so `add_robot` can spawn it by name, without guessing
+these names. They are now advertised in the MuJoCo backend's
+`describe()["methods"]`, completing the add/remove symmetry that
+`remove_object` / `remove_camera` already establish, each with a signature that
+names its distinguishing parameters. Additive only -- no change to the
+`tool_spec.json` enum, the action dispatcher, or any runtime behavior; this
+purely completes the robot-registry discovery surface. (Newton exposes the same
+trio and has the same gap; deferred to keep this diff MuJoCo-scoped like the
+sibling `describe()` families.) A regression test asserts the trio is advertised
+with `data_config=` / `urdf_path=` / `name=` named (fails before, passes after),
+and the existing `test_describe_methods_resolve_to_real_attributes` guard
+confirms each newly advertised name is a live callable on the engine.
+
+
 ### Added: `describe()` advertises the plain-MP4 camera-recording family (`start_cameras_recording` / `stop_cameras_recording` / `get_cameras_recording_status`)
 
 `SimEngine.describe()["methods"]` is the single-call discovery surface an agent

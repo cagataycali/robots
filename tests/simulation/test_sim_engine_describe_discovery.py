@@ -535,6 +535,39 @@ class TestDescribeMuJoCo:
         finally:
             sim.destroy()
 
+    def test_describe_lists_robot_registry_family(self):
+        """describe() advertises the robot-registry + remove_robot surface.
+
+        describe() calls ``add_robot`` "the first scene-construction step" and
+        advertises the object/camera remove halves (``remove_object`` /
+        ``remove_camera``), but the robot inverse ``remove_robot`` -- and the
+        registry methods that feed ``add_robot(name=...)`` (``list_urdfs`` to
+        discover the registered names, ``register_urdf`` to add one) -- were
+        undiscoverable from describe() alone, even though all three are
+        first-class MuJoCo ``tool_spec.json`` + action-dispatcher actions. A
+        caller who built a scene with add_robot could not learn how to remove a
+        robot, or how to register a custom URDF, without guessing these names.
+        They belong on the discovery surface, completing the add/remove symmetry
+        that remove_object / remove_camera already establish.
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        sim = Simulation()
+        try:
+            methods = sim.describe()["methods"]
+            for name in ("list_urdfs", "register_urdf", "remove_robot"):
+                assert name in methods, f"describe() omits robot-registry method {name!r}"
+            # Advertised signatures name the real distinguishing parameters so a
+            # caller can invoke them without reading the source.
+            assert "data_config" in methods["register_urdf"]
+            assert "urdf_path" in methods["register_urdf"]
+            assert "name" in methods["remove_robot"]
+        finally:
+            sim.destroy()
+
     def test_describe_methods_resolve_to_real_attributes(self):
         """Every method MuJoCo describe() advertises must be a real callable.
 

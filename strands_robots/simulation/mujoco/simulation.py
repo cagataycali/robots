@@ -1421,6 +1421,36 @@ class MuJoCoSimEngine(
             "an existing object; position is [x, y, z] meters, orientation is a "
             "[w, x, y, z] quaternion (either may be omitted to leave it unchanged)"
         )
+        # Robot-registry + robot-removal surface. describe() calls add_robot
+        # "the first scene-construction step" and advertises the object/camera
+        # remove halves (remove_object / remove_camera), but not the robot
+        # inverse remove_robot, nor how a caller discovers or extends the set of
+        # names add_robot(name=...) accepts. All three are first-class MuJoCo
+        # tool-spec + action-dispatcher actions: list_urdfs enumerates the
+        # registered robot descriptions, register_urdf adds a new one so
+        # add_robot can spawn it by name, and remove_robot ejects a robot (and
+        # every MJCF element it injected) - completing the add/remove symmetry
+        # that remove_object / remove_camera already establish. Listing them
+        # here reveals the robot-registry surface from one describe() call
+        # instead of by guessing. (Newton exposes the same trio and has the same
+        # gap; deferred here to keep this diff MuJoCo-scoped like the sibling
+        # describe() families.)
+        base["methods"]["list_urdfs"] = (
+            "() -> dict  # enumerate the robot descriptions registered for "
+            "add_robot(name=...) (the source of truth for the names add_robot "
+            "accepts, the robot-registry sibling of list_robots)"
+        )
+        base["methods"]["register_urdf"] = (
+            "(data_config: str, urdf_path: str) -> dict  # register a URDF under "
+            "a data_config name so add_robot(name=data_config) can spawn it; the "
+            "way to extend the add_robot registry with a custom robot"
+        )
+        base["methods"]["remove_robot"] = (
+            "(name: str) -> dict  # remove a robot and every MJCF element it "
+            "injected (bodies, actuators, sensors), then recompile; the inverse "
+            "of add_robot (cooperatively stops that robot's policy first, and "
+            "requires no other robot is running a policy)"
+        )
         base["methods"]["randomize"] = (
             "(randomize_colors=True, randomize_lighting=True, "
             "randomize_physics=False, randomize_positions=False, "
