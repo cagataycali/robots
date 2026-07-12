@@ -193,6 +193,26 @@ class TestPredicateCompilation:
             DeclarativeBenchmark.from_dict(self._base_spec(success={"all": [], "other": []}))
         assert "other" in str(exc.value)
 
+    def test_rejects_unknown_predicate_in_dense_reward(self):
+        """A typo'd predicate name in a ``dense_reward`` term surfaces the same
+        clear ``Unknown predicate ... Valid: [...]`` error as a success clause.
+
+        Success / failure clauses reject unknown names early via
+        ``predicate_kind`` kind-checking, but ``dense_reward`` terms compile
+        through a different path with no kind requirement and rely on
+        ``make_predicate`` to reject the name. This pins that a typo in a
+        reward-term predicate still fails loudly at compile time with a
+        discoverable list of valid predicates, rather than a cryptic
+        downstream crash at evaluation.
+        """
+        with pytest.raises(ValueError) as exc:
+            DeclarativeBenchmark.from_dict(
+                self._base_spec(dense_reward=[{"predicate": "totally_made_up", "value": 1.0}])
+            )
+        msg = str(exc.value)
+        assert "Unknown predicate" in msg
+        assert "totally_made_up" in msg
+
     def test_predicate_bad_kwargs_surface_compile_error(self):
         """Bad predicate kwargs (wrong types, missing required) surface as a
         compile-time error, not a runtime predicate crash."""
