@@ -1020,6 +1020,21 @@ class TestRewardModelTraining:
         assert cfg.reward_model.annotation_mode == "single_stage"
         assert cfg.reward_model.image_key == "observation.images.base"
 
+    def test_build_config_forwards_base_model_to_reward_pretrained_path(self, dataset_root, tmp_path):
+        """A reward-model spec's base_model warm-starts cfg.reward_model.pretrained_path.
+
+        A reward model can resume from a pretrained checkpoint the same way a
+        policy does. When TrainSpec.base_model is set on a reward-model run, it
+        must land on cfg.reward_model.pretrained_path so the checkpoint is
+        actually loaded - never silently dropped (which would train from scratch
+        despite the caller asking to warm-start).
+        """
+        pytest.importorskip("lerobot.rewards")
+        spec = self._sarm_spec(dataset_root, tmp_path, image_key="observation.images.base")
+        spec.base_model = "lerobot/sarm_pretrained"
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert str(cfg.reward_model.pretrained_path) == "lerobot/sarm_pretrained"
+
     def test_build_command_emits_reward_model_flags(self, dataset_root, tmp_path):
         spec = self._sarm_spec(dataset_root, tmp_path, image_key="observation.images.base")
         cmd = LerobotTrainer(device="cpu").build_command(spec)
