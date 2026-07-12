@@ -538,15 +538,15 @@ class TestDoctorVersionResolution:
         version comes from the module's ``__version__`` attribute (source-tree
         install path)."""
         import importlib
-        import importlib.metadata
         import types
+        from importlib import metadata
 
         from strands_robots.doctor import _resolve_version
 
         def _no_metadata(_dist: str) -> str:
-            raise importlib.metadata.PackageNotFoundError(_dist)
+            raise metadata.PackageNotFoundError(_dist)
 
         fake_module = types.SimpleNamespace(__version__="9.9.9-src")
-        monkeypatch.setattr(importlib.metadata, "version", _no_metadata)
+        monkeypatch.setattr(metadata, "version", _no_metadata)
         monkeypatch.setattr(importlib, "import_module", lambda _name: fake_module)
         assert _resolve_version("some_module", "some-dist") == "9.9.9-src"
