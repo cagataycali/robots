@@ -1491,6 +1491,25 @@ typo and the instance-label cases name the robot + point at `list_urdfs` +
 the model-source options (fails before, passes after), that the no-name case
 keeps the generic message, and that a valid positional name still resolves.
 
+### Fixed: `move_object` / `remove_object` / `remove_camera` give an actionable "not found" error (names the entity, offers a close match, points at discovery)
+
+When called with an unknown entity name, the MuJoCo facade's
+`move_object(name=...)`, `remove_object(name=...)`, and `remove_camera(name=...)`
+returned a dead-end `"Object 'X' not found."` / `"Camera 'X' not found."` -- no
+list of what *is* in the scene and no close-match, forcing an agent driving the
+API blind into a discovery round-trip on every typo. The camera *render* /
+*record* paths already listed `Available: [...]`, and `add_robot` already
+offered a difflib close-match for an unknown model, so these three remove/move
+paths were the inconsistent dead ends. They now return an actionable message
+that keeps the `"<Kind> 'X' not found."` prefix (preserving the consistent error
+shape) and appends a difflib close-match (`Did you mean: cube?`), the available
+names, and the discovery action (`list_objects` / `list_cameras_info`). An
+empty scene points the caller at `add_object` instead of listing nothing.
+Message-only; no change to the success paths or physical behavior. A regression
+test asserts each path names a close match + the discovery action (fails before,
+passes after) with a no-regression guard on the valid move/remove paths.
+
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

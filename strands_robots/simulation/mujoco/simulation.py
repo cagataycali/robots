@@ -858,6 +858,39 @@ class MuJoCoSimEngine(
         msg += " Use action='list_urdfs' to see all available robots."
         return msg
 
+    def _unknown_object_msg(self, requested: str) -> str:
+        """Actionable 'object not found' message: name it, offer a close-match,
+        and point at the discovery surface - consistent with the camera
+        render/record error paths and ``_unknown_model_msg`` (#1299) rather
+        than a dead-end "Object 'X' not found."."""
+        known = list(self._world.objects.keys()) if self._world is not None else []
+        msg = f"Object '{requested}' not found."
+        if known:
+            import difflib
+
+            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
+            if matches:
+                msg += " Did you mean: " + ", ".join(matches) + "?"
+            msg += f" Available objects: {known}. Use action='list_objects' to see all."
+        else:
+            msg += " No objects in the scene; add one with action='add_object'."
+        return msg
+
+    def _unknown_camera_msg(self, requested: str) -> str:
+        """Actionable 'camera not found' message for ``remove_camera`` - lists the
+        renderable cameras (like the render/record error paths already do) plus a
+        close-match, so a typo is fixable in-place without a discovery round-trip."""
+        known = self._list_camera_names()
+        msg = f"Camera '{requested}' not found."
+        if known:
+            import difflib
+
+            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
+            if matches:
+                msg += " Did you mean: " + ", ".join(matches) + "?"
+            msg += f" Available: {known}. Use action='list_cameras_info' to see all."
+        return msg
+
     def add_robot(
         self,
         name: str | None = None,
@@ -2177,8 +2210,10 @@ class MuJoCoSimEngine(
         }
 
     def remove_object(self, name: str) -> dict[str, Any]:
-        if self._world is None or name not in self._world.objects:
-            return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
+        if self._world is None:
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+        if name not in self._world.objects:
+            return {"status": "error", "content": [{"text": self._unknown_object_msg(name)}]}
         if err := self._require_no_running_policy("remove_object"):
             return err
         del self._world.objects[name]
@@ -2214,7 +2249,7 @@ class MuJoCoSimEngine(
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if name not in self._world.objects:
-            return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_object_msg(name)}]}
         # Guard: move_object writes qpos + calls mj_forward, racing a running policy.
         if err := self._require_no_running_policy("move_object"):
             return err
@@ -2457,8 +2492,10 @@ class MuJoCoSimEngine(
         from the MjSpec via :func:`SpecBuilder.remove_camera` so future
         renders/compiles no longer see it.
         """
-        if self._world is None or name not in self._world.cameras:
-            return {"status": "error", "content": [{"text": f"Camera '{name}' not found."}]}
+        if self._world is None:
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+        if name not in self._world.cameras:
+            return {"status": "error", "content": [{"text": self._unknown_camera_msg(name)}]}
         if err := self._require_no_running_policy("remove_camera"):
             return err
         cam = self._world.cameras.pop(name)
