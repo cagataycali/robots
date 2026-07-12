@@ -5,6 +5,28 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: yaw locomotion vocabulary - `base_yaw_beyond` predicate + `go2_turn_left` benchmark
+
+The floating-base locomotion DSL could command a yaw-rate (`base_velocity_tracking`
+already accepts `wz`) but had no way to SCORE reaching a turn: the progress
+predicates `base_beyond_x` / `base_beyond_y` read only `base_pos`, so a
+turn-in-place task could reward a `wz` command yet had no terminal for "the base
+actually turned", and `base_tipped` fires on any tilt (roll/pitch), not a
+deliberate turn about the vertical. This adds `base_yaw_beyond(yaw, robot=None)`
+-- TRUE once the base's world yaw heading (extracted from `base_quat`) passes
+`yaw` radians (positive = left/counter-clockwise from the identity spawn) --
+reading the same embodiment-agnostic floating-base surface the other `base_*`
+terms read (no base body name; works on a mobile base whose free joint is
+unnamed) and degrading to `False` on a fixed-base arm. It ships `go2_turn_left`,
+the first built-in to command a pure yaw (`vx=0`, `vy=0`, `wz=0.5`) body twist
+and score it with `base_yaw_beyond`, completing the omnidirectional
+velocity-tracking vocabulary: the three shipped Go2 tasks now exercise all three
+command axes (`vx`/`vy`/`wz`) and all three progress predicates
+(`base_beyond_x`/`base_beyond_y`/`base_yaw_beyond`). A pure roll/pitch tilt never
+satisfies a yaw goal (distinguishing it from `base_tipped`); pairing it with
+`base_tipped` in `failure` vetoes a "turned then fell" rollout, whose yaw would
+be ill-defined.
+
 ### Fixed: `get_observation` no longer emits a floating base's free joint as a degenerate scalar
 
 A robot whose root is a 6-DoF free joint (a humanoid's named

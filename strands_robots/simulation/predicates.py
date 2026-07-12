@@ -42,6 +42,7 @@ Available predicates (bool):
     base_below_z(z, robot=None)
     base_beyond_x(x, robot=None)
     base_beyond_y(y, robot=None)
+    base_yaw_beyond(yaw, robot=None)
 
 Available reward terms (float):
 
@@ -981,6 +982,71 @@ def _base_beyond_y(y: float, robot: str | None = None) -> BoolPredicate:
     return check
 
 
+def _base_yaw_beyond(yaw: float, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base has turned past a heading of ``yaw`` radians.
+
+    The YAW (turn-in-place) SUCCESS counterpart of :func:`_base_beyond_x`
+    (forward) and :func:`_base_beyond_y` (lateral): those score a *position*
+    goal off ``base_pos``, while ``base_yaw_beyond`` scores a *heading* goal off
+    ``base_quat``. It is the missing rotational third of the omnidirectional
+    velocity-tracking vocabulary - the reward term ``base_velocity_tracking``
+    already accepts a yaw-rate command ``wz``, but until now no predicate could
+    SCORE reaching a turn goal, so a turn-in-place benchmark could reward a
+    ``wz`` command yet had no terminal for "the base actually turned". It drops
+    straight into a ``success`` clause next to the fall predicates in
+    ``failure``::
+
+        success:
+          all:
+            - {predicate: base_yaw_beyond, yaw: 1.0}
+        failure:
+          any:
+            - {predicate: base_tipped, tol: 0.7}
+            - {predicate: base_below_z, z: 0.18}
+
+    The heading is the base's yaw about the world vertical, extracted from the
+    ``base_quat`` (``w, x, y, z``) surface the ``base_*`` reward terms,
+    ``base_tipped``, ``base_beyond_x`` and ``base_beyond_y`` read - so it needs
+    no base body name and works on a mobile base whose free joint is unnamed::
+
+        yaw = atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+    ``yaw`` is an ABSOLUTE world heading in radians, single-signed and measured
+    from the spawn heading (the locomotion scenes spawn at the identity
+    orientation -> yaw 0), exactly as ``base_beyond_x`` reads an absolute world x
+    from a +x-facing spawn: positive is a LEFT (counter-clockwise) turn, so
+    ``base_yaw_beyond(yaw=1.0)`` reads "turned ~1 rad (~57 deg) to the left". A
+    turn-in-place task targets a sub-pi heading (a single turn of less than a
+    half-revolution); the yaw wraps at +-pi, so a goal at or beyond pi is not a
+    well-defined single-turn heading (measuring cumulative revolutions would
+    need integrated-angle tracking, out of scope here just as ``base_beyond_x``
+    does not track total path length). It is a pure heading test - roll and
+    pitch do NOT affect the yaw, so a base that merely tips (without turning
+    about the vertical) never satisfies a yaw goal; position and height do not
+    affect it either. Because the yaw of a fully toppled base is ill-defined,
+    pair it with ``base_tipped`` in a ``failure`` clause so a "turned then fell"
+    rollout is rejected on the tilt, not scored as a valid turn.
+
+    Requires a robot with a floating base; a fixed-base arm has no base
+    orientation, so the predicate degrades to ``False`` (never turned -> never
+    spuriously succeeds) and the missing base is logged once. ``robot`` selects
+    the robot in a multi-robot scene (default: the sole robot).
+    """
+    yt = float(yaw)
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        quat = _base_quaternion(sim, rname)
+        if quat is None:
+            return False
+        # base_quat layout is (w, x, y, z) on both backends.
+        w, x, y, z = quat
+        heading = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        return heading > yt
+
+    return check
+
+
 # Reward terms (float-valued)
 
 
@@ -1460,6 +1526,7 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "base_below_z": _base_below_z,
     "base_beyond_x": _base_beyond_x,
     "base_beyond_y": _base_beyond_y,
+    "base_yaw_beyond": _base_yaw_beyond,
     # float-valued
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,

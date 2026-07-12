@@ -72,6 +72,12 @@ def _quat_pitch(deg: float) -> list[float]:
     return [math.cos(h), 0.0, math.sin(h), 0.0]
 
 
+def _quat_yaw(deg: float) -> list[float]:
+    """Unit (w, x, y, z) quaternion for a yaw turn (rotation about world +z)."""
+    h = math.radians(deg) / 2.0
+    return [math.cos(h), 0.0, 0.0, math.sin(h)]
+
+
 @pytest.fixture
 def sim():
     s = Simulation(tool_name="test_builtin_benchmarks", mesh=False)
@@ -83,10 +89,10 @@ def sim():
 @pytest.fixture(autouse=True)
 def _clean_registry():
     """Keep the module-global benchmark registry clean around each test."""
-    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward", "go2_strafe_left"):
+    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward", "go2_strafe_left", "go2_turn_left"):
         unregister_benchmark(_n)
     yield
-    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward", "go2_strafe_left"):
+    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward", "go2_strafe_left", "go2_turn_left"):
         unregister_benchmark(_n)
 
 
@@ -458,6 +464,92 @@ def test_go2_strafe_left_dense_reward_is_finite_and_tracks_vy(sim):
     bench = get_benchmark("go2_strafe_left")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
     _set_base_y(sim, y=0.0, z=0.32)
+    info = bench.on_step(sim, {}, {})
+    assert math.isfinite(info.reward)
+    assert info.done is False
+
+
+# ---------------------------------------------------------------------------
+# go2_turn_left: the YAW counterpart - same quadruped/thresholds, a wz command
+# and a base_yaw_beyond heading goal (completes the vx/vy/wz vocabulary)
+# ---------------------------------------------------------------------------
+def _set_base_yaw(sim, deg: float, z: float = 0.32) -> None:
+    """Set the free joint to a KNOWN yaw heading at the origin (turn-in-place)."""
+    model, data = sim._world._model, sim._world._data
+    jid = next(j for j in range(model.njnt) if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE)
+    qadr = int(model.jnt_qposadr[jid])
+    data.qpos[qadr : qadr + 7] = [0.0, 0.0, float(z), *_quat_yaw(deg)]
+    mujoco.mj_forward(model, data)
+
+
+def test_register_builtin_benchmarks_registers_go2_turn_left():
+    """go2_turn_left is absent until registered, then discoverable + runnable."""
+    assert "go2_turn_left" not in list_benchmarks()
+    names = register_builtin_benchmarks()
+    assert "go2_turn_left" in names
+    assert "go2_turn_left" in list_benchmarks()
+    assert get_benchmark("go2_turn_left") is not None
+
+
+def test_builtin_specs_include_go2_turn_left_with_a_pure_yaw_command():
+    """The shipped turn spec commands a PURE yaw twist (vx=vy=0, wz>0) and scores
+    a heading goal with base_yaw_beyond - the wz axis the walk/strafe tasks leave
+    at zero."""
+    spec = builtin_benchmark_specs()["go2_turn_left"]
+    succ = spec["success"]["all"][0]
+    assert succ["predicate"] == "base_yaw_beyond"
+    assert succ["yaw"] == 1.0
+    track = next(r for r in spec["dense_reward"] if r["predicate"] == "base_velocity_tracking")
+    assert track["vx"] == 0.0 and track["vy"] == 0.0 and track["wz"] == 0.5
+
+
+def test_go2_turn_left_success_fires_on_yaw_progress(sim):
+    """success = base_yaw_beyond(1.0): False until the base turns past ~1 rad left,
+    and pure forward displacement (no turn) never satisfies it."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("go2_turn_left")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_yaw(sim, deg=0.0)
+    assert bench.is_success(sim) is False
+    _set_base_yaw(sim, deg=45.0)  # ~0.79 rad, short of the 1.0 rad line
+    assert bench.is_success(sim) is False
+    _set_base_pose(sim, x=3.0)  # walked far forward but never turned
+    assert bench.is_success(sim) is False
+    _set_base_yaw(sim, deg=90.0)  # turned well left
+    assert bench.is_success(sim) is True
+
+
+def test_go2_turn_left_failure_fires_on_topple(sim):
+    """failure includes base_tipped(0.7): a level (turned) base continues, a
+    toppled one terminates - vetoing a 'turned then fell' rollout."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("go2_turn_left")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_yaw(sim, deg=90.0)  # turned, upright
+    assert bench.is_failure(sim) is False
+    _set_base_pose(sim, x=0.0, quat_wxyz=_quat_pitch(90.0))  # on its side
+    assert bench.is_failure(sim) is True
+
+
+def test_go2_turn_left_failure_fires_on_height_collapse(sim):
+    """failure includes base_below_z(0.18): a standing base continues, a
+    collapsed one terminates."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("go2_turn_left")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_yaw(sim, deg=90.0, z=0.32)  # nominal Go2 stance, turned
+    assert bench.is_failure(sim) is False
+    _set_base_yaw(sim, deg=90.0, z=0.1)  # collapsed below 0.18
+    assert bench.is_failure(sim) is True
+
+
+def test_go2_turn_left_dense_reward_is_finite_and_tracks_wz(sim):
+    """on_step sums the yaw base_velocity_tracking + base_height + base_orientation
+    into a finite dense reward the RL/BC loop can shape on."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("go2_turn_left")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_yaw(sim, deg=0.0, z=0.32)
     info = bench.on_step(sim, {}, {})
     assert math.isfinite(info.reward)
     assert info.done is False

@@ -16,9 +16,12 @@ quadruped task (``go2_strafe_left``) - so a floating-base robot has a runnable,
 discoverable eval out of the box, and to show the same embodiment-agnostic DSL
 transfers unchanged across morphologies, across two bipeds of different scale,
 AND across command directions: ``go2_strafe_left`` commands a pure lateral
-(``vy``) body twist and scores it with ``base_beyond_y``, exercising the
-lateral half of the velocity-tracking vocabulary that the walk-forward tasks
-(pure ``vx`` + ``base_beyond_x``) never touch.
+(``vy``) body twist and scores it with ``base_beyond_y``, and
+``go2_turn_left`` commands a pure yaw-rate (``wz``) twist and scores it with
+``base_yaw_beyond`` - so the three shipped Go2 tasks exercise all three axes
+of the velocity-tracking command (forward ``vx``, lateral ``vy``, yaw ``wz``)
+and all three progress predicates (``base_beyond_x`` / ``base_beyond_y`` /
+``base_yaw_beyond``), the full omnidirectional locomotion vocabulary.
 
 Registration is opt-in - a caller invokes :func:`register_builtin_benchmarks`
 (mirroring how the LIBERO suite registers on demand via
@@ -224,6 +227,57 @@ _GO2_STRAFE_LEFT: dict[str, Any] = {
 }
 
 
+# ``go2_turn_left``: the YAW (turn-in-place) velocity-tracking counterpart of
+# ``go2_walk_forward`` / ``go2_strafe_left`` - turn the Unitree Go2 in place to
+# its left at 0.5 rad/s and stay standing. It is the first shipped benchmark to
+# command a non-zero yaw-rate (``wz``) twist and to score a HEADING goal,
+# completing the omnidirectional velocity-tracking vocabulary (the walk-forward
+# tasks command ``vx``, ``go2_strafe_left`` commands ``vy``, and this commands
+# ``wz`` - all three axes of ``base_velocity_tracking``):
+#
+#   - success: the base turns past a 1.0 rad (~57 deg) heading to the left
+#     (``base_yaw_beyond``) - world yaw is measured from the identity spawn, so
+#     positive is a left (counter-clockwise) turn. A standing-still or
+#     translating-but-not-turning policy never satisfies it (it scores heading
+#     progress, not "did not fall" and not linear displacement).
+#   - failure: the same fall modes as the other Go2 tasks - topple past ~53 deg
+#     (``base_tipped``, tol=0.7) OR height collapse below 0.18 m
+#     (``base_below_z``, the Go2 stands at ~0.32 m). Pairing the fall predicate
+#     with the yaw success is deliberate: a toppled base has an ill-defined yaw,
+#     so ``base_tipped`` vetoes a "turned then fell" rollout.
+#   - dense_reward: the same legged_gym-style stack, but the tracked twist is a
+#     PURE yaw command (vx=0.0, vy=0.0, wz=0.5) - the ``wz`` term of
+#     ``base_velocity_tracking`` (with vx=vy=0 also rewarding zero drift, i.e.
+#     turning IN PLACE) that the walk-forward and strafe tasks leave at zero -
+#     plus the 0.32 m base-height and flat-orientation regularizers.
+_GO2_TURN_LEFT: dict[str, Any] = {
+    "name": "go2_turn_left",
+    "default_robot": "unitree_go2",
+    "supported_robots": ["unitree_go2"],
+    "max_steps": 1000,
+    "success": {"all": [{"predicate": "base_yaw_beyond", "yaw": 1.0}]},
+    "failure": {
+        "any": [
+            {"predicate": "base_tipped", "tol": 0.7},
+            {"predicate": "base_below_z", "z": 0.18},
+        ]
+    },
+    "dense_reward": [
+        {
+            "predicate": "base_velocity_tracking",
+            "vx": 0.0,
+            "vy": 0.0,
+            "wz": 0.5,
+            "lin_weight": 1.0,
+            "ang_weight": 0.5,
+            "tracking_sigma": 0.25,
+        },
+        {"predicate": "base_height", "target": 0.32, "weight": 0.5},
+        {"predicate": "base_orientation", "weight": 0.5},
+    ],
+}
+
+
 # Registry of shipped built-in specs, keyed by their canonical registry name.
 # Extend this dict to ship more; every entry reuses the same embodiment-agnostic
 # floating-base DSL, differing only in the robot, thresholds, and reward stack.
@@ -232,6 +286,7 @@ _BUILTIN_SPECS: dict[str, dict[str, Any]] = {
     "g1_walk_forward": _G1_WALK_FORWARD,
     "t1_walk_forward": _T1_WALK_FORWARD,
     "go2_strafe_left": _GO2_STRAFE_LEFT,
+    "go2_turn_left": _GO2_TURN_LEFT,
 }
 
 
