@@ -950,8 +950,7 @@ def _ensure_paths(path: Path) -> None:
     Defence: if the audit log path is a SYMLINK (potentially pointing
     to attacker-controlled territory like ``/dev/null`` or another
     process's file), refuse to operate. The audit log must always be
-    a real regular file at the canonical location. See
-    review feedback round 4 (symlink-swap defence).
+    a real regular file at the canonical location.
     """
     parent = path.parent
     parent.mkdir(parents=True, exist_ok=True)

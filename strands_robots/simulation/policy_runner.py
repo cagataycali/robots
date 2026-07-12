@@ -92,9 +92,9 @@ def set_eval_seed(seed: int) -> None:
     Public since #179: standalone integration tests
     (``tests_integ/.../test_libero_10_scene5_mujoco_engine_success_rate``)
     bypass :meth:`evaluate_benchmark` and need to call this directly to
-    get reproducible policy rollouts. The leading ``_`` was an oversight
-    from #168 round 38; the function is the supported way to seed an
-    eval and is part of the public API.
+    get reproducible policy rollouts. Despite the leading ``_``, this
+    function is the supported way to seed an eval and is part of the
+    public API.
 
     NumPy / torch are imported lazily so this helper works on minimal
     installs that don't have torch (e.g. ``policy_provider="mock"``
