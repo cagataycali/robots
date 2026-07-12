@@ -357,9 +357,7 @@ def test_start_recording_excludes_free_joint_scalar_from_schema(tmp_path):
     assert started["status"] == "success", started
     names, _shape = _recorder_state_names(engine)
     # The degenerate free-joint scalar is excluded from the scalar joint schema.
-    assert "floating_base_joint" not in names, (
-        "the free joint must not be a scalar observation.state column"
-    )
+    assert "floating_base_joint" not in names, "the free joint must not be a scalar observation.state column"
     # The actuated scalar joints and the structured base columns remain.
     for j in _SO100_JOINTS:
         assert j in names
