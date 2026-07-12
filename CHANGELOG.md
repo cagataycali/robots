@@ -1509,6 +1509,26 @@ Message-only; no change to the success paths or physical behavior. A regression
 test asserts each path names a close match + the discovery action (fails before,
 passes after) with a no-regression guard on the valid move/remove paths.
 
+### Fixed: unknown `robot_name` gives an actionable "not found" error across the sim facade (close match + available robots + `list_robots`)
+
+Every facade method that looks a robot up by name -- `get_robot_state`,
+`set_joint_positions`, `set_joint_velocities`, `remove_robot`, `run_multi_policy`,
+`stop_policy`, `get_features`, `list_bodies` and friends -- returned a dead-end
+`"Robot 'X' not found."` when the name was mistyped: no list of the robots that
+*are* in the world and no close-match, forcing an agent driving the API blind
+into a discovery round-trip on every typo. This was the last remaining bare
+`"... not found."` class after the model (`add_robot`) and object/camera
+(`move_object` / `remove_object` / `remove_camera`) paths were made actionable.
+The ~9 sites now share a single `_unknown_robot_msg` helper that keeps the
+`"Robot 'X' not found."` prefix (preserving the consistent error shape) and
+appends a difflib close-match (`Did you mean: arm1?`), the available robot names,
+and the discovery action (`list_robots`). An empty world points the caller at
+`add_robot` instead of a dead end. Message-only; no change to the success paths
+or physical behavior. A regression test drives both the `simulation.py`
+(`get_robot_state`, `remove_robot`) and `physics.py` (`set_joint_positions`)
+paths and asserts the close-match + available list + discovery action (fails
+before, passes after) with a no-regression guard on a valid robot query.
+
 
 ## [0.4.1] - 2026-07-01
 

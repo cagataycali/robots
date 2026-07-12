@@ -1,4 +1,4 @@
-"""Regression tests: the ``move_object`` / ``remove_object`` / ``remove_camera``
+"""Regression tests: the ``move_object`` / ``remove_object`` / ``remove_camera`` / robot-name
 facade paths return an *actionable* error for an unknown entity instead of a
 dead-end ``"<Kind> 'X' not found."``.
 
@@ -10,7 +10,7 @@ round-trip on every typo. The camera *render*/*record* paths already listed
 close-match; these tests pin that the same actionable shape now covers the
 remove/move-by-name paths: the message names the entity, offers a close match,
 lists the available names, and points at the discovery action
-(``list_objects`` / ``list_cameras_info``).
+(``list_objects`` / ``list_cameras_info`` / ``list_robots``).
 
 The messages keep the ``"<Kind> 'X' not found."`` prefix so the consistent
 error shape (T15 in ``test_agenttool_contract``) is preserved. GL-free
@@ -79,3 +79,70 @@ def test_valid_move_and_remove_unaffected(sim):
     assert sim.move_object("cube", position=[0.2, -0.1, 0.03])["status"] == "success"
     assert sim.remove_camera("front_cam")["status"] == "success"
     assert sim.remove_object("cube")["status"] == "success"
+
+
+_ARM_XML = """<mujoco model="ded_arm">
+  <worldbody>
+    <body name="base" pos="0 0 0.1">
+      <geom type="cylinder" size="0.05 0.05"/>
+      <joint name="pan" type="hinge" axis="0 0 1" range="-3.14 3.14"/>
+      <body name="link1" pos="0 0 0.1">
+        <geom type="capsule" size="0.03" fromto="0 0 0 0 0 0.2"/>
+        <joint name="lift" type="hinge" axis="0 1 0" range="-1.57 1.57"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="pan_act" joint="pan" kp="50"/>
+    <position name="lift_act" joint="lift" kp="50"/>
+  </actuator>
+</mujoco>
+"""
+
+
+@pytest.fixture
+def sim_with_robot(tmp_path):
+    """A GL-free world holding one real robot named ``arm1`` (inline MJCF, no
+    downloaded assets) so the populated ``_unknown_robot_msg`` branch (close-match
+    + available-list) is exercised for real."""
+    xml = tmp_path / "ded_arm.xml"
+    xml.write_text(_ARM_XML)
+    s = Simulation(tool_name="test_missing_robot_msgs_sim", mesh=False)
+    s.create_world(gravity=[0, 0, -9.81])
+    assert s.add_robot("arm1", urdf_path=str(xml), position=[0, 0, 0])["status"] == "success"
+    yield s
+    s.cleanup()
+
+
+def test_get_robot_state_unknown_robot_is_actionable(sim_with_robot):
+    # simulation.py facade path (get_robot_state).
+    text = _err_text(sim_with_robot.get_robot_state("armm1"))
+    assert "Robot 'armm1' not found" in text  # preserved prefix (T15 shape)
+    assert "Did you mean: arm1" in text  # difflib close-match
+    assert "arm1" in text  # names the available robot
+    assert "list_robots" in text  # discovery surface
+
+
+def test_set_joint_positions_unknown_robot_is_actionable(sim_with_robot):
+    # physics.py facade path (set_joint_positions) shares the same helper.
+    text = _err_text(sim_with_robot.set_joint_positions([0.0, 0.0], robot_name="armm1"))
+    assert "Robot 'armm1' not found" in text
+    assert "Did you mean: arm1" in text
+    assert "list_robots" in text
+
+
+def test_remove_robot_unknown_in_empty_scene_points_to_add_robot():
+    # No robots in the world -> point at how to add one, not a dead-end.
+    s = Simulation(tool_name="test_missing_robot_empty_sim", mesh=False)
+    s.create_world(gravity=[0, 0, -9.81])
+    try:
+        text = _err_text(s.remove_robot("arm1"))
+        assert "Robot 'arm1' not found" in text
+        assert "add_robot" in text
+    finally:
+        s.cleanup()
+
+
+def test_valid_robot_query_unaffected(sim_with_robot):
+    # No-regression guard: a correct robot name is not intercepted.
+    assert sim_with_robot.get_robot_state("arm1")["status"] == "success"

@@ -156,6 +156,7 @@ class PhysicsMixin:
             self, action_name: str, robot_name: str | None = None
         ) -> dict[str, Any] | None: ...
         def _require_world(self) -> dict[str, Any] | None: ...
+        def _unknown_robot_msg(self, requested: str) -> str: ...
 
     # State Checkpointing
 
@@ -788,7 +789,7 @@ class PhysicsMixin:
             if robot_name is not None:
                 robots = [r for r in robots if r.name == robot_name]
                 if not robots:
-                    return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+                    return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
             if len(robots) == 0:
                 return {
                     "status": "error",
@@ -890,7 +891,7 @@ class PhysicsMixin:
             if robot_name is not None:
                 robots = [r for r in robots if r.name == robot_name]
                 if not robots:
-                    return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+                    return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
             if len(robots) == 0:
                 return {
                     "status": "error",

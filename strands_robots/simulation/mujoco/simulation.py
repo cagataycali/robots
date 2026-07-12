@@ -362,7 +362,7 @@ class MuJoCoSimEngine(
                 return {"status": "error", "content": [{"text": "No robots in the world."}]}
             robot_name = next(iter(self._world.robots))
         if robot_name not in self._world.robots:
-            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         action_map, coerce_error = self._coerce_action(action, robot_name)
         if coerce_error is not None:
             return coerce_error
@@ -891,6 +891,25 @@ class MuJoCoSimEngine(
             msg += f" Available: {known}. Use action='list_cameras_info' to see all."
         return msg
 
+    def _unknown_robot_msg(self, requested: str) -> str:
+        """Actionable 'robot not found' message: name it, offer a close-match,
+        and list the robots in the world - consistent with ``_unknown_object_msg`` /
+        ``_unknown_camera_msg`` / ``_unknown_model_msg`` (#1299/#1303) rather than a
+        dead-end "Robot 'X' not found." that forces an agent driving the API blind
+        into a discovery round-trip on every typo."""
+        known = list(self._world.robots.keys()) if self._world is not None else []
+        msg = f"Robot '{requested}' not found."
+        if known:
+            import difflib
+
+            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
+            if matches:
+                msg += " Did you mean: " + ", ".join(matches) + "?"
+            msg += f" Available robots: {known}. Use action='list_robots' to see all."
+        else:
+            msg += " No robots in the scene; add one with action='add_robot'."
+        return msg
+
     def add_robot(
         self,
         name: str | None = None,
@@ -1265,7 +1284,7 @@ class MuJoCoSimEngine(
         OTHER robot is running a policy.
         """
         if self._world is None or name not in self._world.robots:
-            return {"status": "error", "content": [{"text": f"Robot '{name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_robot_msg(name)}]}
 
         # Step 1: cooperatively stop THIS robot's policy if running.
         # Has to happen before the global check so remove_robot works even
@@ -1909,7 +1928,7 @@ class MuJoCoSimEngine(
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
         if robot_name not in self._world.robots:
-            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
 
         mj = self._mj
         robot = self._world.robots[robot_name]
@@ -2879,7 +2898,7 @@ class MuJoCoSimEngine(
 
         if robot_name is not None:
             if robot_name not in self._world.robots:
-                return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+                return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
             robot = self._world.robots[robot_name]
             ns = (getattr(robot, "namespace", "") or "").rstrip("/")
             prefix = f"{ns}/" if ns else ""
@@ -3178,7 +3197,7 @@ class MuJoCoSimEngine(
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
         if robot_name not in self._world.robots:
-            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
 
         # Per-robot gate: another policy running on a DIFFERENT robot is fine.
         if err := self._require_no_running_policy("start_policy", robot_name=robot_name):
@@ -3452,7 +3471,7 @@ class MuJoCoSimEngine(
         # Validate every robot exists.
         for rname in policies:
             if rname not in self._world.robots:
-                return {"status": "error", "content": [{"text": f"Robot '{rname}' not found."}]}
+                return {"status": "error", "content": [{"text": self._unknown_robot_msg(rname)}]}
 
         # Reject if any of these robots already has a running async policy
         # (would double-step physics on that robot).
@@ -3896,7 +3915,7 @@ class MuJoCoSimEngine(
                 "content": [{"text": "stop_policy requires 'robot_name'."}],
             }
         if self._world is None or robot_name not in self._world.robots:
-            return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         robot = self._world.robots[robot_name]
         was_running = robot.policy_running
         robot.policy_running = False
