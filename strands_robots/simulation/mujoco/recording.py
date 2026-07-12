@@ -182,16 +182,33 @@ class RecordingMixin(DatasetRecordingMixin):
             camera_keys: list[str] = []
             robot_type = "unknown"
             multi_robot = len(self._world.robots) > 1
+            mj = _ensure_mujoco()
+            model = self._world._model
             for rname, robot in self._world.robots.items():
+                # Exclude a floating base's 6-DoF free joint from the scalar
+                # joint schema: its full state is recorded as the structured
+                # base_pos / base_quat / base_lin_vel / base_ang_vel columns
+                # below, and get_observation no longer emits it as a scalar
+                # (its qpos is [xyz+quat], not a single angle), so declaring a
+                # floating_base_joint scalar column would record a degenerate /
+                # dead value. Mirrors get_observation / get_robot_state.
+                pfx = robot.namespace or ""
+                scalar_joint_names: list[str] = []
+                for jn in robot.joint_names:
+                    jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, (pfx + jn) if pfx else jn)
+                    if jid < 0 and pfx:
+                        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jn)
+                    if jid >= 0 and model.jnt_type[jid] == mj.mjtJoint.mjJNT_FREE:
+                        continue
+                    scalar_joint_names.append(jn)
                 if multi_robot:
-                    joint_names.extend(f"{rname}__{jn}" for jn in robot.joint_names)
+                    joint_names.extend(f"{rname}__{jn}" for jn in scalar_joint_names)
                     action_names.extend(f"{rname}__{ak}" for ak in self.robot_action_keys(rname))
                 else:
-                    joint_names.extend(robot.joint_names)
+                    joint_names.extend(scalar_joint_names)
                     action_names.extend(self.robot_action_keys(rname))
                 robot_type = robot.data_config or rname
 
-            mj = _ensure_mujoco()
             # A floating-base robot (humanoid / mobile) exposes full base
             # kinematics via get_observation - position (base_pos, world x,y,z
             # incl. height), orientation (base_quat, w,x,y,z), linear velocity

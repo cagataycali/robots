@@ -5,6 +5,28 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `get_observation` no longer emits a floating base's free joint as a degenerate scalar
+
+A robot whose root is a 6-DoF free joint (a humanoid's named
+`floating_base_joint`, or a mobile base's `<freejoint>`) surfaces its full base
+pose + twist through `get_observation` as the structured `base_pos` /
+`base_quat` / `base_lin_vel` / `base_ang_vel` keys. But `get_observation` (both
+the MuJoCo and Newton backends) ALSO emitted the free joint itself as a scalar
+`"<joint_name>"` entry equal to `qpos[jnt_qposadr]` -- the base x-coordinate
+reported as a joint angle, silently dropping the y/z position and the entire
+orientation + velocity. That degenerate scalar duplicates `base_pos.x`, and
+because the LeRobotDataset recorder derives its `observation.state` schema from
+the joint list, it became a junk `floating_base_joint` column in every recorded
+floating-base dataset (a misleading input dimension for any policy trained on
+it). `get_robot_state` was already fixed to exclude the free joint from its
+scalar per-joint state; this brings `get_observation` and the dataset recorder
+to the same contract on both backends. The free joint is now excluded from the
+scalar joint schema everywhere; its 6-DoF state remains available through the
+structured `base_*` keys / `base` entry. Fixed-base arms are unaffected. A
+regression test asserts `get_observation` and a reopened recorded dataset carry
+no `floating_base_joint` scalar (fails before, passes after) on both backends,
+with a no-regression guard that the structured base state is still present.
+
 ### Added: `describe()` advertises the teleoperation surface (`attach_teleop` / `teleoperate` / `stop_teleoperate` / `get_teleoperate_status` / `list_teleops` / `detach_teleop`)
 
 `SimEngine.describe()["methods"]` is the single-call discovery surface an agent

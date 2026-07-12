@@ -225,6 +225,13 @@ class TestFloatingBaseSurfacing:
         # [4.4, 5.5, 6.6] rotated into the +90deg-about-Z body frame is
         # [5.5, -4.4, 6.6]. See test_base_ang_vel_is_body_frame_matching_mujoco.
         assert obs["base_ang_vel"] == pytest.approx([5.5, -4.4, 6.6], abs=1e-4)
+        # The 6-DoF free joint ("root") is NOT emitted as a degenerate scalar
+        # joint entry (it would report base-x as a joint angle) - its full state
+        # is the structured base_* keys above, matching get_robot_state and the
+        # MuJoCo backend. The hinge joints past the free joint are still read.
+        assert "root" not in obs
+        assert obs["j1"] == pytest.approx(0.55, abs=1e-4)
+        assert obs["j2"] == pytest.approx(-0.22, abs=1e-4)
 
     def test_base_ang_vel_is_body_frame_matching_mujoco(self, engine_floater):
         """base_ang_vel is the body-frame angular velocity, not the raw world twist.

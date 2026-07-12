@@ -492,6 +492,16 @@ class SimEngine(ABC):
               camera associated with the robot, keyed by camera name.
               Shape ``(H, W, 3)``. Cameras whose render fails MAY be
               omitted; joint state MUST still be returned.
+            - Floating base: a robot whose root is a 6-DoF free joint (a
+              humanoid's named ``floating_base_joint`` or a mobile base's
+              unnamed ``<freejoint>``) does NOT report that free joint as a
+              scalar ``"<joint_name>"`` entry - its qpos is [xyz + quat], so a
+              scalar would report the base x-coordinate as a joint angle and
+              drop the rest. Instead it surfaces the full base pose + twist as
+              ``"base_pos"`` (world x,y,z incl. height), ``"base_quat"``
+              (w,x,y,z), ``"base_lin_vel"`` and ``"base_ang_vel"``, matching
+              :meth:`get_robot_state`'s ``"base"`` entry. Absent for fixed-base
+              arms.
 
         Single-camera rendering is :meth:`render`'s job, not this method's.
         For batched multi-robot observation (future Isaac / Newton), add a

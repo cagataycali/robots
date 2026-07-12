@@ -201,8 +201,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         self._joint_dof_index: dict[tuple[str, str], int] = {}
         # Short name of each robot's floating-base free joint (a humanoid's
         # named ``floating_base_joint``), when it has one. Used to surface the
-        # 6-DoF base pose/twist instead of reporting the base x-coordinate as a
-        # scalar joint value (parity with the MuJoCo backend).
+        # 6-DoF base pose/twist as the structured base_* keys and to EXCLUDE the
+        # free joint from the scalar joint state (its qpos is [xyz+quat], not a
+        # single angle) - matching get_robot_state and the MuJoCo backend.
         self._robot_free_base_joint: dict[str, str] = {}
         # Ordered full body labels per robot (rebuilt with the model).
         self._robot_body_map: dict[str, list[str]] = {}
@@ -675,8 +676,18 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             joint_q = self._state_0.joint_q.numpy()
             joint_qd = self._state_0.joint_qd.numpy()
             robot_joints = self._world.robots[robot_name].joint_names
+            free_short = self._robot_free_base_joint.get(robot_name)
             obs: dict[str, Any] = {}
             for jname in robot_joints:
+                # A 6-DoF free joint (floating base) is not a scalar joint: its
+                # coordinate 0 is the base x-position, so obs[jname] =
+                # joint_q[idx] would report base-x as a joint angle (dropping the
+                # rest of the pose + twist) - a degenerate scalar and a duplicate
+                # of base_pos.x. Its full state is surfaced below as the
+                # structured base_pos/base_quat/base_lin_vel/base_ang_vel keys,
+                # matching get_robot_state and the MuJoCo backend.
+                if jname == free_short:
+                    continue
                 idx = self._joint_coord_index.get((robot_name, jname))
                 if idx is not None and idx < len(joint_q):
                     obs[jname] = float(joint_q[idx])
