@@ -41,6 +41,7 @@ Available predicates (bool):
     base_tipped(tol=0.15, robot=None)
     base_below_z(z, robot=None)
     base_beyond_x(x, robot=None)
+    base_beyond_y(y, robot=None)
 
 Available reward terms (float):
 
@@ -928,6 +929,58 @@ def _base_beyond_x(x: float, robot: str | None = None) -> BoolPredicate:
     return check
 
 
+def _base_beyond_y(y: float, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base's world y-position has passed beyond ``y``.
+
+    The LATERAL-progress SUCCESS counterpart of :func:`_base_beyond_x`: where
+    ``base_beyond_x`` scores a walk-FORWARD goal off ``base_pos`` x,
+    ``base_beyond_y`` scores a strafe-LEFT goal off ``base_pos`` y (world +y is
+    the robot's left for the identity spawn orientation the locomotion scenes
+    use). It is the missing lateral half of the position-success family - the
+    reward terms (``base_velocity_tracking`` with a non-zero ``vy`` command +
+    the base regularizers) shape *how* to strafe, the fall predicates
+    (``base_tipped`` / ``base_below_z``) end a *bad* rollout, and this predicate
+    scores the *goal* ("the base reached lateral distance ``y``")::
+
+        success:
+          all:
+            - {predicate: base_beyond_y, y: 1.0}
+        failure:
+          any:
+            - {predicate: base_tipped, tol: 0.7}
+            - {predicate: base_below_z, z: 0.18}
+
+    Reads ``get_observation``'s ``base_pos`` y (world frame) - the same
+    embodiment-agnostic floating-base surface the ``base_*`` reward terms,
+    ``base_tipped``, ``base_below_z``, and ``base_beyond_x`` read - so it needs
+    no base body name and works on a mobile base whose free joint is unnamed.
+
+    ``y`` is an ABSOLUTE world y-threshold in metres, not a displacement
+    (mirroring ``base_beyond_x``): the canonical locomotion scenes spawn the
+    base near the origin, so ``base_beyond_y(y=D)`` reads "strafed ~D metres to
+    the left". The author sets ``y`` relative to the known spawn y. It is a pure
+    y-position test - height and orientation do not affect it (a base that
+    strafed but then toppled still reads True on y, so pair it with the fall
+    predicates in a ``failure`` clause to reject that outcome).
+
+    Requires a robot with a floating base; a fixed-base arm has no base
+    position, so the predicate degrades to ``False`` (never made lateral
+    progress -> never spuriously succeeds) and the missing base is logged once.
+    ``robot`` selects the robot in a multi-robot scene (default: the sole
+    robot).
+    """
+    yt = float(y)
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        pos = _base_position(sim, rname)
+        if pos is None:
+            return False
+        return pos[1] > yt
+
+    return check
+
+
 # Reward terms (float-valued)
 
 
@@ -1406,6 +1459,7 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "base_tipped": _base_tipped,
     "base_below_z": _base_below_z,
     "base_beyond_x": _base_beyond_x,
+    "base_beyond_y": _base_beyond_y,
     # float-valued
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,

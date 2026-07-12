@@ -3,18 +3,22 @@
 The predicate/reward DSL (:mod:`strands_robots.simulation.predicates`) grew a
 complete floating-base locomotion vocabulary - the ``base_velocity_tracking``
 exponential-kernel tracking reward, the ``base_height`` / ``base_orientation``
-posture regularizers, and the ``base_beyond_x`` (forward-progress success),
+posture regularizers, and the ``base_beyond_x`` / ``base_beyond_y`` (forward- / lateral-progress success),
 ``base_tipped`` (topple) and ``base_below_z`` (height-collapse) predicates - all
 reading the embodiment-agnostic floating-base surface from ``get_observation``.
 Those primitives, however, wired into no runnable benchmark:
 :func:`~strands_robots.simulation.benchmark.list_benchmarks` was empty until a
 caller hand-authored a spec (``register_benchmark_from_file``) or loaded the
 LIBERO suite. This module ships canonical velocity-tracking locomotion benchmarks composed
-from those primitives - a quadruped (``go2_walk_forward``) and two humanoids
-(``g1_walk_forward``, ``t1_walk_forward``) - so a floating-base robot has a
-runnable, discoverable eval out of the box, and to show the same
-embodiment-agnostic DSL transfers unchanged across morphologies and across two
-bipeds of different scale.
+from those primitives - a forward-walk quadruped (``go2_walk_forward``) and two
+humanoids (``g1_walk_forward``, ``t1_walk_forward``), plus a lateral strafe
+quadruped task (``go2_strafe_left``) - so a floating-base robot has a runnable,
+discoverable eval out of the box, and to show the same embodiment-agnostic DSL
+transfers unchanged across morphologies, across two bipeds of different scale,
+AND across command directions: ``go2_strafe_left`` commands a pure lateral
+(``vy``) body twist and scores it with ``base_beyond_y``, exercising the
+lateral half of the velocity-tracking vocabulary that the walk-forward tasks
+(pure ``vx`` + ``base_beyond_x``) never touch.
 
 Registration is opt-in - a caller invokes :func:`register_builtin_benchmarks`
 (mirroring how the LIBERO suite registers on demand via
@@ -175,6 +179,51 @@ _T1_WALK_FORWARD: dict[str, Any] = {
 }
 
 
+# ``go2_strafe_left``: the LATERAL velocity-tracking counterpart of
+# ``go2_walk_forward`` - strafe the Unitree Go2 sideways to its left at 0.5 m/s
+# and stay standing. It is the first shipped benchmark to command a non-zero
+# lateral (``vy``) twist and to score a non-forward position goal, proving the
+# velocity-tracking vocabulary is omnidirectional, not forward-only:
+#
+#   - success: the base strafes past y = 1 m (``base_beyond_y``) - world +y is
+#     the robot's left for the identity spawn orientation, so this reads
+#     "strafed ~1 m left". A standing-still or purely-forward policy never
+#     satisfies it (it scores lateral progress, not "did not fall").
+#   - failure: the same fall modes as the forward task - topple past ~53 deg
+#     (``base_tipped``, tol=0.7) OR height collapse below 0.18 m
+#     (``base_below_z``, the Go2 stands at ~0.32 m).
+#   - dense_reward: the same legged_gym-style stack, but the tracked twist is a
+#     PURE lateral command (vx=0.0, vy=0.5, wz=0.0) - the ``vy`` term of
+#     ``base_velocity_tracking`` that the pure-``vx`` walk-forward tasks leave at
+#     zero - plus the 0.32 m base-height and flat-orientation regularizers.
+_GO2_STRAFE_LEFT: dict[str, Any] = {
+    "name": "go2_strafe_left",
+    "default_robot": "unitree_go2",
+    "supported_robots": ["unitree_go2"],
+    "max_steps": 1000,
+    "success": {"all": [{"predicate": "base_beyond_y", "y": 1.0}]},
+    "failure": {
+        "any": [
+            {"predicate": "base_tipped", "tol": 0.7},
+            {"predicate": "base_below_z", "z": 0.18},
+        ]
+    },
+    "dense_reward": [
+        {
+            "predicate": "base_velocity_tracking",
+            "vx": 0.0,
+            "vy": 0.5,
+            "wz": 0.0,
+            "lin_weight": 1.0,
+            "ang_weight": 0.5,
+            "tracking_sigma": 0.25,
+        },
+        {"predicate": "base_height", "target": 0.32, "weight": 0.5},
+        {"predicate": "base_orientation", "weight": 0.5},
+    ],
+}
+
+
 # Registry of shipped built-in specs, keyed by their canonical registry name.
 # Extend this dict to ship more; every entry reuses the same embodiment-agnostic
 # floating-base DSL, differing only in the robot, thresholds, and reward stack.
@@ -182,6 +231,7 @@ _BUILTIN_SPECS: dict[str, dict[str, Any]] = {
     "go2_walk_forward": _GO2_WALK_FORWARD,
     "g1_walk_forward": _G1_WALK_FORWARD,
     "t1_walk_forward": _T1_WALK_FORWARD,
+    "go2_strafe_left": _GO2_STRAFE_LEFT,
 }
 
 

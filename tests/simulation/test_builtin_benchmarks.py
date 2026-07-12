@@ -83,10 +83,10 @@ def sim():
 @pytest.fixture(autouse=True)
 def _clean_registry():
     """Keep the module-global benchmark registry clean around each test."""
-    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward"):
+    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward", "go2_strafe_left"):
         unregister_benchmark(_n)
     yield
-    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward"):
+    for _n in ("go2_walk_forward", "g1_walk_forward", "t1_walk_forward", "go2_strafe_left"):
         unregister_benchmark(_n)
 
 
@@ -380,6 +380,84 @@ def test_t1_walk_forward_dense_reward_is_finite(sim):
     bench = get_benchmark("t1_walk_forward")
     sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
     _set_base_pose(sim, x=0.0, z=0.66)
+    info = bench.on_step(sim, {}, {})
+    assert math.isfinite(info.reward)
+    assert info.done is False
+
+
+# ---------------------------------------------------------------------------
+# go2_strafe_left: the LATERAL counterpart - same quadruped/thresholds, but a
+# pure vy command scored by base_beyond_y (the vx/base_beyond_x tasks never
+# exercise the lateral axis).
+# ---------------------------------------------------------------------------
+def _set_base_y(sim, y: float, x: float = 0.0, z: float = 0.32, quat_wxyz=None) -> None:
+    """Set the (only) free joint to world (x, y, z) - a y-aware pose setter for
+    the strafe task (the shared _set_base_pose fixes y=0)."""
+    if quat_wxyz is None:
+        quat_wxyz = [1.0, 0.0, 0.0, 0.0]
+    model, data = sim._world._model, sim._world._data
+    jid = next(j for j in range(model.njnt) if model.jnt_type[j] == mujoco.mjtJoint.mjJNT_FREE)
+    qadr = int(model.jnt_qposadr[jid])
+    data.qpos[qadr : qadr + 7] = [float(x), float(y), float(z), *quat_wxyz]
+    mujoco.mj_forward(model, data)
+
+
+def test_register_builtin_benchmarks_registers_go2_strafe_left():
+    """go2_strafe_left is absent until registered, then discoverable + runnable."""
+    assert "go2_strafe_left" not in list_benchmarks()
+    names = register_builtin_benchmarks()
+    assert "go2_strafe_left" in names
+    assert "go2_strafe_left" in list_benchmarks()
+    assert get_benchmark("go2_strafe_left") is not None
+
+
+def test_go2_strafe_left_success_fires_on_lateral_progress(sim):
+    """success = base_beyond_y(1.0): False until the base strafes past y=1 m, and
+    forward x-progress alone must NOT satisfy it (distinct from go2_walk_forward)."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("go2_strafe_left")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_y(sim, y=0.0)
+    assert bench.is_success(sim) is False
+    _set_base_y(sim, y=0.5)
+    assert bench.is_success(sim) is False  # short of the 1 m lateral line
+    _set_base_y(sim, y=0.0, x=3.0)  # walked far FORWARD but zero lateral
+    assert bench.is_success(sim) is False, "forward progress must not score a strafe goal"
+    _set_base_y(sim, y=2.0)  # strafed well left
+    assert bench.is_success(sim) is True
+
+
+def test_go2_strafe_left_failure_fires_on_topple(sim):
+    """failure includes base_tipped(0.7): a level base continues, a toppled one
+    terminates - the same fall vocabulary as the forward task."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("go2_strafe_left")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_y(sim, y=0.0, quat_wxyz=[1.0, 0.0, 0.0, 0.0])
+    assert bench.is_failure(sim) is False
+    _set_base_y(sim, y=0.0, quat_wxyz=_quat_pitch(90.0))  # on its side
+    assert bench.is_failure(sim) is True
+
+
+def test_go2_strafe_left_failure_fires_on_height_collapse(sim):
+    """failure includes base_below_z(0.18): a standing base continues, a
+    collapsed one terminates."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("go2_strafe_left")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_y(sim, y=0.0, z=0.32)  # nominal Go2 stance
+    assert bench.is_failure(sim) is False
+    _set_base_y(sim, y=0.0, z=0.1)  # collapsed below 0.18
+    assert bench.is_failure(sim) is True
+
+
+def test_go2_strafe_left_dense_reward_is_finite_and_tracks_vy(sim):
+    """on_step sums the lateral base_velocity_tracking + base_height +
+    base_orientation into a finite dense reward the RL/BC loop can shape on."""
+    register_builtin_benchmarks()
+    bench = get_benchmark("go2_strafe_left")
+    sim.add_robot("floater", urdf_path=_write(NAMED_BASE_XML))
+    _set_base_y(sim, y=0.0, z=0.32)
     info = bench.on_step(sim, {}, {})
     assert math.isfinite(info.reward)
     assert info.done is False

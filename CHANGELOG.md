@@ -1552,6 +1552,32 @@ paths and asserts the close-match + available list + discovery action (fails
 before, passes after) with a no-regression guard on a valid robot query.
 
 
+### Added: lateral locomotion vocabulary - `base_beyond_y` predicate + `go2_strafe_left` benchmark
+
+The shipped built-in locomotion benchmarks (`go2_walk_forward`,
+`g1_walk_forward`, `t1_walk_forward`) all command a pure FORWARD twist (`vx`)
+and score it with `base_beyond_x` -- the floating-base success family had a
+forward-progress predicate but no LATERAL one, so a strafe task could reward a
+`vy` command (`base_velocity_tracking` already accepts one) yet had no way to
+SCORE reaching a sideways goal, and no shipped benchmark ever exercised the
+`vy` term of the tracking reward. This adds `base_beyond_y(y, robot=None)` --
+the lateral-progress mirror of `base_beyond_x`, reading `base_pos` y off the
+same embodiment-agnostic `get_observation` surface (no base body name, works on
+an unnamed mobile-base free joint), degrading to `False` + warn-once on a
+fixed-base arm -- and ships `go2_strafe_left`, the first built-in to command a
+pure lateral (`vx=0`, `vy=0.5`) body twist and score it with `base_beyond_y`,
+reusing the Go2 fall/height thresholds. The reward/predicate DSL now expresses
+omnidirectional velocity-tracking, not forward-only. Verified end-to-end on a
+real Unitree Go2 in MuJoCo (`evaluate_benchmark`): the base observation
+surfaces, the standing spawn neither trips the fall predicates nor satisfies
+the lateral goal, and the dense reward composes finite. Regression tests set
+known base poses and assert the y-threshold, the y-vs-x axis distinction
+(forward progress must not score a strafe goal), height/orientation
+independence, live tracking, fixed-base degradation, and a full
+`DeclarativeBenchmark` that succeeds only once the base strafes past the line
+(fails before, passes after).
+
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
