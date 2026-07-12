@@ -228,6 +228,31 @@ class SimEngine(ABC):
             raise ValueError("No robots registered in the simulation. Add a robot first (add_robot or Robot factory).")
         raise ValueError(f"Multiple robots registered; specify robot_name. Available: {names}")
 
+    def _unknown_robot_msg(self, requested: str) -> str:
+        """Actionable 'robot not found' message for the backend-agnostic facade.
+
+        Keeps the "Robot 'X' not found." prefix (the consistent error shape the
+        concrete backends also emit via their own ``_unknown_robot_msg``), then
+        appends a difflib close-match, the robots currently in the world, and the
+        discovery action so an agent driving the API by name can recover a typo in
+        zero extra calls instead of hitting a dead-end string. Uses the abstract
+        :meth:`list_robots` primitive, so every backend inherits it; the MuJoCo
+        engine overrides with a ``self._world.robots``-backed variant. Mirrors the
+        ``_unknown_object_msg`` / ``_unknown_camera_msg`` pattern (#1299/#1303/#1306).
+        """
+        known = self.list_robots()
+        msg = f"Robot '{requested}' not found."
+        if known:
+            import difflib
+
+            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
+            if matches:
+                msg += " Did you mean: " + ", ".join(matches) + "?"
+            msg += f" Available robots: {known}. Use action='list_robots' to see all."
+        else:
+            msg += " No robots in the scene; add one with action='add_robot'."
+        return msg
+
     # World lifecycle
 
     @abstractmethod
@@ -960,7 +985,7 @@ class SimEngine(ABC):
         if robot_name not in self.list_robots():
             return {
                 "status": "error",
-                "content": [{"text": f"Robot '{robot_name}' not found."}],
+                "content": [{"text": self._unknown_robot_msg(robot_name)}],
             }
 
         if policy_object is None:
@@ -1644,7 +1669,7 @@ class SimEngine(ABC):
         if resolved_robot not in robots:
             return {
                 "status": "error",
-                "content": [{"text": f"Robot '{resolved_robot}' not found."}],
+                "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
 
         if err := self._validate_action_horizon(action_horizon, "eval_policy"):
@@ -1859,7 +1884,7 @@ class SimEngine(ABC):
         if resolved_robot not in robots:
             return {
                 "status": "error",
-                "content": [{"text": f"Robot '{resolved_robot}' not found. Loaded: {robots}"}],
+                "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
 
         if policy_object is None:
