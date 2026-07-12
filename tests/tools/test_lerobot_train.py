@@ -391,8 +391,8 @@ def test_session_manager_retains_finished_session_with_dead_pid(tmp_path: Path) 
 @pytest.mark.parametrize(
     "exc_factory",
     [
-        pytest.param(lambda pid: train_mod.psutil.NoSuchProcess(pid), id="no-such-process"),
-        pytest.param(lambda pid: train_mod.psutil.AccessDenied(pid), id="access-denied"),
+        pytest.param(train_mod.psutil.NoSuchProcess, id="no-such-process"),
+        pytest.param(train_mod.psutil.AccessDenied, id="access-denied"),
     ],
 )
 def test_session_with_pid_that_vanishes_mid_probe_is_dropped(monkeypatch: pytest.MonkeyPatch, exc_factory: Any) -> None:
