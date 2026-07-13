@@ -48,7 +48,7 @@ Design notes (the contract this tool pins):
   tests where the goal is just to exercise the policy.
 
 See ``strands-labs/robots#708`` for the full root-cause analysis and the
-e2e_agent_test.py fix history (HB#352 -> #716 -> this tool).
+end-to-end agent-test fix history (HB#352 -> #716 -> this tool).
 """
 
 from __future__ import annotations
