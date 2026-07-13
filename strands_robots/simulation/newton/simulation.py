@@ -230,6 +230,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         gravity: list[float] | None = None,
         ground_plane: bool = True,
         terrain: str | None = None,
+        difficulty: float = 1.0,
     ) -> dict[str, Any]:
         """Create an empty Newton world.
 
@@ -242,6 +243,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 MuJoCo backend only). The Newton backend has no heightfield
                 ground yet, so a non-None value is rejected with an actionable
                 error.
+            difficulty: Terrain curriculum elevation scale (MuJoCo backend
+                only, alongside ``terrain``); accepted for signature parity but
+                inert here since Newton rejects ``terrain`` outright.
 
         Returns:
             Status dict with a human-readable confirmation.

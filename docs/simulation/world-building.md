@@ -81,6 +81,24 @@ is the ground-generation primitive a terrain *curriculum* (progressive
 difficulty across resets) builds on. (MuJoCo backend; the Newton backend
 rejects `terrain=` as not-yet-supported.)
 
+That curriculum knob is `difficulty`, which scales the terrain's peak
+elevation (the metre height its normalized `[0, 1]` field maps to) without
+changing the terrain *kind*:
+
+```python
+sim.create_world(terrain="rough", difficulty=0.3)  # gentle bumps (early stage)
+# ... later, harder stages ...
+sim.create_world(terrain="rough", difficulty=1.0)  # full ~8 cm bumps (default)
+sim.create_world(terrain="rough", difficulty=2.0)  # exaggerated ~16 cm bumps
+```
+
+`difficulty=1.0` (the default) is the full-height terrain, byte-identical to
+omitting it; `<1` is gentler, `>1` harsher. It must be a finite value `> 0`,
+and it only applies with a `terrain` - setting `difficulty != 1.0` on a flat
+world (no `terrain`) is rejected with an error rather than silently having no
+effect. A locomotion curriculum ramps `difficulty` across resets to grow the
+terrain the policy must handle.
+
 ## Procedural objects
 
 ```python

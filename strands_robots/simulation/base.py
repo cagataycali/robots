@@ -262,6 +262,7 @@ class SimEngine(ABC):
         gravity: list[float] | None = None,
         ground_plane: bool = True,
         terrain: str | None = None,
+        difficulty: float = 1.0,
     ) -> dict[str, Any]:
         """Create a new simulation world.
 
@@ -274,6 +275,13 @@ class SimEngine(ABC):
         only meaningful when ``ground_plane=True`` and defaults to ``None`` (a
         flat plane). Backends without heightfield support reject a non-None
         ``terrain`` with an actionable error rather than silently ignoring it.
+
+        ``difficulty`` scales the terrain's peak elevation (``1.0`` = full
+        height, ``<1`` gentler, ``>1`` harsher) so a curriculum can ramp
+        terrain magnitude across resets without changing the terrain *kind*.
+        It is only meaningful with a ``terrain``; setting ``difficulty != 1.0``
+        with no ``terrain`` is rejected with an actionable error rather than
+        silently having no effect. Must be a finite value ``> 0``.
         """
         ...
 
