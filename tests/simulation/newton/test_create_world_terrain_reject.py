@@ -52,3 +52,14 @@ def test_newton_terrain_none_is_not_rejected() -> None:
     eng._rebuild = lambda: None  # type: ignore[method-assign]
     r = eng.create_world(terrain=None)
     assert r["status"] == "success"
+
+
+def test_newton_accepts_difficulty_kwarg_and_still_rejects_terrain() -> None:
+    # ``difficulty`` exists on both backends for signature parity; on Newton it
+    # is inert (terrain is rejected outright), but passing it must not raise a
+    # TypeError - the terrain rejection still fires with difficulty supplied.
+    assert _engine_cls is not None
+    eng = _engine_cls.__new__(_engine_cls)
+    r = eng.create_world(terrain="rough", difficulty=0.5)
+    assert r["status"] == "error"
+    assert "Newton" in r["content"][0]["text"] and "rough" in r["content"][0]["text"]

@@ -65,6 +65,114 @@ def _box_rest_z(terrain_kind: str | None, x: float, y: float) -> float:
         sim.destroy()
 
 
+def _box_center_rest_z(terrain_kind: str, difficulty: float) -> float:
+    """Rest z of a box dropped at the pyramid centre for a given difficulty."""
+    sim = MuJoCoSimEngine()
+    try:
+        r = sim.create_world(terrain=terrain_kind, difficulty=difficulty)
+        assert r["status"] == "success", r
+        sim.add_object("blk", shape="box", size=[0.1, 0.1, 0.04], position=[0, 0, 0.6], color=[1, 0, 0, 1])
+        assert sim._world is not None
+        m, d = sim._world._model, sim._world._data
+        for _ in range(2500):
+            mujoco.mj_step(m, d)
+        bid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "blk")
+        return float(d.xpos[bid][2])
+    finally:
+        sim.destroy()
+
+
+def _hfield_peak_elevation(**kw: object) -> float:
+    sim = MuJoCoSimEngine()
+    try:
+        assert sim.create_world(terrain="pyramid", **kw)["status"] == "success"  # type: ignore[arg-type]
+        assert sim._world is not None
+        return float(sim._world._model.hfield_size[0][2])
+    finally:
+        sim.destroy()
+
+
+def test_difficulty_default_matches_full_height_terrain() -> None:
+    # difficulty=1.0 (default) is byte-identical to omitting it: same peak
+    # elevation AND the same normalized heightfield (difficulty scales only the
+    # metre-scale peak, never the [0, 1] field the generator returns).
+    import numpy as np
+
+    assert _hfield_peak_elevation() == _hfield_peak_elevation(difficulty=1.0) == terrain.TERRAIN_ELEVATION
+    a = MuJoCoSimEngine()
+    b = MuJoCoSimEngine()
+    try:
+        a.create_world(terrain="pyramid", difficulty=1.0)
+        b.create_world(terrain="pyramid", difficulty=0.5)
+        assert a._world is not None and b._world is not None
+        assert np.array_equal(np.array(a._world._model.hfield_data), np.array(b._world._model.hfield_data))
+    finally:
+        a.destroy()
+        b.destroy()
+
+
+def test_difficulty_scales_peak_elevation_linearly() -> None:
+    assert abs(_hfield_peak_elevation(difficulty=0.5) - terrain.TERRAIN_ELEVATION * 0.5) < 1e-9
+    assert abs(_hfield_peak_elevation(difficulty=2.0) - terrain.TERRAIN_ELEVATION * 2.0) < 1e-9
+
+
+def test_difficulty_scales_the_settled_terrain_height() -> None:
+    # A box at the pyramid centre settles meaningfully LOWER on a lower-difficulty
+    # (shorter) terrain and higher on a taller one - the curriculum physically
+    # changes the ground the robot walks on, not just a stored number.
+    z_full = _box_center_rest_z("pyramid", 1.0)
+    z_half = _box_center_rest_z("pyramid", 0.5)
+    assert z_full > z_half + 0.02, (z_full, z_half)
+
+
+def test_bad_difficulty_is_rejected_without_half_building_a_world() -> None:
+    for bad in (-1.0, 0.0, float("inf")):
+        sim = MuJoCoSimEngine()
+        try:
+            r = sim.create_world(terrain="rough", difficulty=bad)
+            assert r["status"] == "error"
+            assert "difficulty" in r["content"][0]["text"]
+            assert sim._world is None or sim._world._model is None
+        finally:
+            if sim._world is not None:
+                sim.destroy()
+
+
+def test_difficulty_without_terrain_is_rejected_as_a_no_op() -> None:
+    # difficulty scales a heightfield; setting it != 1.0 with no terrain would
+    # silently do nothing, so it is rejected actionably rather than ignored.
+    sim = MuJoCoSimEngine()
+    try:
+        r = sim.create_world(difficulty=0.5)
+        assert r["status"] == "error"
+        assert "terrain" in r["content"][0]["text"]
+        assert sim._world is None or sim._world._model is None
+    finally:
+        if sim._world is not None:
+            sim.destroy()
+
+
+def test_flat_world_default_difficulty_still_succeeds() -> None:
+    # The common flat-world path (no terrain, default difficulty) is unaffected.
+    sim = MuJoCoSimEngine()
+    try:
+        assert sim.create_world()["status"] == "success"
+        assert _ground_geom_type(sim) == _PLANE
+    finally:
+        sim.destroy()
+
+
+def test_router_dispatch_accepts_difficulty_kwarg() -> None:
+    sim = MuJoCoSimEngine()
+    try:
+        r = sim(action="create_world", terrain="pyramid", difficulty=0.5)
+        assert r["status"] == "success", r
+        assert sim._world is not None
+        assert abs(float(sim._world._model.hfield_size[0][2]) - terrain.TERRAIN_ELEVATION * 0.5) < 1e-9
+    finally:
+        sim.destroy()
+
+
 def test_terrain_builds_a_heightfield_ground() -> None:
     sim = MuJoCoSimEngine()
     try:

@@ -29,11 +29,11 @@ from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, Sim
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
 from strands_robots.simulation.terrain import (
     TERRAIN_BASE,
-    TERRAIN_ELEVATION,
     TERRAIN_RADIUS,
     TERRAIN_RESOLUTION,
     TERRAIN_SEED,
     generate_heightfield,
+    terrain_elevation,
 )
 
 logger = logging.getLogger(__name__)
@@ -324,15 +324,18 @@ class SpecBuilder:
         # share the checker material and the "ground" geom name so downstream
         # ground-plane detection (attach_robot floor-strip) and any name lookup
         # are terrain-agnostic. The hfield surface spans z in
-        # [0, TERRAIN_ELEVATION] on a solid base slab -> flush with z=0 at its
+        # [0, terrain_elevation(difficulty)] on a solid base slab -> flush with z=0 at its
         # lowest point (no hole under the robot), same +/-5 m footprint as the
         # flat plane so the reachable workspace is unchanged.
         if world.ground_plane:
             if world.terrain:
                 heights = generate_heightfield(world.terrain, resolution=TERRAIN_RESOLUTION, seed=TERRAIN_SEED)
+                # difficulty scales the hfield PEAK elevation (kind-agnostic): the
+                # normalized [0, 1] heights are the same, only the metre scale changes.
+                elevation = terrain_elevation(world.terrain_difficulty)
                 spec.add_hfield(
                     name="terrain_hfield",
-                    size=[TERRAIN_RADIUS, TERRAIN_RADIUS, TERRAIN_ELEVATION, TERRAIN_BASE],
+                    size=[TERRAIN_RADIUS, TERRAIN_RADIUS, elevation, TERRAIN_BASE],
                     nrow=TERRAIN_RESOLUTION,
                     ncol=TERRAIN_RESOLUTION,
                     userdata=heights,

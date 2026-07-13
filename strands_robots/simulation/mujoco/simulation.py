@@ -89,7 +89,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
 )
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder, _validate_size
 from strands_robots.simulation.policy_runner import CooperativeStop
-from strands_robots.simulation.terrain import validate_terrain
+from strands_robots.simulation.terrain import validate_difficulty, validate_terrain
 from strands_robots.teleop_mixin import TeleopMixin
 
 if TYPE_CHECKING:
@@ -420,6 +420,7 @@ class MuJoCoSimEngine(
         gravity: list[float] | None = None,
         ground_plane: bool = True,
         terrain: str | None = None,
+        difficulty: float = 1.0,
     ) -> dict[str, Any]:
         """Create a new simulation world.
 
@@ -430,6 +431,12 @@ class MuJoCoSimEngine(
         ``"pyramid"`` = concentric step plateaus rising toward the centre (see
         :mod:`strands_robots.simulation.terrain`). Only applies when
         ``ground_plane=True``.
+
+        ``difficulty`` scales the terrain's peak elevation (``1.0`` = full
+        height, ``<1`` gentler, ``>1`` harsher) - the curriculum knob a
+        trainer ramps across resets. It is only meaningful with a ``terrain``;
+        ``difficulty != 1.0`` with no ``terrain`` is rejected (it would have no
+        effect) and must be a finite value ``> 0``.
         """
         # mujoco verified at __init__
 
@@ -438,6 +445,23 @@ class MuJoCoSimEngine(
                 validate_terrain(terrain)
             except ValueError as exc:
                 return {"status": "error", "content": [{"text": str(exc)}]}
+        try:
+            validate_difficulty(difficulty)
+        except ValueError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
+        if terrain is None and float(difficulty) != 1.0:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"difficulty={difficulty!r} has no effect without a terrain "
+                            "(it scales a heightfield's elevation); pass terrain='rough'/'stairs'/"
+                            "'pyramid' as well, or omit difficulty for a flat ground plane."
+                        )
+                    }
+                ],
+            }
 
         if self._world is not None and self._world._model is not None:
             return {
@@ -457,6 +481,7 @@ class MuJoCoSimEngine(
             gravity=_gravity,
             ground_plane=ground_plane,
             terrain=terrain,
+            terrain_difficulty=float(difficulty),
         )
 
         self._world.cameras["default"] = SimCamera(
@@ -1823,7 +1848,7 @@ class MuJoCoSimEngine(
         # registry trio -- register_urdf / list_urdfs / remove_robot -- is
         # advertised with the robot-registry family earlier in describe().)
         base["methods"]["create_world"] = (
-            "(timestep=None, gravity=None, ground_plane=True, terrain=None) -> dict  # create "
+            "(timestep=None, gravity=None, ground_plane=True, terrain=None, difficulty=1.0) -> dict  # create "
             "a fresh empty simulation world; the lifecycle entry point that precedes "
             "add_robot/add_object (gravity is [gx,gy,gz], ground_plane adds a floor, "
             "terrain='rough'|'stairs'|'pyramid' makes it a locomotion heightfield)"
