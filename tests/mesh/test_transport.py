@@ -217,6 +217,30 @@ class TestIotMqttTransportConfig:
         t = IotMqttTransport()
         assert t.connect() is False
 
+    def test_missing_awsiotsdk_returns_false(self, monkeypatch, tmp_path, caplog):
+        """connect() fail-softs to False when awsiotsdk is not installed.
+
+        The IoT transport is an optional dependency (``strands-robots[mesh-iot]``);
+        with the SDK absent it must behave as a no-op - returning False and
+        logging an install hint - just like ZenohTransport when Zenoh is
+        missing, never crashing the host. Config is otherwise valid here so the
+        SDK-presence check is the only branch that can fail.
+        """
+        import logging
+        import sys
+
+        monkeypatch.setenv("STRANDS_IOT_THING_NAME", "test-thing")
+        monkeypatch.setenv("STRANDS_IOT_ENDPOINT", "x.iot.us-west-2.amazonaws.com")
+        monkeypatch.setenv("STRANDS_IOT_CERT_DIR", str(tmp_path))
+        # A None entry in sys.modules makes ``from awsiot import ...`` raise
+        # ImportError, simulating the SDK not being installed even when it is.
+        monkeypatch.setitem(sys.modules, "awsiot", None)
+
+        t = IotMqttTransport()
+        with caplog.at_level(logging.ERROR, logger="strands_robots.mesh.transport.iot_transport"):
+            assert t.connect() is False
+        assert any("awsiotsdk not installed" in r.message for r in caplog.records)
+
     def test_thing_name_property(self):
         t = IotMqttTransport(
             thing_name="so100-spike-01",
