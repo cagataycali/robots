@@ -11,6 +11,8 @@ are pure stdlib (no mujoco / numpy) and exercise the module in isolation.
 
 from __future__ import annotations
 
+import types
+
 import pytest
 
 from strands_robots.simulation import terrain
@@ -162,3 +164,23 @@ def test_pyramid_is_radially_isotropic_unlike_the_plus_x_staircase() -> None:
     s_row = sg[ci]
     s_col = [sg[i][ci] for i in range(n)]
     assert s_row != s_col
+
+
+def test_rough_field_collapses_to_flat_when_noise_is_degenerate(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Normalization divides by (max - min); a uniform value-noise field (every
+    # cell identical) has a zero span and would divide by zero. The generator
+    # guards that degenerate case by returning a flat field of zeros instead of
+    # crashing. Simulate uniform noise with a constant rng and assert the field
+    # is well-formed and flush with the floor.
+    class _ConstRandom:
+        def __init__(self, seed: int) -> None:
+            self._seed = seed
+
+        def random(self) -> float:
+            return 0.42
+
+    monkeypatch.setattr(terrain, "random", types.SimpleNamespace(Random=_ConstRandom))
+    n = 8
+    h = terrain.generate_heightfield("rough", resolution=n, seed=0)
+    assert len(h) == n * n
+    assert h == [0.0] * (n * n)  # flat, no NaN / no ZeroDivisionError
