@@ -553,3 +553,95 @@ def test_go2_turn_left_dense_reward_is_finite_and_tracks_wz(sim):
     info = bench.on_step(sim, {}, {})
     assert math.isfinite(info.reward)
     assert info.done is False
+
+
+# ---------------------------------------------------------------------------
+# Cross-spec sanity invariants (GL-free, standard unit gate)
+#
+# The tests above pin each spec's SPECIFIC threshold values and drive its
+# predicates at hand-picked poses. The end-to-end "a freshly-spawned upright
+# robot does not already trip failure / satisfy success" (dead-on-arrival)
+# contract, however, is asserted only against the REAL robot in
+# ``tests_integ/simulation/test_builtin_benchmark_load.py`` - network + MuJoCo +
+# GPU, collected only via ``hatch run test-integ``, NOT the PR CI gate. So a
+# newly-added shipped spec (the roadmap's next locomotion benchmarks - a Go1
+# quadruped, terrain variants) could ship an internally-inconsistent threshold
+# (e.g. a ``base_below_z`` collapse line ABOVE the ``base_height`` rewarded
+# stance -> the robot AT its own rewarded stance is already "collapsed" ->
+# every episode fails at t=0) and the PR CI gate would stay green, since the
+# per-spec unit tests only assert the numbers their author wrote and the
+# real-robot spawn guard does not run.
+#
+# These parametrized invariants close that gap in the standard gate. They are
+# derived from :func:`builtin_benchmark_specs` so any benchmark added to the
+# shipped set is covered automatically - no hardcoded list to drift.
+# ---------------------------------------------------------------------------
+_SUCCESS_PROGRESS_THRESHOLD_KEYS = {
+    "base_beyond_x": "x",
+    "base_beyond_y": "y",
+    "base_yaw_beyond": "yaw",
+}
+
+
+def _clause_predicates(spec: dict, key: str) -> list[dict]:
+    """Flatten a spec's ``success``/``failure`` all/any clause into its predicate
+    entry dicts (both connectives, so the invariant is agnostic to which is used)."""
+    clause = spec.get(key, {}) or {}
+    return list(clause.get("all", [])) + list(clause.get("any", []))
+
+
+def _find_predicate(entries: list[dict], name: str) -> dict | None:
+    return next((e for e in entries if e.get("predicate") == name), None)
+
+
+@pytest.mark.parametrize("bench_name", sorted(builtin_benchmark_specs()))
+def test_builtin_spec_collapse_threshold_below_rewarded_stance(bench_name: str):
+    """A loco benchmark's height-collapse FAILURE threshold (``base_below_z``)
+    must be strictly below its rewarded nominal stance (``base_height`` target).
+
+    Otherwise the robot AT the stance the dense reward drives it toward is
+    already classified as a height-collapse failure, so the episode terminates
+    at t=0 (dead-on-arrival). This is the standard-gate counterpart of the
+    real-robot standing-spawn contract that runs only in ``tests_integ``."""
+    spec = builtin_benchmark_specs()[bench_name]
+    below = _find_predicate(_clause_predicates(spec, "failure"), "base_below_z")
+    height = _find_predicate(spec.get("dense_reward", []), "base_height")
+    if below is None or height is None:
+        pytest.skip(f"{bench_name}: no base_below_z / base_height pair to check")
+    assert below["z"] < height["target"], (
+        f"{bench_name}: base_below_z(z={below['z']}) is NOT below the rewarded "
+        f"base_height stance (target={height['target']}) - the nominal stance "
+        f"the reward targets is classified as a height-collapse failure, so the "
+        f"benchmark fails at t=0 (dead-on-arrival)."
+    )
+
+
+@pytest.mark.parametrize("bench_name", sorted(builtin_benchmark_specs()))
+def test_builtin_spec_success_is_positive_progress(bench_name: str):
+    """A loco benchmark scores POSITIVE forward/lateral/yaw progress, so a
+    standing-still (or non-progressing) policy never trivially satisfies it."""
+    spec = builtin_benchmark_specs()[bench_name]
+    success = _clause_predicates(spec, "success")
+    assert success, f"{bench_name}: empty success clause"
+    progress = [
+        (e, _SUCCESS_PROGRESS_THRESHOLD_KEYS[e["predicate"]])
+        for e in success
+        if e.get("predicate") in _SUCCESS_PROGRESS_THRESHOLD_KEYS
+    ]
+    assert progress, f"{bench_name}: no forward/lateral/yaw progress success predicate"
+    for entry, key in progress:
+        assert entry[key] > 0, (
+            f"{bench_name}: success {entry['predicate']} threshold {key}={entry[key]} "
+            f"is not positive - a standing-still policy would satisfy it."
+        )
+
+
+@pytest.mark.parametrize("bench_name", sorted(builtin_benchmark_specs()))
+def test_builtin_spec_is_structurally_complete(bench_name: str):
+    """Every shipped benchmark defines non-empty success, failure, and
+    dense_reward clauses (a runnable eval: a terminal, a fall guard, and a dense
+    shaping signal)."""
+    spec = builtin_benchmark_specs()[bench_name]
+    assert _clause_predicates(spec, "success"), f"{bench_name}: no success predicates"
+    assert _clause_predicates(spec, "failure"), f"{bench_name}: no failure predicates"
+    assert spec.get("dense_reward"), f"{bench_name}: no dense_reward terms"
