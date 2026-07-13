@@ -31,6 +31,7 @@ def _make_minimal_engine():
             timestep: float | None = None,
             gravity: list[float] | None = None,
             ground_plane: bool = True,
+            terrain: str | None = None,
         ) -> dict[str, Any]:
             return {}
 

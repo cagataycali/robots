@@ -27,6 +27,7 @@ _HFIELD = int(mujoco.mjtGeom.mjGEOM_HFIELD)
 
 
 def _ground_geom_type(sim: MuJoCoSimEngine) -> int:
+    assert sim._world is not None
     m = sim._world._model
     gid = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "ground")
     return -1 if gid < 0 else int(m.geom_type[gid])
@@ -54,6 +55,7 @@ def _box_rest_z(terrain_kind: str | None, x: float, y: float) -> float:
         r = sim.create_world(terrain=terrain_kind)
         assert r["status"] == "success", r
         sim.add_object("blk", shape="box", size=[0.1, 0.1, 0.04], position=[x, y, 0.5], color=[1, 0, 0, 1])
+        assert sim._world is not None
         m, d = sim._world._model, sim._world._data
         for _ in range(2500):
             mujoco.mj_step(m, d)
@@ -67,6 +69,7 @@ def test_terrain_builds_a_heightfield_ground() -> None:
     sim = MuJoCoSimEngine()
     try:
         assert sim.create_world(terrain="rough")["status"] == "success"
+        assert sim._world is not None
         m = sim._world._model
         assert _ground_geom_type(sim) == _HFIELD
         assert int(m.nhfield) == 1
@@ -81,6 +84,7 @@ def test_flat_ground_default_is_a_plane() -> None:
     try:
         assert sim.create_world()["status"] == "success"
         assert _ground_geom_type(sim) == _PLANE
+        assert sim._world is not None
         assert int(sim._world._model.nhfield) == 0
     finally:
         sim.destroy()
@@ -113,6 +117,7 @@ def test_ground_plane_false_is_the_master_switch() -> None:
     try:
         assert sim.create_world(terrain="rough", ground_plane=False)["status"] == "success"
         assert _ground_geom_type(sim) == -1  # no ground geom at all
+        assert sim._world is not None
         assert int(sim._world._model.nhfield) == 0
     finally:
         sim.destroy()
@@ -138,6 +143,7 @@ def test_attached_robot_ground_plane_is_stripped_over_terrain() -> None:
             fh.write(_PLANEBOT_MJCF)
             path = fh.name
         assert sim.add_robot("planebot", urdf_path=path)["status"] == "success"
+        assert sim._world is not None
         m = sim._world._model
         plane_geoms = [g for g in range(m.ngeom) if int(m.geom_type[g]) == _PLANE]
         hfield_geoms = [g for g in range(m.ngeom) if int(m.geom_type[g]) == _HFIELD]

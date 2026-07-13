@@ -11,9 +11,14 @@ here via ``__new__`` (no Warp / GPU required, runs in CI).
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 
-_engine_cls = None
+if TYPE_CHECKING:
+    from strands_robots.simulation.newton.simulation import NewtonSimEngine
+
+_engine_cls: type[NewtonSimEngine] | None
 try:  # NewtonSimEngine imports without Warp (Warp is lazily loaded at build time)
     from strands_robots.simulation.newton.simulation import NewtonSimEngine as _engine_cls
 except Exception:  # pragma: no cover - newton package genuinely absent
@@ -25,6 +30,7 @@ pytestmark = pytest.mark.skipif(_engine_cls is None, reason="newton package not 
 def test_newton_rejects_terrain_before_any_build() -> None:
     # __new__ bypasses __init__ (no solver/GPU); the reject returns before the
     # lock/_rebuild, so no engine state is needed.
+    assert _engine_cls is not None
     eng = _engine_cls.__new__(_engine_cls)
     r = eng.create_world(terrain="rough")
     assert r["status"] == "error"
@@ -38,6 +44,7 @@ def test_newton_terrain_none_is_not_rejected() -> None:
     # the reject branch does not fire by patching _rebuild/_lock to no-ops.
     import threading
 
+    assert _engine_cls is not None
     eng = _engine_cls.__new__(_engine_cls)
     eng._lock = threading.RLock()
     eng.default_timestep = 0.002
