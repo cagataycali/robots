@@ -34,7 +34,6 @@ from typing import Any
 import pytest
 import torch
 
-import strands_robots.policies.motionbricks.policy as mb_policy
 from strands_robots.policies.motionbricks.policy import (
     MotionBricksPolicy,
     _MotionBricksAgentAdapter,
@@ -129,7 +128,10 @@ def _install_fake_motionbricks(
     for name, mod in modules.items():
         monkeypatch.setitem(sys.modules, name, mod)
     # require_optional would otherwise fail (real package absent).
-    monkeypatch.setattr(mb_policy, "require_optional", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "strands_robots.policies.motionbricks.policy.require_optional",
+        lambda *a, **k: None,
+    )
     return fake_agent
 
 
