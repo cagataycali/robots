@@ -179,9 +179,8 @@ _PSK_STATE_LOCK = threading.Lock()
 class _ProcessAuditState:
     """Container for module-level mutable flags.
 
-    Same rationale as ``mesh/security.py::_ProcessSecurityState``: we
-    keep the one-shot ``loaded`` flag on an instance attribute so static
-    analysers see a normal attribute read+write rather than a
+    We keep the one-shot ``loaded`` flag on an instance attribute so
+    static analysers see a normal attribute read+write rather than a
     ``global`` declaration on a module-level scalar (which CodeQL's
     "unused global variable" rule mis-classifies -- alert #222).
 
