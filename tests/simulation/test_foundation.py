@@ -40,6 +40,7 @@ def _make_dummy_engine_class() -> type[SimEngine]:
             gravity: list[float] | None = None,
             ground_plane: bool = True,
             terrain: str | None = None,
+            difficulty: float = 1.0,
         ) -> dict[str, Any]:
             return {}
 

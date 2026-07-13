@@ -18,7 +18,14 @@ velocity-tracking commands); ``create_world(terrain="slope")`` lays a
 constant-grade inclined ramp (a continuous uphill pitch, which neither the
 non-monotonic bumps nor the discrete steps test). All four are
 ground-generation primitives a terrain *curriculum* (progressive difficulty
-across resets) is built on.
+across resets) is built on. That curriculum knob is the ``difficulty`` scalar
+(``terrain_elevation``): the heightfield the generator returns is normalized
+to ``[0, 1]`` and scaled to metres by a peak elevation, so
+``create_world(terrain=..., difficulty=d)`` multiplies that peak by ``d``
+(``d=1.0`` full height, smaller = gentler, larger = harsher) to ramp terrain
+magnitude across resets without changing the terrain *kind* -- a robot settles
+onto shallower bumps/steps at a lower difficulty and taller ones as it is
+raised.
 
 The generator is intentionally backend- and MuJoCo-independent (pure stdlib, no
 numpy / mujoco import) so the height data is trivially unit-testable and
@@ -28,6 +35,7 @@ policy on ``terrain="rough"`` regenerates the identical field on every reset.
 
 from __future__ import annotations
 
+import math
 import random
 
 # Supported terrain kinds. ``"rough"`` is smoothed value-noise bumps; ``"stairs"``
@@ -72,6 +80,35 @@ def validate_terrain(kind: str | None) -> None:
     raise ValueError(
         f"Unknown terrain {kind!r}. Supported: {sorted(SUPPORTED_TERRAINS)} (or None / omit for a flat ground plane)."
     )
+
+
+def validate_difficulty(difficulty: float) -> None:
+    """Raise ``ValueError`` unless ``difficulty`` is a finite value ``> 0``.
+
+    ``difficulty`` scales the terrain's peak elevation (``1.0`` = full height);
+    ``0`` would collapse the heightfield to a flat plane (a degenerate hfield
+    with zero elevation, which MuJoCo rejects) and a negative/NaN value is
+    meaningless, so both are rejected actionably rather than silently producing
+    broken ground.
+    """
+    d = float(difficulty)
+    if not math.isfinite(d) or d <= 0.0:
+        raise ValueError(f"terrain difficulty must be a finite value > 0 (1.0 = full height), got {difficulty!r}.")
+
+
+def terrain_elevation(difficulty: float = 1.0) -> float:
+    """Peak terrain elevation in metres for a curriculum ``difficulty``.
+
+    The heightfield generator returns normalized ``[0, 1]`` heights; this maps
+    them to metres. At ``difficulty=1.0`` it returns :data:`TERRAIN_ELEVATION`
+    (the default full-height terrain, unchanged); ``difficulty=0.5`` halves the
+    peak (gentler curriculum stage), ``difficulty=2.0`` doubles it (harsher).
+    The single source of truth both the surface scale and any future consumer
+    agree on. Raises via :func:`validate_difficulty` for a non-positive/NaN
+    value.
+    """
+    validate_difficulty(difficulty)
+    return TERRAIN_ELEVATION * float(difficulty)
 
 
 def _box_blur(grid: list[list[float]], n: int) -> list[list[float]]:
@@ -212,5 +249,7 @@ __all__ = [
     "TERRAIN_STAIR_STEPS",
     "TERRAIN_PYRAMID_STEPS",
     "validate_terrain",
+    "validate_difficulty",
+    "terrain_elevation",
     "generate_heightfield",
 ]

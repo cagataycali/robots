@@ -27,6 +27,27 @@ satisfies a yaw goal (distinguishing it from `base_tipped`); pairing it with
 `base_tipped` in `failure` vetoes a "turned then fell" rollout, whose yaw would
 be ill-defined.
 
+### Added: `create_world(terrain=..., difficulty=...)` - terrain elevation curriculum knob
+
+The three terrain heightfields (`rough`/`stairs`/`pyramid`) shipped as
+"ground-generation primitives a terrain *curriculum* (progressive difficulty
+across resets) is built on", but the curriculum knob itself did not exist: a
+caller could switch the terrain *kind* but not its *magnitude*, so a locomotion
+curriculum could only step between three fixed heights (~8 cm) and could not
+start a policy on gentle ground and grow it. `create_world` gains a `difficulty`
+scalar that multiplies the heightfield's peak elevation: `difficulty=1.0` (the
+default) is the full-height terrain, byte-identical to omitting it; `<1` is
+gentler (a robot settles onto shallower bumps/steps), `>1` harsher. It is
+kind-agnostic (the generator's normalized `[0, 1]` field is unchanged - only the
+metre scale it maps to changes, via the new `terrain.terrain_elevation`
+single-source-of-truth helper) so it composes with every terrain kind, and a
+benchmark/trainer ramps it across resets to grow the terrain the policy must
+handle. `difficulty` must be a finite value `> 0` (a non-positive/NaN value is
+rejected actionably) and only applies with a `terrain`: setting
+`difficulty != 1.0` on a flat world (no `terrain`) is rejected with an error
+rather than silently having no effect. It exists on the Newton backend for
+signature parity but is inert there (Newton rejects `terrain` outright).
+
 ### Added: `create_world(terrain="rough")` - rough-ground heightfield for locomotion
 
 The floating-base locomotion benchmarks (`go2_walk_forward` / `g1_walk_forward`

@@ -243,3 +243,29 @@ def test_slope_is_distinct_from_rough_and_stairs() -> None:
     assert any(rough_row0[j] >= rough_row0[j + 1] for j in range(n - 1))
     # sanity: all three kinds produce a full-size field of the same footprint.
     assert len(slope) == len(stairs) == len(rough) == n * n
+
+
+def test_terrain_elevation_default_is_the_module_constant() -> None:
+    # difficulty=1.0 (the default) is the full-height terrain, unchanged.
+    assert terrain.terrain_elevation() == terrain.TERRAIN_ELEVATION
+    assert terrain.terrain_elevation(1.0) == terrain.TERRAIN_ELEVATION
+
+
+def test_terrain_elevation_scales_linearly_with_difficulty() -> None:
+    # The curriculum knob: peak elevation is a linear multiple of difficulty, so
+    # a trainer ramps terrain magnitude across resets without changing the kind.
+    assert terrain.terrain_elevation(0.5) == terrain.TERRAIN_ELEVATION * 0.5
+    assert terrain.terrain_elevation(2.0) == terrain.TERRAIN_ELEVATION * 2.0
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, -0.01, float("inf"), float("nan")])
+def test_validate_difficulty_rejects_non_positive_or_nonfinite(bad: float) -> None:
+    with pytest.raises(ValueError) as exc:
+        terrain.validate_difficulty(bad)
+    assert "difficulty" in str(exc.value)  # actionable: names the offending argument
+
+
+@pytest.mark.parametrize("good", [0.1, 0.5, 1.0, 2.0, 5.0])
+def test_validate_difficulty_accepts_positive_finite(good: float) -> None:
+    terrain.validate_difficulty(good)  # no raise
+    assert terrain.terrain_elevation(good) > 0.0
