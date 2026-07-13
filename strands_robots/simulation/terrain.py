@@ -8,9 +8,11 @@ a flat plane, so they measure command tracking but never *robustness to
 terrain* -- the whole reason legged locomotion is hard. This module generates a
 deterministic rough-terrain heightfield that
 :meth:`~strands_robots.simulation.base.SimEngine.create_world` can lay down
-instead of the flat plane (``create_world(terrain="rough")``), so a floating-base
-robot settles onto and walks over bumps. It is the ground-generation primitive a
-terrain *curriculum* (progressive difficulty across resets) is built on.
+instead of the flat plane. ``create_world(terrain="rough")`` lays smoothed
+value-noise bumps; ``create_world(terrain="stairs")`` lays a flight of discrete
+step plateaus (foot-placement + climbing, which smooth bumps do not test). Both
+are ground-generation primitives a terrain *curriculum* (progressive difficulty
+across resets) is built on.
 
 The generator is intentionally backend- and MuJoCo-independent (pure stdlib, no
 numpy / mujoco import) so the height data is trivially unit-testable and
@@ -22,10 +24,12 @@ from __future__ import annotations
 
 import random
 
-# Supported terrain kinds. ``"rough"`` is smoothed value-noise bumps; the tuple
-# is the single source of truth both backends validate against and is easy to
-# extend (e.g. ``"stairs"``) without touching the create_world signature.
-SUPPORTED_TERRAINS: tuple[str, ...] = ("rough",)
+# Supported terrain kinds. ``"rough"`` is smoothed value-noise bumps; ``"stairs"``
+# is a flight of discrete parallel step plateaus. The tuple is the single source
+# of truth both backends validate against and is easy to extend without touching
+# the create_world signature -- add a name here and a branch in
+# :func:`generate_heightfield`.
+SUPPORTED_TERRAINS: tuple[str, ...] = ("rough", "stairs")
 
 # Heightfield geometry (metres). The field spans +/-``TERRAIN_RADIUS`` in x and y
 # (matching the flat ground plane's 5 m half-size so the reachable workspace is
@@ -38,6 +42,12 @@ TERRAIN_ELEVATION = 0.08
 TERRAIN_BASE = 0.1
 TERRAIN_RESOLUTION = 40  # nrow == ncol grid cells (25 cm cells over the 10 m field)
 TERRAIN_SEED = 0
+
+# Number of discrete step plateaus for ``terrain="stairs"``. The staircase rises
+# in ``TERRAIN_STAIR_STEPS`` even levels from 0 (flush with z=0) to
+# ``TERRAIN_ELEVATION`` along +x, so each riser is ``TERRAIN_ELEVATION /
+# (TERRAIN_STAIR_STEPS - 1)`` tall (five plateaus -> 2 cm risers up to 8 cm).
+TERRAIN_STAIR_STEPS = 5
 
 
 def validate_terrain(kind: str | None) -> None:
@@ -82,6 +92,24 @@ def _rough(n: int, seed: int) -> list[float]:
     return [(v - lo) / span for v in flat]
 
 
+def _stairs(n: int) -> list[float]:
+    """Discrete parallel step plateaus rising along +x.
+
+    MuJoCo ``<hfield>`` ``userdata`` is row-major with row 0 at min-y and column
+    0 at min-x, so making the level a step function of the *column* index makes
+    the staircase rise along +x and stay constant across y (a flight of steps
+    you climb as x increases). Returns ``TERRAIN_STAIR_STEPS`` distinct
+    normalized plateaus ``{0, 1/(k-1), ..., 1}`` -- deterministic, no rng.
+    """
+    steps = TERRAIN_STAIR_STEPS
+    out: list[float] = []
+    for _i in range(n):  # row (y): every row is identical
+        for j in range(n):  # column (x): step level rises with x
+            level = min((j * steps) // n, steps - 1)  # 0 .. steps-1
+            out.append(level / (steps - 1))
+    return out
+
+
 def generate_heightfield(
     kind: str,
     resolution: int = TERRAIN_RESOLUTION,
@@ -101,6 +129,8 @@ def generate_heightfield(
         raise ValueError(f"terrain resolution must be >= 2, got {resolution}.")
     if kind == "rough":
         return _rough(n, seed)
+    if kind == "stairs":
+        return _stairs(n)
     # validate_terrain accepts only SUPPORTED_TERRAINS; a kind reaching here
     # means the tuple grew without a generator branch.
     raise ValueError(f"terrain kind {kind!r} has no generator implementation.")  # pragma: no cover
@@ -113,6 +143,7 @@ __all__ = [
     "TERRAIN_BASE",
     "TERRAIN_RESOLUTION",
     "TERRAIN_SEED",
+    "TERRAIN_STAIR_STEPS",
     "validate_terrain",
     "generate_heightfield",
 ]

@@ -238,9 +238,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ``default_timestep``).
             gravity: Gravity vector ``[x, y, z]`` (default ``[0, 0, -9.81]``).
             ground_plane: Whether to add a ground plane.
-            terrain: Rough-ground heightfield kind (MuJoCo backend only). The
-                Newton backend has no heightfield ground yet, so a non-None
-                value is rejected with an actionable error.
+            terrain: Heightfield terrain kind (e.g. ``"rough"``/``"stairs"``,
+                MuJoCo backend only). The Newton backend has no heightfield
+                ground yet, so a non-None value is rejected with an actionable
+                error.
 
         Returns:
             Status dict with a human-readable confirmation.
@@ -252,7 +253,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     {
                         "text": (
                             f"terrain={terrain!r} is not supported on the Newton backend "
-                            "(rough-ground heightfields are MuJoCo-only); use "
+                            "(heightfield terrain, e.g. 'rough'/'stairs', is MuJoCo-only); use "
                             "create_simulation(backend='mujoco') for terrain, or omit terrain "
                             "for a flat ground plane."
                         )

@@ -169,9 +169,34 @@ def test_router_dispatch_accepts_terrain_kwarg() -> None:
 def test_router_dispatch_rejects_unknown_terrain() -> None:
     sim = MuJoCoSimEngine()
     try:
-        r = sim(action="create_world", terrain="stairs")
+        r = sim(action="create_world", terrain="bogus")
         assert r["status"] == "error"
         assert "rough" in r["content"][0]["text"]
     finally:
         if sim._world is not None:
             sim.destroy()
+
+
+def test_stairs_builds_a_heightfield_ground() -> None:
+    sim = MuJoCoSimEngine()
+    try:
+        assert sim.create_world(terrain="stairs")["status"] == "success"
+        assert sim._world is not None
+        m = sim._world._model
+        assert _ground_geom_type(sim) == _HFIELD
+        assert int(m.nhfield) == 1
+        # discrete step plateaus -> the compiled heightfield still spans the
+        # full normalized range (flush at z=0, up to the top step).
+        assert float(m.hfield_data.max()) - float(m.hfield_data.min()) > 0.5
+    finally:
+        sim.destroy()
+
+
+def test_stairs_collides_and_climbs_along_x() -> None:
+    # A box dropped on a +x plateau rests meaningfully higher than one on a -x
+    # plateau: the staircase both renders AND collides, and rises along +x.
+    z_top = _box_rest_z("stairs", 4.0, 0.0)  # near the top step
+    z_bot = _box_rest_z("stairs", -4.0, 0.0)  # near the bottom step
+    assert z_top > z_bot + 0.04, (z_top, z_bot)
+    # ...and both settle on the terrain, not fallen through to a hole.
+    assert z_bot > -0.01, z_bot

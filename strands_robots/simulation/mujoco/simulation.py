@@ -423,10 +423,12 @@ class MuJoCoSimEngine(
     ) -> dict[str, Any]:
         """Create a new simulation world.
 
-        ``terrain='rough'`` lays down a deterministic rough-ground heightfield
-        (see :mod:`strands_robots.simulation.terrain`) instead of the flat
+        ``terrain`` lays down a deterministic heightfield instead of the flat
         ground plane, so a floating-base/locomotion robot is spawned and
-        evaluated on non-flat ground. Only applies when ``ground_plane=True``.
+        evaluated on non-flat ground: ``"rough"`` = smoothed value-noise bumps,
+        ``"stairs"`` = a flight of discrete step plateaus (see
+        :mod:`strands_robots.simulation.terrain`). Only applies when
+        ``ground_plane=True``.
         """
         # mujoco verified at __init__
 
@@ -1823,7 +1825,7 @@ class MuJoCoSimEngine(
             "(timestep=None, gravity=None, ground_plane=True, terrain=None) -> dict  # create "
             "a fresh empty simulation world; the lifecycle entry point that precedes "
             "add_robot/add_object (gravity is [gx,gy,gz], ground_plane adds a floor, "
-            "terrain='rough' makes it a rough heightfield for locomotion)"
+            "terrain='rough'|'stairs' makes it a locomotion heightfield)"
         )
         base["methods"]["destroy"] = (
             "() -> dict  # tear down the world and release all resources (joins any "

@@ -51,6 +51,22 @@ primitive a terrain curriculum builds on. MuJoCo backend; the Newton backend
 rejects a non-`None` `terrain` with an actionable error (heightfields are
 MuJoCo-only) rather than silently spawning on a flat plane.
 
+### Added: `create_world(terrain="stairs")` - stepped-ground heightfield for locomotion
+
+`create_world(terrain=...)` gains a second heightfield kind alongside `"rough"`:
+`terrain="stairs"` lays down a flight of discrete flat step plateaus (rising
+along +x) instead of smooth value-noise bumps. Stairs test the foot-placement
+and climbing a smoothly-undulating field never does, so they are the canonical
+next terrain in a locomotion curriculum. Like `"rough"` the field is generated
+by the pure-stdlib, backend-independent `strands_robots.simulation.terrain`
+module, is deterministic (a stepped field is seed-independent), shares the flat
+plane's +/-5 m footprint, and rises from 0 up to the same ~8 cm on a solid base
+slab (flush with `z=0` at its lowest step - no hole under the robot). A box
+dropped on a higher step rests measurably higher than one on a lower step. New
+terrain kinds are added by appending to `SUPPORTED_TERRAINS` and a generator
+branch - no `create_world` signature change. MuJoCo backend; the Newton backend
+rejects any non-`None` `terrain` with an actionable error.
+
 ### Fixed: `get_observation` no longer emits a floating base's free joint as a degenerate scalar
 
 A robot whose root is a 6-DoF free joint (a humanoid's named
