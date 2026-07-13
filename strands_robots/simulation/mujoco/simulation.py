@@ -89,7 +89,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
 )
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder, _validate_size
 from strands_robots.simulation.policy_runner import CooperativeStop
-from strands_robots.simulation.terrain import validate_difficulty, validate_terrain
+from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.teleop_mixin import TeleopMixin
 
 if TYPE_CHECKING:
@@ -457,8 +457,9 @@ class MuJoCoSimEngine(
                     {
                         "text": (
                             f"difficulty={difficulty!r} has no effect without a terrain "
-                            "(it scales a heightfield's elevation); pass terrain='rough'/'stairs'/"
-                            "'pyramid' as well, or omit difficulty for a flat ground plane."
+                            "(it scales a heightfield's elevation); pass a terrain "
+                            f"({'/'.join(repr(t) for t in sorted(SUPPORTED_TERRAINS))}) as well, "
+                            "or omit difficulty for a flat ground plane."
                         )
                     }
                 ],

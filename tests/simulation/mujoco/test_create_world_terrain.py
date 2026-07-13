@@ -152,6 +152,21 @@ def test_difficulty_without_terrain_is_rejected_as_a_no_op() -> None:
             sim.destroy()
 
 
+def test_difficulty_without_terrain_error_names_every_supported_kind() -> None:
+    # The actionable "difficulty needs a terrain" error steers the caller to a
+    # real terrain kind; it must list EVERY supported kind (derived from
+    # SUPPORTED_TERRAINS) so a kind added later (e.g. "slope") is never silently
+    # dropped from the guidance and left undiscoverable in the message.
+    sim = MuJoCoSimEngine()
+    try:
+        msg = sim.create_world(difficulty=0.5)["content"][0]["text"]
+        for kind in terrain.SUPPORTED_TERRAINS:
+            assert repr(kind) in msg, f"error omits supported terrain kind {kind!r}: {msg}"
+    finally:
+        if sim._world is not None:
+            sim.destroy()
+
+
 def test_flat_world_default_difficulty_still_succeeds() -> None:
     # The common flat-world path (no terrain, default difficulty) is unaffected.
     sim = MuJoCoSimEngine()

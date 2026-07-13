@@ -5,6 +5,22 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `create_world(difficulty=...)` is discoverable in the sim tool_spec + the terrain-kind hint stays in sync
+
+`create_world` grew a `difficulty` curriculum knob (it scales a terrain
+heightfield's peak elevation so a locomotion curriculum can ramp terrain
+magnitude across resets) alongside `terrain`, but only `terrain` was advertised
+in the agent-facing `tool_spec.json`. The dispatch router validates against the
+method signature, so a caller that already knew the name could pass `difficulty`
+-- but an LLM forms tool calls from the tool_spec schema it is handed, and with
+`difficulty` absent it had no way to discover the knob, leaving the curriculum
+scaling unreachable through the `sim` tool. `difficulty` is now declared in the
+tool_spec beside `terrain` / `ground_plane`. Relatedly, the "difficulty has no
+effect without a terrain" guidance error now derives its terrain-kind list from
+`SUPPORTED_TERRAINS` instead of a hardcoded `'rough'/'stairs'/'pyramid'` literal,
+so it lists every supported kind (the literal had gone stale and omitted the
+newer `'slope'`) and cannot drift out of sync again.
+
 ### Added: yaw locomotion vocabulary - `base_yaw_beyond` predicate + `go2_turn_left` benchmark
 
 The floating-base locomotion DSL could command a yaw-rate (`base_velocity_tracking`
