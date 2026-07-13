@@ -89,6 +89,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
 )
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder, _validate_size
 from strands_robots.simulation.policy_runner import CooperativeStop
+from strands_robots.simulation.terrain import validate_terrain
 from strands_robots.teleop_mixin import TeleopMixin
 
 if TYPE_CHECKING:
@@ -414,10 +415,26 @@ class MuJoCoSimEngine(
             return 0
 
     def create_world(
-        self, timestep: float | None = None, gravity: list[float] | None = None, ground_plane: bool = True
+        self,
+        timestep: float | None = None,
+        gravity: list[float] | None = None,
+        ground_plane: bool = True,
+        terrain: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new simulation world."""
+        """Create a new simulation world.
+
+        ``terrain='rough'`` lays down a deterministic rough-ground heightfield
+        (see :mod:`strands_robots.simulation.terrain`) instead of the flat
+        ground plane, so a floating-base/locomotion robot is spawned and
+        evaluated on non-flat ground. Only applies when ``ground_plane=True``.
+        """
         # mujoco verified at __init__
+
+        if terrain is not None:
+            try:
+                validate_terrain(terrain)
+            except ValueError as exc:
+                return {"status": "error", "content": [{"text": str(exc)}]}
 
         if self._world is not None and self._world._model is not None:
             return {
@@ -436,6 +453,7 @@ class MuJoCoSimEngine(
             timestep=timestep or self.default_timestep,
             gravity=_gravity,
             ground_plane=ground_plane,
+            terrain=terrain,
         )
 
         self._world.cameras["default"] = SimCamera(
@@ -1802,9 +1820,10 @@ class MuJoCoSimEngine(
         # registry trio -- register_urdf / list_urdfs / remove_robot -- is
         # advertised with the robot-registry family earlier in describe().)
         base["methods"]["create_world"] = (
-            "(timestep=None, gravity=None, ground_plane=True) -> dict  # create a "
-            "fresh empty simulation world; the lifecycle entry point that precedes "
-            "add_robot/add_object (gravity is [gx,gy,gz], ground_plane adds a floor)"
+            "(timestep=None, gravity=None, ground_plane=True, terrain=None) -> dict  # create "
+            "a fresh empty simulation world; the lifecycle entry point that precedes "
+            "add_robot/add_object (gravity is [gx,gy,gz], ground_plane adds a floor, "
+            "terrain='rough' makes it a rough heightfield for locomotion)"
         )
         base["methods"]["destroy"] = (
             "() -> dict  # tear down the world and release all resources (joins any "

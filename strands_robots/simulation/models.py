@@ -168,6 +168,9 @@ class SimWorld:
     timestep: float = 0.002  # 500Hz physics
     gravity: list[float] = field(default_factory=lambda: [0.0, 0.0, -9.81])
     ground_plane: bool = True
+    # Rough-ground terrain kind (e.g. "rough"); None -> flat plane. See
+    # strands_robots.simulation.terrain. Only meaningful when ground_plane=True.
+    terrain: str | None = None
     status: SimStatus = SimStatus.IDLE
     sim_time: float = 0.0
     step_count: int = 0

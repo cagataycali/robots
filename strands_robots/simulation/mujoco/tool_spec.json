@@ -90,6 +90,10 @@
     "ground_plane": {
       "type": "boolean"
     },
+    "terrain": {
+      "type": "string",
+      "description": "create_world: rough-ground heightfield kind ('rough'); omit for a flat ground plane. MuJoCo backend only."
+    },
     "urdf_path": {
       "type": "string",
       "description": "Path to URDF/MJCF file"

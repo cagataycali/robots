@@ -229,6 +229,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         timestep: float | None = None,
         gravity: list[float] | None = None,
         ground_plane: bool = True,
+        terrain: str | None = None,
     ) -> dict[str, Any]:
         """Create an empty Newton world.
 
@@ -237,10 +238,27 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ``default_timestep``).
             gravity: Gravity vector ``[x, y, z]`` (default ``[0, 0, -9.81]``).
             ground_plane: Whether to add a ground plane.
+            terrain: Rough-ground heightfield kind (MuJoCo backend only). The
+                Newton backend has no heightfield ground yet, so a non-None
+                value is rejected with an actionable error.
 
         Returns:
             Status dict with a human-readable confirmation.
         """
+        if terrain is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"terrain={terrain!r} is not supported on the Newton backend "
+                            "(rough-ground heightfields are MuJoCo-only); use "
+                            "create_simulation(backend='mujoco') for terrain, or omit terrain "
+                            "for a flat ground plane."
+                        )
+                    }
+                ],
+            }
         with self._lock:
             self._world = SimWorld(
                 timestep=timestep or self.default_timestep,

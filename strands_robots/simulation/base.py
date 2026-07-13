@@ -261,8 +261,18 @@ class SimEngine(ABC):
         timestep: float | None = None,
         gravity: list[float] | None = None,
         ground_plane: bool = True,
+        terrain: str | None = None,
     ) -> dict[str, Any]:
-        """Create a new simulation world."""
+        """Create a new simulation world.
+
+        ``terrain`` (e.g. ``"rough"``, see
+        :mod:`strands_robots.simulation.terrain`) lays down a deterministic
+        rough-ground heightfield instead of the flat ground plane so a
+        locomotion policy can be spawned/evaluated on non-flat ground; it is
+        only meaningful when ``ground_plane=True`` and defaults to ``None`` (a
+        flat plane). Backends without heightfield support reject a non-None
+        ``terrain`` with an actionable error rather than silently ignoring it.
+        """
         ...
 
     @abstractmethod

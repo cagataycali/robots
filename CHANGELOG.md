@@ -27,6 +27,30 @@ satisfies a yaw goal (distinguishing it from `base_tipped`); pairing it with
 `base_tipped` in `failure` vetoes a "turned then fell" rollout, whose yaw would
 be ill-defined.
 
+### Added: `create_world(terrain="rough")` - rough-ground heightfield for locomotion
+
+The floating-base locomotion benchmarks (`go2_walk_forward` / `g1_walk_forward`
+/ `t1_walk_forward` and the omnidirectional Go2 tasks) all spawned their robot
+on a flat ground plane, so they measured command tracking but never robustness
+to terrain - the whole reason legged locomotion is hard. `create_world` gains a
+`terrain` argument: `terrain="rough"` lays down a deterministic rough-ground
+heightfield (a smoothed value-noise `<hfield>`) instead of the flat plane, so a
+floating-base robot settles onto and walks over bumps. The new
+`strands_robots.simulation.terrain` module generates the field (backend- and
+MuJoCo-independent, pure stdlib) deterministically given `(kind, resolution,
+seed)`, so the same terrain regenerates on every `reset()` and a rough-ground
+benchmark eval is reproducible. The field shares the flat plane's +/-5 m
+footprint (unchanged reachable workspace), ranges from 0 up to ~8 cm on a solid
+base slab (flush with `z=0` at its lowest point - no hole under the robot), and
+reuses the `"ground"` geom name so `attach_robot`'s floor-strip and any name
+lookup stay terrain-agnostic (an attached robot's own z=0 plane is stripped
+over terrain, as over the flat plane). `terrain` only applies when
+`ground_plane=True` (the master floor switch); an unknown kind is rejected with
+an actionable error listing the supported kinds. It is the ground-generation
+primitive a terrain curriculum builds on. MuJoCo backend; the Newton backend
+rejects a non-`None` `terrain` with an actionable error (heightfields are
+MuJoCo-only) rather than silently spawning on a flat plane.
+
 ### Fixed: `get_observation` no longer emits a floating base's free joint as a degenerate scalar
 
 A robot whose root is a 6-DoF free joint (a humanoid's named
