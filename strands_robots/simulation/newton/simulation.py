@@ -1764,6 +1764,16 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     "(joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0, seed=None) -> dict "
                     "(additive Gaussian sensor noise on observations + rendered frames)"
                 ),
+                "create_world": (
+                    "(timestep=None, gravity=None, ground_plane=True, terrain=None, "
+                    "difficulty=1.0) -> dict  (create a fresh simulation world - the "
+                    "world-lifecycle entry point that precedes add_robot / add_object; "
+                    "gravity is [gx, gy, gz], ground_plane lays a floor)"
+                ),
+                "destroy": (
+                    "() -> dict  (tear down the world and release all resources, joining "
+                    "any running background policy first; the inverse of create_world)"
+                ),
                 "reset": "() -> dict (restore baseline joint configuration)",
                 "step": "(n_steps: int = 1) -> dict",
                 "start_recording": (

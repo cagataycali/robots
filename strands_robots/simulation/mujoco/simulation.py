@@ -1835,29 +1835,15 @@ class MuJoCoSimEngine(
             "reads (the observation sibling of robot_action_keys' action side)"
         )
 
-        # Scene / world lifecycle + MJCF editing surface. describe() teaches how
-        # to build a scene (add_robot/add_object/add_camera/load_scene), run a
-        # policy, and read/checkpoint the result, but previously gave no way to
-        # discover the world lifecycle itself -- create_world (the fresh-world
-        # entry point that precedes add_robot) and destroy (release resources at
-        # session end, which the tool-spec guidance explicitly asks callers to
-        # do) -- or the MJCF-editing family: patch or wholesale-replace the live
-        # MJCF and serialize the scene back to XML. All five are first-class
-        # actions in the tool spec + action dispatcher; listing them completes
-        # the discovery surface with the world-lifecycle and MJCF-authoring
-        # operations alongside the build / act / read surfaces. (The URDF/model
-        # registry trio -- register_urdf / list_urdfs / remove_robot -- is
-        # advertised with the robot-registry family earlier in describe().)
-        base["methods"]["create_world"] = (
-            "(timestep=None, gravity=None, ground_plane=True, terrain=None, difficulty=1.0) -> dict  # create "
-            "a fresh empty simulation world; the lifecycle entry point that precedes "
-            "add_robot/add_object (gravity is [gx,gy,gz], ground_plane adds a floor, "
-            "terrain='rough'|'stairs'|'pyramid'|'slope' makes it a locomotion heightfield)"
-        )
-        base["methods"]["destroy"] = (
-            "() -> dict  # tear down the world and release all resources (joins any "
-            "running background policy first); call at session end. The inverse of create_world"
-        )
+        # MJCF-editing surface. create_world / destroy (the world lifecycle) are
+        # advertised on the base SimEngine.describe() contract; here we add the
+        # MuJoCo-specific MJCF-editing family: patch or wholesale-replace the
+        # live MjSpec and serialize the scene back to XML. All three are
+        # first-class actions in the tool spec + action dispatcher, completing
+        # the discovery surface with MJCF-authoring operations alongside the
+        # build / act / read surfaces. (The URDF/model registry trio --
+        # register_urdf / list_urdfs / remove_robot -- is advertised with the
+        # robot-registry family earlier in describe().)
         base["methods"]["patch_scene_mjcf"] = (
             "(ops: list[dict]) -> dict  # apply structured edits to the live "
             "MjSpec atomically then recompile once (rolled back if any op fails). "

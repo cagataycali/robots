@@ -298,6 +298,32 @@ class TestDescribeABC:
         assert "scene_path" in methods["load_scene"]
         assert "contact" in methods["get_contacts"].lower()
 
+    def test_describe_lists_world_lifecycle_entry_points(self):
+        """describe() advertises create_world and destroy on the BASE contract.
+
+        create_world (the fresh-world entry point that precedes add_robot /
+        add_object) and destroy (its teardown inverse) are abstract methods
+        every backend must implement, and their lifecycle siblings reset / step
+        / get_state were already advertised. But the base discovery surface
+        listed neither create_world nor destroy -- so a caller enumerating
+        ``describe()["methods"]`` on any backend that does not separately re-add
+        them (the Newton engine builds its surface from scratch and omitted them
+        too) could not learn how to CREATE the world it must populate, nor how
+        to tear it down, without guessing. They belong on the base contract
+        beside reset / step / get_state as the world-lifecycle entry points.
+        """
+        engine = _make_minimal_engine()
+        methods = engine.describe()["methods"]
+        for name in ("create_world", "destroy"):
+            assert name in methods, f"describe() omits world-lifecycle method {name!r}"
+        # The advertised create_world signature names the real knobs (the flat
+        # floor toggle and the locomotion-terrain curriculum) so a caller can
+        # spawn a robot on non-flat ground without reading the source.
+        blurb = methods["create_world"]
+        assert "ground_plane" in blurb
+        assert "terrain" in blurb
+        assert "difficulty" in blurb
+
 
 @pytest.mark.skipif(
     not pytest.importorskip("mujoco", reason="MuJoCo not installed"),

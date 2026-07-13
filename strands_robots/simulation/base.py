@@ -2179,6 +2179,24 @@ class SimEngine(ABC):
                     "run_policy reports unresolved keys"
                 ),
                 "render": "(camera_name='default', width=None, height=None) -> dict",
+                "create_world": (
+                    "(timestep=None, gravity=None, ground_plane=True, terrain=None, "
+                    "difficulty=1.0) -> dict  # create a fresh simulation world - the "
+                    "world-lifecycle entry point that precedes add_robot / add_object. "
+                    "gravity is [gx, gy, gz]; ground_plane lays a floor; terrain lays a "
+                    "deterministic locomotion heightfield instead of the flat plane "
+                    "('rough' value-noise bumps, 'stairs' step plateaus rising +x, "
+                    "'pyramid' concentric steps rising to the centre, 'slope' a "
+                    "constant-grade ramp); difficulty (finite, > 0; 1.0 = full height) "
+                    "scales the terrain peak elevation for a curriculum without changing "
+                    "the terrain kind. Backends without heightfield support reject a "
+                    "non-None terrain rather than ignoring it"
+                ),
+                "destroy": (
+                    "() -> dict  # tear down the world and release all resources "
+                    "(joins any running background policy first); the inverse of "
+                    "create_world, called at session end"
+                ),
                 "reset": "() -> dict  # during recording, flushes the buffered rollout as one episode before resetting",
                 "step": "(n_steps: int = 1) -> dict",
                 "get_state": (
