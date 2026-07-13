@@ -206,6 +206,32 @@ def test_base_yaw_beyond_accepts_a_negative_threshold(sim):
     assert pred(sim) is False
 
 
+def test_base_yaw_beyond_wraps_at_pi_so_a_turn_past_pi_reads_below_the_goal_again(sim):
+    """The heading is atan2-wrapped to (-pi, pi], so it is single-valued only for
+    a sub-pi turn - the documented reason a turn goal must stay below pi. A turn
+    of just under half a revolution (170 deg -> +2.97 rad) satisfies a yaw=1.0
+    goal, a turn of exactly 180 deg lands on the +pi wrap edge and still reads
+    True, but turning FURTHER (190 deg) wraps the heading to -2.97 rad and the
+    same goal reads False again: past pi the predicate is NOT monotonic in the
+    physical turn angle. This pins that documented discontinuity so a refactor to
+    a cumulative / unwrapped heading (which would keep reading True past pi) is a
+    visible contract change, not a silent one."""
+    sim.add_robot("humanoid", urdf_path=_write(NAMED_BASE_XML))
+    pred = make_predicate("base_yaw_beyond", yaw=1.0)
+    # Just under a half-revolution left: heading ~+2.97 rad, comfortably past 1.0.
+    _set_base_pose(sim, _axis_quat("z", 170.0))
+    assert pred(sim) is True
+    # Exactly half a revolution: atan2(0, -1) = +pi, the top of the (-pi, pi] range.
+    _set_base_pose(sim, _axis_quat("z", 180.0))
+    assert pred(sim) is True
+    # Past pi: the heading WRAPS to -2.97 rad, so the yaw=1.0 goal reads False
+    # again even though the base turned FURTHER left - the wrap discontinuity.
+    _set_base_pose(sim, _axis_quat("z", 190.0))
+    assert pred(sim) is False
+    _set_base_pose(sim, _axis_quat("z", 200.0))
+    assert pred(sim) is False
+
+
 def test_base_yaw_beyond_degrades_to_false_on_fixed_base_arm(sim, caplog):
     """A fixed-base arm has no base orientation: the predicate degrades to False
     (never turned -> never spuriously succeeds) and warns once."""
