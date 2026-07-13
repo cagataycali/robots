@@ -217,6 +217,21 @@ def test_pyramid_builds_a_heightfield_ground() -> None:
         sim.destroy()
 
 
+def test_slope_builds_a_heightfield_ground() -> None:
+    sim = MuJoCoSimEngine()
+    try:
+        assert sim.create_world(terrain="slope")["status"] == "success"
+        assert sim._world is not None
+        m = sim._world._model
+        assert _ground_geom_type(sim) == _HFIELD
+        assert int(m.nhfield) == 1
+        # a constant-grade ramp -> the compiled heightfield still spans the full
+        # normalized range (flush at z=0 at the bottom, up to the top of the ramp).
+        assert float(m.hfield_data.max()) - float(m.hfield_data.min()) > 0.5
+    finally:
+        sim.destroy()
+
+
 def test_pyramid_climbs_toward_center_and_is_radially_isotropic() -> None:
     # A box near the centre rests meaningfully higher than one out at the ring:
     # the pyramid both renders AND collides, rising toward the centre.
@@ -230,3 +245,14 @@ def test_pyramid_climbs_toward_center_and_is_radially_isotropic() -> None:
     assert abs(z_px - z_py) < 0.02, (z_px, z_py)
     # ...and the outer ring settles on the flush base, not fallen into a hole.
     assert z_px > -0.01, z_px
+
+
+def test_slope_collides_and_climbs_along_x() -> None:
+    # A box dropped near the top of the ramp (+x) rests meaningfully higher than
+    # one near the bottom (-x): the slope both renders AND collides, and rises
+    # along +x.
+    z_top = _box_rest_z("slope", 4.0, 0.0)  # near the top of the ramp
+    z_bot = _box_rest_z("slope", -4.0, 0.0)  # near the bottom of the ramp
+    assert z_top > z_bot + 0.04, (z_top, z_bot)
+    # ...and both settle on the terrain, not fallen through to a hole.
+    assert z_bot > -0.01, z_bot

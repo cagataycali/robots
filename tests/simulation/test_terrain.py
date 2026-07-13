@@ -184,3 +184,62 @@ def test_rough_field_collapses_to_flat_when_noise_is_degenerate(monkeypatch: pyt
     h = terrain.generate_heightfield("rough", resolution=n, seed=0)
     assert len(h) == n * n
     assert h == [0.0] * (n * n)  # flat, no NaN / no ZeroDivisionError
+
+
+def test_slope_field_has_correct_length_and_range() -> None:
+    n = 24
+    h = terrain.generate_heightfield("slope", resolution=n)
+    assert len(h) == n * n
+    assert all(0.0 <= v <= 1.0 for v in h)
+    assert min(h) == 0.0 and max(h) == 1.0
+
+
+def test_slope_field_is_deterministic_and_seed_independent() -> None:
+    # A ramp is fully deterministic (no rng), so the seed must not change it.
+    a = terrain.generate_heightfield("slope", resolution=20, seed=0)
+    b = terrain.generate_heightfield("slope", resolution=20, seed=99)
+    assert a == b
+
+
+def test_slope_climbs_along_x_and_is_constant_across_y() -> None:
+    n = 24
+    h = terrain.generate_heightfield("slope", resolution=n)
+    rows = [h[i * n : (i + 1) * n] for i in range(n)]
+    # MuJoCo hfield userdata is row-major (row 0 -> min y, col 0 -> min x): the
+    # ramp rises along +x (columns), so every row is identical...
+    assert all(rows[i] == rows[0] for i in range(n))
+    # ...and each row is a STRICTLY increasing function of x (a ramp, not a
+    # step function that has equal-height plateaus).
+    row0 = rows[0]
+    assert all(row0[j] < row0[j + 1] for j in range(n - 1))
+    assert row0[0] == 0.0 and row0[-1] == 1.0
+
+
+def test_slope_is_constant_grade_not_stepped() -> None:
+    # A slope is a CONSTANT-grade ramp: the per-column rise (first difference) is
+    # uniform. This is what distinguishes it from "stairs" (whose first
+    # difference is 0 across a plateau and jumps at a riser).
+    n = 16
+    h = terrain.generate_heightfield("slope", resolution=n)
+    row0 = h[:n]
+    diffs = [row0[j + 1] - row0[j] for j in range(n - 1)]
+    step = 1.0 / (n - 1)
+    assert all(abs(d - step) < 1e-12 for d in diffs)
+
+
+def test_slope_is_distinct_from_rough_and_stairs() -> None:
+    n = 32
+    slope = terrain.generate_heightfield("slope", resolution=n)
+    stairs = terrain.generate_heightfield("stairs", resolution=n)
+    rough = terrain.generate_heightfield("rough", resolution=n, seed=0)
+    # slope: n distinct evenly-spaced levels per row (continuous linear ramp) --
+    # more than the few discrete stairs plateaus...
+    assert len(set(slope)) == n
+    assert len(set(slope)) > terrain.TERRAIN_STAIR_STEPS
+    # ...and unlike rough, slope is strictly monotonic (rough value noise is not).
+    row0 = slope[:n]
+    assert all(row0[j] < row0[j + 1] for j in range(n - 1))
+    rough_row0 = rough[:n]
+    assert any(rough_row0[j] >= rough_row0[j + 1] for j in range(n - 1))
+    # sanity: all three kinds produce a full-size field of the same footprint.
+    assert len(slope) == len(stairs) == len(rough) == n * n

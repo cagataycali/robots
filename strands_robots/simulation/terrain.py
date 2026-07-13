@@ -6,7 +6,7 @@ locomotion benchmarks (``go2_walk_forward`` / ``g1_walk_forward`` /
 ``t1_walk_forward`` and the omnidirectional Go2 tasks) all spawn their robot on
 a flat plane, so they measure command tracking but never *robustness to
 terrain* -- the whole reason legged locomotion is hard. This module generates a
-deterministic rough-terrain heightfield that
+deterministic heightfield that
 :meth:`~strands_robots.simulation.base.SimEngine.create_world` can lay down
 instead of the flat plane. ``create_world(terrain="rough")`` lays smoothed
 value-noise bumps; ``create_world(terrain="stairs")`` lays a flight of discrete
@@ -14,8 +14,11 @@ step plateaus rising along +x (foot-placement + climbing, which smooth bumps do
 not test); ``create_world(terrain="pyramid")`` lays concentric square step
 plateaus rising toward the centre from every direction (an omnidirectional climb
 the +x-only staircase cannot express, matching the omnidirectional strafe/turn
-velocity-tracking commands). All three are ground-generation primitives a
-terrain *curriculum* (progressive difficulty across resets) is built on.
+velocity-tracking commands); ``create_world(terrain="slope")`` lays a
+constant-grade inclined ramp (a continuous uphill pitch, which neither the
+non-monotonic bumps nor the discrete steps test). All four are
+ground-generation primitives a terrain *curriculum* (progressive difficulty
+across resets) is built on.
 
 The generator is intentionally backend- and MuJoCo-independent (pure stdlib, no
 numpy / mujoco import) so the height data is trivially unit-testable and
@@ -29,11 +32,12 @@ import random
 
 # Supported terrain kinds. ``"rough"`` is smoothed value-noise bumps; ``"stairs"``
 # is a flight of discrete parallel step plateaus rising along +x; ``"pyramid"`` is
-# concentric square step plateaus rising toward the centre from every direction.
-# The tuple is the single source of truth both backends validate against and is
-# easy to extend without touching the create_world signature -- add a name here
-# and a branch in :func:`generate_heightfield`.
-SUPPORTED_TERRAINS: tuple[str, ...] = ("rough", "stairs", "pyramid")
+# concentric square step plateaus rising toward the centre from every direction;
+# ``"slope"`` is a constant-grade inclined ramp. The tuple is the single source
+# of truth both backends validate against and is easy to extend without touching
+# the create_world signature -- add a name here and a branch in
+# :func:`generate_heightfield`.
+SUPPORTED_TERRAINS: tuple[str, ...] = ("rough", "stairs", "pyramid", "slope")
 
 # Heightfield geometry (metres). The field spans +/-``TERRAIN_RADIUS`` in x and y
 # (matching the flat ground plane's 5 m half-size so the reachable workspace is
@@ -149,6 +153,25 @@ def _pyramid(n: int) -> list[float]:
     return out
 
 
+def _slope(n: int) -> list[float]:
+    """A constant-grade inclined ramp rising linearly along +x.
+
+    MuJoCo ``<hfield>`` ``userdata`` is row-major with row 0 at min-y and column
+    0 at min-x, so making the height a *linear* function of the column index
+    makes the ramp rise along +x and stay constant across y (a uniform uphill
+    pitch you climb as x increases). Unlike ``stairs`` (a discrete step
+    function) the surface is continuous, and unlike ``rough`` (non-monotonic
+    value noise) it is strictly monotonic with a uniform grade -- the canonical
+    inclined-plane locomotion terrain. Returns ``n`` distinct evenly-spaced
+    normalized levels per row ``{0, 1/(n-1), ..., 1}`` -- deterministic, no rng.
+    """
+    out: list[float] = []
+    for _i in range(n):  # row (y): every row is identical
+        for j in range(n):  # column (x): height rises linearly with x
+            out.append(j / (n - 1))
+    return out
+
+
 def generate_heightfield(
     kind: str,
     resolution: int = TERRAIN_RESOLUTION,
@@ -172,6 +195,8 @@ def generate_heightfield(
         return _stairs(n)
     if kind == "pyramid":
         return _pyramid(n)
+    if kind == "slope":
+        return _slope(n)
     # validate_terrain accepts only SUPPORTED_TERRAINS; a kind reaching here
     # means the tuple grew without a generator branch.
     raise ValueError(f"terrain kind {kind!r} has no generator implementation.")  # pragma: no cover

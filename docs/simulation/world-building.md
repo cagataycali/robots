@@ -60,9 +60,17 @@ default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
 ## Rough terrain
 
 By default `create_world()` lays down a flat ground plane. A locomotion
-policy is only interesting on ground it can trip on, so pass
-`terrain="rough"` to lay down a deterministic rough-ground heightfield
-instead - a floating-base robot then settles onto and walks over bumps:
+policy is only interesting on ground it can trip on, so pass a `terrain=`
+kind to lay down a deterministic heightfield instead - a floating-base robot
+then settles onto and walks over it. Four kinds ship:
+
+- `terrain="rough"` - smoothed value-noise bumps (robustness to uneven ground).
+- `terrain="stairs"` - a flight of discrete step plateaus rising along +x
+  (foot placement + climbing).
+- `terrain="pyramid"` - concentric square step plateaus rising toward the centre
+  from every direction (an omnidirectional climb).
+- `terrain="slope"` - a constant-grade inclined ramp rising along +x
+  (a continuous uphill pitch).
 
 ```python
 sim.create_world(terrain="rough")        # bumpy heightfield ground
