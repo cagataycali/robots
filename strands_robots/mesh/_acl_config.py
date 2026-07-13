@@ -5,8 +5,7 @@ serialised ``access_control`` block ready for
 ``zenoh.Config.insert_json5``. When the env var is unset, returns the
 permissive :func:`default_acl` skeleton.
 
-Zenoh 1.x quirks (each verified against a live session in
-``tests/mesh/test_zenoh_transport_security.py``):
+Zenoh 1.x quirks (each verified against a live session):
 
 * ``enabled: true`` is required -- without it the entire block is a
   no-op even if rules and subjects are populated.

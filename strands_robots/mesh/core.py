@@ -65,8 +65,7 @@ def _parse_positive_float_env(name: str, default: str, *, minimum: float = 0.0) 
 
     Catches the case where an operator sets ``STRANDS_MESH_RESUME_FRESHNESS_S=abc``
     or a negative value. The module would otherwise fail to import with an opaque
-    ``ValueError`` (found by running the module under bad env locally; see
-    ``test_resume_env_validation.py``).
+    ``ValueError`` (found by running the module under bad env locally).
     """
     raw = os.getenv(name, default)
     try:
@@ -898,7 +897,6 @@ class Mesh(SensorLoopsMixin):
             # Clauses Must Be Narrow". Same tuple as the four other
             # wire-input handlers (_on_cmd, _on_response,
             # _on_safety_estop, _on_safety_resume).
-            # Pin: tests/mesh/test_wire_handler_narrow_except.py
             return
         if not isinstance(data, dict):
             return

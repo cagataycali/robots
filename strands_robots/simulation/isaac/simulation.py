@@ -2203,9 +2203,8 @@ class IsaacSimulation(SimEngine):
         -------
         dict
             Standard Strands tool-result envelope carrying ONLY ``status`` and
-            ``content`` (the tool-result contract forbids extra top-level keys;
-            see tests/test_tool_result_contract.py). On success ``content``
-            holds a ``text`` block, a ``{"image": {"format": "png", ...}}``
+            ``content`` (the tool-result contract forbids extra top-level
+            keys). On success ``content`` holds a ``text`` block, a ``{"image": {"format": "png", ...}}``
             block with raw PNG bytes (matching the MuJoCo backend so the shared
             ``PolicyRunner._extract_frame_ndarray`` can pull frames for video
             recording, #127), and a ``{"json": {...}}`` block with pixel stats
@@ -2232,9 +2231,9 @@ class IsaacSimulation(SimEngine):
             content.append(block)
         # Structured telemetry (resolution, prim_path, rtx flag, pixel stats)
         # lives INSIDE a content json block, never as extra top-level keys -
-        # the Strands tool-result contract permits only {status, content}
-        # (see tests/test_tool_result_contract.py). Consumers that need the
-        # raw rgb/depth ndarrays use get_observation() or the internal
+        # the Strands tool-result contract permits only {status, content}.
+        # Consumers that need the raw rgb/depth ndarrays use get_observation()
+        # or the internal
         # _render_frame() helper; the PNG image block above feeds the shared
         # PolicyRunner video pipeline (#127).
         json_block: dict[str, Any] = dict(meta.get("json", {}))
