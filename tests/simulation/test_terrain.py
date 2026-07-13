@@ -110,3 +110,55 @@ def test_stairs_is_genuinely_stepped_not_smooth() -> None:
     rough = terrain.generate_heightfield("rough", resolution=32, seed=0)
     assert len(set(stairs)) == terrain.TERRAIN_STAIR_STEPS
     assert len(set(rough)) > terrain.TERRAIN_STAIR_STEPS * 10
+
+
+def test_pyramid_field_has_correct_length_and_discrete_levels() -> None:
+    n = 40
+    h = terrain.generate_heightfield("pyramid", resolution=n)
+    assert len(h) == n * n
+    assert all(0.0 <= v <= 1.0 for v in h)
+    assert min(h) == 0.0 and max(h) == 1.0
+    # Like stairs, a pyramid is DISCRETE: exactly TERRAIN_PYRAMID_STEPS distinct
+    # plateau levels (this distinguishes it from the continuous "rough" field).
+    assert len(set(h)) == terrain.TERRAIN_PYRAMID_STEPS
+
+
+def test_pyramid_field_is_deterministic_and_seed_independent() -> None:
+    # A stepped pyramid uses no rng, so the seed must not change it.
+    a = terrain.generate_heightfield("pyramid", resolution=24, seed=0)
+    b = terrain.generate_heightfield("pyramid", resolution=24, seed=99)
+    assert a == b
+
+
+def test_pyramid_peaks_at_center_and_descends_to_the_outer_ring() -> None:
+    n = 40
+    h = terrain.generate_heightfield("pyramid", resolution=n)
+    grid = [h[i * n : (i + 1) * n] for i in range(n)]
+    ci = n // 2
+    # Highest at the central plateau, flush with z=0 (0.0) on the outer ring, so
+    # a robot spawns on the top and never falls below the nominal floor.
+    assert grid[ci][ci] == 1.0
+    assert grid[0][0] == 0.0 and grid[0][-1] == 0.0 and grid[-1][0] == 0.0 and grid[-1][-1] == 0.0
+
+
+def test_pyramid_is_radially_isotropic_unlike_the_plus_x_staircase() -> None:
+    # The defining property vs terrain="stairs": the pyramid's level depends only
+    # on the distance from the centre, so the height profile through the centre
+    # along +x and along +y are IDENTICAL (an omnidirectional climb). The +x-only
+    # staircase cannot express this (there the +y profile is flat).
+    n = 40
+    ci = n // 2
+    p = terrain.generate_heightfield("pyramid", resolution=n)
+    pg = [p[i * n : (i + 1) * n] for i in range(n)]
+    p_row = pg[ci]  # height vs x at fixed y=centre
+    p_col = [pg[i][ci] for i in range(n)]  # height vs y at fixed x=centre
+    assert p_row == p_col  # omnidirectional: +x and +y profiles match
+    assert p_row == p_row[::-1]  # symmetric inverted-V about the centre
+    assert p_row[0] == 0.0 and p_row[-1] == 0.0 and max(p_row) == 1.0
+
+    # Contrast: the staircase's +x profile rises but its +y profile is flat.
+    s = terrain.generate_heightfield("stairs", resolution=n)
+    sg = [s[i * n : (i + 1) * n] for i in range(n)]
+    s_row = sg[ci]
+    s_col = [sg[i][ci] for i in range(n)]
+    assert s_row != s_col

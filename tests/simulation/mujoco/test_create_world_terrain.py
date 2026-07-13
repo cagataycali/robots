@@ -200,3 +200,33 @@ def test_stairs_collides_and_climbs_along_x() -> None:
     assert z_top > z_bot + 0.04, (z_top, z_bot)
     # ...and both settle on the terrain, not fallen through to a hole.
     assert z_bot > -0.01, z_bot
+
+
+def test_pyramid_builds_a_heightfield_ground() -> None:
+    sim = MuJoCoSimEngine()
+    try:
+        assert sim.create_world(terrain="pyramid")["status"] == "success"
+        assert sim._world is not None
+        m = sim._world._model
+        assert _ground_geom_type(sim) == _HFIELD
+        assert int(m.nhfield) == 1
+        # concentric step plateaus -> the compiled heightfield spans the full
+        # normalized range (flush at z=0 on the outer ring, up to the top plateau).
+        assert float(m.hfield_data.max()) - float(m.hfield_data.min()) > 0.5
+    finally:
+        sim.destroy()
+
+
+def test_pyramid_climbs_toward_center_and_is_radially_isotropic() -> None:
+    # A box near the centre rests meaningfully higher than one out at the ring:
+    # the pyramid both renders AND collides, rising toward the centre.
+    z_center = _box_rest_z("pyramid", 0.0, 0.0)
+    z_px = _box_rest_z("pyramid", 4.0, 0.0)  # out along +x
+    z_py = _box_rest_z("pyramid", 0.0, 4.0)  # out along +y (same ring distance)
+    assert z_center > z_px + 0.03, (z_center, z_px)
+    # The distinguishing property vs the +x-only staircase: the +x and +y rings
+    # are at the SAME height (the climb is omnidirectional, depending only on the
+    # distance from the centre) - a staircase would raise +x while +y stays flat.
+    assert abs(z_px - z_py) < 0.02, (z_px, z_py)
+    # ...and the outer ring settles on the flush base, not fallen into a hole.
+    assert z_px > -0.01, z_px

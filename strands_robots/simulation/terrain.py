@@ -10,9 +10,12 @@ deterministic rough-terrain heightfield that
 :meth:`~strands_robots.simulation.base.SimEngine.create_world` can lay down
 instead of the flat plane. ``create_world(terrain="rough")`` lays smoothed
 value-noise bumps; ``create_world(terrain="stairs")`` lays a flight of discrete
-step plateaus (foot-placement + climbing, which smooth bumps do not test). Both
-are ground-generation primitives a terrain *curriculum* (progressive difficulty
-across resets) is built on.
+step plateaus rising along +x (foot-placement + climbing, which smooth bumps do
+not test); ``create_world(terrain="pyramid")`` lays concentric square step
+plateaus rising toward the centre from every direction (an omnidirectional climb
+the +x-only staircase cannot express, matching the omnidirectional strafe/turn
+velocity-tracking commands). All three are ground-generation primitives a
+terrain *curriculum* (progressive difficulty across resets) is built on.
 
 The generator is intentionally backend- and MuJoCo-independent (pure stdlib, no
 numpy / mujoco import) so the height data is trivially unit-testable and
@@ -25,11 +28,12 @@ from __future__ import annotations
 import random
 
 # Supported terrain kinds. ``"rough"`` is smoothed value-noise bumps; ``"stairs"``
-# is a flight of discrete parallel step plateaus. The tuple is the single source
-# of truth both backends validate against and is easy to extend without touching
-# the create_world signature -- add a name here and a branch in
-# :func:`generate_heightfield`.
-SUPPORTED_TERRAINS: tuple[str, ...] = ("rough", "stairs")
+# is a flight of discrete parallel step plateaus rising along +x; ``"pyramid"`` is
+# concentric square step plateaus rising toward the centre from every direction.
+# The tuple is the single source of truth both backends validate against and is
+# easy to extend without touching the create_world signature -- add a name here
+# and a branch in :func:`generate_heightfield`.
+SUPPORTED_TERRAINS: tuple[str, ...] = ("rough", "stairs", "pyramid")
 
 # Heightfield geometry (metres). The field spans +/-``TERRAIN_RADIUS`` in x and y
 # (matching the flat ground plane's 5 m half-size so the reachable workspace is
@@ -48,6 +52,13 @@ TERRAIN_SEED = 0
 # ``TERRAIN_ELEVATION`` along +x, so each riser is ``TERRAIN_ELEVATION /
 # (TERRAIN_STAIR_STEPS - 1)`` tall (five plateaus -> 2 cm risers up to 8 cm).
 TERRAIN_STAIR_STEPS = 5
+
+# Number of concentric step plateaus for ``terrain="pyramid"``. The pyramid rises
+# in ``TERRAIN_PYRAMID_STEPS`` even levels from 0 (the flush outer ring) up to
+# ``TERRAIN_ELEVATION`` at the central plateau, so each riser is
+# ``TERRAIN_ELEVATION / (TERRAIN_PYRAMID_STEPS - 1)`` tall (five plateaus -> 2 cm
+# risers up to 8 cm), matching the staircase riser height.
+TERRAIN_PYRAMID_STEPS = 5
 
 
 def validate_terrain(kind: str | None) -> None:
@@ -110,6 +121,34 @@ def _stairs(n: int) -> list[float]:
     return out
 
 
+def _pyramid(n: int) -> list[float]:
+    """Concentric square step plateaus rising toward the centre (a pyramid staircase).
+
+    Unlike ``terrain="stairs"`` (whose level is a step function of the *column*
+    index, so it rises only along +x and is flat across +y), the pyramid's level
+    is a step function of the Chebyshev (square-ring) distance from the centre --
+    it therefore rises identically from every direction, an *omnidirectional*
+    climb the +x-only staircase cannot express (matching the omnidirectional
+    strafe/turn velocity-tracking commands). The robot spawns at the origin on
+    the highest central plateau and descends steps walking outward on ANY
+    heading. Returns ``TERRAIN_PYRAMID_STEPS`` distinct normalized plateaus
+    ``{1, ..., 1/(k-1), 0}`` -- highest (1.0) at the centre, flush with z=0 (0.0)
+    on the outer ring so a robot never falls below the nominal floor.
+    Deterministic, seed-independent (a stepped field needs no rng).
+    """
+    steps = TERRAIN_PYRAMID_STEPS
+    c = (n - 1) / 2.0  # continuous centre index (row 0 -> min y, col 0 -> min x)
+    out: list[float] = []
+    for i in range(n):  # row (y)
+        for j in range(n):  # column (x)
+            cheb = max(abs(i - c), abs(j - c))  # square-ring distance from centre
+            frac = cheb / c if c > 0 else 0.0  # 0 at centre, 1 on the outer ring
+            ring = min(int(frac * steps), steps - 1)  # 0 (centre) .. steps-1 (edge)
+            level = (steps - 1) - ring  # steps-1 (centre) .. 0 (edge)
+            out.append(level / (steps - 1))
+    return out
+
+
 def generate_heightfield(
     kind: str,
     resolution: int = TERRAIN_RESOLUTION,
@@ -131,6 +170,8 @@ def generate_heightfield(
         return _rough(n, seed)
     if kind == "stairs":
         return _stairs(n)
+    if kind == "pyramid":
+        return _pyramid(n)
     # validate_terrain accepts only SUPPORTED_TERRAINS; a kind reaching here
     # means the tuple grew without a generator branch.
     raise ValueError(f"terrain kind {kind!r} has no generator implementation.")  # pragma: no cover
@@ -144,6 +185,7 @@ __all__ = [
     "TERRAIN_RESOLUTION",
     "TERRAIN_SEED",
     "TERRAIN_STAIR_STEPS",
+    "TERRAIN_PYRAMID_STEPS",
     "validate_terrain",
     "generate_heightfield",
 ]

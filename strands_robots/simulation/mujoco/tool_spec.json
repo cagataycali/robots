@@ -92,7 +92,7 @@
     },
     "terrain": {
       "type": "string",
-      "description": "create_world: heightfield terrain kind ('rough' = bumps, 'stairs' = step plateaus); omit for a flat ground plane. MuJoCo backend only."
+      "description": "create_world: heightfield terrain kind ('rough' = bumps, 'stairs' = step plateaus along +x, 'pyramid' = concentric step plateaus toward the centre); omit for a flat ground plane. MuJoCo backend only."
     },
     "urdf_path": {
       "type": "string",

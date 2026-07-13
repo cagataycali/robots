@@ -266,7 +266,9 @@ class SimEngine(ABC):
         """Create a new simulation world.
 
         ``terrain`` (``"rough"`` = value-noise bumps, ``"stairs"`` = discrete
-        step plateaus; see :mod:`strands_robots.simulation.terrain`) lays down a
+        step plateaus rising along +x, ``"pyramid"`` = concentric step plateaus
+        rising toward the centre; see :mod:`strands_robots.simulation.terrain`)
+        lays down a
         deterministic heightfield instead of the flat ground plane so a
         locomotion policy can be spawned/evaluated on non-flat ground; it is
         only meaningful when ``ground_plane=True`` and defaults to ``None`` (a
