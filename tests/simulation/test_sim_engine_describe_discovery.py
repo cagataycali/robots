@@ -32,6 +32,7 @@ def _make_minimal_engine():
             gravity: list[float] | None = None,
             ground_plane: bool = True,
             terrain: str | None = None,
+            difficulty: float = 1.0,
         ) -> dict[str, Any]:
             return {}
 
