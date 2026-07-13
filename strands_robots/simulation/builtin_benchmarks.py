@@ -59,6 +59,7 @@ from strands_robots.simulation.benchmark_spec import DeclarativeBenchmark
 # ``default_robot`` / ``supported_robots`` and the height thresholds.
 _GO2_WALK_FORWARD: dict[str, Any] = {
     "name": "go2_walk_forward",
+    "instruction": "Walk forward at 1 m/s.",
     "default_robot": "unitree_go2",
     "supported_robots": ["unitree_go2"],
     "max_steps": 1000,
@@ -104,6 +105,7 @@ _GO2_WALK_FORWARD: dict[str, Any] = {
 #     regularizers (added for exactly this in the DSL) belong in a humanoid task.
 _G1_WALK_FORWARD: dict[str, Any] = {
     "name": "g1_walk_forward",
+    "instruction": "Walk forward at 1 m/s.",
     "default_robot": "unitree_g1",
     "supported_robots": ["unitree_g1"],
     "max_steps": 1000,
@@ -154,6 +156,7 @@ _G1_WALK_FORWARD: dict[str, Any] = {
 #     those regularizers apply identically.
 _T1_WALK_FORWARD: dict[str, Any] = {
     "name": "t1_walk_forward",
+    "instruction": "Walk forward at 1 m/s.",
     "default_robot": "booster_t1",
     "supported_robots": ["booster_t1"],
     "max_steps": 1000,
@@ -201,6 +204,7 @@ _T1_WALK_FORWARD: dict[str, Any] = {
 #     zero - plus the 0.32 m base-height and flat-orientation regularizers.
 _GO2_STRAFE_LEFT: dict[str, Any] = {
     "name": "go2_strafe_left",
+    "instruction": "Strafe left at 0.5 m/s.",
     "default_robot": "unitree_go2",
     "supported_robots": ["unitree_go2"],
     "max_steps": 1000,
@@ -252,6 +256,7 @@ _GO2_STRAFE_LEFT: dict[str, Any] = {
 #     plus the 0.32 m base-height and flat-orientation regularizers.
 _GO2_TURN_LEFT: dict[str, Any] = {
     "name": "go2_turn_left",
+    "instruction": "Turn left in place at 0.5 rad/s.",
     "default_robot": "unitree_go2",
     "supported_robots": ["unitree_go2"],
     "max_steps": 1000,

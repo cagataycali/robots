@@ -645,3 +645,26 @@ def test_builtin_spec_is_structurally_complete(bench_name: str):
     assert _clause_predicates(spec, "success"), f"{bench_name}: no success predicates"
     assert _clause_predicates(spec, "failure"), f"{bench_name}: no failure predicates"
     assert spec.get("dense_reward"), f"{bench_name}: no dense_reward terms"
+
+
+@pytest.mark.parametrize("bench_name", sorted(builtin_benchmark_specs()))
+def test_builtin_spec_declares_language_instruction(bench_name: str):
+    """Every shipped velocity-tracking locomotion benchmark declares a
+    natural-language ``instruction`` describing its command, and it compiles
+    through to the benchmark's ``instruction`` property.
+
+    A locomotion benchmark's command IS its task ("walk forward", "strafe
+    left", "turn left"), so the spec carries it as the instruction. Without it
+    a language-conditioned policy (the shipped GR00T ``WBCPolicy``) evaluated on
+    the benchmark receives an empty string - the #187 off-task failure mode -
+    and ``evaluate_benchmark`` emits a spurious empty-instruction warning on
+    every eval. Before ``instruction`` was a spec key these all defaulted to
+    ``""``."""
+    spec = builtin_benchmark_specs()[bench_name]
+    instruction = spec.get("instruction")
+    assert isinstance(instruction, str) and instruction.strip(), (
+        f"{bench_name}: must declare a non-empty natural-language instruction; got {instruction!r}"
+    )
+    # The declared instruction compiles through to the benchmark instance.
+    bench = DeclarativeBenchmark.from_dict(dict(spec))
+    assert bench.instruction == instruction

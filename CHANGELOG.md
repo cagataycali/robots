@@ -48,6 +48,27 @@ rejected actionably) and only applies with a `terrain`: setting
 rather than silently having no effect. It exists on the Newton backend for
 signature parity but is inert there (Newton rejects `terrain` outright).
 
+### Added: `instruction` field on the declarative benchmark spec DSL
+
+`DeclarativeBenchmark` (the YAML/JSON benchmark spec loader) could not express a
+natural-language task command: `instruction` was not an allowed top-level spec
+key, and the class did not override `BenchmarkProtocol.instruction`, so every
+spec-authored benchmark reported `instruction == ""`. Only a hand-written Python
+subclass (e.g. the LIBERO adapter, which reads the BDDL `:language` clause) could
+carry one. The `PolicyRunner` eval loop falls back to `spec.instruction` when the
+caller passes no `instruction=` to `evaluate_benchmark`, so a spec-driven
+benchmark fed a language-conditioned policy (the shipped GR00T `WBCPolicy`,
+OpenVLA, ...) an empty task description -- the #187 off-task failure mode -- and
+`evaluate_benchmark` emitted a spurious empty-instruction warning on every run.
+The spec DSL now accepts an optional `instruction: string` (validated as a string,
+default `""` for backward compatibility) that `DeclarativeBenchmark` surfaces
+through its `instruction` property. The shipped velocity-tracking locomotion
+benchmarks now declare their command as the instruction -- `go2_walk_forward` /
+`g1_walk_forward` / `t1_walk_forward` "Walk forward at 1 m/s.", `go2_strafe_left`
+"Strafe left at 0.5 m/s.", `go2_turn_left` "Turn left in place at 0.5 rad/s." --
+so a language-conditioned locomotion policy receives the command instead of an
+empty string, and the spurious warning no longer fires on a loco eval.
+
 ### Added: `create_world(terrain="rough")` - rough-ground heightfield for locomotion
 
 The floating-base locomotion benchmarks (`go2_walk_forward` / `g1_walk_forward`
