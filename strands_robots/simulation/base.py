@@ -1031,8 +1031,18 @@ class SimEngine(ABC):
             # Caller is responsible for policy.set_robot_state_keys(...) if needed,
             # but we set it here defensively so the semantics match the provider path.
             policy = policy_object
-        policy.set_robot_state_keys(self.robot_action_keys(robot_name))
-        self.bind_policy_sim_context(policy, robot_name)
+        # set_robot_state_keys + sim-context binding are best-effort policy
+        # configuration: a raising robot_action_keys (a backend quirk, a world
+        # torn down mid-setup) must not crash the whole rollout. A genuine
+        # wrong-embodiment mismatch is surfaced far more actionably downstream
+        # by PolicyRunner's fail-fast probe ("the robot has not moved"). This
+        # matches the guarded binding in MujocoSimulation.run_policy's
+        # multi-robot path.
+        try:
+            policy.set_robot_state_keys(self.robot_action_keys(robot_name))
+            self.bind_policy_sim_context(policy, robot_name)
+        except Exception as exc:  # noqa: BLE001 - non-fatal policy configuration
+            logger.debug("policy binding for %r failed: %s", robot_name, exc)
 
         # Auto-install any action controller this policy needs to run correctly
         # on this scene (e.g. the WBC torque shim on a position-servo G1). The
