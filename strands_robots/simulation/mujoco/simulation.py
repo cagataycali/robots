@@ -2270,7 +2270,7 @@ class MuJoCoSimEngine(
         }
 
     def remove_object(self, name: str) -> dict[str, Any]:
-        if self._world is None:
+        if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if name not in self._world.objects:
             return {"status": "error", "content": [{"text": self._unknown_object_msg(name)}]}
@@ -2382,7 +2382,7 @@ class MuJoCoSimEngine(
         renderable cameras (what ``render`` / ``start_recording`` can target)
         instead of guessing names or triggering a "camera not found" error.
         """
-        if self._world is None or self._world._model is None:
+        if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         cams = self.list_cameras()
         lines = ["Cameras (renderable):\n"] + [f"  - {c}" for c in cams]
@@ -2552,7 +2552,7 @@ class MuJoCoSimEngine(
         from the MjSpec via :func:`SpecBuilder.remove_camera` so future
         renders/compiles no longer see it.
         """
-        if self._world is None:
+        if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if name not in self._world.cameras:
             return {"status": "error", "content": [{"text": self._unknown_camera_msg(name)}]}
