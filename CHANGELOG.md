@@ -5,6 +5,23 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: Newton / Isaac `create_world(difficulty=...)` rejects a non-default difficulty with no terrain instead of silently ignoring it
+
+The base `SimEngine.create_world` contract (and the MuJoCo backend) reject a
+`difficulty != 1.0` supplied with no `terrain` with an actionable error --
+`difficulty` only scales a heightfield terrain's peak elevation, so setting it
+without a terrain has no effect, and the contract surfaces that rather than
+silently having none. The Newton and Isaac backends accepted `difficulty` for
+signature parity but only rejected a non-None `terrain`; a non-default
+`difficulty` with no terrain was silently ignored and `create_world` returned
+`status: success` -- a caller ramping a terrain curriculum on the GPU (Newton)
+or Isaac backend got no terrain and no error. Both backends now reject it with
+an actionable message pointing at `create_simulation(backend="mujoco")` (the
+only backend with heightfield terrain) or omitting `difficulty`. A non-None
+`terrain` is still rejected first (the primary error on these backends), and
+the default `difficulty=1.0` is unchanged (a flat-ground no-op). Completes the
+`create_world(terrain=/difficulty=)` contract parity across all three backends.
+
 ### Fixed: `base_height` reward measures the base's clearance above the LOCAL terrain, not an absolute world z
 
 `base_height` is the legged_gym / IsaacLab base-height regularizer paired with

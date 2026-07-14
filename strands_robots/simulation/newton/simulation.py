@@ -244,8 +244,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ground yet, so a non-None value is rejected with an actionable
                 error.
             difficulty: Terrain curriculum elevation scale (MuJoCo backend
-                only, alongside ``terrain``); accepted for signature parity but
-                inert here since Newton rejects ``terrain`` outright.
+                only, alongside ``terrain``); accepted for signature parity with
+                the base contract. Since Newton has no heightfield terrain,
+                ``difficulty`` can never take effect, so a non-default
+                (``!= 1.0``) value is rejected with an actionable error (the base
+                ``create_world`` contract: reject rather than silently ignore it)
+                rather than silently having no effect.
 
         Returns:
             Status dict with a human-readable confirmation.
@@ -260,6 +264,25 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                             "(heightfield terrain, e.g. 'rough'/'stairs'/'pyramid'/'slope', is MuJoCo-only); use "
                             "create_simulation(backend='mujoco') for terrain, or omit terrain "
                             "for a flat ground plane."
+                        )
+                    }
+                ],
+            }
+        # Base create_world contract: reject a non-default difficulty with no
+        # terrain rather than silently ignoring it. On Newton difficulty is
+        # doubly inert - there is no heightfield terrain for it to scale (a
+        # non-None terrain is already rejected above) - so any != 1.0 value is
+        # meaningless here; surface that instead of a status=success no-op.
+        if float(difficulty) != 1.0:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"difficulty={difficulty!r} has no effect on the Newton backend "
+                            "(it scales a heightfield terrain's elevation, and this backend "
+                            "has no heightfield terrain); use create_simulation(backend='mujoco') "
+                            "for a terrain curriculum, or omit difficulty for a flat ground plane."
                         )
                     }
                 ],

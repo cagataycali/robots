@@ -293,15 +293,31 @@ class TestIsaacSimulationConstruction:
 
     def test_create_world_difficulty_accepted_for_signature_parity(self):
         # ``difficulty`` is accepted (signature parity with the base contract);
-        # passing it must not raise TypeError. It is inert on Isaac (which
-        # rejects terrain outright), so with no terrain the call still degrades
-        # to the structured Isaac-Sim-absent error rather than crashing.
+        # passing it must not raise TypeError. A default ``difficulty=1.0`` is a
+        # no-op that falls through to the world build (here the structured
+        # Isaac-Sim-absent error on a host without Isaac Sim), not a crash.
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        sim = IsaacSimulation(num_envs=1, headless=True)
+        result = sim.create_world(difficulty=1.0)
+        assert result["status"] == "error"  # Isaac Sim absent -> structured error
+        assert "difficulty" not in result["content"][0]["text"].lower()
+
+    def test_create_world_difficulty_without_terrain_rejected(self):
+        # Base create_world contract: a non-default ``difficulty`` with no
+        # ``terrain`` is rejected with an actionable error rather than silently
+        # having no effect. Isaac has no heightfield terrain for difficulty to
+        # scale, so any != 1.0 value is doubly inert here; the reject fires
+        # before Isaac Sim boots, so it holds on any host (and takes precedence
+        # over the Isaac-Sim-absent error). Was a status=success / silent no-op
+        # on a host with Isaac Sim before this contract landed.
         from strands_robots.simulation.isaac.simulation import IsaacSimulation
 
         sim = IsaacSimulation(num_envs=1, headless=True)
         result = sim.create_world(difficulty=2.0)
         assert result["status"] == "error"
-        assert "terrain" not in result["content"][0]["text"].lower()
+        text = result["content"][0]["text"].lower()
+        assert "difficulty" in text and "mujoco" in text, text
 
     def test_add_object_signature_parity_with_base(self):
         # The base SimEngine.add_object declares ``mesh_path`` / ``material``
