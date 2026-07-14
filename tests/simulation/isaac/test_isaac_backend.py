@@ -263,6 +263,46 @@ class TestIsaacSimulationConstruction:
         assert result["status"] == "error"
         assert result["content"] and "text" in result["content"][0]
 
+    def test_create_world_signature_parity_with_base(self):
+        # The base SimEngine.create_world abstractmethod declares
+        # ``terrain`` / ``difficulty`` (the terrain-curriculum contract). Every
+        # backend override must accept them so a caller / the tool router can
+        # pass them uniformly; a narrower override raises a bare TypeError on a
+        # documented parameter instead of the contract's actionable error.
+        import inspect
+
+        from strands_robots.simulation.base import SimEngine
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        base = set(inspect.signature(SimEngine.create_world).parameters)
+        override = set(inspect.signature(IsaacSimulation.create_world).parameters)
+        assert {"terrain", "difficulty"} <= override, f"Isaac create_world drops base params: missing {base - override}"
+
+    def test_create_world_terrain_rejected_with_actionable_error(self):
+        # Base contract (SimEngine.create_world docstring): a backend without
+        # heightfield support rejects a non-None ``terrain`` with an actionable
+        # error - NOT a bare TypeError, NOT a silent ignore. The rejection is
+        # exercised before Isaac Sim boots, so it holds on any host.
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        sim = IsaacSimulation(num_envs=1, headless=True)
+        result = sim.create_world(terrain="rough")
+        assert result["status"] == "error"
+        text = result["content"][0]["text"].lower()
+        assert "terrain" in text and "mujoco" in text, text
+
+    def test_create_world_difficulty_accepted_for_signature_parity(self):
+        # ``difficulty`` is accepted (signature parity with the base contract);
+        # passing it must not raise TypeError. It is inert on Isaac (which
+        # rejects terrain outright), so with no terrain the call still degrades
+        # to the structured Isaac-Sim-absent error rather than crashing.
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        sim = IsaacSimulation(num_envs=1, headless=True)
+        result = sim.create_world(difficulty=2.0)
+        assert result["status"] == "error"
+        assert "terrain" not in result["content"][0]["text"].lower()
+
 
 class TestProceduralBuilders:
     def test_list_procedural_robots(self):

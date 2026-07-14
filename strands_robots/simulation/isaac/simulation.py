@@ -634,6 +634,8 @@ class IsaacSimulation(SimEngine):
         timestep: float | None = None,
         gravity: list[float] | None = None,
         ground_plane: bool = True,
+        terrain: str | None = None,
+        difficulty: float = 1.0,
     ) -> dict[str, Any]:
         """Create a new simulation world in Isaac Sim.
 
@@ -648,12 +650,38 @@ class IsaacSimulation(SimEngine):
             Override gravity vector from config. [gx, gy, gz].
         ground_plane : bool
             Whether to add a ground plane. Default True.
+        terrain : str, optional
+            Heightfield terrain kind (e.g. ``"rough"``/``"stairs"``/
+            ``"pyramid"``/``"slope"``). The Isaac backend has no heightfield
+            ground yet, so a non-None value is rejected with an actionable
+            error rather than raising ``TypeError`` or being silently ignored
+            (honouring the
+            :class:`~strands_robots.simulation.base.SimEngine` ``create_world``
+            contract). Use ``create_simulation(backend="mujoco")`` for terrain.
+        difficulty : float
+            Terrain curriculum elevation scale (only meaningful together with
+            ``terrain``). Accepted for signature parity with the base contract
+            but inert here since the Isaac backend rejects ``terrain`` outright.
 
         Returns
         -------
         dict
             Status dict with world info.
         """
+        if terrain is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"terrain={terrain!r} is not supported on the Isaac backend yet "
+                            "(heightfield terrain, e.g. 'rough'/'stairs'/'pyramid'/'slope', is "
+                            "currently MuJoCo-only); use create_simulation(backend='mujoco') for "
+                            "terrain, or omit terrain for a flat ground plane."
+                        )
+                    }
+                ],
+            }
         with self._lock:
             if self._world_created:
                 return {

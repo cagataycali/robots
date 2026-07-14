@@ -1739,6 +1739,25 @@ independence, live tracking, fixed-base degradation, and a full
 (fails before, passes after).
 
 
+### Fixed: Isaac backend `create_world(terrain=...)` honours the base contract instead of raising `TypeError`
+
+`create_world` grew `terrain` / `difficulty` parameters (the heightfield
+terrain-curriculum knob), and the base `SimEngine.create_world` abstractmethod
+documents that a backend without heightfield support must reject a non-None
+`terrain` with an actionable error rather than silently ignoring it. The MuJoCo
+backend implements terrain and the Newton backend rejects it with exactly such
+an error, but the Isaac backend's `create_world` override kept the older,
+narrower signature (no `terrain` / `difficulty`), so `create_world(terrain=...)`
+on an Isaac sim raised a bare `TypeError: unexpected keyword argument 'terrain'`
+instead of the contract's structured error -- and the drift slipped past mypy
+because the extra base parameters carry defaults. The Isaac override now accepts
+`terrain` / `difficulty` for signature parity and rejects a non-None `terrain`
+with an actionable "heightfield terrain is currently MuJoCo-only; use
+`create_simulation(backend='mujoco')`" error *before* booting Isaac Sim (so the
+rejection holds on any host, with or without an Omniverse install); `difficulty`
+is accepted but inert, mirroring the Newton backend.
+
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)
