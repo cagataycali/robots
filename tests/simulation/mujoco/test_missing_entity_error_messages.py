@@ -10,7 +10,7 @@ round-trip on every typo. The camera *render*/*record* paths already listed
 close-match; these tests pin that the same actionable shape now covers the
 remove/move-by-name paths: the message names the entity, offers a close match,
 lists the available names, and points at the discovery action
-(``list_objects`` / ``list_cameras_info`` / ``list_robots``).
+(``list_objects`` / ``list_cameras`` / ``list_robots``).
 
 The messages keep the ``"<Kind> 'X' not found."`` prefix so the consistent
 error shape (T15 in ``test_agenttool_contract``) is preserved. GL-free
@@ -59,7 +59,11 @@ def test_remove_camera_unknown_lists_available_and_suggests(sim):
     assert "Camera 'frnt_cam' not found" in text
     assert "Did you mean: front_cam" in text
     assert "front_cam" in text  # names the available camera
-    assert "list_cameras_info" in text
+    # Recovery hint must name the canonical action the discovery surface
+    # teaches (tool_spec.json + describe() both list 'list_cameras'), not the
+    # internal 'list_cameras_info' method the dispatcher aliases it to.
+    assert "action='list_cameras'" in text
+    assert "list_cameras_info" not in text
 
 
 def test_missing_object_in_empty_scene_points_to_add_object():
