@@ -5,6 +5,25 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: Isaac `add_object` honours the base `mesh_path` / `material` contract instead of silently swallowing them
+
+`SimEngine.add_object` declares `mesh_path` and `material`, and its docstring is
+explicit that a backend which does not support `material` "should reject a
+non-`None` `material` loudly rather than silently ignore it". The MuJoCo backend
+attaches a real material; the Newton backend rejects a non-`None` `material` with
+an actionable error and loads `mesh_path` for `shape="mesh"`. The Isaac override,
+however, kept a narrower signature with a trailing `**kwargs` (used for the
+`scale` alias) that **silently swallowed** `material=` and `mesh_path=`: a caller
+scoping a matte/textured surface or a custom mesh on Isaac got `status: "success"`
+with the request quietly dropped (or, on a host without Isaac Sim, an unrelated
+"No world created" error) -- never the documented rejection, and the agent tool
+router could not pass these params uniformly across backends. The Isaac
+`add_object` now accepts `mesh_path` / `material` for signature parity with the
+base contract and rejects a non-`None` value of either with an actionable error
+(pointing to `create_simulation(backend="mujoco")`) before the stage boots,
+mirroring the Newton reject and the existing Isaac `create_world(terrain=...)`
+rejection. The `scale` alias path is unchanged.
+
 ### Fixed: `create_world(difficulty=...)` is discoverable in the sim tool_spec + the terrain-kind hint stays in sync
 
 `create_world` grew a `difficulty` curriculum knob (it scales a terrain

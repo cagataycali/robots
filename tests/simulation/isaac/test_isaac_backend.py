@@ -303,6 +303,47 @@ class TestIsaacSimulationConstruction:
         assert result["status"] == "error"
         assert "terrain" not in result["content"][0]["text"].lower()
 
+    def test_add_object_signature_parity_with_base(self):
+        # The base SimEngine.add_object declares ``mesh_path`` / ``material``
+        # (the "reject a non-None material loudly rather than silently ignore
+        # it" contract). The Isaac override must accept them so the tool
+        # router / a caller can pass them uniformly instead of hitting a bare
+        # TypeError or, worse, a silent **kwargs swallow.
+        import inspect
+
+        from strands_robots.simulation.base import SimEngine
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        base = set(inspect.signature(SimEngine.add_object).parameters)
+        override = set(inspect.signature(IsaacSimulation.add_object).parameters)
+        assert {"mesh_path", "material"} <= override, f"Isaac add_object drops base params: missing {base - override}"
+
+    def test_add_object_material_rejected_with_actionable_error(self):
+        # Base contract (SimEngine.add_object docstring): a backend that does
+        # not support ``material`` rejects a non-None value loudly rather than
+        # silently ignoring it. The Isaac add_object only sets a flat color, so
+        # a material spec is rejected with an actionable error before the stage
+        # boots (holds on any host, Isaac Sim present or not).
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        sim = IsaacSimulation(num_envs=1, headless=True)
+        result = sim.add_object("block", material={"albedo": [0.2, 0.2, 0.2]})
+        assert result["status"] == "error"
+        text = result["content"][0]["text"].lower()
+        assert "material" in text and "mujoco" in text, text
+
+    def test_add_object_mesh_path_rejected_with_actionable_error(self):
+        # The Isaac add_object supports only primitive shapes; a custom
+        # ``mesh_path`` is rejected with an actionable error rather than being
+        # silently dropped into **kwargs.
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        sim = IsaacSimulation(num_envs=1, headless=True)
+        result = sim.add_object("part", mesh_path="/tmp/widget.obj")
+        assert result["status"] == "error"
+        text = result["content"][0]["text"].lower()
+        assert "mesh" in text and "mujoco" in text, text
+
 
 class TestProceduralBuilders:
     def test_list_procedural_robots(self):

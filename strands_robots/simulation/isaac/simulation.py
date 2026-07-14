@@ -1275,6 +1275,8 @@ class IsaacSimulation(SimEngine):
         color: list[float] | None = None,
         mass: float = 0.1,
         is_static: bool = False,
+        mesh_path: str | None = None,
+        material: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Add an object (shape primitive) to the scene.
@@ -1332,6 +1334,17 @@ class IsaacSimulation(SimEngine):
             Sphere, Cylinder, Capsule}`` and stays pinned in space. If
             ``False`` (default), uses the ``Dynamic*`` counterpart and
             participates in physics with ``mass``.
+        mesh_path : str, optional
+            Path to a custom mesh asset. Loading custom meshes is not
+            supported by the Isaac backend yet; a non-``None`` value is
+            rejected with an actionable error rather than being silently
+            ignored (honouring the
+            :class:`~strands_robots.simulation.base.SimEngine` ``add_object``
+            contract). Use ``create_simulation(backend='mujoco')`` for meshes.
+        material : dict, optional
+            Visual material/texture spec. NOT supported by the Isaac backend
+            yet; a non-``None`` value is rejected loudly rather than silently
+            dropped (use the MuJoCo backend for matte/textured surfaces).
 
         Returns
         -------
@@ -1342,6 +1355,34 @@ class IsaacSimulation(SimEngine):
             ``mass``, and ``is_static`` so an agent can confirm what
             actually landed on the stage without re-querying.
         """
+        if material is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "add_object: material= is not supported on the "
+                            "Isaac backend yet (matte/textured surfaces); use "
+                            "create_simulation(backend='mujoco') for materials, "
+                            "or omit material for a flat color."
+                        )
+                    }
+                ],
+            }
+        if mesh_path is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "add_object: mesh_path=/custom mesh objects are not "
+                            "supported on the Isaac backend yet; use "
+                            "create_simulation(backend='mujoco') for meshes, or a "
+                            "primitive shape (box/sphere/capsule/cylinder)."
+                        )
+                    }
+                ],
+            }
         with self._lock:
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}
