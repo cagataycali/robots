@@ -303,3 +303,56 @@ class TestFloatingBaseKeyframe:
         assert not np.allclose(_qpos(sim), _FLOAT_HOME)
         assert sim.reset()["status"] == "success"
         assert np.allclose(_qpos(sim), _FLOAT_HOME)
+
+
+def _joint_qpos(sim, joint_name: str) -> float:
+    """Read the scalar qpos of a named (namespaced) hinge joint from the live
+    compiled model - proves the pose landed on the intended robot's joint."""
+    model = sim._world._model
+    data = sim._world._data
+    jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+    assert jid >= 0, f"joint {joint_name!r} not found in compiled model"
+    adr = int(model.jnt_qposadr[jid])
+    return float(data.qpos[adr])
+
+
+class TestMultiRobotKeyframeSpawn:
+    """Incrementally adding robots must not disturb an already-spawned robot's
+    keyframe home pose.
+
+    ``add_robot`` runs ``mj_resetData`` (which zeroes the whole model) before
+    posing the freshly-added robot. When an earlier robot was spawned from a
+    ``<keyframe>``, that reset would silently collapse it back to the zero
+    configuration - only the most recently added robot kept its home pose until
+    an unrelated ``reset()`` happened to restore everyone. Building a multi-arm
+    scene one ``add_robot`` at a time is the common path (e.g. a leader/follower
+    pair), so each robot must stay at its canonical home pose across subsequent
+    additions.
+    """
+
+    def test_adding_second_robot_preserves_first_home_pose(self, sim, arm_xml):
+        # Spawn A from its keyframe: it lands at the home pose.
+        sim.add_robot(name="a", urdf_path=arm_xml, keyframe="home")
+        assert np.isclose(_joint_qpos(sim, "a/shoulder"), _HOME[0])
+        assert np.isclose(_joint_qpos(sim, "a/elbow"), _HOME[1])
+
+        # Add a SECOND keyframed robot. A's home pose must survive - the
+        # regression: pre-fix, mj_resetData zeroed A and only B was re-posed.
+        result = sim.add_robot(name="b", urdf_path=arm_xml, keyframe="home")
+        assert result["status"] == "success"
+        assert np.isclose(_joint_qpos(sim, "a/shoulder"), _HOME[0])
+        assert np.isclose(_joint_qpos(sim, "a/elbow"), _HOME[1])
+        assert np.isclose(_joint_qpos(sim, "b/shoulder"), _HOME[0])
+        assert np.isclose(_joint_qpos(sim, "b/elbow"), _HOME[1])
+
+    def test_keyframe_spawn_is_scoped_to_its_own_robot(self, sim, arm_xml):
+        # A added WITHOUT a keyframe stays at the zero configuration even when a
+        # later robot B IS spawned from a keyframe with identical short joint
+        # names ("shoulder"/"elbow"). The home pose must not bleed across the
+        # namespace into A's identically-named joints.
+        sim.add_robot(name="a", urdf_path=arm_xml)
+        sim.add_robot(name="b", urdf_path=arm_xml, keyframe="home")
+        assert np.isclose(_joint_qpos(sim, "a/shoulder"), 0.0)
+        assert np.isclose(_joint_qpos(sim, "a/elbow"), 0.0)
+        assert np.isclose(_joint_qpos(sim, "b/shoulder"), _HOME[0])
+        assert np.isclose(_joint_qpos(sim, "b/elbow"), _HOME[1])

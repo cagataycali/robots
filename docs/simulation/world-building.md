@@ -52,7 +52,10 @@ sim.add_robot(name="panda", data_config="panda", keyframe="home")  # or keyframe
 ```
 
 The pose is applied to the robot's joints by name and is restored by `reset()`,
-so a keyframe spawn is sticky across episodes. An unknown keyframe name/index
+so a keyframe spawn is sticky across episodes. It also survives later
+`add_robot` calls, so incrementally building a multi-robot scene keeps every
+already-spawned arm at its home pose rather than collapsing it to zero. An
+unknown keyframe name/index
 is an error that lists the model's available keyframes. `keyframe=None` (the
 default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
 `keyframe=` as not-yet-supported.)

@@ -5,6 +5,24 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `add_robot(keyframe=...)` no longer collapses an earlier keyframe-spawned robot to the zero pose
+
+Adding a robot runs `mj_resetData` (which zeroes the entire model) before it
+poses the freshly-added robot, then re-applied only that robot's keyframe home
+pose. When an earlier robot had already been spawned from a `<keyframe>`, this
+reset silently dropped it back to the all-zero configuration -- only the most
+recently added robot kept its home pose, until an unrelated `reset()` happened
+to restore everyone. Incrementally building a multi-arm scene one `add_robot`
+call at a time (e.g. a leader/follower pair) is the common path, so this left
+all-but-the-last arm in an out-of-distribution pose for policy rollout/eval.
+
+`add_robot` now re-applies every robot's captured home pose after the reset (a
+no-op for robots spawned without a keyframe), so each arm stays at its
+canonical home pose across subsequent additions. The home pose remains scoped
+to its own robot -- it is never applied to another robot's identically-named
+joints across the namespace boundary.
+
+
 ### Fixed: Newton / Isaac `create_world(difficulty=...)` rejects a non-default difficulty with no terrain instead of silently ignoring it
 
 The base `SimEngine.create_world` contract (and the MuJoCo backend) reject a

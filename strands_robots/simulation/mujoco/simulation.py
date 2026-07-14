@@ -1169,6 +1169,13 @@ class MuJoCoSimEngine(
             self._world.step_count = 0
             if home_by_short:
                 self._apply_home_qpos_to_robot(robot, home_by_short)
+            # ``mj_resetData`` above zeroed the entire model, which also drops
+            # any robot added earlier back to the zero configuration. Re-apply
+            # every robot's captured home pose (a no-op for robots spawned
+            # without a keyframe) so incrementally building a multi-robot scene
+            # keeps each arm at its canonical home pose instead of silently
+            # collapsing all but the most recently added robot.
+            self._restore_home_poses()
             mj.mj_forward(self._world._model, self._world._data)
 
             # Attach the robot to the mesh as its own peer so the agent can
