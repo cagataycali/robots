@@ -282,3 +282,180 @@ class TestUsdLoaderGate:
             pytest.skip("pxr is installed; the import gate does not apply")
         with pytest.raises(ImportError, match=r"usd-core"):
             load_usd(_write(tmp_path, "stage.usda", "#usda 1.0\n"))
+
+
+class TestParseFallbacks:
+    """Malformed numeric attributes degrade to documented defaults, never crash.
+
+    ``_parse_axis`` / ``_parse_xyz`` / ``_safe_float`` are the shared attribute
+    parsers behind every loader. Bad input (wrong arity, non-numeric tokens)
+    must fall back to the documented default rather than raise mid-parse, so a
+    slightly-off description file still yields a usable kinematic structure.
+    """
+
+    def test_axis_wrong_arity_and_non_numeric_fall_back_to_z(self, tmp_path):
+        # A 2-component axis (wrong arity) and a non-numeric axis both fall
+        # back to the +Z default rather than raising.
+        urdf = (
+            '<robot name="r">'
+            '<link name="a"/><link name="b"/><link name="c"/>'
+            '<joint name="short" type="revolute"><parent link="a"/><child link="b"/>'
+            '<axis xyz="1 0"/></joint>'
+            '<joint name="bad" type="revolute"><parent link="b"/><child link="c"/>'
+            '<axis xyz="p q r"/></joint>'
+            "</robot>"
+        )
+        robot = load_urdf(_write(tmp_path, "axis.urdf", urdf))
+        axes = {j.name: j.axis for j in robot.joints}
+        assert axes["short"] == pytest.approx((0.0, 0.0, 1.0))
+        assert axes["bad"] == pytest.approx((0.0, 0.0, 1.0))
+
+    def test_position_wrong_arity_and_non_numeric_fall_back_to_origin(self, tmp_path):
+        # MJCF body pos with too few components / non-numeric tokens both
+        # degrade to the origin default.
+        mjcf = """<mujoco><worldbody>
+          <body name="short" pos="1 0"><geom type="box" size="0.1 0.1 0.1"/></body>
+          <body name="bad" pos="a b c"><geom type="box" size="0.1 0.1 0.1"/></body>
+        </worldbody></mujoco>"""
+        robot = load_mjcf(_write(tmp_path, "pos.xml", mjcf))
+        positions = {b.name: b.position for b in robot.bodies}
+        assert positions["short"] == pytest.approx((0.0, 0.0, 0.0))
+        assert positions["bad"] == pytest.approx((0.0, 0.0, 0.0))
+
+    def test_non_numeric_limit_keeps_default(self, tmp_path):
+        # A non-numeric URDF <limit lower=...> keeps the default -pi limit
+        # (``_safe_float`` swallows the parse error).
+        urdf = (
+            '<robot name="r"><link name="a"/><link name="b"/>'
+            '<joint name="j" type="revolute"><parent link="a"/><child link="b"/>'
+            '<limit lower="foo" upper="1.0"/></joint></robot>'
+        )
+        robot = load_urdf(_write(tmp_path, "lim.urdf", urdf))
+        j = robot.joints[0]
+        assert j.limit_lower == pytest.approx(-3.14159)
+        assert j.limit_upper == pytest.approx(1.0)
+
+
+class TestUrdfFailLoudGuardsExtra:
+    """URDF guards not exercised by the main happy-path suite."""
+
+    def test_directory_path_is_rejected_as_not_a_regular_file(self, tmp_path):
+        # A directory exists but is not a regular file -> explicit guard.
+        with pytest.raises(FileNotFoundError, match="not a regular file"):
+            load_urdf(str(tmp_path))
+
+    def test_link_without_name_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="<link> without name attribute"):
+            load_urdf(_write(tmp_path, "noname.urdf", '<robot name="r"><link/></robot>'))
+
+    def test_joint_without_name_is_rejected(self, tmp_path):
+        urdf = '<robot name="r"><link name="a"/><joint type="fixed"/></robot>'
+        with pytest.raises(ValueError, match="<joint> without name attribute"):
+            load_urdf(_write(tmp_path, "jnn.urdf", urdf))
+
+    def test_joint_missing_parent_or_child_is_rejected(self, tmp_path):
+        urdf = '<robot name="r"><link name="a"/><joint name="j" type="fixed"><parent link="a"/></joint></robot>'
+        with pytest.raises(ValueError, match="missing <parent> or <child>"):
+            load_urdf(_write(tmp_path, "mpc.urdf", urdf))
+
+    def test_parent_child_missing_link_attribute_is_rejected(self, tmp_path):
+        urdf = (
+            '<robot name="r"><link name="a"/><link name="b"/>'
+            '<joint name="j" type="fixed"><parent/><child link="b"/></joint></robot>'
+        )
+        with pytest.raises(ValueError, match="missing 'link' attribute"):
+            load_urdf(_write(tmp_path, "mla.urdf", urdf))
+
+    def test_unknown_child_link_is_rejected(self, tmp_path):
+        urdf = (
+            '<robot name="r"><link name="a"/>'
+            '<joint name="j" type="fixed"><parent link="a"/><child link="ghost"/></joint></robot>'
+        )
+        with pytest.raises(ValueError, match="unknown child link 'ghost'"):
+            load_urdf(_write(tmp_path, "ucl.urdf", urdf))
+
+    def test_collision_without_geometry_falls_back_to_default_box(self, tmp_path):
+        # A <collision> with no <geometry> child is skipped; with no <visual>
+        # either, the link degrades to the default kinematic box.
+        urdf = '<robot name="r"><link name="a"><collision/></link></robot>'
+        robot = load_urdf(_write(tmp_path, "cng.urdf", urdf))
+        body = robot.bodies[0]
+        assert (body.shape, body.shape_size) == ("box", (0.05, 0.05, 0.05))
+
+
+class TestMjcfShapeAndJointFallbacks:
+    """``load_mjcf`` shape/joint extraction defaults for degenerate ``<geom>`` sizes."""
+
+    def test_missing_worldbody_is_rejected(self, tmp_path):
+        with pytest.raises(ValueError, match="has no <worldbody>"):
+            load_mjcf(_write(tmp_path, "nowb.xml", "<mujoco/>"))
+
+    def test_inertial_mass_is_read(self, tmp_path):
+        mjcf = """<mujoco><worldbody>
+          <body name="b"><inertial mass="3.5"/><geom type="box" size="0.1 0.1 0.1"/></body>
+        </worldbody></mujoco>"""
+        robot = load_mjcf(_write(tmp_path, "inertial.xml", mjcf))
+        masses = {b.name: b.mass for b in robot.bodies}
+        assert masses["b"] == pytest.approx(3.5)
+
+    def test_malformed_joint_range_keeps_default_limits(self, tmp_path):
+        mjcf = """<mujoco><worldbody>
+          <body name="b"><joint name="j" type="hinge" range="a b"/><geom type="box" size="0.1 0.1 0.1"/></body>
+        </worldbody></mujoco>"""
+        robot = load_mjcf(_write(tmp_path, "range.xml", mjcf))
+        j = robot.joints[0]
+        assert (j.limit_lower, j.limit_upper) == pytest.approx((-3.14159, 3.14159))
+
+    def test_geomless_body_and_degenerate_sizes_default(self, tmp_path):
+        # A body with no <geom> -> default box; malformed/short primitive
+        # sizes each fall back to the primitive's default extents.
+        mjcf = """<mujoco><worldbody>
+          <body name="nogeom"><joint name="j" type="hinge"/></body>
+          <body name="badsize"><geom type="box" size="x y z"/></body>
+          <body name="shortbox"><geom type="box" size="0.1"/></body>
+          <body name="nosizesphere"><geom type="sphere" size=""/></body>
+          <body name="cyl1"><geom type="cylinder" size="0.03"/></body>
+          <body name="cyl0"><geom type="cylinder" size=""/></body>
+        </worldbody></mujoco>"""
+        robot = load_mjcf(_write(tmp_path, "shapes.xml", mjcf))
+        shapes = {b.name: (b.shape, b.shape_size) for b in robot.bodies}
+        assert shapes["nogeom"] == ("box", (0.05, 0.05, 0.05))
+        assert shapes["badsize"] == ("box", (0.05, 0.05, 0.05))
+        assert shapes["shortbox"] == ("box", (0.05, 0.05, 0.05))
+        assert shapes["nosizesphere"] == ("sphere", (0.05,))
+        # single-size cylinder pads the half-length; no-size cylinder full default.
+        assert shapes["cyl1"] == ("cylinder", (0.03, 0.05))
+        assert shapes["cyl0"] == ("cylinder", (0.05, 0.05))
+
+
+class TestSceneObjectGeomFallbacks:
+    """``load_mjcf_scene_objects`` AABB helpers degrade cleanly on odd geoms.
+
+    A body whose only collision geoms are non-analytic (mesh) or have
+    malformed / under-specified sizes yields no analytic AABB, so the object
+    falls back to the small default box instead of a NaN-sized primitive.
+    """
+
+    def test_malformed_quat_and_wrong_arity_quat_are_identity(self, tmp_path):
+        scene = """<mujoco><worldbody>
+          <body name="bad_quat" pos="0 0 0" quat="a b c d"><geom type="box" size="0.1 0.1 0.1" group="0"/></body>
+          <body name="short_quat" pos="0 0 0" quat="1 0 0"><geom type="box" size="0.1 0.1 0.1" group="0"/></body>
+        </worldbody></mujoco>"""
+        objs = {o.name: o for o in load_mjcf_scene_objects(_write(tmp_path, "q.xml", scene))}
+        assert objs["bad_quat"].quat == pytest.approx((1.0, 0.0, 0.0, 0.0))
+        assert objs["short_quat"].quat == pytest.approx((1.0, 0.0, 0.0, 0.0))
+
+    def test_non_analytic_and_degenerate_geoms_fall_back_to_default_box(self, tmp_path):
+        # Each body's collision geometry gives no usable AABB, so all fall
+        # back to the 0.05 default box at the body origin.
+        scene = """<mujoco><worldbody>
+          <body name="badsize"><geom type="box" size="x y" group="0"/></body>
+          <body name="shortbox"><geom type="box" size="0.1" group="0"/></body>
+          <body name="nosizesphere"><geom type="sphere" size="" group="0"/></body>
+          <body name="shortelli"><geom type="ellipsoid" size="0.1 0.2" group="0"/></body>
+          <body name="nosizecyl"><geom type="cylinder" size="" group="0"/></body>
+          <body name="meshonly"><geom type="mesh" mesh="m" group="0"/></body>
+        </worldbody></mujoco>"""
+        objs = {o.name: o for o in load_mjcf_scene_objects(_write(tmp_path, "d.xml", scene))}
+        for name in ("badsize", "shortbox", "nosizesphere", "shortelli", "nosizecyl", "meshonly"):
+            assert objs[name].size == pytest.approx((0.05, 0.05, 0.05)), name
