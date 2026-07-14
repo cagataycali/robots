@@ -1036,6 +1036,7 @@ class IsaacSimulation(SimEngine):
         data_config: str | None = None,
         position: list[float] | None = None,
         orientation: list[float] | None = None,
+        keyframe: str | int | None = None,
     ) -> dict[str, Any]:
         """Add a robot to the simulation.
 
@@ -1055,12 +1056,38 @@ class IsaacSimulation(SimEngine):
             Base position [x, y, z].
         orientation : list[float], optional
             Base orientation as quaternion [w, x, y, z].
+        keyframe : str | int, optional
+            Canonical-pose keyframe (e.g. panda ``"home"``). The Isaac
+            backend does not parse the MuJoCo ``<keyframe>`` block this
+            refers to, so a non-None value is rejected with an actionable
+            error rather than raising ``TypeError`` or being silently
+            ignored (honouring the
+            :class:`~strands_robots.simulation.base.SimEngine` ``add_robot``
+            contract). Use ``create_simulation(backend="mujoco")`` to spawn
+            at a keyframe, or omit ``keyframe`` for the default zero-pose
+            spawn.
 
         Returns
         -------
         dict
             Status dict with robot info.
         """
+        if keyframe is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_robot: keyframe={keyframe!r} is not supported on "
+                            "the Isaac backend (spawning at a MuJoCo <keyframe> pose "
+                            "is currently MuJoCo-only); use "
+                            "create_simulation(backend='mujoco') to spawn at a "
+                            "keyframe, or omit keyframe for the default zero-pose "
+                            "spawn."
+                        )
+                    }
+                ],
+            }
         with self._lock:
             if not self._world_created:
                 return {

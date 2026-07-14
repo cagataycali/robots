@@ -344,6 +344,48 @@ class TestIsaacSimulationConstruction:
         text = result["content"][0]["text"].lower()
         assert "mesh" in text and "mujoco" in text, text
 
+    def test_add_robot_signature_parity_with_base(self):
+        # The base SimEngine.add_robot declares ``keyframe`` (spawn at a
+        # canonical <keyframe> pose). Every backend override must accept it
+        # so a caller / the tool router can pass it uniformly; a narrower
+        # override raises a bare TypeError on a documented parameter instead
+        # of the contract's actionable error (cf. create_world terrain and
+        # add_object material/mesh_path parity).
+        import inspect
+
+        from strands_robots.simulation.base import SimEngine
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        base = set(inspect.signature(SimEngine.add_robot).parameters)
+        override = set(inspect.signature(IsaacSimulation.add_robot).parameters)
+        assert {"keyframe"} <= override, f"Isaac add_robot drops base params: missing {base - override}"
+
+    def test_add_robot_keyframe_rejected_with_actionable_error(self):
+        # Base contract (SimEngine.add_robot docstring): an unknown/unsupported
+        # keyframe is a hard error that never silently falls back to zeros. The
+        # Isaac backend does not parse the MuJoCo <keyframe> block, so a non-None
+        # keyframe is rejected with an actionable error - NOT a bare TypeError,
+        # NOT a silent zero-pose spawn. The rejection fires before Isaac Sim
+        # boots, so it holds on any host.
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        sim = IsaacSimulation(num_envs=1, headless=True)
+        result = sim.add_robot("panda", keyframe="home")
+        assert result["status"] == "error"
+        text = result["content"][0]["text"].lower()
+        assert "keyframe" in text and "mujoco" in text, text
+
+    def test_add_robot_keyframe_none_not_rejected(self):
+        # keyframe=None (the default) must NOT hit the reject path - a plain
+        # add_robot call still degrades to the structured Isaac-Sim-absent /
+        # no-world error rather than the keyframe rejection.
+        from strands_robots.simulation.isaac.simulation import IsaacSimulation
+
+        sim = IsaacSimulation(num_envs=1, headless=True)
+        result = sim.add_robot("panda")
+        assert result["status"] == "error"
+        assert "keyframe" not in result["content"][0]["text"].lower()
+
 
 class TestProceduralBuilders:
     def test_list_procedural_robots(self):

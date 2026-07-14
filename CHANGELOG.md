@@ -5,6 +5,25 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: Isaac `add_robot` honours the base `keyframe` contract instead of raising a bare `TypeError`
+
+`SimEngine.add_robot` declares a `keyframe` parameter (spawn the robot in a
+canonical `<keyframe>` pose such as panda `"home"` / aloha `"neutral_pose"`
+instead of the default all-zero configuration), and its docstring is explicit
+that an unknown/unsupported keyframe is a hard error that never silently falls
+back to zeros. The MuJoCo and Newton backends implement it; the Isaac override,
+however, kept a narrower signature that omitted `keyframe` entirely, so
+`add_robot(name, keyframe="home")` on the Isaac backend raised a bare
+`TypeError: add_robot() got an unexpected keyword argument 'keyframe'` on a
+documented base parameter, and the agent tool router could not pass `keyframe`
+uniformly across backends. The Isaac `add_robot` now accepts `keyframe` for
+signature parity with the base contract and rejects a non-`None` value with an
+actionable error (pointing to `create_simulation(backend="mujoco")`, since the
+Isaac backend does not parse the MuJoCo `<keyframe>` block) before the stage
+boots, mirroring the existing Isaac `create_world(terrain=...)` and
+`add_object(material=...)` rejections. `keyframe=None` (the default) is
+unchanged.
+
 ### Fixed: Isaac `add_object` honours the base `mesh_path` / `material` contract instead of silently swallowing them
 
 `SimEngine.add_object` declares `mesh_path` and `material`, and its docstring is
