@@ -1239,8 +1239,9 @@ def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -
     """Negative squared base-height error - a locomotion-regularizer reward.
 
     Rewards a floating-base robot for keeping its base (torso/pelvis) near a
-    target WORLD height: ``-weight * (base_z - target) ** 2`` - 0 at the target
-    and growing more negative as the base deviates. Composed alongside
+    target height ABOVE THE LOCAL GROUND beneath it:
+    ``-weight * ((base_z - ground_z) - target) ** 2`` - 0 at the target and
+    growing more negative as the base deviates. Composed alongside
     ``base_velocity`` in a ``dense_reward`` list, it is the standard regularizer
     that stops a velocity-tracking policy from cheating the forward-velocity
     reward by crouching or diving (the legged_gym / IsaacLab ``base_height``
@@ -1248,12 +1249,22 @@ def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -
     dive forward to maximise it - so a viable velocity-tracking reward pairs the
     two.
 
+    The height is measured ABOVE THE LOCAL GROUND, not as an absolute world z:
+    on a raised-terrain heightfield (``create_world(terrain=...)``, the terrain
+    curriculum) a robot standing at its proper posture on a plateau has an
+    absolute base z above the target, so an absolute test spuriously penalises
+    it - worse, it makes the reward *reward crouching* to the flat-ground
+    absolute height while on the plateau, inverting the anti-crouch incentive
+    this term exists to provide. The local terrain height is subtracted (``0.0``
+    on a flat ground plane / a backend with no heightfield, so flat-ground
+    behaviour is byte-for-byte unchanged).
+
     Reads ``get_observation``'s ``base_pos`` (world frame). ``target`` is the
-    desired base height in metres (task-specific: a G1 pelvis ~0.74 m, a Go2
-    trunk ~0.34 m). Requires a robot with a floating base; a fixed-base arm has
-    no base position, so the term degrades to ``0.0`` and the missing base is
-    logged once. ``robot`` selects the robot in a multi-robot scene (default:
-    the sole robot).
+    desired base height in metres, measured above the ground beneath the base
+    (task-specific: a G1 pelvis ~0.74 m, a Go2 trunk ~0.34 m). Requires a robot
+    with a floating base; a fixed-base arm has no base position, so the term
+    degrades to ``0.0`` and the missing base is logged once. ``robot`` selects
+    the robot in a multi-robot scene (default: the sole robot).
     """
     w = float(weight)
     tgt = float(target)
@@ -1263,7 +1274,12 @@ def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -
         pos = _base_position(sim, rname)
         if pos is None:
             return 0.0
-        d = pos[2] - tgt
+        # Height ABOVE THE LOCAL GROUND, not absolute world z: on raised terrain
+        # (create_world(terrain=...)) a robot standing at its target posture on
+        # a plateau has an absolute base z above the target, so an absolute test
+        # spuriously penalises it (and rewards a crouch on the plateau). On flat
+        # ground _ground_height is 0.0 and this reduces to the world height.
+        d = (pos[2] - _ground_height(sim, pos[0], pos[1])) - tgt
         return -w * d * d
 
     return term

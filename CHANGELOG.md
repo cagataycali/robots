@@ -5,6 +5,28 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `base_height` reward measures the base's clearance above the LOCAL terrain, not an absolute world z
+
+`base_height` is the legged_gym / IsaacLab base-height regularizer paired with
+`base_velocity` in a locomotion `dense_reward`: it rewards a floating base for
+holding its torso/pelvis near a target height and penalises crouching/diving so
+a velocity-tracking policy cannot cheat the forward-velocity reward by folding
+down. It scored the error against the base's ABSOLUTE world `z`, which is
+correct only on a flat ground plane. On a raised-terrain heightfield
+(`create_world(terrain=...)`, the terrain curriculum) an absolute test is wrong
+on two counts: a robot standing at its proper posture on a raised plateau has an
+absolute base `z` above the target, so it is spuriously penalised
+(`-(terrain height)^2` even at perfect posture); and the absolute zero-reward
+pose on the plateau is a deep CROUCH (clearance = target minus the terrain
+height), so the term actively REWARDS crouching on terrain, inverting the very
+anti-crouch incentive it exists to provide. `base_height` now measures the
+base's clearance ABOVE THE LOCAL GROUND beneath it (`base z` minus the terrain
+surface height at the base's `(x, y)`) via the `_ground_height_at` backend hook,
+mirroring the `base_below_z` fix. On a flat ground plane / a backend without a
+heightfield the local ground height is `0.0`, so flat-ground behaviour is
+byte-for-byte unchanged. With `base_below_z`, this makes the floating-base
+reward/predicate DSL correct on the terrain curriculum end to end.
+
 ### Fixed: `base_below_z` measures the base's clearance above the LOCAL terrain, not an absolute world z
 
 `base_below_z` is the height-collapse half of a floating-base fall termination
