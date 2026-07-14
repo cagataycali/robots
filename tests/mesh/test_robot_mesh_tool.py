@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -505,3 +506,106 @@ def test_broadcast_summary_truncates_to_ten_responses(fake_local_mesh):
     assert "13 responses" in text
     assert "... and 3 more" in text
     assert text.count("  - ") == 10
+
+
+# --- Device Connect dispatch path: validation gate + fail-soft E-STOP -----
+# The Device Connect dispatcher (``_device_connect_dispatch``) is a distinct
+# code path from the Zenoh mesh, but it must uphold the same two contracts:
+#   1. ``tell`` inherits the mesh command-validation gate - an instruction that
+#      fails ``validate_command`` is rejected + audited and never reaches the
+#      device (dropping this gate would let unvalidated instructions through).
+#   2. fleet ``emergency_stop`` is best-effort - one unreachable device must
+#      not abort the fan-out; the tool reports the partial count and audits it.
+
+
+@pytest.fixture
+def fake_dc_connection(monkeypatch):
+    """Install a fake ``device_connect_agent_tools.connection`` module.
+
+    The connection records every ``invoke()`` and can be told which device ids
+    should raise, so a partially-unreachable fleet can be modelled. State is
+    returned as a dict: set ``devices`` / ``raise_on`` before dispatching and
+    read ``invoked`` afterwards.
+    """
+    import sys
+    import types
+
+    state: dict[str, Any] = {"devices": [], "raise_on": set(), "invoked": []}
+
+    def _get_connection():
+        conn = types.SimpleNamespace()
+        conn.list_devices = lambda: state["devices"]
+
+        def _invoke(device_id, function, params, timeout=None):
+            state["invoked"].append((device_id, function))
+            if device_id in state["raise_on"]:
+                raise RuntimeError(f"{device_id} unreachable")
+            return {"result": {"ok": True}}
+
+        conn.invoke = _invoke
+        return conn
+
+    pkg = types.ModuleType("device_connect_agent_tools")
+    conn_mod = types.ModuleType("device_connect_agent_tools.connection")
+    conn_mod.get_connection = _get_connection  # type: ignore[attr-defined]
+    conn_mod.connect = lambda: None  # type: ignore[attr-defined]
+    pkg.connection = conn_mod  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "device_connect_agent_tools", pkg)
+    monkeypatch.setitem(sys.modules, "device_connect_agent_tools.connection", conn_mod)
+    return state
+
+
+def _dc_dispatch(**kwargs):
+    """Invoke ``_device_connect_dispatch`` with test-friendly defaults."""
+    from strands_robots.tools.robot_mesh import _device_connect_dispatch
+
+    params = {
+        "action": "",
+        "target": "",
+        "instruction": "",
+        "command": "",
+        "policy_provider": "mock",
+        "policy_port": 0,
+        "duration": 30.0,
+        "timeout": 5.0,
+    }
+    params.update(kwargs)
+    return _device_connect_dispatch(**params)
+
+
+def test_dc_tell_rejects_and_audits_overlong_instruction(fake_dc_connection, monkeypatch):
+    from strands_robots.mesh.security import MAX_INSTRUCTION_LEN
+
+    fake_dc_connection["devices"] = [{"device_id": "peer-b"}]
+    calls = _audit_capture(monkeypatch)
+
+    out = _dc_dispatch(action="tell", target="peer-b", instruction="x" * (MAX_INSTRUCTION_LEN + 1))
+
+    assert out["status"] == "error"
+    assert "tell rejected" in out["content"][0]["text"]
+    # The validation gate fires before dispatch: the device is never invoked.
+    assert fake_dc_connection["invoked"] == []
+    # Rejection is audited with success=False for the forensic trail.
+    assert calls and calls[-1][0] == "tell"
+    assert calls[-1][2] is False
+
+
+def test_dc_emergency_stop_is_best_effort_across_unreachable_devices(fake_dc_connection, monkeypatch):
+    fake_dc_connection["devices"] = [
+        {"device_id": "arm-1"},
+        {"device_id": "arm-2"},
+        {"device_id": "arm-3"},
+    ]
+    fake_dc_connection["raise_on"] = {"arm-2"}
+    calls = _audit_capture(monkeypatch)
+
+    out = _dc_dispatch(action="emergency_stop")
+
+    assert out["status"] == "success"
+    # Partial count reported: arm-2 failed, arms 1 and 3 stopped.
+    assert "2/3" in out["content"][0]["text"]
+    # Every device was attempted despite arm-2 raising mid fan-out.
+    assert [d for d, _ in fake_dc_connection["invoked"]] == ["arm-1", "arm-2", "arm-3"]
+    assert calls and calls[-1][0] == "emergency_stop"
+    assert calls[-1][1] == "*"
+    assert calls[-1][2] is True
