@@ -829,8 +829,30 @@ def _base_tipped(tol: float = 0.15, robot: str | None = None) -> BoolPredicate:
     return check
 
 
+def _ground_height(sim: SimEngine, x: float, y: float) -> float:
+    """Local terrain surface height (world z) beneath ``(x, y)``; ``0.0`` on flat ground.
+
+    A height/fall predicate must measure a base's clearance above the ground
+    *beneath it*, not an absolute world z: on a raised-terrain heightfield
+    (``create_world(terrain=...)``) a collapsed robot on a plateau still has an
+    absolute base z above a flat-ground threshold, so an absolute test silently
+    misses the fall. Reads the backend's ``_ground_height_at`` hook (``0.0`` for
+    flat ground / a backend with no heightfield); a sim lacking the hook
+    degrades to ``0.0`` so flat-ground behaviour is unchanged and the predicate
+    never raises.
+    """
+    fn = getattr(sim, "_ground_height_at", None)
+    if fn is None:
+        return 0.0
+    try:
+        return float(fn(x, y))
+    except Exception as e:  # noqa: BLE001 - predicates never raise
+        logger.debug("_ground_height_at(%.3f, %.3f) failed: %s", x, y, e)
+        return 0.0
+
+
 def _base_below_z(z: float, robot: str | None = None) -> BoolPredicate:
-    """True when a floating base's world height has dropped below ``z``.
+    """True when a floating base's height ABOVE THE LOCAL GROUND drops below ``z``.
 
     The height counterpart of :func:`_base_tipped`, and the second half of a
     complete floating-base fall termination: ``base_tipped`` fires when the base
@@ -845,17 +867,23 @@ def _base_below_z(z: float, robot: str | None = None) -> BoolPredicate:
             - {predicate: base_tipped, tol: 0.7}
             - {predicate: base_below_z, z: 0.3}
 
-    Reads ``get_observation``'s ``base_pos`` z (world frame) - the same
-    embodiment-agnostic floating-base surface the ``base_*`` reward terms and
-    ``base_tipped`` read - so it needs no base body name and works on a mobile
-    base whose free joint is unnamed, unlike ``body_below_z`` which resolves a
-    specific body by name (a name a mobile base's unnamed free joint does not
-    expose). It is the base-surface, name-free analogue of
-    ``body_below_z(<base body>, z)``.
+    Reads ``get_observation``'s ``base_pos`` - the same embodiment-agnostic
+    floating-base surface the ``base_*`` reward terms and ``base_tipped`` read -
+    so it needs no base body name and works on a mobile base whose free joint is
+    unnamed, unlike ``body_below_z`` which resolves a specific body by name (a
+    name a mobile base's unnamed free joint does not expose). It is the
+    base-surface, name-free analogue of ``body_below_z(<base body>, z)``.
 
-    ``z`` is the collapse height in metres; a fall termination sets it well
-    below the standing base height (a G1 pelvis stands ~0.74 m, so ``z=0.3``
-    catches a collapse). Requires a robot with a floating base; a fixed-base arm
+    The height is measured ABOVE THE LOCAL GROUND beneath the base, not as an
+    absolute world z: on a raised-terrain heightfield (``create_world(terrain=
+    ...)``, the terrain curriculum) a collapse onto a plateau leaves the base
+    above a flat-ground threshold, so an absolute test would silently miss the
+    fall. The local terrain height is subtracted (``0.0`` on a flat ground plane
+    / a backend with no heightfield, so flat-ground behaviour is unchanged).
+
+    ``z`` is the collapse clearance in metres (height of the base above the
+    ground beneath it); a fall termination sets it well below the standing base
+    height (a G1 pelvis stands ~0.74 m, so ``z=0.3`` catches a collapse). Requires a robot with a floating base; a fixed-base arm
     has no base position, so the predicate degrades to ``False`` (never
     collapsed -> never spuriously fails an episode) and the missing base is
     logged once. ``robot`` selects the robot in a multi-robot scene (default:
@@ -868,7 +896,11 @@ def _base_below_z(z: float, robot: str | None = None) -> BoolPredicate:
         pos = _base_position(sim, rname)
         if pos is None:
             return False
-        return pos[2] < zt
+        # Height ABOVE THE LOCAL GROUND, not absolute world z: on raised terrain
+        # (create_world(terrain=...)) a collapse leaves the base above a
+        # flat-ground threshold, so an absolute test misses the fall. On flat
+        # ground _ground_height is 0.0 and this reduces to the world height.
+        return (pos[2] - _ground_height(sim, pos[0], pos[1])) < zt
 
     return check
 

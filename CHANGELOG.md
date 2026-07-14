@@ -5,6 +5,27 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `base_below_z` measures the base's clearance above the LOCAL terrain, not an absolute world z
+
+`base_below_z` is the height-collapse half of a floating-base fall termination
+(the counterpart of `base_tipped`): it ends a locomotion episode when the
+robot's torso/pelvis has dropped to the ground. It compared the base's world
+`z` against an absolute threshold, which is correct only on a flat ground
+plane. Once a locomotion task runs on a raised-terrain heightfield
+(`create_world(terrain=...)`, the terrain curriculum), an absolute test
+silently MISSES a collapse: a robot that has fallen onto a raised plateau (e.g.
+a 0.16 m pyramid step) still has an absolute base `z` (~0.26 m) above the
+flat-ground collapse threshold (0.18 m for the Go2), so the failure predicate
+never fires and the episode never terminates on the fall. `base_below_z` now
+measures the base's height ABOVE THE LOCAL GROUND beneath it (`base z` minus
+the terrain surface height at the base's `(x, y)`) via a new backend hook
+`_ground_height_at`. The MuJoCo backend bilinearly samples the
+`create_world(terrain=...)` heightfield; the base default (and any backend
+without a heightfield) returns `0.0`, so flat-ground behaviour is byte-for-byte
+unchanged. This is groundwork for a terrain-difficulty locomotion benchmark: a
+fall predicate that works on raised terrain is a prerequisite for running the
+`*_walk_forward` benchmarks on the terrain curriculum.
+
 ### Fixed: Isaac `add_robot` honours the base `keyframe` contract instead of raising a bare `TypeError`
 
 `SimEngine.add_robot` declares a `keyframe` parameter (spawn the robot in a

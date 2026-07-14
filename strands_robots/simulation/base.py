@@ -538,6 +538,20 @@ class SimEngine(ABC):
         """
         ...
 
+    def _ground_height_at(self, x: float, y: float) -> float:
+        """Terrain surface height (world z) beneath world ``(x, y)``; ``0.0`` on flat ground.
+
+        Default ``0.0`` -- a flat ground plane, and any backend without a
+        heightfield. The MuJoCo backend overrides this to sample a
+        ``create_world(terrain=...)`` heightfield so that height-based locomotion
+        predicates (:func:`~strands_robots.simulation.predicates.base_below_z`)
+        measure a base's clearance above the *local* ground instead of an
+        absolute world z -- an absolute test silently misses a collapse on a
+        raised terrain plateau (the base still sits above a flat-ground
+        threshold). Not a public tool action.
+        """
+        return 0.0
+
     def _coerce_action(
         self, action: dict[str, Any] | Sequence[float], robot_name: str
     ) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:

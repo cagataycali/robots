@@ -1393,6 +1393,65 @@ class PhysicsMixin:
             ],
         }
 
+    def _ground_height_at(self, x: float, y: float) -> float:
+        """Terrain surface height (world z) beneath world ``(x, y)``.
+
+        Samples a ``create_world(terrain=...)`` MuJoCo ``<hfield>`` so a
+        height-based locomotion predicate measures a base's clearance above the
+        *local* terrain rather than an absolute world z. Returns ``0.0`` when no
+        heightfield is present (a flat ground plane) and the hfield's base level
+        for a point outside the terrain patch. Bilinearly interpolates the grid.
+        The terrain ground geom is static (world-aligned, welded to the
+        worldbody), so its pose and heightfield are constant after compile.
+        """
+        world = self._world
+        if world is None or world._model is None or world._data is None:
+            return 0.0
+        model, data = world._model, world._data
+        if model.nhfield == 0:
+            return 0.0
+        mj = _ensure_mujoco()
+        hgeom = -1
+        for g in range(model.ngeom):
+            if model.geom_type[g] == mj.mjtGeom.mjGEOM_HFIELD:
+                hgeom = g
+                break
+        if hgeom < 0:
+            return 0.0
+        hid = int(model.geom_dataid[hgeom])
+        if hid < 0:
+            return 0.0
+        gx, gy, gz = (float(v) for v in data.geom_xpos[hgeom])
+        rx, ry, elev = (float(v) for v in model.hfield_size[hid][:3])
+        nrow = int(model.hfield_nrow[hid])
+        ncol = int(model.hfield_ncol[hid])
+        if nrow < 2 or ncol < 2 or rx <= 0.0 or ry <= 0.0:
+            return gz
+        adr = int(model.hfield_adr[hid])
+        grid = np.asarray(model.hfield_data[adr : adr + nrow * ncol], dtype=float).reshape(nrow, ncol)
+        # MuJoCo <hfield> userdata is row-major, row 0 -> min y and col 0 -> min
+        # x, the grid spanning +-radius about the geom origin. Map (x, y) to a
+        # fractional (row, col) and bilinearly interpolate the normalized height.
+        u = (x - gx + rx) / (2.0 * rx)  # 0..1 across x (columns)
+        v = (y - gy + ry) / (2.0 * ry)  # 0..1 across y (rows)
+        if u < 0.0 or u > 1.0 or v < 0.0 or v > 1.0:
+            return gz  # off the terrain patch -> its flush (base) level
+        fc = u * (ncol - 1)
+        fr = v * (nrow - 1)
+        c0 = int(math.floor(fc))
+        r0 = int(math.floor(fr))
+        c1 = min(c0 + 1, ncol - 1)
+        r1 = min(r0 + 1, nrow - 1)
+        tc = fc - c0
+        tr = fr - r0
+        h = (
+            grid[r0, c0] * (1.0 - tc) * (1.0 - tr)
+            + grid[r0, c1] * tc * (1.0 - tr)
+            + grid[r1, c0] * (1.0 - tc) * tr
+            + grid[r1, c1] * tc * tr
+        )
+        return gz + elev * float(h)
+
     # Export Model XML
 
     def export_xml(self, output_path: str | None = None) -> dict[str, Any]:
