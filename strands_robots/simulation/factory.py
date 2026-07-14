@@ -256,7 +256,7 @@ def _import_backend_class(name: str) -> type[SimEngine]:
     # 1. Runtime registry (user-registered)
     if name in _runtime_registry:
         cls: type[SimEngine] = _runtime_registry[name]()
-        logger.debug("Loaded runtime backend: %s → %s", name, cls.__name__)
+        logger.debug("Loaded runtime backend: %s -> %s", name, cls.__name__)
         return cls
 
     # 2. Built-in registry
@@ -278,7 +278,7 @@ def _import_backend_class(name: str) -> type[SimEngine]:
                 f"`strands_robots.simulation.factory.register_backend()` to proceed."
             ) from exc
         backend_cls: type[SimEngine] = getattr(module, class_name)  # type: ignore[assignment]
-        logger.debug("Loaded built-in backend: %s → %s.%s", name, module_path, class_name)
+        logger.debug("Loaded built-in backend: %s -> %s.%s", name, module_path, class_name)
         return backend_cls
 
     # 3. Entry-point plugins (third-party packages, e.g. strands-robots-sim).
@@ -289,7 +289,7 @@ def _import_backend_class(name: str) -> type[SimEngine]:
     plugins = _load_plugin_backends()
     if name in plugins:
         plugin_cls = plugins[name]
-        logger.debug("Loaded plugin backend: %s → %s", name, plugin_cls.__name__)
+        logger.debug("Loaded plugin backend: %s -> %s", name, plugin_cls.__name__)
         return plugin_cls
 
     available = ", ".join(list_backends())

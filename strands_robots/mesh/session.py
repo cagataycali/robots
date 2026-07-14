@@ -622,7 +622,7 @@ def get_session() -> Any | None:
             try:
                 _SESSION = zenoh.open(cfg)
                 _SESSION_REFS = 1
-                logger.info("Zenoh mesh session opened (client → %s)", local_ep)
+                logger.info("Zenoh mesh session opened (client -> %s)", local_ep)
                 return _SESSION
             except (RuntimeError, OSError, ConnectionError, _ZError) as exc:
                 # Narrow tuple per AGENTS.md > Review Learnings (#86):
@@ -744,7 +744,7 @@ def _get_zenoh_session_directly() -> Any | None:
             try:
                 _SESSION = zenoh.open(cfg)
                 _SESSION_REFS = 1
-                logger.info("Zenoh mesh session opened (client → %s)", local_ep)
+                logger.info("Zenoh mesh session opened (client -> %s)", local_ep)
                 return _SESSION
             except (RuntimeError, OSError, ConnectionError, _ZError) as exc:
                 logger.warning("Zenoh session open failed (client mode): %s", exc)
