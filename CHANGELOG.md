@@ -5,6 +5,23 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `lerobot_async` honors a `rename_map` for remote observation-key remapping
+
+`LerobotAsyncPolicy` (the gRPC client to a LeRobot `PolicyServer`) built its
+`RemotePolicyConfig` without a `rename_map`, so a caller-supplied `rename_map=`
+landed in the ignored-kwargs bag and was silently dropped (warned, then
+discarded). That left the async provider unable to drive a checkpoint whose
+expected camera/state feature keys differ from the ones the robot exposes -- the
+exact remapping the in-process [`lerobot_local`] provider already supports via
+`obs_rename`. A stock checkpoint trained with, say, `observation.images.laptop`
+was therefore unreachable from a robot whose camera is named `front`.
+
+`create_policy("lerobot_async", ..., rename_map={robot_obs_key: model_feature_key})`
+now forwards the map verbatim to the server's `RemotePolicyConfig.rename_map`,
+which the server applies as a `RenameObservationsProcessorStep` (renaming each
+matching observation key before the policy sees it). The default stays `{}` (no
+remap), and a non-dict `rename_map` is rejected client-side with a clear error.
+
 ### Added: `get_ground_height(x, y)` -- query the local terrain surface height
 
 `create_world(terrain=...)` raises the local ground up to
