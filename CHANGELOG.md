@@ -5,6 +5,26 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `DatasetRecorder.create(overwrite=...)` for honest re-recording into an existing `repo_id`
+
+`DatasetRecorder.create()` calls `LeRobotDataset.create()`, which `mkdir`s its
+target with `exist_ok=False` and raises a bare `FileExistsError` when the
+dataset directory already exists. `create()` exposed no `overwrite` parameter,
+so re-running a capture script into the same `repo_id` dead-ended with a cryptic
+crash and no in-API way to force a fresh dataset -- while `resume()`'s docstring
+and its no-resume `RuntimeError` both pointed callers at an `overwrite=True` that
+only existed on the `Simulation.start_recording` facade.
+
+`create()` now takes `overwrite: bool = False` and resolves an existing target up
+front, matching the facade: `overwrite=True` wipes and recreates a fresh dataset;
+`overwrite=False` on an existing dataset (a dir containing `meta/`) raises a clear
+`FileExistsError` naming `overwrite=True` and `resume()`; an existing empty
+directory (e.g. `tempfile.mkdtemp()`) is cleared so `create()` does not trip over
+its own existence guard; and a non-empty non-dataset directory raises `ValueError`
+rather than clobbering unrelated files. The dataset-directory resolution is now a
+shared `resolve_dataset_dir()` helper used by both `create()` and the sim facade
+(honouring `$HF_LEROBOT_HOME`), so the two surfaces can no longer diverge.
+
 ### Fixed: notebooks and the lerobot e2e test fixture no longer hard-default `MUJOCO_GL` to the macOS-only `cgl`
 
 The four `.py` examples became platform-aware in #973, but the notebooks under
