@@ -1184,6 +1184,164 @@ def test_create_builds_features_from_joints_and_cameras(monkeypatch):
     assert features["observation.images.top"]["shape"] == (3, 240, 320)
 
 
+
+# DatasetRecorder.create(overwrite=...) -- existing-dataset-directory handling.
+#
+# LeRobotDataset.create() does mkdir(exist_ok=False) and raises a bare
+# FileExistsError when its target directory already exists, and create() used to
+# expose no way to force a fresh dataset. These tests pin the overwrite contract
+# without a real lerobot install: they inject a fake LeRobotDataset (whose
+# create() must / must not run) and pass root=tmp_path so _resolve_dataset_dir
+# takes the explicit-root branch (no lerobot.constants import needed).
+
+
+class _RecordingCreateDataset:
+    """Fake LeRobotDataset whose create() records whether it was invoked.
+
+    Used to assert that create() is short-circuited (never called) when an
+    existing directory blocks a non-overwrite create, and called exactly once
+    on the overwrite / absent-dir paths.
+    """
+
+    create_calls: int = 0
+
+    def __init__(self, repo_id, root=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+
+    @classmethod
+    def create(cls, repo_id, fps=30, root=None, robot_type="unknown", features=None,
+               use_videos=True, image_writer_threads=4, vcodec="libsvtav1"):
+        cls.create_calls += 1
+        return cls(repo_id, root=root)
+
+
+def test_create_without_overwrite_raises_clear_error_on_existing_dir(monkeypatch, tmp_path):
+    """create() on an existing dir (no overwrite) raises a clear FileExistsError.
+
+    The message must name the escape hatches that actually exist -- overwrite=
+    and resume() -- instead of leaving LeRobot to raise a bare FileExistsError.
+    The underlying dataset create() must never run (the dir pre-check
+    short-circuits before it).
+    """
+    _RecordingCreateDataset.create_calls = 0
+    _patch_lerobot_dataset(monkeypatch, _RecordingCreateDataset)
+
+    # A populated dataset directory already on disk.
+    (tmp_path / "meta").mkdir()
+    (tmp_path / "meta" / "info.json").write_text("{}")
+
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        DatasetRecorder.create("user/data", root=str(tmp_path), joint_names=["j1"])
+
+    # The message also points at resume() as the append path.
+    with pytest.raises(FileExistsError, match="resume"):
+        DatasetRecorder.create("user/data", root=str(tmp_path), joint_names=["j1"])
+
+    assert _RecordingCreateDataset.create_calls == 0  # never reached LeRobot
+
+
+def test_create_overwrite_true_replaces_existing_dir(monkeypatch, tmp_path):
+    """create(overwrite=True) removes an existing dir, then creates fresh."""
+    _RecordingCreateDataset.create_calls = 0
+    _patch_lerobot_dataset(monkeypatch, _RecordingCreateDataset)
+
+    # A pre-existing dataset dir with a sentinel that must be gone afterward.
+    (tmp_path / "meta").mkdir()
+    sentinel = tmp_path / "meta" / "old.parquet"
+    sentinel.write_text("stale")
+
+    recorder = DatasetRecorder.create("user/data", root=str(tmp_path), joint_names=["j1"], overwrite=True)
+
+    assert not sentinel.exists()  # the stale dataset dir was removed
+    assert not tmp_path.exists()  # rmtree removed the target entirely
+    assert _RecordingCreateDataset.create_calls == 1  # fresh create() ran once
+    assert recorder.dataset.repo_id == "user/data"
+
+
+def test_create_overwrite_true_replaces_existing_file_target(monkeypatch, tmp_path):
+    """overwrite=True also clears a plain file sitting at the dataset path."""
+    _RecordingCreateDataset.create_calls = 0
+    _patch_lerobot_dataset(monkeypatch, _RecordingCreateDataset)
+
+    file_target = tmp_path / "dataset_root"
+    file_target.write_text("not a directory")
+
+    DatasetRecorder.create("user/data", root=str(file_target), joint_names=["j1"], overwrite=True)
+
+    assert not file_target.exists()  # the file was unlinked
+    assert _RecordingCreateDataset.create_calls == 1
+
+
+def test_create_no_precheck_when_dir_absent(monkeypatch, tmp_path):
+    """An absent dataset dir skips the overwrite pre-check and creates normally."""
+    _RecordingCreateDataset.create_calls = 0
+    _patch_lerobot_dataset(monkeypatch, _RecordingCreateDataset)
+
+    absent = tmp_path / "does_not_exist_yet"
+    recorder = DatasetRecorder.create("user/data", root=str(absent), joint_names=["j1"])
+
+    assert _RecordingCreateDataset.create_calls == 1
+    assert recorder.dataset.repo_id == "user/data"
+
+
+def test_create_reraises_bare_fileexists_with_guidance(monkeypatch, tmp_path):
+    """When the dir cannot be pre-resolved, a LeRobot FileExistsError is re-raised
+    with the actionable overwrite=/resume() guidance rather than left bare.
+
+    Simulates the root=None + HF_LEROBOT_HOME-unavailable edge: the pre-check
+    resolver returns None, so the guard cannot fire, and LeRobot's create()
+    raises FileExistsError. create() must translate that into the same clear
+    message naming overwrite= and resume().
+    """
+    class _FileExistsCreateDataset:
+        @classmethod
+        def create(cls, repo_id, **kwargs):
+            raise FileExistsError(f"[Errno 17] File exists: {repo_id}")
+
+    _patch_lerobot_dataset(monkeypatch, _FileExistsCreateDataset)
+    # Force the resolver to return None (cannot pre-check) by leaving root=None
+    # and making lerobot.constants unimportable.
+    import sys
+    monkeypatch.setitem(sys.modules, "lerobot.constants", None)
+
+    with pytest.raises(FileExistsError, match="overwrite=True"):
+        DatasetRecorder.create("user/data", joint_names=["j1"])
+
+
+def test_create_overwrite_true_surfaces_unresolvable_dir(monkeypatch):
+    """overwrite=True but the dir is unresolvable -> a clear FileExistsError that
+    says the directory could not be resolved (not the bare LeRobot error)."""
+    class _FileExistsCreateDataset:
+        @classmethod
+        def create(cls, repo_id, **kwargs):
+            raise FileExistsError("[Errno 17] File exists")
+
+    _patch_lerobot_dataset(monkeypatch, _FileExistsCreateDataset)
+    import sys
+    monkeypatch.setitem(sys.modules, "lerobot.constants", None)
+
+    with pytest.raises(FileExistsError, match="[Cc]ould not resolve"):
+        DatasetRecorder.create("user/data", joint_names=["j1"], overwrite=True)
+
+
+def test_resolve_dataset_dir_prefers_explicit_root():
+    """_resolve_dataset_dir returns Path(root) verbatim when root is given."""
+    from strands_robots.dataset_recorder import _resolve_dataset_dir
+    from pathlib import Path
+
+    assert _resolve_dataset_dir("user/data", "/tmp/explicit") == Path("/tmp/explicit")
+
+
+def test_resolve_dataset_dir_returns_none_when_unresolvable(monkeypatch):
+    """With no root and no importable HF_LEROBOT_HOME, the resolver returns None
+    so create() falls back to catching LeRobot's own FileExistsError."""
+    import sys
+    from strands_robots.dataset_recorder import _resolve_dataset_dir
+
+    monkeypatch.setitem(sys.modules, "lerobot.constants", None)
+    assert _resolve_dataset_dir("user/data", None) is None
+
 # camera_key_map remap + camera-key-mismatch diagnostic
 #
 # Regression coverage for the silent data-loss mode where a policy declares

@@ -24,6 +24,7 @@ Usage:
 import json
 import logging
 import re
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
@@ -201,6 +202,52 @@ def _get_lerobot_dataset_class():
         ) from exc
 
 
+def _resolve_dataset_dir(repo_id: str, root: str | None) -> Path | None:
+    """Resolve the on-disk directory ``LeRobotDataset.create`` will write to.
+
+    LeRobot writes a dataset to ``root`` when given, else to
+    ``HF_LEROBOT_HOME / repo_id`` (the ``~/.cache/huggingface/lerobot`` default,
+    overridable via the ``HF_LEROBOT_HOME`` env var). :meth:`DatasetRecorder.create`
+    needs this path to honor ``overwrite=`` before handing off to LeRobot, whose
+    ``create`` does ``mkdir(exist_ok=False)`` and raises ``FileExistsError`` on a
+    pre-existing dir.
+
+    Returns ``None`` when ``root`` is not given and ``HF_LEROBOT_HOME`` cannot be
+    imported (e.g. a minimal env without lerobot). Callers treat ``None`` as
+    "cannot pre-check" and fall back to catching LeRobot's ``FileExistsError``,
+    so the overwrite handling degrades gracefully rather than crashing on import.
+
+    Args:
+        repo_id: HuggingFace dataset ID (e.g. "user/my_dataset").
+        root: Explicit local dataset directory, or None to use the LeRobot default.
+
+    Returns:
+        The resolved dataset directory, or None if it cannot be determined.
+    """
+    if root is not None:
+        return Path(root)
+    try:
+        from lerobot.constants import HF_LEROBOT_HOME
+    except Exception:  # noqa: BLE001 - any import failure -> "cannot pre-check"
+        return None
+    return Path(HF_LEROBOT_HOME) / repo_id
+
+
+def _dataset_exists_message(dataset_dir: "Path | str") -> str:
+    """Actionable error text for a create() blocked by an existing dataset dir.
+
+    Names both escape hatches so the message points at parameters that actually
+    exist: ``overwrite=True`` (replace with a fresh dataset) and
+    :meth:`DatasetRecorder.resume` (append episodes to the existing one).
+    """
+    return (
+        f"Dataset directory already exists: {dataset_dir}. DatasetRecorder.create() "
+        "builds a NEW dataset and will not replace or append to an existing one. "
+        "Pass overwrite=True to replace it with a fresh dataset, or use "
+        "DatasetRecorder.resume() to append episodes to the existing dataset."
+    )
+
+
 class DatasetRecorder:
     """Bridge between strands-robots control loops and LeRobotDataset.
 
@@ -286,6 +333,7 @@ class DatasetRecorder:
         extra_state_specs: list[tuple[str, list[str]]] | None = None,
         task: str = "",
         root: str | None = None,
+        overwrite: bool = False,
         use_videos: bool = True,
         vcodec: str = "h264",
         streaming_encoding: bool = True,
@@ -319,6 +367,13 @@ class DatasetRecorder:
                 these; add_frame reads the source keys, not the expanded names.
             task: Default task description
             root: Local directory for dataset storage
+            overwrite: When True, replace an existing dataset directory
+                (``root`` or the ``HF_LEROBOT_HOME/repo_id`` default) with a
+                fresh dataset. When False (default) and the directory already
+                exists, create() raises a clear ``FileExistsError`` naming
+                ``overwrite=`` and :meth:`resume` instead of leaving LeRobot to
+                fail with a bare ``FileExistsError``. To APPEND episodes to an
+                existing dataset use :meth:`resume`, not ``overwrite=True``.
             use_videos: Encode camera frames as video (True) or keep as images
             vcodec: Video codec for the per-camera MP4 streams. Defaults to
                 "h264" (H.264), which is universally decodable - including
@@ -383,7 +438,34 @@ class DatasetRecorder:
             create_kwargs["streaming_encoding"] = streaming_encoding
         if "video_backend" in create_params:
             create_kwargs["video_backend"] = video_backend
-        dataset = LeRobotDatasetCls.create(**create_kwargs)
+        # Honor overwrite= before LeRobot's create() (which mkdir(exist_ok=False)s
+        # and raises a bare FileExistsError on a pre-existing dir). When the dir
+        # cannot be pre-resolved (root=None and HF_LEROBOT_HOME unavailable), fall
+        # back to catching that FileExistsError below and re-raising it with the
+        # same actionable guidance.
+        dataset_dir = _resolve_dataset_dir(repo_id, root)
+        if dataset_dir is not None and dataset_dir.exists():
+            if overwrite:
+                if dataset_dir.is_dir():
+                    shutil.rmtree(dataset_dir)
+                else:
+                    dataset_dir.unlink()
+                logger.info("Removed existing dataset target for overwrite=True: %s", dataset_dir)
+            else:
+                raise FileExistsError(_dataset_exists_message(dataset_dir))
+
+        try:
+            dataset = LeRobotDatasetCls.create(**create_kwargs)
+        except FileExistsError as exc:
+            # The dir existed but we could not pre-resolve it (root=None with
+            # HF_LEROBOT_HOME unimportable). Re-raise with actionable guidance
+            # rather than the bare LeRobot FileExistsError.
+            if overwrite:
+                raise FileExistsError(
+                    f"Could not resolve the dataset directory to honor overwrite=True "
+                    f"for {repo_id}; remove it manually or pass an explicit root=."
+                ) from exc
+            raise FileExistsError(_dataset_exists_message(dataset_dir or repo_id)) from exc
 
         recorder = cls(dataset=dataset, task=task, camera_key_map=camera_key_map)
         # When vector state specs expand the schema (e.g. a floating base),
@@ -410,10 +492,10 @@ class DatasetRecorder:
     ) -> "DatasetRecorder":
         """Resume recording into an EXISTING LeRobotDataset (append episodes).
 
-        Unlike :meth:`create` (which calls ``LeRobotDataset.create`` and
-        hard-fails with ``FileExistsError`` if the dataset dir already
-        exists), this opens an on-disk dataset via ``LeRobotDataset.resume``
-        so further ``add_frame``/``save_episode`` calls append new episodes.
+        Unlike :meth:`create` (which builds a NEW dataset and either errors
+        on an existing dir or, with ``overwrite=True``, replaces it), this
+        opens an on-disk dataset via ``LeRobotDataset.resume`` so further
+        ``add_frame``/``save_episode`` calls append new episodes.
 
         This is the multi-episode data-collection path: ``start_recording``
         with ``overwrite=False`` on an existing dataset routes here instead of
