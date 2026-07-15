@@ -609,3 +609,47 @@ def test_dc_emergency_stop_is_best_effort_across_unreachable_devices(fake_dc_con
     assert calls and calls[-1][0] == "emergency_stop"
     assert calls[-1][1] == "*"
     assert calls[-1][2] is True
+
+
+# --- built-in Zenoh mesh fallback: observability + no-Device-Connect contract
+# When Device Connect is absent, robot_mesh falls through to the built-in Zenoh
+# mesh. Two user-facing contracts on that path had no coverage: the peers
+# listing must surface a peer's in-flight task, and rpc must return an
+# actionable error (the Zenoh mesh has no device-native call) rather than crash.
+
+
+def test_peers_listing_surfaces_remote_task_status(fake_local_mesh):
+    """A discovered peer that reports a running task renders that task and its
+    instruction in the peers listing, so an agent can see what the fleet is
+    doing before issuing new commands."""
+    with patch(
+        "strands_robots.mesh.session.get_peers",
+        return_value=[
+            {
+                "peer_id": "remote-1",
+                "type": "robot",
+                "hostname": "host1",
+                "age": 3,
+                "task_status": "running",
+                "instruction": "pick up the red cube",
+            }
+        ],
+    ):
+        out = _strands_call(action="peers")
+
+    assert out["status"] == "success"
+    text = out["content"][0]["text"]
+    assert "task: running - pick up the red cube" in text
+
+
+def test_rpc_without_device_connect_returns_actionable_error(fake_local_mesh):
+    """rpc is a device-native function call with no Zenoh-mesh equivalent. With
+    a local mesh present but Device Connect unavailable, the tool returns an
+    actionable error dict (never raises) that names Device Connect as the
+    requirement instead of silently timing out."""
+    out = _strands_call(action="rpc", target="dev-1", function="nod")
+
+    assert out["status"] == "error"
+    text = out["content"][0]["text"]
+    assert "rpc" in text
+    assert "Device Connect" in text
