@@ -1755,6 +1755,10 @@ class MuJoCoSimEngine(
             "translational + rotational Jacobian of a body/site/geom for IK/control"
         )
         base["methods"]["get_total_mass"] = "() -> dict  # total mass of the model"
+        base["methods"]["get_ground_height"] = (
+            "(x, y) -> dict  # local terrain surface height (world z) beneath (x, y); "
+            "0.0 on flat ground -- place objects/cameras/goals on create_world(terrain=...) ground"
+        )
         base["methods"]["raycast"] = (
             "(origin: list[float], direction: list[float], exclude_body=-1, "
             "include_static=True) -> dict  # first geom hit along a world-frame "
@@ -2205,6 +2209,15 @@ class MuJoCoSimEngine(
         whose top is at ``z = 0.75`` settles with its body origin at
         ``z = 0.775``. Assuming half-extent makes objects look like they "sink
         into" a support when the rest height was simply mis-computed.
+
+        On a ``create_world(terrain=...)`` world the local ground beneath
+        ``(x, y)`` is *elevated* (up to ``TERRAIN_ELEVATION * difficulty`` above
+        ``z = 0``), so this flat-support formula -- which assumes a support at
+        ``z = 0`` -- leaves an object spawned there buried in the heightfield
+        (it then sinks through instead of resting on the surface). Query the
+        local surface with :meth:`get_ground_height` and add the shape's rest
+        offset (e.g. ``size_z / 2`` for a box) to place the object on the
+        terrain: ``position=[x, y, get_ground_height(x, y)["content"][1]["json"]["height"] + size_z / 2]``.
 
         Args:
             name: Unique object name. Its geom is injected as ``"<name>_geom"``.
@@ -3212,7 +3225,7 @@ class MuJoCoSimEngine(
                 "(direct path or auto-resolve from data_config name), add objects, run VLA policies, "
                 "render cameras, record trajectories, domain randomize. "
                 "Same Policy ABC as real robot control - sim and real with zero code changes. "
-                "Actions (67 total): "
+                "Actions (68 total): "
                 "[World] create_world, load_scene, reset, get_state, destroy, export_xml; "
                 "[Robots] add_robot, remove_robot, list_robots, get_robot_state, list_bodies; "
                 "[Objects] add_object, remove_object, move_object, list_objects; "
@@ -3221,7 +3234,7 @@ class MuJoCoSimEngine(
                 "[Rendering] render, render_depth, render_all, open_viewer, close_viewer; "
                 "[Physics] step, set_gravity, set_timestep, set_joint_positions, set_joint_velocities, "
                 "apply_force, get_contacts, get_contact_forces, get_body_state, get_energy, "
-                "get_total_mass, get_sensor_data, get_jacobian, get_mass_matrix, inverse_dynamics, "
+                "get_total_mass, get_ground_height, get_sensor_data, get_jacobian, get_mass_matrix, inverse_dynamics, "
                 "forward_kinematics, save_state, load_state, set_body_properties, set_geom_properties; "
                 "[Scene MJCF] replace_scene_mjcf, patch_scene_mjcf, raycast, multi_raycast; "
                 "[Recording] start_recording, save_episode, stop_recording, get_recording_status, "

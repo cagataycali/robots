@@ -1,0 +1,91 @@
+"""Regression tests for the public ``get_ground_height(x, y)`` terrain query.
+
+``create_world(terrain=...)`` raises the local ground up to
+``TERRAIN_ELEVATION * difficulty`` above ``z = 0``, and the terrain-relative
+locomotion predicates + the spawn/reset base-seating already sample that local
+surface internally (``_ground_height_at``). But there was no *public* way for a
+caller to ask where the terrain surface is, so an object/camera/goal added at a
+flat-ground ``z`` on a raised plateau spawns buried in the heightfield and sinks
+through instead of resting on it. ``get_ground_height`` exposes the surface as a
+facade query (and agent-dispatch action). These tests build real worlds and read
+real geometry (GL-free -- no rendering): flat ground reports ``0.0``, a terrain
+world reports the elevated local surface (matching the internal sampler), the
+value is finite-validated, and it dispatches through the agent-tool router.
+"""
+
+from __future__ import annotations
+
+import math
+
+from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
+
+
+def test_get_ground_height_flat_ground_returns_zero() -> None:
+    sim = MuJoCoSimEngine()
+    try:
+        sim.create_world(ground_plane=True)
+        r = sim.get_ground_height(0.13, -0.21)
+        assert r["status"] == "success"
+        payload = r["content"][1]["json"]
+        assert payload["x"] == 0.13 and payload["y"] == -0.21
+        assert payload["height"] == 0.0
+    finally:
+        sim.destroy()
+
+
+def test_get_ground_height_reports_elevated_terrain_surface() -> None:
+    """On a raised terrain world the query returns the local surface z (not 0),
+    matching the internal sampler that backs the locomotion predicates."""
+    sim = MuJoCoSimEngine()
+    try:
+        sim.create_world(ground_plane=True, terrain="pyramid", difficulty=2.0)
+        # Centre plateau of the pyramid is the highest ground.
+        r = sim.get_ground_height(0.0, 0.0)
+        assert r["status"] == "success"
+        height = r["content"][1]["json"]["height"]
+        # Elevated well above the flat-ground z=0 (the whole point of the query).
+        assert height > 0.1, f"expected an elevated centre plateau, got {height}"
+        # Public query must agree with the internal sampler the predicates use.
+        assert math.isclose(height, sim._ground_height_at(0.0, 0.0), abs_tol=1e-9)
+    finally:
+        sim.destroy()
+
+
+def test_get_ground_height_rejects_non_finite() -> None:
+    sim = MuJoCoSimEngine()
+    try:
+        sim.create_world(ground_plane=True)
+        for x, y in ((float("nan"), 0.0), (0.0, float("inf")), (0.0, float("-inf"))):
+            r = sim.get_ground_height(x, y)
+            assert r["status"] == "error"
+        # non-numeric / bool are not valid coordinates
+        assert sim.get_ground_height("a", 0.0)["status"] == "error"  # type: ignore[arg-type]
+        assert sim.get_ground_height(True, 0.0)["status"] == "error"  # type: ignore[arg-type]
+    finally:
+        sim.destroy()
+
+
+def test_get_ground_height_dispatches_via_tool_router() -> None:
+    sim = MuJoCoSimEngine()
+    try:
+        sim.create_world(ground_plane=True, terrain="pyramid", difficulty=2.0)
+        ok = sim(action="get_ground_height", x=0.0, y=0.0)
+        assert ok["status"] == "success"
+        assert ok["content"][1]["json"]["height"] > 0.1
+        # both coordinates are required
+        missing = sim(action="get_ground_height", x=0.0)
+        assert missing["status"] == "error"
+        assert "y" in missing["content"][0]["text"]
+    finally:
+        sim.destroy()
+
+
+def test_get_ground_height_is_discoverable() -> None:
+    """Advertised in the tool_spec enum and the describe() methods surface."""
+    sim = MuJoCoSimEngine()
+    try:
+        enum = sim.tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"]
+        assert "get_ground_height" in enum
+        assert "get_ground_height" in sim.describe()["methods"]
+    finally:
+        sim.destroy()

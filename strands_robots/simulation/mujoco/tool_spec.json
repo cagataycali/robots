@@ -63,6 +63,7 @@
         "get_contact_forces",
         "forward_kinematics",
         "get_total_mass",
+        "get_ground_height",
         "export_xml",
         "render_all",
         "start_cameras_recording",
@@ -289,6 +290,14 @@
     "fast_mode": {
       "type": "boolean",
       "description": "Skip sleep between actions for faster data collection"
+    },
+    "x": {
+      "type": "number",
+      "description": "World x coordinate (for get_ground_height)"
+    },
+    "y": {
+      "type": "number",
+      "description": "World y coordinate (for get_ground_height)"
     },
     "body_name": {
       "type": "string",

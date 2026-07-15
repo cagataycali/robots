@@ -5,6 +5,28 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `get_ground_height(x, y)` -- query the local terrain surface height
+
+`create_world(terrain=...)` raises the local ground up to
+`TERRAIN_ELEVATION * difficulty` above `z=0`, and the terrain-relative
+locomotion predicates (`base_below_z` / `base_height`) plus the spawn/reset
+base-seating already sample that local surface internally. But there was no
+*public* way for a caller to ask where the terrain surface actually is, so a
+scene builder placing an object / camera / goal at a flat-ground `z` on a raised
+plateau spawned it BURIED in the heightfield -- a dynamic object then sinks
+through the terrain instead of resting on it (e.g. a 5 cm cube added at
+`z=0.03` on a `difficulty=2.0` pyramid whose local surface is at `z=0.16`
+penetrates 13 cm and settles below the ground).
+
+`get_ground_height(x, y)` exposes that surface as a facade query (and an
+agent-dispatch action): it returns the local terrain height in a
+`{"json": {"x", "y", "height"}}` block, `0.0` on a flat ground plane and for
+any backend without a heightfield. A caller can now place things on terrain
+correctly, e.g.
+`add_object("cube", position=[x, y, get_ground_height(x, y)["content"][1]["json"]["height"] + size_z / 2])`.
+The `add_object` docstring's flat-support rest-height guidance now points at it
+for terrain worlds. Non-finite coordinates are rejected.
+
 ### Fixed: a floating-base robot spawns SEATED on the terrain surface instead of buried below it
 
 `create_world(terrain=...)` lays a heightfield so a locomotion robot can be

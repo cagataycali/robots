@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import math
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
@@ -556,6 +557,50 @@ class SimEngine(ABC):
         threshold). Not a public tool action.
         """
         return 0.0
+
+    def get_ground_height(self, x: float, y: float) -> dict[str, Any]:
+        """Query the terrain surface height (world z) beneath world ``(x, y)``.
+
+        Public counterpart of the internal :meth:`_ground_height_at` hook: a
+        ``create_world(terrain=...)`` heightfield raises the local ground up to
+        ``TERRAIN_ELEVATION * difficulty`` above ``z=0``, and there was no public
+        way to ask where that surface is. Callers building a terrain scene need
+        it to place an object / camera / goal *on* the surface -- an object added
+        at a flat-ground ``z`` (computed as if the support were at ``z=0``) on a
+        raised plateau spawns *buried* in the heightfield and sinks through
+        instead of resting on it. The same local-height sampler already backs the
+        terrain-relative locomotion predicates
+        (:func:`~strands_robots.simulation.predicates.base_below_z`) and the
+        spawn/reset base-seating; this exposes it as a facade query.
+
+        Returns ``0.0`` for a flat ground plane and for any backend without a
+        heightfield, so a non-terrain world reports a flat surface.
+
+        Args:
+            x: World x coordinate.
+            y: World y coordinate.
+
+        Returns:
+            Agent-tool status dict. On success ``content`` carries a
+            ``{"json": {"x": ..., "y": ..., "height": ...}}`` block with the
+            surface height in meters. Errors when ``x`` / ``y`` is not a finite
+            real number.
+        """
+        for label, val in (("x", x), ("y", y)):
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(float(val)):
+                return {
+                    "status": "error",
+                    "content": [{"text": f"get_ground_height: {label} must be a finite number, got {val!r}."}],
+                }
+        fx, fy = float(x), float(y)
+        height = float(self._ground_height_at(fx, fy))
+        return {
+            "status": "success",
+            "content": [
+                {"text": f"Ground height at ({fx:.4f}, {fy:.4f}) = {height:.4f}m"},
+                {"json": {"x": fx, "y": fy, "height": height}},
+            ],
+        }
 
     def _coerce_action(
         self, action: dict[str, Any] | Sequence[float], robot_name: str
