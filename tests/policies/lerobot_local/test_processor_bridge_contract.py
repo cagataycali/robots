@@ -99,7 +99,7 @@ def test_apply_embodiment_inserts_fresh_rename_when_existing_step_is_frozen(monk
     exercises the bridge's fallback logic hermetically (no real LeRobot import).
     """
     fake_mod = types.ModuleType("lerobot.processor.rename_processor")
-    fake_mod.RenameObservationsProcessorStep = _FreshRenameStep
+    setattr(fake_mod, "RenameObservationsProcessorStep", _FreshRenameStep)
     monkeypatch.setitem(sys.modules, "lerobot.processor.rename_processor", fake_mod)
     # No pack-state step for an empty state_keys embodiment: keep the fallback
     # path hermetic (older LeRobot without a registered pack-state also returns
