@@ -51,9 +51,9 @@ _NAMED_LOW_BASE = """
 </mujoco>
 """
 
-_UNNAMED_LOW_BASE = _NAMED_LOW_BASE.replace(
-    '<freejoint name="floating_base_joint"/>', "<freejoint/>"
-).replace("seat_named", "seat_unnamed")
+_UNNAMED_LOW_BASE = _NAMED_LOW_BASE.replace('<freejoint name="floating_base_joint"/>', "<freejoint/>").replace(
+    "seat_named", "seat_unnamed"
+)
 
 # A fixed-base arm (no free joint): the seat must skip it without error.
 _FIXED_ARM = """
