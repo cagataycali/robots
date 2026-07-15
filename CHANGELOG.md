@@ -5,6 +5,26 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: notebooks and the lerobot e2e test fixture no longer hard-default `MUJOCO_GL` to the macOS-only `cgl`
+
+The four `.py` examples became platform-aware in #973, but the notebooks under
+`examples/notebooks/` (`01`, `02`, `03`, `05`) and the module fixture of
+`tests/training/test_lerobot_e2e.py` still planted `MUJOCO_GL=cgl`
+unconditionally in their first cell / setup. `cgl` is the macOS-only offscreen
+GL backend, so on headless Linux (CI, cloud GPUs, Jetson) the first offscreen
+render died with `RuntimeError: invalid value for environment variable
+MUJOCO_GL: cgl`. Since `setdefault(..., "cgl")` writes `cgl` precisely when
+nothing is exported, the `examples/notebooks/README.md` claim that the notebooks
+"fall back to the environment's default" on headless Linux was also false.
+
+All five sites now use the same platform-aware default as the `.py` examples --
+`os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")`
+-- so `cgl` is selected only on macOS and a user-exported `MUJOCO_GL` still
+wins, and the README now describes the actual behaviour. A new
+`tests/test_examples_mujoco_gl.py` guard scans the notebooks plus every tracked
+`examples/` / `tests/` `.py` file and fails on any unguarded `MUJOCO_GL=cgl`
+default, so this regression cannot creep back in.
+
 ### Added: `lerobot_async` honors a `rename_map` for remote observation-key remapping
 
 `LerobotAsyncPolicy` (the gRPC client to a LeRobot `PolicyServer`) built its
