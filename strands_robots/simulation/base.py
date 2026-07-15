@@ -282,6 +282,11 @@ class SimEngine(ABC):
         It is only meaningful with a ``terrain``; setting ``difficulty != 1.0``
         with no ``terrain`` is rejected with an actionable error rather than
         silently having no effect. Must be a finite value ``> 0``.
+
+        A floating-base robot added to a terrain world is spawned seated on
+        the local terrain surface (raised by the heightfield height beneath
+        it) at ``add_robot`` and on ``reset()``, so its feet are not buried
+        below the raised terrain.
         """
         ...
 

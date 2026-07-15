@@ -110,6 +110,13 @@ world (no `terrain`) is rejected with an error rather than silently having no
 effect. A locomotion curriculum ramps `difficulty` across resets to grow the
 terrain the policy must handle.
 
+A floating-base robot added to a terrain world (or reset in one) spawns
+SEATED on the local terrain surface: its base is raised by the heightfield
+height beneath its `(x, y)` so its feet rest on the ground, rather than at
+the flat-ground keyframe height (which would leave them buried below a raised
+heightfield). A flat ground plane and a fixed-base arm (no free joint) are
+unaffected.
+
 ## Procedural objects
 
 ```python

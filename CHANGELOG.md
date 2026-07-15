@@ -5,6 +5,26 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: a floating-base robot spawns SEATED on the terrain surface instead of buried below it
+
+`create_world(terrain=...)` lays a heightfield so a locomotion robot can be
+spawned and evaluated on non-flat ground -- the feature's stated purpose. But a
+robot's model spawns its free base at the flat-ground keyframe height (e.g. the
+Unitree Go2 base at `z=0.445`, feet ~`z=0.02`), so on a raised heightfield the
+feet started BELOW the terrain surface: the robot spawned partially buried in
+the ground, with penetration that grew with the curriculum `difficulty` (a
+pyramid at `difficulty=4.0` buried the feet ~0.3 m). This is exactly the
+initial state a terrain curriculum resets into every episode.
+
+`add_robot` and `reset()` now seat every floating-base robot on the local
+terrain -- offsetting its base `z` by the heightfield height beneath its
+`(x, y)` -- so its feet rest on the surface at the start of every episode.
+A flat ground plane is a no-op (the local height is `0.0`, so non-terrain
+worlds are byte-for-byte unchanged) and a fixed-base arm (no free joint) is
+skipped. Both a NAMED floating base (a humanoid's `floating_base_joint`) and
+an UNNAMED `<freejoint>` (a mobile base) are handled.
+
+
 ### Fixed: `add_robot(keyframe=...)` no longer collapses an earlier keyframe-spawned robot to the zero pose
 
 Adding a robot runs `mj_resetData` (which zeroes the entire model) before it

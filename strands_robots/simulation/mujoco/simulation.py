@@ -438,6 +438,12 @@ class MuJoCoSimEngine(
         trainer ramps across resets. It is only meaningful with a ``terrain``;
         ``difficulty != 1.0`` with no ``terrain`` is rejected (it would have no
         effect) and must be a finite value ``> 0``.
+
+        A floating-base robot added to a terrain world is spawned SEATED on
+        the local terrain surface (its base is raised by the heightfield
+        height beneath it) at ``add_robot`` and on every ``reset()``, rather
+        than at the flat-ground keyframe height that would leave its feet
+        buried below the raised terrain.
         """
         # mujoco verified at __init__
 
@@ -1176,6 +1182,7 @@ class MuJoCoSimEngine(
             # keeps each arm at its canonical home pose instead of silently
             # collapsing all but the most recently added robot.
             self._restore_home_poses()
+            self._seat_floating_bases_on_terrain()
             mj.mj_forward(self._world._model, self._world._data)
 
             # Attach the robot to the mesh as its own peer so the agent can
@@ -1328,6 +1335,47 @@ class MuJoCoSimEngine(
                     continue
                 adr = int(model.jnt_qposadr[jid])
                 data.qpos[adr : adr + len(vals)] = vals
+
+    def _seat_floating_bases_on_terrain(self) -> None:
+        """Raise each floating-base robot onto the local terrain surface.
+
+        ``create_world(terrain=...)`` lays a heightfield whose surface rises up
+        to ``TERRAIN_ELEVATION * difficulty`` above ``z=0``, but a robot's model
+        spawns its free base at the flat-ground keyframe height (e.g. the
+        Unitree Go2 base at ``z=0.445``, feet ~``z=0.02``). On a terrain world
+        that leaves the feet BELOW the heightfield -- the robot spawns *buried*
+        in the ground, with penetration that grows with the curriculum
+        ``difficulty`` -- contradicting the terrain feature's stated purpose of
+        spawning a locomotion robot ON non-flat ground. Offset each floating
+        base's ``z`` by the terrain height beneath its ``(x, y)`` so it is
+        seated on the surface (feet just clear of it), the correct initial
+        state for a locomotion policy and a terrain-difficulty curriculum.
+
+        A flat ground plane (``_ground_height_at`` returns ``0.0``) is a no-op,
+        so non-terrain worlds are byte-for-byte unchanged; a fixed-base arm (no
+        free joint) is skipped. Called once per spawn / reset cycle right after
+        the home-pose restore (which returns each base to its flat keyframe z),
+        so it starts from a known base height and is idempotent. Handles both a
+        NAMED floating base (a humanoid's ``floating_base_joint``) and an
+        UNNAMED ``<freejoint>`` (a mobile base) via
+        :meth:`_robot_free_base_joint_id`. The caller holds the model lock and
+        runs ``mj_forward`` afterwards.
+        """
+        world = self._world
+        if world is None or world._model is None or world._data is None:
+            return
+        model = world._model
+        data = world._data
+        if model.nhfield == 0:  # flat ground plane -- nothing to seat onto
+            return
+        for robot in world.robots.values():
+            jid = self._robot_free_base_joint_id(model, robot)
+            if jid < 0:  # fixed-base arm: no floating base to seat
+                continue
+            adr = int(model.jnt_qposadr[jid])
+            ground = self._ground_height_at(float(data.qpos[adr]), float(data.qpos[adr + 1]))
+            if ground:
+                data.qpos[adr + 2] = float(data.qpos[adr + 2]) + ground
 
     def remove_robot(self, name: str) -> dict[str, Any]:
         """Remove a robot and every element it injected (bodies, actuators,
@@ -2692,6 +2740,7 @@ class MuJoCoSimEngine(
             # so a keyframe spawn is sticky across resets -- mirroring how a
             # benchmark restores its canonical start pose each episode.
             self._restore_home_poses()
+            self._seat_floating_bases_on_terrain()
             mj.mj_forward(self._world._model, self._world._data)
             self._world.sim_time = 0.0
             self._world.step_count = 0
