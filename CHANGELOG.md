@@ -62,6 +62,20 @@ which the server applies as a `RenameObservationsProcessorStep` (renaming each
 matching observation key before the policy sees it). The default stays `{}` (no
 remap), and a non-dict `rename_map` is rejected client-side with a clear error.
 
+### Docs: correct the remaining pre-0.6 lerobot install guidance (`architecture.md` / `troubleshooting.md` / `molmoact2.md`)
+
+The `lerobot>=0.6.0` floor bump (`lerobot[feetech,dataset]>=0.6.0,<0.7.0`) and the
+follow-up VLA dependency-guidance pass corrected most docs, but a few user-facing
+spots still carried the dead pre-0.6 narrative. The `architecture.md` dependency
+matrix advertised the obsolete `lerobot>=0.5.0,<0.6.0` cap; the `troubleshooting.md`
+version-skew row told users to `pip install "lerobot>=0.5.0,<0.6"` (a manual pin that
+*conflicts* with the declared `>=0.6.0` floor) and to install `MolmoAct2Policy` "from
+source" (it ships in lerobot >= 0.6 on PyPI, so `strands-robots[molmoact2]` resolves it),
+and its Jetson/pyav row linked to a broken `#molmoact2-on-jetson-lerobot-from-source`
+anchor. Corrected all of these (plus the `molmoact2.md` "lerobot from source" install
+line) to match the current PyPI floor, and extended `tests/test_lerobot_dependency_docs.py`
+to pin them -- including a heading-slug resolution check so the Jetson anchor stays live.
+
 ### Added: `get_ground_height(x, y)` -- query the local terrain surface height
 
 `create_world(terrain=...)` raises the local ground up to
