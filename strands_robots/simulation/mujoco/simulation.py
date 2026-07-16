@@ -45,6 +45,7 @@ import inspect
 import json
 import logging
 import math
+import numbers
 import os
 import re
 import threading
@@ -52,7 +53,7 @@ import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
@@ -2822,37 +2823,61 @@ class MuJoCoSimEngine(
             tls.model = None
 
     def set_gravity(self, gravity: list[float] | float | int) -> dict[str, Any]:
+        """Set the world gravity vector.
+
+        Accepts either a 3-element ``[x, y, z]`` list or a bare real scalar,
+        which is interpreted as the z-component (``[0, 0, z]``). The scalar
+        may be any :class:`numbers.Real` -- a Python ``int`` / ``float`` or a
+        NumPy scalar such as ``np.float32`` / ``np.int64`` (e.g. a value read
+        from a config array or produced by ``np.degrees(...)``). A NumPy
+        array is treated as the vector form, not a scalar.
+
+        Args:
+            gravity: Gravity as ``[x, y, z]`` (m/s^2) or a real scalar z-component.
+
+        Returns:
+            Agent-tool ``status`` / ``content`` dict. Errors (structured, never
+            raised) on a missing world, a running policy, a non-3-element or
+            non-numeric vector, or non-finite components.
+        """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # set_gravity during a running policy races the worker thread
         if err := self._require_no_running_policy("set_gravity"):
             return err
-        # validate length/dtype before numpy broadcast
-        if isinstance(gravity, (int, float)):
-            gravity = [0.0, 0.0, float(gravity)]
-        try:
-            if len(gravity) != 3:
+        # Accept any real scalar (numbers.Real) as a z-only gravity so a value
+        # computed as a NumPy scalar (np.float32 / np.int64 / np.degrees(...)) is
+        # treated like a plain float, not refused with a misleading "has no len()".
+        # A NumPy array is not numbers.Real, so it still takes the vector path.
+        if isinstance(gravity, numbers.Real):
+            components = [0.0, 0.0, float(gravity)]
+        else:
+            # Any other value must be a 3-element sized vector (list / tuple /
+            # NumPy array). Validate length/dtype before the numpy broadcast.
+            try:
+                vector = cast("Sequence[float]", gravity)
+                if len(vector) != 3:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {"text": f"set_gravity: 'gravity' must be a 3-element list [x,y,z], got {len(vector)}"}
+                        ],
+                    }
+                components = [float(g) for g in vector]
+            except (TypeError, ValueError) as e:
                 return {
                     "status": "error",
-                    "content": [
-                        {"text": f"set_gravity: 'gravity' must be a 3-element list [x,y,z], got {len(gravity)}"}
-                    ],
+                    "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list of numbers ({e})"}],
                 }
-            gravity = [float(g) for g in gravity]
-        except (TypeError, ValueError) as e:
+        if not all(math.isfinite(g) for g in components):
             return {
                 "status": "error",
-                "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list of numbers ({e})"}],
-            }
-        if not all(math.isfinite(g) for g in gravity):
-            return {
-                "status": "error",
-                "content": [{"text": f"set_gravity: all components must be finite, got {gravity}"}],
+                "content": [{"text": f"set_gravity: all components must be finite, got {components}"}],
             }
         with self._lock:
-            self._world._model.opt.gravity[:] = gravity
-            self._world.gravity = gravity
-        return {"status": "success", "content": [{"text": f"Gravity: {gravity}"}]}
+            self._world._model.opt.gravity[:] = components
+            self._world.gravity = components
+        return {"status": "success", "content": [{"text": f"Gravity: {components}"}]}
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
         if self._world is None or self._world._model is None or self._world._data is None:
