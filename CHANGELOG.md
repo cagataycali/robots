@@ -5,6 +5,26 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: sim action router accepts NumPy scalar components in vector parameters
+
+The MuJoCo agent-tool dispatch router (`sim(action=..., **kwargs)` ->
+`_validate_and_build_kwargs`) length- and dtype-checks every vector parameter
+(`position`, `force`, `torque`, `gravity`, `direction`, `point`, `orientation`,
+`color`) before the value reaches NumPy / MuJoCo. The per-component guard used
+`isinstance(component, (int, float))`, which is `False` for every NumPy scalar
+except `np.float64` (only it subclasses Python `float`). Vector params routinely
+originate from an observation or `mj_data` -- a NumPy array whose elements are
+`np.float32` / `np.int64` -- so a natural
+`sim(action="add_object", position=[obs[0], obs[1], obs[2]])` on a float32
+observation was rejected with `Parameter 'position'[0] must be numeric, got
+float32.` even though every component is a finite real number.
+
+The guard now uses `numbers.Real`, so NumPy scalar components pass while Python
+`bool`, `np.bool_` (neither is a `numbers.Real` once `bool` is excluded), and
+non-numeric junk stay rejected with the same structured error. This mirrors the
+`numbers.Real` coercion contract already applied to `get_ground_height`,
+`set_gravity`, and `add_camera(fov=...)`.
+
 ### Added: `DatasetRecorder.create(overwrite=...)` for honest re-recording into an existing `repo_id`
 
 `DatasetRecorder.create()` calls `LeRobotDataset.create()`, which `mkdir`s its

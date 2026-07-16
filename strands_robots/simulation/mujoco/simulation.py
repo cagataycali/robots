@@ -45,6 +45,7 @@ import inspect
 import json
 import logging
 import math
+import numbers
 import os
 import re
 import threading
@@ -3919,7 +3920,14 @@ class MuJoCoSimEngine(
                     ],
                 }
             for i, component in enumerate(val):
-                if not isinstance(component, (int, float)) or isinstance(component, bool):
+                # Accept any real scalar, including NumPy types (np.float32 /
+                # np.int64 / ...): vector params like position / gravity / point
+                # naturally arrive from an observation or mj_data (a NumPy
+                # array), so `[float(x) for x in obs[...]]` is not required of
+                # the caller. isinstance(_, (int, float)) rejected those (only
+                # np.float64 subclasses float). numbers.Real still rejects
+                # bool / np.bool_ (np.bool_ is not a Real) and non-numeric junk.
+                if not isinstance(component, numbers.Real) or isinstance(component, bool):
                     return None, {
                         "status": "error",
                         "content": [

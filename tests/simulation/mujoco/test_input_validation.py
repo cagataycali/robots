@@ -837,3 +837,79 @@ class TestGetSensorDataContract:
         res = sim_with_sensors.get_sensor_data(sensor_name="nope")
         assert res["status"] == "error", res
         assert "Sensor 'nope' not found." in res["content"][0]["text"]
+
+
+class TestRouterVectorNumpyScalars:
+    """Router-level vector params accept NumPy scalar components.
+
+    The agent-tool dispatch router (``sim(action=..., **kwargs)`` ->
+    ``_validate_and_build_kwargs``) length- and dtype-checks every vector
+    parameter (position, force, torque, gravity, direction, point,
+    orientation, color) before the value reaches NumPy / MuJoCo. It used
+    ``isinstance(component, (int, float))``, which is ``False`` for NumPy
+    scalars (only ``np.float64`` subclasses ``float``). Vector params
+    routinely arrive from an observation or ``mj_data`` -- a NumPy array whose
+    elements are ``np.float32`` / ``np.int64`` -- so a natural
+    ``position=[obs[0], obs[1], obs[2]]`` was rejected as "must be numeric,
+    got float32" even though every component is a finite real number. The
+    guard now uses ``numbers.Real`` so NumPy scalars pass while ``bool`` /
+    ``np.bool_`` / non-numeric junk stay rejected.
+    """
+
+    @pytest.fixture
+    def sim_with_world(self):
+        sim = Simulation()
+        sim.create_world()
+        yield sim
+        sim.destroy()
+
+    def test_numpy_scalar_position_accepted(self, sim_with_world):
+        """A position built from NumPy scalars (as from an observation) is
+        accepted by the router instead of erroring on dtype."""
+        np = pytest.importorskip("numpy")
+        res = sim_with_world(
+            action="add_object",
+            shape="box",
+            size=[0.02, 0.02, 0.02],
+            position=[np.float32(0.3), np.int64(0), np.float64(0.5)],
+            name="np_cube",
+        )
+        assert res["status"] == "success", res
+
+    def test_python_bool_component_still_rejected(self, sim_with_world):
+        """``bool`` is an ``int`` subclass but is not a valid coordinate; it
+        must stay rejected even though the guard now accepts ``numbers.Real``."""
+        res = sim_with_world(
+            action="add_object",
+            shape="box",
+            size=[0.02, 0.02, 0.02],
+            position=[True, 0.0, 0.5],
+            name="bool_cube",
+        )
+        assert res["status"] == "error", res
+        assert "must be numeric" in res["content"][0]["text"]
+
+    def test_numpy_bool_component_still_rejected(self, sim_with_world):
+        """``np.bool_`` is not a ``numbers.Real`` and stays rejected."""
+        np = pytest.importorskip("numpy")
+        res = sim_with_world(
+            action="add_object",
+            shape="box",
+            size=[0.02, 0.02, 0.02],
+            position=[np.bool_(True), 0.0, 0.5],
+            name="npbool_cube",
+        )
+        assert res["status"] == "error", res
+        assert "must be numeric" in res["content"][0]["text"]
+
+    def test_non_numeric_component_still_rejected(self, sim_with_world):
+        """Non-numeric junk still returns the structured dtype error."""
+        res = sim_with_world(
+            action="add_object",
+            shape="box",
+            size=[0.02, 0.02, 0.02],
+            position=["a", "b", "c"],
+            name="str_cube",
+        )
+        assert res["status"] == "error", res
+        assert "must be numeric" in res["content"][0]["text"]
