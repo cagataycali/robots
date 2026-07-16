@@ -90,6 +90,56 @@ def _coerce_finite_vector(
     return out, None
 
 
+def _coerce_finite_joint_map(
+    values: dict[str, Any],
+    name: str,
+    method: str,
+) -> tuple[dict[str, float], dict[str, Any] | None]:
+    """Coerce a ``{joint_name: value}`` map to finite floats before any write.
+
+    Each value must be a real number (Python or NumPy scalar) and finite. A
+    non-numeric value would otherwise raise ``ValueError`` from ``float(value)``
+    past the structured-error dispatch contract, and ``nan`` / ``inf`` would
+    slip straight into ``data.qpos`` / ``data.qvel`` -- ``mj_forward`` then
+    propagates the ``nan`` across the whole kinematic state (or an ``inf``
+    velocity blows up the integrator) while the tool still reports
+    ``status="success"``. Validating up front keeps the write atomic: an invalid
+    value leaves the model untouched.
+
+    Args:
+        values: The ``{joint_name: value}`` mapping to validate.
+        name: Parameter name (``"positions"`` / ``"velocities"``), used in error text.
+        method: Calling method name, used in error text.
+
+    Returns:
+        ``(coerced, None)`` on success, or ``({}, error_dict)`` on the first
+        invalid value -- matching the structured-error tool contract so the
+        caller never raises past dispatch.
+    """
+    out: dict[str, float] = {}
+    for jnt_name, value in values.items():
+        try:
+            f = float(value)
+        except (TypeError, ValueError):
+            return {}, {
+                "status": "error",
+                "content": [
+                    {"text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, got {value!r}"}
+                ],
+            }
+        if not math.isfinite(f):
+            return {}, {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"{method}: '{name}' value for joint '{jnt_name}' must be finite (no nan/inf), got {value!r}"
+                    }
+                ],
+            }
+        out[jnt_name] = f
+    return out, None
+
+
 def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     """Return the dense ``nv x nv`` mass matrix M(q), robust to MuJoCo drift.
 
@@ -826,6 +876,12 @@ class PhysicsMixin:
         * list/tuple: [v0, v1, ...] - ordered positional. Must match a single robot's
           joint count (when ``robot_name`` is given, that robot's joints; otherwise the
           world must contain exactly one robot, or the call errors).
+
+        Every value must be a finite real number (Python or NumPy scalar). A
+        ``nan`` / ``inf`` or a non-numeric value returns a structured
+        ``status="error"`` and leaves ``qpos`` untouched, rather than corrupting
+        the kinematic state (``mj_forward`` propagates a ``nan`` everywhere) or
+        raising past the tool-dispatch contract.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -899,6 +955,14 @@ class PhysicsMixin:
                 ],
             }
 
+        # Validate every value is a finite number before any qpos write. Without
+        # this a non-numeric entry raises ValueError past the structured-error
+        # contract, and a nan/inf lands in data.qpos where mj_forward propagates
+        # it across the whole kinematic state while the tool still reports success.
+        positions, err = _coerce_finite_joint_map(positions, "positions", "set_joint_positions")
+        if err:
+            return err
+
         set_count = 0
         with self._lock:
             for jnt_name, value in positions.items():
@@ -930,6 +994,11 @@ class PhysicsMixin:
 
         Writes to qvel. Useful for initializing dynamics. Accepts dict or list
         (see set_joint_positions for list semantics).
+
+        Every value must be a finite real number (Python or NumPy scalar). A
+        ``nan`` / ``inf`` or a non-numeric value returns a structured
+        ``status="error"`` and leaves ``qvel`` untouched, rather than blowing up
+        the integrator on the next step or raising past the tool-dispatch contract.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -997,6 +1066,13 @@ class PhysicsMixin:
                     }
                 ],
             }
+
+        # Validate every value is a finite number before any qvel write (see
+        # set_joint_positions): a nan/inf velocity blows up the integrator on the
+        # next step and a non-numeric entry escapes the structured-error contract.
+        velocities, err = _coerce_finite_joint_map(velocities, "velocities", "set_joint_velocities")
+        if err:
+            return err
 
         set_count = 0
         with self._lock:

@@ -407,6 +407,89 @@ class TestSetJointVelocitiesForms:
         assert "nope" in res["content"][0]["text"]
 
 
+# set_joint_positions / set_joint_velocities finite-value validation
+
+
+class TestSetJointFiniteValidation:
+    """Regression: joint setters must reject non-finite / non-numeric values.
+
+    ``set_joint_positions`` / ``set_joint_velocities`` wrote each value straight
+    into ``data.qpos`` / ``data.qvel`` via ``float(value)`` with no guard. A
+    ``nan`` / ``inf`` landed directly in the state buffer -- ``mj_forward`` then
+    propagates the ``nan`` across the whole kinematic tree (or an ``inf``
+    velocity blows up the integrator on the next step) while the tool still
+    returned ``status="success"``; a non-numeric value raised ``ValueError``
+    past the structured-error dispatch contract. Both must now return a
+    structured error and leave the state untouched.
+    """
+
+    def _first_joint(self, sim):
+        joint_names = list(sim._world.robots.values())[0].joint_names or []
+        if not joint_names:
+            pytest.skip("robot has no named joints")
+        return joint_names[0]
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_positions_nonfinite_rejected_and_qpos_untouched(self, sim_with_robot, bad):
+        jn = self._first_joint(sim_with_robot)
+        before = sim_with_robot._world._data.qpos.copy()
+        res = sim_with_robot.set_joint_positions(positions={jn: bad})
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+        # State must be left untouched (no nan/inf leaked into qpos).
+        assert np.array_equal(sim_with_robot._world._data.qpos, before)
+        assert np.all(np.isfinite(sim_with_robot._world._data.qpos))
+
+    def test_positions_non_numeric_returns_structured_error(self, sim_with_robot):
+        """A non-numeric value must NOT raise past dispatch."""
+        jn = self._first_joint(sim_with_robot)
+        res = sim_with_robot.set_joint_positions(positions={jn: "not-a-number"})
+        assert res["status"] == "error"
+        assert "must be a number" in res["content"][0]["text"]
+
+    def test_positions_nonfinite_in_list_form_rejected(self, sim_with_robot):
+        joint_names = list(sim_with_robot._world.robots.values())[0].joint_names or []
+        if not joint_names:
+            pytest.skip("robot has no named joints")
+        vals = [0.0] * len(joint_names)
+        vals[0] = float("nan")
+        before = sim_with_robot._world._data.qpos.copy()
+        res = sim_with_robot.set_joint_positions(positions=vals)
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+        assert np.array_equal(sim_with_robot._world._data.qpos, before)
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_velocities_nonfinite_rejected_and_qvel_untouched(self, sim_with_robot, bad):
+        jn = self._first_joint(sim_with_robot)
+        before = sim_with_robot._world._data.qvel.copy()
+        res = sim_with_robot.set_joint_velocities(velocities={jn: bad})
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+        assert np.array_equal(sim_with_robot._world._data.qvel, before)
+        assert np.all(np.isfinite(sim_with_robot._world._data.qvel))
+
+    def test_velocities_non_numeric_returns_structured_error(self, sim_with_robot):
+        jn = self._first_joint(sim_with_robot)
+        res = sim_with_robot.set_joint_velocities(velocities={jn: [1, 2, 3]})
+        assert res["status"] == "error"
+        assert "must be a number" in res["content"][0]["text"]
+
+    def test_bad_value_rejected_even_for_unknown_joint(self, sim_with_robot):
+        """Input is validated up front, so a bad value fails fast regardless of
+        whether the joint resolves -- an unknown joint no longer masks nan/inf."""
+        res = sim_with_robot.set_joint_positions(positions={"ghost": float("inf")})
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
+
+    def test_valid_numpy_scalar_positions_still_apply(self, sim_with_robot):
+        """A finite NumPy scalar is a valid value and must still be written."""
+        jn = self._first_joint(sim_with_robot)
+        res = sim_with_robot.set_joint_positions(positions={jn: np.float64(0.2)})
+        assert res["status"] == "success"
+        assert "1/1" in res["content"][0]["text"]
+
+
 # Policy-running guards
 
 
