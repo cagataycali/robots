@@ -134,6 +134,41 @@ def _jnt_qpos_width(mj: Any, jnt_type: int) -> int:
     return 1
 
 
+def _validate_pose_vector(param_name: str, vec: Any, expected_len: int) -> str | None:
+    """Return an error message if ``vec`` is not ``expected_len`` finite numbers.
+
+    Guards ``move_object`` (and any caller writing a pose straight into
+    ``data.qpos``) against the two silent-corruption / contract-break classes
+    the numeric-input campaign targets:
+
+    * A wrong-length or non-numeric vector (e.g. ``["a", "b", "c"]`` or a
+      2-element position) otherwise raises a bare ``ValueError`` inside the
+      numpy assignment - escaping the structured ``{"status": "error"}``
+      tool-result contract.
+    * A ``nan``/``inf`` component is written verbatim into ``data.qpos`` and
+      then propagated through the whole physics state by ``mj_forward``,
+      reporting ``success`` while silently poisoning the simulation.
+
+    A numpy real scalar per element is accepted (``float(np.float64(...))``
+    succeeds), matching the "accept NumPy scalar components" behaviour of the
+    other sim setters. Returns ``None`` when ``vec`` is acceptable.
+    """
+    try:
+        length = len(vec)
+    except TypeError:
+        return f"move_object: '{param_name}' must be a list/tuple of {expected_len} numbers, got {vec!r}"
+    if length != expected_len:
+        return f"move_object: '{param_name}' must be a {expected_len}-element vector, got {length} ({vec!r})"
+    for _elem in vec:
+        try:
+            _f = float(_elem)
+        except (TypeError, ValueError):
+            return f"move_object: '{param_name}' elements must be numbers, got {vec!r}"
+        if not math.isfinite(_f):
+            return f"move_object: '{param_name}' must contain finite numbers (no nan/inf), got {vec!r}"
+    return None
+
+
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
 # Tool schema is 357 lines of JSON. `tool_spec` property is on the LLM hot path
@@ -2371,9 +2406,17 @@ class MuJoCoSimEngine(
           by editing the spec body pose and recompiling the scene (preserving
           other joints' state), just like ``add_object`` / ``remove_object``.
 
-        Returns ``status="error"`` if the object is unknown or the static-body
-        recompile fails - it never reports success without actually moving the
-        object.
+        ``position`` must be a 3-element vector and ``orientation`` a 4-element
+        wxyz quaternion; each must contain only finite real numbers (NumPy
+        scalars accepted). A wrong-length, non-numeric, or nan/inf pose is
+        rejected up front rather than raising a bare ``ValueError`` past the
+        tool-result contract or silently writing a non-finite value into
+        ``data.qpos`` (which ``mj_forward`` would propagate through the whole
+        physics state).
+
+        Returns ``status="error"`` if the object is unknown, the pose is
+        invalid, or the static-body recompile fails - it never reports success
+        without actually moving the object.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2382,6 +2425,18 @@ class MuJoCoSimEngine(
         # Guard: move_object writes qpos + calls mj_forward, racing a running policy.
         if err := self._require_no_running_policy("move_object"):
             return err
+
+        # Validate the pose BEFORE mutating any state. Both the dynamic path
+        # (raw data.qpos write) and the static path (spec reposition) otherwise
+        # let a wrong-length / non-numeric vector raise a bare ValueError past
+        # the tool-result contract, or write a nan/inf straight into qpos where
+        # mj_forward silently poisons the whole physics state. Only validate a
+        # component that is actually supplied (None leaves it unchanged; the
+        # move logic below treats a falsy value as "no change").
+        if position and (perr := _validate_pose_vector("position", position, 3)) is not None:
+            return {"status": "error", "content": [{"text": perr}]}
+        if orientation and (oerr := _validate_pose_vector("orientation", orientation, 4)) is not None:
+            return {"status": "error", "content": [{"text": oerr}]}
 
         mj = self._mj
         model, data = self._world._model, self._world._data
