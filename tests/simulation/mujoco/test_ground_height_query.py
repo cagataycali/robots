@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 
 
@@ -87,5 +89,40 @@ def test_get_ground_height_is_discoverable() -> None:
         enum = sim.tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"]
         assert "get_ground_height" in enum
         assert "get_ground_height" in sim.describe()["methods"]
+    finally:
+        sim.destroy()
+
+
+def test_get_ground_height_accepts_numpy_scalars() -> None:
+    """Terrain coordinates come from ``mj_data`` / an observation (NumPy arrays),
+    so a NumPy scalar must be accepted as a finite real number.
+
+    The validation previously used ``isinstance(val, (int, float))``, which is
+    False for ``np.float32`` / ``np.int64`` / ``np.int32`` (only ``np.float64``
+    subclasses Python ``float``). That spuriously rejected the natural call
+    ``get_ground_height(*obs["base_pos"][:2])`` on a float32 observation with a
+    misleading "must be a finite number" error, even though the value IS finite.
+    """
+    sim = MuJoCoSimEngine()
+    try:
+        sim.create_world(ground_plane=True, terrain="pyramid", difficulty=2.0)
+        expected = sim._ground_height_at(0.0, 0.0)
+        # A scalar sliced from a float32 array is the realistic case (an
+        # observation / mj_data coordinate), alongside the bare NumPy scalars.
+        xy32 = np.array([0.0, 0.0], dtype=np.float32)
+        for x, y in (
+            (np.float32(0.0), np.float32(0.0)),
+            (np.float64(0.0), np.float64(0.0)),
+            (np.int64(0), np.int64(0)),
+            (np.int32(0), np.int32(0)),
+            (xy32[0], xy32[1]),
+        ):
+            r = sim.get_ground_height(x, y)
+            assert r["status"] == "success", (type(x).__name__, r)
+            assert math.isclose(r["content"][1]["json"]["height"], expected, abs_tol=1e-9)
+        # NumPy booleans and non-finite NumPy scalars are still rejected.
+        assert sim.get_ground_height(np.bool_(True), 0.0)["status"] == "error"  # type: ignore[arg-type]
+        assert sim.get_ground_height(np.float32("nan"), 0.0)["status"] == "error"
+        assert sim.get_ground_height(np.float64("inf"), 0.0)["status"] == "error"
     finally:
         sim.destroy()

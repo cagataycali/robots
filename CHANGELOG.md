@@ -1987,6 +1987,17 @@ rejection holds on any host, with or without an Omniverse install); `difficulty`
 is accepted but inert, mirroring the Newton backend.
 
 
+### Fixed: `get_ground_height(x, y)` accepts NumPy scalar coordinates
+
+`get_ground_height` validated its coordinates with `isinstance(val, (int, float))`, which is
+`False` for `np.float32` / `np.int64` / `np.int32` (only `np.float64` subclasses Python
+`float`). Terrain coordinates naturally come from `mj_data` / an observation (a NumPy array),
+so the natural call `get_ground_height(*obs["base_pos"][:2])` on a float32 observation was
+rejected with a misleading "must be a finite number" error even though the value is a finite
+real number. The check now uses `numbers.Real`, accepting any real scalar (including NumPy
+scalar types) while still rejecting `bool` / `np.bool_` / non-finite values.
+
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

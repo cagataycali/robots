@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import math
+import numbers
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
@@ -584,10 +585,13 @@ class SimEngine(ABC):
             Agent-tool status dict. On success ``content`` carries a
             ``{"json": {"x": ..., "y": ..., "height": ...}}`` block with the
             surface height in meters. Errors when ``x`` / ``y`` is not a finite
-            real number.
+            real number. Accepts any real scalar, including NumPy scalar
+            types (``np.float32`` / ``np.int64`` / ...), since terrain
+            coordinates naturally come from ``mj_data`` / an observation
+            (a NumPy array), not hand-typed Python floats.
         """
         for label, val in (("x", x), ("y", y)):
-            if isinstance(val, bool) or not isinstance(val, (int, float)) or not math.isfinite(float(val)):
+            if isinstance(val, bool) or not isinstance(val, numbers.Real) or not math.isfinite(float(val)):
                 return {
                     "status": "error",
                     "content": [{"text": f"get_ground_height: {label} must be a finite number, got {val!r}."}],
