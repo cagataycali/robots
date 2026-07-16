@@ -1887,3 +1887,67 @@ def test_create_refuses_nonempty_non_dataset_dir(tmp_path, monkeypatch):
         DatasetRecorder.create("user/data", root=str(root), joint_names=["j1"])
     assert _FakeDatasetOverwriteCreate.created == 0
     assert (root / "important.txt").exists()
+
+
+# create() target resolution also handles a repo_id/root that points at an
+# existing plain FILE (not a directory) - e.g. an agent passing root= to a path
+# that already holds a file. overwrite=False must refuse with a clear "not a
+# directory" error rather than dead-ending inside LeRobotDataset.create();
+# overwrite=True removes the file so a fresh dataset can be created in its place.
+
+
+def test_create_refuses_file_target_without_overwrite(tmp_path, monkeypatch):
+    """A file at the resolved target (not a dir) raises a clear ValueError and
+    never runs create() or deletes the file."""
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    target = tmp_path / "not_a_dir"
+    target.write_text("i am a file")
+
+    with pytest.raises(ValueError, match="not a directory"):
+        DatasetRecorder.create("user/data", root=str(target), joint_names=["j1"])
+    assert _FakeDatasetOverwriteCreate.created == 0
+    assert target.is_file()
+    assert target.read_text() == "i am a file"
+
+
+def test_create_overwrite_replaces_file_target_then_creates_fresh(tmp_path, monkeypatch):
+    """overwrite=True on a file target unlinks it before create() runs fresh."""
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    target = tmp_path / "stale"
+    target.write_text("stale contents")
+
+    recorder = DatasetRecorder.create("user/data", root=str(target), joint_names=["j1"], overwrite=True)
+
+    assert not target.exists()
+    assert _FakeDatasetOverwriteCreate.created == 1
+    assert recorder.dataset.repo_id == "user/data"
+
+
+# resolve_dataset_dir() mirrors LeRobotDataset root resolution. When lerobot is
+# not importable it must fall back to the documented default dataset home
+# (~/.cache/huggingface/lerobot) instead of raising, so callers can still
+# inspect the target path in a lerobot-less environment.
+
+
+def test_resolve_dataset_dir_falls_back_to_default_home_when_lerobot_absent(monkeypatch):
+    import importlib
+
+    from strands_robots.dataset_recorder import resolve_dataset_dir
+
+    # Removing HF_LEROBOT_HOME from lerobot's constants module makes
+    # `from lerobot.utils.constants import HF_LEROBOT_HOME` raise ImportError,
+    # exercising the documented default-home fallback without disturbing any
+    # other lerobot import (the module object itself is left in place).
+    # When lerobot is installed, drop the constant so the import fails; when it
+    # is absent the fallback is already the natural path - both reach line 216.
+    try:
+        constants = importlib.import_module("lerobot.utils.constants")
+        monkeypatch.delattr(constants, "HF_LEROBOT_HOME", raising=False)
+    except ImportError:
+        pass
+
+    resolved = resolve_dataset_dir("user/data")
+
+    assert resolved == Path.home() / ".cache" / "huggingface" / "lerobot" / "user" / "data"
