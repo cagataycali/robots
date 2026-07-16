@@ -1945,7 +1945,7 @@ def test_resolve_dataset_dir_falls_back_to_default_home_when_lerobot_absent(monk
     try:
         constants = importlib.import_module("lerobot.utils.constants")
         monkeypatch.delattr(constants, "HF_LEROBOT_HOME", raising=False)
-    except ImportError:
+    except ImportError:  # lerobot not installed; the fallback path is what we test
         pass
 
     resolved = resolve_dataset_dir("user/data")
