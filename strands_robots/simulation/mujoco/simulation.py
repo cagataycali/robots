@@ -2544,7 +2544,11 @@ class MuJoCoSimEngine(
         mount points before placing a camera; robot bodies are namespaced
         ``<robot>/<body>`` (e.g. ``so101/gripper`` is the SO101 wrist mount).
 
-        Validation: ``fov`` must be a finite angle in ``(0, 180)`` degrees and
+        Validation: ``position`` and ``target`` must each be 3-element vectors
+        of finite real numbers (NumPy scalars are accepted); a nan/inf or
+        non-numeric component is rejected here rather than corrupting the
+        camera's look-direction basis or escaping the structured-error
+        contract. ``fov`` must be a finite angle in ``(0, 180)`` degrees and
         ``width``/``height`` must be positive ints within the offscreen
         framebuffer cap (same bounds ``render`` enforces). Invalid values are
         rejected here at config time with an actionable error rather than
@@ -2555,10 +2559,17 @@ class MuJoCoSimEngine(
         if err := self._require_no_running_policy("add_camera"):
             return err
 
-        # validate position / target shape before we bake them into XML.
-        pos = position or [1.0, 1.0, 1.0]
-        tgt = target or [0.0, 0.0, 0.0]
-        for _lbl, _vec in (("position", pos), ("target", tgt)):
+        # Validate position / target shape AND elements before we bake them
+        # into XML. Each must be a 3-element vector of finite real numbers.
+        # Without the element check a non-numeric element (e.g. ["a","b","c"])
+        # raises TypeError inside the degenerate-look comparison below --
+        # escaping the structured-error contract -- and a nan/inf component
+        # slips silently into the camera's xyaxes basis (a 0/0 division),
+        # registering a broken camera that renders nothing. Mirrors the
+        # per-element guard on apply_force. Coerce to clean float lists so the
+        # downstream look-direction check and SimCamera see plain floats.
+        _clean: dict[str, list[float]] = {}
+        for _lbl, _vec in (("position", position or [1.0, 1.0, 1.0]), ("target", target or [0.0, 0.0, 0.0])):
             try:
                 if len(_vec) != 3:
                     return {
@@ -2567,6 +2578,26 @@ class MuJoCoSimEngine(
                     }
             except TypeError:
                 return {"status": "error", "content": [{"text": f"add_camera: '{_lbl}' must be a list of 3 numbers"}]}
+            _vals: list[float] = []
+            for _elem in _vec:
+                try:
+                    _f = float(_elem)
+                except (TypeError, ValueError):
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"add_camera: '{_lbl}' elements must be numbers, got {_vec!r}"}],
+                    }
+                if not math.isfinite(_f):
+                    return {
+                        "status": "error",
+                        "content": [
+                            {"text": f"add_camera: '{_lbl}' must contain finite numbers (no nan/inf), got {_vec!r}"}
+                        ],
+                    }
+                _vals.append(_f)
+            _clean[_lbl] = _vals
+        pos = _clean["position"]
+        tgt = _clean["target"]
         # Degenerate orientation: position == target means no well-defined look direction.
         if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
             return {

@@ -819,6 +819,63 @@ class TestAddCameraParamValidation:
         assert "good" in sim_with_world._world.cameras
 
 
+class TestAddCameraPositionTargetValidation:
+    """add_camera validates position/target elements are finite real numbers.
+
+    Pre-fix, add_camera only checked that position/target were 3-element
+    vectors, not that each element was a finite number. A non-numeric element
+    (e.g. ["a", "b", "c"]) raised TypeError inside the degenerate-look
+    comparison -- escaping the structured-error tool contract -- and a nan/inf
+    component passed the length check and slipped silently into the camera's
+    xyaxes look-direction basis (a 0/0 division), registering a broken camera
+    that renders nothing. These pin the per-element guard, mirroring
+    apply_force, and confirm NumPy scalar components are still accepted.
+    """
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"position": ["a", "b", "c"], "target": [0.0, 0.0, 1.0]},
+            {"position": [0.5, 0.0, 0.3], "target": ["x", "y", "z"]},
+            # nested lists are length-3 but not scalar numbers.
+            {"position": [[1], 2, 3], "target": [0.0, 0.0, 1.0]},
+            # None is neither a number nor coercible.
+            {"position": [1.0, None, 3.0], "target": [0.0, 0.0, 1.0]},
+        ],
+    )
+    def test_non_numeric_elements_error(self, sim_with_world, kwargs):
+        res = sim_with_world.add_camera(name="bad", **kwargs)
+        assert res["status"] == "error"
+        assert "must be numbers" in res["content"][0]["text"]
+        assert "bad" not in sim_with_world._world.cameras
+
+    @pytest.mark.parametrize(
+        "kwargs",
+        [
+            {"position": [float("nan"), 0.0, 0.3], "target": [0.0, 0.0, 1.0]},
+            {"position": [float("inf"), 0.0, 0.3], "target": [0.0, 0.0, 1.0]},
+            {"position": [0.5, 0.0, 0.3], "target": [float("-inf"), 0.0, 0.0]},
+            {"position": [0.5, 0.0, 0.3], "target": [0.0, float("nan"), 0.0]},
+        ],
+    )
+    def test_non_finite_elements_error(self, sim_with_world, kwargs):
+        res = sim_with_world.add_camera(name="bad", **kwargs)
+        assert res["status"] == "error"
+        assert "finite numbers" in res["content"][0]["text"]
+        assert "bad" not in sim_with_world._world.cameras
+
+    def test_numpy_scalar_components_accepted(self, sim_with_world):
+        # Components read from a config array arrive as NumPy scalars; they are
+        # finite real numbers and must be accepted like plain floats.
+        res = sim_with_world.add_camera(
+            name="npc",
+            position=[np.float32(0.5), np.float64(0.0), np.int64(1)],
+            target=[0.0, 0.0, 0.0],
+        )
+        assert res["status"] == "success", res["content"][0]["text"]
+        assert "npc" in sim_with_world._world.cameras
+
+
 # send_action ordered-vector normalization
 
 
