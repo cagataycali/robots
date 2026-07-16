@@ -1064,11 +1064,36 @@ class MuJoCoSimEngine(
         ``data_config=``/``urdf_path=`` options) -- not a dead-end "supply a
         model source". The bare model-source message is kept only when no
         ``name`` was supplied at all.
+
+        ``position`` (3 elements) and ``orientation`` (4-element wxyz quaternion)
+        are validated up front: a wrong-length, non-numeric, or non-finite
+        (nan/inf) vector returns an actionable ``{"status": "error"}`` and
+        leaves the simulation unchanged, rather than baking a degenerate pose
+        into the robot's base transform. NumPy scalar components are accepted.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_robot"):
             return err
+
+        # Validate the caller-supplied base pose before it is baked into the
+        # robot's frame pos/quat. Without this, `add_robot` shares the numeric
+        # -vector failure classes already guarded on `add_object` / `move_object`
+        # / `add_camera`: a nan/inf `position`/`orientation` is written verbatim
+        # into the base transform and propagated across the whole physics state
+        # by `mj_forward` while `add_robot` still reports `status="success"`
+        # (silent corruption); a wrong-length vector yields a generic "Failed to
+        # inject robot" with no hint that the length was wrong; and a non-numeric
+        # element raises a bare MuJoCo `add_frame(): incompatible function
+        # arguments` TypeError that escapes the structured-error contract. NumPy
+        # scalar components are accepted.
+        if position is not None and (e := _validate_pose_vector("add_robot", "position", position, 3)) is not None:
+            return {"status": "error", "content": [{"text": e}]}
+        if (
+            orientation is not None
+            and (e := _validate_pose_vector("add_robot", "orientation", orientation, 4)) is not None
+        ):
+            return {"status": "error", "content": [{"text": e}]}
 
         # Remember whether the caller supplied a `name` (vs an auto-derived
         # label): an explicit name that resolves to no model is a

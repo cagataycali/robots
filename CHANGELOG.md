@@ -5,6 +5,29 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `add_robot` rejects a non-finite / malformed base pose instead of baking it into the scene
+
+`add_robot` writes the caller-supplied `position` (3) / `orientation`
+(4-element wxyz quaternion) straight into the injected robot's frame pos/quat,
+but did not validate that pose -- so it shared the numeric-vector failure
+classes already guarded on `add_object`, `move_object`, and `add_camera`:
+
+* A `nan` / `inf` `position` / `orientation` was written verbatim into the base
+  transform and propagated across the whole physics state by `mj_forward` while
+  `add_robot` still reported `status="success"` -- a silent corruption
+  (`data.xpos` went non-finite).
+* A wrong-length vector produced a generic "Failed to inject robot" with no hint
+  that the length was the problem.
+* A non-numeric element raised a bare MuJoCo `add_frame(): incompatible function
+  arguments` `TypeError` that escaped the structured `{"status": "error"}`
+  tool-result contract.
+
+`add_robot` now validates `position` (finite, numeric, length 3) and
+`orientation` (finite, numeric, length 4) up front via the same
+`_validate_pose_vector` helper the sibling scene methods use, returning an
+actionable structured error and leaving the simulation state finite / the robot
+unregistered. NumPy scalar components are accepted.
+
 ### Fixed: sim action router accepts NumPy scalar components in vector parameters
 
 The MuJoCo agent-tool dispatch router (`sim(action=..., **kwargs)` ->
