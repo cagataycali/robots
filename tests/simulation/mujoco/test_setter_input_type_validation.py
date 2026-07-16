@@ -53,7 +53,7 @@ class TestSetterInputTypeValidation:
         branch of the shape check rather than raising to the caller."""
         res = sim_with_world.add_camera(name="cam", position=5)
         assert res["status"] == "error"
-        assert "list of 3 numbers" in res["content"][0]["text"]
+        assert "list/tuple of 3 numbers" in res["content"][0]["text"]
 
 
 class TestSetGravityNumpyScalar:

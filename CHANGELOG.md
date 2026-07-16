@@ -2042,6 +2042,33 @@ The guard now rejects any non-finite value (`not math.isfinite(mass) or mass
 enforced by `set_timestep` and `set_gravity`. Finite positive masses (including
 NumPy scalars, which `float()` still coerces) are unaffected.
 
+### Fixed: `add_object` / `add_camera` reject a non-finite / malformed numeric vector instead of baking it into the MJCF
+
+Both are scene-construction methods that write caller-supplied numeric vectors
+into the compiled MuJoCo model, but neither validated those vectors' contents,
+so two failure classes slipped through:
+
+* `add_object` wrote a `nan` / `inf` `position` or `orientation` verbatim into
+  the object's freejoint `qpos`; `mj_forward` then propagated the non-finite
+  value across the whole physics state while `add_object` still reported
+  `status="success"` -- a silent corruption. A `nan` `size` aborted the
+  recompile with a cryptic "spec recompile refused", and a non-numeric `color`
+  / `size` (e.g. `["r", "g", "b", "a"]`) raised a bare `TypeError` from inside
+  MuJoCo's `add_geom` / the `size <= 0` comparison -- escaping the structured
+  `{"status": "error"}` tool-result contract.
+* `add_camera` baked a `nan` / `inf` `position` / `target` into the camera's
+  `xyaxes` (`fwd /= flen` divides by NaN), silently registering a degenerate
+  camera that renders garbage while reporting `status="success"`; a non-numeric
+  element raised a bare `TypeError` from the degenerate-orientation
+  `abs(pos[i] - tgt[i])` comparison.
+
+Both methods now validate every caller-supplied numeric vector up front
+(finite, numeric, and -- for `position` / `orientation` / `target` -- the
+expected length) and return an actionable structured error, leaving the
+simulation state finite and the entity unregistered. NumPy scalar components
+are accepted, matching the finiteness contract already enforced by
+`move_object`, `set_geom_properties`, `set_gravity` and `add_camera`'s `fov`.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

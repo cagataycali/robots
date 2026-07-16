@@ -646,7 +646,7 @@ class TestAddCameraTargetOrients:
         try:
             res = sim.add_camera(name="bad_cam", position=[1, 2], target=[0, 0, 0])
             assert res["status"] == "error"
-            assert "3 elements" in res["content"][0]["text"]
+            assert "3-element" in res["content"][0]["text"]
         finally:
             sim.destroy()
 

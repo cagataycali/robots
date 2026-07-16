@@ -134,39 +134,62 @@ def _jnt_qpos_width(mj: Any, jnt_type: int) -> int:
     return 1
 
 
-def _validate_pose_vector(param_name: str, vec: Any, expected_len: int) -> str | None:
-    """Return an error message if ``vec`` is not ``expected_len`` finite numbers.
+def _validate_finite_vector(method: str, param_name: str, vec: Any) -> str | None:
+    """Return an error message if any element of ``vec`` is not a finite number.
 
-    Guards ``move_object`` (and any caller writing a pose straight into
-    ``data.qpos``) against the two silent-corruption / contract-break classes
-    the numeric-input campaign targets:
+    Guards the numeric vectors a scene-construction call bakes into the
+    compiled MJCF (``add_object`` color/size, ``add_camera`` position/target,
+    etc.) against the two classes the numeric-input campaign targets:
 
-    * A wrong-length or non-numeric vector (e.g. ``["a", "b", "c"]`` or a
-      2-element position) otherwise raises a bare ``ValueError`` inside the
-      numpy assignment - escaping the structured ``{"status": "error"}``
-      tool-result contract.
-    * A ``nan``/``inf`` component is written verbatim into ``data.qpos`` and
-      then propagated through the whole physics state by ``mj_forward``,
-      reporting ``success`` while silently poisoning the simulation.
+    * A non-numeric or non-iterable element (e.g. ``["a", "b", "c"]`` or a
+      nested list) otherwise raises a bare ``TypeError``/``ValueError`` deep
+      inside MuJoCo's ``add_geom`` or a ``size <= 0`` comparison - escaping the
+      structured ``{"status": "error"}`` tool-result contract.
+    * A ``nan``/``inf`` component is baked verbatim into the geom/camera and
+      either poisons the physics state on the next ``mj_forward`` or aborts the
+      spec recompile with a cryptic "spec recompile refused", reporting a
+      success/garbage result instead of an actionable error.
 
     A numpy real scalar per element is accepted (``float(np.float64(...))``
     succeeds), matching the "accept NumPy scalar components" behaviour of the
-    other sim setters. Returns ``None`` when ``vec`` is acceptable.
+    other sim setters. Length is NOT checked here (color is 3-or-4, size is
+    shape-dependent); use :func:`_validate_pose_vector` for a fixed length.
+    Returns ``None`` when every element is a finite real number.
     """
     try:
-        length = len(vec)
+        iter(vec)
     except TypeError:
-        return f"move_object: '{param_name}' must be a list/tuple of {expected_len} numbers, got {vec!r}"
-    if length != expected_len:
-        return f"move_object: '{param_name}' must be a {expected_len}-element vector, got {length} ({vec!r})"
+        return f"{method}: '{param_name}' must be a list/tuple of numbers, got {vec!r}"
     for _elem in vec:
         try:
             _f = float(_elem)
         except (TypeError, ValueError):
-            return f"move_object: '{param_name}' elements must be numbers, got {vec!r}"
+            return f"{method}: '{param_name}' elements must be numbers, got {vec!r}"
         if not math.isfinite(_f):
-            return f"move_object: '{param_name}' must contain finite numbers (no nan/inf), got {vec!r}"
+            return f"{method}: '{param_name}' must contain finite numbers (no nan/inf), got {vec!r}"
     return None
+
+
+def _validate_pose_vector(method: str, param_name: str, vec: Any, expected_len: int) -> str | None:
+    """Return an error message if ``vec`` is not ``expected_len`` finite numbers.
+
+    Fixed-length wrapper over :func:`_validate_finite_vector` for the pose
+    vectors written straight into ``data.qpos`` (``move_object`` /
+    ``add_object`` position+orientation, ``add_camera`` position+target). A
+    wrong-length vector otherwise raises a bare ``ValueError`` inside the numpy
+    assignment - escaping the structured ``{"status": "error"}`` tool-result
+    contract - and a ``nan``/``inf`` component is propagated through the whole
+    physics state by ``mj_forward``, reporting ``success`` while silently
+    poisoning the simulation. A numpy real scalar per element is accepted.
+    Returns ``None`` when ``vec`` is acceptable.
+    """
+    try:
+        length = len(vec)
+    except TypeError:
+        return f"{method}: '{param_name}' must be a list/tuple of {expected_len} numbers, got {vec!r}"
+    if length != expected_len:
+        return f"{method}: '{param_name}' must be a {expected_len}-element vector, got {length} ({vec!r})"
+    return _validate_finite_vector(method, param_name, vec)
 
 
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
@@ -2276,7 +2299,10 @@ class MuJoCoSimEngine(
         Returns:
             Agent-tool status dict. ``{"status": "success", ...}`` on success;
             ``{"status": "error", ...}`` when no world exists, a policy is
-            running, the name is taken, ``size`` has a non-positive extent,
+            running, the name is taken, ``position``/``orientation``/``color``/
+            ``size`` contains a non-finite (``nan``/``inf``) or non-numeric
+            element or ``position``/``orientation`` is the wrong length (3 / 4),
+            ``size`` has a non-positive extent,
             ``shape="mesh"`` is missing ``mesh_path``, or the recompile fails.
 
         Example:
@@ -2325,6 +2351,27 @@ class MuJoCoSimEngine(
                 "status": "error",
                 "content": [{"text": "add_object: shape='mesh' requires mesh_path (path to an STL/OBJ asset)."}],
             }
+
+        # Validate every caller-supplied numeric vector is finite BEFORE we bake
+        # it into the compiled MJCF. Without this: a nan/inf position or
+        # orientation is written verbatim into the object's freejoint qpos and
+        # mj_forward then propagates it through the whole physics state
+        # (reporting success while silently poisoning the sim); a nan/inf size
+        # aborts the recompile with a cryptic "spec recompile refused"; and a
+        # non-numeric element (e.g. ["a", ...]) raises a bare TypeError inside
+        # MuJoCo's add_geom or the size <= 0 comparison, escaping the
+        # structured-error contract. NumPy scalar components are accepted.
+        if position is not None and (e := _validate_pose_vector("add_object", "position", position, 3)) is not None:
+            return {"status": "error", "content": [{"text": e}]}
+        if (
+            orientation is not None
+            and (e := _validate_pose_vector("add_object", "orientation", orientation, 4)) is not None
+        ):
+            return {"status": "error", "content": [{"text": e}]}
+        if color is not None and (e := _validate_finite_vector("add_object", "color", color)) is not None:
+            return {"status": "error", "content": [{"text": e}]}
+        if size is not None and (e := _validate_finite_vector("add_object", "size", size)) is not None:
+            return {"status": "error", "content": [{"text": e}]}
 
         # 'size' is the full extent in meters per the docstring; reject a
         # non-positive (degenerate) extent before mutating scene state so the
@@ -2433,9 +2480,9 @@ class MuJoCoSimEngine(
         # mj_forward silently poisons the whole physics state. Only validate a
         # component that is actually supplied (None leaves it unchanged; the
         # move logic below treats a falsy value as "no change").
-        if position and (perr := _validate_pose_vector("position", position, 3)) is not None:
+        if position and (perr := _validate_pose_vector("move_object", "position", position, 3)) is not None:
             return {"status": "error", "content": [{"text": perr}]}
-        if orientation and (oerr := _validate_pose_vector("orientation", orientation, 4)) is not None:
+        if orientation and (oerr := _validate_pose_vector("move_object", "orientation", orientation, 4)) is not None:
             return {"status": "error", "content": [{"text": oerr}]}
 
         mj = self._mj
@@ -2544,60 +2591,32 @@ class MuJoCoSimEngine(
         mount points before placing a camera; robot bodies are namespaced
         ``<robot>/<body>`` (e.g. ``so101/gripper`` is the SO101 wrist mount).
 
-        Validation: ``position`` and ``target`` must each be 3-element vectors
-        of finite real numbers (NumPy scalars are accepted); a nan/inf or
-        non-numeric component is rejected here rather than corrupting the
-        camera's look-direction basis or escaping the structured-error
-        contract. ``fov`` must be a finite angle in ``(0, 180)`` degrees and
-        ``width``/``height`` must be positive ints within the offscreen
-        framebuffer cap (same bounds ``render`` enforces). Invalid values are
-        rejected here at config time with an actionable error rather than
-        deferring a cryptic spec-recompile or GL failure to the first render.
+        Validation: ``position`` and ``target`` must each be 3 finite numbers
+        (NumPy scalars accepted); ``fov`` must be a finite angle in ``(0, 180)``
+        degrees; and ``width``/``height`` must be positive ints within the
+        offscreen framebuffer cap (same bounds ``render`` enforces). Invalid
+        values are rejected here at config time with an actionable error rather
+        than deferring an uncaught ``TypeError`` (non-numeric), a silently
+        degenerate camera (``nan``/``inf`` baked into ``xyaxes``), or a cryptic
+        spec-recompile / GL failure to the first render.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_camera"):
             return err
 
-        # Validate position / target shape AND elements before we bake them
-        # into XML. Each must be a 3-element vector of finite real numbers.
-        # Without the element check a non-numeric element (e.g. ["a","b","c"])
-        # raises TypeError inside the degenerate-look comparison below --
-        # escaping the structured-error contract -- and a nan/inf component
-        # slips silently into the camera's xyaxes basis (a 0/0 division),
-        # registering a broken camera that renders nothing. Mirrors the
-        # per-element guard on apply_force. Coerce to clean float lists so the
-        # downstream look-direction check and SimCamera see plain floats.
-        _clean: dict[str, list[float]] = {}
-        for _lbl, _vec in (("position", position or [1.0, 1.0, 1.0]), ("target", target or [0.0, 0.0, 0.0])):
-            try:
-                if len(_vec) != 3:
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"add_camera: '{_lbl}' must be 3 elements [x,y,z], got {len(_vec)}"}],
-                    }
-            except TypeError:
-                return {"status": "error", "content": [{"text": f"add_camera: '{_lbl}' must be a list of 3 numbers"}]}
-            _vals: list[float] = []
-            for _elem in _vec:
-                try:
-                    _f = float(_elem)
-                except (TypeError, ValueError):
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"add_camera: '{_lbl}' elements must be numbers, got {_vec!r}"}],
-                    }
-                if not math.isfinite(_f):
-                    return {
-                        "status": "error",
-                        "content": [
-                            {"text": f"add_camera: '{_lbl}' must contain finite numbers (no nan/inf), got {_vec!r}"}
-                        ],
-                    }
-                _vals.append(_f)
-            _clean[_lbl] = _vals
-        pos = _clean["position"]
-        tgt = _clean["target"]
+        # validate position / target shape before we bake them into XML.
+        pos = position or [1.0, 1.0, 1.0]
+        tgt = target or [0.0, 0.0, 0.0]
+        for _lbl, _vec in (("position", pos), ("target", tgt)):
+            # Validate shape AND finiteness up front. The degenerate-orientation
+            # check below does ``abs(pos[i] - tgt[i])`` element-wise, so a
+            # non-numeric element (e.g. ["a", ...]) would otherwise raise a bare
+            # TypeError there, and a nan/inf slips silently into the camera's
+            # baked xyaxes (fwd /= flen divides by nan -> a degenerate camera
+            # that renders garbage while reporting success). NumPy scalars ok.
+            if (e := _validate_pose_vector("add_camera", _lbl, _vec, 3)) is not None:
+                return {"status": "error", "content": [{"text": e}]}
         # Degenerate orientation: position == target means no well-defined look direction.
         if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
             return {
