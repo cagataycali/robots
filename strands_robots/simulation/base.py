@@ -887,10 +887,13 @@ class SimEngine(ABC):
         (``round(1 / control_frequency / ...)``); a value ``<= 0`` or a
         non-number otherwise reaches that arithmetic deep inside the runner and
         raises a bare ``ValueError``/``TypeError``/``ZeroDivisionError`` rather
-        than the structured tool-error dict the public API contracts. ``bool`` is
-        rejected explicitly: it is an ``int`` subclass, so ``True`` would slip
-        through the numeric check and act as a silent 1 Hz. Returns a structured
-        error dict to surface, or ``None`` when valid.
+        than the structured tool-error dict the public API contracts. Any real
+        scalar is accepted (``numbers.Real``), so a NumPy-scalar frequency such
+        as ``np.float32(50.0)`` or ``np.int64(50)`` passes; ``bool`` is rejected
+        explicitly (an ``int`` subclass, ``True`` would slip through and act as a
+        silent 1 Hz) and non-finite values (``nan``/``inf``) are rejected before
+        the ``<= 0`` comparison. Returns a structured error dict to surface, or
+        ``None`` when valid.
 
         Args:
             control_frequency: The caller-supplied value to validate.
@@ -899,10 +902,22 @@ class SimEngine(ABC):
         Returns:
             An error dict naming the offending parameter, or ``None``.
         """
+        # Accept any real scalar (``numbers.Real``) so a NumPy-scalar frequency
+        # (e.g. ``np.float32(50.0)`` / ``np.int64(50)`` computed from a config
+        # array or ``mj_data``) is not rejected: ``isinstance(x, (int, float))``
+        # is ``False`` for every NumPy scalar except ``np.float64``. ``bool`` is
+        # still rejected explicitly (an ``int`` subclass, ``True`` would act as a
+        # silent 1 Hz), and non-finite values (``nan``/``inf``) are rejected via
+        # ``math.isfinite`` before the ``<= 0`` comparison so a ``nan`` -- which
+        # is never ``<= 0`` -- cannot slip through into the ``1 / frequency`` and
+        # ``n_steps / frequency`` arithmetic. Mirrors the ``numbers.Real`` +
+        # finiteness contract already applied to ``add_camera(fov=...)`` and
+        # ``get_ground_height``.
         if (
             isinstance(control_frequency, bool)
-            or not isinstance(control_frequency, (int, float))
-            or control_frequency <= 0
+            or not isinstance(control_frequency, numbers.Real)
+            or not math.isfinite(float(control_frequency))
+            or float(control_frequency) <= 0
         ):
             return {
                 "status": "error",
@@ -1068,6 +1083,11 @@ class SimEngine(ABC):
 
         if err := self._validate_positive_frequency(control_frequency, "run_policy"):
             return err
+        # Coerce to a plain Python float now the value is validated: a NumPy
+        # scalar (accepted above via numbers.Real) flows into 1 / control_frequency
+        # and time.sleep(...) downstream, and time.sleep rejects a numpy.float32
+        # with a bare "cannot be interpreted as an integer" TypeError.
+        control_frequency = float(control_frequency)
 
         # accept n_steps (or legacy max_steps) as an alternate horizon
         # specification. duration = n_steps / control_frequency. If both
@@ -1790,6 +1810,11 @@ class SimEngine(ABC):
             return err
         if err := self._validate_positive_frequency(control_frequency, "eval_policy"):
             return err
+        # Coerce to a plain Python float now the value is validated: a NumPy
+        # scalar (accepted above via numbers.Real) flows into 1 / control_frequency
+        # and time.sleep(...) downstream, and time.sleep rejects a numpy.float32
+        # with a bare "cannot be interpreted as an integer" TypeError.
+        control_frequency = float(control_frequency)
 
         if policy_object is None:
             from strands_robots.policies import create_policy
@@ -1950,6 +1975,11 @@ class SimEngine(ABC):
             return err
         if err := self._validate_positive_frequency(control_frequency, "evaluate_benchmark"):
             return err
+        # Coerce to a plain Python float now the value is validated: a NumPy
+        # scalar (accepted above via numbers.Real) flows into 1 / control_frequency
+        # and time.sleep(...) downstream, and time.sleep rejects a numpy.float32
+        # with a bare "cannot be interpreted as an integer" TypeError.
+        control_frequency = float(control_frequency)
 
         spec = get_benchmark(benchmark_name)
         if spec is None:
