@@ -2023,6 +2023,24 @@ type is `SupportsFloat` so a NumPy-scalar call type-checks as well as runs.
 `add_camera` rejected a NumPy scalar field-of-view (`np.float32(58.0)`, `np.int64(58)`) with a misleading "'fov' must be a finite number in degrees" error, even though the value is a finite real number, because the guard used `isinstance(fov, (int, float))` (`False` for every NumPy scalar except `np.float64`). A fov computed from a config array or `np.degrees(...)` was therefore refused. The check now uses `numbers.Real`, accepting any real scalar (including NumPy types) while still rejecting `bool` / `np.bool_`, non-finite values, and angles outside the open interval `(0, 180)` -- matching the `get_ground_height` coordinate contract.
 
 
+### Fixed: `control_frequency` rejects non-finite values and accepts NumPy scalars
+
+`run_policy` / `start_policy` / `eval_policy` / `evaluate_benchmark` share
+`_validate_positive_frequency`, which guards `control_frequency` before it is used
+as a divisor (`1 / control_frequency` action period, `n_steps / control_frequency`
+duration). The guard used `isinstance(control_frequency, (int, float))` with
+`control_frequency > 0`, which (a) let a non-finite frequency through -- `nan <= 0`
+and `inf <= 0` are both `False`, so `nan` / `inf` slipped the check and reached
+`int(duration * control_frequency)` in the runner, surfacing the bare
+`ValueError("cannot convert float NaN to integer")` this guard exists to replace
+instead of a structured error naming the parameter, and (b) refused a NumPy-scalar
+frequency (`np.float32(50.0)` / `np.int64(30)` read from a config array) as
+non-numeric even though it is a finite real. The guard now uses `numbers.Real` +
+`math.isfinite`, so non-finite frequencies are rejected up front with the
+structured `control_frequency must be > 0` error and NumPy scalars are accepted --
+matching the `get_ground_height`, `set_gravity`, and `add_camera(fov=...)`
+coordinate/scalar contract.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

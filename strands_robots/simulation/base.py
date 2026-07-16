@@ -889,7 +889,14 @@ class SimEngine(ABC):
         raises a bare ``ValueError``/``TypeError``/``ZeroDivisionError`` rather
         than the structured tool-error dict the public API contracts. ``bool`` is
         rejected explicitly: it is an ``int`` subclass, so ``True`` would slip
-        through the numeric check and act as a silent 1 Hz. Returns a structured
+        through the numeric check and act as a silent 1 Hz. A non-finite value
+        (``nan`` / ``inf``) is rejected too: it passes ``<= 0`` (both ``nan <= 0``
+        and ``inf <= 0`` are ``False``), so it would otherwise slip through and
+        reach ``int(duration * control_frequency)`` in the runner as the very
+        bare ``ValueError`` ("cannot convert float NaN to integer") this guard
+        exists to replace. Any real scalar is accepted, including a NumPy scalar
+        (``np.float32`` / ``np.int64``, e.g. a frequency read from a config
+        array), rather than being refused as non-numeric. Returns a structured
         error dict to surface, or ``None`` when valid.
 
         Args:
@@ -901,7 +908,8 @@ class SimEngine(ABC):
         """
         if (
             isinstance(control_frequency, bool)
-            or not isinstance(control_frequency, (int, float))
+            or not isinstance(control_frequency, numbers.Real)
+            or not math.isfinite(float(control_frequency))
             or control_frequency <= 0
         ):
             return {

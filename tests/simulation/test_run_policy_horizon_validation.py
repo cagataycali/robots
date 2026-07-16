@@ -16,9 +16,11 @@ alias is asserted to behave identically to ``n_steps`` (it is normalized to
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from strands_robots.simulation import create_simulation
+from strands_robots.simulation.base import SimEngine
 
 
 @pytest.fixture
@@ -298,4 +300,49 @@ class TestEvalPolicyCountGuards:
         result = sim.eval_policy(
             robot_name="arm1", policy_provider="mock", n_episodes=1, max_steps=2, control_frequency=50.0
         )
+        assert result["status"] == "success", result
+
+
+class TestControlFrequencyFiniteAndNumpyScalar:
+    """control_frequency must be a FINITE real; a NumPy scalar is a valid real.
+
+    ``_validate_positive_frequency`` is the single chokepoint run_policy /
+    start_policy / eval_policy / evaluate_benchmark share. Per its docstring it
+    exists so a bad frequency is refused with a structured error naming the
+    parameter *before* it reaches ``int(duration * control_frequency)`` in the
+    runner. A non-finite frequency (``nan`` / ``inf``) defeated that: ``nan <= 0``
+    and ``inf <= 0`` are both ``False``, so it slipped the guard and surfaced as
+    the bare ``ValueError('cannot convert float NaN to integer')`` the guard was
+    meant to replace. A NumPy-scalar frequency (``np.float32(50.0)`` read from a
+    config array) was conversely refused as "not a number" though it is a
+    perfectly good real. Both are now handled via ``numbers.Real`` +
+    ``math.isfinite``.
+    """
+
+    @pytest.mark.parametrize("bad_freq", [float("nan"), float("inf"), float("-inf")])
+    def test_guard_rejects_non_finite(self, bad_freq):
+        err = SimEngine._validate_positive_frequency(bad_freq, "run_policy")
+        assert err is not None, f"{bad_freq!r} must be rejected"
+        assert "control_frequency must be > 0" in err["content"][0]["text"]
+
+    @pytest.mark.parametrize("good_freq", [np.float32(50.0), np.int64(30), np.float64(25.0)])
+    def test_guard_accepts_numpy_real_scalar(self, good_freq):
+        assert SimEngine._validate_positive_frequency(good_freq, "run_policy") is None
+
+    @pytest.mark.parametrize("bad_freq", [float("nan"), float("inf")])
+    def test_run_policy_rejects_non_finite_control_frequency(self, sim, bad_freq):
+        # Before the fix these slipped the guard and reached
+        # int(duration * control_frequency), surfacing the cryptic
+        # "Policy failed: cannot convert float NaN to integer" instead of the
+        # guard's structured "control_frequency must be > 0" message.
+        text = _err_text(sim.run_policy("arm1", n_steps=5, control_frequency=bad_freq))
+        assert "control_frequency must be > 0" in text
+
+    def test_eval_policy_rejects_nan_control_frequency(self, sim):
+        text = _err_text(sim.eval_policy(robot_name="arm1", max_steps=3, control_frequency=float("nan")))
+        assert "control_frequency must be > 0" in text
+
+    def test_run_policy_accepts_numpy_scalar_control_frequency(self, sim):
+        # A NumPy scalar frequency flows all the way through the rollout.
+        result = sim.run_policy("arm1", n_steps=2, control_frequency=np.float32(50.0), fast_mode=True)
         assert result["status"] == "success", result
