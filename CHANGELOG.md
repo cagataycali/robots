@@ -2092,6 +2092,24 @@ simulation state finite and the entity unregistered. NumPy scalar components
 are accepted, matching the finiteness contract already enforced by
 `move_object`, `set_geom_properties`, `set_gravity` and `add_camera`'s `fov`.
 
+### Fixed: physics/introspection lookups return an actionable "not found" for an unknown body/site/geom/sensor
+
+`get_body_state`, `get_jacobian`, `set_body_properties`, `set_geom_properties`,
+`apply_force`, and `get_sensor_data` resolve a caller-supplied body/site/geom/
+sensor name and, on a miss, returned a dead-end `"<Kind> 'X' not found."` with
+no list of what *is* in the model and no close-match -- the last holdouts of the
+actionable-error class the camera / object / robot facade paths already cover
+(`_unknown_camera_msg` / `_unknown_object_msg` / `_unknown_robot_msg`). An agent
+(or human) driving these blind hit a dead end on every typo and had to guess or
+run a separate discovery round-trip.
+
+These lookups now route through a shared `_unknown_mj_entity_msg(kind, name)`
+that preserves the `"<Kind> 'X' not found."` prefix (so the consistent
+error-shape contract is unchanged), appends a difflib close-match over the
+model's *named* entities, lists the available names (capped), and -- for bodies
+-- points at the real `list_bodies` discovery action. The informative
+`get_sensor_data` "Model has no sensors." branch is preserved.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

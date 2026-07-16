@@ -428,7 +428,7 @@ class PhysicsMixin:
 
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
-            return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
 
         f = np.array(force or [0, 0, 0], dtype=np.float64)
         t = np.array(torque or [0, 0, 0], dtype=np.float64)
@@ -491,6 +491,48 @@ class PhysicsMixin:
                 if mid >= 0:
                     return int(mid)
         return -1
+
+    def _unknown_mj_entity_msg(self, kind: str, requested: str) -> str:
+        """Actionable "<kind> not found" message for the physics/introspection
+        lookups (``get_body_state`` / ``get_jacobian`` / ``set_body_properties`` /
+        ``set_geom_properties`` / ``get_sensor_data`` ...): name the entity, offer
+        a difflib close-match over the model's *named* entities, list the
+        available names (capped), and - for bodies - point at the ``list_bodies``
+        discovery action. Consistent with ``_unknown_object_msg`` /
+        ``_unknown_camera_msg`` / ``_unknown_robot_msg`` (#1299/#1303/#1306)
+        rather than a dead-end "<Kind> 'X' not found." that forces an agent
+        driving the API blind into guesswork on every typo.
+
+        The ``"<Kind> 'X' not found."`` prefix is preserved so the consistent
+        error shape (T15 in ``test_agenttool_contract``) is unaffected.
+
+        ``kind`` is one of ``"Body" | "Site" | "Geom" | "Sensor"``.
+        """
+        import mujoco as _mj
+
+        model = self._world._model if self._world is not None else None
+        msg = f"{kind} '{requested}' not found."
+        if model is None:
+            return msg
+        obj_type, count = {
+            "Body": (_mj.mjtObj.mjOBJ_BODY, model.nbody),
+            "Site": (_mj.mjtObj.mjOBJ_SITE, model.nsite),
+            "Geom": (_mj.mjtObj.mjOBJ_GEOM, model.ngeom),
+            "Sensor": (_mj.mjtObj.mjOBJ_SENSOR, model.nsensor),
+        }[kind]
+        known = [nm for i in range(int(count)) if (nm := _mj.mj_id2name(model, obj_type, i)) and nm != "world"]
+        if known:
+            import difflib
+
+            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
+            if matches:
+                msg += " Did you mean: " + ", ".join(matches) + "?"
+            shown = known if len(known) <= 30 else known[:30] + ["..."]
+            plural = {"Body": "bodies", "Site": "sites", "Geom": "geoms", "Sensor": "sensors"}[kind]
+            msg += f" Available {plural}: {shown}."
+            if kind == "Body":
+                msg += " Use action='list_bodies' to see all."
+        return msg
 
     def raycast(
         self,
@@ -639,19 +681,19 @@ class PhysicsMixin:
             if body_name:
                 obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
                 if obj_id < 0:
-                    return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
+                    return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
                 mj.mj_jacBody(model, data, jacp, jacr, obj_id)
                 label = f"body '{body_name}'"
             elif site_name:
                 obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_SITE, site_name)
                 if obj_id < 0:
-                    return {"status": "error", "content": [{"text": f"Site '{site_name}' not found."}]}
+                    return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Site", site_name)}]}
                 mj.mj_jacSite(model, data, jacp, jacr, obj_id)
                 label = f"site '{site_name}'"
             elif geom_name:
                 obj_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, geom_name)
                 if obj_id < 0:
-                    return {"status": "error", "content": [{"text": f"Geom '{geom_name}' not found."}]}
+                    return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Geom", geom_name)}]}
                 mj.mj_jacGeom(model, data, jacp, jacr, obj_id)
                 label = f"geom '{geom_name}'"
             else:
@@ -824,7 +866,7 @@ class PhysicsMixin:
 
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
-            return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
 
         with self._lock:
             # Reflect the CURRENT qpos/qvel. This reads data.xpos/xquat/xmat/xipos
@@ -1161,7 +1203,7 @@ class PhysicsMixin:
             }
 
         if sensor_name and sensor_name not in sensors:
-            return {"status": "error", "content": [{"text": f"Sensor '{sensor_name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Sensor", sensor_name)}]}
 
         lines = [f"Sensors ({len(sensors)}/{model.nsensor}):"]
         for name, info in sensors.items():
@@ -1222,7 +1264,7 @@ class PhysicsMixin:
         model = self._world._model
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
-            return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
+            return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
 
         changes = []
         with self._lock:
@@ -1289,7 +1331,10 @@ class PhysicsMixin:
             if (gid is None or gid < 0) and not geom_name.endswith("_geom"):
                 gid = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, f"{geom_name}_geom")
         if gid is None or gid < 0 or gid >= model.ngeom:
-            return {"status": "error", "content": [{"text": f"Geom '{geom_name or geom_id}' not found."}]}
+            return {
+                "status": "error",
+                "content": [{"text": self._unknown_mj_entity_msg("Geom", str(geom_name or geom_id))}],
+            }
 
         # Validate numeric inputs before any model write. Without this a nan/inf
         # (or negative) value lands directly in geom_rgba / geom_friction /
@@ -1523,7 +1568,7 @@ class PhysicsMixin:
             if body_name is not None:
                 bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
                 if bid < 0:
-                    return {"status": "error", "content": [{"text": f"Body '{body_name}' not found."}]}
+                    return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
                 body_payload = {
                     "position": data.xpos[bid].tolist(),
                     "quaternion": data.xquat[bid].tolist(),

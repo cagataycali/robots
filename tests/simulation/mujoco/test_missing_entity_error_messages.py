@@ -150,3 +150,106 @@ def test_remove_robot_unknown_in_empty_scene_points_to_add_robot():
 def test_valid_robot_query_unaffected(sim_with_robot):
     # No-regression guard: a correct robot name is not intercepted.
     assert sim_with_robot.get_robot_state("arm1")["status"] == "success"
+
+
+# --- physics.py Body / Site / Geom / Sensor lookups (get_body_state, get_jacobian,
+# set_body_properties, apply_force, set_geom_properties, get_sensor_data) ------------
+# These shared _resolve_mj_name lookups previously returned a dead-end
+# "<Kind> 'X' not found." with no available-list and no close-match - the last
+# holdouts of the actionable-error class the camera/object/robot paths already
+# cover. They now route through ``_unknown_mj_entity_msg`` (same shape:
+# preserved prefix + difflib close-match + available names, plus a
+# ``list_bodies`` discovery hint for bodies).
+
+
+def test_get_body_state_unknown_body_is_actionable(sim):
+    # sim fixture has an object 'cube' -> body 'cube'.
+    text = _err_text(sim.get_body_state("crube"))
+    assert "Body 'crube' not found" in text  # preserved prefix (T15 shape)
+    assert "Did you mean: cube" in text  # difflib close-match
+    assert "cube" in text  # names the available body
+    assert "list_bodies" in text  # discovery surface (a real action)
+
+
+def test_get_jacobian_unknown_body_is_actionable(sim):
+    # A different physics.py call site sharing the same helper.
+    text = _err_text(sim.get_jacobian(body_name="crube"))
+    assert "Body 'crube' not found" in text
+    assert "Did you mean: cube" in text
+    assert "list_bodies" in text
+
+
+def test_set_body_properties_unknown_body_is_actionable(sim):
+    text = _err_text(sim.set_body_properties("crube", mass=1.0))
+    assert "Body 'crube' not found" in text
+    assert "Did you mean: cube" in text
+    assert "list_bodies" in text
+
+
+def test_set_geom_properties_unknown_geom_is_actionable(sim):
+    # add_object names the geom '<object>_geom'.
+    text = _err_text(sim.set_geom_properties(geom_name="cube_geeom", color=[1, 0, 0, 1]))
+    assert "Geom 'cube_geeom' not found" in text  # preserved prefix
+    assert "Did you mean: cube_geom" in text  # close-match
+    assert "cube_geom" in text  # names the available geom
+    # geoms have no dedicated list_* action, so no discovery hint is emitted.
+    assert "list_bodies" not in text
+
+
+def test_get_sensor_data_no_sensors_message_preserved(sim):
+    # The sim fixture has no sensors: the informative "Model has no sensors."
+    # branch must be preserved (not replaced with a generic available-list).
+    text = _err_text(sim.get_sensor_data(sensor_name="anything"))
+    assert "Sensor 'anything' not found" in text
+    assert "Model has no sensors" in text
+
+
+_SITE_SENSOR_XML = """<mujoco model="probe">
+  <worldbody>
+    <body name="link" pos="0 0 0.3">
+      <joint name="j0" type="hinge" axis="0 0 1"/>
+      <geom name="pad" type="box" size="0.02 0.02 0.02"/>
+      <site name="tip" pos="0 0 0.05"/>
+    </body>
+  </worldbody>
+  <sensor>
+    <framepos name="tip_pos" objtype="site" objname="tip"/>
+  </sensor>
+</mujoco>
+"""
+
+
+@pytest.fixture
+def sim_with_site_sensor(tmp_path):
+    """A GL-free world holding a robot named ``probe`` with a named site and a
+    framepos sensor (inline MJCF), so the Site/Sensor branches of
+    ``_unknown_mj_entity_msg`` are exercised on real named entities."""
+    xml = tmp_path / "probe.xml"
+    xml.write_text(_SITE_SENSOR_XML)
+    s = Simulation(tool_name="test_missing_site_sensor_sim", mesh=False)
+    s.create_world(gravity=[0, 0, -9.81])
+    assert s.add_robot("probe", urdf_path=str(xml), position=[0, 0, 0])["status"] == "success"
+    yield s
+    s.cleanup()
+
+
+def test_get_jacobian_unknown_site_lists_available(sim_with_site_sensor):
+    # add_robot namespaces the site as 'probe/tip'; the available-list surfaces
+    # the exact (namespaced) name the caller must use.
+    text = _err_text(sim_with_site_sensor.get_jacobian(site_name="probe/tpi"))
+    assert "Site 'probe/tpi' not found" in text  # preserved prefix
+    assert "Did you mean: probe/tip" in text  # close-match on the real name
+    assert "probe/tip" in text  # names the available site
+
+
+def test_get_sensor_data_unknown_sensor_is_actionable(sim_with_site_sensor):
+    text = _err_text(sim_with_site_sensor.get_sensor_data(sensor_name="tip_poss"))
+    assert "Sensor 'tip_poss' not found" in text  # preserved prefix
+    assert "Did you mean: probe/tip_pos" in text  # close-match (namespaced)
+    assert "probe/tip_pos" in text  # names the available sensor
+
+
+def test_valid_physics_queries_unaffected(sim):
+    # No-regression guard: correct body/geom names are not intercepted.
+    assert sim.get_body_state("cube")["status"] == "success"
+    assert sim.set_geom_properties(geom_name="cube_geom", color=[0, 1, 0, 1])["status"] == "success"
