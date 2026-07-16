@@ -45,6 +45,7 @@ import inspect
 import json
 import logging
 import math
+import numbers
 import os
 import re
 import threading
@@ -2528,7 +2529,10 @@ class MuJoCoSimEngine(
         # cryptic "spec recompile refused", or - for fov <= 0 - silently
         # registers a degenerate camera that renders nothing useful. Reject it
         # here with an actionable message, mirroring the position/target checks.
-        if not isinstance(fov, (int, float)) or isinstance(fov, bool) or not math.isfinite(fov):
+        # Accept any real number (``numbers.Real``) so a NumPy scalar fov
+        # (e.g. ``np.float32(58.0)`` from a config array) is not rejected as
+        # "not a finite number"; only ``bool`` and non-finite values are refused.
+        if isinstance(fov, bool) or not isinstance(fov, numbers.Real) or not math.isfinite(float(fov)):
             return {
                 "status": "error",
                 "content": [{"text": f"add_camera: 'fov' must be a finite number in degrees, got {fov!r}."}],

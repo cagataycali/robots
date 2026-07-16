@@ -1998,6 +1998,10 @@ real number. The check now uses `numbers.Real`, accepting any real scalar (inclu
 scalar types) while still rejecting `bool` / `np.bool_` / non-finite values. The parameter
 type is `SupportsFloat` so a NumPy-scalar call type-checks as well as runs.
 
+### Fixed: `add_camera(fov=...)` accepts NumPy scalar angles
+
+`add_camera` rejected a NumPy scalar field-of-view (`np.float32(58.0)`, `np.int64(58)`) with a misleading "'fov' must be a finite number in degrees" error, even though the value is a finite real number, because the guard used `isinstance(fov, (int, float))` (`False` for every NumPy scalar except `np.float64`). A fov computed from a config array or `np.degrees(...)` was therefore refused. The check now uses `numbers.Real`, accepting any real scalar (including NumPy types) while still rejecting `bool` / `np.bool_`, non-finite values, and angles outside the open interval `(0, 180)` -- matching the `get_ground_height` coordinate contract.
+
 
 ## [0.4.1] - 2026-07-01
 

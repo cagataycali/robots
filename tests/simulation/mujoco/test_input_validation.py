@@ -7,6 +7,8 @@ aborts that were caught by autonomous local testing on PR #85.
 import pytest
 
 pytest.importorskip("mujoco")
+import numpy as np  # noqa: E402
+
 from strands_robots.simulation.mujoco.backend import _can_render  # noqa: E402
 
 requires_gl = pytest.mark.skipif(
@@ -673,6 +675,32 @@ class TestAddCameraParamValidation:
         res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=True)
         assert res["status"] == "error"
         assert "finite number" in res["content"][0]["text"]
+
+    def test_fov_numpy_float32_accepted(self, sim_with_world):
+        # A NumPy scalar fov (e.g. np.float32 from a config array) is a finite
+        # real number; it must be accepted, not rejected as "not a finite number".
+        res = sim_with_world.add_camera(name="npf", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=np.float32(58.0))
+        assert res["status"] == "success", res["content"][0]["text"]
+        assert "npf" in sim_with_world._world.cameras
+
+    def test_fov_numpy_int64_accepted(self, sim_with_world):
+        res = sim_with_world.add_camera(name="npi", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=np.int64(58))
+        assert res["status"] == "success", res["content"][0]["text"]
+        assert "npi" in sim_with_world._world.cameras
+
+    def test_fov_numpy_bool_still_rejected(self, sim_with_world):
+        # np.bool_ is not numbers.Real; treat it like Python bool - a caller bug.
+        res = sim_with_world.add_camera(name="npb", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=np.bool_(True))
+        assert res["status"] == "error"
+        assert "finite number" in res["content"][0]["text"]
+        assert "npb" not in sim_with_world._world.cameras
+
+    def test_fov_numpy_nan_still_rejected(self, sim_with_world):
+        res = sim_with_world.add_camera(
+            name="npn", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], fov=np.float32("nan")
+        )
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
 
     def test_width_zero_errors(self, sim_with_world):
         res = sim_with_world.add_camera(name="c", position=[0.5, 0, 0.3], target=[0.2, 0, 0.05], width=0)
