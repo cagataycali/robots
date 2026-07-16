@@ -533,11 +533,24 @@ class PhysicsMixin:
                 "content": [{"text": "raycast: 'origin' and 'direction' must be lists of 3 numbers"}],
             }
 
+        # Every element must be a finite real number. Without this, a
+        # non-numeric element (e.g. ["a", ...]) raises ValueError inside
+        # np.array(dtype=float64) -- escaping the structured-error contract --
+        # and nan/inf slip silently into mj_ray (nan direction survives the
+        # zero-length guard because ``nan < 1e-10`` is False, then poisons the
+        # normalized vector fed to the C solver).
+        origin_f, err = _coerce_finite_vector(origin, "origin", "raycast")
+        if err is not None:
+            return err
+        direction_f, err = _coerce_finite_vector(direction, "direction", "raycast")
+        if err is not None:
+            return err
+
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        pnt = np.array(origin, dtype=np.float64)
-        vec = np.array(direction, dtype=np.float64)
+        pnt = np.array(origin_f, dtype=np.float64)
+        vec = np.array(direction_f, dtype=np.float64)
         # Normalize direction
         norm = np.linalg.norm(vec)
         if norm < 1e-10:
@@ -1422,7 +1435,13 @@ class PhysicsMixin:
         except TypeError:
             return {"status": "error", "content": [{"text": "multi_raycast: 'origin' must be a list of 3 numbers"}]}
 
-        pnt = np.array(origin, dtype=np.float64)
+        # See raycast: reject non-numeric / nan / inf origin before np.array so
+        # a bad element cannot raise past the tool contract or poison mj_ray.
+        origin_f, err = _coerce_finite_vector(origin, "origin", "multi_raycast")
+        if err is not None:
+            return err
+
+        pnt = np.array(origin_f, dtype=np.float64)
         results: list[dict[str, Any]] = []
 
         # Refresh geom world poses once, then serialize every mj_ray against a
@@ -1450,7 +1469,11 @@ class PhysicsMixin:
                         }
                     )
                     continue
-                vec = np.array(d, dtype=np.float64)
+                d_floats, d_err = _coerce_finite_vector(d, "direction", f"ray[{idx}]")
+                if d_err is not None:
+                    results.append({"distance": None, "geom_id": None, "error": d_err["content"][0]["text"]})
+                    continue
+                vec = np.array(d_floats, dtype=np.float64)
                 norm = np.linalg.norm(vec)
                 if norm < 1e-10:
                     results.append({"distance": None, "geom_id": None, "error": f"ray[{idx}]: zero-length direction"})

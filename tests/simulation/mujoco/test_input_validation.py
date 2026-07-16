@@ -131,6 +131,61 @@ class TestRaycastValidation:
         assert rays[1].get("error") is not None
         assert "zero-length" in rays[1]["error"]
 
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_nonfinite_direction_errors(self, sim_with_robot, bad):
+        """A nan/inf direction survives the zero-length guard (``nan < 1e-10`` is
+        False) and would poison the normalized vector fed to mj_ray. Reject it."""
+        res = sim_with_robot.raycast(origin=[0, 0, 1], direction=[bad, 0.0, 0.0])
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"].lower()
+        assert "direction" in res["content"][0]["text"]
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_nonfinite_origin_errors(self, sim_with_robot, bad):
+        res = sim_with_robot.raycast(origin=[bad, 0.0, 1.0], direction=[0, 0, -1])
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"].lower()
+        assert "origin" in res["content"][0]["text"]
+
+    def test_non_numeric_origin_errors_not_raises(self, sim_with_robot):
+        """A non-numeric element must return a structured error, not raise
+        ValueError from np.array(dtype=float64) past the tool contract."""
+        res = sim_with_robot.raycast(origin=["a", "b", "c"], direction=[0, 0, -1])
+        assert res["status"] == "error"
+        assert "number" in res["content"][0]["text"].lower()
+
+    def test_non_numeric_direction_errors_not_raises(self, sim_with_robot):
+        res = sim_with_robot.raycast(origin=[0, 0, 1], direction=["x", 0, 0])
+        assert res["status"] == "error"
+        assert "number" in res["content"][0]["text"].lower()
+
+    def test_multi_raycast_non_numeric_origin_errors_not_raises(self, sim_with_robot):
+        res = sim_with_robot.multi_raycast(origin=["x", 0, 1], directions=[[0, 0, -1]])
+        assert res["status"] == "error"
+        assert "number" in res["content"][0]["text"].lower()
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf")])
+    def test_multi_raycast_nonfinite_origin_errors(self, sim_with_robot, bad):
+        res = sim_with_robot.multi_raycast(origin=[bad, 0, 1], directions=[[0, 0, -1]])
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"].lower()
+
+    def test_multi_raycast_nonfinite_direction_isolates_error(self, sim_with_robot):
+        """A nan direction in one ray must be reported per-ray, not abort the
+        batch or silently pass a poisoned vector to mj_ray."""
+        res = sim_with_robot.multi_raycast(
+            origin=[0, 0, 5],
+            directions=[[0, 0, -1], [float("nan"), 0.0, 0.0], [1, 0, -1]],
+        )
+        assert res["status"] == "success"
+        rays = res["content"][1]["json"]["rays"]
+        assert len(rays) == 3
+        assert rays[1].get("error") is not None
+        assert "finite" in rays[1]["error"].lower()
+        # Valid rays around the bad one are unaffected.
+        assert rays[0].get("error") is None
+        assert rays[2].get("error") is None
+
 
 class TestApplyForceValidation:
     def test_missing_both_force_and_torque_errors(self, sim_with_robot):
