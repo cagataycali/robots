@@ -584,6 +584,36 @@ class TestRuntimeModification:
         assert model.body_mass[body_id] == pytest.approx(2.0)
         assert model.body_inertia[body_id] == pytest.approx([0.0, 0.0, 0.0])
 
+    def test_set_body_mass_rejects_nonfinite(self, sim):
+        """A non-finite mass is rejected instead of silently corrupting the model.
+
+        ``float('nan') <= 0`` and ``float('inf') <= 0`` are both ``False``, so a
+        bare ``mass <= 0`` guard lets NaN/+Inf slip through: the body's mass and
+        (mass-tracking) inertia would be set to NaN/Inf and the next ``mj_step``
+        would produce a non-finite ``qacc`` -- a silent physics corruption
+        reported as ``status="success"``. The guard must also reject non-finite
+        values, matching the finiteness contract already enforced by
+        ``set_timestep`` / ``set_gravity``.
+        """
+        model = sim._world._model
+        body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "box1")
+        good_mass = float(model.body_mass[body_id])
+        good_inertia = model.body_inertia[body_id].copy()
+        assert good_mass > 0 and (good_inertia > 0).all()
+
+        for bad in (float("nan"), float("inf"), -float("inf")):
+            result = sim.set_body_properties(body_name="box1", mass=bad)
+            assert result["status"] == "error", f"mass={bad!r} was not rejected"
+            assert "finite" in result["content"][0]["text"]
+            # Neither mass nor inertia was mutated by the rejected call.
+            assert model.body_mass[body_id] == pytest.approx(good_mass)
+            assert model.body_inertia[body_id] == pytest.approx(good_inertia)
+            # And the world remains integrable (no NaN leaked into the model).
+            mj.mj_forward(model, sim._world._data)
+            import numpy as np
+
+            assert np.all(np.isfinite(sim._world._data.qacc))
+
     def test_set_geom_color(self, sim):
         result = sim.set_geom_properties(geom_name="box_geom", color=[0, 1, 0, 1])
         assert result["status"] == "success"

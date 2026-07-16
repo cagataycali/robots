@@ -1041,12 +1041,12 @@ class PhysicsMixin:
 
         Args:
             body_name: Name of the body to modify.
-            mass: New absolute mass (kg); must be ``> 0``. When set, the body's
+            mass: New absolute mass (kg); must be a finite number ``> 0``. When set, the body's
                 inertia is scaled by ``mass / old_mass`` to preserve consistency.
 
         Returns:
             A tool-result dict; ``status="error"`` if the world is missing, a
-            policy is running, ``mass`` is not a positive number, or the body is
+            policy is running, ``mass`` is not a finite positive number, or the body is
             not found, otherwise ``status="success"`` summarizing the change.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
@@ -1063,10 +1063,10 @@ class PhysicsMixin:
                     "status": "error",
                     "content": [{"text": f"set_body_properties: 'mass' must be a positive number, got {mass!r}"}],
                 }
-            if mass <= 0:
+            if not math.isfinite(mass) or mass <= 0:
                 return {
                     "status": "error",
-                    "content": [{"text": f"set_body_properties: 'mass' must be > 0, got {mass}"}],
+                    "content": [{"text": f"set_body_properties: 'mass' must be a finite number > 0, got {mass}"}],
                 }
 
         mj = _ensure_mujoco()

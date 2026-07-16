@@ -2027,6 +2027,21 @@ type is `SupportsFloat` so a NumPy-scalar call type-checks as well as runs.
 `add_camera` rejected a NumPy scalar field-of-view (`np.float32(58.0)`, `np.int64(58)`) with a misleading "'fov' must be a finite number in degrees" error, even though the value is a finite real number, because the guard used `isinstance(fov, (int, float))` (`False` for every NumPy scalar except `np.float64`). A fov computed from a config array or `np.degrees(...)` was therefore refused. The check now uses `numbers.Real`, accepting any real scalar (including NumPy types) while still rejecting `bool` / `np.bool_`, non-finite values, and angles outside the open interval `(0, 180)` -- matching the `get_ground_height` coordinate contract.
 
 
+### Fixed: `set_body_properties(mass=...)` rejects a non-finite mass
+
+`set_body_properties` documents `mass` as a positive physics invariant, but its
+guard used only `if mass <= 0`. `float('nan') <= 0` and `float('inf') <= 0` are
+both `False`, so a NaN or `+Inf` mass slipped through: the body's `body_mass`
+was set to NaN/Inf and its `body_inertia` (which is scaled by `mass / old_mass`
+to stay consistent) became NaN/Inf as well, so the next `mj_step` produced a
+non-finite `qacc` -- a silent physics corruption reported as
+`status="success"`. (`-Inf` was already caught because `-Inf <= 0` is `True`.)
+
+The guard now rejects any non-finite value (`not math.isfinite(mass) or mass
+<= 0`) before mutating the model, matching the finiteness contract already
+enforced by `set_timestep` and `set_gravity`. Finite positive masses (including
+NumPy scalars, which `float()` still coerces) are unaffected.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

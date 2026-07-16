@@ -200,7 +200,16 @@ class TestMassAndTimestepValidation:
     def test_set_body_properties_negative_mass_errors(self, sim_with_robot):
         res = sim_with_robot.set_body_properties(body_name="link1", mass=-1.0)
         assert res["status"] == "error"
-        assert "must be > 0" in res["content"][0]["text"]
+        assert "must be a finite number > 0" in res["content"][0]["text"]
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+    def test_set_body_properties_nonfinite_mass_errors(self, sim_with_robot, bad):
+        """NaN/Inf must be rejected: ``nan <= 0`` and ``inf <= 0`` are both False,
+        so a bare positivity guard would let them corrupt ``body_mass`` /
+        ``body_inertia`` while reporting success."""
+        res = sim_with_robot.set_body_properties(body_name="link1", mass=bad)
+        assert res["status"] == "error"
+        assert "finite" in res["content"][0]["text"]
 
     def test_set_body_properties_zero_mass_errors(self, sim_with_robot):
         res = sim_with_robot.set_body_properties(body_name="link1", mass=0.0)
