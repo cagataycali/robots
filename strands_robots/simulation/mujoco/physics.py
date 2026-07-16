@@ -30,6 +30,66 @@ from strands_robots.simulation.mujoco.backend import (
 logger = logging.getLogger(__name__)
 
 
+def _coerce_finite_vector(
+    values: Any,
+    name: str,
+    method: str,
+    *,
+    min_value: float | None = None,
+    strict_min: bool = False,
+) -> tuple[list[float] | None, dict[str, Any] | None]:
+    """Coerce a numeric vector to ``float`` and validate every element.
+
+    Each element must be a real number (Python or NumPy scalar) and finite --
+    ``nan`` / ``inf`` are rejected because they slip silently into the MuJoCo
+    model buffers and corrupt the solver while the tool still reports success.
+    An optional lower bound enforces physics invariants (non-negative friction,
+    positive geom extent).
+
+    Args:
+        values: The input sequence (list / tuple / NumPy array).
+        name: Parameter name, used in error text.
+        method: Calling method name, used in error text.
+        min_value: If set, every element must be ``>= min_value`` (or ``>`` when
+            ``strict_min`` is True).
+        strict_min: Use a strict ``>`` comparison against ``min_value``.
+
+    Returns:
+        ``(floats, None)`` on success, or ``(None, error_dict)`` on the first
+        invalid element -- matching the structured-error tool contract so the
+        caller never raises past dispatch.
+    """
+    try:
+        seq = list(values)
+    except TypeError:
+        return None, {
+            "status": "error",
+            "content": [{"text": f"{method}: '{name}' must be a sequence of numbers, got {values!r}"}],
+        }
+    out: list[float] = []
+    for elem in seq:
+        try:
+            f = float(elem)
+        except (TypeError, ValueError):
+            return None, {
+                "status": "error",
+                "content": [{"text": f"{method}: '{name}' elements must be numbers, got {values!r}"}],
+            }
+        if not math.isfinite(f):
+            return None, {
+                "status": "error",
+                "content": [{"text": f"{method}: '{name}' must contain finite numbers (no nan/inf), got {values!r}"}],
+            }
+        if min_value is not None and ((f <= min_value) if strict_min else (f < min_value)):
+            rel = ">" if strict_min else ">="
+            return None, {
+                "status": "error",
+                "content": [{"text": f"{method}: '{name}' values must be {rel} {min_value}, got {values!r}"}],
+            }
+        out.append(f)
+    return out, None
+
+
 def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     """Return the dense ``nv x nv`` mass matrix M(q), robust to MuJoCo drift.
 
@@ -1116,6 +1176,13 @@ class PhysicsMixin:
         mid-phase) are recomputed so a grown geom collides correctly instead of
         letting other bodies pass through it. Mesh/plane/height-field geoms take
         their extent from asset data, so a ``size`` write is inert for them.
+
+        All numeric inputs are validated before any model write: ``color``,
+        ``friction`` and ``size`` must contain only finite numbers (``nan`` /
+        ``inf`` are rejected), ``friction`` coefficients must be ``>= 0`` and
+        ``size`` half-extents must be ``> 0``. An invalid value returns a
+        structured ``status="error"`` result and leaves the model untouched,
+        rather than silently corrupting the solver or broadphase bounds.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1134,6 +1201,25 @@ class PhysicsMixin:
                 gid = self._resolve_mj_name(mj.mjtObj.mjOBJ_GEOM, f"{geom_name}_geom")
         if gid is None or gid < 0 or gid >= model.ngeom:
             return {"status": "error", "content": [{"text": f"Geom '{geom_name or geom_id}' not found."}]}
+
+        # Validate numeric inputs before any model write. Without this a nan/inf
+        # (or negative) value lands directly in geom_rgba / geom_friction /
+        # geom_size and silently corrupts rendering, the contact solver, or the
+        # broadphase bounds (geom_rbound becomes inf) while the tool still
+        # reports success. Friction coefficients are non-negative and a geom's
+        # size (half-extent) must be strictly positive.
+        if color is not None:
+            color, err = _coerce_finite_vector(color, "color", "set_geom_properties")
+            if err:
+                return err
+        if friction is not None:
+            friction, err = _coerce_finite_vector(friction, "friction", "set_geom_properties", min_value=0.0)
+            if err:
+                return err
+        if size is not None:
+            size, err = _coerce_finite_vector(size, "size", "set_geom_properties", min_value=0.0, strict_min=True)
+            if err:
+                return err
 
         label = geom_name or f"geom_{gid}"
         changes = []
