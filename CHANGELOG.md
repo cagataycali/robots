@@ -1995,7 +1995,8 @@ is accepted but inert, mirroring the Newton backend.
 so the natural call `get_ground_height(*obs["base_pos"][:2])` on a float32 observation was
 rejected with a misleading "must be a finite number" error even though the value is a finite
 real number. The check now uses `numbers.Real`, accepting any real scalar (including NumPy
-scalar types) while still rejecting `bool` / `np.bool_` / non-finite values.
+scalar types) while still rejecting `bool` / `np.bool_` / non-finite values. The parameter
+type is `SupportsFloat` so a NumPy-scalar call type-checks as well as runs.
 
 
 ## [0.4.1] - 2026-07-01

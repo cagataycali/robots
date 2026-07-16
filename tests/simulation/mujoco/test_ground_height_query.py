@@ -121,7 +121,7 @@ def test_get_ground_height_accepts_numpy_scalars() -> None:
             assert r["status"] == "success", (type(x).__name__, r)
             assert math.isclose(r["content"][1]["json"]["height"], expected, abs_tol=1e-9)
         # NumPy booleans and non-finite NumPy scalars are still rejected.
-        assert sim.get_ground_height(np.bool_(True), 0.0)["status"] == "error"  # type: ignore[arg-type]
+        assert sim.get_ground_height(np.bool_(True), 0.0)["status"] == "error"
         assert sim.get_ground_height(np.float32("nan"), 0.0)["status"] == "error"
         assert sim.get_ground_height(np.float64("inf"), 0.0)["status"] == "error"
     finally:

@@ -24,7 +24,7 @@ import numbers
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, SupportsFloat
 
 if TYPE_CHECKING:
     from strands_robots.policies import Policy
@@ -559,7 +559,7 @@ class SimEngine(ABC):
         """
         return 0.0
 
-    def get_ground_height(self, x: float, y: float) -> dict[str, Any]:
+    def get_ground_height(self, x: SupportsFloat, y: SupportsFloat) -> dict[str, Any]:
         """Query the terrain surface height (world z) beneath world ``(x, y)``.
 
         Public counterpart of the internal :meth:`_ground_height_at` hook: a
@@ -578,8 +578,10 @@ class SimEngine(ABC):
         heightfield, so a non-terrain world reports a flat surface.
 
         Args:
-            x: World x coordinate.
-            y: World y coordinate.
+            x: World x coordinate. Any object convertible to ``float``
+                (``SupportsFloat``), including NumPy scalars, that is a finite
+                real number.
+            y: World y coordinate. Same accepted types as ``x``.
 
         Returns:
             Agent-tool status dict. On success ``content`` carries a
