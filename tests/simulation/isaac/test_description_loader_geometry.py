@@ -196,6 +196,33 @@ class TestMjcfRobotLoader:
         with pytest.raises(ValueError, match="root element must be <mujoco>"):
             load_mjcf(_write(tmp_path, "b.xml", "<foo/>"))
 
+    def test_two_dof_joint_on_one_body_is_rejected_as_duplicate_edge(self, tmp_path):
+        # A single <body> carrying two <joint> children (an idiomatic MJCF
+        # 2-DOF compound joint, e.g. a hip with a roll and a pitch axis)
+        # produces two joints that share the same (parent, child) body edge.
+        # A tree articulation requires each non-root link to have exactly one
+        # inbound joint, so the loader must reject this fail-fast at load time
+        # rather than let it surface as a cryptic articulation error two layers
+        # down. The 2-DOF axis must instead be split with an intermediate
+        # massless link body (the pattern _build_unitree_g1 uses).
+        mjcf = """<mujoco model="two_dof"><worldbody>
+          <body name="base"><geom type="sphere" size="0.1"/>
+            <body name="hip" pos="0 0 0.1">
+              <joint name="hip_roll" type="hinge" axis="1 0 0"/>
+              <joint name="hip_pitch" type="hinge" axis="0 1 0"/>
+              <geom type="box" size="0.03 0.03 0.03"/>
+            </body>
+          </body>
+        </worldbody></mujoco>"""
+        with pytest.raises(ValueError, match="duplicate parent->child body edges") as exc:
+            load_mjcf(_write(tmp_path, "two_dof.xml", mjcf))
+        # The message names both offending joints so the author can locate and
+        # split the compound joint from the traceback alone.
+        msg = str(exc.value)
+        assert "hip_roll" in msg
+        assert "hip_pitch" in msg
+        assert "intermediate" in msg
+
 
 class TestUrdfRobotLoader:
     """``load_urdf`` -> link/joint topology, shape extraction, fail-loud guards."""
