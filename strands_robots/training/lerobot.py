@@ -248,11 +248,12 @@ class LerobotTrainer(Trainer):
 
     @property
     def provider_name(self) -> str:
+        """Provider identity - pairs with the ``lerobot_local`` inference policy."""
         return "lerobot_local"
 
     @property
     def hardware_floor(self) -> dict[str, Any]:
-        # ACT fits a consumer GPU; large VLAs (pi05) want an L40S. Advisory.
+        """Advisory floor: ACT fits a consumer 8 GB GPU; large VLAs (pi05) want an L40S."""
         return {"min_gpus": 1, "min_vram_gb": 8, "multinode": False}
 
     # ---- helpers -----------------------------------------------------------
@@ -420,6 +421,17 @@ class LerobotTrainer(Trainer):
     # ---- ABC ---------------------------------------------------------------
 
     def validate(self, spec: TrainSpec) -> list[str]:
+        """Pure preflight for a LeRobot policy- or reward-model run.
+
+        Runs the shared input-safety gate, then checks a data source -
+        exactly one of a local LeRobotDataset v3 ``dataset_root`` or a Hub
+        ``dataset_repo_id`` (for streaming) - an ``output_dir``, positive
+        ``steps``, single-node only (``num_nodes == 1``), a ``val_episodes``
+        split below the dataset total, and that ``lerobot.scripts.lerobot_train``
+        is importable. ``extra['reward_model']`` switches to reward-model
+        preflight; otherwise the default policy path is checked. Returns the
+        problem list; empty means launchable. Read-only.
+        """
         problems: list[str] = self._security_problems(spec)
 
         # Data source: either a local v3 root, or a Hub repo id (streaming the
@@ -885,6 +897,15 @@ class LerobotTrainer(Trainer):
         return cfg
 
     def train(self, spec: TrainSpec) -> TrainResult:
+        """Run LeRobot training in-process via ``lerobot_train.train(cfg)``.
+
+        Fails closed on any :meth:`validate` problem, builds the
+        ``TrainPipelineConfig`` from the spec (policy or reward-model path,
+        resume, learning rate), and calls lerobot's own training function
+        directly. ``num_gpus > 1`` spawns workers via torch
+        ``elastic_launch``. Blocks until the run terminates and returns a
+        terminal ``TrainResult`` with the checkpoint dir + metrics verdict.
+        """
         problems = self.validate(spec)
         if problems:
             return TrainResult(
