@@ -178,3 +178,37 @@ class TestSetGeomPropertiesRejectsInvalid:
         assert res["status"] == "success"
         assert abs(float(sim_with_box._world._model.geom_size[gid][0]) - 0.06) < 1e-6
         assert abs(float(sim_with_box._world._model.geom_friction[gid][0]) - 0.8) < 1e-4
+
+    @pytest.mark.parametrize(
+        ("kwargs", "param"),
+        [
+            ({"color": 0.5}, "color"),
+            ({"friction": 1.0}, "friction"),
+            ({"size": 0.05}, "size"),
+        ],
+    )
+    def test_bare_scalar_vector_arg_rejected_and_model_untouched(self, sim_with_box, kwargs, param):
+        """A bare scalar where a numeric *sequence* is expected is rejected.
+
+        ``color`` / ``friction`` / ``size`` are vector-valued. Passing a single
+        number (a common agent mistake, e.g. ``color=0.5`` instead of
+        ``color=[0.5, 0.5, 0.5, 1.0]``) is not iterable, so it hits the
+        sequence-level coercion guard rather than crashing with a bare
+        ``TypeError``. The call returns a structured error naming the parameter
+        and leaves the model buffers untouched.
+        """
+        gid = self._geom_id(sim_with_box)
+        model = sim_with_box._world._model
+        before = {
+            "rgba": model.geom_rgba[gid].copy(),
+            "friction": model.geom_friction[gid].copy(),
+            "size": model.geom_size[gid].copy(),
+        }
+        res = sim_with_box.set_geom_properties(geom_name="box", **kwargs)
+        assert res["status"] == "error"
+        text = res["content"][0]["text"]
+        assert param in text
+        assert "sequence of numbers" in text
+        assert (model.geom_rgba[gid] == before["rgba"]).all()
+        assert (model.geom_friction[gid] == before["friction"]).all()
+        assert (model.geom_size[gid] == before["size"]).all()
