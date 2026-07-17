@@ -705,3 +705,85 @@ def test_backup_summary_headers_have_no_orphan_whitespace(populated: Path, tmp_p
     _assert_no_orphan_header_whitespace(text)
     assert text.startswith("**Backup Completed Successfully**")
     assert "**Filters applied:**" in text
+
+
+# --- Error-path return contracts (tool surfaces failures as status=error) ---
+# The @tool contract requires failures to be returned as
+# {"status": "error", ...} rather than raised past dispatch. These pin the
+# manager-failure and empty-branch paths of the list/backup/restore/delete
+# actions that the happy-path tests above do not exercise.
+
+
+def test_list_skips_device_type_with_no_calibrations(tmp_path: Path) -> None:
+    """``list`` renders only device types that actually have models.
+
+    When one device type is populated and the other is empty, the empty type
+    is skipped from the rendered listing rather than emitting a bare heading.
+    """
+    mgr = LeRobotCalibrationManager(tmp_path)
+    mgr.save_calibration("robots", "so101_follower", "orange_arm", _calib(3))
+    # teleoperators dir exists (created by the manager) but holds no models.
+
+    result = lerobot_calibrate(action="list", base_path=str(tmp_path))
+
+    assert result["status"] == "success"
+    text = result["content"][0]["text"]
+    assert "**Robots**" in text
+    assert "**Teleoperators**" not in text
+    assert tool_json(result)["count"] == 1
+
+
+def test_backup_action_failure_surfaces_error(populated: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failing backup is returned as status=error, not raised."""
+    monkeypatch.setattr(
+        LeRobotCalibrationManager,
+        "backup_calibrations",
+        lambda self, *a, **k: (False, "disk full", 0),
+    )
+
+    result = lerobot_calibrate(
+        action="backup",
+        output_dir=str(tmp_path / "out"),
+        base_path=str(populated),
+    )
+
+    assert result["status"] == "error"
+    assert "Backup failed" in result["content"][0]["text"]
+    assert "disk full" in result["content"][0]["text"]
+
+
+def test_restore_action_missing_backup_dir_surfaces_error(populated: Path, tmp_path: Path) -> None:
+    """``restore`` from a non-existent backup directory returns status=error."""
+    result = lerobot_calibrate(
+        action="restore",
+        backup_dir=str(tmp_path / "no_such_backup"),
+        base_path=str(populated),
+    )
+
+    assert result["status"] == "error"
+    assert "Restore failed" in result["content"][0]["text"]
+
+
+def test_delete_action_failure_surfaces_error(populated: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When a calibration exists but deletion fails, the tool returns error.
+
+    Guards the window where ``calibration_exists`` is True yet the unlink
+    fails (permission error, race) - the tool must surface that as
+    status=error rather than falsely reporting success.
+    """
+    monkeypatch.setattr(
+        LeRobotCalibrationManager,
+        "delete_calibration",
+        lambda self, *a, **k: False,
+    )
+
+    result = lerobot_calibrate(
+        action="delete",
+        device_type="robots",
+        device_model="so101_follower",
+        device_id="green_arm",
+        base_path=str(populated),
+    )
+
+    assert result["status"] == "error"
+    assert "Failed to delete" in result["content"][0]["text"]
