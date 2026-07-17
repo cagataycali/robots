@@ -312,6 +312,17 @@ class TestProcessorBridgeFallback:
             pytest.skip("installed lerobot has no ProcessorMigrationError")
         assert migration_error in _missing_config_errors()
 
+    def test_missing_migration_error_falls_back_to_builtin_errors(self, monkeypatch):
+        # On an older lerobot that predates ProcessorMigrationError the set must
+        # degrade to the built-in (FileNotFoundError, ValueError) rather than
+        # raise ImportError while classifying a missing processor config.
+        from lerobot.processor import pipeline as lr_pipeline
+
+        from strands_robots.policies.lerobot_local.processor import _missing_config_errors
+
+        monkeypatch.delattr(lr_pipeline, "ProcessorMigrationError", raising=False)
+        assert _missing_config_errors() == (FileNotFoundError, ValueError)
+
 
 @_requires_lerobot_pipeline
 class TestUpstreamLerobotParity:
