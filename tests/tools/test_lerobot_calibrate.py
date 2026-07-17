@@ -13,6 +13,7 @@ structures, round-trips) rather than implementation details.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -641,3 +642,66 @@ def test_list_marks_unreadable_calibration_without_failing(populated: Path, monk
     result = lerobot_calibrate(action="list", base_path=str(populated))
     assert result["status"] == "success"
     assert "error reading file" in result["content"][0]["text"]
+
+
+# --- Well-formed markdown headers (no orphan whitespace) --------------------
+# Emoji sweeps that stripped a leading icon from a header line ("## icon Foo")
+# leave orphan whitespace behind ("##  Foo", " **Foo**"), which renders as a
+# malformed heading with a stray leading space or a double space after the
+# hashes. These tests pin the rendered heading lines of the list-heavy actions
+# so that regression cannot silently reappear.
+
+
+def _assert_no_orphan_header_whitespace(text: str) -> None:
+    """Fail if any rendered line has orphan markdown-header whitespace.
+
+    Rejects a line that leads with a space before a bold ``**`` title
+    (e.g. ``" **Foo**"``) and a heading whose hashes are followed by more than
+    one space (e.g. ``"##  Foo"``). Nested list items (``"  - ..."``) are
+    legitimately indented and are left untouched.
+    """
+    for line in text.splitlines():
+        stripped = line.lstrip(" ")
+        if stripped.startswith("- "):
+            continue  # nested list item; indentation is intentional
+        assert not (line.startswith(" ") and stripped.startswith("**")), (
+            f"header line leads with orphan whitespace: {line!r}"
+        )
+        assert not re.match(r"#{1,6}\s{2,}", stripped), f"heading has double space after hashes: {line!r}"
+
+
+def test_list_headers_have_no_orphan_whitespace(populated: Path) -> None:
+    """``list`` renders its title and per-type/model headings without orphan gaps."""
+    result = lerobot_calibrate(action="list", base_path=str(populated))
+    assert result["status"] == "success"
+    text = result["content"][0]["text"]
+    _assert_no_orphan_header_whitespace(text)
+    # The section headings must render as clean single-space markdown.
+    assert "## **Teleoperators**" in text or "## **Robots**" in text
+    assert text.startswith("**LeRobot Calibrations**")
+
+
+def test_analyze_headers_have_no_orphan_whitespace(populated: Path) -> None:
+    """``analyze`` renders its title and stat sub-headings without orphan gaps."""
+    result = lerobot_calibrate(action="analyze", base_path=str(populated))
+    assert result["status"] == "success"
+    text = result["content"][0]["text"]
+    _assert_no_orphan_header_whitespace(text)
+    assert text.startswith("**Calibration Analysis**")
+    assert "### **Summary Statistics**" in text
+    assert "### **Device Model Breakdown**" in text
+
+
+def test_backup_summary_headers_have_no_orphan_whitespace(populated: Path, tmp_path: Path) -> None:
+    """``backup`` renders its completion and filter headings without orphan gaps."""
+    result = lerobot_calibrate(
+        action="backup",
+        output_dir=str(tmp_path / "bk"),
+        device_type="robots",
+        base_path=str(populated),
+    )
+    assert result["status"] == "success"
+    text = result["content"][0]["text"]
+    _assert_no_orphan_header_whitespace(text)
+    assert text.startswith("**Backup Completed Successfully**")
+    assert "**Filters applied:**" in text
