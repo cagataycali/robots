@@ -2110,6 +2110,22 @@ model's *named* entities, lists the available names (capped), and -- for bodies
 -- points at the real `list_bodies` discovery action. The informative
 `get_sensor_data` "Model has no sensors." branch is preserved.
 
+### Fixed: `build_command` reward-model path emits `--reward_model.pretrained_path` for a warm-started run
+
+`LerobotTrainer.build_command` is the argv-parity helper documenting the
+draccus CLI the typed `build_config` maps to (and the contract
+`test_native_parity` guards). `build_config` warm-starts a reward-model run
+from `TrainSpec.base_model` by setting `reward_model.pretrained_path`, but
+`build_command` emitted `--policy.pretrained_path` only in the policy branch
+and never the `--reward_model.pretrained_path` equivalent. So the documented
+"equivalent CLI" for a warm-started reward-model (SARM) run trained from
+scratch (`pretrained_path` defaults to `None`) instead of loading
+`base_model` -- diverging from the in-process `train(cfg)` path. `build_command`
+now emits `--reward_model.pretrained_path=<base_model>` when `base_model` is
+set, mirroring the policy path. (`push_to_hub` is intentionally not emitted:
+`RewardModelConfig.push_to_hub` already defaults to `False`, so `build_config`
+setting it `False` is a no-op the CLI need not restate.)
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

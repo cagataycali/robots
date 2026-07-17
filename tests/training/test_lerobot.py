@@ -1044,6 +1044,31 @@ class TestRewardModelTraining:
         # A reward-model run does not train a policy -> no --policy.* flags.
         assert not any(c.startswith("--policy.") for c in cmd)
 
+    def test_build_command_emits_reward_model_pretrained_path(self, dataset_root, tmp_path, monkeypatch):
+        """A reward-model spec's base_model must reach --reward_model.pretrained_path.
+
+        build_config warm-starts cfg.reward_model.pretrained_path from base_model
+        (test_build_config_forwards_base_model_to_reward_pretrained_path), but the
+        argv-parity helper only emitted --policy.pretrained_path (the policy
+        branch). For a warm-started reward-model run the documented "equivalent
+        CLI" therefore trained from scratch (pretrained_path defaults to None)
+        instead of loading base_model -- the exact build_command<->build_config
+        drift the policy path already avoids.
+
+        Forces the offline reward-registry fallback so the argv parity is asserted
+        without importing lerobot (the pretrained_path emission is
+        registry-independent), keeping the check fast and deterministic.
+        """
+        import sys
+
+        monkeypatch.setitem(sys.modules, "lerobot.rewards", None)
+        spec = self._sarm_spec(dataset_root, tmp_path, image_key="observation.images.base")
+        spec.base_model = "lerobot/sarm_pretrained"
+        cmd = LerobotTrainer(device="cpu").build_command(spec)
+        assert "--reward_model.pretrained_path=lerobot/sarm_pretrained" in cmd
+        # A reward-model run never trains a policy -> no --policy.pretrained_path.
+        assert not any(c.startswith("--policy.pretrained_path=") for c in cmd)
+
     def test_validate_rejects_unknown_reward_type(self, dataset_root, tmp_path):
         spec = self._sarm_spec(dataset_root, tmp_path, type="not_a_reward_model")
         problems = LerobotTrainer().validate(spec)
