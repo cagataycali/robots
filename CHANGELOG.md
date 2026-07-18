@@ -2126,6 +2126,10 @@ set, mirroring the policy path. (`push_to_hub` is intentionally not emitted:
 `RewardModelConfig.push_to_hub` already defaults to `False`, so `build_config`
 setting it `False` is a no-op the CLI need not restate.)
 
+### Docs: point the streamed-training instructions at the current `lerobot.scripts.lerobot_train` module
+
+`strands_robots/streaming_dataset.py`'s module docstring and the `docs/recording.md` streamed-training example instructed `python -m lerobot.scripts.train ...` -- but lerobot renamed that module to `lerobot.scripts.lerobot_train` (the old path is removed, so the command now raises `ModuleNotFoundError`). The rest of the codebase already uses the current name (`strands_robots.training.lerobot`, `strands_robots.tools.lerobot_train`, `docs/training/overview.md`); these two user-facing spots lagged. Corrected both to `python -m lerobot.scripts.lerobot_train` and updated the `recording.md` example to the draccus `--dotted.flags` form (`--policy.type=act --dataset.repo_id=... --dataset.streaming=true --num_workers=4`), matching how the trainer is invoked everywhere else.
+
 ## [0.4.1] - 2026-07-01
 
 ### Security: Removed the unregistered `mimicgen` dependency (dependency-confusion RCE, CVE-pending)

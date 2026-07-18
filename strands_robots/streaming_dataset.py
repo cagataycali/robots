@@ -2,8 +2,8 @@
 """Streaming read-back for LeRobotDataset - read frames directly from the Hub.
 
 Primary use: in-process eval / replay / notebooks / agent loops (NOT a
-precondition for streamed *training* - ``python -m lerobot.scripts.train
-dataset.streaming=true`` already uses StreamingLeRobotDataset via
+precondition for streamed *training* - ``python -m lerobot.scripts.lerobot_train
+--dataset.streaming=true`` already uses StreamingLeRobotDataset via
 ``lerobot.datasets.factory.make_dataset``).
 
 Design mirrors :mod:`strands_robots.dataset_recorder`:
