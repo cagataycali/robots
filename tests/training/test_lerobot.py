@@ -880,6 +880,34 @@ class TestExpertOnlyMethod:
         # A plain (non-expert_only) run must not silently flip the flag on.
         assert cfg.policy.train_expert_only is False
 
+    def test_validate_rejects_expert_only_for_unsupported_policy(self, dataset_root, tmp_path):
+        # pi0_fast's lerobot config has NO train_expert_only field: build_config
+        # silently full-finetunes the backbone (hasattr guard) while reporting
+        # success, so validate() must surface it up front.
+        spec = self._expert_spec(dataset_root, tmp_path, ptype="pi0_fast")
+        problems = LerobotTrainer().validate(spec)
+        assert any("method 'expert_only' is not supported" in p for p in problems)
+
+    def test_validate_accepts_expert_only_for_supported_policy(self, dataset_root, tmp_path):
+        for ptype in ("pi0", "pi05", "smolvla"):
+            spec = self._expert_spec(dataset_root, tmp_path, ptype=ptype)
+            assert LerobotTrainer().validate(spec) == []
+
+    def test_policy_supports_expert_only_tracks_config_field(self):
+        # Drift guard: the capability must reflect each config's ACTUAL
+        # train_expert_only field, not a hardcoded copy - so a lerobot policy
+        # that gains/loses the field is tracked with zero maintenance here.
+        import dataclasses
+
+        from strands_robots.training.lerobot import _policy_registry, _policy_supports_expert_only
+
+        reg = _policy_registry()
+        if reg is None:
+            pytest.skip("lerobot registry unavailable offline")
+        for ptype, cfg_cls in reg.items():
+            has_field = any(f.name == "train_expert_only" for f in dataclasses.fields(cfg_cls))
+            assert _policy_supports_expert_only(ptype) is has_field, ptype
+
 
 class TestSampleWeightingRABC:
     """RA-BC sample-weighting wiring: extra['sample_weighting'] -> nested SampleWeightingConfig.

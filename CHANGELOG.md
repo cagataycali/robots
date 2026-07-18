@@ -5,6 +5,23 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: training `expert_only` supported-policy set sourced live from lerobot
+
+`LerobotTrainer` gated `method="expert_only"` (freeze the VLM, train only the
+action expert) against a HARD-CODED tuple `{pi0, pi05, pi0_fast, smolvla}`, and
+the `lerobot_train` tool's `build_train_command` used a separate hard-copied
+set. That is the stale-allowlist drift class (sibling of the `lerobot_async`
+and reward-model registry fixes): lerobot's `PI0FASTConfig` exposes NO
+`train_expert_only` field, so an `expert_only` pi0_fast run passed `validate`,
+then `build_config`'s `hasattr` guard silently SKIPPED the flag and
+full-finetuned the whole backbone (a far more expensive, different run) while
+reporting success; conversely a policy lerobot later GAINS the field would be
+wrongly rejected. The supported set is now sourced live -- a policy supports
+`expert_only` iff its lerobot config declares a `train_expert_only` field
+(`dataclasses.fields`) -- with a static fallback used only when lerobot is not
+importable, and drift-guard tests keep the fallback a faithful snapshot. The
+docstrings no longer claim a fixed `pi0/pi05/pi0_fast/smolvla` list.
+
 ### Changed: `lerobot_async` sources its server-supported policy set live from lerobot
 
 `LerobotAsyncPolicy` validates `policy_type` client-side against the set of
