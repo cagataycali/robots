@@ -5,6 +5,18 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Changed: `lerobot_async` sources its server-supported policy set live from lerobot
+
+`LerobotAsyncPolicy` validates `policy_type` client-side against the set of
+policies a lerobot `PolicyServer` can serve. That set was a hand-copied tuple
+kept in sync with `lerobot.async_inference.constants.SUPPORTED_POLICIES` by
+hand -- a silent drift landmine: when lerobot adds an async-servable policy the
+client wrongly rejected it (only the frozen copy was accepted), and if lerobot
+dropped one the client accepted it only to fail after the gRPC handshake. It is
+now sourced live from that lerobot constant, with a static fallback used only
+when lerobot or its async extra is not importable, and a drift-guard test keeps
+the fallback a faithful snapshot.
+
 ### Fixed: `add_robot` rejects a non-finite / malformed base pose instead of baking it into the scene
 
 `add_robot` writes the caller-supplied `position` (3) / `orientation`
