@@ -589,7 +589,7 @@ def get_session() -> Any | None:
             # (the prior try/except was dead -- _build_config() below
             # invokes resolve_auth_mode() again unconditionally).
             # Aligns with the loud-on-misconfig posture of _float_env
-            # and _load_acl_file. Addressed in PR-224 R1.
+            # and _load_acl_file.
             #
             # Prefer the thread-local
             # ``auth_mode`` stash from ``Mesh.start``. This is the same
@@ -723,7 +723,7 @@ def _get_zenoh_session_directly() -> Any | None:
             # (the prior try/except was dead -- _build_config() below
             # invokes resolve_auth_mode() again unconditionally).
             # Aligns with the loud-on-misconfig posture of _float_env
-            # and _load_acl_file. Addressed in PR-224 R1.
+            # and _load_acl_file.
             #
             # Prefer the thread-local
             # ``auth_mode`` stash. Mirrors the same fix at the
