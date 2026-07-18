@@ -574,6 +574,19 @@ class TestStrictKeys:
         assert m.video.get("webcam") == "ego_view_bg_crop_pad_res256_freq20"
         assert any("positional" in r.message for r in caplog.records)
 
+    def test_action_nonstrict_maps_positionally_and_warns(self, caplog):
+        # Symmetric to the observation case: so100 action keys
+        # (single_arm, gripper) share no name with GR1's action keys
+        # (left_arm, right_arm, ...), so strict_keys=False must fall back to
+        # positional pairing in declaration order (zip stops at the shorter
+        # list) and emit an INFO log per auto-mapped key.
+        import logging
+
+        with caplog.at_level(logging.INFO):
+            m = _auto_infer_action_mapping(DATA_CONFIG_MAP["so100"], GR1_MMC, strict_keys=False)
+        assert m.actions == {"left_arm": "single_arm", "right_arm": "gripper"}
+        assert any("positional" in r.message for r in caplog.records)
+
     def test_obs_exact_match_never_raises_in_strict_mode(self):
         # so100 <-> SO100_MMC matches by exact name, so strict_keys=True is a no-op.
         m = _auto_infer_observation_mapping(DATA_CONFIG_MAP["so100"], SO100_MMC, strict_keys=True)
