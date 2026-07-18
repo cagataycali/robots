@@ -745,6 +745,32 @@ def test_blocked_method_name_is_refused(monkeypatch: pytest.MonkeyPatch) -> None
     assert called["n"] == 0, "blocked method must not be invoked"
 
 
+def test_blocked_method_reached_through_module_path_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The method blocklist must screen the module path, not just the ``method``
+    argument. ``_import_from_lerobot`` walks attribute chains, so an agent can
+    resolve a side-effecting callable directly by putting its name in ``module``
+    with an empty ``method`` (e.g. ``module="...LeRobotDataset.push_to_hub"``).
+    That callable must still be refused before invocation, otherwise the guard
+    is trivially bypassable."""
+    called = {"n": 0}
+
+    def resolver(path: str) -> Any:
+        # The dotted module path resolved straight to the callable itself.
+        def push_to_hub(**kwargs: Any) -> None:
+            called["n"] += 1  # must never run
+
+        return push_to_hub
+
+    monkeypatch.setattr(M, "_import_from_lerobot", resolver)
+    result = _fn(module="datasets.lerobot_dataset.LeRobotDataset.push_to_hub", method="")
+    assert result["status"] == "error"
+    text = _texts(result)
+    _assert_ascii(text)
+    assert "Blocked" in text
+    assert "push_to_hub" in text
+    assert called["n"] == 0, "blocked callable reached via module path must not be invoked"
+
+
 def test_safe_method_on_unblocked_module_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
     """The guards are an allowlist, not a blanket denial: an ordinary method on
     an unrestricted module still dispatches and returns its result."""
