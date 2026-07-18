@@ -5,6 +5,21 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Docs: document the six remaining undocumented dispatchable sim actions
+
+`get_state`, `list_objects`, `remove_object`, `reset`, `set_timestep`, and
+`step` were dispatchable through the MuJoCo simulation agent tool (they are in
+the `tool_spec` action enum and `describe()` advertises them) yet their handler
+methods on `MuJoCoSimEngine` had NO docstring -- so an agent enumerating the
+tool spec had no summary of what the action does or when it errors, the exact
+discovery-surface dead-end the docstring convention exists to prevent. Each now
+carries a summary + Args/Returns naming the `{status, content}` result and its
+`status="error"` conditions (e.g. `reset` documents that it flushes buffered
+recording frames as a separate episode and errors while a policy is running;
+`step` documents that `0` is an accepted no-op). A new contract test
+(`test_dispatchable_actions_have_documented_handlers`) pins the invariant on the
+live engine so no future dispatchable action can ship without a docstring.
+
 ### Fixed: training `expert_only` supported-policy set sourced live from lerobot
 
 `LerobotTrainer` gated `method="expert_only"` (freeze the VLM, train only the

@@ -786,6 +786,49 @@ class TestDescribeMuJoCo:
         finally:
             sim.destroy()
 
+    def test_dispatchable_actions_have_documented_handlers(self):
+        """Every agent-dispatchable action's handler must carry a docstring.
+
+        The handler docstring is the discovery surface an agent reads to learn
+        what an action does; an undocumented handler dead-ends a caller who
+        enumerated the tool spec. Pins the invariant on the live engine so a
+        newly-wired action cannot ship without documentation. (This closed six
+        stragglers: get_state, list_objects, remove_object, reset,
+        set_timestep, step.)
+        """
+        import os
+
+        os.environ.setdefault("MUJOCO_GL", "egl")
+        from strands_robots.simulation import Simulation
+
+        def _find_action_enum(node):
+            if isinstance(node, dict):
+                enum = node.get("enum")
+                if isinstance(enum, list) and all(isinstance(x, str) for x in enum):
+                    yield enum
+                for value in node.values():
+                    yield from _find_action_enum(value)
+
+        sim = Simulation()
+        try:
+            enums = [e for e in _find_action_enum(sim.tool_spec) if "add_robot" in e and "reset" in e]
+            assert len(enums) == 1, "tool_spec must expose exactly one action enum"
+            actions = enums[0]
+            aliases = sim._ACTION_ALIASES
+            undocumented = []
+            for action in actions:
+                handler = getattr(sim, aliases.get(action, action), None)
+                assert callable(handler), f"dispatchable action {action!r} has no callable handler"
+                if not (getattr(handler, "__doc__", None) or "").strip():
+                    undocumented.append(action)
+            assert not undocumented, (
+                "dispatchable actions with undocumented handlers: "
+                f"{sorted(undocumented)} - each action's handler docstring is "
+                "the agent discovery surface for that action"
+            )
+        finally:
+            sim.destroy()
+
 
 class TestNoAlias:
     """Code is the single source of truth: no duplicate-name aliases.
