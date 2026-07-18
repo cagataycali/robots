@@ -532,4 +532,5 @@ def test_validation_tracks_a_newly_added_lerobot_policy(monkeypatch: pytest.Monk
         policy_type=fake,
         pretrained_name_or_path="x/y",
     )
+    assert isinstance(policy, LerobotAsyncPolicy)
     assert policy.policy_type == fake
