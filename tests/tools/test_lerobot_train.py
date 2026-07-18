@@ -179,11 +179,11 @@ def test_expert_only_policy_types_tracks_lerobot_registry() -> None:
     # that actually declare a train_expert_only field, so it tracks lerobot.
     import dataclasses
 
-    try:
-        import lerobot.policies  # noqa: F401
-        from lerobot.configs.policies import PreTrainedConfig
-    except Exception:  # noqa: BLE001
-        pytest.skip("lerobot registry unavailable offline")
+    # importorskip both registers the policy configs (side-effect import) and
+    # binds PreTrainedConfig unconditionally, so it is always initialized on the
+    # path that uses it below (CodeQL: no use-before-init).
+    pytest.importorskip("lerobot.policies")
+    PreTrainedConfig = pytest.importorskip("lerobot.configs.policies").PreTrainedConfig
     expected = {
         name
         for name, cfg_cls in PreTrainedConfig.get_known_choices().items()
