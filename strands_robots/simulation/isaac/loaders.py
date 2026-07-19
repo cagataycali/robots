@@ -2,7 +2,8 @@
 
 Follow-up to the R7 Phase 1 procedural-builder slice (PR #46): instead of
 hardcoding ``_build_so100`` / ``_build_panda`` / ``_build_unitree_g1`` in
-``procedural.py``, drive the same ``ProceduralRobot`` dataclass from existing
+:mod:`strands_robots.simulation.isaac.procedural`, drive the same
+``ProceduralRobot`` dataclass from existing
 robot description files (URDF, MJCF, USD) so the code path becomes a generic
 loader rather than a per-robot Python builder.
 
