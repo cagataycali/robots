@@ -1083,3 +1083,50 @@ def test_run_multi_policy_single_robot_records_unnamespaced_columns(tmp_path):
     finally:
         sim.destroy()
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def test_get_state_reports_live_recording_progress(sim_with_two_robots, tmp_path):
+    """``get_state`` annotates the recorded step count while a recording is live.
+
+    ``Simulation.get_state`` is the human-readable introspection surface an
+    agent polls to monitor a data-collection episode. When a LeRobotDataset
+    recording is active it appends a ``[recording] N steps`` line so the caller
+    can watch the buffer fill mid-rollout; on an idle world that line is absent.
+    The count reflects the trajectory buffer the run_policy hook fills, so it is
+    strictly positive once frames have been rolled out under an active recorder.
+    """
+    import re
+
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    sim = sim_with_two_robots
+
+    # Idle world: no recording annotation on the state summary.
+    idle = sim.get_state()
+    assert idle["status"] == "success"
+    assert "[recording]" not in idle["content"][0]["text"]
+
+    r = sim.start_recording(repo_id="local/state_progress", fps=20, root=str(tmp_path), overwrite=True)
+    assert r["status"] == "success", r
+
+    from strands_robots.policies.mock import MockPolicy
+
+    policy = MockPolicy()
+    policy.set_robot_state_keys(sim.robot_joint_names("alpha"))
+    r = sim.run_policy("alpha", policy_object=policy, duration=0.5, control_frequency=20.0)
+    assert r["status"] == "success", r
+
+    # Recording still active: the summary reports a positive buffered count.
+    active_text = sim.get_state()["content"][0]["text"]
+    match = re.search(r"\[recording\] (\d+) steps", active_text)
+    assert match is not None, active_text
+    assert int(match.group(1)) > 0, active_text
+
+    sim.stop_recording()
+
+    # Back to idle: the annotation is gone once the recording is finalized.
+    done_text = sim.get_state()["content"][0]["text"]
+    assert "[recording]" not in done_text
