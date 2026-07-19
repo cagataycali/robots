@@ -408,7 +408,7 @@ def _audit_tool_action(action: str, target: str, success: bool, detail: str) -> 
     """Best-effort audit log of every safety-significant tool call.
 
     A swallowed exception with no log line means a broken audit
-    path silently disappears. Match the ``core.py:_on_cmd`` pattern -
+    path silently disappears. Match the :meth:`~strands_robots.mesh.core.Mesh._on_cmd` pattern -
     log at DEBUG so operators investigating "why don't I see my LLM
     tool actions in the audit log?" get a breadcrumb without flooding
     production. Audit failures must NEVER propagate up into the safety
