@@ -26,12 +26,22 @@ flagging every ``.py`` token: mesh docstrings legitimately cite *test* modules b
 filename (the guarding ``test_*.py`` files that pin a behavior), which live under
 ``tests/`` and are not importable modules of the package. ``__init__.py`` is
 excluded because it names a package, not a cross-referenceable module symbol.
+
+A sibling filename rots identically whether it sits in a docstring or a plain
+``#`` comment, so the guard covers both: an earlier version scanned only
+docstrings, letting comment references such as ``audit.py:_ensure_paths`` slip
+through. Comment scanning uses :mod:`tokenize` so only real ``#`` comments are
+inspected - a filename used as data in a code string literal
+(``zf.writestr("lambda_function.py", ...)``) names a file in another process,
+not an internal sibling, and is correct as written.
 """
 
 from __future__ import annotations
 
 import ast
+import io
 import re
+import tokenize
 from pathlib import Path
 
 import strands_robots.mesh as mesh_pkg
@@ -77,4 +87,32 @@ def test_mesh_docstrings_reference_modules_not_sibling_filenames() -> None:
         "mesh docstrings must cross-reference sibling modules by module "
         "(:mod:`~strands_robots.mesh.session`) not source filename (``session.py``). "
         f"Offending docstrings: {offenders}"
+    )
+
+
+def _comments_with_sibling_filename_refs() -> dict[str, list[str]]:
+    """Map ``relpath`` -> module-filename tokens found in its ``#`` comments.
+
+    The docstring guard above misses references buried in comments; this closes
+    that gap using :mod:`tokenize` so only genuine comment text is inspected and
+    code string literals that name a file as data are never flagged.
+    """
+    offenders: dict[str, list[str]] = {}
+    for source_file in sorted(_PACKAGE_DIR.rglob("*.py")):
+        source = source_file.read_text(encoding="utf-8")
+        hits: list[str] = []
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.type == tokenize.COMMENT:
+                hits.extend(t for t in _FILENAME_RE.findall(tok.string) if t in _PACKAGE_MODULES)
+        if hits:
+            offenders[str(source_file.relative_to(_PACKAGE_DIR))] = sorted(set(hits))
+    return offenders
+
+
+def test_mesh_comments_reference_modules_not_sibling_filenames() -> None:
+    offenders = _comments_with_sibling_filename_refs()
+    assert not offenders, (
+        "mesh comments must cross-reference sibling modules by module path "
+        "(``strands_robots.mesh.audit._ensure_paths``) not source filename "
+        f"(``audit.py``). Offending files: {offenders}"
     )
