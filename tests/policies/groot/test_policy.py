@@ -23,6 +23,7 @@ from strands_robots.policies.groot.data_config import Gr00tDataConfig  # noqa: E
 from strands_robots.policies.groot.policy import (  # noqa: E402
     _auto_infer_action_mapping,
     _auto_infer_observation_mapping,
+    _coerce_action_row,
     _detect_groot_version,
     _match_keys,
     _parse_action_mapping,
@@ -631,6 +632,13 @@ class TestShapes:
         r = _to_state_batch([1.0, 2.0, 3.0])
         assert r.shape == (1, 1, 3) and r.dtype == np.float32
 
+    def test_state_3d_and_higher_passthrough(self):
+        # Already-batched (B, T, D) state is left as-is (only dtype is
+        # coerced to float32), so callers may pre-shape their own batches.
+        r = _to_state_batch(np.zeros((2, 3, 4), dtype=np.float64))
+        assert r.shape == (2, 3, 4) and r.dtype == np.float32
+        assert _to_state_batch(np.zeros((1, 2, 3, 4))).shape == (1, 2, 3, 4)
+
     def test_ref_from_mapped_video_keys(self):
         """Should only look at keys in the video_keys set."""
         obs = {
@@ -805,6 +813,32 @@ class TestUnpackActions:
 
     def test_empty(self):
         assert _make_policy(action_mapping=ActionMapping())._unpack_actions({}) == []
+
+
+class TestCoerceActionRow:
+    """_coerce_action_row pins the get_actions() -> list[dict] output typing
+    contract shared by the local and service unpack paths: per-joint values are
+    python float (0-D) or list[float] (vector), never raw np.ndarray."""
+
+    def test_numpy_scalar_becomes_python_float(self):
+        out = _coerce_action_row(np.float32(1.5))
+        assert out == 1.5 and type(out) is float
+
+    def test_numpy_vector_becomes_python_float_list(self):
+        out = _coerce_action_row(np.array([1.0, 2.0], dtype=np.float32))
+        assert out == [1.0, 2.0]
+        assert isinstance(out, list) and all(type(x) is float for x in out)
+
+    def test_python_scalar_without_tolist_becomes_float(self):
+        # Values that do not expose .tolist() (a bare python number) still
+        # coerce to a python float via the ndim==0 branch.
+        out = _coerce_action_row(3)
+        assert out == 3.0 and type(out) is float
+
+    def test_python_sequence_without_tolist_becomes_list(self):
+        # A python list/tuple has no .tolist(); the ndim!=0 branch returns list().
+        assert _coerce_action_row([1.0, 2.0]) == [1.0, 2.0]
+        assert _coerce_action_row((1.0, 2.0)) == [1.0, 2.0]
 
 
 # (section)
