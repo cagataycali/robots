@@ -92,8 +92,6 @@ def _import_from_lerobot(module_path: str):
     full_path = f"lerobot.{module_path}" if not module_path.startswith("lerobot.") else module_path
 
     segments = full_path.split(".")
-    if not segments or segments == [""]:
-        raise LeRobotResolveError(f"Cannot resolve '{module_path}' in lerobot")
 
     # Walk from the longest importable module prefix down to the shortest. The
     # first prefix that imports cleanly is the module; remaining segments are

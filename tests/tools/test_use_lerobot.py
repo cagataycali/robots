@@ -356,6 +356,56 @@ def test_deep_import_is_cached() -> None:
     assert "lerobot.policies" in M._DEEP_IMPORTED
 
 
+def test_deep_import_skips_private_and_test_submodules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deep import walks public submodules only: ``_private`` names and a
+    ``tests`` package are skipped before any import is attempted, so discovery
+    never drags a package's own test suite into the process."""
+    import types
+
+    root = types.ModuleType("lerobot.fakepkg")
+    root.__path__ = []  # non-empty attribute marks this module as a package
+    real_import = importlib.import_module
+    imported: list[str] = []
+
+    def fake_import(name: str, *a: Any, **k: Any) -> Any:
+        imported.append(name)
+        if name == "lerobot.fakepkg":
+            return root
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    monkeypatch.setattr(
+        M.pkgutil,
+        "iter_modules",
+        lambda path: [(None, "_private", False), (None, "tests", True), (None, "core", True)],
+    )
+    M._DEEP_IMPORTED.discard("lerobot.fakepkg")
+    try:
+        M._deep_import("lerobot.fakepkg")
+    finally:
+        M._DEEP_IMPORTED.discard("lerobot.fakepkg")
+        M._DEEP_IMPORTED.discard("lerobot.fakepkg.core")
+
+    # Only the public ``core`` submodule is recursed into; the private and test
+    # submodules are filtered out and never handed to importlib.
+    assert "lerobot.fakepkg.core" in imported
+    assert "lerobot.fakepkg._private" not in imported
+    assert "lerobot.fakepkg.tests" not in imported
+
+
+def test_registry_choices_empty_when_class_lacks_known_choices(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Registry discovery reads lerobot's own ``ChoiceRegistry.get_known_choices``.
+    If a config class ever loses that method (lerobot API drift), discovery must
+    degrade to an empty mapping rather than raising AttributeError."""
+
+    class _NoChoices:
+        pass
+
+    monkeypatch.setattr(M, "_deep_import", lambda pkg, _seen=None: None)
+    monkeypatch.setattr(M, "_import_from_lerobot", lambda path: _NoChoices)
+    assert M._get_registry_choices("robots") == {}
+
+
 # ----------------------------------------------------------------------------
 # import resolution -- resolver-internal error classification
 # ----------------------------------------------------------------------------
