@@ -778,22 +778,6 @@ class MuJoCoSimEngine(
             logger.debug("spec.to_xml() failed: %s", xml_err)
         self._world.status = SimStatus.IDLE
 
-    def _recompile_world(self) -> dict[str, Any]:
-        """Rebuild MjModel from scratch via :meth:`_compile_world`.
-
-        This is the "nuke and pave" path used when the world config changes
-        in a way that can't be expressed as a spec mutation (e.g. clearing
-        every body). For incremental changes (add/remove body, camera),
-        prefer ``_recompile_preserving_state`` in :mod:`scene_ops` which
-        goes through ``spec.recompile(model, data)`` and preserves joint
-        state.
-        """
-        try:
-            self._compile_world()
-            return {"status": "success"}
-        except Exception as e:
-            return {"status": "error", "content": [{"text": f"Recompile failed: {e}"}]}
-
     # Robot Management
 
     @staticmethod
