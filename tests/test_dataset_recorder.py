@@ -1951,3 +1951,101 @@ def test_resolve_dataset_dir_falls_back_to_default_home_when_lerobot_absent(monk
     resolved = resolve_dataset_dir("user/data")
 
     assert resolved == Path.home() / ".cache" / "huggingface" / "lerobot" / "user" / "data"
+
+
+class TestSyncDatasetToBucketFreeFunction:
+    """The lifecycle-independent ``sync_dataset_to_bucket(root, bucket)`` helper.
+
+    Syncing an existing on-disk dataset must not require a live recorder, a
+    simulation world, or lerobot: it operates on a bare directory. These pin
+    that the free function is exported at the package top level and enforces the
+    same allowlist/finalized-meta contract as the recorder method, deriving
+    ``run_id`` from the directory name when omitted.
+    """
+
+    def test_exported_at_package_top_level(self):
+        """``from strands_robots import sync_dataset_to_bucket`` resolves."""
+        import strands_robots
+        from strands_robots.dataset_recorder import sync_dataset_to_bucket as impl
+
+        assert strands_robots.sync_dataset_to_bucket is impl
+        assert "sync_dataset_to_bucket" in strands_robots.__all__
+
+    def test_syncs_bare_directory_deriving_run_id_from_dirname(self, tmp_path, monkeypatch):
+        """No recorder needed: a finalized directory syncs, run_id = dir name."""
+        import subprocess
+
+        from strands_robots.dataset_recorder import sync_dataset_to_bucket
+
+        ds_dir = tmp_path / "robot-fave-20260721"
+        (ds_dir / "meta").mkdir(parents=True)
+        monkeypatch.setattr("strands_robots.dataset_recorder._hf_executable", lambda: "hf")
+
+        seen: list[list[str]] = []
+
+        def _fake_run(cmd, **_kw):
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+        monkeypatch.setattr(subprocess, "run", _fake_run)
+
+        result = sync_dataset_to_bucket(ds_dir, "my-org/robot-fave")
+
+        assert result["status"] == "success"
+        assert result["bucket_uri"] == "hf://buckets/my-org/robot-fave/robot-fave-20260721"
+        # No recorder -> no episode/frame counts leak into the free-function result.
+        assert "episodes" not in result
+        assert "frames" not in result
+        # hf sync targets the bare directory as-is.
+        sync_cmd = seen[-1]
+        assert sync_cmd[:2] == ["hf", "sync"]
+        assert sync_cmd[2] == str(ds_dir)
+
+    def test_rejects_unsafe_bucket_before_subprocess(self, tmp_path, monkeypatch):
+        """Agent-reachable: injection-unsafe bucket rejected without running hf."""
+        import subprocess
+
+        from strands_robots.dataset_recorder import sync_dataset_to_bucket
+
+        (tmp_path / "meta").mkdir()
+        monkeypatch.setattr("strands_robots.dataset_recorder._hf_executable", lambda: "hf")
+
+        def _boom(*_a, **_k):
+            raise AssertionError("subprocess must not run for an unsafe bucket")
+
+        monkeypatch.setattr(subprocess, "run", _boom)
+
+        result = sync_dataset_to_bucket(tmp_path, "../evil")
+        assert result["status"] == "error"
+        assert "invalid bucket" in result["message"]
+
+    def test_requires_finalized_meta_dir(self, tmp_path, monkeypatch):
+        """A directory without meta/ (norm stats) is rejected."""
+        from strands_robots.dataset_recorder import sync_dataset_to_bucket
+
+        monkeypatch.setattr("strands_robots.dataset_recorder._hf_executable", lambda: "hf")
+        result = sync_dataset_to_bucket(tmp_path, "my-org/robot-fave")
+        assert result["status"] == "error"
+        assert "meta/" in result["message"]
+
+    def test_recorder_method_delegates_and_adds_counts(self, tmp_path, monkeypatch):
+        """``DatasetRecorder.sync_to_bucket`` delegates then adds episode/frame counts."""
+        import subprocess
+
+        from strands_robots import dataset_recorder as dr
+
+        _write_meta(tmp_path)
+        monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+        monkeypatch.setattr(
+            subprocess,
+            "run",
+            lambda cmd, **_kw: subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr=""),
+        )
+
+        result = _sync_recorder(tmp_path, repo_id="my-org/robot-fave").sync_to_bucket("my-org/robot-fave")
+
+        assert result["status"] == "success"
+        assert result["bucket_uri"] == "hf://buckets/my-org/robot-fave/robot-fave"
+        # The method layer contributes the recorder's counts on top of the delegate.
+        assert result["episodes"] == 2
+        assert result["frames"] == 40

@@ -345,6 +345,32 @@ episodes to the existing dataset instead of replacing it.
 | `push_to_hub(tags=None, private=False)` | Upload to a versioned HF dataset repo |
 | `sync_to_bucket(bucket, run_id=None, private=True)` | Sync to a mutable HF Storage Bucket (`hf://buckets/...`) — Xet-deduped collection target; needs the `hf` CLI. `bucket` (`name` or `org/name`) and `run_id` (single segment) are allowlist-validated (`[A-Za-z0-9._-]`, no traversal) before the sync |
 
+## Sync an on-disk dataset without a recorder
+
+`DatasetRecorder.sync_to_bucket` needs a live recorder. When the dataset
+already exists on disk — recorded earlier in the process, produced by
+`lerobot-record` on hardware, or a directory you want to re-sync ("daily
+sync") — use the lifecycle-independent module-level helper. It needs neither a
+recorder, a simulation world, nor lerobot to be importable: just the `hf` CLI
+and a finalized dataset directory (one containing `meta/`).
+
+```python
+from strands_robots import sync_dataset_to_bucket
+
+sync_dataset_to_bucket(
+    "/root/.cache/huggingface/lerobot/user/my_dataset",  # on-disk dataset dir
+    "my-org/robot-fave",                                 # bucket "name" or "org/name"
+    # run_id defaults to the directory name when omitted
+)
+# -> {"status": "success", "bucket_uri": "hf://buckets/my-org/robot-fave/my_dataset"}
+```
+
+`bucket` and `run_id` are allowlist-validated (`[A-Za-z0-9._-]`, no traversal
+or shell metacharacters) before any subprocess, and the directory must contain
+`meta/` (normalization stats) or the sync is refused. `DatasetRecorder.sync_to_bucket`
+is a thin delegate to this helper that additionally reports the recorder's
+episode/frame counts.
+
 ## Read back
 
 Fully materialized (downloads everything):
