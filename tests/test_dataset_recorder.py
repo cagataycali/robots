@@ -1966,9 +1966,9 @@ class TestSyncDatasetToBucketFreeFunction:
     def test_exported_at_package_top_level(self):
         """``from strands_robots import sync_dataset_to_bucket`` resolves."""
         import strands_robots
-        from strands_robots.dataset_recorder import sync_dataset_to_bucket as impl
+        import strands_robots.dataset_recorder
 
-        assert strands_robots.sync_dataset_to_bucket is impl
+        assert strands_robots.sync_dataset_to_bucket is strands_robots.dataset_recorder.sync_dataset_to_bucket
         assert "sync_dataset_to_bucket" in strands_robots.__all__
 
     def test_syncs_bare_directory_deriving_run_id_from_dirname(self, tmp_path, monkeypatch):
