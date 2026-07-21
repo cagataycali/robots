@@ -1367,11 +1367,18 @@ class PolicyRunner:
             payload["action_resolution_rate"] = {}
             payload["partial_action_failure_rate"] = 0.0
 
-        # If every send_action call failed (all keys unresolved), the robot
-        # never moved -- report this as an error rather than a false success.
-        if _action_errors > 0 and _action_errors >= step_count and step_count > 0:
+        # If EVERY step was a TOTAL failure (the policy emitted keys but none
+        # resolved to an actuator), the robot never moved -- report this as an
+        # error rather than a false success. This mirrors the fail-fast probe
+        # and must key off ``_total_failure_steps``, NOT ``_action_errors``:
+        # ``_action_errors`` also counts PARTIAL steps (some keys resolve, the
+        # robot moves), so a policy that drives valid keys plus one extra
+        # unresolved key every step (e.g. a 7-DOF-trained policy on a 6-DOF arm)
+        # would otherwise be misreported as "the robot did not move". A partial
+        # rollout is operational -- surfaced via partial_action_failure_rate.
+        if _total_failure_steps >= step_count and step_count > 0:
             text += (
-                f"\n\nALL {_action_errors} action steps had unresolved keys "
+                f"\n\nALL {step_count} action steps had 100% unresolved keys "
                 f"-- the robot did not move. Check that the policy's output keys "
                 f"match the robot's actuator names."
             )
