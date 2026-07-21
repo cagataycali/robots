@@ -390,8 +390,16 @@ Equivalently, the standalone reader: `from strands_robots import StreamingDatase
 Useful kwargs (forwarded to `StreamingLeRobotDataset`, version-tolerant):
 `episodes=[...]` (subset without download), `buffer_size`, `max_num_shards`,
 `return_uint8=True` (default; halves frame bandwidth), and
-`drop_videos=True` (proprio-only — skips video decode entirely, so it works on
-edge devices without a torchcodec wheel).
+`drop_videos=True` (proprio-only — keeps camera keys out of the temporal window
+so no video is decoded, letting edge devices without a torchcodec wheel stream
+state/action). `drop_videos=True` requires `delta_timestamps` (it prunes video
+keys from it); without `delta_timestamps` every frame still decodes its MP4, so
+that combination raises rather than silently needing torchcodec anyway.
+
+To stream from a Hugging Face Storage Bucket pass `repo_type="bucket"`. This is
+forwarded to `StreamingLeRobotDataset` and requires a lerobot whose streaming
+reader accepts `repo_type`; on an older lerobot the call raises instead of
+silently reading the versioned dataset namespace.
 
 For **training**, the upstream trainer uses the same engine:
 

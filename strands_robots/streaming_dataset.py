@@ -111,13 +111,50 @@ class StreamingDatasetReader:
         shuffle: bool = True,
         return_uint8: bool = True,  # halves frame bandwidth; policies normalize
         validate_deltas: bool = True,  # parity with the materialized dataset path
-        drop_videos: bool = False,  # proprio-only streaming (no torchcodec)
-        repo_type: str = "dataset",  # "dataset" or "bucket"; forwarded only to a lerobot that accepts it
+        drop_videos: bool = False,  # proprio-only; requires delta_timestamps (else raises)
+        repo_type: str = "dataset",  # "dataset" or "bucket"; a non-default value raises if lerobot cannot forward it
     ) -> StreamingDatasetReader:
         StreamingCls = _get_streaming_cls()
         init_sig = inspect.signature(StreamingCls).parameters
         # If the constructor accepts **kwargs, every candidate is forwardable.
         accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in init_sig.values())
+
+        # repo_type selects WHICH storage system is read ("bucket" vs the
+        # versioned "dataset" namespace). Unlike the cosmetic kwargs below, it
+        # must never be silently dropped: forwarding a bucket request to a
+        # lerobot whose StreamingLeRobotDataset does not declare repo_type would
+        # read a different repo (or 404) with no signal. Fail loud so the caller
+        # upgrades lerobot instead of silently streaming the wrong data. The
+        # default "dataset" is always safe to drop (no semantic change).
+        if repo_type != "dataset" and not (accepts_var_kw or "repo_type" in init_sig):
+            try:
+                from importlib.metadata import version as _pkg_version
+
+                _lr_ver = _pkg_version("lerobot")
+            except Exception:  # noqa: BLE001 - version lookup is best-effort diagnostics
+                _lr_ver = "unknown"
+            raise RuntimeError(
+                f"repo_type={repo_type!r} is not supported by the installed "
+                f"lerobot (version {_lr_ver}): its StreamingLeRobotDataset does "
+                "not accept a repo_type parameter, so the request would silently "
+                "read the versioned dataset namespace instead. Upgrade lerobot to "
+                "a version whose StreamingLeRobotDataset accepts repo_type, or "
+                "pass repo_type='dataset'."
+            )
+
+        # drop_videos avoids torchcodec by keeping camera keys out of the
+        # temporal window (delta_timestamps). With no delta_timestamps there is
+        # nothing to prune and every streamed frame still decodes its camera
+        # MP4 - so the advertised proprio-only, torchcodec-free path is a no-op.
+        # Fail loud rather than quietly requiring torchcodec anyway.
+        if drop_videos and not delta_timestamps:
+            raise ValueError(
+                "drop_videos=True has no effect without delta_timestamps: every "
+                "streamed frame still decodes its camera MP4 (which needs "
+                "torchcodec). Pass delta_timestamps selecting only the proprio "
+                "keys to stream, e.g. delta_timestamps={'observation.state': "
+                "[0.0], 'action': [0.0]}, to stream state/action without video."
+            )
 
         # Proprio-only: strip video keys from delta_timestamps so video decode
         # (torchcodec) is never invoked - lets constrained edge devices stream

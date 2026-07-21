@@ -80,19 +80,31 @@ def test_repo_type_forwarded_when_supported(monkeypatch):
     assert r.dataset.repo_type == "bucket"
 
 
-def test_repo_type_dropped_when_unsupported(monkeypatch):
-    """A constructor without repo_type must not raise when repo_type is passed."""
+class _Narrow:
+    """Constructor that accepts only repo_id (no repo_type, no **kwargs)."""
 
-    class _Narrow:
-        def __init__(self, repo_id):
-            self.repo_id = repo_id
-            self.num_frames = self.num_episodes = self.fps = 0
+    def __init__(self, repo_id):
+        self.repo_id = repo_id
+        self.num_frames = self.num_episodes = self.fps = 0
 
-        def __iter__(self):
-            yield {}
+    def __iter__(self):
+        yield {}
 
+
+def test_repo_type_bucket_raises_when_unsupported(monkeypatch):
+    """repo_type selects WHICH storage is read, so a lerobot that cannot
+    forward it must fail loud rather than silently reading the dataset
+    namespace (a bucket request that quietly reads a different repo)."""
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    r = sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
+    with pytest.raises(RuntimeError, match="repo_type='bucket' is not supported"):
+        sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
+
+
+def test_repo_type_default_dataset_never_raises_when_unsupported(monkeypatch):
+    """The default repo_type='dataset' is a no-op semantic and is always safe
+    to drop on a lerobot without the parameter - it must not raise."""
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
+    r = sd.StreamingDatasetReader.open("org/ds", validate_deltas=False)
     assert r.dataset.repo_id == "org/ds"
 
 
@@ -123,6 +135,15 @@ def test_drop_videos_all_camera_keys_yields_none(monkeypatch):
     )
     # All keys were camera keys → delta_timestamps drops out entirely.
     assert "delta_timestamps" not in r.dataset.kw
+
+
+def test_drop_videos_without_deltas_raises(monkeypatch):
+    """drop_videos=True with no delta_timestamps is a no-op on the wire (every
+    frame still decodes its MP4), so the advertised torchcodec-free path must
+    fail loud instead of silently requiring torchcodec."""
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
+    with pytest.raises(ValueError, match="drop_videos=True has no effect without delta_timestamps"):
+        sd.StreamingDatasetReader.open("org/ds", drop_videos=True, validate_deltas=False)
 
 
 def test_dataloader_ignores_shuffle(monkeypatch):
