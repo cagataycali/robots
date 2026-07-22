@@ -1540,3 +1540,71 @@ class TestCooperativeStop:
         payload = next(c["json"] for c in result["content"] if "json" in c)
         assert payload["stopped_early"] is False
         assert payload["episodes_completed"] == 2
+
+    def test_evaluate_benchmark_docstring_documents_cooperative_stop(self):
+        """The ``evaluate_benchmark`` facade must document the cooperative-stop
+        contract, matching its ``eval_policy`` / ``run_policy`` siblings.
+
+        A caller relying only on the facade docstring otherwise cannot discover
+        that raising ``CooperativeStop`` from ``on_frame`` ends the eval
+        gracefully (rather than crashing with an uncaught ``BaseException``) and
+        that the result reports ``stopped_early`` / ``episodes_completed``.
+        """
+        doc = SimEngine.evaluate_benchmark.__doc__ or ""
+        assert "CooperativeStop" in doc, "evaluate_benchmark doc must name CooperativeStop"
+        assert "stopped_early" in doc, "evaluate_benchmark doc must document stopped_early"
+        assert "episodes_completed" in doc, "evaluate_benchmark doc must document episodes_completed"
+
+    def test_spec_cooperative_stop_closes_in_progress_video(self, tmp_path: Path):
+        """A cooperative stop mid-episode with recording active closes the
+        in-progress episode's video writer cleanly and drops it from
+        ``video_paths`` (the episode never completed), while the eval still
+        returns a graceful ``stopped_early`` result.
+        """
+        import base64
+        import io
+
+        import numpy as np
+        from PIL import Image
+
+        def _png_b64() -> str:
+            buf = io.BytesIO()
+            Image.fromarray(np.zeros((16, 16, 3), dtype=np.uint8)).save(buf, format="PNG")
+            return base64.b64encode(buf.getvalue()).decode()
+
+        class _RenderingFakeSim(FakeSim):
+            """FakeSim that returns a decodable PNG so the rollout video writer
+            actually opens and captures frames (base FakeSim renders no image)."""
+
+            def render(self, camera_name="default", width=None, height=None):
+                return {
+                    "status": "success",
+                    "content": [{"image": {"format": "png", "source": {"bytes": _png_b64()}}}],
+                }
+
+        sim = _RenderingFakeSim()
+        policy = MockPolicy()
+        policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+
+        def hook(step, obs, action):
+            # Fire during episode 0 (max_steps=20) so the episode never completes
+            # and its video writer is still open when the stop propagates.
+            if step >= 4:
+                raise CooperativeStop("user stopped benchmark")
+
+        video_path = tmp_path / "rollout.mp4"
+        result = PolicyRunner(sim).evaluate(
+            "fake_robot",
+            policy,
+            spec=_CountingBenchmark(),
+            n_episodes=5,
+            on_frame=hook,
+            video={"path": str(video_path), "fps": 30, "camera": "default"},
+        )
+        assert result["status"] == "success"
+        payload = next(c["json"] for c in result["content"] if "json" in c)
+        assert payload["stopped_early"] is True
+        # Stop fired inside episode 0 -> no episode fully completed.
+        assert payload["episodes_completed"] == 0
+        # The interrupted episode's partial video is closed but never reported.
+        assert payload["video_paths"] == []
