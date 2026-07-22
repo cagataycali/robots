@@ -91,12 +91,11 @@ def set_eval_seed(seed: int) -> None:
       are scoped to torch (not the broader environment) so the side
       effect surface is acceptable.
 
-    Public since #179: standalone integration tests
-    (``tests_integ/.../test_libero_10_scene5_mujoco_engine_success_rate``)
-    bypass :meth:`evaluate_benchmark` and need to call this directly to
-    get reproducible policy rollouts. Despite the leading ``_``, this
-    function is the supported way to seed an eval and is part of the
-    public API.
+    Public API - the single supported RNG-seeding entry point, exported
+    via ``__all__``. :meth:`evaluate_benchmark` calls it once before an
+    eval, but standalone callers that drive a policy rollout without
+    going through ``evaluate_benchmark`` can call it directly to get
+    reproducible rollouts.
 
     NumPy / torch are imported lazily so this helper works on minimal
     installs that don't have torch (e.g. ``policy_provider="mock"``

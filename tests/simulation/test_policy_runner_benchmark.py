@@ -847,11 +847,10 @@ class TestEvalSeeding:
         """``set_eval_seed`` is the single public RNG-seeding entry point
         (no leading underscore, exported via ``__all__``).
 
-        #179 renamed the helper to the public ``set_eval_seed`` (standalone
-        integration tests such as
-        ``tests_integ/.../test_libero_10_scene5_mujoco_engine_success_rate``
-        call it directly for reproducible rollouts). A private
-        ``_set_eval_seed`` back-compat alias lingered afterwards; it is
+        The helper was renamed from a private ``_set_eval_seed`` to the
+        public ``set_eval_seed`` so standalone callers (integration tests
+        that drive a rollout without ``evaluate_benchmark``) can seed
+        directly. A private back-compat alias lingered afterwards; it is
         now removed so the module exposes exactly one name. Pin that
         single-name contract: the private alias must not reappear.
         """
@@ -864,6 +863,28 @@ class TestEvalSeeding:
         assert "set_eval_seed" in policy_runner.__all__
         # The private back-compat alias is gone (single public name only).
         assert not hasattr(policy_runner, "_set_eval_seed")
+
+    def test_set_eval_seed_docstring_matches_public_contract(self):
+        """The docstring must describe the function as it actually is:
+        a public, no-underscore name.
+
+        Regression pin: the docstring previously carried a stale line
+        ("Despite the leading ``_``...") from before the private-to-public
+        rename, and cited a specific test-file path. Both contradict the
+        docstring convention (describe the public contract, reference
+        behavior not test files) and confuse a reader who sees no leading
+        underscore on the actual symbol.
+        """
+        from strands_robots.simulation.policy_runner import set_eval_seed
+
+        doc = set_eval_seed.__doc__ or ""
+        # No stale claim of a leading-underscore / private name.
+        assert "leading ``_``" not in doc
+        assert "leading _" not in doc
+        # No test-file-path citation embedded in the public docstring.
+        assert "tests_integ/" not in doc
+        # The symbol itself is public.
+        assert not set_eval_seed.__name__.startswith("_")
 
     def test_set_eval_seed_torch_reproducibility(self):
         """#179 - ``set_eval_seed`` seeds torch's CPU + CUDA RNGs and
