@@ -5,6 +5,22 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Quality: reject PR-review/verification provenance in source comments
+
+The review-archaeology guard (`tests/test_source_strings_no_review_archaeology.py`)
+already rejected `review thread <file>.py:<line>` back-pointers and review-round
+narration (`review round N`, `R7-5`). It now also rejects a PR/issue number
+immediately followed by `review` or `verification` (`#166 review finding`,
+`#168 verification showed ...`, `caught in PR #60 review`) and the compact
+`R<round> review` tag (`R3 review fix`) -- narration of which PR review or
+verification pass produced a change, which rots and misdirects the reader and
+belongs in git history, not the source. Fifteen such comments across
+`benchmarks/libero/adapter.py`, `mesh/security.py`, `simulation/isaac/simulation.py`,
+and three `simulation/mujoco/` modules were reworded to state why the code is
+shaped the way it is; the `review`/`verification` token must follow the number,
+so prose like `review 5 frames` is not matched. Comment-only change; no runtime
+behaviour is affected.
+
 ### Docs: streaming-data-loop notebook states the minimum `strands-robots` version for the bucket path
 
 The streaming-data-loop notebook (`examples/notebooks/05_streaming_data_loop.ipynb`,
