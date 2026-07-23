@@ -19,6 +19,7 @@ Contracts pinned here:
   attachment references (a dangling weld would fail the next recompile).
 """
 
+import numpy as np
 import pytest
 
 mj = pytest.importorskip("mujoco")
@@ -177,6 +178,38 @@ class TestKinematicAttach:
         result = sim.attach_bodies("carrier", "fixture", mode="kinematic")
         assert result["status"] == "error"
         assert "freejoint" in result["content"][0]["text"]
+
+    def test_stale_attachment_dropped_when_parent_body_vanishes(self, two_boxes, caplog):
+        """A kinematic follow whose parent body disappears is dropped, not fatal.
+
+        ``delete_body`` via ``patch_scene_mjcf`` can remove the parent out from
+        under a live kinematic attachment (it does not go through the
+        ``remove_object`` guard). The docstring contract: the next step drops
+        the now-unresolvable entry with a warning so a stale name cannot
+        silently teleport an unrelated joint - stepping must stay finite and
+        both the kinematic-follow and the attachment registry must be cleared.
+        """
+        sim = two_boxes
+        assert sim.attach_bodies("carrier", "cube", mode="kinematic")["status"] == "success"
+
+        # Remove the parent body; the child's freejoint still exists, so the
+        # entry becomes unresolvable on the parent side only.
+        assert sim.patch_scene_mjcf([{"op": "delete_body", "name": "carrier"}])["status"] == "success"
+
+        with caplog.at_level("WARNING", logger="strands_robots.simulation.mujoco.manipulation"):
+            sim.step(3)  # exercises _apply_kinematic_attachments with a dead parent
+
+        assert any("cube" in rec.message and "dropped" in rec.message for rec in caplog.records), (
+            "the stale attachment must be dropped with a warning"
+        )
+        backend = sim._world._backend_state
+        assert "cube" not in backend.get("kinematic_attachments", {}), "the kinematic-follow entry must be cleared"
+        assert "cube" not in backend.get("attachments", {}), "the attachment registry entry must be cleared"
+        assert bool(np.all(np.isfinite(sim._world._data.qacc))), "dropping the stale entry must leave state finite"
+
+        # A second step is a clean no-op now that the registry is empty.
+        sim.step(3)
+        assert bool(np.all(np.isfinite(sim._world._data.qacc)))
 
 
 class TestAttachErrorContract:

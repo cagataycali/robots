@@ -137,6 +137,32 @@ class TestActuateRobot:
         assert result["status"] == "error"
         assert arm_sim._world._model.nu == 0
 
+    def test_kp_empty_dict_rejected(self, arm_sim):
+        """An empty ``{joint: kp}`` dict actuates nothing - a structured error,
+        not a silent no-op that reports success while leaving nu unchanged."""
+        result = arm_sim.actuate_robot("arm", kp={})
+        assert result["status"] == "error"
+        assert "empty" in result["content"][0]["text"]
+        assert arm_sim._world._model.nu == 0, "a rejected call must not mutate the scene"
+
+    def test_damping_validation(self, arm_sim):
+        """``damping`` must be a finite number >= 0; NaN, negative, and
+        non-numeric values are rejected before any spec surgery."""
+        for bad in (float("nan"), -1.0, "stiff"):
+            result = arm_sim.actuate_robot("arm", damping=bad)
+            assert result["status"] == "error", f"damping={bad!r} must be rejected"
+            assert "damping" in result["content"][0]["text"]
+        assert arm_sim._world._model.nu == 0, "a rejected call must not mutate the scene"
+
+    def test_armature_validation(self, arm_sim):
+        """``armature`` must be a finite number >= 0; NaN, negative, and
+        non-numeric values are rejected before any spec surgery."""
+        for bad in (float("nan"), -0.5, None):
+            result = arm_sim.actuate_robot("arm", armature=bad)
+            assert result["status"] == "error", f"armature={bad!r} must be rejected"
+            assert "armature" in result["content"][0]["text"]
+        assert arm_sim._world._model.nu == 0, "a rejected call must not mutate the scene"
+
     def test_double_actuation_refused(self, arm_sim):
         assert arm_sim.actuate_robot("arm")["status"] == "success"
         result = arm_sim.actuate_robot("arm")
