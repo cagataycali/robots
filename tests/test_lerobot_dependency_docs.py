@@ -188,6 +188,60 @@ def test_no_userfacing_file_invokes_removed_lerobot_scripts_train() -> None:
         )
 
 
+# --- negative contract: storage-buckets blog-draft corrections (#1507). The
+#     blog draft was copied from these in-repo spots, so the wrong text has to
+#     be pinned out at the source or it re-enters the next draft:
+#     * README's streamed-training one-liner used the removed
+#       ``python -m lerobot.scripts.train`` module AND Hydra-style ``key=value``
+#       args; the trainer is the ``lerobot-train`` entry point
+#       (``lerobot.scripts.lerobot_train``) with draccus ``--dotted.key=value``
+#       flags.
+#     * "``pip install -U huggingface_hub``" resolves to 0.x in many envs,
+#       whose ``hf`` CLI has no ``buckets``/``sync`` subcommands - the install
+#       line must pin ``>=1.0`` everywhere ``sync_to_bucket`` is documented.
+#     * The shard-size claim understated lerobot's defaults: 100 MB is the
+#       data-parquet default; video MP4 shards default to 200 MB. ---
+
+_README = _REPO_ROOT / "README.md"
+_DATASET_RECORDER = _REPO_ROOT / "strands_robots" / "dataset_recorder.py"
+
+
+def test_readme_streamed_training_invocation_is_current() -> None:
+    text = _README.read_text()
+    assert "lerobot.scripts.train" not in text, (
+        "README.md instructs the removed `python -m lerobot.scripts.train`; "
+        "lerobot renamed the trainer module to `lerobot.scripts.lerobot_train`"
+    )
+    # the documented invocation is the entry point with draccus --dotted flags
+    assert "lerobot-train" in text, "README.md lost its `lerobot-train` reference"
+    assert "--dataset.streaming=true" in text, (
+        "README.md streamed-training example must use draccus `--dotted.key=value` flags, not Hydra `key=value` args"
+    )
+
+
+def test_hf_cli_install_guidance_pins_huggingface_hub_1_0() -> None:
+    # `pip install -U huggingface_hub` (unversioned) resolves to 0.36.x in many
+    # envs, which has no `buckets`/`sync` subcommands; every install line next
+    # to `sync_to_bucket` guidance must pin >=1.0.
+    for path in (_README, _DATASET_RECORDER):
+        text = path.read_text()
+        assert "pip install -U huggingface_hub" not in text, (
+            f"{path.name} recommends an unversioned huggingface_hub install; "
+            "the `hf buckets`/`hf sync` subcommands need >=1.0"
+        )
+        assert "huggingface_hub>=1.0" in text, f"{path.name} lost the huggingface_hub>=1.0 pin"
+
+
+def test_shard_size_claim_names_both_lerobot_defaults() -> None:
+    text = _DATASET_RECORDER.read_text()
+    # lerobot defaults: 100 MB data parquet / 200 MB video MP4 - "100 MB
+    # default" alone understates the video shard size.
+    assert "100 MB default" not in text, (
+        "dataset_recorder.py understates the shard defaults; lerobot uses 100 MB data parquet / 200 MB video MP4"
+    )
+    assert "100 MB data parquet / 200 MB video" in text
+
+
 # --- negative contract: lerobot 0.6 relocated + renamed the codec allowlist.
 #     ``VALID_VIDEO_CODECS`` moved from ``lerobot.datasets.video_utils`` to
 #     ``lerobot.configs.video``, the hardware-encoder set was renamed
@@ -197,8 +251,6 @@ def test_no_userfacing_file_invokes_removed_lerobot_scripts_train() -> None:
 #     ``video_utils.VALID_VIDEO_CODECS ... | HW_ENCODERS`` allowlist) even though
 #     the ``[lerobot]`` extra floors lerobot at >=0.6.0 - so the code comment
 #     contradicted both the pyproject floor and the installed lerobot API. ---
-
-_DATASET_RECORDER = _REPO_ROOT / "strands_robots" / "dataset_recorder.py"
 
 
 def test_dataset_recorder_codec_docs_track_the_supported_lerobot_floor() -> None:
