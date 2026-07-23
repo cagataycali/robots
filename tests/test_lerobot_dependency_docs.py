@@ -211,3 +211,39 @@ def test_dataset_recorder_codec_docs_track_the_supported_lerobot_floor() -> None
     # and the current allowlist symbols/entries are the ones documented
     assert "HW_VIDEO_CODECS" in text
     assert "libaom-av1" in text
+
+
+# --- positive contract: the [wbc] extra's huggingface_hub floor must guarantee
+#     the `hf buckets`/`hf sync` CLI subcommands the bucket-sync docs instruct.
+#     Those subcommands only exist on huggingface_hub>=1.0; the docs (README
+#     streamed-training section + dataset_recorder.sync_to_bucket, pinned by
+#     test_hf_cli_install_guidance_pins_huggingface_hub_1_0) tell users to
+#     `pip install -U "huggingface_hub>=1.0"`, so a fresh
+#     `pip install strands-robots[wbc]` that resolves an `hf` entry point WITHOUT
+#     those subcommands (huggingface_hub 0.36.x satisfies a <1.0 floor) silently
+#     reproduces the exact "hf CLI not found / no such subcommand" failure the
+#     docs' own error message calls out. Floor the direct pin at >=1.0 so the
+#     resolver can't drift below the documented minimum. See issue #1549. ---
+
+
+def _wbc_huggingface_hub_spec() -> str:
+    """The exact version specifier the ``[wbc]`` extra declares for huggingface_hub."""
+    for spec in _extras()["wbc"]:
+        # normalize the dist name (huggingface_hub / huggingface-hub) before matching
+        name = spec.split(">")[0].split("<")[0].split("=")[0].split("[")[0]
+        if name.replace("-", "_").strip() == "huggingface_hub":
+            return spec
+    raise AssertionError("no huggingface_hub pin found in the [wbc] extra")
+
+
+def test_wbc_extra_huggingface_hub_floor_is_at_least_1_0() -> None:
+    spec = _wbc_huggingface_hub_spec()
+    # floor at >=1.0 so the resolved `hf` CLI carries the buckets/sync subcommands
+    assert ">=1.0" in spec, (
+        f"[wbc] huggingface_hub floor must be >=1.0 (the `hf buckets`/`hf sync` "
+        f"CLI subcommands the bucket-sync docs instruct only exist on >=1.0); got {spec!r}"
+    )
+    # the dead pre-1.0 floor must not linger
+    assert ">=0.20.0" not in spec, f"[wbc] still pins the dead pre-1.0 huggingface_hub floor: {spec!r}"
+    # keep the MAJOR cap (<2.0.0) per repo convention (>=1.0 deps cap the major)
+    assert "<2.0.0" in spec, f"[wbc] huggingface_hub pin lost its <2.0.0 major cap: {spec!r}"
