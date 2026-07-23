@@ -16,11 +16,10 @@ whole state-mutation family is proven to observe the guard, and the guard cannot
 regress on just one method.
 """
 
+import mujoco as _mj  # noqa: F401  (import guard: skip when mujoco is absent)
 import pytest
 
-pytest.importorskip("mujoco")
-
-from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from strands_robots.simulation.mujoco.simulation import Simulation
 
 # Minimal single-DOF arm with a named worldbody geom so the post-stop
 # set_geom_properties call has a concrete target to recolor.
@@ -67,9 +66,6 @@ def _stop_and_await(sim) -> None:
         try:
             fut.result(timeout=10.0)
         except Exception:
-            # Best-effort teardown: the worker future may surface its own
-            # stop/timeout error, which is irrelevant to the mutation guard
-            # under test. Swallow it so cleanup does not mask the assertion.
             pass
 
 
