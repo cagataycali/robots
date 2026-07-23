@@ -142,7 +142,7 @@ def train_policy(
         - ``lerobot_local`` + ACT/diffusion: ``pip install 'strands-robots[lerobot]'``.
         - ``lerobot_local`` + ``smolvla``/``pi0``/``pi05``: add lerobot's
           ``[smolvla]``/``[pi]`` extra on top of ``strands-robots[lerobot]``
-          (which pins ``lerobot>=0.6.0``). Those extras layer
+          (which pins ``lerobot>=0.6.1``). Those extras layer
           ``transformers>=5.4.0,<5.6.0`` (plus num2words / scipy); do NOT pin
           ``transformers==5.3.0`` - it conflicts with lerobot 0.6's transformers
           floor.

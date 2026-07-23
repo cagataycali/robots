@@ -1,6 +1,6 @@
 """Keep the VLA install docs consistent with the declared dependencies.
 
-The ``lerobot>=0.6.0`` bump obsoleted a body of pre-0.6 install guidance that
+The ``lerobot>=0.6.1`` bump obsoleted a body of pre-0.6 install guidance that
 lived in the ``train_policy`` tool docstring and the policy/training docs:
 
 * ``pip install 'lerobot[smolvla]==0.5.1'`` and a ``transformers==5.3.0`` pin -
@@ -12,7 +12,7 @@ lived in the ``train_policy`` tool docstring and the policy/training docs:
   longer applies to the supported range.
 * "MolmoAct2 requires lerobot **from source**" - ``MolmoAct2Policy`` ships in
   lerobot >= 0.6, so ``strands-robots[molmoact2]`` (which pulls
-  ``strands-robots[lerobot]`` -> ``lerobot>=0.6.0``) resolves it straight from
+  ``strands-robots[lerobot]`` -> ``lerobot>=0.6.1``) resolves it straight from
   PyPI; no ``git+`` install.
 
 These assertions pin the pyproject reality and forbid the stale guidance from
@@ -36,10 +36,10 @@ def _extras() -> dict[str, list[str]]:
 # --- positive contract: the pyproject reality the docs must reflect ---
 
 
-def test_lerobot_extra_requires_0_6() -> None:
+def test_lerobot_extra_requires_0_6_1() -> None:
     joined = " ".join(_extras()["lerobot"])
     assert "lerobot" in joined
-    assert ">=0.6.0" in joined, f"lerobot extra no longer pins >=0.6.0: {joined!r}"
+    assert ">=0.6.1" in joined, f"lerobot extra no longer pins >=0.6.1: {joined!r}"
 
 
 def test_molmoact2_extra_is_pure_pypi_with_transformers_5_4_plus() -> None:
@@ -109,8 +109,9 @@ def test_architecture_lerobot_extra_row_matches_pyproject_floor() -> None:
     text = _ARCHITECTURE.read_text()
     # the dependency-matrix row must not advertise the dead pre-0.6 cap
     assert "lerobot>=0.5.0,<0.6.0" not in text, "architecture.md still cites the dead <0.6.0 lerobot cap"
-    # it must reflect the real floor (>=0.6.0)
-    assert ">=0.6.0" in text, "architecture.md [lerobot] row should name the >=0.6.0 floor"
+    # it must name the exact floor the [lerobot] extra declares in pyproject
+    floor = _lerobot_floor_from_pyproject()  # e.g. ">=0.6.1,<0.7.0"
+    assert floor in text, f"architecture.md [lerobot] row must name the pyproject floor {floor!r}"
 
 
 def test_troubleshooting_version_skew_remedy_does_not_conflict_with_floor() -> None:

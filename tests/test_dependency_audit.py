@@ -156,32 +156,42 @@ def test_direct_reference_check_ignores_extras_specifiers_and_markers(tmp_path):
 # resolution. This guard fails if either half regresses.
 import tomllib  # noqa: E402
 
+import pytest  # noqa: E402
 from packaging.requirements import Requirement  # noqa: E402
 from packaging.version import Version  # noqa: E402
 
 
-def _lerobot_extra_requirement() -> Requirement:
+def _lerobot_requirement(extra: str) -> Requirement:
     data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
-    extra = data["project"]["optional-dependencies"]["lerobot"]
-    for spec in extra:
+    specs = data["project"]["optional-dependencies"][extra]
+    for spec in specs:
         req = Requirement(spec)
         if req.name == "lerobot":
             return req
-    raise AssertionError("no `lerobot` requirement found in the [lerobot] extra")
+    raise AssertionError(f"no `lerobot` requirement found in the [{extra}] extra")
 
 
-def test_lerobot_extra_requires_at_least_0_6() -> None:
-    """The ``[lerobot]`` extra must floor lerobot at >= 0.6.0.
+@pytest.mark.parametrize("extra", ["lerobot", "lerobot-async"])
+def test_lerobot_extra_requires_at_least_0_6_1(extra: str) -> None:
+    """The ``[lerobot]`` / ``[lerobot-async]`` extras must floor lerobot at >= 0.6.1.
 
-    The 0.5.1-era torch/torchcodec overrides were removed because lerobot 0.6's
-    own markers resolve the decoder stack correctly; that only holds for
-    lerobot >= 0.6, so the floor must not regress below it.
+    Two coupled reasons the floor cannot regress below 0.6.1:
+
+    * The 0.5.1-era torch/torchcodec overrides were removed because lerobot 0.6's
+      own dependency markers resolve the decoder stack correctly (that only holds
+      for lerobot >= 0.6).
+    * The flagship bucket-streaming path
+      (``StreamingDatasetReader.open(..., repo_type="bucket")`` via
+      ``sim.stream_dataset``) needs lerobot 0.6.1 -- the first release whose
+      ``StreamingLeRobotDataset`` accepts the ``repo_type`` parameter. Flooring at
+      0.6.1 makes that guarantee resolver-time instead of a runtime ``RuntimeError``
+      (or, on lerobot 0.6.0, a silently dropped kwarg).
     """
-    req = _lerobot_extra_requirement()
-    assert Version("0.6.0") in req.specifier, f"lerobot floor must admit 0.6.0, got {req.specifier}"
-    assert Version("0.5.9") not in req.specifier, (
-        f"lerobot floor must exclude 0.5.x (the overrides that compensated for "
-        f"lerobot 0.5.1's decoder markers were removed), got {req.specifier}"
+    req = _lerobot_requirement(extra)
+    assert Version("0.6.1") in req.specifier, f"lerobot floor must admit 0.6.1, got {req.specifier}"
+    assert Version("0.6.0") not in req.specifier, (
+        f"lerobot floor must exclude 0.6.0 -- its StreamingLeRobotDataset lacks the "
+        f"repo_type parameter the bucket-streaming path requires, got {req.specifier}"
     )
 
 

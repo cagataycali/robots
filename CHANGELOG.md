@@ -5,6 +5,10 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Changed: `[lerobot]` / `[lerobot-async]` extras floor lerobot at `>=0.6.1`
+
+The `[lerobot]` and `[lerobot-async]` extras now pin `lerobot>=0.6.1,<0.7.0` (was `>=0.6.0`). The flagship bucket-streaming path -- `StreamingDatasetReader.open(..., repo_type="bucket")` via `sim.stream_dataset` -- requires lerobot 0.6.1, the first release whose `StreamingLeRobotDataset` accepts the `repo_type` parameter. On lerobot 0.6.0 the kwarg is silently dropped by the tolerant-forwarding shim, so the guarantee previously lived only in docs. Flooring at 0.6.1 makes it resolver-time (install fails fast) instead of a runtime surprise. No API change; the `[molmoact2]` extra inherits the raised floor via `strands-robots[lerobot]`. Pinned by `tests/test_dependency_audit.py::test_lerobot_extra_requires_at_least_0_6_1`.
+
 ### Added: LIBERO MuJoCo example drivers (`examples/libero/run_mujoco.py`, `run_mujoco_agent.py`)
 
 The default-backend LIBERO drivers promised by the epic-#1269 migration are
