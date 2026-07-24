@@ -58,6 +58,12 @@ class ReachyMiniDriver(DeviceDriver):
 
     @property
     def identity(self) -> DeviceIdentity:
+        """Static Device Connect identity for the Reachy Mini head.
+
+        Returns a :class:`~device_connect_edge.types.DeviceIdentity` reporting
+        ``device_type="reachy_mini"``, the ``Pollen Robotics`` manufacturer, and
+        the configured host in the model string.
+        """
         return DeviceIdentity(
             device_type="reachy_mini",
             manufacturer="Pollen Robotics",
@@ -67,6 +73,11 @@ class ReachyMiniDriver(DeviceDriver):
 
     @property
     def status(self) -> DeviceStatus:
+        """Availability of the Reachy Mini; always reports ``"idle"``.
+
+        The head has no long-running task state, so it advertises itself as
+        available for commands at all times.
+        """
         return DeviceStatus(availability="idle")
 
     async def connect(self) -> None:

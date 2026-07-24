@@ -34,6 +34,13 @@ class SimulationDeviceDriver(DeviceDriver):
 
     @property
     def identity(self) -> DeviceIdentity:
+        """Static Device Connect identity for the wrapped simulation.
+
+        Returns a :class:`~device_connect_edge.types.DeviceIdentity` reporting
+        ``device_type="strands_sim"``, the ``strands-robots`` manufacturer, and
+        the simulation's ``tool_name_str`` as the model (falling back to
+        ``"simulation"``).
+        """
         return DeviceIdentity(
             device_type="strands_sim",
             manufacturer="strands-robots",
@@ -43,6 +50,12 @@ class SimulationDeviceDriver(DeviceDriver):
 
     @property
     def status(self) -> DeviceStatus:
+        """Live availability of the wrapped simulation.
+
+        Returns a :class:`~device_connect_edge.types.DeviceStatus` that is
+        ``"busy"`` (``busy_score`` 1.0) when any robot in the world is running a
+        policy and ``"idle"`` (``busy_score`` 0.0) otherwise.
+        """
         world = getattr(self._sim, "_world", None)
         is_busy = False
         if world:

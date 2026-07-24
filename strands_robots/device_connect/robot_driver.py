@@ -35,6 +35,12 @@ class RobotDeviceDriver(DeviceDriver):
 
     @property
     def identity(self) -> DeviceIdentity:
+        """Static Device Connect identity for the wrapped robot.
+
+        Returns a :class:`~device_connect_edge.types.DeviceIdentity` reporting
+        ``device_type="strands_robot"``, the ``strands-robots`` manufacturer, and
+        the robot's ``tool_name_str`` as the model (falling back to ``"robot"``).
+        """
         return DeviceIdentity(
             device_type="strands_robot",
             manufacturer="strands-robots",
@@ -44,6 +50,12 @@ class RobotDeviceDriver(DeviceDriver):
 
     @property
     def status(self) -> DeviceStatus:
+        """Live availability of the wrapped robot.
+
+        Returns a :class:`~device_connect_edge.types.DeviceStatus` that is
+        ``"busy"`` (``busy_score`` 1.0) while a task is running and ``"idle"``
+        (``busy_score`` 0.0) otherwise, derived from the robot's task state.
+        """
         task = getattr(self._robot, "_task_state", None)
         is_busy = task is not None and hasattr(task, "status") and getattr(task.status, "value", "idle") == "running"
         return DeviceStatus(

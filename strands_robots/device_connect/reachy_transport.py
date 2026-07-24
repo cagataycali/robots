@@ -211,6 +211,13 @@ class ZenohLink(HardwareLink):
         self._prefix = prefix
 
     async def start(self, on_joints: JointsCallback, on_imu: ImuCallback) -> None:
+        """Subscribe to the Zenoh joint-position and IMU topics.
+
+        Wires ``on_joints`` / ``on_imu`` to the ``<prefix>/joint_positions`` and
+        ``<prefix>/imu_data`` topics; malformed frames are dropped so the
+        subscription stays alive.
+        """
+
         async def _on_joints(data: bytes, _reply=None):
             try:
                 on_joints(json.loads(data.decode()))
@@ -227,9 +234,11 @@ class ZenohLink(HardwareLink):
         await self._transport.subscribe(f"{self._prefix}/imu_data", _on_imu)
 
     async def stop(self) -> None:
+        """No-op; the shared Zenoh transport is torn down by the DeviceRuntime."""
         pass  # Transport teardown handled by DeviceRuntime
 
     async def send_cmd(self, cmd: dict[str, Any]) -> None:
+        """Publish a command dict as JSON to the ``<prefix>/command`` topic."""
         await self._transport.publish(f"{self._prefix}/command", json.dumps(cmd).encode())
 
 
@@ -250,6 +259,13 @@ class WebSocketLink(HardwareLink):
         self._read_task: asyncio.Task[None] | None = None
 
     async def start(self, on_joints: JointsCallback, on_imu: ImuCallback) -> None:
+        """Open the daemon WebSocket and start the sensor read loop.
+
+        Connects to ``ws(s)://<host>:<port>/ws/sdk`` (bearer-authenticating when a
+        daemon token is configured, warning once when it is not) and spawns the
+        background task that dispatches incoming frames to ``on_joints`` /
+        ``on_imu``.
+        """
         import websockets
 
         # Security hardening: authenticate to the daemon when a token is
@@ -288,12 +304,19 @@ class WebSocketLink(HardwareLink):
                 pass  # skip malformed frame; keep reading
 
     async def stop(self) -> None:
+        """Cancel the read loop and close the WebSocket connection."""
         if self._read_task:
             self._read_task.cancel()
         if self._ws:
             await self._ws.close()
 
     async def send_cmd(self, cmd: dict[str, Any]) -> None:
+        """Translate the first recognised command key to the daemon wire format.
+
+        Maps ``head_pose`` / ``antennas_joint_positions`` / ``body_yaw`` /
+        ``torque`` to their WebSocket message shape and sends it; a no-op when the
+        socket is not connected or no known key is present.
+        """
         if not self._ws:
             return
         for key, fn in self._WS_CMD_MAP.items():
