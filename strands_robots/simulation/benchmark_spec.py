@@ -225,14 +225,31 @@ class DeclarativeBenchmark(BenchmarkProtocol):
 
     @property
     def name(self) -> str:
+        """Unique benchmark id, from the spec's required ``name`` key.
+
+        Used as the registry key by :func:`register_benchmark_from_file`;
+        registering two specs with the same ``name`` overwrites the first.
+        """
         return self._name
 
     @property
     def supported_robots(self) -> list[str]:
+        """Registry ``data_config`` names this benchmark accepts (spec ``supported_robots``).
+
+        Implements :attr:`BenchmarkProtocol.supported_robots`. Returns a fresh
+        copy so callers cannot mutate the compiled spec. An empty list (the
+        spec omitted the key) means "any robot".
+        """
         return list(self._supported_robots)
 
     @property
     def default_robot(self) -> str:
+        """Robot loaded when the sim is empty, from the spec's required ``default_robot``.
+
+        Implements :attr:`BenchmarkProtocol.default_robot`;
+        :meth:`on_episode_start` adds it via ``sim.add_robot`` before the first
+        observation when no robot is present.
+        """
         return self._default_robot
 
     @property
@@ -290,9 +307,23 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         return StepInfo(reward=reward, done=False)
 
     def is_success(self, sim: SimEngine) -> bool:
+        """Evaluate the compiled ``success`` clause against ``sim``.
+
+        Implements :meth:`BenchmarkProtocol.is_success`. Side-effect-free (the
+        predicate closures only read sim state), so the eval loop may call it
+        multiple times per step. Returns ``True`` once the spec's ``success``
+        all/any predicates are satisfied, ending the episode with success.
+        """
         return bool(self._success_fn(sim))
 
     def is_failure(self, sim: SimEngine) -> bool:
+        """Evaluate the compiled ``failure`` clause against ``sim``.
+
+        Implements :meth:`BenchmarkProtocol.is_failure`. Side-effect-free;
+        returns ``True`` when the spec's ``failure`` all/any predicates are
+        satisfied (a spec that omits ``failure`` compiles to an always-``False``
+        clause). Failure ends the episode without marking success.
+        """
         return bool(self._failure_fn(sim))
 
     @classmethod
