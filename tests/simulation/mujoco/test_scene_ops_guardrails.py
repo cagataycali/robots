@@ -532,3 +532,110 @@ class TestWeldEqualityConstraintRoundTrip:
         assert scene_ops.remove_equality_constraint(two_body_world, "never_added") is False
         # A miss must not mutate the compiled model.
         assert int(two_body_world._model.neq) == neq_before
+
+
+class TestSpecSurgeryFailureRecovery:
+    """Spec surgery that fails at recompile must leave the live spec exactly as
+    it was, never a half-applied edit. ``add_weld_constraint`` deletes the
+    equality it just appended; ``actuate_robot_in_scene`` restores its
+    pre-surgery XML snapshot. Both return a clean ``False``. The invariant that
+    matters is that a *subsequent* scene mutation still succeeds - a failed edit
+    must not poison later ops.
+    """
+
+    @pytest.fixture
+    def two_body_world(self, sim: Simulation) -> SimWorld:
+        sim.create_world()
+        assert (
+            sim.add_object(
+                name="anchor", shape="box", size=[0.05, 0.05, 0.05], position=[0.2, 0.0, 0.3], is_static=True
+            )["status"]
+            == "success"
+        )
+        assert (
+            sim.add_object(name="cube", shape="box", size=[0.05, 0.05, 0.05], position=[0.2, 0.0, 0.4])["status"]
+            == "success"
+        )
+        world = sim._world
+        assert world is not None
+        return world
+
+    def test_weld_recompile_failure_removes_equality_and_leaves_spec_usable(
+        self, sim: Simulation, two_body_world: SimWorld, monkeypatch
+    ) -> None:
+        orig_recompile = scene_ops._recompile_preserving_state
+        neq_before = int(two_body_world._model.neq)
+        spec = scene_ops._get_spec(two_body_world)
+        assert spec is not None
+        neqspec_before = len(spec.equalities)
+
+        # Force the post-edit recompile to fail: the just-added equality must be
+        # deleted again so the spec stays compilable.
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", lambda *a, **k: False)
+        assert (
+            scene_ops.add_weld_constraint(
+                two_body_world,
+                name="doomed_weld",
+                parent="anchor",
+                child="cube",
+                relpos=[0.0, 0.0, 0.1],
+                relquat=[1.0, 0.0, 0.0, 0.0],
+            )
+            is False
+        )
+        # The failed equality was rolled off the spec (no lingering half-add)
+        # and the compiled model is untouched.
+        spec_after = scene_ops._get_spec(two_body_world)
+        assert spec_after is not None
+        assert len(spec_after.equalities) == neqspec_before
+        assert int(two_body_world._model.neq) == neq_before
+
+        # Not poisoned: with recompile working again, a real weld still lands.
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", orig_recompile)
+        assert (
+            scene_ops.add_weld_constraint(
+                two_body_world,
+                name="good_weld",
+                parent="anchor",
+                child="cube",
+                relpos=[0.0, 0.0, 0.1],
+                relquat=[1.0, 0.0, 0.0, 0.0],
+            )
+            is True
+        )
+        assert int(two_body_world._model.neq) == neq_before + 1
+
+    def test_actuate_recompile_failure_restores_spec_and_leaves_scene_usable(
+        self, sim: Simulation, two_body_world: SimWorld, monkeypatch
+    ) -> None:
+        orig_recompile = scene_ops._recompile_preserving_state
+        nbody_before = int(two_body_world._model.nbody)
+
+        # The actuator surgery flips the integrator and edits joints/actuators on
+        # the live spec, then recompiles. Force that recompile to fail: the
+        # pre-surgery XML snapshot must be restored so the edit does not linger.
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", lambda *a, **k: False)
+        robot = SimRobot(name="ghostarm", urdf_path="x.xml", namespace="ghostarm/")
+        assert (
+            scene_ops.actuate_robot_in_scene(
+                two_body_world,
+                robot,
+                {"pan": 50.0},
+                damping=1.0,
+                armature=0.01,
+                gravity_compensation=True,
+                disable_self_collision=True,
+            )
+            is False
+        )
+        # Compiled model unchanged by the failed surgery.
+        assert int(two_body_world._model.nbody) == nbody_before
+
+        # Not poisoned: the restored spec still recompiles, so a subsequent real
+        # scene mutation succeeds end-to-end.
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", orig_recompile)
+        assert (
+            sim.add_object(name="probe", shape="box", size=[0.05, 0.05, 0.05], position=[0.1, 0.1, 0.5])["status"]
+            == "success"
+        )
+        assert int(two_body_world._model.nbody) == nbody_before + 1
