@@ -231,20 +231,57 @@ class SessionManager:
             logger.error(f"Error saving sessions: {e}")
 
     def add_session(self, name: str, info: dict[str, Any]) -> None:
+        """Persist a training session record under ``name``.
+
+        Loads the current on-disk sessions, upserts ``name`` -> ``info``
+        (an existing entry with the same name is overwritten), and writes the
+        map back to disk.
+
+        Args:
+            name: session key (e.g. the run/job name) to store the record under.
+            info: session metadata to persist (typically ``pid``, ``log_file``,
+                ``dataset``, and start timestamp).
+        """
         sessions = self._load_sessions()
         sessions[name] = info
         self._save_sessions(sessions)
 
     def remove_session(self, name: str) -> None:
+        """Delete the session stored under ``name`` if one exists.
+
+        A no-op when ``name`` is not tracked, so callers need not check first.
+
+        Args:
+            name: session key to remove.
+        """
         sessions = self._load_sessions()
         if name in sessions:
             del sessions[name]
             self._save_sessions(sessions)
 
     def get_session(self, name: str) -> dict[str, Any] | None:
+        """Return the stored metadata for a single session.
+
+        Args:
+            name: session key to look up.
+
+        Returns:
+            The session's info dict, or ``None`` if no session is tracked under
+            ``name``. Dead processes are pruned on load, so a returned record is
+            one whose PID either is still running or belonged to a finished run.
+        """
         return self._load_sessions().get(name)
 
     def list_sessions(self) -> dict[str, Any]:
+        """Return every currently-tracked session keyed by name.
+
+        Returns:
+            A ``name -> info`` map. Sessions whose PID is no longer a running
+            process are not dropped -- they are retained so ``status`` can still
+            report the final log tail -- but the load step is what derives the
+            live/finished distinction, so this never reports a stale PID as
+            running.
+        """
         return self._load_sessions()
 
 
