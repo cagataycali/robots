@@ -11,9 +11,10 @@ mid ``mj_step`` on the very same arrays. Both therefore route through the shared
 "policy is running" error rather than racing the worker.
 
 The sibling state mutations (``set_joint_positions`` / ``set_body_properties`` /
-``apply_force``) are pinned elsewhere; these two closed the remaining gap so the
-whole state-mutation family is proven to observe the guard, and the guard cannot
-regress on just one method.
+``apply_force``) are pinned elsewhere. ``load_state`` restores a checkpoint via
+``mj_setState`` + ``mj_forward`` on the same shared arrays, so it carries the
+identical hazard and observes the guard too. Together these pin the whole
+state-mutation family, so the guard cannot regress on just one method.
 """
 
 pytest = __import__("pytest")
@@ -99,6 +100,30 @@ def test_set_geom_properties_blocked_during_policy(sim_with_running_policy):
 
     result = sim.set_geom_properties(geom_name="ground", color=[1.0, 0.0, 0.0, 1.0])
     assert result["status"] == "success", result
+
+
+def test_load_state_blocked_during_policy(sim_with_running_policy):
+    """load_state restores a checkpoint via mj_setState + mj_forward on the
+    shared model/data arrays, so it is refused while the worker is mid mj_step;
+    the save/load round-trip works once the worker has stopped.
+
+    The guard is checked before the checkpoint lookup, so a mid-policy call is
+    refused with the uniform "policy is running" error even for a checkpoint
+    name that was never saved -- the agent is told to stop the policy first
+    rather than getting a misleading "checkpoint not found".
+    """
+    sim = sim_with_running_policy
+
+    result = sim.load_state("default")
+    assert result["status"] == "error"
+    assert "policy is running" in result["content"][0]["text"].lower()
+
+    _stop_and_await(sim)
+
+    # Round-trip is available again once the worker is gone.
+    assert sim.save_state("cp")["status"] == "success"
+    restored = sim.load_state("cp")
+    assert restored["status"] == "success", restored
 
 
 def test_state_mutation_guard_is_global_scope(sim_with_running_policy):
