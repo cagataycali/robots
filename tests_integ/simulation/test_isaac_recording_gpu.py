@@ -153,6 +153,100 @@ class TestIsaacDatasetRecording:
         finally:
             sim.destroy()
 
+    def test_robot_factory_backend_swap_round_trip(self, tmp_path):
+        """Robot("so100", backend="isaac") record-and-stream: the notebook pin.
+
+        This is the exact entry point demonstrated by the optional Isaac step
+        in examples/notebooks/05_streaming_data_loop.ipynb - the factory route
+        (create_simulation("isaac") + add_robot(data_config="so100"),
+        strands_robots/robot.py) rather than the raw IsaacSimulation + Franka
+        USD form the tests above use. Pinning it here means the notebook's
+        one-kwarg backend-swap story can never silently drift from reality
+        (issue #1536: never ship example code CI cannot verify).
+
+        Known risk: so100 registry resolution on Isaac has not been executed on
+        a GPU host before this test (issue #1552 used a Franka USD). If this
+        fails for asset/registry reasons (not recording reasons), the agreed
+        fallback is to switch both this test and the notebook cell to the
+        Franka-USD form and file a follow-up for so100-on-Isaac resolution.
+        """
+        from strands_robots import MockPolicy, Robot
+        from strands_robots.dataset_recorder import read_dataset_episode_indices
+
+        _skip_if_isaac_unavailable()
+        root = str(tmp_path / "isaac_factory_ds")
+
+        # Factory route: same call the notebook makes; returns the backend sim.
+        sim = Robot("so100", backend="isaac", mesh=False)
+        try:
+            r = sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0.0, 0.05])
+            assert r["status"] == "success", f"add_camera: {r}"
+
+            r = sim.start_recording(
+                repo_id="local/nb5_isaac",
+                root=root,
+                fps=10,
+                task="pick up the red cube",
+                cameras=["front"],
+                overwrite=True,
+            )
+            assert r["status"] == "success", f"start_recording: {r}"
+
+            # control_frequency <= 1/rendering_dt (Isaac default 30Hz) so each
+            # recorded frame reflects a freshly rendered product - matches the
+            # notebook cell's fps=10 / control_frequency=10.0 pacing.
+            r = sim.run_policy(
+                robot_name="so100",
+                policy_object=MockPolicy(),
+                n_steps=10,
+                control_frequency=10.0,
+                fast_mode=True,
+                instruction="pick up the red cube",
+            )
+            assert r["status"] == "success", f"run_policy: {r}"
+
+            r = sim.save_episode()
+            assert r["status"] == "success", f"save_episode: {r}"
+
+            r = sim.stop_recording()
+            assert r["status"] == "success", f"stop_recording: {r}"
+
+            r = sim.verify_dataset_episodes(1)
+            assert r["status"] == "success", f"verify_dataset_episodes: {r}"
+
+            # Round-trip: reopen the on-disk dataset and assert its truth.
+            info = read_dataset_episode_indices(root)
+            assert info["total_episodes"] == 1, info
+            assert info["total_frames"] == 10, info
+            assert (Path(root) / "meta" / "info.json").exists()
+
+            mp4s = sorted(Path(root).glob("videos/**/*.mp4"))
+            keys = {part for p in mp4s for part in p.parts if part.startswith("observation.images.")}
+            assert keys == {"observation.images.front"}, keys
+            assert all(p.stat().st_size > 0 for p in mp4s)
+
+            # Train-shape == read-shape: the schema declared in meta/info.json
+            # must match what stream_dataset actually emits on read-back, so
+            # training consumers never see a different image shape than the
+            # schema promises (mirrors the raw-API test above).
+            info_json = json.loads((Path(root) / "meta" / "info.json").read_text())
+            declared = {
+                key: tuple(int(d) for d in feat["shape"])
+                for key, feat in info_json["features"].items()
+                if key.startswith("observation.images.")
+            }
+            assert set(declared) == keys, declared
+            reader = sim.stream_dataset("local/nb5_isaac", root=root, shuffle=False)
+            frame = next(iter(reader))
+            for key, (c, h, w) in declared.items():
+                emitted = tuple(int(d) for d in frame[key].shape[-3:])
+                assert emitted in ((c, h, w), (h, w, c)), (
+                    f"{key}: schema declares CHW {(c, h, w)} but stream_dataset "
+                    f"emitted {emitted} - factory-path probe and read-back shape diverged"
+                )
+        finally:
+            sim.destroy()
+
     def test_multi_camera_frames_are_distinct(self, tmp_path):
         """Two cameras with different vantages record distinct pixel content.
 
