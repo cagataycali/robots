@@ -2,6 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 """Background renderer contracts (panorama path: zero ML deps)."""
 
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -49,6 +51,64 @@ def test_panorama_missing_image_path_falls_back_to_procedural(tmp_path) -> None:
 def test_download_gsplat_scene_rejects_unknown_name(tmp_path) -> None:
     with pytest.raises(KeyError, match="Unknown scene"):
         download_gsplat_scene("not-a-scene", cache_dir=tmp_path)
+
+
+def test_download_gsplat_scene_returns_cached_file_without_downloading(tmp_path, monkeypatch) -> None:
+    # A present, non-empty cache file short-circuits the network fetch: the
+    # helper must return the cached path and never call urlretrieve. (The .spz
+    # scene derives slug "tabletop" + ".spz" from its source URL.)
+    cached = tmp_path / "tabletop.spz"
+    cached.write_bytes(b"already-on-disk")
+
+    def _must_not_download(*args, **kwargs):
+        raise AssertionError("urlretrieve must not run on a cache hit")
+
+    monkeypatch.setattr("urllib.request.urlretrieve", _must_not_download)
+
+    dest = download_gsplat_scene("tabletop (indoor room)", cache_dir=tmp_path)
+    assert dest == cached
+    assert dest.read_bytes() == b"already-on-disk"
+
+
+def test_download_gsplat_scene_fetches_via_atomic_part_rename(tmp_path, monkeypatch) -> None:
+    # Cache miss downloads to a temporary ``.part`` sidecar and only then
+    # atomically renames it to the final path, so a killed download never
+    # leaves a truncated file at the cache location. A .spz source URL caches
+    # under a ``.spz`` extension.
+    from strands_robots.rendering import backgrounds
+
+    calls: list[tuple[str, str]] = []
+
+    def _fake_urlretrieve(url, filename):
+        calls.append((url, str(filename)))
+        Path(filename).write_bytes(b"SPLAT-BYTES")
+
+    monkeypatch.setattr("urllib.request.urlretrieve", _fake_urlretrieve)
+
+    name = "tabletop (indoor room)"
+    dest = download_gsplat_scene(name, cache_dir=tmp_path)
+
+    assert dest == tmp_path / "tabletop.spz"
+    assert dest.read_bytes() == b"SPLAT-BYTES"
+    assert len(calls) == 1
+    fetched_url, part_path = calls[0]
+    assert fetched_url == backgrounds.GSPLAT_SCENES[name]
+    # Downloaded to the temp sidecar, not straight to the final path.
+    assert part_path.endswith(".spz.part")
+    # The sidecar was renamed away, leaving only the final cached file.
+    assert not (tmp_path / "tabletop.spz.part").exists()
+
+
+def test_download_gsplat_scene_maps_ply_url_to_ply_extension(tmp_path, monkeypatch) -> None:
+    # A .ply source URL must cache under a ``.ply`` extension so the loader
+    # dispatches to the PLY reader (not the SPZ reader). "bonsai" ships as .ply.
+    monkeypatch.setattr(
+        "urllib.request.urlretrieve",
+        lambda url, filename: Path(filename).write_bytes(b"ply-bytes"),
+    )
+    dest = download_gsplat_scene("bonsai (indoor tabletop)", cache_dir=tmp_path)
+    assert dest == tmp_path / "bonsai.ply"
+    assert dest.read_bytes() == b"ply-bytes"
 
 
 def test_scene_preset_registries_are_consistent() -> None:
