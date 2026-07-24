@@ -360,6 +360,33 @@ def test_get_contacts_not_implemented_on_base_facade():
         FakeSim().get_contacts()
 
 
+def test_get_frame_not_implemented_on_base_facade():
+    """The raw-frame path (``get_frame``) is a backend hook: a subclass that
+    provides ``render`` but no raw ``(rgb, depth)`` path must fail loud.
+
+    ``get_frame`` is the numeric-array counterpart of ``render`` used by the
+    in-process consumers (hybrid compositor, dataset recorders, video writers).
+    Its contract states backends must never substitute silently wrong pixels --
+    failures raise. This pins that a backend which never overrides it inherits a
+    clear ``NotImplementedError`` naming the method, not a silent ``None`` or a
+    zero frame that would corrupt a recording downstream.
+    """
+    with pytest.raises(NotImplementedError, match="get_frame"):
+        FakeSim().get_frame()
+
+
+def test_get_camera_params_not_implemented_on_base_facade():
+    """Pinhole intrinsics/extrinsics (``get_camera_params``) are a backend hook.
+
+    A backend that has not implemented the camera-params path must raise a clear
+    ``NotImplementedError`` naming the method rather than returning bogus
+    intrinsics, so consumers (calibration, projection, synthetic-data export)
+    never silently trust a wrong camera model.
+    """
+    with pytest.raises(NotImplementedError, match="get_camera_params"):
+        FakeSim().get_camera_params()
+
+
 # Actionable "robot not found" on the policy-execution sites (#1306 follow-up)
 #
 # run_policy / eval_policy / evaluate_benchmark used to emit a bare
