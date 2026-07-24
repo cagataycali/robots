@@ -128,3 +128,77 @@ def test_feather_mask_softens_boundary_only() -> None:
     assert 0.0 < alpha[3, 3] < 1.0  # boundary softened
     # radius=0 degrades to the raw mask.
     assert np.array_equal(feather_mask(mask, radius=0), mask.astype(np.float32))
+
+
+class FakeBackgroundRGBA(FakeBackground):
+    """Background that returns a 4-channel (RGBA) render, as some renderers do.
+
+    The compositor must drop the alpha channel down to RGB before compositing.
+    """
+
+    def render(self, cam: CameraParams):
+        rgb, depth = super().render(cam)
+        alpha = np.full((cam.height, cam.width, 1), 255, dtype=np.uint8)
+        return np.concatenate([rgb, alpha], axis=2), depth
+
+
+class FakeSimRGBA(FakeSim):
+    """Frame source whose foreground render carries an alpha channel."""
+
+    def get_frame(self, camera_name="default", width=None, height=None):
+        rgb, depth = super().get_frame(camera_name, width, height)
+        alpha = np.full((rgb.shape[0], rgb.shape[1], 1), 255, dtype=np.uint8)
+        return np.concatenate([rgb, alpha], axis=2), depth
+
+
+def test_rgba_foreground_alpha_channel_is_dropped() -> None:
+    comp = HybridCompositor(FakeSimRGBA(_square_depth()), background=FakeBackground(), feather_pixels=0)
+    frame = comp.render("cam")
+    # Alpha is stripped: debug + composite layers are 3-channel and the
+    # geometry pixel still shows the (white) foreground colour.
+    assert frame.foreground_rgb.shape == (H, W, 3)
+    assert frame.rgb.shape == (H, W, 3)
+    assert tuple(frame.rgb[5, 7]) == (255, 255, 255)
+
+
+def test_rgba_background_alpha_channel_is_dropped() -> None:
+    comp = HybridCompositor(FakeSim(_square_depth()), background=FakeBackgroundRGBA(), feather_pixels=0)
+    frame = comp.render("cam")
+    assert frame.background_rgb.shape == (H, W, 3)
+    # Sky pixel shows the (blue) background with its alpha dropped.
+    assert tuple(frame.rgb[0, 0]) == (0, 0, 255)
+
+
+def test_render_with_feathering_blends_the_geometry_boundary() -> None:
+    # feather_pixels > 0 routes the winner mask through feather_mask, softening
+    # the foreground/background seam so edge pixels are a blend of both.
+    comp = HybridCompositor(FakeSim(_square_depth()), background=FakeBackground(), feather_pixels=1)
+    frame = comp.render("cam")
+    fg, bg = (255, 255, 255), (0, 0, 255)
+    blended = [tuple(frame.rgb[y, x]) for y in range(H) for x in range(W) if tuple(frame.rgb[y, x]) not in (fg, bg)]
+    assert blended, "feathering should produce at least one blended edge pixel"
+
+
+def test_background_cache_is_bounded_under_many_camera_poses() -> None:
+    # Distinct camera names key distinct cache entries; past the cap the cache
+    # is dropped so it cannot grow without bound during a long fly-through.
+    bg = FakeBackground()
+    comp = HybridCompositor(FakeSim(_square_depth()), background=bg, feather_pixels=0)
+    for i in range(18):
+        comp.render(f"cam{i}")
+    assert bg.render_calls == 18  # each distinct pose rendered exactly once
+    # The overflow cleared the cache, so an early camera is now a miss and
+    # re-renders rather than being served stale.
+    comp.render("cam0")
+    assert bg.render_calls == 19
+
+
+def test_clear_caches_forces_background_recompute() -> None:
+    bg = FakeBackground()
+    comp = HybridCompositor(FakeSim(_square_depth()), background=bg, feather_pixels=0)
+    comp.render("cam")
+    comp.render("cam")
+    assert bg.render_calls == 1  # second render served from cache
+    comp.clear_caches()
+    comp.render("cam")
+    assert bg.render_calls == 2  # cache dropped -> background recomputed
