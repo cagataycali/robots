@@ -389,6 +389,9 @@ class IotMqttTransport:
 
     @property
     def thing_name(self) -> str:
+        """The AWS IoT thing name this transport authenticates as, or ``""``
+        if unset. Used as the MQTT client id and mTLS identity.
+        """
         return self._thing_name or ""
 
     # Pub/Sub

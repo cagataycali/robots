@@ -607,18 +607,30 @@ class BridgeTransport:
     # Inspection
 
     def is_alive(self) -> bool:
+        """``True`` if *either* underlying transport is still connected.
+
+        The bridge stays usable while one side survives, so callers can keep
+        publishing to whichever leg is up.
+        """
         return self._zenoh.is_alive() or self._iot.is_alive()
 
     @property
     def zenoh(self) -> ZenohTransport:
+        """The wrapped local-mesh Zenoh transport (always published to)."""
         return self._zenoh
 
     @property
     def iot(self) -> IotMqttTransport:
+        """The wrapped AWS IoT MQTT transport (published to only for
+        bridged topics).
+        """
         return self._iot
 
     @property
     def bridge_suffixes(self) -> frozenset[str]:
+        """Topic suffixes whose messages are mirrored onto the IoT leg; all
+        other topics stay Zenoh-local.
+        """
         return self._bridge_suffixes
 
     @property

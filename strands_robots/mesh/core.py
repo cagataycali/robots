@@ -750,10 +750,19 @@ class Mesh(SensorLoopsMixin):
 
     @property
     def alive(self) -> bool:
+        """``True`` while this peer is joined to the mesh (between
+        :meth:`join` and :meth:`leave`); ``False`` once it has left.
+        """
         return self._running
 
     @property
     def peers(self) -> list[dict[str, Any]]:
+        """Presence dicts for every *other* peer currently on the mesh.
+
+        Excludes this peer itself. Discovery is asynchronous, so the list
+        grows as presence beacons arrive. Use :attr:`peers_by_id` for O(1)
+        lookup by ``peer_id`` or :meth:`get_peer` for a ``None``-safe fetch.
+        """
         return [p for p in _session_get_peers() if p.get("peer_id") != self.peer_id]
 
     @property
