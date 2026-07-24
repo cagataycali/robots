@@ -129,6 +129,21 @@ class PanoramaBackground:
     # ----- BackgroundRenderer interface ----- #
 
     def render(self, cam: CameraParams) -> tuple[np.ndarray, np.ndarray]:
+        """Sample the equirectangular panorama along ``cam``'s per-pixel rays.
+
+        Casts one world-space ray per output pixel, maps each ray direction to
+        spherical ``(theta, phi)`` coordinates, applies the configured yaw
+        rotation, and bilinearly samples the panorama texture. Depth is a
+        constant ``cam.zfar`` plane so any MuJoCo foreground always wins the
+        compositor's depth test.
+
+        Args:
+            cam: pinhole camera parameters at the desired image size.
+
+        Returns:
+            ``(rgb, depth)`` with ``rgb`` as ``(H, W, 3) uint8`` and ``depth``
+            as ``(H, W) float32`` filled with ``cam.zfar`` meters.
+        """
         pano = self._ensure_panorama()  # (Hp, Wp, 3) uint8
         H, W = cam.height, cam.width
 
@@ -471,6 +486,28 @@ class GsplatBackground:
     # ----- BackgroundRenderer interface ----- #
 
     def render(self, cam: CameraParams) -> tuple[np.ndarray, np.ndarray]:
+        """Rasterize the loaded 3D Gaussian Splatting scene from ``cam``.
+
+        Lazily loads the ``.ply``/``.spz`` splats on first call, builds the
+        gaussian->camera view matrix (converting the stored camera->world
+        MuJoCo/OpenGL pose and the scene-alignment transform into gsplat's
+        OpenCV convention), and rasterizes in ``RGB+D`` mode. Splat RGB is
+        alpha-composited over the neutral background fill so unobserved regions
+        read as plain sky/ceiling rather than black, and zero-contribution
+        pixels are promoted to ``cam.zfar`` depth so they lose the depth test
+        against any MuJoCo foreground.
+
+        Args:
+            cam: pinhole camera parameters at the desired image size.
+
+        Returns:
+            ``(rgb, depth)`` with ``rgb`` as ``(H, W, 3) uint8`` and ``depth``
+            as ``(H, W) float32`` in meters (camera frame).
+
+        Raises:
+            ImportError: if the ``sim-gs`` extra (``torch`` + ``gsplat``) is
+                not installed.
+        """
         if self._splats is None:
             self._load()
         import torch
