@@ -663,3 +663,90 @@ class TestGsplatBackgroundClipSplats:
         # gs-z -1 -> world 4.0 (kept); gs-z -4 -> world 1.0 (kept): the transform
         # is honored, so both clear the world-frame floor.
         assert (kept, total) == (2, 2)
+
+
+class TestBakeGsplatPanorama:
+    """bake_gsplat_panorama reprojects six outward cube faces into an
+    equirectangular panorama using the same spherical convention
+    ``PanoramaBackground`` samples with, so a baked backdrop reads correctly
+    per-camera. The gaussian-splat render is the only CUDA-bound step; the
+    cube-to-equirect reprojection and image write are pure numpy + Pillow and
+    are pinned here without gsplat/CUDA by doubling the render boundary.
+    """
+
+    @staticmethod
+    def _face_color(fwd) -> np.ndarray:
+        """Map an outward face direction to a distinct RGB so a panorama pixel's
+        colour identifies which world direction it sampled."""
+        return ((np.asarray(fwd, dtype=float) + 1.0) * 0.5 * 255.0).astype(np.uint8)
+
+    def test_reprojects_cube_faces_into_equirectangular_directions(self, tmp_path, monkeypatch) -> None:
+        torch = pytest.importorskip("torch")
+        from PIL import Image
+
+        from strands_robots.rendering import backgrounds as bg
+
+        # A room-like cloud so _upright_view_transform has a well-defined thin
+        # (up) axis; it does not change the doubled render but exercises the
+        # real pre-render setup (load + upright transform) in bake.
+        rng = np.random.default_rng(0)
+        means = np.column_stack(
+            [rng.uniform(-4, 4, 2000), rng.uniform(-2, 2, 2000), rng.uniform(-0.1, 0.1, 2000)]
+        ).astype(np.float32)
+        face_color = self._face_color
+
+        def fake_load(self) -> None:
+            self._splats = {"means": torch.from_numpy(means)}
+
+        def fake_render(self, cam):
+            # bake builds T_world_cam columns [right, up, -fwd], so the outward
+            # face direction is -Z of the camera rotation. Paint the whole face
+            # that direction's colour to trace where each pixel is sampled from.
+            fwd = -np.asarray(cam.T_world_cam, dtype=float)[:3, 2]
+            rgb = np.empty((cam.height, cam.width, 3), np.uint8)
+            rgb[:] = face_color(fwd)
+            return rgb, np.zeros((cam.height, cam.width), np.float32)
+
+        monkeypatch.setattr(bg.GsplatBackground, "_load", fake_load)
+        monkeypatch.setattr(bg.GsplatBackground, "render", fake_render)
+
+        # PNG keeps the reprojection lossless so exact direction->colour
+        # assertions hold (production bakes a .jpg; the format is incidental).
+        out = bg.bake_gsplat_panorama(
+            tmp_path / "scene.ply",
+            out_path=tmp_path / "pano.png",
+            face_size=32,
+            equi_w=64,
+            equi_h=32,
+            device="cpu",
+        )
+
+        assert out.exists() and out.stat().st_size > 0
+        pano = np.array(Image.open(out))
+        assert pano.shape == (32, 64, 3)
+        assert pano.dtype == np.uint8
+
+        # Equirect convention (matches PanoramaBackground): column W/2 -> theta 0
+        # and row H/2 -> phi 0 -> +X; column 0 -> theta -pi -> -X; row 0 -> phi
+        # +pi/2 -> +Z. Each sampled pixel must carry that face's colour.
+        np.testing.assert_array_equal(pano[16, 32], self._face_color([1.0, 0.0, 0.0]))
+        np.testing.assert_array_equal(pano[16, 0], self._face_color([-1.0, 0.0, 0.0]))
+        np.testing.assert_array_equal(pano[0, 32], self._face_color([0.0, 0.0, 1.0]))
+
+    def test_returns_cached_panorama_without_rerendering(self, tmp_path, monkeypatch) -> None:
+        # A non-empty output short-circuits: bake returns the cached path and
+        # never touches the (GPU) splat load/render path.
+        from strands_robots.rendering import backgrounds as bg
+
+        out = tmp_path / "pano.jpg"
+        out.write_bytes(b"cached-panorama")
+
+        def boom(self) -> None:
+            raise AssertionError("bake must not load splats when a cached panorama exists")
+
+        monkeypatch.setattr(bg.GsplatBackground, "_load", boom)
+
+        result = bg.bake_gsplat_panorama(tmp_path / "scene.ply", out_path=out, device="cpu")
+
+        assert result == out
+        assert out.read_bytes() == b"cached-panorama"
