@@ -1091,7 +1091,8 @@ class TestRealModeConfigDiscovery:
 
         _ensure_lerobot_robots_registered()
         ConfigClass = RobotConfig.get_choice_class("so101_follower")
-        real_fields = {f.name for f in dataclasses.fields(ConfigClass)}
+        fields = list(dataclasses.fields(ConfigClass))
+        real_fields = {f.name for f in fields}
 
         # Import from production code -- single source of truth (no drift).
         forwardable_set = set(_FORWARDABLE_KWARGS)
@@ -1101,12 +1102,30 @@ class TestRealModeConfigDiscovery:
 
         target_field = sorted(dataclass_only_fields)[0]
 
+        # Satisfy every required (no-default) field so construction fails ONLY
+        # if the forwarding of ``target_field`` is broken -- never because of an
+        # unrelated required field. lerobot #4142 added optional PID-gain fields
+        # (position_p/i/d_coefficient) to SO-follower configs; when one of those
+        # sorts first as ``target_field`` the config still declares a required
+        # ``port``, so a fixed ``cameras``/``target_field`` kwarg pair alone left
+        # ``port`` unset and the construction raised a ValueError unrelated to
+        # the forwarding contract under test. Fill required fields dynamically so
+        # the test stays pinned on forwarding as lerobot evolves its dataclass.
+        required = {
+            f.name: "placeholder"
+            for f in fields
+            if f.default is dataclasses.MISSING
+            and f.default_factory is dataclasses.MISSING
+            and f.name not in {"cameras", "id"}
+        }
+        kwargs = {**required, target_field: "test_value"}
+
         hw = HwRobot.__new__(HwRobot)
         hw.tool_name_str = "test_forward"
-        # Pass the dataclass-only field -- should NOT raise ValueError
-        cfg = hw._create_minimal_config("so101_follower", cameras={}, **{target_field: "test_value"})
-        # The field should have been forwarded to the config
-        assert hasattr(cfg, target_field)
+        # Pass the dataclass-only field -- should NOT raise ValueError, and the
+        # value must round-trip verbatim (forwarded, not dropped).
+        cfg = hw._create_minimal_config("so101_follower", cameras={}, **kwargs)
+        assert getattr(cfg, target_field) == "test_value"
 
 
 class TestMinimalConfigContractBranches:
