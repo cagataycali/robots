@@ -120,3 +120,192 @@ def test_gsplat_rasterizer_available_is_a_nonraising_capability_probe() -> None:
     ok, reason = gsplat_rasterizer_available()
     assert isinstance(ok, bool)
     assert isinstance(reason, str) and reason
+
+
+# --------------------------------------------------------------------------- #
+# SPZ (Niantic Gaussian SPlat) reader -- pure numpy + torch, no gsplat/CUDA.
+# --------------------------------------------------------------------------- #
+# The .spz reader is a hand-rolled binary parser (gzip container, 16-byte
+# header, struct-of-arrays body, and a bit-packed "smallest-three" quaternion
+# codec for version 3). It is the format the curated MuJoCo-GS-Web scenes ship
+# in, so a decode regression silently corrupts every splat backdrop. These
+# tests pin the wire format by round-tripping known inputs through the parser.
+
+_INV_SQRT2 = 1.0 / np.sqrt(2.0)
+
+
+def _encode_spz_rotation_v3(q_wxyz: tuple[float, float, float, float]) -> list[int]:
+    """Encode a WXYZ quaternion into 4 bytes using the SPZ v3 smallest-three
+    codec (the inverse of ``_decode_spz_rotations(..., smallest_three=True)``).
+
+    The largest-magnitude component is dropped (reconstructed on decode from
+    unit norm); its index goes in the top 2 bits. The other three are stored
+    LSB-first in decode order (component index 3, 2, 1, 0, skipping the
+    largest) as a 9-bit magnitude plus a sign bit.
+    """
+    w, x, y, z = q_wxyz
+    xyzw = np.array([x, y, z, w], dtype=float)
+    xyzw /= np.linalg.norm(xyzw)
+    i_largest = int(np.argmax(np.abs(xyzw)))
+    if xyzw[i_largest] < 0:  # canonical form: largest component positive
+        xyzw = -xyzw
+    comp = 0
+    shift = 0
+    for i in (3, 2, 1, 0):
+        if i == i_largest:
+            continue
+        val = xyzw[i]
+        negbit = 1 if val < 0 else 0
+        mag = min(int(round(abs(val) / _INV_SQRT2 * 511)), 511)
+        comp |= ((mag & 511) | (negbit << 9)) << shift
+        shift += 10
+    comp |= (i_largest & 3) << 30
+    return [comp & 0xFF, (comp >> 8) & 0xFF, (comp >> 16) & 0xFF, (comp >> 24) & 0xFF]
+
+
+def _pack_positions(means: np.ndarray, frac_bits: int) -> bytes:
+    """Encode (N,3) float means as 9 bytes/point (24-bit LE signed fixed point)."""
+    fixed = (np.round(means * (1 << frac_bits)).astype(np.int64)) & 0xFFFFFF
+    out = np.zeros((means.shape[0], 3, 3), np.uint8)
+    out[:, :, 0] = fixed & 0xFF
+    out[:, :, 1] = (fixed >> 8) & 0xFF
+    out[:, :, 2] = (fixed >> 16) & 0xFF
+    return out.reshape(means.shape[0], 9).tobytes()
+
+
+def _build_spz(
+    tmp_path,
+    means: np.ndarray,
+    alpha: np.ndarray,
+    col: np.ndarray,
+    scl: np.ndarray,
+    rot: np.ndarray,
+    *,
+    version: int,
+    frac_bits: int = 12,
+    sh_degree: int = 0,
+):
+    """Write a minimal gzip-compressed .spz file and return its path."""
+    import gzip
+    import struct
+
+    from strands_robots.rendering.backgrounds import _SPZ_MAGIC
+
+    n = means.shape[0]
+    header = struct.pack("<iii", _SPZ_MAGIC, version, n) + struct.pack("<BBBB", sh_degree, frac_bits, 0, 0)
+    body = (
+        _pack_positions(means, frac_bits)
+        + alpha.astype(np.uint8).tobytes()
+        + col.astype(np.uint8).reshape(n, 3).tobytes()
+        + scl.astype(np.uint8).reshape(n, 3).tobytes()
+        + rot.astype(np.uint8).tobytes()
+    )
+    path = tmp_path / f"scene_v{version}.spz"
+    path.write_bytes(gzip.compress(header + body))
+    return path
+
+
+class TestSpzGaussianSplatReader:
+    """The .spz reader must decode Niantic Gaussian-splat scenes (versions 2
+    and 3) into the canonical splat dict, and reject files it cannot parse."""
+
+    def test_decode_rotations_v3_roundtrips_quaternions(self) -> None:
+        from strands_robots.rendering.backgrounds import _decode_spz_rotations
+
+        quats = [(1.0, 0.0, 0.0, 0.0), (0.8, 0.1, 0.2, 0.3), (0.0, 1.0, 0.0, 0.0), (0.3, -0.4, 0.5, 0.7)]
+        rot = np.array([_encode_spz_rotation_v3(q) for q in quats], np.uint8)
+        decoded = _decode_spz_rotations(rot, smallest_three=True)
+        assert decoded.shape == (4, 4)
+        for q, d in zip(quats, decoded):
+            expected = np.array(q) / np.linalg.norm(q)
+            if float(np.dot(expected, d)) < 0:  # a quaternion and its negation are the same rotation
+                d = -d
+            # 9-bit magnitude quantisation caps the error at ~1/sqrt(2)/511.
+            assert np.max(np.abs(expected - d)) < 3e-3
+            assert abs(float(np.linalg.norm(d)) - 1.0) < 1e-4
+
+    def test_decode_rotations_v2_reconstructs_w_from_xyz(self) -> None:
+        from strands_robots.rendering.backgrounds import _decode_spz_rotations
+
+        # v2 stores xyz mapped through byte/127.5 - 1; w is sqrt(1 - |xyz|^2).
+        rot = np.array([[128, 128, 128], [200, 60, 130]], np.uint8)
+        decoded = _decode_spz_rotations(rot, smallest_three=False)
+        assert decoded.shape == (2, 4)
+        for byte_row, d in zip(rot, decoded):
+            xyz = byte_row[:3].astype(np.float32) / 127.5 - 1.0
+            w = np.sqrt(max(0.0, 1.0 - float((xyz * xyz).sum())))
+            expected = np.array([w, xyz[0], xyz[1], xyz[2]], np.float32)  # WXYZ order
+            assert np.allclose(d, expected, atol=1e-4)
+
+    def test_load_v3_parses_every_field(self, tmp_path) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import _load_spz_splats
+
+        means = np.array([[0.5, -0.25, 1.0], [0.0, 0.125, -0.5]], np.float32)
+        alpha = np.array([255, 128], np.uint8)
+        col = np.array([[128, 128, 128], [255, 0, 64]], np.uint8)
+        scl = np.array([[160, 160, 160], [80, 100, 120]], np.uint8)
+        rot = np.array(
+            [_encode_spz_rotation_v3((1.0, 0.0, 0.0, 0.0)), _encode_spz_rotation_v3((0.8, 0.1, 0.2, 0.3))], np.uint8
+        )
+        path = _build_spz(tmp_path, means, alpha, col, scl, rot, version=3, frac_bits=12)
+
+        splats = _load_spz_splats(path, device="cpu")
+        assert set(splats) == {"means", "scales", "quats", "opacities", "colors"}
+        m = splats["means"].numpy()
+        assert m.shape == (2, 3) and m.dtype == np.float32
+        # 24-bit fixed point at frac_bits=12 recovers the means to sub-mm.
+        assert np.allclose(m, means, atol=1e-3)
+        # scale = exp(byte/16 - 10); opacity = byte/255.
+        assert np.allclose(splats["scales"].numpy(), np.exp(scl.astype(np.float32) / 16.0 - 10.0), atol=1e-5)
+        assert np.allclose(splats["opacities"].numpy(), alpha.astype(np.float32) / 255.0, atol=1e-4)
+        # DC color decodes to [0,1] linear RGB; the neutral 128 byte maps near 0.5.
+        colors = splats["colors"].numpy()
+        assert colors.shape == (2, 3)
+        assert np.all((colors >= 0.0) & (colors <= 1.0))
+        assert np.allclose(colors[0], 0.5, atol=0.02)
+        # v3 rot decodes to a unit WXYZ quaternion; row 0 is (near-)identity.
+        quats = splats["quats"].numpy()
+        assert quats.shape == (2, 4)
+        assert np.allclose(np.linalg.norm(quats, axis=1), 1.0, atol=1e-3)
+        assert np.allclose(np.abs(quats[0]), np.array([1.0, 0.0, 0.0, 0.0]), atol=3e-3)
+
+    def test_load_v2_takes_the_three_byte_rotation_path(self, tmp_path) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import _load_spz_splats
+
+        means = np.array([[0.0, 0.0, 0.0]], np.float32)
+        alpha = np.array([200], np.uint8)
+        col = np.array([[10, 20, 30]], np.uint8)
+        scl = np.array([[128, 128, 128]], np.uint8)
+        rot = np.array([[128, 128, 128]], np.uint8)  # v2: 3 bytes/point
+        path = _build_spz(tmp_path, means, alpha, col, scl, rot, version=2)
+
+        splats = _load_spz_splats(path, device="cpu")
+        assert splats["means"].shape == (1, 3)
+        assert splats["quats"].shape == (1, 4)  # w reconstructed -> 4 comps
+        assert abs(float(splats["opacities"][0]) - 200.0 / 255.0) < 1e-4
+
+    def test_load_rejects_bad_magic(self, tmp_path) -> None:
+        pytest.importorskip("torch")
+        import gzip
+        import struct
+
+        from strands_robots.rendering.backgrounds import _load_spz_splats
+
+        path = tmp_path / "bad_magic.spz"
+        path.write_bytes(gzip.compress(struct.pack("<iii", 0xDEAD, 3, 0) + struct.pack("<BBBB", 0, 12, 0, 0)))
+        with pytest.raises(ValueError, match="bad SPZ magic"):
+            _load_spz_splats(path, device="cpu")
+
+    def test_load_rejects_unsupported_version(self, tmp_path) -> None:
+        pytest.importorskip("torch")
+        import gzip
+        import struct
+
+        from strands_robots.rendering.backgrounds import _SPZ_MAGIC, _load_spz_splats
+
+        path = tmp_path / "bad_version.spz"
+        path.write_bytes(gzip.compress(struct.pack("<iii", _SPZ_MAGIC, 9, 0) + struct.pack("<BBBB", 0, 12, 0, 0)))
+        with pytest.raises(ValueError, match="unsupported SPZ version"):
+            _load_spz_splats(path, device="cpu")
