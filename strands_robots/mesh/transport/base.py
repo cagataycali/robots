@@ -63,7 +63,6 @@ class SubHandle(Protocol):
         preferred. Zenoh maps this to ``Subscriber.undeclare()``; MQTT
         backends send the broker ``unsubscribe`` packet.
         """
-        ...
 
 
 @runtime_checkable
