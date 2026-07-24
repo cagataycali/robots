@@ -80,6 +80,53 @@ def _joint_qpos(sim, name):
     return float(d.qpos[m.jnt_qposadr[jid]])
 
 
+# A floating-base robot exercising the MULTI-DOF joint path that a hinge-only
+# arm never reaches: a free root joint (6 DOFs), a ball joint (3 DOFs), and a
+# single hinge (1 DOF). Used to pin how actuate_robot/zero_dynamics treat
+# non-hinge/slide joints (humanoids, quadrupeds, mobile bases).
+FLOATER_MJCF = """<mujoco model="floater">
+  <worldbody>
+    <body name="base" pos="0 0 0.5">
+      <freejoint name="root"/>
+      <geom type="box" size="0.05 0.05 0.05" mass="1.0"/>
+      <body name="head" pos="0 0 0.1">
+        <joint name="neck" type="ball"/>
+        <geom type="box" size="0.03 0.03 0.03" mass="0.3"/>
+        <body name="arm" pos="0 0 0.06">
+          <joint name="elbow" type="hinge" axis="0 1 0"/>
+          <geom type="box" size="0.02 0.02 0.05" mass="0.1"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+# Same base, but with NO hinge/slide joint at all (free + ball only).
+FLOATER_NO_HINGE_MJCF = """<mujoco model="floater_no_hinge">
+  <worldbody>
+    <body name="base" pos="0 0 0.5">
+      <freejoint name="root"/>
+      <geom type="box" size="0.05 0.05 0.05" mass="1.0"/>
+      <body name="head" pos="0 0 0.1">
+        <joint name="neck" type="ball"/>
+        <geom type="box" size="0.03 0.03 0.03" mass="0.3"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+
+
+def _add_floating_base(sim, tmp_path, mjcf=FLOATER_MJCF, name="floater"):
+    """Add a floating-base robot from an MJCF string and return its handle."""
+    model_file = tmp_path / f"{name}.xml"
+    model_file.write_text(mjcf)
+    result = sim.add_robot(name="fl", urdf_path=str(model_file))
+    assert result["status"] == "success", result
+    return sim._world.robots["fl"]
+
+
 class TestActuateRobot:
     def test_send_action_drives_urdf_arm_after_actuation(self, arm_sim):
         """The headline contract: an actuator-less URDF arm becomes drivable."""
@@ -191,6 +238,25 @@ class TestActuateRobot:
         assert result["status"] == "success", result
         assert arm_sim._world._model.nu == 2
 
+    def test_skips_non_hinge_slide_joints_on_floating_base(self, sim, tmp_path):
+        # A free/ball joint carries no position-servo semantics, so a floating
+        # base is actuated only on its hinge/slide joints; the free + ball
+        # joints are silently skipped (not errored, not actuated).
+        _add_floating_base(sim, tmp_path)
+        result = sim.actuate_robot(robot_name="fl", kp=100.0)
+        assert result["status"] == "success", result
+        assert sim._world._model.nu == 1, "only the single hinge must gain an actuator"
+        assert "['elbow']" in result["content"][0]["text"]
+
+    def test_no_hinge_slide_joints_is_actionable_error(self, sim, tmp_path):
+        # A robot with only free/ball joints has nothing to position-servo:
+        # a structured error, not a spec recompile with zero actuators.
+        _add_floating_base(sim, tmp_path, mjcf=FLOATER_NO_HINGE_MJCF)
+        result = sim.actuate_robot(robot_name="fl", kp=100.0)
+        assert result["status"] == "error"
+        assert "no hinge/slide joints" in result["content"][0]["text"]
+        assert sim._world._model.nu == 0, "a rejected actuate_robot must add no actuators"
+
 
 class TestZeroDynamics:
     def test_zeroes_all_dofs(self, sim):
@@ -237,3 +303,30 @@ class TestZeroDynamics:
         sim.step(40)
         result = sim._dispatch_action("zero_dynamics", {})
         assert result["status"] == "success", result
+
+    def test_zeroes_all_dofs_of_free_and_ball_joints(self, sim, tmp_path):
+        # zero_dynamics must clear EVERY DOF of a multi-DOF joint, not just the
+        # first: a free joint spans 6 DOFs and a ball joint 3. A width-1
+        # regression would leave a floating base spinning/translating on 5 of
+        # its 6 DOFs after the "anti-explosion" reset.
+        robot = _add_floating_base(sim, tmp_path)
+        m, d = sim._world._model, sim._world._data
+
+        # Seed a nonzero velocity/acceleration on every DOF the robot owns.
+        d.qvel[:] = 1.5
+        d.qacc[:] = 2.0
+
+        result = sim.zero_dynamics(robot_name="fl")
+        assert result["status"] == "success", result
+        # 6 (free) + 3 (ball) + 1 (hinge) = 10 DOFs reported zeroed.
+        assert "10 DOFs" in result["content"][0]["text"]
+
+        for jid in robot.joint_ids:
+            jtype = int(m.jnt_type[jid])
+            width = {int(mj.mjtJoint.mjJNT_FREE): 6, int(mj.mjtJoint.mjJNT_BALL): 3}.get(jtype, 1)
+            adr = int(m.jnt_dofadr[jid])
+            # qvel and qacc_warmstart are cleared and stay cleared; qacc is
+            # re-derived by the trailing mj_forward, so it is not asserted zero
+            # (it reflects gravity), matching test_zeroes_all_dofs.
+            assert [float(v) for v in d.qvel[adr : adr + width]] == pytest.approx([0.0] * width, abs=1e-12)
+            assert [float(v) for v in d.qacc_warmstart[adr : adr + width]] == pytest.approx([0.0] * width, abs=1e-12)
