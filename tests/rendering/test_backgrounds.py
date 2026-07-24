@@ -481,3 +481,185 @@ class TestPlyGaussianSplatReader:
         colors = _load_ply_splats(path, device="cpu")["colors"].numpy()
         assert np.allclose(colors[0], 1.0)
         assert np.allclose(colors[1], 0.0)
+
+
+# --------------------------------------------------------------------------- #
+# GsplatBackground config normalization + splat clipping (no gsplat/CUDA)
+# --------------------------------------------------------------------------- #
+#
+# Constructing a GsplatBackground and clipping its gaussians are pure
+# numpy/torch bookkeeping -- the heavy gsplat rasterizer is only touched lazily
+# on the first ``render()``. These contracts (mode resolution, background-fill
+# defaults, and transform-aware sub-floor/opacity clipping) are pinned here
+# without needing the ``sim-gs`` extra.
+
+
+class TestGsplatBackgroundConfig:
+    """The GsplatBackground constructor normalizes its render-mode config."""
+
+    def test_defaults_to_no_alignment_black_fill_and_lazy_splats(self) -> None:
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(ply_path="/nonexistent/scene.ply")
+
+        # No skybox/backdrop alignment unless explicitly asked for.
+        assert bg._skybox is False
+        assert bg._auto_backdrop is False
+        # Identity world_from_gs and no splats loaded yet (lazy on first render).
+        assert np.allclose(bg._transform, np.eye(4))
+        assert bg._explicit_transform is False
+        assert bg._splats is None
+        # Non-skybox default fill is black (voids read as black, matching the
+        # dark scene background convention).
+        assert bg._bg_fill.tolist() == [0.0, 0.0, 0.0]
+
+    def test_skybox_mode_defaults_to_neutral_grey_void_fill(self) -> None:
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(ply_path="scene.ply", skybox=True)
+
+        assert bg._skybox is True
+        # Unobserved zenith/edges read as a light-grey ceiling/sky, not black.
+        assert bg._bg_fill.tolist() == [188.0, 188.0, 192.0]
+
+    def test_explicit_bg_fill_overrides_the_mode_default(self) -> None:
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(ply_path="scene.ply", skybox=True, bg_fill=(10, 20, 30))
+
+        assert bg._bg_fill.tolist() == [10.0, 20.0, 30.0]
+
+    def test_explicit_transform_disables_skybox_and_backdrop_fits(self) -> None:
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        transform = np.eye(4)
+        transform[0, 3] = 1.5
+        bg = GsplatBackground(
+            ply_path="scene.ply",
+            transform=transform,
+            skybox=True,
+            auto_backdrop=True,
+        )
+
+        # A caller-supplied world_from_gs wins: no auto-fit clobbers it.
+        assert bg._explicit_transform is True
+        assert bg._skybox is False
+        assert bg._auto_backdrop is False
+        assert np.allclose(bg._transform, transform)
+
+    def test_skybox_alignment_and_clip_parameters_are_captured(self) -> None:
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(
+            ply_path="scene.ply",
+            skybox=True,
+            up_sign=-1.0,
+            yaw_deg=30,
+            radius=2.0,
+            floor_z=-0.5,
+            clip_below=0.1,
+            min_opacity=0.3,
+            floor_pct=1.5,
+            metric=True,
+            up_axis=(0, 0, 1),
+            major_axis=(1, 0, 0),
+            own_floor=True,
+        )
+
+        assert bg._up_sign == -1.0
+        assert bg._yaw_deg == 30.0
+        assert bg._radius == 2.0
+        assert bg._floor_z == -0.5
+        assert bg._clip_below == 0.1
+        assert bg._min_opacity == 0.3
+        assert bg._floor_pct == 1.5
+        assert bg._metric is True
+        assert bg._up_axis == (0, 0, 1)
+        assert bg._major_axis == (1, 0, 0)
+        # own_floor tells the compositor to hide the MuJoCo grid ground.
+        assert bg.own_floor is True
+
+    def test_backdrop_center_and_radius_are_captured(self) -> None:
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(
+            ply_path="scene.ply",
+            auto_backdrop=True,
+            backdrop_center=(1.0, 2.0, 3.0),
+            backdrop_radius=5.0,
+        )
+
+        assert bg._auto_backdrop is True
+        assert bg._backdrop_center.tolist() == [1.0, 2.0, 3.0]
+        assert bg._backdrop_radius == 5.0
+
+
+class TestGsplatBackgroundClipSplats:
+    """_clip_splats drops sub-floor gaussians and low-opacity floaters."""
+
+    @staticmethod
+    def _splats(means, opacities):
+        import torch
+
+        n = len(means)
+        return {
+            "means": torch.tensor(means, dtype=torch.float32),
+            "opacities": torch.tensor(opacities, dtype=torch.float32).reshape(-1, 1),
+            "colors": torch.zeros(n, 3),
+            "scales": torch.ones(n, 3),
+            "quats": torch.zeros(n, 4),
+        }
+
+    def test_clips_below_floor_and_low_opacity(self) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(ply_path="scene.ply")
+        bg._transform = np.eye(4)
+        # z:   -1.0 (below floor), 0.5, 2.0, 3.0 ; opacity: 0.9, 0.1, 0.9, 0.9
+        bg._splats = self._splats(
+            [[0, 0, -1.0], [0, 0, 0.5], [0, 0, 2.0], [0, 0, 3.0]],
+            [0.9, 0.1, 0.9, 0.9],
+        )
+
+        kept, total = bg._clip_splats(clip_below=0.0, min_opacity=0.25)
+
+        # Kept iff world-z >= 0 AND opacity >= 0.25 -> only the z=2 and z=3 ones.
+        assert total == 4
+        assert kept == 2
+        assert bg._splats["means"].tolist() == [[0.0, 0.0, 2.0], [0.0, 0.0, 3.0]]
+        # Every parallel field is filtered to the same survivors.
+        for key in ("means", "opacities", "colors", "scales", "quats"):
+            assert bg._splats[key].shape[0] == 2
+
+    def test_zero_min_opacity_disables_the_opacity_filter(self) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(ply_path="scene.ply")
+        bg._transform = np.eye(4)
+        bg._splats = self._splats([[0, 0, -1.0], [0, 0, 1.0]], [0.01, 0.01])
+
+        kept, total = bg._clip_splats(clip_below=0.0, min_opacity=0.0)
+
+        # Faint floaters survive; only the sub-floor gaussian is dropped.
+        assert (kept, total) == (1, 2)
+        assert bg._splats["means"].tolist() == [[0.0, 0.0, 1.0]]
+
+    def test_clip_threshold_is_applied_in_world_frame_after_transform(self) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering.backgrounds import GsplatBackground
+
+        bg = GsplatBackground(ply_path="scene.ply")
+        # world_from_gs lifts every gaussian by +5 in z, so gaussians that sit
+        # below the floor in their own frame clear it in world coordinates.
+        transform = np.eye(4)
+        transform[2, 3] = 5.0
+        bg._transform = transform
+        bg._splats = self._splats([[0, 0, -1.0], [0, 0, -4.0]], [0.9, 0.9])
+
+        kept, total = bg._clip_splats(clip_below=0.0, min_opacity=0.0)
+
+        # gs-z -1 -> world 4.0 (kept); gs-z -4 -> world 1.0 (kept): the transform
+        # is honored, so both clear the world-frame floor.
+        assert (kept, total) == (2, 2)
