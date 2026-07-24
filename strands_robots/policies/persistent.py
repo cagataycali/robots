@@ -105,40 +105,50 @@ class PersistentPolicy(Policy):
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, Any]]:
+        """Delegate to the wrapped policy under the async lock (see :meth:`Policy.get_actions`)."""
         async with self._async_lock:
             return await self._inner.get_actions(observation_dict, instruction, **kwargs)
 
     def get_actions_sync(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, Any]]:
+        """Delegate to the wrapped policy under the per-call lock (see :meth:`Policy.get_actions_sync`)."""
         with self._call_lock:
             return self._inner.get_actions_sync(observation_dict, instruction, **kwargs)
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        """Forward the robot state keys to the wrapped policy."""
         self._inner.set_robot_state_keys(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
+        """Reset the wrapped policy's per-episode state (weights stay resident)."""
         self._inner.reset(seed)
 
     def set_control_frequency(self, hz: float) -> None:
+        """Forward the executing loop's control rate to the wrapped policy."""
         self._inner.set_control_frequency(hz)
 
     def set_rtc_observed_delay(self, steps: int | None) -> None:
+        """Forward the observed inference delay (RTC steps) to the wrapped policy."""
         self._inner.set_rtc_observed_delay(steps)
 
     @property
     def requires_images(self) -> bool:
+        """Whether the wrapped policy needs camera frames in its observation."""
         return self._inner.requires_images
 
     @property
     def execution_horizon(self) -> int:
+        """Actions consumed from one ``get_actions`` chunk, from the wrapped policy."""
         return self._inner.execution_horizon
 
     def is_chunk_emitting(self) -> bool:
+        """Whether the wrapped policy returns multi-action chunks per ``get_actions``."""
         return self._inner.is_chunk_emitting()
 
     @property
     def provider_name(self) -> str:
+        """Provider name of the wrapped policy (identifies the resident model)."""
         return self._inner.provider_name
 
     def __getattr__(self, name: str) -> Any:

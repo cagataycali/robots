@@ -19,6 +19,7 @@ class MockPolicy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Provider name for identification (always ``"mock"``)."""
         return "mock"
 
     @property
@@ -27,6 +28,7 @@ class MockPolicy(Policy):
         return False
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        """Record the ordered joint keys used to name the sinusoidal action dict."""
         self.robot_state_keys = robot_state_keys
 
     async def get_actions(
