@@ -129,6 +129,23 @@ class PanoramaBackground:
     # ----- BackgroundRenderer interface ----- #
 
     def render(self, cam: CameraParams) -> tuple[np.ndarray, np.ndarray]:
+        """Sample the equirectangular panorama along ``cam``'s per-pixel rays.
+
+        Implements :meth:`BackgroundRenderer.render`. Casts a world-space ray
+        through every pixel (honouring the optional yaw ``rotation``), maps each
+        ray to equirectangular ``(u, v)`` and bilinearly samples the panorama
+        texture. The panorama sits at infinity, so depth is a constant
+        ``cam.zfar`` -- every background pixel loses the compositor's depth test
+        against any simulation foreground.
+
+        Args:
+            cam: pinhole camera parameters at the desired image size.
+
+        Returns:
+            ``(rgb, depth)`` with ``rgb`` as ``(H, W, 3) uint8`` and ``depth`` as
+            ``(H, W) float32`` filled with ``cam.zfar`` (the background is at
+            infinity).
+        """
         pano = self._ensure_panorama()  # (Hp, Wp, 3) uint8
         H, W = cam.height, cam.width
 
@@ -471,6 +488,28 @@ class GsplatBackground:
     # ----- BackgroundRenderer interface ----- #
 
     def render(self, cam: CameraParams) -> tuple[np.ndarray, np.ndarray]:
+        """Rasterize the 3D Gaussian Splat scene from ``cam`` (RGB + depth).
+
+        Implements :meth:`BackgroundRenderer.render`. Lazily loads the splats on
+        the first call, builds the gaussian->camera view matrix (converting the
+        stored MuJoCo/OpenGL ``T_world_cam`` into gsplat's OpenCV convention) and
+        rasterizes in ``"RGB+D"`` mode. The RGB is composited over the neutral
+        ``bg_fill`` by accumulated alpha so un-observed regions read as a plain
+        fill rather than black, and empty (no-gaussian) pixels have their depth
+        promoted to ``cam.zfar`` so they lose the compositor's depth test.
+
+        Args:
+            cam: pinhole camera parameters at the desired image size.
+
+        Returns:
+            ``(rgb, depth)`` with ``rgb`` as ``(H, W, 3) uint8`` and ``depth`` as
+            ``(H, W) float32`` metric depth in the camera frame.
+
+        Raises:
+            RuntimeError: if ``device='cuda'`` was requested but torch reports no
+                CUDA device (surfaced eagerly on first load).
+            FileNotFoundError: if the configured Gaussian-splat file is missing.
+        """
         if self._splats is None:
             self._load()
         import torch
