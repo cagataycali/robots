@@ -13,7 +13,7 @@ them.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -41,7 +41,10 @@ class _RecordingTransport:
 def _bridge() -> tuple[BridgeTransport, _RecordingTransport, _RecordingTransport]:
     zenoh = _RecordingTransport()
     iot = _RecordingTransport()
-    return BridgeTransport(zenoh=zenoh, iot=iot), zenoh, iot
+    # _RecordingTransport is a structural stub (no declare_subscriber), so cast
+    # to Any at the constructor boundary -- matching the convention in
+    # test_bridge_dedup.py. BridgeTransport only exercises put/connect here.
+    return BridgeTransport(zenoh=cast(Any, zenoh), iot=cast(Any, iot)), zenoh, iot
 
 
 SHADOW_TOPIC = shadow_update_topic("thor-arm")  # $aws/things/thor-arm/shadow/name/presence/update
