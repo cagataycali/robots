@@ -207,6 +207,12 @@ class VideoConfig:
 
     @property
     def enabled(self) -> bool:
+        """Whether recording is on: ``True`` iff an output ``path`` was set.
+
+        The other fields (``fps``, ``camera``, ``width``, ``height``) are
+        ignored when this is ``False`` -- a falsy ``path`` opts the whole
+        rollout out of MP4 capture.
+        """
         return bool(self.path)
 
     @classmethod

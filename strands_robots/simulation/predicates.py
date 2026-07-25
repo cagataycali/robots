@@ -1416,9 +1416,17 @@ class StatefulRewardTerm:
     """
 
     def __call__(self, sim: SimEngine) -> float:  # pragma: no cover - interface
+        """Score the current sim state, returning this step's reward contribution."""
         raise NotImplementedError
 
     def reset(self) -> None:  # pragma: no cover - interface
+        """Clear per-episode state at an episode boundary.
+
+        Called by :meth:`SimEnv.reset` and
+        :meth:`DeclarativeBenchmark.on_episode_start` before a new episode so
+        accumulated progress (phase counters, best-so-far distances, latched
+        successes) does not leak across episodes.
+        """
         raise NotImplementedError
 
 
