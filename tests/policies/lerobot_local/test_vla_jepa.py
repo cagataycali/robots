@@ -156,6 +156,7 @@ def test_vla_jepa_registered_type_resolution_is_well_behaved() -> None:
     newest VLA so a drift that makes it leak is caught at the vla_jepa slice.
     """
     _require_vla_jepa_registered()
+    cls: type | None = None
     try:
         cls = resolve_policy_class_by_name("vla_jepa")
     except ImportError:
