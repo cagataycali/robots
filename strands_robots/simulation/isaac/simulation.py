@@ -751,6 +751,67 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     }
                 ],
             }
+        # Isaac's ``PhysicsContext.set_gravity`` takes a single signed scalar
+        # (the gravity along -Z); the backend cannot apply an off-axis vector.
+        # A non-Z-aligned override was previously silently reduced to its
+        # z-component -- so ``gravity=[0, -9.81, 0]`` yielded ZERO gravity --
+        # while the result echoed the full input vector as if applied. Validate
+        # up front and reject anything the backend cannot honour, rather than
+        # applying a gravity the caller never asked for.
+        if gravity is not None:
+            if isinstance(gravity, (list, tuple)):
+                if len(gravity) != 3:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"create_world: gravity vector must have 3 components [gx, gy, gz], "
+                                    f"got {len(gravity)}."
+                                )
+                            }
+                        ],
+                    }
+                try:
+                    gvec = [float(g) for g in gravity]
+                except (TypeError, ValueError):
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"create_world: gravity components must be numbers, got {gravity!r}."}],
+                    }
+                if not all(np.isfinite(gvec)):
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"create_world: gravity components must be finite, got {gravity!r}."}],
+                    }
+                if gvec[0] != 0.0 or gvec[1] != 0.0:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"create_world: the Isaac backend only supports Z-aligned gravity "
+                                    f"(its PhysicsContext.set_gravity takes a signed scalar); a non-Z-aligned "
+                                    f"vector like {gravity!r} cannot be honoured. Pass a scalar or a "
+                                    f"[0, 0, gz] vector, or use create_simulation(backend='mujoco') for "
+                                    f"arbitrary-direction gravity."
+                                )
+                            }
+                        ],
+                    }
+            elif isinstance(gravity, (int, float)):
+                if not np.isfinite(gravity):
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"create_world: gravity must be finite, got {gravity!r}."}],
+                    }
+            else:
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": f"create_world: gravity must be a scalar or [gx, gy, gz] vector, got {gravity!r}."}
+                    ],
+                }
         with self._lock:
             if self._world_created:
                 return {
@@ -1128,7 +1189,13 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         urdf_path : str, optional
             Path to URDF file.
         mjcf_path : str, optional
-            Path to MJCF file.
+            Path to an MJCF file. The Isaac backend has no MJCF importer for
+            robots (it loads USD natively and converts URDF via the Omniverse
+            URDF importer), so a non-None value is rejected with an actionable
+            error rather than being silently ignored -- previously a name that
+            also matched the procedural registry would silently spawn the
+            procedural stub instead. Convert the MJCF to URDF/USD, or use
+            create_simulation(backend="mujoco") to load MJCF directly.
         usd_path : str, optional
             Path to USD file (native Isaac format).
         data_config : str, optional
@@ -1136,7 +1203,14 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         position : list[float], optional
             Base position [x, y, z].
         orientation : list[float], optional
-            Base orientation as quaternion [w, x, y, z].
+            Base orientation as quaternion [w, x, y, z]. The Isaac ``add_robot``
+            spawn path does not yet apply a base orientation (the USD/URDF
+            loaders position the articulation but ignore rotation), so a
+            non-identity quaternion is rejected with an actionable error rather
+            than being silently dropped. Omit it (or pass identity
+            ``[1, 0, 0, 0]``) for the default upright spawn, or use
+            create_simulation(backend="mujoco") to spawn at an arbitrary
+            orientation.
         keyframe : str | int, optional
             Canonical-pose keyframe (e.g. panda ``"home"``). The Isaac
             backend does not parse the MuJoCo ``<keyframe>`` block this
@@ -1165,6 +1239,38 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                             "create_simulation(backend='mujoco') to spawn at a "
                             "keyframe, or omit keyframe for the default zero-pose "
                             "spawn."
+                        )
+                    }
+                ],
+            }
+        if mjcf_path is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_robot: mjcf_path={mjcf_path!r} is not supported on the Isaac "
+                            "backend (it has no MJCF robot importer; it loads USD natively and "
+                            "converts URDF). Convert the MJCF to URDF/USD and pass urdf_path/"
+                            "usd_path, or use create_simulation(backend='mujoco') to load MJCF."
+                        )
+                    }
+                ],
+            }
+        # The default None means identity; only a non-identity quaternion is
+        # rejected (parity with the keyframe/terrain guards -- reject an
+        # unsupported request rather than silently dropping the rotation).
+        if orientation is not None and list(orientation) != [1.0, 0.0, 0.0, 0.0]:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_robot: orientation={orientation!r} is not applied on the Isaac "
+                            "backend spawn path (the USD/URDF loaders position the articulation but "
+                            "ignore base rotation). Omit orientation (or pass identity "
+                            "[1, 0, 0, 0]) for the default upright spawn, or use "
+                            "create_simulation(backend='mujoco') to spawn at an orientation."
                         )
                     }
                 ],
@@ -2269,17 +2375,29 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             # being silently dropped (parity with the MuJoCo backend).
             unresolved: list[str] = []
             action_array: np.ndarray
+            # ``joint_indices`` restricts an ``ArticulationAction`` to a subset
+            # of the articulation's DOFs; ``None`` addresses every joint. For a
+            # dict action we command ONLY the named joints and leave the rest at
+            # their current PD targets (parity with the MuJoCo/Newton backends).
+            # A full zero-filled ``joint_positions`` vector would instead drive
+            # every unnamed joint to 0.0 -- e.g. ``send_action({"gripper": 0.04})``
+            # would slam the whole arm to its home pose.
+            joint_indices: np.ndarray | None
             if isinstance(action, dict):
                 joint_set = set(robot.joint_names)
                 unresolved = [k for k in action if k not in joint_set]
-                action_array = np.zeros(len(robot.joint_names), dtype=np.float32)
-                for i, jname in enumerate(robot.joint_names):
-                    if jname in action:
-                        action_array[i] = float(action[jname])
+                named = [i for i, jname in enumerate(robot.joint_names) if jname in action]
+                action_array = np.array(
+                    [float(action[robot.joint_names[i]]) for i in named],
+                    dtype=np.float32,
+                )
+                joint_indices = np.array(named, dtype=np.int32)
             elif isinstance(action, np.ndarray):
                 action_array = action.astype(np.float32).flatten()
+                joint_indices = None
             else:
                 action_array = np.array(action, dtype=np.float32)
+                joint_indices = None
 
             # Apply to articulation. Isaac Sim 6.0's articulation
             # (``isaacsim.core.prims.SingleArticulation``) drives PD position
@@ -2288,13 +2406,15 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             # on the 6.0 class (the #101 ``omni.isaac.* -> isaacsim.*`` migration
             # renamed imports but missed this articulation method). See
             # ``set_joint_positions`` below for the teleport (non-PD) counterpart.
-            if robot.articulation is not None:
+            if robot.articulation is not None and action_array.size > 0:
                 try:
                     from isaacsim.core.utils.types import (  # type: ignore[import-not-found]
                         ArticulationAction,
                     )
 
-                    robot.articulation.apply_action(ArticulationAction(joint_positions=action_array))
+                    robot.articulation.apply_action(
+                        ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
+                    )
                 except (RuntimeError, ValueError, AttributeError, ImportError) as e:
                     # apply_action raises RuntimeError on a torn-down
                     # articulation, ValueError on shape mismatch, AttributeError
