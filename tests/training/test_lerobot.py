@@ -1619,27 +1619,74 @@ class TestInProcessTrainerCorrectness:
         assert cfg.policy.use_peft is False
         assert str(cfg.policy.pretrained_path) == str(ckpt)
 
-    def test_resume_config_path_injected_into_argv_for_validate(self, spec, tmp_path):
+    def _train_checkpoint(self, tmp_path, output_dir, **policy_overrides):
+        """Write a resumable checkpoint: <out>/checkpoints/last/pretrained_model.
+
+        Persists a full ``TrainPipelineConfig`` (via draccus ``save_pretrained``)
+        exactly as lerobot writes ``train_config.json`` at save time -- so the
+        serialized ``optimizer``/``scheduler``/``policy`` are present, which is
+        the whole point of resuming from the checkpoint rather than the spec.
+        """
+        from lerobot.configs.train import TrainPipelineConfig
+        from lerobot.policies.factory import make_policy_config
+
+        policy = make_policy_config("act")
+        for key, value in policy_overrides.items():
+            setattr(policy, key, value)
+        # A minimal but VALID pipeline config: validate() fills optimizer/scheduler
+        # from the policy preset on a fresh (non-resume) build, so this is exactly
+        # what lerobot serializes into a real checkpoint's train_config.json.
+        ckpt_cfg = TrainPipelineConfig(policy=policy, output_dir=output_dir, steps=100)
+        ckpt_cfg.validate()
+        last = output_dir / "checkpoints" / "last" / "pretrained_model"
+        last.mkdir(parents=True)
+        ckpt_cfg.save_pretrained(last)
+        return last
+
+    def test_resume_rebuilds_config_from_checkpoint(self, spec, tmp_path):
         pytest.importorskip("lerobot")
         from strands_robots.training._inproc import resume_argv
 
-        last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
-        last.mkdir(parents=True)
-        (last / "train_config.json").write_text("{}")
-        spec.output_dir = str(tmp_path / "out")
+        out = tmp_path / "out"
+        # Checkpoint trained with a non-default chunk_size (default 100).
+        last = self._train_checkpoint(out, out, chunk_size=42, n_action_steps=42)
+        spec.output_dir = str(out)
         spec.resume = True
+        spec.steps = 500  # resume to a larger step target
         trainer = LerobotTrainer(device="cpu")
         cfg = trainer.build_config(spec)
+
+        # MUST FIX regression: a spec-built resume cfg leaves optimizer/scheduler
+        # unset (validate() skips the preset when resuming) and make_optimizer_
+        # and_scheduler raises before the train loop. Rebuilding from the
+        # checkpoint carries them, so the run can actually start.
+        assert cfg.resume is True
+        assert cfg.optimizer is not None
+        # Policy config comes from the checkpoint, not make_policy_config defaults.
+        assert cfg.policy.chunk_size == 42
+        assert cfg.policy.n_action_steps == 42
+        # Managed run-control overrides reapplied on top of the loaded config.
+        assert cfg.steps == 500
+        assert str(cfg.output_dir) == str(out)
+
         cfg_path = trainer._resume_config_path(spec.output_dir)
         assert cfg_path is not None
-
-        # Pre-fix: no --config_path on sys.argv -> lerobot refuses to resume.
-        with pytest.raises(ValueError, match="config_path is expected when resuming"):
-            cfg.validate()
-        # Post-fix: the shim exposes --config_path so validate() resolves the ckpt.
+        # validate() still resolves the checkpoint via the argv shim (the flag
+        # lerobot recovers off sys.argv), now on a cfg that also carries optimizer.
         with resume_argv(cfg_path):
             cfg.validate()
         assert str(cfg.policy.pretrained_path) == str(last)
+
+    def test_resume_without_checkpoint_falls_back_to_fresh_build(self, spec, tmp_path):
+        pytest.importorskip("lerobot")
+        # resume=True but no checkpoint on disk: build_config must NOT raise;
+        # it falls through to a fresh build so lerobot reports its own resume error.
+        spec.output_dir = str(tmp_path / "out")
+        spec.resume = True
+        trainer = LerobotTrainer(device="cpu")
+        assert trainer._resume_config_path(spec.output_dir) is None
+        cfg = trainer.build_config(spec)  # no AttributeError / no crash
+        assert cfg.resume is True
 
     def test_resume_argv_noop_when_config_path_falsy(self):
         from strands_robots.training._inproc import resume_argv

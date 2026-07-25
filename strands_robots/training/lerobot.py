@@ -826,11 +826,72 @@ class LerobotTrainer(Trainer):
         dataclass tree ``train(cfg)`` consumes directly (no argv). Dispatches to
         the reward-model path when ``extra['reward_model']`` is set, else the
         default policy path.
+
+        On ``resume``, the config is rebuilt FROM THE CHECKPOINT rather than
+        from the spec (see :meth:`_build_resume_config`): a spec-built resume
+        config leaves ``optimizer``/``scheduler`` unset (lerobot's ``validate()``
+        applies the preset only when NOT resuming), so lerobot's factory raises
+        before the train loop.
         """
+        if spec.resume:
+            resume_cfg = self._build_resume_config(spec)
+            if resume_cfg is not None:
+                return resume_cfg
+            # No resumable checkpoint on disk: fall through to a fresh build so
+            # validate() surfaces lerobot's own resume error, not an AttributeError.
         rm = self._reward_model_dict(spec)
         if rm is not None:
             return self._build_reward_model_config(spec, rm)
         return self._build_policy_config(spec)
+
+    def _build_resume_config(self, spec: TrainSpec) -> TrainPipelineConfig | None:
+        """Rebuild the ``TrainPipelineConfig`` from the checkpoint's own config.
+
+        Mirrors lerobot's CLI resume: the CLI passes ``--config_path`` and draccus
+        deserializes the checkpoint's ``train_config.json`` as the BASE config, so
+        the resumed run inherits the checkpoint's serialized ``optimizer`` and
+        ``scheduler``. lerobot's ``validate()`` applies the optimizer preset only
+        when NOT resuming (``elif self.use_policy_training_preset and not
+        self.resume``), so a fresh spec-built resume cfg keeps ``optimizer=None``
+        and ``make_optimizer_and_scheduler`` raises ``ValueError("Optimizer config
+        is required ...")`` before the train loop. The checkpoint's policy config
+        is likewise ignored on a fresh build (defaults-only -- the same silent
+        mismatch class as the ``base_model`` warm-start path).
+
+        Loading via ``TrainPipelineConfig.from_pretrained`` restores
+        ``optimizer``/``scheduler``/``policy`` verbatim; only the managed
+        run-control overrides (output_dir, steps, save_freq, wandb off, seed) are
+        reapplied on top. Returns ``None`` when no resumable checkpoint exists on
+        disk, so the caller falls back to a fresh build and lerobot reports its own
+        resume error rather than this method raising.
+        """
+        from pathlib import Path
+
+        from lerobot.configs.train import TrainPipelineConfig
+
+        cfg_file = self._resume_config_path(spec.output_dir)
+        if cfg_file is None:
+            return None
+
+        # from_pretrained takes the pretrained_model DIRECTORY holding
+        # train_config.json (the dir latest_checkpoint returns).
+        cfg = TrainPipelineConfig.from_pretrained(os.path.dirname(cfg_file))
+
+        cfg.resume = True
+        # output_dir MUST stay the resumed run's dir; validate() derives
+        # checkpoint_path from it (mirrors _apply_common_config on the fresh path).
+        if spec.output_dir:
+            cfg.output_dir = Path(spec.output_dir)
+        cfg.checkpoint_path = Path(cfg_file).parent.parent
+        # Run-control fields the caller legitimately re-specifies on resume.
+        cfg.steps = spec.steps
+        cfg.save_freq = spec.save_freq
+        if spec.seed is not None:
+            cfg.seed = spec.seed
+        if hasattr(cfg, "wandb") and hasattr(cfg.wandb, "enable"):
+            cfg.wandb.enable = False
+        self._apply_extra_passthrough(cfg, spec)
+        return cfg
 
     def _build_dataset_config(self, spec: TrainSpec) -> Any:
         """Shared ``DatasetConfig`` for both the policy and reward-model paths."""
