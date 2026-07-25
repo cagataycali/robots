@@ -55,7 +55,7 @@ import shutil
 import time
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.training._inproc import call_callable, elastic_launch_callable
+from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -932,13 +932,25 @@ class LerobotTrainer(Trainer):
 
         ptype = self._resolve_policy_type(spec)
 
-        policy_cfg = make_policy_config(ptype)
+        if spec.base_model:
+            # Warm start: load the checkpoint's OWN saved config (architecture
+            # hyperparameters - chunk_size, vision backbone, hidden dims, ...)
+            # rather than make_policy_config's all-defaults. lerobot's make_policy
+            # feeds this config verbatim to from_pretrained (strict=False), so a
+            # defaults-only config silently loads mismatched/partial weights from a
+            # base trained with non-default hyperparameters. Mirror lerobot's own
+            # --policy.path flow, which builds PreTrainedConfig.from_pretrained
+            # first and then loads the weights against it.
+            from lerobot.configs.policies import PreTrainedConfig
+
+            policy_cfg = PreTrainedConfig.from_pretrained(spec.base_model)
+            policy_cfg.pretrained_path = Path(spec.base_model)
+        else:
+            policy_cfg = make_policy_config(ptype)
         if hasattr(policy_cfg, "device"):
             policy_cfg.device = self.device
         if hasattr(policy_cfg, "push_to_hub"):
             policy_cfg.push_to_hub = False
-        if spec.base_model:
-            policy_cfg.pretrained_path = Path(spec.base_model)
         if spec.method == "expert_only" and hasattr(policy_cfg, "train_expert_only"):
             policy_cfg.train_expert_only = True
         if spec.learning_rate is not None:
@@ -978,8 +990,13 @@ class LerobotTrainer(Trainer):
                     "to a version that supports them, or drop them from the spec."
                 )
             peft_cfg = PeftConfig(**peft_kwargs)
-            if hasattr(policy_cfg, "use_peft"):
-                policy_cfg.use_peft = True
+            # Do NOT set policy_cfg.use_peft here. lerobot never sets use_peft
+            # before training; make_policy reads use_peft=True as "load
+            # pretrained_path as a PEFT ADAPTER repo" (PeftConfig.from_pretrained),
+            # which crashes on a plain base checkpoint, and rejects use_peft=True
+            # with no checkpoint outright. Setting cfg.peft alone is what triggers
+            # lerobot_train's wrap_with_peft on the freshly loaded base policy;
+            # use_peft is flipped by lerobot itself only after wrapping.
 
         cfg = TrainPipelineConfig(
             dataset=self._build_dataset_config(spec),
@@ -1103,7 +1120,12 @@ class LerobotTrainer(Trainer):
             else:
                 from lerobot.scripts.lerobot_train import train as lerobot_train
 
-                call_callable(lerobot_train, cfg, log_path=log_path)
+                # On resume, lerobot's validate() reads the checkpoint's
+                # train_config.json path back off sys.argv (--config_path); the
+                # in-process call has no argv, so inject it for the call.
+                resume_cfg = self._resume_config_path(spec.output_dir) if spec.resume else None
+                with resume_argv(resume_cfg):
+                    call_callable(lerobot_train, cfg, log_path=log_path)
         except Exception as e:  # noqa: BLE001 - convert ANY failure to a result
             train_error = e
             logger.error("LerobotTrainer in-process train failed: %s", e)
@@ -1200,7 +1222,11 @@ def _lerobot_worker(policy_type: str, device: str, spec: TrainSpec, log_path: st
     from lerobot.scripts.lerobot_train import train as lerobot_train
 
     is_rank0 = _os.environ.get("LOCAL_RANK", "0") == "0"
-    call_callable(lerobot_train, cfg, log_path=log_path if is_rank0 else None)
+    # Resume needs --config_path on sys.argv for lerobot's validate() (see
+    # resume_argv); each spawned worker builds its own cfg and must inject it too.
+    resume_cfg = trainer._resume_config_path(spec.output_dir) if spec.resume else None
+    with resume_argv(resume_cfg):
+        call_callable(lerobot_train, cfg, log_path=log_path if is_rank0 else None)
 
 
 def _expand_big_number(token: str) -> float | None:

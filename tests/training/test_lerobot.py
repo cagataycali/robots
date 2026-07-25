@@ -5,6 +5,7 @@ end-to-end sim->train->load is exercised separately.
 """
 
 import json
+import sys
 
 import pytest
 
@@ -24,7 +25,7 @@ def dataset_root(tmp_path):
 def spec(dataset_root, tmp_path):
     return TrainSpec(
         dataset_root=dataset_root,
-        base_model="lerobot/act_aloha_sim",
+        base_model="",
         output_dir=str(tmp_path / "out"),
         steps=200,
         global_batch_size=8,
@@ -181,6 +182,7 @@ class TestQuantileHelpers:
 
 class TestBuildCommand:
     def test_single_gpu_core_flags(self, spec):
+        spec.base_model = "lerobot/act_aloha_sim"  # argv-parity only; no load
         cmd = LerobotTrainer(device="cpu").build_command(spec)
         # build_command is now a PURE argv-parity helper (no launcher prefix);
         # the module path is the first token.
@@ -264,7 +266,7 @@ class TestBuildConfig:
         assert cfg.policy.type == "act"
         assert cfg.policy.device == "cpu"
         assert cfg.policy.push_to_hub is False
-        assert str(cfg.policy.pretrained_path) == "lerobot/act_aloha_sim"
+        assert cfg.policy.pretrained_path is None
         assert cfg.steps == 200
         assert cfg.batch_size == 8
         assert cfg.save_freq == 100
@@ -281,7 +283,9 @@ class TestBuildConfig:
         assert cfg.peft.method_type == "LORA"
         assert cfg.peft.r == 16
         assert cfg.peft.target_modules == "q_proj,v_proj"
-        assert cfg.policy.use_peft is True
+        # strands must NOT pre-set use_peft: make_policy would then misread the
+        # base checkpoint as a PEFT adapter repo. cfg.peft alone drives wrapping.
+        assert cfg.policy.use_peft is False
 
     def test_val_split_episodes(self, spec):
         pytest.importorskip("lerobot")
@@ -1564,3 +1568,83 @@ class TestLerobotDdpWorker:
         assert recorder["cfg"] is sentinel
         # ...but only rank 0 writes the shared log, so a non-zero rank leaves it absent.
         assert not log_path.exists()
+
+
+class TestInProcessTrainerCorrectness:
+    """Regression tests for the in-process trainer's resume / LoRA / warm-start.
+
+    Each test fails on the pre-fix code and passes after:
+      * resume: cfg.validate() needs --config_path on sys.argv (argv shim);
+      * LoRA: strands must not pre-set policy_cfg.use_peft (inverts lerobot);
+      * warm start: base_model must load the checkpoint's own saved config.
+    """
+
+    def _act_checkpoint(self, tmp_path, **overrides):
+        """Write a local ACT checkpoint config.json with non-default fields."""
+        from lerobot.policies.factory import make_policy_config
+
+        ckpt = tmp_path / "base_ckpt"
+        ckpt.mkdir()
+        base = make_policy_config("act")
+        for key, value in overrides.items():
+            setattr(base, key, value)
+        base.save_pretrained(ckpt)
+        return ckpt
+
+    def test_base_model_warm_start_reads_checkpoint_config(self, spec, tmp_path):
+        pytest.importorskip("lerobot")
+        # A base checkpoint trained with a non-default chunk_size (default 100).
+        ckpt = self._act_checkpoint(tmp_path, chunk_size=42, n_action_steps=42)
+        spec.base_model = str(ckpt)
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # Pre-fix: make_policy_config defaults -> chunk_size 100 (checkpoint ignored).
+        assert cfg.policy.chunk_size == 42
+        assert cfg.policy.n_action_steps == 42
+        assert str(cfg.policy.pretrained_path) == str(ckpt)
+        # Managed overrides still applied on top of the loaded config.
+        assert cfg.policy.device == "cpu"
+        assert cfg.policy.push_to_hub is False
+
+    def test_lora_base_model_does_not_preset_use_peft(self, spec, tmp_path):
+        pytest.importorskip("lerobot")
+        ckpt = self._act_checkpoint(tmp_path)
+        spec.base_model = str(ckpt)
+        spec.method = "lora"
+        spec.lora_r = 8
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # cfg.peft drives wrap_with_peft on the loaded base; use_peft must stay
+        # False so make_policy loads the plain base checkpoint, not an adapter repo.
+        assert cfg.peft is not None
+        assert cfg.peft.method_type == "LORA"
+        assert cfg.policy.use_peft is False
+        assert str(cfg.policy.pretrained_path) == str(ckpt)
+
+    def test_resume_config_path_injected_into_argv_for_validate(self, spec, tmp_path):
+        pytest.importorskip("lerobot")
+        from strands_robots.training._inproc import resume_argv
+
+        last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
+        last.mkdir(parents=True)
+        (last / "train_config.json").write_text("{}")
+        spec.output_dir = str(tmp_path / "out")
+        spec.resume = True
+        trainer = LerobotTrainer(device="cpu")
+        cfg = trainer.build_config(spec)
+        cfg_path = trainer._resume_config_path(spec.output_dir)
+        assert cfg_path is not None
+
+        # Pre-fix: no --config_path on sys.argv -> lerobot refuses to resume.
+        with pytest.raises(ValueError, match="config_path is expected when resuming"):
+            cfg.validate()
+        # Post-fix: the shim exposes --config_path so validate() resolves the ckpt.
+        with resume_argv(cfg_path):
+            cfg.validate()
+        assert str(cfg.policy.pretrained_path) == str(last)
+
+    def test_resume_argv_noop_when_config_path_falsy(self):
+        from strands_robots.training._inproc import resume_argv
+
+        saved = list(sys.argv)
+        with resume_argv(None):
+            assert sys.argv == saved
+        assert sys.argv == saved
