@@ -202,3 +202,59 @@ def test_clear_caches_forces_background_recompute() -> None:
     comp.clear_caches()
     comp.render("cam")
     assert bg.render_calls == 2  # cache dropped -> background recomputed
+
+
+class FakeFiniteBackground(FakeBackground):
+    """Background at a uniform *finite* depth, to exercise the z-compare bias.
+
+    Every other fixture parks the background at ``zfar`` (100 m), so the
+    foreground/background depths are always ~99 m apart and the 1 mm tie-break
+    in :meth:`HybridCompositor.render` is never straddled. This background sits
+    at a close, finite depth so a near-tie foreground can be placed either side
+    of the bias.
+    """
+
+    def __init__(self, depth: float, color=(0, 0, 255)):
+        super().__init__(color=color)
+        self.depth = float(depth)
+
+    def render(self, cam: CameraParams):
+        rgb, _ = super().render(cam)
+        depth = np.full((cam.height, cam.width), self.depth, dtype=np.float32)
+        return rgb, depth
+
+
+def _uniform_depth(value: float) -> np.ndarray:
+    """A full-frame foreground at a single finite depth (valid geometry)."""
+    return np.full((H, W), float(value), dtype=np.float32)
+
+
+def test_foreground_within_depth_bias_loses_to_background() -> None:
+    # The winner rule is ``fg_depth + 1e-3 < bg_depth``: the foreground must be
+    # *more than* 1 mm in front to win. A foreground only 0.5 mm closer than the
+    # background is inside that bias, so the background must still show -- this
+    # is the anti-z-fighting guard that keeps a near-coincident gsplat backdrop
+    # from flickering against sim geometry.
+    bg_depth = 5.0
+    comp = HybridCompositor(
+        FakeSim(_uniform_depth(bg_depth - 0.0005)),  # 0.5 mm closer: within the 1 mm bias
+        background=FakeFiniteBackground(bg_depth),
+        feather_pixels=0,
+    )
+    frame = comp.render("cam")
+    assert not frame.foreground_mask.any()
+    assert tuple(frame.rgb[H // 2, W // 2]) == (0, 0, 255)  # background wins
+
+
+def test_foreground_beyond_depth_bias_wins() -> None:
+    # A foreground 2 mm closer than the background clears the 1 mm bias and
+    # wins the z-compare everywhere.
+    bg_depth = 5.0
+    comp = HybridCompositor(
+        FakeSim(_uniform_depth(bg_depth - 0.002)),  # 2 mm closer: beyond the 1 mm bias
+        background=FakeFiniteBackground(bg_depth),
+        feather_pixels=0,
+    )
+    frame = comp.render("cam")
+    assert frame.foreground_mask.all()
+    assert tuple(frame.rgb[H // 2, W // 2]) == (255, 255, 255)  # foreground wins
