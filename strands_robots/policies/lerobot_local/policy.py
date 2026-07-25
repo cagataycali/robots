@@ -861,6 +861,8 @@ class LerobotLocalPolicy(Policy):
                 overrides=self.processor_overrides or {},
                 policy_type=self.policy_type,
                 policy_config=getattr(self._policy, "config", None),
+                revision=self.revision,
+                norm_tag=self._molmoact2_norm_tag,
             )
         except (FileNotFoundError, ValueError, ImportError) as exc:
             # Processor bridge is optional - models work without it via the raw

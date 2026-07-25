@@ -264,6 +264,7 @@ def load_norm_stats(
     pretrained_name_or_path: str,
     *,
     filename: str = "norm_stats.json",
+    revision: str | None = None,
 ) -> dict[str, Any] | None:
     """Load a ``norm_stats.json`` payload from a local dir or the HF Hub.
 
@@ -274,6 +275,8 @@ def load_norm_stats(
     Args:
         pretrained_name_or_path: HF repo id or local checkpoint directory.
         filename: Default norm-stats filename to look for.
+        revision: Optional Hub branch/tag/SHA to pin the download to, so the
+            norm-stats file matches revision-pinned policy weights.
 
     Returns:
         Parsed JSON payload dict, or ``None`` when unavailable.
@@ -306,14 +309,14 @@ def load_norm_stats(
         from huggingface_hub import hf_hub_download
 
         try:
-            cfg_path = hf_hub_download(pretrained_name_or_path, "config.json")
+            cfg_path = hf_hub_download(pretrained_name_or_path, "config.json", revision=revision)
             cfg = _read_json(Path(cfg_path))
             if cfg and cfg.get("norm_stats_filename"):
                 resolved_filename = str(cfg["norm_stats_filename"])
         except Exception as exc:  # noqa: BLE001 - config.json is optional
             logger.debug("norm_stats: no config.json on hub: %s", exc)
 
-        downloaded = hf_hub_download(pretrained_name_or_path, resolved_filename)
+        downloaded = hf_hub_download(pretrained_name_or_path, resolved_filename, revision=revision)
         return _read_json(Path(downloaded))
     except Exception as exc:  # noqa: BLE001 - network/repo errors are non-fatal
         logger.debug("norm_stats: could not fetch %s from hub: %s", resolved_filename, exc)
