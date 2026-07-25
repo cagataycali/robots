@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -442,12 +443,17 @@ def test_performance_async_branch_reports_speedup(fake_camera: FakeCamera) -> No
 
 def test_create_camera_builds_realsense_when_available(monkeypatch: pytest.MonkeyPatch) -> None:
     """When the RealSense SDK is present, _create_camera routes a 'realsense'
-    request to the RealSense config + camera classes with the serial number."""
+    request to the RealSense config + camera classes with the serial number.
+
+    The config field is ``serial_number_or_name`` in LeRobot's
+    RealSenseCameraConfig - the fake mirrors that exact kwarg so the test
+    validates the real dataclass contract rather than a bug-mirroring alias.
+    """
     seen: dict[str, Any] = {}
 
-    def fake_config(serial_number, fps, width, height):
-        seen["serial"] = serial_number
-        return SimpleNamespace(serial_number=serial_number)
+    def fake_config(serial_number_or_name, fps, width, height):
+        seen["serial"] = serial_number_or_name
+        return SimpleNamespace(serial_number_or_name=serial_number_or_name)
 
     monkeypatch.setattr(cam_mod, "REALSENSE_AVAILABLE", True)
     monkeypatch.setattr(cam_mod, "RealSenseCameraConfig", fake_config)
@@ -455,7 +461,33 @@ def test_create_camera_builds_realsense_when_available(monkeypatch: pytest.Monke
 
     cam = cam_mod._create_camera("realsense", "0123", 640, 480, 30, "RGB", "NO_ROTATION")
     assert seen["serial"] == "0123"
-    assert cam.config.serial_number == "0123"
+    assert cam.config.serial_number_or_name == "0123"
+
+
+def test_create_camera_realsense_uses_real_config_dataclass_field() -> None:
+    """Regression: _create_camera must construct RealSenseCameraConfig with the
+    field name the real LeRobot dataclass actually declares
+    (``serial_number_or_name``). The pre-fix code passed ``serial_number=``,
+    which never existed as a field and raised
+    ``TypeError: unexpected keyword argument`` on every realsense action.
+
+    This drives the real (SDK-free-importable) config dataclass and a stub
+    camera, so it fails on the old kwarg and passes on the corrected one -
+    without any RealSense hardware.
+    """
+    from lerobot.cameras.realsense.configuration_realsense import (
+        RealSenseCameraConfig,
+    )
+
+    with (
+        mock.patch.object(cam_mod, "REALSENSE_AVAILABLE", True),
+        mock.patch.object(cam_mod, "RealSenseCameraConfig", RealSenseCameraConfig),
+        mock.patch.object(cam_mod, "RealSenseCamera", lambda config: SimpleNamespace(config=config)),
+    ):
+        cam = cam_mod._create_camera("realsense", "944622072361", 640, 480, 30, "RGB", "NO_ROTATION")
+
+    assert cam.config.serial_number_or_name == "944622072361"
+    assert cam.config.fps == 30
 
 
 def test_create_camera_realsense_without_sdk_raises(monkeypatch: pytest.MonkeyPatch) -> None:

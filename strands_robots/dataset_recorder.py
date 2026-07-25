@@ -554,7 +554,7 @@ class DatasetRecorder:
         vcodec: str = "h264",
         streaming_encoding: bool = True,
         image_writer_threads: int = 4,
-        video_backend: str = "auto",
+        video_backend: str | None = None,
         video_width: int = 640,
         video_height: int = 480,
         camera_key_map: dict[str, str] | None = None,
@@ -594,7 +594,10 @@ class DatasetRecorder:
                 wheels commonly cannot decode it and silently yield 0 frames.
             streaming_encoding: Stream-encode video during capture
             image_writer_threads: Threads for writing image frames
-            video_backend: Video backend for encoding ("auto" for HW encoder auto-detect)
+            video_backend: LeRobot video *decode* backend for read-back
+                ("torchcodec" or "pyav"). Left as None by default so LeRobot
+                picks its platform default; only forwarded when explicitly set.
+                Encoder selection is controlled by ``vcodec`` (not this param).
             camera_key_map: Optional remap of observed camera stream names to the
                 declared schema names (e.g. {"front_camera": "image",
                 "wrist_camera": "wrist_image"}). Bare names or fully-qualified
@@ -658,7 +661,7 @@ class DatasetRecorder:
         # streaming_encoding / video_backend only in newer LeRobot versions
         if "streaming_encoding" in create_params:
             create_kwargs["streaming_encoding"] = streaming_encoding
-        if "video_backend" in create_params:
+        if "video_backend" in create_params and video_backend is not None:
             create_kwargs["video_backend"] = video_backend
 
         # Resolve create-vs-crash for an existing target BEFORE calling
@@ -690,7 +693,7 @@ class DatasetRecorder:
         vcodec: str = "h264",
         streaming_encoding: bool = True,
         image_writer_threads: int = 4,
-        video_backend: str = "auto",
+        video_backend: str | None = None,
         camera_key_map: dict[str, str] | None = None,
     ) -> "DatasetRecorder":
         """Resume recording into an EXISTING LeRobotDataset (append episodes).
@@ -718,7 +721,9 @@ class DatasetRecorder:
                 config). See create() for the H.264-vs-AV1 trade-off.
             streaming_encoding: Stream-encode video during capture.
             image_writer_threads: Threads for writing image frames.
-            video_backend: Video backend for encoding.
+            video_backend: LeRobot video *decode* backend for read-back
+                ("torchcodec" or "pyav"); None uses LeRobot's platform default.
+                Encoder selection is controlled by ``vcodec`` (not this param).
             camera_key_map: Optional remap of observed camera stream names to
                 the declared schema names (see create()).
 
@@ -747,7 +752,7 @@ class DatasetRecorder:
             resume_kwargs["streaming_encoding"] = streaming_encoding
         if "image_writer_threads" in resume_sig:
             resume_kwargs["image_writer_threads"] = image_writer_threads
-        if "video_backend" in resume_sig:
+        if "video_backend" in resume_sig and video_backend is not None:
             resume_kwargs["video_backend"] = video_backend
 
         dataset = LeRobotDatasetCls.resume(**resume_kwargs)

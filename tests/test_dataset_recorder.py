@@ -1115,6 +1115,100 @@ def test_create_wraps_vcodec_in_camera_encoder_on_052(monkeypatch):
     assert constructed[0].vcodec == "libsvtav1"
 
 
+class _VideoBackendProbeCreate:
+    """create() declares video_backend with a distinctive sentinel default so a
+    test can tell whether the recorder forwarded a value or left it untouched."""
+
+    _UNSET = "__unset__"
+    last_create_kwargs: dict = {}
+
+    def __init__(self, repo_id, root=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+
+    @classmethod
+    def create(
+        cls,
+        repo_id,
+        fps=30,
+        root=None,
+        robot_type="unknown",
+        features=None,
+        use_videos=True,
+        image_writer_threads=4,
+        camera_encoder=None,
+        streaming_encoding=True,
+        video_backend="__unset__",
+    ):
+        cls.last_create_kwargs = {"video_backend": video_backend}
+        return cls(repo_id, root=root)
+
+
+class _VideoBackendProbeResume:
+    """resume() counterpart of _VideoBackendProbeCreate."""
+
+    _UNSET = "__unset__"
+    last_resume_kwargs: dict = {}
+
+    def __init__(self, repo_id, root=None, meta=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+        self.meta = meta or _ResumeMeta(total_episodes=0, total_frames=0)
+
+    @classmethod
+    def resume(
+        cls,
+        repo_id,
+        root=None,
+        camera_encoder=None,
+        image_writer_threads=4,
+        video_backend="__unset__",
+    ):
+        cls.last_resume_kwargs = {"video_backend": video_backend}
+        return cls(repo_id, root=root)
+
+
+def test_create_omits_video_backend_by_default(monkeypatch):
+    """Regression: video_backend defaults to None and must NOT be forwarded to
+    LeRobot.create() unless explicitly set.
+
+    ``video_backend`` is LeRobot's video *decode* backend; valid values are
+    "torchcodec"/"pyav" ("video_reader" is a deprecated alias). The old default
+    of "auto" was never a valid decode backend, so read-back through the created
+    dataset (e.g. dataset[0]) raised ``ValueError: Unsupported video backend:
+    auto``. With the fix, the default is None and the kwarg is left off so
+    LeRobot picks its own platform default. The fake's sentinel default proves
+    the recorder sent nothing (pre-fix it forwarded "auto" and this fails).
+    """
+    _install_video_encoder_config(monkeypatch)
+    _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeCreate)
+
+    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1")
+
+    assert _VideoBackendProbeCreate.last_create_kwargs["video_backend"] == "__unset__"
+
+
+def test_resume_omits_video_backend_by_default(monkeypatch):
+    """Regression: resume() must not forward video_backend when left at its
+    None default (see test_create_omits_video_backend_by_default)."""
+    _install_video_encoder_config(monkeypatch)
+    _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeResume)
+
+    DatasetRecorder.resume("user/data", vcodec="libsvtav1")
+
+    assert _VideoBackendProbeResume.last_resume_kwargs["video_backend"] == "__unset__"
+
+
+def test_create_forwards_video_backend_when_explicitly_set(monkeypatch):
+    """When a caller explicitly passes a valid decode backend, it IS forwarded."""
+    _install_video_encoder_config(monkeypatch)
+    _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeCreate)
+
+    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav")
+
+    assert _VideoBackendProbeCreate.last_create_kwargs["video_backend"] == "pyav"
+
+
 def test_create_warns_when_video_encoder_config_missing(monkeypatch, caplog):
     """If create() wants camera_encoder= but VideoEncoderConfig can't be
     imported, the recorder warns and proceeds with camera_encoder unset rather
