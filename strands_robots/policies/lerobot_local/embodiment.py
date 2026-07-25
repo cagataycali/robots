@@ -339,6 +339,7 @@ def register_pack_state_step() -> type | None:
         joint_mids: list[float] = field(default_factory=list)
 
         def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+            """Compose the declared scalar joint keys into ``observation.state`` (passthrough when already packed)."""
             if "observation.state" in observation:
                 return observation  # already packed -> passthrough
 
@@ -405,6 +406,7 @@ def register_pack_state_step() -> type | None:
             return out
 
         def get_config(self) -> dict[str, Any]:
+            """Return the JSON-serializable config (``state_keys``, ``expected_dim``, ``dim_policy``) for checkpoint round-trip."""
             return {
                 "state_keys": list(self.state_keys),
                 "expected_dim": self.expected_dim,
@@ -412,6 +414,7 @@ def register_pack_state_step() -> type | None:
             }
 
         def transform_features(self, features):  # type: ignore[no-untyped-def]
+            """Return ``features`` unchanged: packing reshapes only the runtime obs, not the model's declared feature set."""
             # State vector composition doesn't change the model's declared
             # feature set (the normalizer already knows observation.state);
             # we only reshape the runtime obs. Pass features through.

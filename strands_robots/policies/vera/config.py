@@ -201,6 +201,7 @@ class VeraConfig:
 
     @property
     def server_uri(self) -> str:
+        """Websocket URI the client connects to (``ws://<host>:<server_port>``)."""
         return f"ws://{self.host}:{self.server_port}"
 
     def server_env(self) -> dict[str, str]:

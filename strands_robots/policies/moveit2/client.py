@@ -47,6 +47,7 @@ class MsgSerializer:
 
     @staticmethod
     def to_bytes(data: dict[str, Any]) -> bytes:
+        """Pack a JSON-shaped request dict to msgpack bytes (``use_bin_type`` keeps str and bytes distinct on the wire)."""
         msgpack = _load_msgpack()
         # use_bin_type=True keeps str / bytes distinct on the wire
         # (matches msgpack >=1.0 default but explicit is better than
@@ -55,6 +56,7 @@ class MsgSerializer:
 
     @staticmethod
     def from_bytes(data: bytes) -> dict[str, Any]:
+        """Unpack msgpack bytes into a dict, decoding msgpack ``str`` back to Python ``str`` (``raw=False``)."""
         msgpack = _load_msgpack()
         # raw=False decodes msgpack ``str`` types back to Python ``str``
         # (msgpack >=1.0 default); strict_map_key=False allows

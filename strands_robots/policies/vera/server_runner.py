@@ -119,6 +119,7 @@ class VeraServerRunner:
     # -- lifecycle ----------------------------------------------------------
 
     def is_running(self) -> bool:
+        """Return True while the launched server subprocess is alive (has not exited)."""
         return self._proc is not None and self._proc.poll() is None
 
     def start(self) -> None:
@@ -312,6 +313,7 @@ class DockerServerRunner:
     # -- lifecycle ----------------------------------------------------------
 
     def is_running(self) -> bool:
+        """Return True while the server container is running."""
         return self._container_running()
 
     def start(self) -> None:
