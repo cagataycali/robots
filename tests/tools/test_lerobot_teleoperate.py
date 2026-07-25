@@ -258,6 +258,139 @@ def test_build_start_record_argv_matches_lerobot_record_fields() -> None:
             assert flag in record_fields, f"{flag} not a RecordConfig field"
 
 
+# ---------------------------------------------------------------------------
+# lerobot HEAD repo_id stamping: record must pin --dataset.root + expose --resume
+#
+# At lerobot HEAD, lerobot-record calls ``cfg.dataset.stamp_repo_id()`` on every
+# fresh recording, rewriting repo_id to ``{repo_id}_YYYYMMDD_HHMMSS``. Without an
+# explicit ``--dataset.root`` the on-disk dataset (and Hub push) moves to the
+# stamped id, so downstream train/verify/path-reporting look at the requested id
+# and find nothing. The record command must therefore always pin an explicit
+# root and expose ``--resume`` for appending.
+
+
+def test_build_record_command_always_pins_dataset_root_when_root_omitted() -> None:
+    """Fresh record with no explicit root must still emit --dataset.root.
+
+    lerobot HEAD timestamp-stamps a fresh record's repo_id; pinning an explicit
+    root (resolved from the repo_id under $HF_LEROBOT_HOME) keeps the on-disk
+    dataset at the requested location regardless of the stamp.
+    """
+    from strands_robots.dataset_recorder import resolve_dataset_dir
+
+    cmd = build_lerobot_command(
+        action="start",
+        robot_type="so101_follower",
+        robot_port="/dev/ttyACM0",
+        teleop_type="so101_leader",
+        teleop_port="/dev/ttyACM1",
+        dataset_repo_id="user/cubes",
+    )
+    assert "lerobot.scripts.lerobot_record" in cmd
+    assert "--dataset.root" in cmd
+    assert cmd[cmd.index("--dataset.root") + 1] == str(resolve_dataset_dir("user/cubes", None))
+
+
+def test_build_record_command_respects_explicit_dataset_root() -> None:
+    """An explicit dataset_root is forwarded verbatim (overrides the resolved default)."""
+    cmd = build_lerobot_command(
+        action="start",
+        robot_type="so101_follower",
+        robot_port="/dev/ttyACM0",
+        teleop_type="so101_leader",
+        teleop_port="/dev/ttyACM1",
+        dataset_repo_id="user/cubes",
+        dataset_root="/data/lerobot/cubes",
+    )
+    assert cmd[cmd.index("--dataset.root") + 1] == "/data/lerobot/cubes"
+
+
+def test_build_record_command_emits_resume_flag_when_requested() -> None:
+    """record_resume=True must emit lerobot-record's --resume true for appending."""
+    cmd = build_lerobot_command(
+        action="start",
+        robot_type="so101_follower",
+        robot_port="/dev/ttyACM0",
+        teleop_type="so101_leader",
+        teleop_port="/dev/ttyACM1",
+        dataset_repo_id="user/cubes",
+        record_resume=True,
+    )
+    assert "--resume" in cmd
+    assert cmd[cmd.index("--resume") + 1] == "true"
+
+
+def test_build_record_command_omits_resume_by_default() -> None:
+    """A fresh record (record_resume left False) must not emit --resume."""
+    cmd = build_lerobot_command(
+        action="start",
+        robot_type="so101_follower",
+        robot_port="/dev/ttyACM0",
+        teleop_type="so101_leader",
+        teleop_port="/dev/ttyACM1",
+        dataset_repo_id="user/cubes",
+    )
+    assert "--resume" not in cmd
+
+
+def test_build_teleop_command_has_no_dataset_root_or_resume() -> None:
+    """Plain teleoperation (no dataset) must not carry record-only flags."""
+    cmd = build_lerobot_command(
+        action="start",
+        robot_type="so101_follower",
+        robot_port="/dev/ttyACM0",
+        teleop_type="so101_leader",
+        teleop_port="/dev/ttyACM1",
+    )
+    assert "lerobot.scripts.lerobot_teleoperate" in cmd
+    assert "--dataset.root" not in cmd
+    assert "--resume" not in cmd
+
+
+def test_record_result_reports_pinned_dataset_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A background record start returns the true on-disk dataset root + repo_id.
+
+    Downstream consumers (train, verify, path reporting) read ``dataset_root``
+    from the result rather than deriving it from the requested repo_id, which
+    lerobot HEAD would have stamped.
+    """
+    from strands_robots.dataset_recorder import resolve_dataset_dir
+
+    monkeypatch.setattr(tele_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(pid=os.getpid()))
+    result = lerobot_teleoperate(
+        action="start",
+        session_name="rec_report",
+        robot_type="so101_follower",
+        teleop_type="so101_leader",
+        dataset_repo_id="user/cubes",
+        auto_accept_calibration=False,
+    )
+    assert result["status"] == "success"
+    payload = tool_json(result)
+    assert payload["dataset_repo_id"] == "user/cubes"
+    assert payload["dataset_root"] == str(resolve_dataset_dir("user/cubes", None))
+    assert payload["resume"] is False
+    _assert_ascii(_texts(result))
+
+
+def test_record_result_reports_resume_when_appending(monkeypatch: pytest.MonkeyPatch) -> None:
+    """record_resume=True is reflected in the session result payload."""
+    monkeypatch.setattr(tele_mod.subprocess, "Popen", lambda *a, **k: _FakeProc(pid=os.getpid()))
+    result = lerobot_teleoperate(
+        action="start",
+        session_name="rec_resume",
+        robot_type="so101_follower",
+        teleop_type="so101_leader",
+        dataset_repo_id="user/cubes",
+        record_resume=True,
+        auto_accept_calibration=False,
+    )
+    assert result["status"] == "success"
+    payload = tool_json(result)
+    assert payload["resume"] is True
+    assert "--resume true" in payload["command"]
+
+
 def test_build_start_teleop_command_without_dataset() -> None:
     cmd = build_lerobot_command(
         action="start",
