@@ -1724,7 +1724,6 @@ class TestInProcessTrainerCorrectness:
         optimizer/scheduler from train_config.json.
         """
         pytest.importorskip("lerobot")
-        import json
 
         # Write a checkpoint with a serialized optimizer config (mimicking what
         # lerobot writes on a real training run).
