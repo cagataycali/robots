@@ -89,6 +89,96 @@ class TestValidate:
         assert any("val_episodes" in p for p in problems)
 
 
+_AUGMENT_HINT = "augment_dataset_quantile_stats"
+
+
+def _write_stats(dataset_root, *, with_quantiles):
+    """Write a minimal v3 meta/stats.json with or without quantile keys."""
+    import os
+
+    stats = {
+        "observation.state": {"mean": [0.0], "std": [1.0], "min": [-1.0], "max": [1.0]},
+        "action": {"mean": [0.0], "std": [1.0], "min": [-1.0], "max": [1.0]},
+    }
+    if with_quantiles:
+        for feat in stats.values():
+            feat["q01"] = [-0.9]
+            feat["q99"] = [0.9]
+    meta = os.path.join(dataset_root, "meta")
+    with open(os.path.join(meta, "stats.json"), "w", encoding="utf-8") as fh:
+        json.dump(stats, fh)
+
+
+class TestQuantileStatsPreflight:
+    """A QUANTILES-normalizing policy (molmoact2, pi05) needs the dataset stats
+    to carry quantile keys; validate() must flag a definite miss at spec time
+    instead of letting it fail deep inside lerobot's normalization.
+    """
+
+    def test_quantile_policy_missing_stats_flagged(self, spec):
+        spec.extra["policy_type"] = "molmoact2"
+        _write_stats(spec.dataset_root, with_quantiles=False)
+        problems = LerobotTrainer().validate(spec)
+        offending = [p for p in problems if _AUGMENT_HINT in p]
+        assert offending, f"expected augment-script guidance, got {problems}"
+        assert "QUANTILES" in offending[0]
+        assert spec.dataset_root in offending[0]
+
+    def test_quantile_policy_with_stats_is_clean(self, spec):
+        spec.extra["policy_type"] = "molmoact2"
+        _write_stats(spec.dataset_root, with_quantiles=True)
+        problems = LerobotTrainer().validate(spec)
+        assert not any(_AUGMENT_HINT in p for p in problems), problems
+
+    def test_pi05_missing_stats_flagged(self, spec):
+        spec.extra["policy_type"] = "pi05"
+        _write_stats(spec.dataset_root, with_quantiles=False)
+        problems = LerobotTrainer().validate(spec)
+        assert any(_AUGMENT_HINT in p for p in problems), problems
+
+    def test_non_quantile_policy_not_flagged(self, spec):
+        # act normalizes with MEAN_STD/MIN_MAX; a pre-quantile dataset is fine.
+        spec.extra["policy_type"] = "act"
+        _write_stats(spec.dataset_root, with_quantiles=False)
+        problems = LerobotTrainer().validate(spec)
+        assert not any(_AUGMENT_HINT in p for p in problems), problems
+
+    def test_no_local_stats_json_not_flagged(self, spec):
+        # meta/stats.json absent -> unknown (e.g. Hub dataset) -> no false positive.
+        spec.extra["policy_type"] = "molmoact2"
+        problems = LerobotTrainer().validate(spec)
+        assert not any(_AUGMENT_HINT in p for p in problems), problems
+
+
+class TestQuantileHelpers:
+    def test_policy_uses_quantile_norm_live_registry(self):
+        from strands_robots.training.lerobot import _policy_uses_quantile_norm
+
+        assert _policy_uses_quantile_norm("molmoact2") is True
+        assert _policy_uses_quantile_norm("pi05") is True
+        assert _policy_uses_quantile_norm("act") is False
+
+    def test_stats_have_quantiles(self):
+        from strands_robots.training.lerobot import _stats_have_quantiles
+
+        assert _stats_have_quantiles({"action": {"mean": [0.0], "q01": [-1.0]}}) is True
+        assert _stats_have_quantiles({"action": {"mean": [0.0], "std": [1.0]}}) is False
+        assert _stats_have_quantiles(None) is False
+
+    def test_dataset_quantile_stats_present_tristate(self, tmp_path):
+        import os
+
+        from strands_robots.training.lerobot import _dataset_quantile_stats_present
+
+        root = str(tmp_path)
+        assert _dataset_quantile_stats_present(root) is None  # no stats.json
+        os.makedirs(os.path.join(root, "meta"))
+        _write_stats(root, with_quantiles=False)
+        assert _dataset_quantile_stats_present(root) is False
+        _write_stats(root, with_quantiles=True)
+        assert _dataset_quantile_stats_present(root) is True
+
+
 class TestBuildCommand:
     def test_single_gpu_core_flags(self, spec):
         cmd = LerobotTrainer(device="cpu").build_command(spec)

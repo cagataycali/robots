@@ -95,6 +95,22 @@ _RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "
 # Currently pi0, pi05, and smolvla expose the field (pi0_fast does NOT).
 _EXPERT_ONLY_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "smolvla"})
 
+# LeRobot policy types whose config normalizes STATE/ACTION with QUANTILES
+# (``NormalizationMode.QUANTILES``). Such a policy needs the dataset's stats to
+# carry the quantile keys (q01, q10, q50, q90, q99); a dataset recorded before
+# quantile stats existed only has mean/std/min/max, so training either fails or
+# mis-normalizes deep inside lerobot's stats plumbing. Discovered live per
+# policy type off the config class's ``normalization_mapping`` default
+# (see :func:`_policy_uses_quantile_norm`); the static set is the offline
+# FALLBACK. Currently molmoact2 and the pi05 family normalize with quantiles.
+_QUANTILE_NORM_POLICY_TYPES_FALLBACK = frozenset({"molmoact2", "pi05"})
+
+# Quantile stat keys lerobot writes for ``DEFAULT_QUANTILES`` = [0.01, 0.10,
+# 0.50, 0.90, 0.99] (``qNN`` where NN = int(q * 100)). A dataset carries quantile
+# stats when ANY feature's stats dict holds one of these keys (mirrors lerobot's
+# own ``augment_dataset_quantile_stats.has_quantile_stats``).
+_QUANTILE_STAT_KEYS = ("q01", "q10", "q50", "q90", "q99")
+
 # RA-BC (Reward-Aligned Behavior Cloning) is surfaced to the agent through the
 # ``extra['sample_weighting']`` dict. lerobot >= 0.5.2 configures sample
 # weighting via a NESTED ``SampleWeightingConfig`` on ``TrainPipelineConfig``
@@ -194,6 +210,62 @@ def _policy_supports_expert_only(ptype: str) -> bool:
     if reg is not None and ptype in reg:
         return any(f.name == "train_expert_only" for f in dataclasses.fields(reg[ptype]))
     return ptype in _EXPERT_ONLY_POLICY_TYPES_FALLBACK
+
+
+def _policy_uses_quantile_norm(ptype: str) -> bool:
+    """Whether ``ptype``'s lerobot config normalizes any feature with QUANTILES.
+
+    A quantile-normalizing policy (molmoact2, pi05, ...) requires the training
+    dataset's stats to carry quantile keys (q01..q99); without them lerobot
+    either fails or silently mis-normalizes. Probed live off the registry config
+    *class*'s ``normalization_mapping`` field default (a ``dataclasses.field``
+    ``default_factory`` call - no config instantiation, so no device warnings or
+    construction cost), so any policy lerobot adds with quantile normalization is
+    recognized with zero per-type maintenance. Falls back to the documented
+    static set when lerobot's registry is unavailable offline.
+    """
+    reg = _policy_registry()
+    if reg is None or ptype not in reg:
+        return ptype in _QUANTILE_NORM_POLICY_TYPES_FALLBACK
+    for f in dataclasses.fields(reg[ptype]):
+        if f.name == "normalization_mapping" and f.default_factory is not dataclasses.MISSING:
+            try:
+                mapping = f.default_factory()
+            except Exception:  # noqa: BLE001 - a broken default falls back to the static set
+                return ptype in _QUANTILE_NORM_POLICY_TYPES_FALLBACK
+            return any(getattr(mode, "value", mode) == "QUANTILES" for mode in mapping.values())
+    return False
+
+
+def _stats_have_quantiles(stats: dict[str, Any] | None) -> bool:
+    """Whether a LeRobotDataset stats dict carries quantile keys for any feature.
+
+    Mirrors lerobot's ``augment_dataset_quantile_stats.has_quantile_stats``: the
+    stats are ``{feature: {stat: value}}`` and quantiles are present when ANY
+    feature holds one of ``q01..q99``.
+    """
+    if not isinstance(stats, dict):
+        return False
+    return any(isinstance(feat, dict) and any(q in feat for q in _QUANTILE_STAT_KEYS) for feat in stats.values())
+
+
+def _dataset_quantile_stats_present(dataset_root: str) -> bool | None:
+    """Tri-state quantile-stats probe for a local LeRobotDataset v3 root.
+
+    Reads ``meta/stats.json`` (lerobot's ``STATS_PATH``, the aggregate stats
+    ``load_stats`` feeds to normalization). Returns ``True`` when quantile keys
+    are present, ``False`` when the file exists but lacks them, and ``None`` when
+    the file is absent or unreadable (unknown - e.g. a Hub dataset with no
+    materialized local cache), so a definite miss can be flagged without false
+    positives on the unknown case.
+    """
+    stats_path = os.path.join(dataset_root, "meta", "stats.json")
+    try:
+        with open(stats_path, encoding="utf-8") as fh:
+            stats = json.load(fh)
+    except (OSError, json.JSONDecodeError):
+        return None
+    return _stats_have_quantiles(stats)
 
 
 def _reward_registry() -> dict[str, type] | None:
@@ -563,7 +635,41 @@ class LerobotTrainer(Trainer):
             for k, v in sw.items():
                 if isinstance(v, str) and v.startswith("-"):
                     problems.append(f"sample_weighting['{k}'] must not start with '-' (would parse as a stray flag)")
+
+        problems.extend(self._quantile_stats_problems(spec, ptype))
         return problems
+
+    def _quantile_stats_problems(self, spec: TrainSpec, ptype: str) -> list[str]:
+        """Preflight the dataset's quantile stats for a QUANTILES-normalizing policy.
+
+        A policy that normalizes STATE/ACTION with ``NormalizationMode.QUANTILES``
+        (molmoact2, pi05, ...) reads the dataset stats' quantile keys (q01..q99)
+        to normalize. A dataset recorded before quantile stats existed carries
+        only mean/std/min/max, so lerobot either raises or silently
+        mis-normalizes deep inside its stats plumbing at train time. This lifts
+        that failure to spec-validation time with an actionable message naming
+        lerobot's ``augment_dataset_quantile_stats`` remedy.
+
+        Read-only and conservative: it only flags a DEFINITE miss (a local
+        ``meta/stats.json`` present but lacking quantile keys). A Hub dataset with
+        no materialized local cache is left unflagged (stats unknown without a
+        download); its quantiles are validated by lerobot when the shards load.
+        Datasets recorded by the current DatasetRecorder already include quantile
+        stats (lerobot's ``compute_episode_stats`` computes them by default), so
+        they pass cleanly.
+        """
+        if not (spec.dataset_root and _policy_uses_quantile_norm(ptype)):
+            return []
+        if _dataset_quantile_stats_present(spec.dataset_root) is not False:
+            return []
+        repo_id = spec.dataset_repo_id or "<your-dataset-repo-id>"
+        return [
+            f"policy_type '{ptype}' normalizes STATE/ACTION with QUANTILES but the dataset at "
+            f"'{spec.dataset_root}' has no quantile stats (missing q01/q99 in meta/stats.json); "
+            "lerobot would mis-normalize or fail at train time. Add quantile stats first: "
+            f"python -m lerobot.scripts.augment_dataset_quantile_stats --repo-id={repo_id} "
+            f"--root={spec.dataset_root} (datasets recorded with current lerobot already include them)."
+        ]
 
     def _validate_reward_model(self, spec: TrainSpec, rm: dict[str, Any]) -> list[str]:
         """Reward-model training preflight (the ``cfg.reward_model`` path).
