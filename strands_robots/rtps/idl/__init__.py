@@ -67,23 +67,31 @@ if _HAVE_CYCLONEDDS:
 
     @dataclass
     class Vector3(IdlStruct, typename="geometry_msgs::msg::dds_::Vector3_"):
+        """``geometry_msgs/msg/Vector3``: a free 3-D vector (x, y, z)."""
+
         x: float64 = 0.0
         y: float64 = 0.0
         z: float64 = 0.0
 
     @dataclass
     class Twist(IdlStruct, typename="geometry_msgs::msg::dds_::Twist_"):
+        """``geometry_msgs/msg/Twist``: linear + angular velocity, the standard mobile-base command."""
+
         linear: Vector3 = field(default_factory=Vector3)
         angular: Vector3 = field(default_factory=Vector3)
 
     @dataclass
     class Point(IdlStruct, typename="geometry_msgs::msg::dds_::Point_"):
+        """``geometry_msgs/msg/Point``: a 3-D position (x, y, z) in metres."""
+
         x: float64 = 0.0
         y: float64 = 0.0
         z: float64 = 0.0
 
     @dataclass
     class Quaternion(IdlStruct, typename="geometry_msgs::msg::dds_::Quaternion_"):
+        """``geometry_msgs/msg/Quaternion``: an orientation (x, y, z, w); identity is ``w=1``."""
+
         x: float64 = 0.0
         y: float64 = 0.0
         z: float64 = 0.0
@@ -91,6 +99,8 @@ if _HAVE_CYCLONEDDS:
 
     @dataclass
     class Pose(IdlStruct, typename="geometry_msgs::msg::dds_::Pose_"):
+        """``geometry_msgs/msg/Pose``: a :class:`Point` position plus a :class:`Quaternion` orientation."""
+
         position: Point = field(default_factory=Point)
         orientation: Quaternion = field(default_factory=Quaternion)
 
@@ -112,11 +122,15 @@ if _HAVE_CYCLONEDDS:
 
     @dataclass
     class Time(IdlStruct, typename="builtin_interfaces::msg::dds_::Time_"):
+        """``builtin_interfaces/msg/Time``: a timestamp split into whole ``sec`` and ``nanosec`` remainder."""
+
         sec: int32 = 0
         nanosec: uint32 = 0
 
     @dataclass
     class Header(IdlStruct, typename="std_msgs::msg::dds_::Header_"):
+        """``std_msgs/msg/Header``: a frame-tagged stamp (:class:`Time` ``stamp`` + ``frame_id``) prepended to stamped messages."""
+
         stamp: Time = field(default_factory=Time)
         frame_id: str = ""
 
@@ -130,6 +144,8 @@ if _HAVE_CYCLONEDDS:
 
     @dataclass
     class JointState(IdlStruct, typename="sensor_msgs::msg::dds_::JointState_"):
+        """``sensor_msgs/msg/JointState``: per-joint ``name``/``position``/``velocity``/``effort`` arrays with a :class:`Header`."""
+
         header: Header = field(default_factory=Header)
         name: sequence[str] = field(default_factory=list)  # type: ignore[type-arg, assignment]
         position: sequence[float64] = field(default_factory=list)  # type: ignore[type-arg, assignment]
@@ -147,6 +163,8 @@ if _HAVE_CYCLONEDDS:
 
     @dataclass
     class Image(IdlStruct, typename="sensor_msgs::msg::dds_::Image_"):
+        """``sensor_msgs/msg/Image``: a raw camera frame (``encoding``, dimensions, row ``step``, ``data`` bytes) with a :class:`Header`."""
+
         header: Header = field(default_factory=Header)
         height: uint32 = 0
         width: uint32 = 0
