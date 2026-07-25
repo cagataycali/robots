@@ -1644,6 +1644,12 @@ class TestInProcessTrainerCorrectness:
         policy = make_policy_config("act")
         for key, value in policy_overrides.items():
             setattr(policy, key, value)
+        # Force push_to_hub off, mirroring the production build_config path
+        # (lerobot.py sets policy_cfg.push_to_hub = False). Otherwise lerobot's
+        # validate() raises "'repo_id' argument missing" because the policy config
+        # defaults push_to_hub truthy without a repo_id.
+        if hasattr(policy, "push_to_hub"):
+            policy.push_to_hub = False
         # A minimal but VALID pipeline config: validate() fills optimizer/scheduler
         # from the policy preset on a fresh (non-resume) build, so this is exactly
         # what lerobot serializes into a real checkpoint's train_config.json.
