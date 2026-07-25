@@ -892,12 +892,21 @@ class RenderingMixin:
                     }
                 label = camera_name
 
-            if cam_id >= 0:
-                renderer.update_scene(self._world._data, camera=cam_id, scene_option=self._get_viz_option())
-            else:
-                renderer.update_scene(self._world._data, scene_option=self._get_viz_option())
-
-            img = renderer.render().copy()
+            # Reading mjData (update_scene copies xpos/xquat/xmat/geom poses,
+            # and render() dereferences data.contact) races a concurrent
+            # mj_step from a policy worker or the step() loop, producing torn
+            # frames in recorded MP4s (upstream MuJoCo #191) and risking a
+            # native crash. The recorder daemon calls render() on its own
+            # thread, so this path is NOT covered by the blanket dispatch lock;
+            # serialize the mjData read + frame copy under self._lock. The
+            # .copy() inside the lock hands back an independent buffer so the
+            # PNG encoding below runs unlocked.
+            with self._lock:
+                if cam_id >= 0:
+                    renderer.update_scene(self._world._data, camera=cam_id, scene_option=self._get_viz_option())
+                else:
+                    renderer.update_scene(self._world._data, scene_option=self._get_viz_option())
+                img = renderer.render().copy()
             # Additive camera jitter (set_obs_noise); no-op when disabled.
             img = self._maybe_jitter_frame(img)
 

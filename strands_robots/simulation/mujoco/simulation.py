@@ -607,16 +607,19 @@ class MuJoCoSimEngine(
         if not os.path.exists(scene_path):
             return {"status": "error", "content": [{"text": f"Scene file not found: {scene_path}"}]}
 
+        # Compile the new scene into LOCAL model/data first. A malformed MJCF
+        # must NOT destroy the currently-live world: previously self._world was
+        # reassigned to a fresh SimWorld BEFORE the spec compiled, so a bad
+        # file discarded the live scene and still returned an error dict. We
+        # only swap self._world in after a successful compile + forward.
         try:
-            self._world = SimWorld()
             # Load the scene as a live MjSpec - this gives us a mutable AST
             # for downstream add_object/add_robot operations, matching the
             # contract produced by _compile_world for fresh worlds.
             spec = SpecBuilder.from_file(scene_path)
-            self._world._backend_state["spec"] = spec
             with filter_mujoco_attach_noise():
-                self._world._model = spec.compile()
-            self._world._data = mj.MjData(self._world._model)
+                model = spec.compile()
+            data = mj.MjData(model)
             # Forward the freshly-allocated MjData so derived state
             # (xpos / xquat / xmat / sensor data) is populated. Without
             # this, ``Renderer.update_scene`` finds the body transforms
@@ -627,36 +630,48 @@ class MuJoCoSimEngine(
             # Cost: O(model.nbody) - negligible for typical scenes.
             # Failure here is genuinely a bug in the loaded MJCF
             # (e.g. inconsistent qpos vs joint definitions), so let it
-            # propagate to the outer ``except Exception`` below where
-            # it gets converted to a structured error response.
-            mj.mj_forward(self._world._model, self._world._data)
-            self._world.status = SimStatus.IDLE
+            # propagate to the ``except`` below where it gets converted
+            # to a structured error response - with the old world intact.
+            mj.mj_forward(model, data)
+        except Exception as e:
+            logger.error("Failed to load scene: %s", e)
+            return {"status": "error", "content": [{"text": f"Failed to load scene: {e}"}]}
+
+        # Compile succeeded - atomically swap in the new world under the lock
+        # so a concurrent render/recorder thread never observes a half-built
+        # world (load_scene runs under the blanket dispatch lock, so this
+        # acquisition is a reentrant no-op there and the real guard when the
+        # method is called directly).
+        with self._lock:
+            world = SimWorld()
+            world._backend_state["spec"] = spec
+            world._model = model
+            world._data = data
+            world.status = SimStatus.IDLE
 
             # Cache the canonical serialisation; legacy readers use this.
             try:
                 with filter_mujoco_attach_noise():
-                    self._world._backend_state["xml"] = spec.to_xml()
+                    world._backend_state["xml"] = spec.to_xml()
             except Exception as xml_err:
                 logger.debug("spec.to_xml() on loaded scene failed: %s", xml_err)
 
-            self._world._backend_state["scene_loaded"] = True
-            self._world._backend_state["scene_base_dir"] = os.path.dirname(os.path.abspath(scene_path))
+            world._backend_state["scene_loaded"] = True
+            world._backend_state["scene_base_dir"] = os.path.dirname(os.path.abspath(scene_path))
+            self._world = world
 
-            return {
-                "status": "success",
-                "content": [
-                    {
-                        "text": (
-                            f"Scene loaded from {os.path.basename(scene_path)}\n"
-                            f"Bodies: {self._world._model.nbody}, Joints: {self._world._model.njnt}, Actuators: {self._world._model.nu}\n"
-                            "Use action='get_state' to inspect, action='step' to simulate"
-                        )
-                    }
-                ],
-            }
-        except Exception as e:
-            logger.error("Failed to load scene: %s", e)
-            return {"status": "error", "content": [{"text": f"Failed to load scene: {e}"}]}
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"Scene loaded from {os.path.basename(scene_path)}\n"
+                        f"Bodies: {model.nbody}, Joints: {model.njnt}, Actuators: {model.nu}\n"
+                        "Use action='get_state' to inspect, action='step' to simulate"
+                    )
+                }
+            ],
+        }
 
     def replace_scene_mjcf(self, xml: str) -> dict[str, Any]:
         """Atomically replace the entire scene with agent-authored MJCF.
@@ -1499,14 +1514,23 @@ class MuJoCoSimEngine(
         # rebuilds the spec from the remaining world.robots dict, so the robot
         # we want to drop must no longer be in it.
         robot_obj = self._world.robots[name]
-        del self._world.robots[name]
 
-        # Detach the robot's per-peer mesh (if any) BEFORE the XML rebuild
-        # so external peers see the peer leave the mesh promptly. This is
-        # the inverse of the announce in ``add_robot`` / ``_attach_robot_to_mesh``.
-        self._detach_robot_from_mesh(robot_obj)
+        # The cooperative stop + no-running-policy gate above guarantee no
+        # PolicyRunner worker is mid-mj_step. The XML round-trip below still
+        # reallocates model/data, so serialize it under self._lock to exclude
+        # the render/recorder daemon (rendering.py reads mjData under the same
+        # lock). remove_robot is dispatched WITHOUT the blanket lock (see
+        # _SELF_LOCKING_ACTIONS), so this acquisition is the real critical
+        # section, not a reentrant no-op.
+        with self._lock:
+            del self._world.robots[name]
 
-        ejected = eject_robot_from_scene(self._world, name)
+            # Detach the robot's per-peer mesh (if any) BEFORE the XML rebuild
+            # so external peers see the peer leave the mesh promptly. This is
+            # the inverse of the announce in ``add_robot`` / ``_attach_robot_to_mesh``.
+            self._detach_robot_from_mesh(robot_obj)
+
+            ejected = eject_robot_from_scene(self._world, name)
         if not ejected:
             # Unlikely - rebuild from world state with one fewer robot.
             return {
@@ -2559,51 +2583,57 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": oerr}]}
 
         mj = self._mj
-        model, data = self._world._model, self._world._data
-
-        jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, f"{name}_joint")
-        if jnt_id >= 0:
-            # Dynamic object: a freejoint carries its pose, so move it cheaply
-            # through data.qpos + a forward pass (no recompile).
-            qpos_addr = model.jnt_qposadr[jnt_id]
-            moved = False
-            if position:
-                data.qpos[qpos_addr : qpos_addr + 3] = position
-                self._world.objects[name].position = position
-                moved = True
-            if orientation:
-                data.qpos[qpos_addr + 3 : qpos_addr + 7] = orientation
-                self._world.objects[name].orientation = orientation
-                moved = True
-            if moved:
-                # Place the object AT REST at the new pose. A freejoint retains
-                # its 6-DOF linear+angular velocity across a bare data.qpos
-                # write, so without this a repositioned object keeps its prior
-                # momentum: a settling object teleports and immediately shoots
-                # off, and an eval/benchmark loop that repositions objects
-                # between episodes starts each episode with the object drifting
-                # (silently non-reproducible). This matches add_object (spawns
-                # at rest), reset (zeroes velocities), and the Newton backend
-                # (rebuilds from the builder at rest).
-                dof_addr = model.jnt_dofadr[jnt_id]
-                data.qvel[dof_addr : dof_addr + 6] = 0.0
-            mj.mj_forward(model, data)
-        elif position is not None or orientation is not None:
-            # Static object: welded to the worldbody with no freejoint, so it
-            # has no data.qpos slice to write - the old code fell through here
-            # and returned success while moving nothing (a silent no-op).
-            # Reposition it by editing the spec body pose and recompiling
-            # (preserving other joints' state), mirroring add_object /
-            # remove_object.
-            if not reposition_body_in_scene(self._world, name, position=position, orientation=orientation):
-                return {
-                    "status": "error",
-                    "content": [{"text": f"Failed to reposition '{name}' in the live scene."}],
-                }
-            if position is not None:
-                self._world.objects[name].position = position
-            if orientation is not None:
-                self._world.objects[name].orientation = orientation
+        # move_object writes data.qpos/qvel + mj_forward (dynamic path) or
+        # recompiles the scene (static path); serialize both against a
+        # concurrent mj_step/render under self._lock, matching every sibling
+        # mutator (send_action, step, reset, set_gravity). The
+        # _require_no_running_policy gate above stops a policy worker; the
+        # lock additionally excludes the render/recorder daemon.
+        with self._lock:
+            model, data = self._world._model, self._world._data
+            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, f"{name}_joint")
+            if jnt_id >= 0:
+                # Dynamic object: a freejoint carries its pose, so move it cheaply
+                # through data.qpos + a forward pass (no recompile).
+                qpos_addr = model.jnt_qposadr[jnt_id]
+                moved = False
+                if position:
+                    data.qpos[qpos_addr : qpos_addr + 3] = position
+                    self._world.objects[name].position = position
+                    moved = True
+                if orientation:
+                    data.qpos[qpos_addr + 3 : qpos_addr + 7] = orientation
+                    self._world.objects[name].orientation = orientation
+                    moved = True
+                if moved:
+                    # Place the object AT REST at the new pose. A freejoint retains
+                    # its 6-DOF linear+angular velocity across a bare data.qpos
+                    # write, so without this a repositioned object keeps its prior
+                    # momentum: a settling object teleports and immediately shoots
+                    # off, and an eval/benchmark loop that repositions objects
+                    # between episodes starts each episode with the object drifting
+                    # (silently non-reproducible). This matches add_object (spawns
+                    # at rest), reset (zeroes velocities), and the Newton backend
+                    # (rebuilds from the builder at rest).
+                    dof_addr = model.jnt_dofadr[jnt_id]
+                    data.qvel[dof_addr : dof_addr + 6] = 0.0
+                mj.mj_forward(model, data)
+            elif position is not None or orientation is not None:
+                # Static object: welded to the worldbody with no freejoint, so it
+                # has no data.qpos slice to write - the old code fell through here
+                # and returned success while moving nothing (a silent no-op).
+                # Reposition it by editing the spec body pose and recompiling
+                # (preserving other joints' state), mirroring add_object /
+                # remove_object.
+                if not reposition_body_in_scene(self._world, name, position=position, orientation=orientation):
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"Failed to reposition '{name}' in the live scene."}],
+                    }
+                if position is not None:
+                    self._world.objects[name].position = position
+                if orientation is not None:
+                    self._world.objects[name].orientation = orientation
 
         return {"status": "success", "content": [{"text": f"'{name}' moved to {position or 'same'}"}]}
 
@@ -4108,6 +4138,11 @@ class MuJoCoSimEngine(
         }
 
     # Action name aliases (tool-action -> method-name)
+    # Dispatched actions that manage their own locking and MUST NOT run
+    # under the blanket dispatch RLock (see _dispatch_action). Each one
+    # acquires self._lock internally around its own model/data access.
+    _SELF_LOCKING_ACTIONS: frozenset[str] = frozenset({"step", "stop_policy", "remove_robot"})
+
     _ACTION_ALIASES = {
         "list_robots": "list_robots_info",
         "list_cameras": "list_cameras_info",
@@ -4292,11 +4327,27 @@ class MuJoCoSimEngine(
         if err is not None:
             return err
         assert kwargs is not None
-        # All dispatched actions are serialized under self._lock (RLock).
-        # This is the single chokepoint that prevents concurrent reads/writes
-        # to MuJoCo model/data from the agent thread while a PolicyRunner
-        # worker is mid-mj_step. Individual methods that also acquire the
-        # lock are harmless (RLock is reentrant on the same thread).
+        # Most dispatched actions are serialized under self._lock (RLock): the
+        # single chokepoint that prevents concurrent reads/writes to MuJoCo
+        # model/data from the agent thread while a PolicyRunner worker is
+        # mid-mj_step. Individual methods that also acquire the lock are
+        # harmless (RLock is reentrant on the same thread).
+        #
+        # A few actions in _SELF_LOCKING_ACTIONS must run WITHOUT the blanket
+        # lock because they manage their own concurrency:
+        #   * remove_robot joins on the target robot's PolicyRunner Future;
+        #     that worker needs self._lock to observe the cooperative-stop
+        #     flag, so holding the lock across the join deadlocks (the join
+        #     then swallows the TimeoutError and rebuilds the scene under a
+        #     still-live worker holding stale model/data ids).
+        #   * step acquires+releases self._lock in bounded batches so
+        #     stop_policy and the recorder/MJPEG threads can interleave on long
+        #     runs; the blanket lock would hold it for the whole call and
+        #     defeat the batching.
+        #   * stop_policy only flips a bool and needs no lock; keeping it off
+        #     the blanket lock lets it interrupt a long-running step.
+        if method_name in self._SELF_LOCKING_ACTIONS:
+            return method(**kwargs)
         with self._lock:
             return method(**kwargs)
 
