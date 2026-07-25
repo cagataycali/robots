@@ -395,8 +395,13 @@ class IotMqttTransport:
                 if self._client is not None:
                     try:
                         self._client.stop()
-                    except Exception:
-                        pass
+                    except Exception as stop_exc:
+                        # Best-effort teardown of a half-constructed client on the
+                        # construction-failure path. The connect() has already
+                        # failed and we return False regardless; a stop() error
+                        # here (e.g. client never reached a startable state) must
+                        # not mask the original failure. Log at debug and move on.
+                        logger.debug("IoT client stop during failure cleanup: %s", stop_exc)
                     self._client = None
                 return False
             ok = self._connected.wait(self._connect_timeout)
