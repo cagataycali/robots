@@ -448,6 +448,7 @@ class TestStateCheckpointing:
         result = sim.save_state(name="post_add")
         assert result["status"] == "success"
         result = sim.load_state(name="post_add")
+        assert result["status"] == "success"
 
     def test_load_state_after_same_shape_recompile_returns_error(self, sim):
         # A same-shape recompile (remove one free-jointed object, add another)
@@ -477,7 +478,6 @@ class TestStateCheckpointing:
         result = sim.save_state(name="with_b")
         assert result["status"] == "success"
         result = sim.load_state(name="with_b")
-        assert result["status"] == "success"
         assert result["status"] == "success"
 
 
