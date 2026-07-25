@@ -83,11 +83,18 @@ class PersistentPolicy(Policy):
     ) -> None:
         self._provider_arg = provider
         self._config = dict(config)
-        # Serialise inference across threads (sync path) and coroutines (async
-        # path). The wrapped model holds per-episode state, so concurrent
-        # get_actions on one shared handle must not interleave.
+        # Serialise inference across BOTH the sync and async entry points with a
+        # single ``threading.Lock``. The wrapped model holds per-episode state,
+        # so concurrent get_actions on one shared handle must not interleave.
+        # A ``threading.Lock`` (not ``asyncio.Lock``) is the correct primitive:
+        # every runtime call path resolves the coroutine via ``asyncio.run`` on
+        # a FRESH event loop per call (see ``strands_robots._async_utils``), and
+        # an ``asyncio.Lock``'s waiter future is bound to the loop that created
+        # it -- a second thread awaiting the lock on its own loop would await a
+        # waiter whose wake-up is scheduled on the first thread's (now-dead)
+        # loop and hang forever. A ``threading.Lock`` is loop-agnostic and
+        # serialises correctly across threads and loops alike.
         self._call_lock = threading.Lock()
-        self._async_lock = asyncio.Lock()
         if policy_object is not None:
             self._inner: Policy = policy_object
         else:
@@ -105,9 +112,20 @@ class PersistentPolicy(Policy):
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, Any]]:
-        """Delegate to the wrapped policy under the async lock (see :meth:`Policy.get_actions`)."""
-        async with self._async_lock:
+        """Delegate to the wrapped policy under the shared thread lock (see :meth:`Policy.get_actions`).
+
+        Acquires the same ``threading.Lock`` the sync path uses, so the sync and
+        async entry points mutually exclude on the wrapped model's per-episode
+        state. The blocking acquire runs in the loop's default executor so a
+        shared running loop is never frozen while another caller holds the lock
+        (each runtime call still runs on its own per-call ``asyncio.run`` loop).
+        """
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._call_lock.acquire)
+        try:
             return await self._inner.get_actions(observation_dict, instruction, **kwargs)
+        finally:
+            self._call_lock.release()
 
     def get_actions_sync(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any

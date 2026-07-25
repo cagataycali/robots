@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import threading
+import time
 
 import pytest
 
@@ -144,8 +145,8 @@ class TestPersistentPolicyWrapper:
 
     def test_async_get_actions_delegates_to_inner(self):
         # The async entry point (used by async runtimes) must delegate to the
-        # wrapped policy's coroutine under the async lock and return its
-        # per-tick action dicts - not a separately rebuilt or zeroed result.
+        # wrapped policy's coroutine under the shared thread lock and return
+        # its per-tick action dicts - not a separately rebuilt or zeroed result.
         inner = MockPolicy()
         inner.set_robot_state_keys(["j1", "j2", "j3", "j4", "j5", "j6"])
         wrapper = PersistentPolicy("mock", policy_object=inner)
@@ -153,6 +154,48 @@ class TestPersistentPolicyWrapper:
         actions = asyncio.run(wrapper.get_actions(_obs(), ""))
         assert isinstance(actions, list) and len(actions) >= 1
         assert all(isinstance(a, dict) for a in actions)
+
+    def test_async_get_actions_no_deadlock_across_per_call_loops(self):
+        # Regression: the runtime resolves the async get_actions via asyncio.run
+        # on a FRESH event loop per call (strands_robots._async_utils), from any
+        # thread. Guarding with a module-level asyncio.Lock deadlocks here: its
+        # waiter future is bound to the loop that created it, so a second thread
+        # awaiting the lock on its own loop awaits a waiter whose wake-up is
+        # scheduled on the first thread's dead loop and never returns. The lock
+        # must be a loop-agnostic threading.Lock. Two threads share one handle;
+        # one holds inference long enough to force contention -- both must return
+        # within a bounded timeout.
+        class _SlowInner(MockPolicy):
+            async def get_actions(self, observation_dict, instruction, **kwargs):
+                time.sleep(0.4)  # hold the lock while the other thread contends
+                return await super().get_actions(observation_dict, instruction, **kwargs)
+
+        inner = _SlowInner()
+        inner.set_robot_state_keys(["j1", "j2", "j3", "j4", "j5", "j6"])
+        wrapper = PersistentPolicy("mock", policy_object=inner)
+        wrapper.set_robot_state_keys(["j1", "j2", "j3", "j4", "j5", "j6"])
+
+        done: list[int] = []
+        dlock = threading.Lock()
+
+        def worker(i: int) -> None:
+            # Mimic the runtime: a brand-new event loop for this single call.
+            asyncio.run(wrapper.get_actions(_obs(), ""))
+            with dlock:
+                done.append(i)
+
+        threads = [threading.Thread(target=worker, args=(i,)) for i in range(2)]
+        threads[0].start()
+        time.sleep(0.05)  # ensure thread 0 acquires the lock first
+        threads[1].start()
+        for t in threads:
+            t.join(timeout=5.0)
+
+        assert not any(t.is_alive() for t in threads), (
+            "async get_actions deadlocked under two-thread contention: "
+            f"threads still alive after join, done={sorted(done)}"
+        )
+        assert sorted(done) == [0, 1]
 
     def test_forwards_unknown_attribute_to_inner(self):
         # Attributes not explicitly delegated on the wrapper (e.g. provider
