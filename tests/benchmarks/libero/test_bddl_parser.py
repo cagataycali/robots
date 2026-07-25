@@ -202,7 +202,7 @@ class TestPredicateVocabulary:
         sample_args = {
             "on": "cube_1 table_1",
             "near": "cube_1 gripper_1",
-            "inside": "cube_1 basket_1",
+            "in": "cube_1 basket_1",
             "open": "drawer_joint",
             "closed": "drawer_joint",
             "grasped": "cube_1",
@@ -539,14 +539,17 @@ class TestRoundTrip:
         sim = _BodyStateSim({"bottle_1": {"quaternion": [1.0, 0, 0, 0]}})
         assert fn(sim) is True
 
-    def test_inside_task(self):
+    def test_in_task(self):
+        # Upstream LIBERO writes the containment goal as ``(In obj container)``
+        # (see ``libero.libero.envs.predicates.VALIDATE_PREDICATE_FN_DICT``);
+        # the parser normalises the head to lowercase ``in``.
         text = """
-            (define (problem libero_put_inside)
-              (:goal (inside cube_1 basket_1)))
+            (define (problem libero_put_in)
+              (:goal (In cube_1 basket_1)))
         """
         problem = parse_bddl(text)
         fn = compile_goal(problem.goal)  # type: ignore[arg-type]
-        # Approximate-inside uses default tolerances (0.15, 0.15).
+        # Approximate-containment uses default tolerances (0.15, 0.15).
         sim = _BodyStateSim({"cube_1": {"position": [0.05, 0.02, 0.1]}, "basket_1": {"position": [0, 0, 0.1]}})
         assert fn(sim) is True
 
@@ -673,7 +676,7 @@ class TestArityRejection:
         "expr,token",
         [
             ("(near cube_1)", "near"),
-            ("(inside cube_1)", "inside"),
+            ("(in cube_1)", "in"),
             ("(open drawer_joint extra)", "open"),
             ("(closed drawer_joint extra)", "closed"),
         ],

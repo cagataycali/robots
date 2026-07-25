@@ -35,6 +35,7 @@ import importlib
 import json
 import logging
 import os
+import random
 import re
 from collections.abc import Callable
 from pathlib import Path
@@ -55,8 +56,6 @@ from strands_robots.simulation.models import SimCamera, SimRobot
 from strands_robots.utils import get_base_dir, require_optional
 
 if TYPE_CHECKING:
-    import random
-
     from strands_robots.simulation.base import SimEngine
 
 logger = logging.getLogger(__name__)
@@ -3147,7 +3146,7 @@ def _walk_predicate_tree(node: Any, sim: SimEngine) -> list[tuple[str, bool]]:
 
     Each reported leaf string includes the actual body positions
     looked up via ``sim.get_body_state`` so we can see why a position-
-    based predicate (``on``, ``inside``, etc.) returned its verdict -
+    based predicate (``on``, ``in``, etc.) returned its verdict -
     distinguishes between "name doesn't resolve" (None pos), "wrong
     geometric threshold" (positions present but predicate still False),
     and "true success" (positions present and predicate True).

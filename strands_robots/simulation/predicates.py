@@ -651,7 +651,7 @@ def _body_on(
 
 
 def _body_inside(body: str, container: str, xy_tol: float = 0.15, z_tol: float = 0.15) -> BoolPredicate:
-    """Approximate ``(inside A B)`` predicate - A contained within B's volume.
+    """Approximate ``(in A B)`` predicate - A contained within B's volume.
 
     True when A's position is within an axis-aligned box centered on B with
     half-extents (``xy_tol``, ``xy_tol``, ``z_tol``). LIBERO-typical use is
