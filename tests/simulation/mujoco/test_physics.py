@@ -409,6 +409,47 @@ class TestStateCheckpointing:
         result = sim.load_state(name="doesnt_exist")
         assert result["status"] == "error"
 
+    def test_save_load_round_trips_ctrl(self, sim):
+        # ctrl (servo targets) MUST survive a checkpoint round-trip. Previously
+        # save_state used mjSTATE_FULLPHYSICS, which excludes ctrl/qfrc_applied,
+        # so the first step after load_state drove toward the pre-restore
+        # targets. Regression for that silent drop.
+        sim._world._data.ctrl[0] = 0.8
+        mj.mj_forward(sim._world._model, sim._world._data)
+
+        result = sim.save_state(name="ctrl_ckpt")
+        assert result["status"] == "success"
+
+        # Clobber ctrl after the checkpoint.
+        sim._world._data.ctrl[0] = -0.5
+        mj.mj_forward(sim._world._model, sim._world._data)
+        assert sim._world._data.ctrl[0] == pytest.approx(-0.5)
+
+        result = sim.load_state(name="ctrl_ckpt")
+        assert result["status"] == "success"
+        assert sim._world._data.ctrl[0] == pytest.approx(0.8)
+
+    def test_load_state_after_recompile_returns_structured_error(self, sim):
+        # A scene recompile that resizes the state vector (add_object inserts a
+        # free joint -> nq/nv grow) must invalidate an earlier checkpoint. The
+        # stale vector must NOT be applied: previously mj_setState raised a raw
+        # ValueError or silently misaligned qpos. Expect a structured error dict.
+        result = sim.save_state(name="pre_add")
+        assert result["status"] == "success"
+
+        add = sim.add_object(name="dropped_cube", shape="box", size=[0.05, 0.05, 0.05])
+        assert add["status"] == "success"
+
+        result = sim.load_state(name="pre_add")
+        assert result["status"] == "error"
+        assert "stale" in result["content"][0]["text"].lower()
+
+        # The checkpoint saved AFTER the mutation applies cleanly.
+        result = sim.save_state(name="post_add")
+        assert result["status"] == "success"
+        result = sim.load_state(name="post_add")
+        assert result["status"] == "success"
+
 
 class TestInverseDynamics:
     @staticmethod

@@ -271,10 +271,23 @@ class PhysicsMixin:
     # State Checkpointing
 
     def save_state(self, name: str = "default") -> dict[str, Any]:
-        """Save the full physics state (qpos, qvel, act, time) to a named checkpoint.
+        """Save the full integration state to a named checkpoint.
 
-        Uses mj_getState with mjSTATE_FULLPHYSICS for complete state capture
-        including ctrl and qfrc_applied buffers.
+        Captures the complete ``mjSTATE_INTEGRATION`` vector - qpos, qvel,
+        act, ctrl, qfrc_applied, xfrc_applied, mocap pose, eq_active, plugin
+        state and time - so a subsequent ``load_state`` restores the servo
+        targets (``ctrl``) and latched external forces, not just positions.
+        ``mjSTATE_FULLPHYSICS`` (used previously) silently excluded ``ctrl``
+        and ``qfrc_applied``, so the first step after a restore drove toward
+        the pre-restore targets - contradicting this docstring and
+        ``describe()``.
+
+        The checkpoint is stamped with the model's structural fingerprint
+        (state size + nq/nv/na/nu). A scene recompile that changes the model
+        shape (e.g. ``add_object`` inserts a free joint) invalidates the
+        stored vector; ``load_state`` detects the mismatch and returns a
+        structured error instead of raising a raw ``ValueError`` or silently
+        applying a misaligned vector.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -283,15 +296,18 @@ class PhysicsMixin:
         model, data = self._world._model, self._world._data
 
         with self._lock:
-            state_size = mj.mj_stateSize(model, mj.mjtState.mjSTATE_FULLPHYSICS)
+            state_size = mj.mj_stateSize(model, mj.mjtState.mjSTATE_INTEGRATION)
             state = np.zeros(state_size)
-            mj.mj_getState(model, data, state, mj.mjtState.mjSTATE_FULLPHYSICS)
+            mj.mj_getState(model, data, state, mj.mjtState.mjSTATE_INTEGRATION)
+            fingerprint = (int(model.nq), int(model.nv), int(model.na), int(model.nu))
 
         if not hasattr(self._world, "_checkpoints"):
             self._world._checkpoints = {}
 
         self._world._checkpoints[name] = {
             "state": state.copy(),
+            "state_size": int(state_size),
+            "fingerprint": fingerprint,
             "sim_time": self._world.sim_time,
             "step_count": self._world.step_count,
         }
@@ -303,7 +319,7 @@ class PhysicsMixin:
                     "text": (
                         f"State '{name}' saved\n"
                         f"  t={self._world.sim_time:.4f}s, step={self._world.step_count}\n"
-                        f"State vector: {state_size} floats\n"
+                        f"State vector: {state_size} floats (mjSTATE_INTEGRATION, incl. ctrl)\n"
                         f"Checkpoints: {list(self._world._checkpoints.keys())}"
                     )
                 }
@@ -311,7 +327,14 @@ class PhysicsMixin:
         }
 
     def load_state(self, name: str = "default") -> dict[str, Any]:
-        """Restore physics state from a named checkpoint."""
+        """Restore integration state (incl. ctrl) from a named checkpoint.
+
+        Refuses to apply a checkpoint whose structural fingerprint no longer
+        matches the live model - a scene recompile since ``save_state`` (e.g.
+        ``add_object`` / ``remove_robot``) resized the state vector, so
+        applying it would raise a raw ``ValueError`` or silently misalign
+        qpos/ctrl. In that case a structured error is returned.
+        """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # load_state during a running policy races worker thread
@@ -331,7 +354,27 @@ class PhysicsMixin:
         checkpoint = checkpoints[name]
 
         with self._lock:
-            mj.mj_setState(model, data, checkpoint["state"], mj.mjtState.mjSTATE_FULLPHYSICS)
+            current_size = mj.mj_stateSize(model, mj.mjtState.mjSTATE_INTEGRATION)
+            current_fp = (int(model.nq), int(model.nv), int(model.na), int(model.nu))
+            saved_size = checkpoint.get("state_size", checkpoint["state"].shape[0])
+            saved_fp = checkpoint.get("fingerprint")
+            if current_size != saved_size or (saved_fp is not None and current_fp != saved_fp):
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"Checkpoint '{name}' is stale: the scene was recompiled since it "
+                                f"was saved (saved nq/nv/na/nu={saved_fp}, size={saved_size}; "
+                                f"current={current_fp}, size={current_size}). Applying it would "
+                                f"misalign the physics state. Save a fresh checkpoint after scene "
+                                f"mutations such as add_object / remove_robot."
+                            )
+                        }
+                    ],
+                }
+
+            mj.mj_setState(model, data, checkpoint["state"], mj.mjtState.mjSTATE_INTEGRATION)
             mj.mj_forward(model, data)
 
             self._world.sim_time = checkpoint["sim_time"]
