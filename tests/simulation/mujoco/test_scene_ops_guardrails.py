@@ -13,6 +13,8 @@ fail loudly and predictably rather than crash mid-mutation.
 
 from __future__ import annotations
 
+from typing import cast
+
 import pytest
 
 pytest.importorskip("mujoco")
@@ -634,6 +636,46 @@ class TestSpecSurgeryFailureRecovery:
         # Not poisoned: the restored spec still recompiles, so a subsequent real
         # scene mutation succeeds end-to-end.
         monkeypatch.setattr(scene_ops, "_recompile_preserving_state", orig_recompile)
+        assert (
+            sim.add_object(name="probe", shape="box", size=[0.05, 0.05, 0.05], position=[0.1, 0.1, 0.5])["status"]
+            == "success"
+        )
+        assert int(two_body_world._model.nbody) == nbody_before + 1
+
+    def test_actuate_surgery_exception_restores_spec_and_leaves_scene_usable(
+        self, sim: Simulation, two_body_world: SimWorld
+    ) -> None:
+        """A spec edit that *raises* mid-surgery (before the recompile) must also
+        restore the pre-surgery snapshot -- not just a recompile that returns
+        False. Here the actuator loop flips the integrator and appends an
+        actuator onto the live spec, then a non-numeric ``kp`` makes
+        ``float(kp)`` raise ``ValueError`` inside the surgery block. The half-
+        applied edit (an orphan actuator targeting a joint that does not exist)
+        would make every later recompile fail, so the snapshot restore is what
+        keeps the scene usable.
+        """
+        nbody_before = int(two_body_world._model.nbody)
+        robot = SimRobot(name="ghostarm", urdf_path="x.xml", namespace="ghostarm/")
+
+        assert (
+            scene_ops.actuate_robot_in_scene(
+                two_body_world,
+                robot,
+                # a deliberately non-numeric kp: float(...) raises ValueError mid-surgery
+                {"pan": cast(float, "not-a-number")},
+                damping=1.0,
+                armature=0.01,
+                gravity_compensation=True,
+                disable_self_collision=True,
+            )
+            is False
+        )
+        # Compiled model unchanged by the failed surgery.
+        assert int(two_body_world._model.nbody) == nbody_before
+
+        # Not poisoned: the restored spec still recompiles, so a subsequent real
+        # scene mutation succeeds. Without the snapshot restore the orphan
+        # actuator left on the spec would fail this recompile.
         assert (
             sim.add_object(name="probe", shape="box", size=[0.05, 0.05, 0.05], position=[0.1, 0.1, 0.5])["status"]
             == "success"
