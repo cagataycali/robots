@@ -67,12 +67,22 @@ class _FakeRobot:
         self.started = None
         self.stopped = False
 
-    def start_task(self, instruction, policy_provider, policy_port, host, duration):
+    def start_task(
+        self,
+        instruction,
+        policy_port=None,
+        policy_host="localhost",
+        policy_provider="groot",
+        duration=30.0,
+        **kw,
+    ):
+        # Real HardwareRobot.start_task signature so a positional misorder in
+        # the caller surfaces as a wrong-field value instead of passing.
         self.started = dict(
             instruction=instruction,
             policy_provider=policy_provider,
             policy_port=policy_port,
-            host=host,
+            policy_host=policy_host,
             duration=duration,
         )
         return {"status": "success", "instruction": instruction}

@@ -100,12 +100,17 @@ class RobotDeviceDriver(DeviceDriver):
         if not is_safe_policy_provider(policy_provider):
             return {"status": "error", "reason": f"policy_provider not allowed: {policy_provider!r}"}
 
+        # Call by keyword: HardwareRobot.start_task is
+        # (instruction, policy_port, policy_host, policy_provider, duration).
+        # A positional call here silently misroutes the arguments (the provider
+        # string lands in policy_port, the port in policy_host, and "localhost"
+        # in policy_provider), so bind them explicitly to their target fields.
         return self._robot.start_task(
             instruction,
-            policy_provider,
-            policy_port or None,
-            "localhost",
-            duration,
+            policy_port=policy_port or None,
+            policy_host="localhost",
+            policy_provider=policy_provider,
+            duration=duration,
         )
 
     @rpc()

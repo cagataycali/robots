@@ -104,10 +104,14 @@ class FakeRobot:
     def reset(self):
         return {"reset": True}
 
-    def _execute_task_sync(self, instruction, provider, port, host, duration, **kw):
-        return {"executed": instruction, "provider": provider}
+    def _execute_task_sync(
+        self, instruction, policy_port=None, policy_host="localhost", policy_provider="groot", duration=30.0, **kw
+    ):
+        return {"executed": instruction, "provider": policy_provider}
 
-    def start_task(self, instruction, provider, port, host, duration, **kw):
+    def start_task(
+        self, instruction, policy_port=None, policy_host="localhost", policy_provider="groot", duration=30.0, **kw
+    ):
         return {"started": instruction}
 
 

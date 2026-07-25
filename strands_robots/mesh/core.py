@@ -1650,12 +1650,33 @@ class Mesh(SensorLoopsMixin):
                     duration=duration,
                     extra=extra,
                 )
+            # Bind by keyword: the hardware entry points are
+            # (instruction, policy_port, policy_host, policy_provider, duration).
+            # A positional call would misroute the provider into policy_port,
+            # the port into policy_host, and the allowlist-checked policy_host
+            # into policy_provider -- defeating the host guard above.
             if action == "execute" and hasattr(r, "_execute_task_sync"):
                 return dict(
-                    r._execute_task_sync(instruction, policy_provider, policy_port, policy_host, duration, **extra)
+                    r._execute_task_sync(
+                        instruction,
+                        policy_port=policy_port,
+                        policy_host=policy_host,
+                        policy_provider=policy_provider,
+                        duration=duration,
+                        **extra,
+                    )
                 )
             if action == "start" and hasattr(r, "start_task"):
-                return dict(r.start_task(instruction, policy_provider, policy_port, policy_host, duration, **extra))
+                return dict(
+                    r.start_task(
+                        instruction,
+                        policy_port=policy_port,
+                        policy_host=policy_host,
+                        policy_provider=policy_provider,
+                        duration=duration,
+                        **extra,
+                    )
+                )
         if action == "step" and hasattr(r, "step"):
             return dict(r.step(cmd.get("steps", 1)))
         if action == "reset" and hasattr(r, "reset"):
