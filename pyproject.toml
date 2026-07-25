@@ -342,8 +342,14 @@ ros2 = [
 vera-sim = [
     "gymnasium==0.29.1",
     "gym-pusht==0.1.5",
-    "robomimic==0.5.0",
     "robosuite==1.4.1",
+    # robomimic v0.5.0 is NOT published to PyPI -- the highest PyPI release is
+    # 0.3.0, and v0.5.0 exists only as an ARISE-Initiative GitHub tag. Pinning
+    # `robomimic==0.5.0` here is therefore both unresolvable (uv lock fails) and
+    # a dependency-confusion risk (anyone publishing 0.5.0 to PyPI would be
+    # installed). robomimic is not imported anywhere in the source; VERA pulls
+    # it in itself. If you need robomimic v0.5.0, install it from source:
+    #     pip install "robomimic @ git+https://github.com/ARISE-Initiative/robomimic.git@v0.5.0"
     # MimicGen (NVlabs) is NOT published to PyPI -- the `mimicgen` name on PyPI
     # is an unaffiliated third-party package, so pinning it here is a
     # dependency-confusion risk and it is not imported anywhere in the source.
@@ -442,6 +448,20 @@ dependencies = [
 # inference runs on GPU. The sole remaining override is the diffusers security
 # floor.
 [tool.uv]
+# The legacy VERA sim stack ([vera-sim]) pins gymnasium==0.29.1, which is
+# mutually exclusive with lerobot>=0.6.0 (requires gymnasium>=1.1.1). uv
+# resolves all extras jointly by default, so without a fork declaration this
+# single pin drags the WHOLE resolution below lerobot 0.6 (previously froze the
+# lock at lerobot 0.5.1, making vla_jepa/molmoact2/eo1/lerobot.rl unreachable).
+# Declaring the conflict makes uv fork the resolution: install [vera-sim] OR the
+# lerobot-0.6 extras, never both in one environment.
+conflicts = [
+    [{ extra = "vera-sim" }, { extra = "lerobot" }],
+    [{ extra = "vera-sim" }, { extra = "lerobot-async" }],
+    [{ extra = "vera-sim" }, { extra = "molmoact2" }],
+    [{ extra = "vera-sim" }, { extra = "all" }],
+    [{ extra = "vera-sim" }, { extra = "benchmark-libero" }],
+]
 override-dependencies = [
     # SECURITY: diffusers <0.36 is vulnerable to a GHSA trust_remote_code bypass
     # + a TOCTOU RCE (fixed in 0.38.0). diffusers is only exercised by the

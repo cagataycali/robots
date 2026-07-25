@@ -254,3 +254,95 @@ def test_ruff_bound_is_consistent_across_pyproject() -> None:
     """The ruff bound must be identical in every declaration so they never drift."""
     specs = {str(req.specifier) for req in _ruff_requirements()}
     assert len(specs) == 1, f"ruff bound must be identical across pyproject, got {specs}"
+
+
+# ---------------------------------------------------------------------------
+# Phantom `==` version-pin guard + the vera-sim / lerobot-0.6 fork invariant.
+#
+# `robomimic==0.5.0` was pinned in the [vera-sim] extra, but robomimic's highest
+# PyPI release is 0.3.0 -- v0.5.0 exists only as an ARISE-Initiative GitHub tag.
+# The pin was thus unresolvable forever (it wedged `uv lock`, freezing uv.lock at
+# a months-old lerobot 0.5.1 resolution and hiding vla_jepa/molmoact2/lerobot.rl)
+# AND a dependency-confusion vector (whoever publishes robomimic 0.5.0 to PyPI
+# gets installed). A phantom `==` version differs from a nonexistent NAME, so the
+# name-existence audit missed it; check_pinned_versions_exist closes that gap.
+#
+# Separately, [vera-sim] pins gymnasium==0.29.1, mutually exclusive with
+# lerobot>=0.6.0 (gymnasium>=1.1.1). uv resolves all extras jointly, so absent a
+# fork declaration that pin drags the WHOLE resolution below lerobot 0.6. The
+# [tool.uv].conflicts entries fork vera-sim away from the lerobot-0.6 extras.
+
+
+def test_pinned_version_check_flags_phantom_version():
+    """A `name==X` pin whose version is absent from PyPI must be flagged."""
+    findings = audit_deps.check_pinned_versions_exist(
+        {"robomimic": "robomimic==0.5.0"},
+        version_fetcher=lambda _name: {"0.1.0", "0.2.0", "0.3.0"},
+    )
+    assert any("PHANTOM VERSION" in f and "0.5.0" in f for f in findings), findings
+
+
+def test_pinned_version_check_passes_for_existing_version():
+    """An exact pin to a real release must not be flagged."""
+    findings = audit_deps.check_pinned_versions_exist(
+        {"robosuite": "robosuite==1.4.1"},
+        version_fetcher=lambda _name: {"1.4.0", "1.4.1"},
+    )
+    assert findings == [], findings
+
+
+def test_pinned_version_check_ignores_ranges_and_inconclusive():
+    """Range specifiers and inconclusive (None) fetches must never fire."""
+    # A range pin is not an exact `==`, so it is not a phantom-version candidate.
+    assert (
+        audit_deps.check_pinned_versions_exist(
+            {"lerobot": "lerobot[feetech,dataset]>=0.6.0,<0.7.0"},
+            version_fetcher=lambda _name: {"0.6.0"},
+        )
+        == []
+    )
+    # A None fetch (network flakiness) must be treated as inconclusive, not a
+    # failure, so the audit never reddens the build on a transient error.
+    assert (
+        audit_deps.check_pinned_versions_exist(
+            {"robomimic": "robomimic==0.5.0"},
+            version_fetcher=lambda _name: None,
+        )
+        == []
+    )
+
+
+def test_vera_sim_has_no_phantom_robomimic_pin():
+    """The live [vera-sim] extra must not pin robomimic (a phantom `==` version).
+
+    robomimic must be a source install (documented in the extra), never a PyPI
+    pin, so the unresolvable/confusion-prone `robomimic==0.5.0` cannot return.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    vera_sim = data["project"]["optional-dependencies"]["vera-sim"]
+    offenders = [spec for spec in vera_sim if Requirement(spec).name == "robomimic"]
+    assert offenders == [], f"robomimic must not be a PyPI pin in [vera-sim]: {offenders}"
+
+
+def test_vera_sim_is_forked_away_from_lerobot06_extras():
+    """[tool.uv].conflicts must fork [vera-sim] from the lerobot-0.6 extras.
+
+    [vera-sim]'s gymnasium==0.29.1 is mutually exclusive with lerobot>=0.6.0
+    (gymnasium>=1.1.1). Without a conflict declaration uv resolves all extras
+    jointly and that single pin drags the whole lock below lerobot 0.6 (the
+    regression that froze uv.lock at lerobot 0.5.1). Each lerobot-0.6 extra must
+    be declared as conflicting with vera-sim so uv forks the resolution instead.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    conflicts = data.get("tool", {}).get("uv", {}).get("conflicts", [])
+    forked = set()
+    for pair in conflicts:
+        extras = {member.get("extra") for member in pair}
+        if "vera-sim" in extras:
+            forked |= extras - {"vera-sim"}
+    for extra in ("lerobot", "lerobot-async", "molmoact2", "all"):
+        assert extra in forked, (
+            f"[tool.uv].conflicts must fork vera-sim from the '{extra}' extra so "
+            f"its gymnasium 0.29 pin cannot drag the lock below lerobot 0.6; "
+            f"forked pairs found: {sorted(forked)}"
+        )
