@@ -750,3 +750,138 @@ class TestBakeGsplatPanorama:
 
         assert result == out
         assert out.read_bytes() == b"cached-panorama"
+
+
+# --------------------------------------------------------------------------- #
+# GsplatBackground._load -- splat load + alignment wiring (no gsplat/CUDA)
+# --------------------------------------------------------------------------- #
+#
+# _load() gates on the ``sim-gs`` extra (torch + gsplat) and then, for a
+# .spz/.ply scene, decodes the splats and -- in skybox / auto-backdrop mode --
+# fits the ``world_from_gs`` transform and drops out-of-bounds gaussians. The
+# gsplat *rasterizer* is CUDA-bound and only touched later in ``render()``, so
+# the decode + alignment wiring is exercised here on CPU with the optional-dep
+# gate stubbed out. A room-like ``.spz`` (wide X, deep Y, thin Z) gives the PCA
+# up-axis a well-defined direction so the fit is meaningful.
+
+
+def _room_spz(tmp_path, n: int = 1500, seed: int = 0):
+    """Write a room-like scene as a minimal v2 ``.spz`` and return (path, means)."""
+    rng = np.random.default_rng(seed)
+    means = np.column_stack([rng.uniform(-4.0, 4.0, n), rng.uniform(-2.0, 2.0, n), rng.uniform(-0.1, 0.1, n)]).astype(
+        np.float32
+    )
+    alpha = np.full(n, 255, np.uint8)
+    col = np.full((n, 3), 128, np.uint8)
+    scl = np.full((n, 3), 128, np.uint8)
+    rot = np.full((n, 3), 128, np.uint8)  # v2 stores 3 bytes/point
+    path = _build_spz(tmp_path, means, alpha, col, scl, rot, version=2)
+    return path, means
+
+
+def _apply(T: np.ndarray, pts: np.ndarray) -> np.ndarray:
+    """Apply a 4x4 affine ``world_from_gs`` to ``(N, 3)`` points."""
+    return pts @ T[:3, :3].T + T[:3, 3]
+
+
+class TestGsplatBackgroundLoad:
+    """_load decodes a scene and, per mode, fits the world_from_gs transform."""
+
+    def test_skybox_mode_seats_the_scene_floor_and_keeps_permissive_splats(self, tmp_path, monkeypatch) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering import backgrounds as bg
+
+        # Stub the sim-gs optional-dep gate: we exercise the CPU decode + fit,
+        # not the CUDA rasterizer.
+        monkeypatch.setattr(bg, "require_optional", lambda *a, **k: None)
+        path, means = _room_spz(tmp_path)
+
+        floor_z = -0.3
+        b = bg.GsplatBackground(
+            ply_path=path,
+            device="cpu",
+            skybox=True,
+            up_sign=1.0,
+            floor_z=floor_z,
+            floor_pct=2.0,
+            radius=2.5,
+            # A permissive world-z floor keeps every gaussian, so the clip
+            # branch runs but drops nothing.
+            clip_below=-100.0,
+            min_opacity=0.0,
+            up_axis=(0.0, 0.0, 1.0),
+            major_axis=(1.0, 0.0, 0.0),
+        )
+        b._load()
+
+        # A skybox transform was fit (not left at identity).
+        assert not np.allclose(b._transform, np.eye(4))
+        # The fit seats the floor_pct percentile of world-z at floor_z -- this
+        # is what puts the photoreal ground under the arm.
+        world = _apply(b._transform, means)
+        assert np.isclose(np.percentile(world[:, 2], 2.0), floor_z, atol=1e-2)
+        # ...and scales the horizontal 95th-percentile extent to ``radius``.
+        horiz = np.linalg.norm(world[:, :2] - world[:, :2].mean(axis=0), axis=1)
+        assert np.isclose(np.percentile(horiz, 95), 2.5, rtol=0.05)
+        # The permissive clip retained every decoded gaussian.
+        assert b._splats is not None
+        assert b._splats["means"].detach().cpu().numpy().shape[0] == means.shape[0]
+
+    def test_skybox_clip_drops_gaussians_below_the_world_floor(self, tmp_path, monkeypatch) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering import backgrounds as bg
+
+        monkeypatch.setattr(bg, "require_optional", lambda *a, **k: None)
+        path, means = _room_spz(tmp_path)
+
+        # A world-z clip at 0 with the floor seated at -0.3 drops the sub-floor
+        # slab, so fewer gaussians survive than were decoded.
+        b = bg.GsplatBackground(
+            ply_path=path,
+            device="cpu",
+            skybox=True,
+            up_sign=1.0,
+            floor_z=-0.3,
+            clip_below=0.0,
+            min_opacity=0.0,
+            up_axis=(0.0, 0.0, 1.0),
+            major_axis=(1.0, 0.0, 0.0),
+        )
+        b._load()
+
+        assert b._splats is not None
+        kept = b._splats["means"].detach().cpu().numpy().shape[0]
+        assert 0 <= kept < means.shape[0]
+
+    def test_auto_backdrop_mode_centres_scene_on_backdrop_center(self, tmp_path, monkeypatch) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering import backgrounds as bg
+
+        monkeypatch.setattr(bg, "require_optional", lambda *a, **k: None)
+        path, means = _room_spz(tmp_path)
+
+        center = (0.05, 0.05, 0.25)
+        b = bg.GsplatBackground(
+            ply_path=path,
+            device="cpu",
+            auto_backdrop=True,
+            backdrop_center=center,
+            backdrop_radius=3.0,
+        )
+        b._load()
+
+        # The backdrop fit maps the scene centroid exactly onto backdrop_center.
+        assert not np.allclose(b._transform, np.eye(4))
+        assert np.allclose(_apply(b._transform, means.mean(axis=0)), center, atol=5e-3)
+        # No clip is applied in backdrop mode -- every gaussian is retained.
+        assert b._splats is not None
+        assert b._splats["means"].detach().cpu().numpy().shape[0] == means.shape[0]
+
+    def test_missing_scene_file_raises_filenotfound(self, tmp_path, monkeypatch) -> None:
+        pytest.importorskip("torch")
+        from strands_robots.rendering import backgrounds as bg
+
+        monkeypatch.setattr(bg, "require_optional", lambda *a, **k: None)
+        b = bg.GsplatBackground(ply_path=tmp_path / "does_not_exist.spz", device="cpu")
+        with pytest.raises(FileNotFoundError, match="Gaussian Splat not found"):
+            b._load()
