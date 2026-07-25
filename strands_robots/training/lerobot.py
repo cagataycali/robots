@@ -920,6 +920,37 @@ class LerobotTrainer(Trainer):
             if ckpt_cfg:
                 cfg.checkpoint_path = Path(ckpt_cfg).parent.parent
 
+    def _populate_resume_optimizer(self, cfg: Any, spec: TrainSpec) -> None:
+        """Populate optimizer/scheduler for a resumed in-process run.
+
+        On resume, lerobot's validate() skips the optimizer preset application
+        (``not self.resume`` guard), expecting the config was deserialized from
+        the checkpoint's train_config.json (which carries the serialized
+        optimizer/scheduler). The in-process path builds the config fresh from
+        the spec, so cfg.optimizer stays None and make_optimizer_and_scheduler
+        raises before the training loop.
+
+        Resolution: apply the policy's optimizer/scheduler preset ourselves,
+        mirroring what validate() does on the non-resume (fresh-train) path.
+        On the CLI resume path the preset comes from the deserialized checkpoint
+        config; since we build cfg.policy from the checkpoint's saved config
+        (via PreTrainedConfig.from_pretrained in the base_model path, or
+        make_policy_config for fresh resume), the preset is already correct.
+        """
+        if cfg.optimizer is None and cfg.policy is not None:
+            try:
+                cfg.optimizer = cfg.policy.get_optimizer_preset()
+                logger.debug("Resume: populated optimizer from policy preset.")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Resume: failed to get optimizer preset: %s", e)
+
+        if getattr(cfg, "scheduler", None) is None and cfg.policy is not None:
+            try:
+                cfg.scheduler = cfg.policy.get_scheduler_preset()
+                logger.debug("Resume: populated scheduler from policy preset.")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Resume: failed to get scheduler preset: %s", e)
+
     def _apply_extra_passthrough(self, cfg: TrainPipelineConfig, spec: TrainSpec) -> None:
         """Typed passthrough for remaining ``extra.*`` keys (validate()-gated).
 
@@ -1071,6 +1102,8 @@ class LerobotTrainer(Trainer):
             peft=peft_cfg,
         )
         self._apply_common_config(cfg, spec)
+        if spec.resume:
+            self._populate_resume_optimizer(cfg, spec)
 
         # RA-BC sample weighting: lerobot >= 0.6.0 configures it via a NESTED
         # SampleWeightingConfig on TrainPipelineConfig (cfg.sample_weighting),

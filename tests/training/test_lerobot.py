@@ -1695,3 +1695,46 @@ class TestInProcessTrainerCorrectness:
         with resume_argv(None):
             assert sys.argv == saved
         assert sys.argv == saved
+
+    def test_resume_populates_optimizer_from_checkpoint_config(self, spec, tmp_path):
+        """Regression: resume must populate cfg.optimizer from the checkpoint.
+
+        On resume, lerobot's validate() skips optimizer preset application
+        (``not self.resume`` guard), so cfg.optimizer stays None when the config
+        is built fresh. make_optimizer_and_scheduler then raises ValueError
+        before the training loop. The fix reads the checkpoint's serialized
+        optimizer/scheduler from train_config.json.
+        """
+        pytest.importorskip("lerobot")
+        import json
+
+        # Write a checkpoint with a serialized optimizer config (mimicking what
+        # lerobot writes on a real training run).
+        last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
+        last.mkdir(parents=True)
+        saved_config = {
+            "optimizer": {
+                "type": "AdamW",
+                "lr": 1e-4,
+                "betas": [0.95, 0.999],
+                "eps": 1e-8,
+                "weight_decay": 1e-4,
+            },
+            "scheduler": {
+                "type": "cosine",
+                "num_warmup_steps": 500,
+            },
+        }
+        (last / "train_config.json").write_text(json.dumps(saved_config))
+
+        spec.output_dir = str(tmp_path / "out")
+        spec.resume = True
+        trainer = LerobotTrainer(device="cpu")
+        cfg = trainer.build_config(spec)
+
+        # The fix must have populated optimizer from the checkpoint's config.
+        assert cfg.optimizer is not None, (
+            "cfg.optimizer must be populated from the checkpoint's "
+            "train_config.json on resume, otherwise make_optimizer_and_scheduler "
+            "raises ValueError before the training loop starts."
+        )
