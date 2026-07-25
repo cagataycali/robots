@@ -441,11 +441,17 @@ class ReachyMiniDriver(DeviceDriver):
         failures: list[str] = []
         try:
             await self._disable_motors_impl()
-        except (RuntimeError, OSError) as exc:
+        # Recovery path: catch broadly. Hardware links raise transport-specific
+        # exceptions outside (RuntimeError, OSError) -- e.g. the Lite variant's
+        # WebSocketLink raises websockets.exceptions.ConnectionClosed
+        # (WebSocketException -> Exception) and the Zenoh variant raises its own
+        # publish errors. A safety handler must attempt BOTH stops regardless of
+        # the failing link type, so record and continue rather than crash out.
+        except Exception as exc:  # noqa: BLE001 - attempt-both e-stop recovery
             failures.append(f"disableMotors: {exc}")
         try:
             await self._stop_motion_impl()
-        except (RuntimeError, OSError) as exc:
+        except Exception as exc:  # noqa: BLE001 - attempt-both e-stop recovery
             failures.append(f"stopMotion: {exc}")
         if failures:
             logger.critical(

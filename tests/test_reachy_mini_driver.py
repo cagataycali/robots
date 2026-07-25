@@ -406,6 +406,39 @@ def test_emergency_stop_surfaces_daemon_transport_failure(rmd, monkeypatch, capl
     assert any("did NOT fully complete" in r.message for r in caplog.records)
 
 
+def test_emergency_stop_attempts_rest_stop_when_torque_link_drops(rmd, monkeypatch, caplog):
+    """A dropped real-time link during torque-off must NOT skip the REST stop.
+
+    The hardware links raise transport-specific exceptions that are neither
+    ``RuntimeError`` nor ``OSError`` -- the Lite variant's ``WebSocketLink``
+    raises ``websockets.exceptions.ConnectionClosed`` (MRO
+    ``WebSocketException -> Exception``) and the Zenoh variant raises its own
+    publish errors. If the torque-off (which runs first, on the real-time link)
+    raises such an exception, the handler must still attempt the REST stop
+    (a separate HTTP channel that may still be alive) and log the failure --
+    honoring its own "attempt BOTH stop actions even if one fails" contract.
+    A narrow ``except (RuntimeError, OSError)`` let the exception escape,
+    aborting the handler before the REST stop.
+    """
+
+    class _ConnectionClosed(Exception):
+        """Stand-in for websockets.exceptions.ConnectionClosed: subclasses
+        Exception directly, not RuntimeError/OSError (same MRO shape)."""
+
+    monkeypatch.setenv("DEVICE_CONNECT_ESTOP_ALLOW", "safety-*")
+    hw = AsyncMock()
+    hw.send_cmd.side_effect = _ConnectionClosed("websocket closed during torque-off")
+    drv = _bare(rmd, _hw=hw)
+    with patch.object(rmd, "api", return_value={"ok": True}) as fake_api:
+        with caplog.at_level("CRITICAL"):
+            _run(drv.onEmergencyStop("safety-007", "emergencyStop", {}))
+    # Torque-off raised a non-OSError/RuntimeError transport error, but the REST
+    # stop was still attempted on its separate channel.
+    assert any(call.args[2] == "/api/move/stop" for call in fake_api.call_args_list)
+    # The torque-off failure surfaced loudly rather than crashing the handler.
+    assert any("did NOT fully complete" in r.message for r in caplog.records)
+
+
 def test_stop_motion_impl_raises_on_transport_error(rmd):
     """The stopMotion core raises when the daemon REST call errors, so a caller
     cannot mistake a dead-daemon ``{"error": ...}`` for a real stop."""
