@@ -563,12 +563,22 @@ class TestBuildConfigAdditionalBranches:
         pytest.importorskip("lerobot")
         last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
         last.mkdir(parents=True)
-        (last / "train_config.json").write_text("{}")
+        # A real checkpoint's train_config.json is a fully-serialized
+        # TrainPipelineConfig, never an empty stub: _build_resume_config rebuilds
+        # the config via TrainPipelineConfig.from_pretrained (draccus), which
+        # rejects a config missing required fields like `dataset`. Serialize a
+        # real fresh-built config so resume exercises the true round-trip.
+        trainer = LerobotTrainer(device="cpu")
+        trainer._build_policy_config(spec)._save_pretrained(last)
         spec.output_dir = str(tmp_path / "out")
         spec.resume = True
-        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        cfg = trainer.build_config(spec)
         # checkpoint_path is pretrained_model.parent.parent == the "last" dir.
         assert str(cfg.checkpoint_path) == str(last.parent)
+        # The checkpoint's config survives the from_pretrained round-trip (not a
+        # defaults-only fresh build): the dataset field is restored verbatim. For
+        # the local-root spec fixture, _dataset_source resolves repo_id="local".
+        assert cfg.dataset.repo_id == "local"
 
 
 class TestResolveDotted:
