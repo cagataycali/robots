@@ -1637,6 +1637,7 @@ class TestInProcessTrainerCorrectness:
         serialized ``optimizer``/``scheduler``/``policy`` are present, which is
         the whole point of resuming from the checkpoint rather than the spec.
         """
+        from lerobot.configs.default import DatasetConfig
         from lerobot.configs.train import TrainPipelineConfig
         from lerobot.policies.factory import make_policy_config
 
@@ -1646,7 +1647,14 @@ class TestInProcessTrainerCorrectness:
         # A minimal but VALID pipeline config: validate() fills optimizer/scheduler
         # from the policy preset on a fresh (non-resume) build, so this is exactly
         # what lerobot serializes into a real checkpoint's train_config.json.
-        ckpt_cfg = TrainPipelineConfig(policy=policy, output_dir=output_dir, steps=100)
+        # ``dataset`` is a required field on TrainPipelineConfig (no default), so
+        # pass a minimal DatasetConfig mirroring the production build path.
+        ckpt_cfg = TrainPipelineConfig(
+            dataset=DatasetConfig(repo_id="dummy/resume-fixture"),
+            policy=policy,
+            output_dir=output_dir,
+            steps=100,
+        )
         ckpt_cfg.validate()
         last = output_dir / "checkpoints" / "last" / "pretrained_model"
         last.mkdir(parents=True)
