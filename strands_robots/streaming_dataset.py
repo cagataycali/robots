@@ -130,10 +130,12 @@ class StreamingDatasetReader:
         Raises:
             RuntimeError: ``repo_type`` is not ``"dataset"`` but the installed
                 ``StreamingLeRobotDataset`` does not accept a ``repo_type``
-                parameter (lerobot < 0.6.1). Silently dropping the kwarg would
-                stream from the versioned *dataset* namespace instead of the
-                requested bucket - a different storage system, not a cosmetic
-                difference - so this is never tolerant-dropped.
+                parameter. No released lerobot does (the versioned-dataset vs
+                bucket storage split is not upstream); the parameter is retained
+                only for a lerobot build that adds it. Silently dropping the
+                kwarg would stream from the versioned *dataset* namespace instead
+                of the requested bucket - a different storage system, not a
+                cosmetic difference - so this is never tolerant-dropped.
             ValueError: ``drop_videos=True`` but no non-video keys remain in
                 ``delta_timestamps`` (or none were passed). Without a proprio
                 ``delta_timestamps``, StreamingLeRobotDataset streams every
@@ -147,17 +149,18 @@ class StreamingDatasetReader:
         accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in init_sig.values())
 
         # repo_type selects WHICH storage system is read (versioned dataset
-        # namespace vs bucket). Unlike the cosmetic kwargs below, silently
-        # dropping it on an older lerobot would open the wrong storage system
-        # without error - fail fast instead.
+        # namespace vs bucket). No released lerobot accepts it; unlike the
+        # cosmetic kwargs below, silently dropping a non-default value would open
+        # the wrong storage system without error - fail fast instead.
         if repo_type != "dataset" and not (accepts_var_kw or "repo_type" in init_sig):
             raise RuntimeError(
-                f"repo_type={repo_type!r} requires lerobot>=0.6.1 "
-                f"(installed: {_lerobot_version()}): the installed "
-                "StreamingLeRobotDataset does not accept a repo_type parameter, "
-                "and silently falling back to the 'dataset' namespace would "
-                "stream from a different storage system. "
-                "Upgrade with: pip install 'lerobot>=0.6.1'"
+                f"repo_type={repo_type!r} is not supported by any released lerobot "
+                f"(installed: {_lerobot_version()}): StreamingLeRobotDataset does not "
+                "accept a repo_type parameter (the versioned-dataset vs bucket storage "
+                "split is not upstream), and silently falling back to the 'dataset' "
+                "namespace would stream from a different storage system. Pass "
+                "repo_type='dataset' (the default) or use a lerobot build whose "
+                "StreamingLeRobotDataset accepts repo_type."
             )
 
         # Proprio-only: strip video keys from delta_timestamps so video decode
@@ -180,6 +183,19 @@ class StreamingDatasetReader:
                     "drop_videos has no effect. Pass e.g. "
                     "delta_timestamps={'observation.state': [0.0], 'action': [0.0]}."
                 )
+
+        # return_uint8 absence does not change semantics (policies normalize
+        # either way) but a lerobot that lacks it streams frames as float32 -
+        # ~4x the bandwidth of uint8. That is a real cost, not a no-op, so warn
+        # rather than drop it silently (unlike the truly cosmetic kwargs below).
+        if return_uint8 and not (accepts_var_kw or "return_uint8" in init_sig):
+            logger.warning(
+                "return_uint8=True dropped: installed StreamingLeRobotDataset "
+                "(lerobot %s) does not accept return_uint8, so frames stream as "
+                "float32 (~4x the bandwidth of uint8). Policies still normalize "
+                "correctly; upgrade lerobot for uint8 streaming.",
+                _lerobot_version(),
+            )
 
         kwargs: dict[str, Any] = {"repo_id": repo_id}
         candidate = dict(

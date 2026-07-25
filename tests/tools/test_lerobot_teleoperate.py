@@ -492,6 +492,33 @@ def test_build_dagger_command_forwards_dataset_root_and_display_data() -> None:
     assert cmd[cmd.index("--display_data") + 1] == "true"
 
 
+def test_build_dagger_command_preflights_missing_rollout_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """DAgger shells ``python -m lerobot.scripts.lerobot_rollout``, which only
+    exists in lerobot>=0.6.0. On an older install the tool must fail fast with
+    an actionable upgrade hint rather than let the subprocess die with an opaque
+    ``No module named`` error."""
+    import importlib.util as _iu
+
+    real_find_spec = _iu.find_spec
+
+    def fake_find_spec(name: str, *args: Any, **kw: Any):
+        if name == "lerobot.scripts.lerobot_rollout":
+            return None
+        return real_find_spec(name, *args, **kw)
+
+    monkeypatch.setattr(tele_mod.importlib.util, "find_spec", fake_find_spec)
+    with pytest.raises(RuntimeError, match=r"dagger requires lerobot>=0\.6\.0"):
+        build_lerobot_command(
+            action="dagger",
+            robot_type="so101_follower",
+            robot_port="/dev/ttyACM0",
+            teleop_type="so101_leader",
+            teleop_port="/dev/ttyACM1",
+            policy_path="user/act_fold",
+            dataset_repo_id="user/fold_corrections",
+        )
+
+
 # ---------------------------------------------------------------------------
 # SessionManager - persisted store, dead-process pruning
 # ---------------------------------------------------------------------------

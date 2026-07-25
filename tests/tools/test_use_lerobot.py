@@ -768,7 +768,7 @@ def test_blocked_module_prefix_check_respects_explicit_lerobot_prefix(
     ('lerobot.scripts...') module paths, so a caller cannot bypass it by
     spelling out the 'lerobot.' prefix themselves."""
     monkeypatch.setattr(M, "_import_from_lerobot", lambda path: lambda **kw: None)
-    result = _fn(module="lerobot.common.datasets.push.foo", method="")
+    result = _fn(module="lerobot.scripts.lerobot_train.train", method="")
     assert result["status"] == "error"
     assert "Blocked" in _texts(result)
 
@@ -963,3 +963,30 @@ def test_collect_images_stops_at_depth_limit() -> None:
     frame = np.zeros((64, 64, 3), dtype=np.uint8)
     M._collect_images(frame, blocks, _depth=3)
     assert blocks == []
+
+
+# ----------------------------------------------------------------------------
+# blocklist / advertisement drift guards
+# ----------------------------------------------------------------------------
+def test_blocklist_has_no_stale_common_datasets_push() -> None:
+    """The blocklist must not carry lerobot.common.datasets.push: that module
+    was removed upstream (HEAD lerobot.common = control_utils/train_utils/
+    wandb_utils only). Hub-push coverage lives in _BLOCKED_METHODS instead."""
+    assert "lerobot.common.datasets.push" not in M._BLOCKED_MODULE_PREFIXES
+    assert "push_to_hub" in M._BLOCKED_METHODS
+
+
+def test_scripts_prefix_still_blocked() -> None:
+    """lerobot.scripts stays blocked (subprocess-spawning training scripts)."""
+    assert "lerobot.scripts" in M._BLOCKED_MODULE_PREFIXES
+
+
+def test_discovery_does_not_advertise_blocked_train_entry_point() -> None:
+    """The discovery entry_points must not advertise scripts.lerobot_train.train:
+    it is refused by the lerobot.scripts blocklist, so listing it as a call
+    target is self-contradictory."""
+    result = M._discover_modules()
+    entry_points = result.get("entry_points", {})
+    assert "scripts.lerobot_train.train" not in entry_points
+    # A genuinely callable, non-blocked target is still advertised.
+    assert "policies.factory.get_policy_class" in entry_points

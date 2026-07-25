@@ -913,13 +913,13 @@ class TestSampleWeightingRABC:
     """RA-BC sample-weighting wiring: extra['sample_weighting'] -> nested SampleWeightingConfig.
 
     Regression for the folding recipe's headline ablation (HQ + RA-BC + relative
-    actions). lerobot >= 0.5.2 configures RA-BC through a NESTED
+    actions). lerobot >= 0.6.0 configures RA-BC through a NESTED
     ``SampleWeightingConfig`` on ``TrainPipelineConfig`` (``cfg.sample_weighting``,
     fields ``type`` / ``progress_path`` / ``head_mode`` / ``kappa`` / ``epsilon``),
     replacing the flat ``use_rabc`` / ``rabc_*`` fields of earlier 0.5.x. The
     trainer forwards the friendly ``sample_weighting`` dict (whose keys match
     those fields 1:1) into that config. Before this migration the trainer set the
-    removed flat fields and raised "no 'use_rabc'" against lerobot 0.5.2, so RA-BC
+    removed flat fields and raised "no 'use_rabc'" against lerobot 0.6.0, so RA-BC
     was unreachable.
     """
 
@@ -952,13 +952,13 @@ class TestSampleWeightingRABC:
 
     def test_build_config_old_lerobot_raises_actionable(self, dataset_root, tmp_path, monkeypatch):
         # On a lerobot without the nested sample-weighting surface, build_config
-        # must raise an actionable ValueError ("requires lerobot >= 0.5.2"), not
+        # must raise an actionable ValueError ("requires lerobot >= 0.6.0"), not
         # leak the raw ImportError from the internal SampleWeightingConfig import.
         pytest.importorskip("lerobot.utils.sample_weighting")
         import sys
 
         monkeypatch.setitem(sys.modules, "lerobot.utils.sample_weighting", None)
-        with pytest.raises(ValueError, match="requires lerobot >= 0.5.2"):
+        with pytest.raises(ValueError, match="requires lerobot >= 0.6.0"):
             LerobotTrainer(device="cpu").build_config(self._rabc_spec(dataset_root, tmp_path))
 
     def test_build_config_missing_sample_weighting_field_raises_actionable(self, dataset_root, tmp_path, monkeypatch):
@@ -1036,7 +1036,7 @@ class TestRewardModelTraining:
     The *producing* half of RA-BC. A reward model (SARM) trains through the SAME
     ``lerobot_train.train(cfg)`` entry point as a policy, but populates
     ``cfg.reward_model`` (and leaves ``cfg.policy`` unset) so lerobot follows its
-    ``is_reward_model_training`` path. Requires lerobot >= 0.5.2 (the
+    ``is_reward_model_training`` path. Requires lerobot >= 0.6.0 (the
     ``lerobot.rewards`` package). Before this, ``sarm`` was rejected outright -
     there was no reward-model path in ``LerobotTrainer`` at all.
     """
@@ -1320,7 +1320,7 @@ class TestOfflineRegistryFallbacks:
 
     Type/field discovery reads live off lerobot's draccus registries, which are
     populated as an import side effect of ``lerobot.policies`` / ``lerobot.rewards``.
-    When those imports fail (lerobot not installed, or lerobot < 0.5.2 with no
+    When those imports fail (lerobot not installed, or lerobot < 0.6.0 with no
     ``lerobot.rewards``), discovery must fall back to the documented static sets
     instead of raising, so ``validate`` still produces an actionable message
     offline. Import failure is simulated by binding the submodule to ``None`` in

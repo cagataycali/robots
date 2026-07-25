@@ -17,7 +17,7 @@ Closes the SARM -> RA-BC -> policy loop on top of
 for inference - a dense task-progress score in ``[0, 1]`` - usable as an
 eval-time success/score signal.
 
-All of this requires lerobot >= 0.5.2 (the ``lerobot.rewards`` package, where
+All of this requires lerobot >= 0.6.0 (the ``lerobot.rewards`` package, where
 SARM moved from ``lerobot.policies.sarm`` in earlier 0.5.x). The progress
 computation additionally needs ``matplotlib`` (imported by lerobot's
 ``compute_rabc_weights`` module).

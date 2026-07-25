@@ -61,8 +61,10 @@ _IMAGE_MAX_DIM = 4096  # arrays larger than this on H or W are still treated as 
 # subprocess-spawn operations that could be weaponised via prompt injection.
 _BLOCKED_MODULE_PREFIXES: tuple[str, ...] = (
     "lerobot.scripts",  # training scripts that spawn subprocesses
-    "lerobot.common.datasets.push",  # HuggingFace Hub push / upload
 )
+# Note: Hub push/upload is blocked by _BLOCKED_METHODS (push_to_hub,
+# upload_folder, ...), not a module prefix - lerobot has no dedicated push
+# module (the old lerobot.common.datasets.push was removed upstream).
 
 # Methods on otherwise-safe modules that have dangerous side effects.
 _BLOCKED_METHODS: set[str] = {
@@ -229,7 +231,6 @@ def _discover_modules() -> dict[str, Any]:
         "policies.factory.make_policy": "Build a policy instance from config",
         "robots.utils.make_robot_from_config": "Instantiate a robot from its config",
         "teleoperators.utils.make_teleoperator_from_config": "Instantiate a teleoperator",
-        "scripts.lerobot_train.train": "Train a policy on a dataset",
         "model.kinematics.RobotKinematics": "Forward/inverse kinematics",
         "envs.factory.make_env": "Create a gym environment",
         "utils.constants.HF_LEROBOT_CALIBRATION": "Calibration directory path",

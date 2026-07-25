@@ -718,7 +718,7 @@ class ProcessorBridge:
             return []
 
         inert: list[str] = []
-        for pipeline in (self._preprocessor, self._postprocessor):
+        for is_post_pipeline, pipeline in ((False, self._preprocessor), (True, self._postprocessor)):
             if pipeline is None:
                 continue
             for step in getattr(pipeline, "steps", []):
@@ -729,7 +729,6 @@ class ProcessorBridge:
                 norm_map = getattr(step, "norm_map", None) or {}
                 stat_keys = set((getattr(step, "stats", None) or {}).keys())
                 stat_keys |= set(getattr(step, "_tensor_stats", {}).keys())
-                is_unnormalizer = class_name == "UnnormalizerProcessorStep"
                 for key, feature in features.items():
                     ftype = getattr(feature, "type", None)
                     if ftype is None:
@@ -737,13 +736,18 @@ class ProcessorBridge:
                     mode = norm_map.get(ftype)
                     if mode is None or mode == NormalizationMode.IDENTITY:
                         continue
-                    # A NormalizerProcessorStep applies only observation features
-                    # (it skips ACTION); an UnnormalizerProcessorStep applies only
-                    # the ACTION. Mirror that so a feature the step never touches
-                    # is not falsely flagged.
-                    if is_unnormalizer and ftype != FeatureType.ACTION:
+                    # NormalizerProcessorStep and UnnormalizerProcessorStep each
+                    # process BOTH observation and action when present (lerobot
+                    # HEAD: normalize_processor.py). At inference, though, the
+                    # preprocessor transition carries only the observation
+                    # (action is None) and the postprocessor only the action, so
+                    # only the feature type matching the pipeline's transition is
+                    # actually exercised; the other type is never touched and so
+                    # cannot be silently inert here. Key off pipeline position,
+                    # not the step class, to reflect the real transition shape.
+                    if is_post_pipeline and ftype != FeatureType.ACTION:
                         continue
-                    if not is_unnormalizer and ftype == FeatureType.ACTION:
+                    if not is_post_pipeline and ftype == FeatureType.ACTION:
                         continue
                     lookup = ACTION if ftype == FeatureType.ACTION else key
                     if lookup not in stat_keys:

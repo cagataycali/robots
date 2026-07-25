@@ -100,6 +100,11 @@ def _convert_joint_vector(
     because the SO-arm gripper uses ``MotorNormMode.RANGE_0_100`` (0..100), not
     degrees - see ``lerobot/robots/so_follower/so_follower.py``.
 
+    The arm-degrees direction assumes the checkpoint was recorded with the SO
+    driver's ``use_degrees=True`` (its default, but opt-out). With
+    ``use_degrees=False`` the arm is ``MotorNormMode.RANGE_M100_100`` (-100..100),
+    so this degree conversion must not be applied to such a checkpoint.
+
     LeRobot's ``MotorNormMode.DEGREES`` is **mid-point-centered**: the value a
     checkpoint trains on is the angular displacement from each motor's
     calibration mid-point, not the absolute joint angle (ground truth:
@@ -449,13 +454,21 @@ class EmbodimentMap:
     dim_policy: str = "strict"
     # Unit conventions for state/action vectors. The MuJoCo sim expresses
     # revolute joints in RADIANS, but LeRobot SO-arm checkpoints (so100/so101,
-    # MolmoAct2 etc.) are trained on the driver's MotorNormMode: arm joints in
-    # DEGREES and the gripper in RANGE_0_100. "native" = no conversion (the
-    # default; real-hardware *_real maps already speak the driver units).
-    # "degrees" = arm columns are degrees + the gripper column is 0..100; the
-    # policy converts deg<->rad and 0..100<->the gripper joint range when packing
-    # state (model<-sim) and emitting actions (model->sim). See so_follower.py
-    # (MotorNormMode.DEGREES for the arm, RANGE_0_100 for the gripper).
+    # MolmoAct2 etc.) trained on data recorded with the driver's DEGREES mode
+    # speak the driver's MotorNormMode: arm joints in DEGREES and the gripper in
+    # RANGE_0_100. "native" = no conversion (the default; real-hardware *_real
+    # maps already speak the driver units). "degrees" = arm columns are degrees
+    # + the gripper column is 0..100; the policy converts deg<->rad and
+    # 0..100<->the gripper joint range when packing state (model<-sim) and
+    # emitting actions (model->sim). See so_follower.py.
+    #
+    # CAVEAT: the arm-in-DEGREES convention holds only for checkpoints recorded
+    # with the SO driver's use_degrees=True. That is the lerobot so_follower /
+    # so_leader DEFAULT (kept "for backward compatibility with previous
+    # policies/dataset"), but it is opt-out: with use_degrees=False the arm uses
+    # MotorNormMode.RANGE_M100_100 (-100..100), NOT degrees (so_follower.py:50
+    # -> RANGE_M100_100). state_units/action_units="degrees" would mis-convert a
+    # RANGE_M100_100-recorded checkpoint - leave those on "native".
     state_units: str = "native"
     action_units: str = "native"
     # Index of the gripper column in state_keys/action_keys (RANGE_0_100, not a

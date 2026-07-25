@@ -14,7 +14,7 @@ sources for the ``register_subclass`` decorators (the ground truth, independent
 of import side effects) and asserts strands' dynamic discovery sees exactly the
 same set and can validate + build a config for each. It ``importorskip``s
 ``lerobot.rewards`` so it self-skips on a lerobot too old to ship it
-(< 0.5.2 / PyPI), where reward-model training cannot run anyway.
+(< 0.6.0 / PyPI), where reward-model training cannot run anyway.
 """
 
 from __future__ import annotations

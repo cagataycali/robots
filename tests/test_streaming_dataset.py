@@ -7,6 +7,7 @@ proprio-only ``drop_videos`` path, delta-grid validation, and the bucket-sync
 CLI construction + meta/ guard.
 """
 
+import logging
 import os
 import subprocess
 
@@ -90,7 +91,7 @@ def test_repo_type_bucket_raises_when_unsupported(monkeypatch):
             raise AssertionError("constructor must never be reached")
 
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
-    with pytest.raises(RuntimeError, match=r"repo_type='bucket' requires lerobot>=0\.6\.1"):
+    with pytest.raises(RuntimeError, match=r"repo_type='bucket' is not supported by any released lerobot"):
         sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
 
 
@@ -126,7 +127,7 @@ def test_bucket_guard_message_survives_unresolvable_lerobot_version(monkeypatch)
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
     with pytest.raises(RuntimeError, match=r"installed: unknown") as exc:
         sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
-    assert "repo_type='bucket' requires lerobot>=0.6.1" in str(exc.value)
+    assert "repo_type='bucket' is not supported by any released lerobot" in str(exc.value)
 
 
 def test_repo_type_bucket_forwarded_via_var_kwargs(monkeypatch):
@@ -151,6 +152,35 @@ def test_repo_type_dataset_default_ok_when_unsupported(monkeypatch):
     monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
     r = sd.StreamingDatasetReader.open("org/ds", repo_type="dataset", validate_deltas=False)
     assert r.dataset.repo_id == "org/ds"
+
+
+def test_return_uint8_drop_warns_when_unsupported(monkeypatch, caplog):
+    """return_uint8=True on a lerobot whose StreamingLeRobotDataset lacks the
+    parameter is dropped (semantics unchanged) but streams float32 - ~4x the
+    bandwidth of uint8. That cost must be surfaced as a warning, not silent."""
+
+    class _Narrow:
+        def __init__(self, repo_id):
+            self.repo_id = repo_id
+            self.num_frames = self.num_episodes = self.fps = 0
+
+        def __iter__(self):
+            yield {}
+
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _Narrow, raising=False)
+    with caplog.at_level(logging.WARNING, logger=sd.logger.name):
+        sd.StreamingDatasetReader.open("org/ds", return_uint8=True, validate_deltas=False)
+    assert any("return_uint8=True dropped" in r.message for r in caplog.records)
+
+
+def test_return_uint8_no_warn_when_supported(monkeypatch, caplog):
+    """No bandwidth warning when the constructor accepts return_uint8 (**kwargs
+    here): the kwarg is forwarded and honored, so nothing is dropped."""
+    monkeypatch.setattr(sd, "StreamingLeRobotDataset", _FakeStreaming, raising=False)
+    with caplog.at_level(logging.WARNING, logger=sd.logger.name):
+        r = sd.StreamingDatasetReader.open("org/ds", return_uint8=True, validate_deltas=False)
+    assert r.dataset.kw["return_uint8"] is True
+    assert not any("return_uint8=True dropped" in rec.message for rec in caplog.records)
 
 
 def test_drop_videos_strips_camera_deltas(monkeypatch):

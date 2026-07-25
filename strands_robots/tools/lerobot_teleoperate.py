@@ -9,6 +9,7 @@ This tool integrates teleoperation and recording functionality from lerobot, all
 - Manage multiple teleoperation sessions
 """
 
+import importlib.util
 import json
 import logging
 import os
@@ -315,6 +316,17 @@ def build_lerobot_command(
             raise ValueError("dataset_repo_id is required for dagger action (corrections are recorded)")
         if dagger_input_device not in ("keyboard", "pedal"):
             raise ValueError(f"dagger_input_device must be 'keyboard' or 'pedal', got '{dagger_input_device}'")
+
+        # lerobot.scripts.lerobot_rollout (the DAgger entry point) landed in
+        # lerobot 0.6.0; on an older install the subprocess would fail with an
+        # opaque "No module named" error. Preflight so the caller gets an
+        # actionable upgrade hint instead.
+        if importlib.util.find_spec("lerobot.scripts.lerobot_rollout") is None:
+            raise RuntimeError(
+                "dagger requires lerobot>=0.6.0: the installed lerobot has no "
+                "'lerobot.scripts.lerobot_rollout' (the DAgger rollout entry "
+                "point). Reinstall with: uv pip install 'strands-robots[lerobot]'."
+            )
 
         cmd = ["python", "-m", "lerobot.scripts.lerobot_rollout"]
         cmd.extend(

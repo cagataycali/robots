@@ -25,7 +25,7 @@ trains through the SAME ``train(cfg)`` entry point as a policy, but populates
 ``cfg.reward_model`` instead of ``cfg.policy``; lerobot then follows its
 ``TrainPipelineConfig.is_reward_model_training`` path. Request it via
 ``TrainSpec.extra['reward_model']`` (a dict of friendly fields). Requires
-lerobot >= 0.5.2 (the ``lerobot.rewards`` package).
+lerobot >= 0.6.0 (the ``lerobot.rewards`` package).
 
 Launcher selection (still no shell):
     * 1 GPU / CPU    -> call ``train(cfg)`` directly in-process.
@@ -96,7 +96,7 @@ _RELATIVE_ACTION_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "pi0_fast", "
 _EXPERT_ONLY_POLICY_TYPES_FALLBACK = frozenset({"pi0", "pi05", "smolvla"})
 
 # RA-BC (Reward-Aligned Behavior Cloning) is surfaced to the agent through the
-# ``extra['sample_weighting']`` dict. lerobot >= 0.5.2 configures sample
+# ``extra['sample_weighting']`` dict. lerobot >= 0.6.0 configures sample
 # weighting via a NESTED ``SampleWeightingConfig`` on ``TrainPipelineConfig``
 # (``cfg.sample_weighting``), replacing the flat ``use_rabc`` / ``rabc_*``
 # fields of earlier 0.5.x. The friendly keys map 1:1 onto that config's fields,
@@ -109,7 +109,7 @@ _SAMPLE_WEIGHTING_TYPES = {"rabc", "uniform"}
 # keys). A reward model - e.g. SARM (Stage-Aware Reward Model), the model behind
 # RA-BC - trains through the SAME ``lerobot_train.train(cfg)`` entry point as a
 # policy, but populates ``cfg.reward_model`` instead of ``cfg.policy``
-# (``TrainPipelineConfig.is_reward_model_training``). Requires lerobot >= 0.5.2
+# (``TrainPipelineConfig.is_reward_model_training``). Requires lerobot >= 0.6.0
 # (the ``lerobot.rewards`` package).
 #
 # Parity with lerobot is DYNAMIC, not a hardcoded list: both the set of reward
@@ -119,7 +119,7 @@ _SAMPLE_WEIGHTING_TYPES = {"rabc", "uniform"}
 # use. Any reward model lerobot ships (sarm, robometer, topreward,
 # reward_classifier, ...) or a third-party plugin registers is reachable with no
 # change here. The static fallbacks below are used ONLY when ``lerobot.rewards``
-# is absent (lerobot < 0.5.2), where reward-model training cannot run anyway but
+# is absent (lerobot < 0.6.0), where reward-model training cannot run anyway but
 # ``validate()`` should still produce a useful message offline.
 _REWARD_MODEL_TYPES_FALLBACK = frozenset({"sarm", "reward_classifier", "robometer", "topreward"})
 
@@ -203,7 +203,7 @@ def _reward_registry() -> dict[str, type] | None:
     ``@RewardModelConfig.register_subclass`` decorator, which is what populates
     the draccus ChoiceRegistry - querying it before that import yields an empty
     mapping, so the import is the load-bearing step. Returns ``None`` when the
-    installed lerobot has no ``lerobot.rewards`` (lerobot < 0.5.2).
+    installed lerobot has no ``lerobot.rewards`` (lerobot < 0.6.0).
     """
     try:
         import lerobot.rewards  # noqa: F401  (import for register_subclass side effect)
@@ -232,7 +232,7 @@ def _reward_friendly_fields(rtype: str) -> set[str]:
     (Hub metadata, feature specs) are plumbing lerobot derives - none belong in
     the friendly surface. This gives every reward type - not just SARM - full
     knob reach with zero per-type maintenance. Falls back to SARM's documented
-    friendly keys when the registry is unavailable (offline / lerobot < 0.5.2),
+    friendly keys when the registry is unavailable (offline / lerobot < 0.6.0),
     where reward-model training cannot run anyway.
 
     ``type`` (the registry selector) is never a config field and is handled by
@@ -426,7 +426,7 @@ class LerobotTrainer(Trainer):
         surfaced through the ``extra`` escape hatch as a single
         ``sample_weighting`` dict with friendly keys (``type``,
         ``progress_path``, ``head_mode``, ``kappa``, ``epsilon``). lerobot
-        >= 0.5.2 configures it via a nested ``SampleWeightingConfig`` on
+        >= 0.6.0 configures it via a nested ``SampleWeightingConfig`` on
         ``TrainPipelineConfig`` (``cfg.sample_weighting``); the friendly keys map
         1:1 onto that config's fields. Example::
 
@@ -888,7 +888,7 @@ class LerobotTrainer(Trainer):
         )
         self._apply_common_config(cfg, spec)
 
-        # RA-BC sample weighting: lerobot >= 0.5.2 configures it via a NESTED
+        # RA-BC sample weighting: lerobot >= 0.6.0 configures it via a NESTED
         # SampleWeightingConfig on TrainPipelineConfig (cfg.sample_weighting),
         # which its train loop turns into a per-sample loss reweighting. The
         # friendly extra['sample_weighting'] keys map 1:1 onto that config's
@@ -897,7 +897,7 @@ class LerobotTrainer(Trainer):
         # sample weighting.
         sw = self._sample_weighting_dict(spec)
         if sw is not None:
-            # RA-BC sample weighting is a lerobot >= 0.5.2 surface (the nested
+            # RA-BC sample weighting is a lerobot >= 0.6.0 surface (the nested
             # SampleWeightingConfig on TrainPipelineConfig). Gate on its presence
             # FIRST so an older lerobot yields an actionable ValueError instead of
             # a raw ModuleNotFoundError from the import below.
@@ -905,14 +905,14 @@ class LerobotTrainer(Trainer):
                 raise ValueError(
                     "The installed lerobot does not expose sample weighting (no "
                     "'sample_weighting' on TrainPipelineConfig); requires lerobot "
-                    ">= 0.5.2, or drop extra['sample_weighting']."
+                    ">= 0.6.0, or drop extra['sample_weighting']."
                 )
             try:
                 from lerobot.utils.sample_weighting import SampleWeightingConfig
             except ImportError as exc:
                 raise ValueError(
                     "The installed lerobot does not expose sample weighting (no "
-                    "'lerobot.utils.sample_weighting'); requires lerobot >= 0.5.2, "
+                    "'lerobot.utils.sample_weighting'); requires lerobot >= 0.6.0, "
                     "or drop extra['sample_weighting']."
                 ) from exc
 
