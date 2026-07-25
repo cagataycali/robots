@@ -106,10 +106,10 @@ def test_mjpeg_frames_closes_cleanly_on_client_disconnect() -> None:
     first = next(gen)  # emit one chunk, then suspend at the yield
     assert first.startswith(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n")
 
-    gen.close()  # simulates the consumer disconnecting
+    gen.close()  # type: ignore[attr-defined]  # simulates consumer disconnect
 
     # The generator is finished: it does not resume or emit further chunks.
     with pytest.raises(StopIteration):
         next(gen)
     # close() on an already-finished generator stays a no-op (never raises).
-    gen.close()
+    gen.close()  # type: ignore[attr-defined]
