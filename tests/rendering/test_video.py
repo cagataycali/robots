@@ -88,3 +88,28 @@ def test_mjpeg_frames_non_strict_skips_bad_frames() -> None:
     chunks = list(mjpeg_frames(flaky, fps=1000.0, max_frames=1))
     assert len(chunks) == 1  # stream survived the bad frame
     assert calls["n"] >= 2
+
+
+def test_mjpeg_frames_closes_cleanly_on_client_disconnect() -> None:
+    """Closing the stream (client disconnect) stops it without raising.
+
+    A live MJPEG generator feeds an ``<img src=...>`` consumer that can
+    vanish at any moment; the browser dropping the socket surfaces as a
+    ``GeneratorExit`` thrown into the suspended ``yield``. That must
+    terminate the stream cleanly -- a stray ``finally`` or a swallowed
+    close would either leak the render loop or re-raise into the WSGI
+    server, so pin the disconnect contract explicitly.
+    """
+    frame = np.zeros((4, 4, 3), dtype=np.uint8)
+    # No max_frames -> an otherwise-infinite stream; only a disconnect ends it.
+    gen = mjpeg_frames(lambda: frame, fps=1000.0)
+    first = next(gen)  # emit one chunk, then suspend at the yield
+    assert first.startswith(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n")
+
+    gen.close()  # simulates the consumer disconnecting
+
+    # The generator is finished: it does not resume or emit further chunks.
+    with pytest.raises(StopIteration):
+        next(gen)
+    # close() on an already-finished generator stays a no-op (never raises).
+    gen.close()
