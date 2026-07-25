@@ -79,7 +79,6 @@ def test_build_single_gpu_command_emits_core_flags() -> None:
         batch_size=16,
         save_freq=1000,
         device="cuda",
-        dtype="bfloat16",
     )
     assert cmd[:3] == ["python", "-m", "lerobot.scripts.lerobot_train"]
     assert "--dataset.repo_id=local" in cmd
@@ -93,7 +92,8 @@ def test_build_single_gpu_command_emits_core_flags() -> None:
     assert "--steps=5000" in cmd
     assert "--batch_size=16" in cmd
     assert "--save_freq=1000" in cmd
-    assert "--policy.dtype=bfloat16" in cmd
+    # ACT's lerobot config has no dtype field, so no --policy.dtype is emitted.
+    assert not any(tok.startswith("--policy.dtype") for tok in cmd)
     # No accelerate prefix on a single-GPU run.
     assert "accelerate" not in cmd
 
@@ -234,6 +234,101 @@ def test_expert_only_policy_types_falls_back_when_lerobot_unimportable(
 
     monkeypatch.setitem(sys.modules, "lerobot.policies", None)
     assert train_mod._expert_only_policy_types() == train_mod._EXPERT_ONLY_POLICIES_FALLBACK
+
+
+# ---------------------------------------------------------------------------
+# Per-policy dtype / gradient_checkpointing field gating
+#
+# dtype and gradient_checkpointing are PER-POLICY config fields in lerobot: only
+# some policy configs declare them (the pi0 family, xvla, eo1 for dtype; the pi0
+# family, diffusion, molmoact2 for gradient_checkpointing). The default policy,
+# ACT, declares NEITHER, so emitting --policy.dtype / --policy.gradient_checkpointing
+# for it makes draccus abort with "unrecognized arguments" before training starts.
+# ---------------------------------------------------------------------------
+def test_act_default_omits_dtype_and_gradient_checkpointing() -> None:
+    """The default (ACT) invocation must not emit fields ACT's config lacks.
+
+    Regression: the tool used to default dtype="bfloat16" and emit --policy.dtype
+    unconditionally, so the DEFAULT lerobot_train(policy_type="act") built a
+    command draccus rejects with "unrecognized arguments: --dtype" before a step
+    ever ran. Defaults must produce a launchable command.
+    """
+    cmd = build_train_command(dataset_root="/data/cubes", policy_type="act")
+    assert not any(tok.startswith("--policy.dtype") for tok in cmd)
+    assert "--policy.gradient_checkpointing=true" not in cmd
+
+
+def test_dtype_emitted_for_policy_that_declares_it() -> None:
+    """A policy whose config declares dtype (pi05) still gets --policy.dtype."""
+    cmd = build_train_command(
+        dataset_root="/data/cubes",
+        policy_type="pi05",
+        dtype="bfloat16",
+    )
+    assert "--policy.dtype=bfloat16" in cmd
+
+
+def test_explicit_dtype_on_policy_without_field_raises_clear_error() -> None:
+    """Explicit dtype= on a policy lacking the field fails strands-side, clearly.
+
+    Better a targeted ValueError naming the policy than a draccus stack trace
+    from a doomed subprocess.
+    """
+    pytest.importorskip("lerobot.policies")
+    with pytest.raises(ValueError, match="has no 'dtype' config field"):
+        build_train_command(
+            dataset_root="/data/cubes",
+            policy_type="act",
+            dtype="bfloat16",
+        )
+
+
+def test_gradient_checkpointing_on_policy_without_field_raises_clear_error() -> None:
+    """gradient_checkpointing on a policy lacking the field fails strands-side."""
+    pytest.importorskip("lerobot.policies")
+    with pytest.raises(ValueError, match="has no 'gradient_checkpointing' config field"):
+        build_train_command(
+            dataset_root="/data/cubes",
+            policy_type="act",
+            gradient_checkpointing=True,
+        )
+
+
+def test_policy_config_field_names_tracks_lerobot_registry() -> None:
+    """The live field probe matches lerobot's actual config dataclass fields."""
+    import dataclasses
+
+    pytest.importorskip("lerobot.policies")
+    PreTrainedConfig = pytest.importorskip("lerobot.configs.policies").PreTrainedConfig
+    for name, cfg_cls in PreTrainedConfig.get_known_choices().items():
+        expected = frozenset(f.name for f in dataclasses.fields(cfg_cls))
+        assert train_mod._policy_config_field_names(name) == expected
+
+
+def test_policy_config_field_names_unknown_policy_is_none() -> None:
+    """An unknown policy type resolves to None (gating is skipped, not crashed)."""
+    pytest.importorskip("lerobot.policies")
+    assert train_mod._policy_config_field_names("definitely_not_a_policy") is None
+
+
+def test_field_gating_passes_through_when_lerobot_unimportable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When lerobot cannot be imported the field set is unknown, so flags pass
+    through unguarded rather than raising - the runtime start path preflights
+    lerobot separately, so this only affects offline command building."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "lerobot.policies", None)
+    assert train_mod._policy_config_field_names("act") is None
+    cmd = build_train_command(
+        dataset_root="/data/cubes",
+        policy_type="act",
+        dtype="bfloat16",
+        gradient_checkpointing=True,
+    )
+    assert "--policy.dtype=bfloat16" in cmd
+    assert "--policy.gradient_checkpointing=true" in cmd
 
 
 def test_val_episodes_reserves_last_n_episodes(tmp_path: Path) -> None:
@@ -411,11 +506,16 @@ def test_unknown_action_errors(tmp_path: Path) -> None:
 # build_train_command - optional flag pass-through
 # ---------------------------------------------------------------------------
 def test_build_command_emits_optional_tuning_flags() -> None:
-    """Optional steps/batch/save_freq/dtype/grad-ckpt/pretrained flags all appear."""
+    """Optional steps/batch/save_freq/dtype/grad-ckpt/pretrained flags all appear.
+
+    dtype and gradient_checkpointing are per-policy config fields, so this uses
+    pi05 - a policy whose lerobot config declares both - to exercise the emission
+    path. ACT, the tool default, has neither field (see the dedicated gate tests).
+    """
     cmd = build_train_command(
         dataset_root="/data/ds",
-        policy_type="act",
-        pretrained_path="lerobot/act_base",
+        policy_type="pi05",
+        pretrained_path="lerobot/pi05_base",
         output_dir="/out",
         steps=500,
         batch_size=16,
@@ -428,7 +528,7 @@ def test_build_command_emits_optional_tuning_flags() -> None:
     assert "--save_freq=100" in cmd
     assert "--policy.dtype=float32" in cmd
     assert "--policy.gradient_checkpointing=true" in cmd
-    assert "--policy.pretrained_path=lerobot/act_base" in cmd
+    assert "--policy.pretrained_path=lerobot/pi05_base" in cmd
     assert "--output_dir=/out" in cmd
 
 
