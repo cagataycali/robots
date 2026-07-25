@@ -655,10 +655,20 @@ class LiberoAdapter(BenchmarkProtocol):
 
     @property
     def supported_robots(self) -> list[str]:
+        """Registry ``data_config`` names this task accepts (LIBERO is Panda-only).
+
+        Returns a copy of the ``supported_robots_list`` constructor argument
+        (default ``["panda"]``) so callers cannot mutate the adapter's list.
+        """
         return list(self.supported_robots_list)
 
     @property
     def default_robot(self) -> str:
+        """Robot :meth:`on_episode_start` loads when the sim is empty.
+
+        The ``default_robot_name`` constructor argument (default ``"panda"``);
+        must be an element of :attr:`supported_robots`.
+        """
         return self.default_robot_name
 
     @property

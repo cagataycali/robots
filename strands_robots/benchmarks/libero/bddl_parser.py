@@ -73,16 +73,22 @@ class Pred:
 
 @dataclass(frozen=True)
 class And:
+    """Conjunction: holds only when every clause in ``clauses`` holds."""
+
     clauses: tuple[Node, ...]
 
 
 @dataclass(frozen=True)
 class Or:
+    """Disjunction: holds when at least one clause in ``clauses`` holds."""
+
     clauses: tuple[Node, ...]
 
 
 @dataclass(frozen=True)
 class Not:
+    """Negation: holds when the single ``clause`` does not hold."""
+
     clause: Node
 
 
