@@ -3384,10 +3384,17 @@ class MuJoCoSimEngine(
 
     @property
     def tool_name(self) -> str:
+        """The tool name the agent invokes this simulation under.
+
+        Defaults to ``"mujoco_simulation"`` but is settable via the
+        ``tool_name`` constructor argument so several engines can coexist in
+        one agent's tool registry under distinct names.
+        """
         return self.tool_name_str
 
     @property
     def tool_type(self) -> str:
+        """The Strands ``AgentTool`` category for this tool (always ``"simulation"``)."""
         return "simulation"
 
     def _require_world(self) -> dict[str, Any] | None:
@@ -3480,6 +3487,13 @@ class MuJoCoSimEngine(
 
     @property
     def tool_spec(self) -> ToolSpec:
+        """The Strands ``ToolSpec`` (name, description, JSON input schema) the agent sees.
+
+        The description enumerates the full action surface (create_world,
+        add_robot, run_policy, render, ...) and the input schema is the
+        module-level ``_TOOL_SPEC_SCHEMA`` cached at import time, so building
+        the spec is allocation-cheap on every access.
+        """
         # schema cached at module load; see _TOOL_SPEC_SCHEMA
         return {
             "name": self.tool_name_str,
@@ -3518,6 +3532,14 @@ class MuJoCoSimEngine(
     async def stream(
         self, tool_use: ToolUse, invocation_state: dict[str, Any], **kwargs: Any
     ) -> AsyncGenerator[ToolResultEvent, None]:
+        """Dispatch one agent tool call and yield its single ``ToolResultEvent``.
+
+        Reads the ``action`` (and its arguments) from ``tool_use["input"]``,
+        runs it against this stateful session, and yields exactly one result
+        event carrying the originating ``toolUseId``. Any exception is caught
+        and surfaced as a ``status="error"`` result rather than propagating
+        past dispatch, per the agent-tool contract.
+        """
         try:
             tool_use_id = tool_use.get("toolUseId", "")
             input_data = tool_use.get("input", {})
