@@ -1231,10 +1231,12 @@ class DatasetRecorder:
 
     @property
     def repo_id(self) -> str:
+        """The Hugging Face ``repo_id`` of the dataset being recorded."""
         return self.dataset.repo_id
 
     @property
     def root(self) -> str:
+        """Filesystem path to the dataset's on-disk root directory, as a string."""
         return str(self.dataset.root)
 
     def __repr__(self) -> str:

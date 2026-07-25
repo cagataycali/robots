@@ -8,6 +8,12 @@ _COMMANDS = ("doctor", "verify-dataset")
 
 
 def main() -> None:
+    """Dispatch ``python -m strands_robots <command>`` to its subcommand.
+
+    Routes the first argv token to the ``doctor`` or ``verify-dataset`` entry
+    point (stripping it so the subcommand parses clean args) and exits non-zero
+    on a missing or unknown command.
+    """
     if len(sys.argv) < 2:
         print("Usage: python -m strands_robots <command>")
         print(f"Commands: {', '.join(_COMMANDS)}")

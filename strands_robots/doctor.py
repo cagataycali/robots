@@ -313,6 +313,7 @@ def run_doctor() -> int:
 
 
 def main() -> None:
+    """Console-script entry point: run every check and exit with its status code."""
     sys.exit(run_doctor())
 
 

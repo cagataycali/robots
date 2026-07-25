@@ -1318,10 +1318,12 @@ class Robot(TeleopMixin, AgentTool):
 
     @property
     def tool_name(self) -> str:
+        """The Strands agent-tool name this robot registers itself under."""
         return self.tool_name_str
 
     @property
     def tool_type(self) -> str:
+        """The Strands tool category for this device (always ``"robot"``)."""
         return "robot"
 
     @property

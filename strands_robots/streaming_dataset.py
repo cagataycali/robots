@@ -251,14 +251,17 @@ class StreamingDatasetReader:
 
     @property
     def num_frames(self) -> Any:
+        """Total number of frames across all episodes in the streamed dataset."""
         return self.dataset.num_frames
 
     @property
     def num_episodes(self) -> Any:
+        """Total number of episodes in the streamed dataset."""
         return self.dataset.num_episodes
 
     @property
     def fps(self) -> Any:
+        """Capture frame rate (frames per second) of the streamed dataset."""
         return self.dataset.fps
 
     @property
