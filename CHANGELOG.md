@@ -5,6 +5,46 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: AWS IoT mesh backend dead paths (peer discovery, camera ref, profile scoping, reconnect leak)
+
+Seven verified defects that left the pure-`iot` and `bridge` mesh backends
+partially or fully non-functional:
+
+- **Presence/monitoring discovery was silently dead.** `iot:Receive` grants in
+  the robot and operator IoT policies used the MQTT `+` wildcard inside `topic/`
+  ARNs (`topic/strands/+/presence`). AWS treats `+` literally in `topic/` ARNs -
+  wildcards there must be IAM `*` - so presence, state, health, and safety-event
+  delivery never matched. Switched every `topic/` (data-plane) Receive resource
+  to `*`; `topicfilter/` (Subscribe) grants keep `+` (correct there).
+- **Camera S3-offload reference never left the host.** The `camera/` MQTT drop
+  rule (for multi-hundred-KB frames) also swallowed the tiny
+  `camera/<cam>/ref` pointer that tells a cloud subscriber the S3 key, so frames
+  uploaded to S3 (real cost) with nothing on the receiving end. `/ref` metadata
+  now publishes over MQTT on both backends; raw frames still stay LAN-only.
+- **`$aws/...` shadow updates were a no-op on `bridge` and leaked onto the LAN.**
+  Named-shadow updates published to `$aws/things/.../shadow/...` were written to
+  Zenoh (leaking reserved keys onto the LAN) and never forwarded to IoT. Reserved
+  `$aws/` topics now route to the IoT leg exclusively.
+- **`bootstrap_account(profile=...)` only applied the profile to the STS check.**
+  Every resource-creating client (iot/iam/lambda/dynamodb/logs) fell back to the
+  default credential chain, defeating the adjacent `account_id_expected` guard.
+  A single profile session now backs every client; `teardown_account` gained the
+  same `profile` parameter.
+- **MQTT reconnect leaked the old client.** After a broker drop a second
+  `connect()` built a new mqtt5 client without stopping the stale one (duplicate
+  inbound delivery + leaked sockets/threads per retry). The stale client is now
+  stopped before rebuild.
+- **`connect()` could raise instead of returning False.** A corrupt PEM
+  (`AwsCrtError` from `mtls_from_path`) propagated into `Mesh.start`, stranding
+  BridgeTransport's already-acquired Zenoh session. Client construction is now
+  contained; `connect()` returns False and the mesh stays off.
+- **`dry_run` preview mismatched reality; teardown orphaned the provisioning
+  hook.** The preview listed wrong table/log-group/rule/role names plus a phantom
+  Thing Type and Policy; `teardown_account` left the `strands-mesh-provisioning-hook`
+  Lambda and its role (holding a live IoT invoke grant) behind. The preview is now
+  built from the same name constants the create path uses, and teardown removes
+  both managed Lambdas and all four managed roles.
+
 ### Added: LIBERO MuJoCo example drivers (`examples/libero/run_mujoco.py`, `run_mujoco_agent.py`)
 
 The default-backend LIBERO drivers promised by the epic-#1269 migration are

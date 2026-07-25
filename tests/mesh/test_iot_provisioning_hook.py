@@ -44,7 +44,7 @@ def test_template_create_includes_hook_when_arn_supplied():
     mod._ensure_provisioning_role = lambda *a, **k: "arn:aws:iam::123456789012:role/x"
     try:
         b._ensure_provisioning_template(
-            iot, acct, hook_lambda_arn="arn:aws:lambda:us-east-1:123456789012:function:hook"
+            iot, MagicMock(), acct, hook_lambda_arn="arn:aws:lambda:us-east-1:123456789012:function:hook"
         )
     finally:
         mod._ensure_provisioning_role = orig
@@ -66,7 +66,7 @@ def test_template_omits_hook_when_no_arn():
     orig = mod._ensure_provisioning_role
     mod._ensure_provisioning_role = lambda *a, **k: "arn:aws:iam::123456789012:role/x"
     try:
-        b._ensure_provisioning_template(iot, acct)  # no hook arn
+        b._ensure_provisioning_template(iot, MagicMock(), acct)  # no hook arn
     finally:
         mod._ensure_provisioning_role = orig
 
