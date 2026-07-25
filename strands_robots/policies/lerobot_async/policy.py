@@ -352,15 +352,7 @@ class LerobotAsyncPolicy(Policy):
         (``observation.images.<name>``).
         """
         from lerobot.utils.constants import OBS_STR
-
-        try:
-            # lerobot >= 0.6.0 (the lerobot-async extra's floor).
-            from lerobot.utils.feature_utils import hw_to_dataset_features
-        except ImportError:
-            # 0.5.1 kept it under lerobot.datasets.feature_utils. The extra pins
-            # >=0.6.0, but a mixed env (see the version-drift story) resolves
-            # cleanly here instead of raising a confusing ImportError.
-            from lerobot.datasets.feature_utils import hw_to_dataset_features
+        from lerobot.utils.feature_utils import hw_to_dataset_features
 
         if not self.robot_state_keys:
             raise RuntimeError(
