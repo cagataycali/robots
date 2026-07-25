@@ -135,6 +135,7 @@ class MoveIt2Policy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"moveit2"``)."""
         return "moveit2"
 
     @property

@@ -229,9 +229,15 @@ class LerobotAsyncPolicy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"lerobot_async"``)."""
         return "lerobot_async"
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        """Record the robot's ordered joint/state keys.
+
+        Stored as the state-vector layout sent to the async inference server on
+        each observation.
+        """
         self.robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:

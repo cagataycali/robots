@@ -649,6 +649,7 @@ class Gr00tPolicy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"groot"``)."""
         return "groot"
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
@@ -717,6 +718,14 @@ class Gr00tPolicy(Policy):
         logger.debug("Gr00tPolicy.reset: local-mode reseed applied (seed=%r)", seed)
 
     async def get_actions(self, observation_dict: dict[str, Any], instruction: str, **kwargs) -> list[dict[str, Any]]:
+        """Predict an action chunk for one observation.
+
+        Dispatches to local in-process inference when the policy was loaded in
+        ``"local"`` mode, otherwise forwards the observation to the GR00T
+        inference service. Returns a list of per-timestep action dicts keyed by
+        actuator name; ``instruction`` is the language goal and extra ``kwargs``
+        are ignored by this provider.
+        """
         if self._mode == "local":
             return self._local_get_actions(observation_dict, instruction)
         return self._service_get_actions(observation_dict, instruction)

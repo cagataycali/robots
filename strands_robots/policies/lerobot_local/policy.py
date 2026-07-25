@@ -406,6 +406,7 @@ class LerobotLocalPolicy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"lerobot_local"``)."""
         return "lerobot_local"
 
     @property

@@ -343,6 +343,7 @@ class WBCGaitPolicy(WBCPolicy):
 
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"wbc_gait"``)."""
         return "wbc_gait"
 
     def _resolve_config(self, config: str | dict[str, Any] | WBCConfig | None, checkpoint: str | None) -> WBCConfig:
