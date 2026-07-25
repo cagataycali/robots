@@ -236,6 +236,12 @@ never written. It resolves each camera's MP4 from `meta/info.json`'s
 `strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1, check_videos=True)`,
 which returns the same report dict.
 
+`verify-dataset` always produces a report - it never crashes on the corruption
+it exists to flag. A corrupt or foreign `meta/episodes` parquet, a non-v3
+`video_path` template, or a truncated / unreadable MP4 is reported as a problem
+string in the report (and a non-zero exit code), not surfaced as a raw
+traceback.
+
 ## Recording paths
 
 | Method | Extra needed | Output |

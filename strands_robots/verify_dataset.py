@@ -119,14 +119,15 @@ def verify_dataset(
         problems.append(f"expected must be a non-negative int, got {expected!r}")
         return report
 
-    # Parquet ground truth.
+    # Parquet ground truth. A corrupt or foreign parquet under meta/episodes
+    # makes pyarrow raise ArrowInvalid (a ValueError subclass); an unreadable
+    # file raises OSError. The checker's contract is "always produce a report",
+    # so surface these as problems rather than letting them escape as a
+    # traceback - this is exactly the corruption verify_dataset exists to flag.
     try:
         info = read_dataset_episode_indices(root_path)
-    except FileNotFoundError as e:
-        problems.append(str(e))
-        return report
-    except ImportError as e:
-        problems.append(str(e))
+    except (FileNotFoundError, ImportError, ValueError, OSError) as e:
+        problems.append(f"could not read episode parquet: {e}")
         return report
 
     report["total_episodes"] = info["total_episodes"]
@@ -231,9 +232,14 @@ def _video_frame_count(path: Path) -> int | None:
             if not container.streams.video:
                 return None
             n = container.streams.video[0].frames
-    except (OSError, ValueError, RuntimeError):
-        # Unreadable/corrupt header (incl. av.error.InvalidDataError, a
-        # ValueError subclass): treat as "cannot confirm" and skip the compare.
+    except Exception:
+        # Best-effort probe: a corrupt/truncated container can raise any of
+        # PyAV's ~29 av.error.* classes - most are bare Exception subclasses
+        # (only InvalidDataError happens to subclass ValueError), so a narrow
+        # (OSError, ValueError, RuntimeError) tuple lets the rest escape. Treat
+        # every read failure as "cannot confirm" (never "zero frames") and skip
+        # the compare so a genuine mismatch is never masked and an unreadable
+        # header never false-positives.
         return None
     return int(n) if isinstance(n, int) and n > 0 else None
 
@@ -285,6 +291,19 @@ def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
             "template - cannot locate the per-episode MP4 files"
         ]
 
+    # Validate the template resolves with the LeRobot v3 keys we supply. A
+    # non-v3 template (e.g. a v2-style ``videos/{episode_chunk:03d}/...``)
+    # raises KeyError/IndexError from str.format; a malformed format spec raises
+    # ValueError. Surface it as a problem instead of letting it escape
+    # verify_dataset as a traceback - the checker must always produce a report.
+    try:
+        template.format(video_key="", chunk_index=0, file_index=0)
+    except (KeyError, IndexError, ValueError) as e:
+        return 0, [
+            f"meta/info.json 'video_path' template {template!r} is not a LeRobot v3 "
+            f"template (cannot resolve with video_key/chunk_index/file_index): {e!r}"
+        ]
+
     try:
         import pyarrow.parquet as pq
     except ImportError:  # pragma: no cover - pyarrow ships with the lerobot extra
@@ -301,8 +320,13 @@ def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
     # episode carried no ``length`` (the column is optional in some writers).
     unknown_len_files: set[tuple[str, int, int]] = set()
     keys_with_refs: set[str] = set()
+    problems: list[str] = []
     for pf in parquet_files:
-        table = pq.read_table(pf)
+        try:
+            table = pq.read_table(pf)
+        except (ValueError, OSError) as e:
+            problems.append(f"could not read {pf.relative_to(root_path)}: {e}")
+            continue
         cols = set(table.column_names)
         data = table.to_pydict()
         episodes = data.get("episode_index", [])
@@ -328,7 +352,6 @@ def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
                 else:
                     expected_frames[key] = expected_frames.get(key, 0) + int(length)
 
-    problems: list[str] = []
     for vk in video_keys:
         if vk not in keys_with_refs:
             problems.append(
@@ -424,7 +447,11 @@ def _verify_feature_stats(root_path: Path) -> tuple[int, list[str]]:
     checked = 0
     problems: list[str] = []
     for pf in parquet_files:
-        table = pq.read_table(pf)
+        try:
+            table = pq.read_table(pf)
+        except (ValueError, OSError) as e:
+            problems.append(f"could not read {pf.relative_to(root_path)} for stats: {e}")
+            continue
         cols = set(table.column_names)
         if "episode_index" not in cols:
             continue

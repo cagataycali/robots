@@ -975,3 +975,100 @@ class TestFeatureStatsEdgeCases:
         checked, problems = _verify_feature_stats(tmp_path)
         assert checked == 1
         assert any("identically zero" in p and "all frames" in p for p in problems)
+
+
+def _write_garbage_parquet(root: Path) -> Path:
+    """Write a meta/episodes tree whose parquet is not a valid parquet file.
+
+    pyarrow raises ``ArrowInvalid`` (a ValueError subclass) when it tries to
+    open this - the corruption class the verifier exists to report.
+    """
+    ep_dir = root / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True, exist_ok=True)
+    (ep_dir / "episodes_000.parquet").write_bytes(b"this is not a parquet file at all")
+    return root
+
+
+class TestCorruptInputProducesReport:
+    """The checker's contract is "always produce a report" - even on exactly the
+    corrupt datasets it exists to flag. A corrupt/foreign parquet, a non-v3
+    ``video_path`` template, or a truncated MP4 must yield a structured report
+    listing the problem, never an escaping traceback / non-report crash.
+    """
+
+    def test_garbage_parquet_returns_report_not_traceback(self, tmp_path: Path) -> None:
+        # A foreign/corrupt meta/episodes parquet makes pyarrow raise
+        # ArrowInvalid (a ValueError subclass) out of read_dataset_episode_indices.
+        # verify_dataset used to catch only FileNotFoundError/ImportError, so it
+        # escaped as a stack trace; now it is reported.
+        _write_garbage_parquet(tmp_path)
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "error"
+        assert report["ok"] is False
+        assert any("could not read episode parquet" in p for p in report["problems"])
+
+    def test_garbage_parquet_cli_exits_1_without_traceback(self, tmp_path: Path) -> None:
+        _write_garbage_parquet(tmp_path)
+        assert verify_main([str(tmp_path)]) == 1
+
+    def test_non_v3_video_path_template_returns_report_not_keyerror(self, tmp_path: Path) -> None:
+        # A v2-style template carries an {episode_chunk} placeholder we never
+        # supply, so str.format raised KeyError out of verify_dataset. It is now
+        # surfaced as a problem.
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0],
+            video_keys=["observation.images.cam"],
+            frames_per_episode=[3],
+            write_files=set(),
+            video_path="videos/{episode_chunk:03d}/{video_key}/file-{file_index:03d}.mp4",
+        )
+        report = verify_dataset(tmp_path)
+        assert report["status"] == "error"
+        assert any("not a LeRobot v3 template" in p for p in report["problems"])
+
+    def test_truncated_mp4_frame_probe_never_raises(self, tmp_path: Path) -> None:
+        # A truncated / garbage MP4 can make PyAV raise any of ~29 av.error.*
+        # classes, most of which are bare Exception subclasses (only
+        # InvalidDataError subclasses ValueError). The best-effort frame probe
+        # must swallow all of them and return None ("cannot confirm"), never
+        # propagate and never claim zero frames.
+        bad = tmp_path / "truncated.mp4"
+        bad.write_bytes(b"\x00\x00\x00\x18ftypmp42" + b"\xff" * 256)
+        assert _video_frame_count(bad) is None
+
+    def test_frame_probe_swallows_bare_exception_av_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Most of PyAV's ~29 av.error.* classes subclass bare Exception, not
+        # OSError/ValueError/RuntimeError - so a corrupt container that raised
+        # e.g. DecoderNotFoundError escaped the old narrow probe catch. Simulate
+        # one (its constructor takes (code, message)) and assert the probe
+        # swallows it and returns None ("cannot confirm"), never propagates.
+        av = pytest.importorskip("av")
+        exc_cls = av.error.DecoderNotFoundError
+
+        def _raise(*_args: object, **_kwargs: object) -> object:
+            raise exc_cls(0, "simulated missing decoder")
+
+        real = tmp_path / "real.mp4"
+        _write_real_mp4(real, n_frames=3)  # write before patching av.open
+        monkeypatch.setattr(av, "open", _raise)
+        assert _video_frame_count(real) is None
+
+    def test_all_three_corruptions_together_produce_report(self, tmp_path: Path) -> None:
+        # End-to-end: a dataset that is simultaneously the video-template case
+        # still returns a structured report (single verify_dataset call) with no
+        # traceback and exit-code semantics preserved.
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0, 1],
+            video_keys=["observation.images.cam"],
+            frames_per_episode=[3, 3],
+            write_files=set(),
+            video_path="videos/{episode_chunk:03d}/{video_key}/file-{file_index:03d}.mp4",
+        )
+        report = verify_dataset(tmp_path)
+        assert isinstance(report["problems"], list)
+        assert report["status"] == "error"
+        assert verify_main([str(tmp_path)]) == 1
