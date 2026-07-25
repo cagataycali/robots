@@ -299,7 +299,13 @@ class PhysicsMixin:
             state_size = mj.mj_stateSize(model, mj.mjtState.mjSTATE_INTEGRATION)
             state = np.zeros(state_size)
             mj.mj_getState(model, data, state, mj.mjtState.mjSTATE_INTEGRATION)
-            fingerprint = (int(model.nq), int(model.nv), int(model.na), int(model.nu))
+            fingerprint = (
+                int(model.nq),
+                int(model.nv),
+                int(model.na),
+                int(model.nu),
+                self._world._recompile_generation,
+            )
 
         if not hasattr(self._world, "_checkpoints"):
             self._world._checkpoints = {}
@@ -355,7 +361,13 @@ class PhysicsMixin:
 
         with self._lock:
             current_size = mj.mj_stateSize(model, mj.mjtState.mjSTATE_INTEGRATION)
-            current_fp = (int(model.nq), int(model.nv), int(model.na), int(model.nu))
+            current_fp = (
+                int(model.nq),
+                int(model.nv),
+                int(model.na),
+                int(model.nu),
+                self._world._recompile_generation,
+            )
             saved_size = checkpoint.get("state_size", checkpoint["state"].shape[0])
             saved_fp = checkpoint.get("fingerprint")
             if current_size != saved_size or (saved_fp is not None and current_fp != saved_fp):

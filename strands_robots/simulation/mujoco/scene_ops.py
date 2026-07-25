@@ -90,6 +90,10 @@ def _recompile_preserving_state(world: SimWorld, spec: Any) -> bool:
     world._model = new_model
     world._data = new_data
 
+    # Bump recompile generation so save_state/load_state can detect stale
+    # checkpoints even when nq/nv/na/nu happen to stay the same (e.g.
+    # remove one free-jointed object, add another of the same shape).
+    world._recompile_generation += 1
     # Forward pass so newly-injected bodies have valid xpos/xquat and any
     # camera xforms are populated. Without this, the next render() call
     # after add_object / add_robot / add_camera returns a 100% black frame

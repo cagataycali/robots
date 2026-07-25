@@ -448,6 +448,36 @@ class TestStateCheckpointing:
         result = sim.save_state(name="post_add")
         assert result["status"] == "success"
         result = sim.load_state(name="post_add")
+
+    def test_load_state_after_same_shape_recompile_returns_error(self, sim):
+        # A same-shape recompile (remove one free-jointed object, add another)
+        # leaves nq/nv/na/nu unchanged but the joint addresses now map to
+        # different bodies. The recompile-generation stamp must catch this and
+        # return a structured error - applying the stale vector would silently
+        # teleport the new object into the old objects saved pose/velocity.
+        add1 = sim.add_object(name="obj_a", shape="sphere", size=[0.03])
+        assert add1["status"] == "success"
+
+        result = sim.save_state(name="with_a")
+        assert result["status"] == "success"
+
+        # Remove obj_a, add obj_b - same shape (one free joint each), so
+        # nq/nv/na/nu are identical after both mutations.
+        rm = sim.remove_object(name="obj_a")
+        assert rm["status"] == "success"
+        add2 = sim.add_object(name="obj_b", shape="sphere", size=[0.03])
+        assert add2["status"] == "success"
+
+        # The fingerprint must detect the stale checkpoint.
+        result = sim.load_state(name="with_a")
+        assert result["status"] == "error"
+        assert "stale" in result["content"][0]["text"].lower()
+
+        # A fresh checkpoint saved after the mutation applies cleanly.
+        result = sim.save_state(name="with_b")
+        assert result["status"] == "success"
+        result = sim.load_state(name="with_b")
+        assert result["status"] == "success"
         assert result["status"] == "success"
 
 
