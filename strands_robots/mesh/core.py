@@ -2678,8 +2678,14 @@ class Mesh(SensorLoopsMixin):
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         try:
             self.publish("strands/broadcast", msg)
-            event.wait(timeout=timeout)
-            time.sleep(0.3)
+            # A broadcast has no single expected responder, so collect acks for
+            # the FULL window. ``event`` fires on the FIRST response
+            # (``event.set()`` in ``_on_response``); waiting on it returned
+            # ~0.3s after ack #1 and systematically under-reported the fleet --
+            # an operator could not distinguish "1 of 12 stopped" from "all
+            # stopped". Wait on the shutdown event instead so the window is
+            # honoured in full yet still interruptible when the mesh is closing.
+            self._stop_event.wait(timeout=timeout)
         finally:
             with self._rpc_lock:
                 resps = self._responses.pop(turn, [])
@@ -3056,15 +3062,24 @@ class Mesh(SensorLoopsMixin):
         # ``source_zid`` is absent (bridge / IoT). Bound as a
         # deterministic JSON blob (sort_keys, no whitespace) so issuer
         # and receiver compute the same digest byte-for-byte.
-        local_zid = self._local_session_zid()
+        # Decide the publish path BEFORE computing the proof. ``_safety_wire_zid``
+        # returns the wire ``source_zid`` only when the Zenoh-native path will
+        # actually carry it; on the fallback ``put()`` path (which strips
+        # ``source_zid`` from the body) it returns ``None``. Binding the MAC to
+        # ``_local_session_zid()`` while the envelope is later published on the
+        # fallback path made every receiver recompute the proof over a byte
+        # string that lacked ``source_zid`` -- so remote lockout resume never
+        # verified and the fleet stayed e-stopped. Binding to the exact wire
+        # form the receiver will see keeps issuer and receiver in agreement.
+        wire_zid = self._safety_wire_zid("strands/safety/resume")
         mac_fields: dict[str, Any] = {
             "peer_id": self.peer_id,
             "t": envelope_t,
             "lockout_elapsed_s": elapsed,
             "proof_nonce": proof_nonce,
         }
-        if local_zid is not None:
-            mac_fields["source_zid"] = local_zid
+        if wire_zid is not None:
+            mac_fields["source_zid"] = wire_zid
         mac_input = json.dumps(
             mac_fields,
             sort_keys=True,
@@ -3082,8 +3097,8 @@ class Mesh(SensorLoopsMixin):
             "proof_nonce": proof_nonce,
             "override_proof": override_proof,
         }
-        if local_zid is not None:
-            envelope["source_zid"] = local_zid
+        if wire_zid is not None:
+            envelope["source_zid"] = wire_zid
         self._publish_safety_envelope("strands/safety/resume", envelope)
         logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
         # success is also generic on the wire; the local audit
@@ -3135,6 +3150,41 @@ class Mesh(SensorLoopsMixin):
             return None
         zid_str = str(zid)
         return zid_str or None
+
+    def _safety_wire_zid(self, key: str) -> str | None:
+        """Return the wire ``source_zid`` a safety envelope on *key* will carry.
+
+        Returns the local Zenoh session ZID only when the full native
+        publish path is ready (session open, publisher declarable, and the
+        ``zenoh.SourceInfo`` constructor present). Returns ``None`` when the
+        SourceInfo-less fallback ``put()`` path -- which strips ``source_zid``
+        from the body -- will be taken instead.
+
+        This is the single decision point an issuer must consult BEFORE
+        binding ``source_zid`` into an HMAC (the resume override proof) so the
+        proof is computed over the exact body form that reaches the wire. If
+        the proof is bound to :meth:`_local_session_zid` but the envelope is
+        then published on the fallback path, every receiver recomputes the MAC
+        over a byte string that lacks ``source_zid`` and the proof never
+        verifies -- leaving the fleet stuck in lockout.
+
+        A runtime ``publisher.put`` failure after this returns a zid still
+        degrades to the stripped fallback; for a resume that means the proof
+        will not verify and the peer stays locked out -- the fail-safe
+        direction. See :meth:`_publish_safety_envelope`.
+        """
+        local_zid = self._local_session_zid()
+        if local_zid is None:
+            return None
+        if self._safety_publisher_for(key) is None:
+            return None
+        try:
+            import zenoh
+        except ImportError:
+            return None
+        if not hasattr(zenoh, "SourceInfo"):
+            return None
+        return local_zid
 
     def _safety_publisher_for(self, key: str) -> Any | None:
         """Lazily declare and cache a Zenoh ``Publisher`` for *key*.
@@ -3238,7 +3288,22 @@ class Mesh(SensorLoopsMixin):
 
         In the fallback case the body-level HMAC binding still holds;
         only the additional cross-session-forge defence is omitted.
+
+        The body's ``source_zid`` presence is authoritative: a wire
+        ``SourceInfo`` is attached ONLY when the body advertises
+        ``source_zid``, so body and wire always agree at the receiver
+        (which hard-rejects a wire-present/body-absent mismatch). Issuers
+        that bind ``source_zid`` into an HMAC (the resume proof) pre-decide
+        via :meth:`_safety_wire_zid` so the body carries ``source_zid`` only
+        when the native path is ready to back it with a matching wire zid.
         """
+        if "source_zid" not in payload:
+            # No wire attribution requested (non-Zenoh transport, no open
+            # session, or an issuer that pre-decided the fallback path). Plain
+            # put keeps body and wire consistently zid-less so the receiver's
+            # transport-agnostic accept-without-zid contract holds.
+            put(key, payload)
+            return
         pub = self._safety_publisher_for(key)
         if pub is None:
             put(key, self._strip_wire_zid(payload))

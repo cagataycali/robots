@@ -59,7 +59,7 @@ ESTOP_LAMBDA_RESERVED_CONCURRENCY = 2
 #: Finding #16: dedup window (seconds). Two estop envelopes with the same
 #: (peer_id, t) within this window invoke the fan-out only once.
 ESTOP_DEDUP_TTL_S = 30
-_LAMBDA_VERSION = 2  # Bump whenever _ESTOP_LAMBDA_SOURCE changes
+_LAMBDA_VERSION = 3  # Bump whenever _ESTOP_LAMBDA_SOURCE changes
 RULE_SAFETY_TO_DYNAMODB = "strands_safety_to_dynamodb"
 RULE_ESTOP_FANOUT = "strands_estop_fanout"
 PROVISIONING_TEMPLATE = "strands-mesh-fleet-provisioning"
@@ -157,9 +157,20 @@ _ESTOP_LAMBDA_SOURCE = textwrap.dedent(
                         qos=1,
                         payload=json.dumps({
                             "sender_id": "strands-mesh-estop-fanout",
-                            "turn_id": "estop-fanout",
+                            # turn_id MUST be unique per fan-out: robots dedup on
+                            # (sender_id, turn_id) in _exec_cmd, so a constant
+                            # "estop-fanout" made every e-stop after the first be
+                            # dropped fleet-wide as a replay. aws_request_id is
+                            # unique per Lambda invocation (== per logical
+                            # e-stop) but shared across the robots fanned out in
+                            # one invocation, so each robot still dedups its own
+                            # duplicate deliveries.
+                            "turn_id": context.aws_request_id,
                             "command": {"action": "stop"},
-                            "timestamp": context.aws_request_id,
+                            # timestamp is a numeric epoch seconds field; feeding
+                            # it the aws_request_id UUID broke any consumer that
+                            # treated it as a number.
+                            "timestamp": time.time(),
                         }).encode(),
                     )
                     published += 1
