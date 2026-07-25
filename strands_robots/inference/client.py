@@ -203,6 +203,12 @@ class RemotePolicy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Identify this policy as the ``remote`` provider (the client half).
+
+        Always ``"remote"`` regardless of which policy runs on the server;
+        read :attr:`remote_provider_name` for the server-side policy's own
+        provider name.
+        """
         return "remote"
 
     @property
@@ -223,12 +229,25 @@ class RemotePolicy(Policy):
         return max(1, self._execution_horizon)
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        """Store the robot state keys and forward them to the server policy.
+
+        Unlike the base no-op, the remote client mirrors the keys to the
+        server over the open connection so the server-side policy maps
+        observations onto the same joints; when not yet connected, they are
+        replayed on the next connect handshake.
+        """
         self._robot_state_keys = list(robot_state_keys)
         with self._lock:
             if self._ws is not None:
                 self._request({"type": protocol.MSG_SET_STATE_KEYS, "keys": self._robot_state_keys})
 
     def set_control_frequency(self, hz: float) -> None:
+        """Set the control rate and forward it to the server policy.
+
+        Delegates to the base to validate ``hz > 0`` and store it locally,
+        then mirrors the rate to the server (when connected) so latency-aware
+        server policies (RTC) slice chunk seams against the real loop rate.
+        """
         super().set_control_frequency(hz)  # validates hz > 0 and sets the attribute
         with self._lock:
             if self._ws is not None:
