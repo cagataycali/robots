@@ -19,6 +19,7 @@ had gaps:
 """
 
 import json
+from importlib.resources import files
 
 import pytest
 
@@ -128,10 +129,8 @@ class TestCanonicalNameRoundTrip:
     """Every canonical robot name (alias-less included) must resolve to itself."""
 
     def _canonical_names(self):
-        import strands_robots.registry.robots as robots_mod
-
-        path = robots_mod.__file__.rsplit("/", 1)[0] + "/robots.json"
-        return list(json.loads(open(path, encoding="utf-8").read())["robots"])
+        data = files("strands_robots.registry").joinpath("robots.json").read_text(encoding="utf-8")
+        return list(json.loads(data)["robots"])
 
     def test_every_canonical_name_round_trips(self):
         """resolve_name(canonical) == canonical for all robots in robots.json."""
