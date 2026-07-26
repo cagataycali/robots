@@ -49,6 +49,67 @@ from strands_robots.utils import process_rss_mb
 __all__ = ["PersistentPolicy", "preload", "list_cached", "evict"]
 
 
+class _LockHandoff:
+    """Cancellation-safe handoff of a :class:`threading.Lock` to a coroutine.
+
+    ``threading.Lock.acquire`` blocks uninterruptibly, so a coroutine that
+    acquires it via ``loop.run_in_executor`` cannot cancel the acquire once the
+    executor thread has entered it: cancelling the future raises
+    ``CancelledError`` in the awaiting task while the executor thread goes on to
+    take the lock, and nothing is left to release it. On a handle shared across
+    every ``run_policy``/``eval_policy`` call that permanently freezes all
+    subsequent inference.
+
+    This object closes that window by making the acquire hand the lock over
+    under a tiny guard mutex:
+
+    * :meth:`acquire` (executor thread) takes the lock, then publishes it to the
+      waiting coroutine - unless the coroutine already abandoned the acquire, in
+      which case it releases the lock immediately.
+    * :meth:`abandon` (loop thread, in the cancellation handler) marks the
+      acquire abandoned and releases the lock if it was already published.
+
+    Because both sides take ``_guard`` around the flag-and-release, exactly one
+    of them releases the lock no matter how the cancellation interleaves with
+    the acquire, and correctness never depends on a done-callback running on a
+    loop that may already be closed.
+
+    Each call site uses its own instance; the wrapped lock is shared.
+    """
+
+    __slots__ = ("_lock", "_guard", "_abandoned", "_held")
+
+    def __init__(self, lock: threading.Lock) -> None:
+        self._lock = lock
+        self._guard = threading.Lock()
+        self._abandoned = False
+        self._held = False
+
+    def acquire(self) -> None:
+        """Block until the shared lock is held, or drop it if already abandoned."""
+        self._lock.acquire()
+        with self._guard:
+            if self._abandoned:
+                self._lock.release()
+                return
+            self._held = True
+
+    def abandon(self) -> None:
+        """Give up on the acquire; release the lock now or when it is taken."""
+        with self._guard:
+            self._abandoned = True
+            if self._held:
+                self._held = False
+                self._lock.release()
+
+    def release(self) -> None:
+        """Release the shared lock if this handoff currently holds it."""
+        with self._guard:
+            if self._held:
+                self._held = False
+                self._lock.release()
+
+
 class PersistentPolicy(Policy):
     """A persistent, reusable handle around an underlying policy.
 
@@ -119,13 +180,27 @@ class PersistentPolicy(Policy):
         state. The blocking acquire runs in the loop's default executor so a
         shared running loop is never frozen while another caller holds the lock
         (each runtime call still runs on its own per-call ``asyncio.run`` loop).
+
+        Cancellation-safe: if this coroutine is cancelled (e.g. by
+        ``asyncio.wait_for``) while the acquire is still pending, the lock is
+        released as soon as the executor thread obtains it, so a cancelled call
+        never poisons the shared handle. See :class:`_LockHandoff`.
         """
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, self._call_lock.acquire)
+        handoff = _LockHandoff(self._call_lock)
+        try:
+            await loop.run_in_executor(None, handoff.acquire)
+        except BaseException:
+            # The executor thread cannot be interrupted mid-acquire (a cancelled
+            # wait_for / task is the realistic trigger), so tell the handoff to
+            # drop the lock the moment it takes it. Without this the lock is
+            # leaked and every later call on this shared handle hangs.
+            handoff.abandon()
+            raise
         try:
             return await self._inner.get_actions(observation_dict, instruction, **kwargs)
         finally:
-            self._call_lock.release()
+            handoff.release()
 
     def get_actions_sync(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any

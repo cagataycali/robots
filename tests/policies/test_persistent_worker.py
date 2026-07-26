@@ -33,6 +33,7 @@ from strands_robots.policies import (
 )
 from strands_robots.policies.base import Policy
 from strands_robots.policies.mock import MockPolicy
+from strands_robots.policies.persistent import _LockHandoff
 
 
 class _CountingPolicy(MockPolicy):
@@ -196,6 +197,91 @@ class TestPersistentPolicyWrapper:
             f"threads still alive after join, done={sorted(done)}"
         )
         assert sorted(done) == [0, 1]
+
+    def test_async_get_actions_cancelled_mid_acquire_frees_shared_lock(self):
+        # Regression: the async entry point acquires the shared threading.Lock in
+        # the loop's executor, and that blocking acquire cannot be cancelled once
+        # the executor thread has entered it. A caller cancelled while the lock
+        # is held elsewhere (asyncio.wait_for around a seconds-long inference is
+        # routine) used to abandon an executor thread that then took the lock
+        # with nobody left to release it, freezing every later call on the shared
+        # handle. The cancelled call must leave the lock free.
+        gate = threading.Event()
+
+        class _GatedInner(MockPolicy):
+            def get_actions_sync(self, observation_dict, instruction, **kwargs):
+                gate.wait(timeout=10.0)  # hold the wrapper's lock until released
+                return super().get_actions_sync(observation_dict, instruction, **kwargs)
+
+        joints = ["j1", "j2", "j3", "j4", "j5", "j6"]
+        inner = _GatedInner()
+        inner.set_robot_state_keys(joints)
+        wrapper = PersistentPolicy("mock", policy_object=inner)
+        wrapper.set_robot_state_keys(joints)
+
+        holder = threading.Thread(target=lambda: wrapper.get_actions_sync(_obs(), ""), daemon=True)
+        holder.start()
+        time.sleep(0.1)  # holder owns the lock, parked on the gate
+
+        async def cancel_while_acquire_is_pending() -> None:
+            task = asyncio.ensure_future(wrapper.get_actions(_obs(), ""))
+            await asyncio.sleep(0.1)  # executor thread is blocked in acquire
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+            # Release the holder so the abandoned acquire completes (and, when
+            # fixed, immediately drops the lock) before the loop shuts its
+            # default executor down.
+            gate.set()
+            await asyncio.sleep(0.3)
+
+        asyncio.run(cancel_while_acquire_is_pending())
+        holder.join(timeout=5.0)
+        assert not holder.is_alive()
+
+        # The handle must still be usable: pre-fix the abandoned executor thread
+        # holds the lock forever and this call never returns.
+        served = threading.Event()
+
+        def later_caller() -> None:
+            wrapper.get_actions_sync(_obs(), "")
+            served.set()
+
+        thread = threading.Thread(target=later_caller, daemon=True)
+        thread.start()
+        assert served.wait(timeout=5.0), (
+            "cancelled async get_actions leaked the shared inference lock: "
+            "a subsequent call on the same handle never acquired it"
+        )
+
+    def test_lock_handoff_abandoned_after_acquire_releases_lock(self):
+        # Cancellation landing AFTER the executor thread published the lock: the
+        # coroutine never reaches its finally, so abandon() must do the release.
+        lock = threading.Lock()
+        handoff = _LockHandoff(lock)
+        handoff.acquire()
+        assert lock.locked()
+        handoff.abandon()
+        assert not lock.locked()
+        # Idempotent: a late release() from an unwound frame is a no-op, not a
+        # RuntimeError on an already-unlocked lock.
+        handoff.release()
+        assert not lock.locked()
+
+    def test_lock_handoff_abandoned_before_acquire_releases_lock(self):
+        # Cancellation landing WHILE the executor thread is still blocked: the
+        # acquire itself must drop the lock as soon as it wins it.
+        lock = threading.Lock()
+        lock.acquire()  # another caller is mid-inference
+        handoff = _LockHandoff(lock)
+        acquirer = threading.Thread(target=handoff.acquire, daemon=True)
+        acquirer.start()
+        time.sleep(0.05)
+        handoff.abandon()
+        lock.release()  # the other caller finishes
+        acquirer.join(timeout=5.0)
+        assert not acquirer.is_alive()
+        assert not lock.locked()
 
     def test_forwards_unknown_attribute_to_inner(self):
         # Attributes not explicitly delegated on the wrapper (e.g. provider
