@@ -1957,12 +1957,15 @@ class MuJoCoSimEngine(
             "(positions: dict[str, float] | list[float], robot_name=None) -> dict "
             "# write qpos directly and run forward kinematics (teleport / set an "
             "initial pose, bypassing the actuators). dict is per-joint; list is "
-            "ordered and must match one robot's joint count (see get_features)"
+            "ordered and must match one robot's joint count (see get_features). "
+            "The write is all-or-nothing: a dict key that is not a joint of the "
+            "model is an error, not a silent skip (see robot_joint_names)"
         )
         base["methods"]["set_joint_velocities"] = (
             "(velocities: dict[str, float] | list[float], robot_name=None) -> dict "
             "# write qvel directly (set an initial dynamic state); dict or "
-            "ordered-list form mirrors set_joint_positions"
+            "ordered-list form mirrors set_joint_positions, including its "
+            "all-or-nothing rejection of unknown joint names"
         )
 
         # Background-policy lifecycle. MuJoCo overrides start_policy to run in a

@@ -129,12 +129,19 @@ def test_set_joint_velocities_none_dict_errors(ready_sim):
     assert "'velocities' is required" in r["content"][0]["text"]
 
 
-def test_set_joint_positions_unknown_joint_is_skipped_not_raised(ready_sim):
-    """Unknown joint names are logged and skipped - not fatal."""
+def test_set_joint_positions_unknown_joint_rejects_whole_write(ready_sim):
+    """An unknown joint name is a structured error, not a partial write.
+
+    This used to assert ``success`` on the grounds that "the valid joint still
+    applied" - which is exactly the defect: the caller asked for a two-joint
+    pose, got a one-joint pose, and was told the call succeeded. The write is
+    now all-or-nothing and reports the name it could not resolve.
+    """
     joints = ready_sim.robot_joint_names("arm")
     assert len(joints) > 0, "Fixture robot must have joints"
     r = ready_sim.set_joint_positions(positions={joints[0]: 0.1, "__nope__": 0.2})
-    assert r["status"] == "success"  # the valid joint still applied
+    assert r["status"] == "error"
+    assert "__nope__" in r["content"][0]["text"]
 
 
 def test_apply_force_torque_only(ready_sim):

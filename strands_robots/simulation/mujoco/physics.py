@@ -561,7 +561,7 @@ class PhysicsMixin:
         The ``"<Kind> 'X' not found."`` prefix is preserved so the consistent
         error shape (T15 in ``test_agenttool_contract``) is unaffected.
 
-        ``kind`` is one of ``"Body" | "Site" | "Geom" | "Sensor"``.
+        ``kind`` is one of ``"Body" | "Site" | "Geom" | "Sensor" | "Joint"``.
         """
         import mujoco as _mj
 
@@ -574,6 +574,7 @@ class PhysicsMixin:
             "Site": (_mj.mjtObj.mjOBJ_SITE, model.nsite),
             "Geom": (_mj.mjtObj.mjOBJ_GEOM, model.ngeom),
             "Sensor": (_mj.mjtObj.mjOBJ_SENSOR, model.nsensor),
+            "Joint": (_mj.mjtObj.mjOBJ_JOINT, model.njnt),
         }[kind]
         known = [nm for i in range(int(count)) if (nm := _mj.mj_id2name(model, obj_type, i)) and nm != "world"]
         if known:
@@ -583,10 +584,18 @@ class PhysicsMixin:
             if matches:
                 msg += " Did you mean: " + ", ".join(matches) + "?"
             shown = known if len(known) <= 30 else known[:30] + ["..."]
-            plural = {"Body": "bodies", "Site": "sites", "Geom": "geoms", "Sensor": "sensors"}[kind]
+            plural = {
+                "Body": "bodies",
+                "Site": "sites",
+                "Geom": "geoms",
+                "Sensor": "sensors",
+                "Joint": "joints",
+            }[kind]
             msg += f" Available {plural}: {shown}."
             if kind == "Body":
                 msg += " Use action='list_bodies' to see all."
+            elif kind == "Joint":
+                msg += " Use action='robot_joint_names' to see one robot's joints."
         return msg
 
     def raycast(
@@ -970,6 +979,75 @@ class PhysicsMixin:
 
     # Direct Joint Control
 
+    def _resolve_joint_write_targets(
+        self,
+        values: dict[str, float],
+        name: str,
+        method: str,
+    ) -> tuple[dict[str, int], dict[str, Any] | None]:
+        """Resolve every joint name to a MuJoCo joint id before any state write.
+
+        The dict form of :meth:`set_joint_positions` / :meth:`set_joint_velocities`
+        used to skip names it could not resolve and still answer
+        ``status="success"``, so a typo (or a namespaced name from the wrong
+        robot) wrote nothing - or worse, wrote only part of the requested pose -
+        while the caller was told the pose had been applied. Resolving up front
+        makes the write all-or-nothing, matching the list form (which already
+        rejects a joint-count mismatch) and ``send_action`` (which already
+        rejects action keys it cannot resolve).
+
+        Args:
+            values: The ``{joint_name: value}`` mapping about to be written.
+            name: Parameter name (``"positions"`` / ``"velocities"``), used in error text.
+            method: Calling method name, used in error text.
+
+        Returns:
+            ``({joint_name: joint_id}, None)`` when every name resolves, else
+            ``({}, error_dict)`` naming the unresolved names, the joints the
+            model does have, and the discovery action - the structured-error
+            tool contract, so the caller never raises past dispatch.
+        """
+        mj = _ensure_mujoco()
+        if not values:
+            return {}, {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"{method}: '{name}' is empty, so there is nothing to write. "
+                            "Pass at least one joint (dict form) or a full ordered vector (list form); "
+                            "use action='robot_joint_names' to see one robot's joints."
+                        )
+                    }
+                ],
+            }
+
+        resolved: dict[str, int] = {}
+        unresolved: list[str] = []
+        for jnt_name in values:
+            jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
+            if jnt_id >= 0:
+                resolved[jnt_name] = jnt_id
+            else:
+                unresolved.append(jnt_name)
+        if not unresolved:
+            return resolved, None
+
+        detail = self._unknown_mj_entity_msg("Joint", unresolved[0])
+        if len(unresolved) > 1:
+            detail = f"Unresolved '{name}' keys: {unresolved}. {detail}"
+        return {}, {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: {len(unresolved)} of {len(values)} '{name}' keys are not joints "
+                        f"in this model, so nothing was written (the write is all-or-nothing). {detail}"
+                    )
+                }
+            ],
+        }
+
     def set_joint_positions(
         self,
         positions: dict[str, float] | list[float] | None = None,
@@ -992,6 +1070,13 @@ class PhysicsMixin:
         ``status="error"`` and leaves ``qpos`` untouched, rather than corrupting
         the kinematic state (``mj_forward`` propagates a ``nan`` everywhere) or
         raising past the tool-dispatch contract.
+
+        The write is all-or-nothing: every dict key must name a joint of the
+        model (verbatim or resolvable through a robot namespace). A key that
+        does not resolve returns ``status="error"`` listing the model's joints
+        and leaves ``qpos`` untouched -- a typo can no longer report success
+        while silently applying a partial pose (or no pose at all). An empty
+        mapping is likewise rejected instead of reporting a successful no-op.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1009,7 +1094,6 @@ class PhysicsMixin:
             }
 
         # normalize list input to dict using a deterministic joint ordering
-        ignored: list[str] = []
         if isinstance(positions, (list, tuple)):
             robots = list(self._world.robots.values())
             if robot_name is not None:
@@ -1073,26 +1157,21 @@ class PhysicsMixin:
         if err:
             return err
 
-        set_count = 0
+        joint_ids, err = self._resolve_joint_write_targets(positions, "positions", "set_joint_positions")
+        if err:
+            return err
+
         with self._lock:
             for jnt_name, value in positions.items():
-                jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
-                if jnt_id >= 0:
-                    qpos_adr = model.jnt_qposadr[jnt_id]
-                    data.qpos[qpos_adr] = float(value)
-                    set_count += 1
-                else:
-                    ignored.append(jnt_name)
-                    logger.warning("Joint '%s' not found, skipping", jnt_name)
+                qpos_adr = model.jnt_qposadr[joint_ids[jnt_name]]
+                data.qpos[qpos_adr] = float(value)
 
             mj.mj_forward(model, data)
 
-        msg = f"Set {set_count}/{len(positions)} joint positions, FK updated"
-        if ignored:
-            msg += f" (ignored: {ignored})"
+        count = len(positions)
         return {
             "status": "success",
-            "content": [{"text": msg}],
+            "content": [{"text": f"Set {count}/{count} joint positions, FK updated"}],
         }
 
     def set_joint_velocities(
@@ -1109,6 +1188,10 @@ class PhysicsMixin:
         ``nan`` / ``inf`` or a non-numeric value returns a structured
         ``status="error"`` and leaves ``qvel`` untouched, rather than blowing up
         the integrator on the next step or raising past the tool-dispatch contract.
+
+        The write is all-or-nothing on the same terms as
+        :meth:`set_joint_positions`: an unresolvable joint name (or an empty
+        mapping) returns ``status="error"`` and leaves ``qvel`` untouched.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1124,7 +1207,6 @@ class PhysicsMixin:
                 "content": [{"text": "set_joint_velocities: 'velocities' is required (list or dict)."}],
             }
 
-        ignored: list[str] = []
         if isinstance(velocities, (list, tuple)):
             robots = list(self._world.robots.values())
             if robot_name is not None:
@@ -1184,20 +1266,17 @@ class PhysicsMixin:
         if err:
             return err
 
-        set_count = 0
+        joint_ids, err = self._resolve_joint_write_targets(velocities, "velocities", "set_joint_velocities")
+        if err:
+            return err
+
         with self._lock:
             for jnt_name, value in velocities.items():
-                jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, jnt_name)
-                if jnt_id >= 0:
-                    dof_adr = model.jnt_dofadr[jnt_id]
-                    data.qvel[dof_adr] = float(value)
-                    set_count += 1
-                else:
-                    ignored.append(jnt_name)
+                dof_adr = model.jnt_dofadr[joint_ids[jnt_name]]
+                data.qvel[dof_adr] = float(value)
 
-        msg = f"Set {set_count}/{len(velocities)} joint velocities"
-        if ignored:
-            msg += f" (ignored: {ignored})"
+        count = len(velocities)
+        msg = f"Set {count}/{count} joint velocities"
         return {
             "status": "success",
             "content": [{"text": msg}],

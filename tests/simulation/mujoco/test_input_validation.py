@@ -454,11 +454,15 @@ class TestSetJointVelocitiesForms:
         assert res["status"] == "error"
         assert "must be a dict or list" in res["content"][0]["text"]
 
-    def test_dict_form_unknown_joint_is_skipped_not_fatal(self, sim_with_robot):
-        """Unknown joint names are reported as ignored, not raised."""
+    def test_dict_form_unknown_joint_is_rejected(self, sim_with_robot):
+        """An unknown joint name errors instead of reporting a 0-of-1 success.
+
+        The previous contract answered ``success`` with "Set 0/1 joint
+        velocities (ignored: ['nope'])", so a caller branching on ``status``
+        could not tell that nothing had been written.
+        """
         res = sim_with_robot.set_joint_velocities(velocities={"nope": 1.0})
-        assert res["status"] == "success"
-        assert "0/1" in res["content"][0]["text"]
+        assert res["status"] == "error"
         assert "nope" in res["content"][0]["text"]
 
 

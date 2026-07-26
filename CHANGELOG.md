@@ -35,6 +35,42 @@ action vector whose length does not match the actuator count), and a malformed
 `action_key_map` - a bare string, a non-string entry, a duplicate key or an empty
 list - is rejected before the dataset is fetched.
 
+### Fixed: joint setters reject joint names they cannot write
+
+The dict form of `set_joint_positions` / `set_joint_velocities` resolved each
+joint name inside the write loop and skipped the ones MuJoCo did not know, then
+answered `status="success"`:
+
+```python
+sim.set_joint_positions({"joint1": 0.8, "joint_2": -0.6, "joint4": -2.0})
+# -> success: "Set 2/3 joint positions, FK updated (ignored: ['joint_2'])"
+```
+
+A caller branching on `status` was told the pose had been applied. With every
+key misspelled nothing was written at all; with one key misspelled the *other*
+half of the pose was written, leaving the arm in a configuration nobody asked
+for - and a partially-posed scene silently becomes the initial state of the next
+rollout or recorded episode.
+
+Both sibling contracts already reject what they cannot apply: the ordered-list
+form of the same two methods errors on a joint-count mismatch, and `send_action`
+errors on action keys it cannot resolve. The dict form now matches them. Every
+key is resolved before any `qpos` / `qvel` write, so the write is
+all-or-nothing, and an unresolvable key returns an error that names it, offers a
+close match, lists the model's joints and points at `robot_joint_names`:
+
+```
+set_joint_positions: 1 of 3 'positions' keys are not joints in this model, so
+nothing was written (the write is all-or-nothing). Joint 'joint_2' not found.
+Did you mean: panda/joint2, panda/joint7, panda/joint1? Available joints: [...].
+Use action='robot_joint_names' to see one robot's joints.
+```
+
+An empty mapping is rejected on the same grounds (it reported a successful
+"Set 0/0" no-op). Valid input is unchanged, including short joint names that
+resolve through a robot namespace.
+
+
 ### Fixed: `randomize` / `set_obs_noise` reject parameters they cannot honor
 
 Both methods declare `**kwargs` to match the `**kwargs`-typed
