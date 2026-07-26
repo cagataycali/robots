@@ -351,3 +351,50 @@ class TestEvalPolicyCountGuards:
             robot_name="arm1", policy_provider="mock", n_episodes=1, max_steps=2, control_frequency=50.0
         )
         assert result["status"] == "success", result
+
+
+def _reported_n_steps(result: dict) -> int:
+    """Pull the executed step count out of a successful run_policy result."""
+    assert result["status"] == "success", result
+    payloads = [c["json"] for c in result["content"] if "json" in c]
+    assert payloads, f"no json payload in result: {result}"
+    return int(payloads[0]["n_steps"])
+
+
+class TestNStepsExactHorizon:
+    """run_policy(n_steps=N) must execute EXACTLY N control steps at every rate.
+
+    The step horizon used to round-trip through a float wall-clock duration
+    (``duration = n_steps / control_frequency``) which the runner then
+    reconverted with ``int(duration * control_frequency)``. Floating-point
+    error truncated the count on any frequency that does not divide the horizon
+    evenly: ``n_steps=1 @ 49 Hz`` reconverted to ``int(1/49*49) == 0``, so the
+    rollout returned ``status="success"`` having executed ZERO steps. The
+    integer horizon is now forwarded to the runner verbatim, so the executed
+    count equals the requested count exactly and independently of the rate.
+    """
+
+    @pytest.mark.parametrize("control_frequency", list(range(1, 121)))
+    def test_single_step_runs_exactly_one_step(self, sim, control_frequency):
+        # n_steps=1 is the canonical regression: pre-fix this ran 0 steps at
+        # every frequency where 1/f*f floors below 1 (e.g. 49, 90, 98 Hz).
+        result = sim.run_policy("arm1", n_steps=1, control_frequency=float(control_frequency), fast_mode=True)
+        assert _reported_n_steps(result) == 1
+
+    @pytest.mark.parametrize("n_steps", [1, 13, 15, 37, 100])
+    @pytest.mark.parametrize("control_frequency", [11.0, 49.0, 50.0, 90.0, 120.0])
+    def test_arbitrary_horizon_runs_exact_count(self, sim, n_steps, control_frequency):
+        # e.g. 13 @ 90 Hz reconverted to 12, 15 @ 11 Hz to 14 pre-fix.
+        result = sim.run_policy("arm1", n_steps=n_steps, control_frequency=control_frequency, fast_mode=True)
+        assert _reported_n_steps(result) == n_steps
+
+    def test_legacy_max_steps_alias_runs_exact_count(self, sim):
+        # max_steps is normalized to n_steps, so it must be exact too.
+        result = sim.run_policy("arm1", max_steps=1, control_frequency=49.0, fast_mode=True)
+        assert _reported_n_steps(result) == 1
+
+    def test_duration_path_unchanged_when_n_steps_omitted(self, sim):
+        # When no explicit horizon is given the wall-clock duration path still
+        # governs: 0.2 s @ 50 Hz -> 10 steps.
+        result = sim.run_policy("arm1", duration=0.2, control_frequency=50.0, fast_mode=True)
+        assert _reported_n_steps(result) == 10

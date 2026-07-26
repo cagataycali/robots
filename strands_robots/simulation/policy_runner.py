@@ -679,6 +679,7 @@ class PolicyRunner:
         *,
         instruction: str = "",
         duration: float = 10.0,
+        n_steps: int | None = None,
         control_frequency: float = 50.0,
         action_horizon: int = 8,
         fast_mode: bool = False,
@@ -700,7 +701,11 @@ class PolicyRunner:
                 construction so tests can inject mocks trivially.
             instruction: Natural-language instruction forwarded to the policy.
             duration: Wall-clock seconds to run (interpreted as control steps
-                via ``control_frequency``).
+                via ``control_frequency``). Used only when ``n_steps`` is None.
+            n_steps: Explicit integer step-count horizon resolved by the caller
+                from ``n_steps`` / the legacy ``max_steps`` alias. When set (and
+                > 0) it is the exact number of control steps executed, bypassing
+                the lossy ``int(duration * control_frequency)`` recomputation.
             control_frequency: Target Hz for ``policy.get_actions`` calls.
             action_horizon: Max actions consumed per policy call before
                 requerying observation. Clamped up to the policy's own
@@ -919,7 +924,16 @@ class PolicyRunner:
         start_time = time.time()
         step_count = 0
         try:
-            total_steps = int(duration * control_frequency)
+            # Prefer an explicit integer step count when the caller resolved one
+            # from ``n_steps`` (or the legacy ``max_steps`` alias). Recomputing
+            # ``int(duration * control_frequency)`` from the float ``duration =
+            # n_steps / control_frequency`` truncates on any frequency that does
+            # not divide evenly (e.g. n_steps=1 @ 49 Hz -> 0 steps reported as
+            # success). Forwarding the count verbatim keeps the horizon exact.
+            if n_steps is not None and n_steps > 0:
+                total_steps = int(n_steps)
+            else:
+                total_steps = int(duration * control_frequency)
             action_sleep = 1.0 / control_frequency
 
             # Control-rate substepping: a position-servo robot needs the physics
