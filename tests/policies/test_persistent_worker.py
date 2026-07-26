@@ -228,7 +228,7 @@ class TestPersistentPolicyWrapper:
             await asyncio.sleep(0.1)  # executor thread is blocked in acquire
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
-                await task
+                await asyncio.wait_for(task, timeout=5.0)
             # Release the holder so the abandoned acquire completes (and, when
             # fixed, immediately drops the lock) before the loop shuts its
             # default executor down.
