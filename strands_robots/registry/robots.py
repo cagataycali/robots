@@ -50,16 +50,22 @@ def resolve_name(name: str) -> str:
     """
     normalized = name.lower().strip().replace("-", "_")
     alias_map = _build_alias_map()
+    # Canonical names come straight from the registry keys. Using
+    # ``alias_map.values()`` here was wrong: it only contains robots that
+    # declare at least one alias, so the 16 alias-less robots (ur5e, reachy2,
+    # ...) were treated as unknown and a normalized form like "reachy-2" ->
+    # "reachy_2" never resolved to canonical "reachy2".
+    canonical_names = set(_load("robots").get("robots", {}))
     if normalized in alias_map:
         return alias_map[normalized]
-    if normalized in alias_map.values():  # already canonical
+    if normalized in canonical_names:  # already canonical
         return normalized
     # Fallback: try with all underscores stripped (e.g. "so_100" -> "so100").
     # Only return the stripped form if it actually matches something we know.
     stripped = normalized.replace("_", "")
     if stripped in alias_map:
         return alias_map[stripped]
-    if stripped in alias_map.values():
+    if stripped in canonical_names:
         return stripped
     return normalized
 
