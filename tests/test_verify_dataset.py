@@ -25,7 +25,12 @@ pytest.importorskip("pyarrow")
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from strands_robots.verify_dataset import _verify_feature_stats, _video_frame_count, verify_dataset
+from strands_robots.verify_dataset import (
+    _verify_feature_stats,
+    _verify_video_files,
+    _video_frame_count,
+    verify_dataset,
+)
 from strands_robots.verify_dataset import main as verify_main
 
 
@@ -1006,6 +1011,81 @@ class TestCorruptInputProducesReport:
         assert report["status"] == "error"
         assert report["ok"] is False
         assert any("could not read episode parquet" in p for p in report["problems"])
+
+    def test_partly_corrupt_parquet_still_reports_the_readable_episodes(self, tmp_path: Path) -> None:
+        """One broken shard names itself; the readable episodes are still reported.
+
+        Partial damage (an interrupted rsync/hub download truncating a file or
+        two of many) used to collapse the whole report to "0 episodes", hiding
+        both which file broke and how much of the dataset survived. The report
+        now carries the readable ground truth plus the broken file's path.
+        """
+        ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+        ep_dir.mkdir(parents=True)
+        pq.write_table(pa.table({"episode_index": [0, 1], "length": [10, 12]}), ep_dir / "file-000.parquet")
+        (ep_dir / "file-001.parquet").write_bytes(b"truncated, not a parquet file")
+
+        report = verify_dataset(tmp_path, check_videos=False, check_stats=False)
+
+        assert report["ok"] is False
+        assert report["total_episodes"] == 2
+        assert report["frames_per_episode"] == [10, 12]
+        assert report["total_frames"] == 22
+        assert any("file-001.parquet" in p for p in report["problems"])
+
+    def test_partly_corrupt_parquet_still_runs_the_remaining_checks(self, tmp_path: Path) -> None:
+        """A broken shard does not disable the info.json / video / stats checks.
+
+        Every check after the parquet read used to be skipped on a corrupt
+        shard, so an operator diagnosing a damaged dataset learned nothing about
+        metadata drift or missing pixels. All of them now run against the
+        readable files and report independently.
+        """
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0, 1],
+            video_keys=["observation.images.cam"],
+            frames_per_episode=[10, 12],
+            write_files={"observation.images.cam:0"},  # episode 1's MP4 is missing
+        )
+        # info.json declares 3 episodes: drift against the 2 readable ones.
+        info_path = tmp_path / "meta" / "info.json"
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info["total_episodes"] = 3
+        info_path.write_text(json.dumps(info), encoding="utf-8")
+        (tmp_path / "meta" / "episodes" / "chunk-000" / "episodes_001.parquet").write_bytes(b"not a parquet file")
+
+        report = verify_dataset(tmp_path)
+
+        assert report["ok"] is False
+        assert report["info_total_episodes"] == 3
+        assert report["video_files_checked"] > 0
+        assert any("total_episodes=3 disagrees with parquet" in p for p in report["problems"])
+        assert any("missing" in p and "observation.images.cam" in p for p in report["problems"])
+        # The broken shard is reported ONCE, not once per check that also
+        # cannot read it (the video and stats passes skip known-bad shards).
+        assert sum("episodes_001.parquet" in p for p in report["problems"]) == 1
+
+    def test_video_and_stats_checks_report_a_corrupt_shard_when_called_directly(self, tmp_path: Path) -> None:
+        """Standalone, the video and stats passes report shards they cannot read.
+
+        ``verify_dataset`` tells them which shards it has already reported, but
+        called on their own (no ``known_unreadable``) each pass must still name
+        the unreadable shard rather than skipping it silently.
+        """
+        _write_video_dataset(
+            tmp_path,
+            episode_indices=[0],
+            video_keys=["observation.images.cam"],
+            frames_per_episode=[4],
+        )
+        (tmp_path / "meta" / "episodes" / "chunk-000" / "episodes_001.parquet").write_bytes(b"not a parquet file")
+
+        _checked, video_problems = _verify_video_files(tmp_path)
+        _stats_checked, stats_problems = _verify_feature_stats(tmp_path)
+
+        assert any("could not read" in p and "episodes_001.parquet" in p for p in video_problems)
+        assert any("for stats" in p and "episodes_001.parquet" in p for p in stats_problems)
 
     def test_garbage_parquet_cli_exits_1_without_traceback(self, tmp_path: Path) -> None:
         _write_garbage_parquet(tmp_path)

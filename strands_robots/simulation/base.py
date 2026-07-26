@@ -1496,12 +1496,15 @@ class SimEngine(ABC):
             holds exactly ``expected`` episodes, else ``"error"``. The
             ``{"json": {...}}`` block carries ``expected``, ``actual``,
             ``info_total_episodes``, ``sources_agree``, ``episode_indices``,
-            ``total_frames``, ``total_frames_per_ep`` and ``root`` so a caller
-            (or CI) can fail loudly programmatically. ``status`` is ``"error"``
-            both when the parquet count differs from ``expected`` AND when the
-            parquet disagrees with ``meta/info.json``'s ``total_episodes``
-            (``sources_agree`` is then ``False``) - the two metadata sources
-            must agree, never just one.
+            ``total_frames``, ``total_frames_per_ep``, ``unreadable_files`` and
+            ``root`` so a caller (or CI) can fail loudly programmatically.
+            ``status`` is ``"error"`` when the parquet count differs from
+            ``expected``, when the parquet disagrees with ``meta/info.json``'s
+            ``total_episodes`` (``sources_agree`` is then ``False``) - the two
+            metadata sources must agree, never just one - and when any episode
+            parquet file could not be read (``unreadable_files`` non-empty),
+            since the episodes found are then only a lower bound. An unreadable
+            or corrupt parquet is reported as this same error dict, never raised.
         """
         if not isinstance(expected, int) or expected < 0:
             return {
@@ -1529,7 +1532,12 @@ class SimEngine(ABC):
 
         try:
             info = read_dataset_episode_indices(root)
-        except FileNotFoundError as e:
+        except (ValueError, OSError) as e:
+            # OSError covers the empty/unfinalized dataset (FileNotFoundError -
+            # no episode parquet yet) and an unreadable file; ValueError covers a
+            # corrupt / truncated / foreign parquet (pyarrow raises ArrowInvalid,
+            # a ValueError subclass). This facade is agent-callable, so both must
+            # surface as a structured error dict, never as an escaping traceback.
             return {
                 "status": "error",
                 "content": [
@@ -1543,6 +1551,7 @@ class SimEngine(ABC):
                             "episode_indices": [],
                             "total_frames": 0,
                             "total_frames_per_ep": [],
+                            "unreadable_files": [],
                             "root": str(root),
                         }
                     },
@@ -1553,6 +1562,7 @@ class SimEngine(ABC):
 
         actual = info["total_episodes"]
         info_total = info.get("info_total_episodes")
+        unreadable = info.get("unreadable_files") or []
 
         # Two independent truths must agree: the parquet episode count AND the
         # meta/info.json total_episodes header. A dataset can report the right
@@ -1561,10 +1571,21 @@ class SimEngine(ABC):
         # True when info.json is absent (parquet is then the sole truth) or when
         # the header matches the parquet.
         sources_agree = info_total is None or info_total == actual
-        ok = actual == expected and sources_agree
+        # A dataset with unreadable episode parquet files can never be certified:
+        # the readable files are a LOWER BOUND on the episode count, so a count
+        # that happens to equal ``expected`` proves nothing about the whole
+        # dataset. Fail loud and name the broken files.
+        ok = actual == expected and sources_agree and not unreadable
         status = "success" if ok else "error"
 
-        if not sources_agree:
+        if unreadable:
+            text = (
+                f"verify_dataset_episodes: UNREADABLE - {len(unreadable)} episode "
+                f"parquet file(s) could not be read, so the {actual} episode(s) found "
+                f"are a lower bound (expected {expected}): {'; '.join(unreadable)}. "
+                f"Root: {root}"
+            )
+        elif not sources_agree:
             verdict = "MISMATCH"
             text = (
                 f"verify_dataset_episodes: {verdict} - meta/info.json reports "
@@ -1592,6 +1613,7 @@ class SimEngine(ABC):
                         "episode_indices": info["episode_indices"],
                         "total_frames": info["total_frames"],
                         "total_frames_per_ep": info["frames_per_episode"],
+                        "unreadable_files": list(unreadable),
                         "root": str(root),
                     }
                 },

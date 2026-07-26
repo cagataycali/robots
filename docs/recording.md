@@ -242,6 +242,16 @@ it exists to flag. A corrupt or foreign `meta/episodes` parquet, a non-v3
 string in the report (and a non-zero exit code), not surfaced as a raw
 traceback.
 
+Corruption confined to SOME episode parquet shards (the usual outcome of an
+interrupted rsync or hub download) is localised rather than fatal: each
+unreadable shard is named as a problem, the readable shards still supply
+`total_episodes` / `frames_per_episode`, and the info.json, video, and
+dead-column checks still run against them. Only a `meta/episodes` tree with no
+readable shard at all reports zero episodes. The same holds for
+`verify_dataset_episodes`, which additionally refuses to certify a dataset with
+unreadable shards even when the readable count matches `expected` - the count is
+then only a lower bound, reported in the `unreadable_files` diagnostics.
+
 ## Recording paths
 
 | Method | Extra needed | Output |

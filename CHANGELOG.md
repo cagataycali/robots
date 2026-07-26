@@ -31,6 +31,30 @@ An orthographic free camera (`<visual><global orthographic="true"/>`) is now
 refused with an actionable `ValueError` instead of being handed perspective
 intrinsics no parallel projection can satisfy.
 
+### Fixed: one corrupt episode parquet no longer crashes or blanks dataset verification
+
+`meta/episodes/**/*.parquet` is read shard by shard, and damage is usually
+confined to a file or two (an interrupted rsync or hub download truncates one
+shard of twenty). Two defects turned that partial damage into a total loss of
+diagnosis:
+
+- **`SimEngine.verify_dataset_episodes` raised instead of reporting.** It caught
+  only `FileNotFoundError` / `ImportError` from `read_dataset_episode_indices`,
+  so a truncated shard surfaced as `pyarrow.lib.ArrowInvalid` out of an
+  agent-callable facade documented to return a status dict. It now returns the
+  structured error dict for any unreadable/corrupt parquet, and refuses to
+  certify a dataset whose shards are partly unreadable even when the readable
+  episode count happens to equal `expected` (the count is a lower bound). The
+  `json` diagnostics block gained `unreadable_files`.
+- **`verify-dataset` collapsed the whole report.** The first unreadable shard
+  aborted the read, so a dataset with 19 intact shards reported
+  `total_episodes: 0` and skipped every remaining check (info.json drift,
+  per-episode video files, dead control columns). `read_dataset_episode_indices`
+  now skips the unreadable shards, returns the readable episode truth plus an
+  `unreadable_files` list (`"<path>: <error>"`), and raises only when NO shard is
+  readable. `verify_dataset` names each broken shard as a problem and runs the
+  remaining checks against the readable files.
+
 ### Fixed: AWS IoT mesh backend dead paths (peer discovery, camera ref, profile scoping, reconnect leak)
 
 Seven verified defects that left the pure-`iot` and `bridge` mesh backends

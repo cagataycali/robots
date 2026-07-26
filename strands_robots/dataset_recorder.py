@@ -1335,11 +1335,23 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
             Returned alongside the parquet truth so callers can cross-check the
             two metadata sources for agreement - a healthy dataset has
             ``info_total_episodes == total_episodes``.
+          - ``unreadable_files``: ``"<path relative to root>: <error>"`` for
+            every ``meta/episodes`` parquet that could not be read (empty list
+            for a healthy dataset). A partially-corrupt dataset - one truncated
+            file out of twenty, the usual outcome of an interrupted sync or hub
+            download - still yields the episode truth of the readable files, so
+            callers can localise the damage instead of seeing zero episodes.
+            The episode counts above cover ONLY the readable files, so any
+            non-empty ``unreadable_files`` means the totals are a lower bound
+            and the dataset must not be certified as complete.
 
     Raises:
         ImportError: If ``pyarrow`` is not installed.
         FileNotFoundError: If no ``meta/episodes`` parquet exists under ``root``
             (no episode was ever flushed - the dataset is empty/unfinalized).
+        ValueError: If every ``meta/episodes`` parquet is unreadable, so there
+            is no episode ground truth at all. The message lists each file and
+            its read error.
     """
     try:
         import pyarrow.parquet as pq
@@ -1356,8 +1368,21 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
 
     pairs: list[tuple[int, int]] = []
     seen: set[int] = set()
+    unreadable_files: list[str] = []
+    readable_files = 0
     for pf in parquet_files:
-        table = pq.read_table(pf)
+        # A corrupt / truncated / foreign parquet raises ArrowInvalid (a
+        # ValueError subclass); an unreadable one raises OSError. Damage is
+        # usually confined to a few files (interrupted rsync, partial hub
+        # download), so record which file failed and keep reading the rest -
+        # aborting the whole read here would report zero episodes for a dataset
+        # that is mostly intact and hide which file is actually broken.
+        try:
+            table = pq.read_table(pf)
+        except (ValueError, OSError) as e:
+            unreadable_files.append(f"{pf.relative_to(root_path)}: {e}")
+            continue
+        readable_files += 1
         cols = table.column_names
         if "episode_index" not in cols:
             continue
@@ -1371,6 +1396,12 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
             seen.add(ep_int)
             length = int(lengths[i]) if lengths is not None and lengths[i] is not None else 0
             pairs.append((ep_int, length))
+
+    if unreadable_files and readable_files == 0:
+        # Nothing readable at all: there is no ground truth to return, so this
+        # is a hard read failure rather than a partial one.
+        detail = "; ".join(unreadable_files)
+        raise ValueError(f"No readable meta/episodes parquet under {root_path}: {detail}")
 
     pairs.sort(key=lambda p: p[0])
     episode_indices = [p[0] for p in pairs]
@@ -1398,4 +1429,5 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
         "total_frames": sum(frames_per_episode) if has_lengths else 0,
         "frames_per_episode": frames_per_episode if has_lengths else [],
         "info_total_episodes": info_total_episodes,
+        "unreadable_files": unreadable_files,
     }

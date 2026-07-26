@@ -1612,6 +1612,53 @@ def test_read_dataset_episode_indices_dedups_and_skips_columnless_parquet(tmp_pa
     assert result["frames_per_episode"] == [3, 5]  # first-seen length for ep 0
     assert result["total_frames"] == 8
     assert result["info_total_episodes"] is None  # no meta/info.json written
+    assert result["unreadable_files"] == []  # every shard was readable
+
+
+def test_read_dataset_episode_indices_keeps_readable_shards_when_one_is_corrupt(tmp_path):
+    """One corrupt shard must not erase the episode truth of the readable ones.
+
+    Partial damage is the common case (an interrupted rsync or hub download
+    truncates a file or two of many). The reader reports the broken shard by
+    relative path in ``unreadable_files`` and still returns the episodes it
+    could read, so a caller can localise the damage instead of seeing an empty
+    dataset.
+    """
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+
+    from strands_robots.dataset_recorder import read_dataset_episode_indices
+
+    ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    pq.write_table(pa.table({"episode_index": [0, 1], "length": [10, 12]}), ep_dir / "file-000.parquet")
+    (ep_dir / "file-001.parquet").write_bytes(b"truncated, not a parquet file")
+
+    result = read_dataset_episode_indices(tmp_path)
+
+    assert result["episode_indices"] == [0, 1]
+    assert result["total_frames"] == 22
+    assert len(result["unreadable_files"]) == 1
+    assert result["unreadable_files"][0].startswith("meta/episodes/chunk-000/file-001.parquet: ")
+
+
+def test_read_dataset_episode_indices_raises_when_no_shard_is_readable(tmp_path):
+    """With no readable shard there is no ground truth, so the read fails loud.
+
+    Returning an empty episode list would be indistinguishable from a genuinely
+    empty dataset, so a wholly unreadable ``meta/episodes`` tree raises with
+    every file and its read error named.
+    """
+    pytest.importorskip("pyarrow")
+
+    from strands_robots.dataset_recorder import read_dataset_episode_indices
+
+    ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    (ep_dir / "file-000.parquet").write_bytes(b"not a parquet file")
+
+    with pytest.raises(ValueError, match=r"No readable meta/episodes parquet"):
+        read_dataset_episode_indices(tmp_path)
 
 
 class _FakeSyncDataset:

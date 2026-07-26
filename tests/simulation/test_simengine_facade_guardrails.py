@@ -327,6 +327,62 @@ def test_verify_dataset_episodes_missing_parquet_reports_json_diagnostics(monkey
     assert diagnostics["root"] == "/tmp/does-not-exist-dataset-root"
 
 
+def test_verify_dataset_episodes_corrupt_parquet_is_structured_error(tmp_path):
+    """A corrupt episode parquet is reported, not raised past the facade.
+
+    ``pyarrow`` raises ``ArrowInvalid`` (a ``ValueError`` subclass) on a
+    truncated / foreign parquet. The facade caught only ``FileNotFoundError``
+    and ``ImportError``, so this escaped as a traceback out of an agent-callable
+    method that documents a status dict.
+    """
+    ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    (ep_dir / "file-000.parquet").write_bytes(b"truncated, not a parquet file")
+
+    class RootedSim(FakeSim):
+        def _active_dataset_root(self) -> str:
+            return str(tmp_path)
+
+    result = RootedSim().verify_dataset_episodes(2)
+
+    assert result["status"] == "error"
+    assert "verify_dataset_episodes" in result["content"][0]["text"]
+    diagnostics = result["content"][1]["json"]
+    assert diagnostics["expected"] == 2
+    assert diagnostics["actual"] == 0
+    assert diagnostics["sources_agree"] is False
+
+
+def test_verify_dataset_episodes_rejects_matching_count_with_unreadable_shard(tmp_path):
+    """Unreadable shards make the episode count a lower bound, so never certify.
+
+    With one shard readable (2 episodes) and one corrupt, an ``expected=2``
+    check must NOT pass: the corrupt shard may hold further episodes, so the
+    dataset cannot be certified complete. The broken file is named and reported
+    in the ``unreadable_files`` diagnostics.
+    """
+    pa_mod = pytest.importorskip("pyarrow")
+    pq_mod = pytest.importorskip("pyarrow.parquet")
+
+    ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    pq_mod.write_table(pa_mod.table({"episode_index": [0, 1], "length": [4, 4]}), ep_dir / "file-000.parquet")
+    (ep_dir / "file-001.parquet").write_bytes(b"truncated, not a parquet file")
+
+    class RootedSim(FakeSim):
+        def _active_dataset_root(self) -> str:
+            return str(tmp_path)
+
+    result = RootedSim().verify_dataset_episodes(2)
+
+    assert result["status"] == "error"
+    assert "UNREADABLE" in result["content"][0]["text"]
+    diagnostics = result["content"][1]["json"]
+    assert diagnostics["actual"] == 2
+    assert len(diagnostics["unreadable_files"]) == 1
+    assert "file-001.parquet" in diagnostics["unreadable_files"][0]
+
+
 def test_verify_dataset_episodes_import_error_is_structured_error(monkeypatch):
     """A missing optional dep behind the reader degrades to a structured error."""
     import strands_robots.dataset_recorder as dr
