@@ -5,6 +5,48 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `set_geom_properties` honors every vector component or rejects the vector
+
+`color`, `friction` and `size` each target a MuJoCo buffer with a fixed component
+layout, but the mutator wrote whatever it was given component by component: it
+sliced `geom_size[gid, :min(len(size), 3)]`, zero-padded `friction`, and appended
+an alpha to `color[:3]`. A vector that did not match its target's layout was
+therefore applied as a mix of the caller's components and fabricated ones - under
+a `status="success"` result - or crashed with a bare NumPy error:
+
+```python
+sim.add_object("crate", shape="box", size=[0.2, 0.3, 0.4])   # half-extents 0.1/0.15/0.2
+sim.set_geom_properties(geom_name="crate", size=[0.5])
+# -> success: "size -> [0.5, 0.15, 0.2]"   (a slab; only x was applied)
+sim.set_geom_properties(geom_name="crate", size=[])
+# -> success: "size -> [0.5, 0.15, 0.2]"   (nothing written, a resize reported)
+sim.set_geom_properties(geom_name="crate", friction=[1.0])
+# -> success: "friction -> [1.0, 0.0, 0.0]"  (torsional 0.5 and rolling 0.001,
+#                                             never mentioned, zeroed)
+sim.set_geom_properties(geom_name="crate", color=[0.5])
+# -> ValueError: could not broadcast input array from shape (2,) into shape (4,)
+#    (raised past the tool envelope)
+sim.set_geom_properties(geom_name="crate", color=[])
+# -> success: "color -> [1.0, 1.0, 1.0, 1.0]"  (repainted opaque white)
+```
+
+Each vector's component count is now validated before any model write, alongside
+the existing finite/positive element checks, so the call is all-or-nothing:
+
+- `color` must be 3 (RGB, alpha set to 1.0) or 4 (RGBA).
+- `friction` must be the 3 MuJoCo coefficients (sliding, torsional, rolling);
+  MuJoCo has no per-component default to fall back on, so a shorter vector cannot
+  be honored.
+- `size` must carry exactly the components the geom's compiled type defines -
+  1 (sphere), 2 (capsule, cylinder) or 3 (box, ellipsoid, plane). A mesh, height
+  field or SDF geom takes its extent from asset data and defines no `geom_size`
+  component, so `size` is refused for it and the error names the alternatives.
+
+The errors name the parameter, the count the geom's own type requires and what
+the components mean, and `describe()` advertises the counts so a caller does not
+have to discover them by trial. Rejected calls leave `geom_size` / `geom_friction`
+/ `geom_rgba` and the derived collision bounds untouched.
+
 ### Fixed: `add_object` honors every `size` component or rejects the vector
 
 The MuJoCo backend documents an exact per-shape `size` layout (full extents in

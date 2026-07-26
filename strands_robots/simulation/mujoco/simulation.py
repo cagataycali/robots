@@ -1947,7 +1947,9 @@ class MuJoCoSimEngine(
         )
         base["methods"]["set_geom_properties"] = (
             "(geom_name=None, geom_id=None, color=None, friction=None, size=None) "
-            "-> dict  # set a geom's color (RGBA), friction, or size; "
+            "-> dict  # set a geom's color (RGB or RGBA), friction (3: sliding, "
+            "torsional, rolling) or size (every component the geom type defines: "
+            "sphere 1, capsule/cylinder 2, box/ellipsoid/plane 3); "
             "domain-randomize appearance + contact dynamics (identify the geom by "
             "name or id)"
         )

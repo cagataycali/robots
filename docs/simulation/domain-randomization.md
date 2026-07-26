@@ -59,6 +59,41 @@ for episode in range(N):
                              success_fn=my_fn)
 ```
 
+## Targeted per-geom / per-body perturbation
+
+`randomize()` perturbs the whole scene; `set_geom_properties` /
+`set_body_properties` perturb one entity, which is what you want when only the
+manipuland's friction or the table's height should change between episodes.
+
+```python
+sim.set_geom_properties(geom_name="crate", color=[0.8, 0.2, 0.2],   # RGB or RGBA
+                        friction=[0.6, 0.01, 0.001],                # sliding, torsional, rolling
+                        size=[0.2, 0.2, 0.05])                      # box: three half-extents
+sim.set_body_properties(body_name="crate", mass=1.4)                # inertia scales with it
+```
+
+**Every vector must carry the exact component count its target defines.** There
+is no meaningful value to invent for a component you omit, so a partial vector is
+rejected instead of being mixed with the compiled one:
+
+| Parameter | Accepted components |
+|---|---|
+| `color` | 3 (RGB, alpha set to 1.0) or 4 (RGBA) |
+| `friction` | 3 (sliding, torsional, rolling) |
+| `size` | whatever the geom's type defines: sphere 1, capsule/cylinder 2, box/ellipsoid/plane 3 |
+
+```python
+sim.set_geom_properties(geom_name="crate", size=[0.4])
+# status=error: 'size' must have exactly 3 component(s) (box: three half-extents),
+#               got 1: [0.4]. Pass every component - a partial 'size' cannot be
+#               applied without inventing the missing values.
+```
+
+A mesh / height-field / SDF geom takes its extent from asset data and defines no
+`geom_size` component, so `size` is refused for it (resize the asset instead).
+Growing a size-defined primitive refreshes its broadphase and mid-phase collision
+bounds, so other bodies collide with the new extent rather than passing through it.
+
 ## Sensor noise
 
 `set_obs_noise` adds Gaussian measurement noise to observations so a policy is

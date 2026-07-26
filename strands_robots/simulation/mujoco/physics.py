@@ -37,6 +37,8 @@ def _coerce_finite_vector(
     *,
     min_value: float | None = None,
     strict_min: bool = False,
+    accepted_lengths: tuple[int, ...] | None = None,
+    layout: str = "",
 ) -> tuple[list[float] | None, dict[str, Any] | None]:
     """Coerce a numeric vector to ``float`` and validate every element.
 
@@ -46,6 +48,13 @@ def _coerce_finite_vector(
     An optional lower bound enforces physics invariants (non-negative friction,
     positive geom extent).
 
+    ``accepted_lengths`` enforces the component count the target buffer defines.
+    A vector shorter than its target cannot be written without inventing the
+    missing components (leaving them at their compiled value, or padding with a
+    fabricated one), and a longer vector can only be written by discarding its
+    tail -- both apply a value the caller never asked for, so the count is
+    rejected instead.
+
     Args:
         values: The input sequence (list / tuple / NumPy array).
         name: Parameter name, used in error text.
@@ -53,11 +62,14 @@ def _coerce_finite_vector(
         min_value: If set, every element must be ``>= min_value`` (or ``>`` when
             ``strict_min`` is True).
         strict_min: Use a strict ``>`` comparison against ``min_value``.
+        accepted_lengths: If set, the component counts that can be honored.
+        layout: Human-readable meaning of the components, used in the
+            component-count error text.
 
     Returns:
         ``(floats, None)`` on success, or ``(None, error_dict)`` on the first
-        invalid element -- matching the structured-error tool contract so the
-        caller never raises past dispatch.
+        invalid element or an unusable component count -- matching the
+        structured-error tool contract so the caller never raises past dispatch.
     """
     try:
         seq = list(values)
@@ -87,6 +99,22 @@ def _coerce_finite_vector(
                 "content": [{"text": f"{method}: '{name}' values must be {rel} {min_value}, got {values!r}"}],
             }
         out.append(f)
+    if accepted_lengths is not None and len(out) not in accepted_lengths:
+        expected = " or ".join(str(n) for n in accepted_lengths)
+        detail = f" ({layout})" if layout else ""
+        return None, {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: '{name}' must have exactly {expected} "
+                        f"component(s){detail}, got {len(out)}: {out}. Pass every "
+                        f"component - a partial '{name}' cannot be applied "
+                        "without inventing the missing values."
+                    )
+                }
+            ],
+        }
     return out, None
 
 
@@ -236,6 +264,38 @@ def _recompute_primitive_geom_bounds(mj: Any, model: Any, gid: int) -> bool:
     # geom_aabb layout is [center(3), half-extent(3)]; primitives are centered.
     model.geom_aabb[gid, 3:6] = half
     return True
+
+
+# Number of ``geom_size`` components each MuJoCo geom type defines, plus the
+# meaning of each one. MuJoCo stores every geom's extent in a 3-wide
+# ``geom_size`` row, but only the leading components its type defines carry
+# meaning - a sphere reads one, a capsule two, a box three. A type whose extent
+# comes from asset data (mesh, height field, SDF) defines none.
+_GEOM_SIZE_LAYOUTS: dict[str, tuple[int, str]] = {
+    "plane": (3, "x half-extent, y half-extent, grid spacing"),
+    "sphere": (1, "radius"),
+    "capsule": (2, "radius, half-length"),
+    "ellipsoid": (3, "three semi-axes"),
+    "cylinder": (2, "radius, half-length"),
+    "box": (3, "three half-extents"),
+}
+
+
+def _geom_type_name(mj: Any, geom_type: int) -> str:
+    """Return a geom type's short lowercase name (``"box"``, ``"mesh"``, ...).
+
+    Args:
+        mj: The imported ``mujoco`` module.
+        geom_type: A ``model.geom_type`` entry (an ``mjtGeom`` value).
+
+    Returns:
+        The ``mjtGeom`` name with its ``mjGEOM_`` prefix stripped and lowercased,
+        or ``"type_<n>"`` if the value is not a known ``mjtGeom`` member.
+    """
+    try:
+        return str(mj.mjtGeom(int(geom_type)).name).removeprefix("mjGEOM_").lower()
+    except ValueError:
+        return f"type_{int(geom_type)}"
 
 
 class PhysicsMixin:
@@ -1439,15 +1499,44 @@ class PhysicsMixin:
         primitive (sphere/capsule/cylinder/ellipsoid/box), the geom's collision
         bounding volumes (``geom_rbound`` for broadphase, ``geom_aabb`` for
         mid-phase) are recomputed so a grown geom collides correctly instead of
-        letting other bodies pass through it. Mesh/plane/height-field geoms take
-        their extent from asset data, so a ``size`` write is inert for them.
+        letting other bodies pass through it. A plane's bounds are type-derived,
+        so only its stored ``geom_size`` changes.
+
+        Every vector must carry the exact number of components its target
+        defines, because there is no meaningful value to invent for a component
+        the caller omitted:
+
+        * ``color``: 3 (RGB, alpha set to 1.0) or 4 (RGBA).
+        * ``friction``: 3 (sliding, torsional, rolling).
+        * ``size``: whatever the geom's compiled type defines - 1 for a sphere,
+          2 for a capsule/cylinder, 3 for a box/ellipsoid/plane. Mesh, height
+          field and SDF geoms take their extent from asset data and define no
+          ``geom_size`` component, so ``size`` is refused for them.
 
         All numeric inputs are validated before any model write: ``color``,
         ``friction`` and ``size`` must contain only finite numbers (``nan`` /
         ``inf`` are rejected), ``friction`` coefficients must be ``>= 0`` and
         ``size`` half-extents must be ``> 0``. An invalid value returns a
         structured ``status="error"`` result and leaves the model untouched,
-        rather than silently corrupting the solver or broadphase bounds.
+        rather than silently corrupting the solver or broadphase bounds, or
+        applying a shape/appearance the caller never asked for.
+
+        Args:
+            geom_name: Name of the geom to modify. The owning object's name is
+                accepted as an alias for an ``add_object`` geom (``"<name>"`` for
+                ``"<name>_geom"``).
+            geom_id: Geom id, as an alternative to ``geom_name``.
+            color: RGB (3) or RGBA (4) components in ``[0, 1]``.
+            friction: The three MuJoCo friction coefficients (sliding,
+                torsional, rolling), each ``>= 0``.
+            size: The geom's half-extents, with exactly as many components as
+                its type defines, each ``> 0``.
+
+        Returns:
+            A tool-result dict; ``status="error"`` if the world is missing, a
+            policy is running, the geom is not found, or a vector's values or
+            component count cannot be honored, otherwise ``status="success"``
+            summarizing the changes applied.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1476,16 +1565,67 @@ class PhysicsMixin:
         # broadphase bounds (geom_rbound becomes inf) while the tool still
         # reports success. Friction coefficients are non-negative and a geom's
         # size (half-extent) must be strictly positive.
+        #
+        # Component counts are validated in the same pass. A vector shorter than
+        # its target buffer used to be written component-wise (or padded with
+        # zeros / an invented alpha), so a partial value silently mixed the
+        # caller's components with the compiled ones - a one-element size on a
+        # box resized only x and left y/z at their old half-extents, while a
+        # one-element friction zeroed the torsional and rolling coefficients the
+        # caller never mentioned. A longer vector had its tail discarded. Both
+        # applied a shape / appearance / contact model nobody asked for under a
+        # status="success" result, so the exact count is now required.
         if color is not None:
-            color, err = _coerce_finite_vector(color, "color", "set_geom_properties")
+            color, err = _coerce_finite_vector(
+                color,
+                "color",
+                "set_geom_properties",
+                accepted_lengths=(3, 4),
+                layout="RGB, or RGBA with alpha",
+            )
             if err:
                 return err
         if friction is not None:
-            friction, err = _coerce_finite_vector(friction, "friction", "set_geom_properties", min_value=0.0)
+            friction, err = _coerce_finite_vector(
+                friction,
+                "friction",
+                "set_geom_properties",
+                min_value=0.0,
+                accepted_lengths=(3,),
+                layout="sliding, torsional, rolling",
+            )
             if err:
                 return err
         if size is not None:
-            size, err = _coerce_finite_vector(size, "size", "set_geom_properties", min_value=0.0, strict_min=True)
+            gtype = _geom_type_name(mj, model.geom_type[gid])
+            geom_layout = _GEOM_SIZE_LAYOUTS.get(gtype)
+            if geom_layout is None:
+                # mesh / hfield / sdf: the extent comes from the asset, so no
+                # component of the requested size can be honored. Storing it
+                # anyway would report a resize that never happens.
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"set_geom_properties: geom '{geom_name or gid}' has type "
+                                f"'{gtype}', whose extent comes from its asset data and "
+                                "defines no 'size' component - resize the asset, or use a "
+                                "size-defined primitive geom "
+                                f"({', '.join(sorted(_GEOM_SIZE_LAYOUTS))}) instead."
+                            )
+                        }
+                    ],
+                }
+            size, err = _coerce_finite_vector(
+                size,
+                "size",
+                "set_geom_properties",
+                min_value=0.0,
+                strict_min=True,
+                accepted_lengths=(geom_layout[0],),
+                layout=f"{gtype}: {geom_layout[1]}",
+            )
             if err:
                 return err
 
@@ -1494,17 +1634,19 @@ class PhysicsMixin:
 
         with self._lock:
             if color is not None:
-                model.geom_rgba[gid] = color[:4] if len(color) >= 4 else color[:3] + [1.0]
+                # Validated as 3 or 4 components; RGB gets an opaque alpha.
+                model.geom_rgba[gid] = color if len(color) == 4 else [*color, 1.0]
                 changes.append(f"color → {model.geom_rgba[gid].tolist()}")
 
             if friction is not None:
-                fric = friction[:3] if len(friction) >= 3 else friction + [0.0] * (3 - len(friction))
-                model.geom_friction[gid] = fric
-                changes.append(f"friction → {fric}")
+                # Validated as exactly the three MuJoCo coefficients.
+                model.geom_friction[gid] = friction
+                changes.append(f"friction → {friction}")
 
             if size is not None:
-                n = min(len(size), 3)
-                model.geom_size[gid, :n] = size[:n]
+                # Validated as exactly the component count this geom's type
+                # defines; the unused tail of the 3-wide row stays as compiled.
+                model.geom_size[gid, : len(size)] = size
                 # geom_rbound (broadphase) and geom_aabb (mid-phase) are derived
                 # from geom_size at compile time and are not refreshed by the
                 # solver; without recomputing them a grown geom keeps its old,

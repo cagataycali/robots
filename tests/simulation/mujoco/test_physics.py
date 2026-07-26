@@ -739,8 +739,7 @@ class TestRuntimeModification:
     def test_set_geom_size_resizes_geom(self, sim):
         """set_geom_properties(size=...) writes the new half-extents into the
         live model so the next step / render sees the resized geom (no
-        recompile). Only the leading ``min(len(size), 3)`` entries are set,
-        matching MuJoCo's per-type geom_size layout."""
+        recompile). A box defines three half-extents, so all three are set."""
         geom_id = mj.mj_name2id(sim._world._model, mj.mjtObj.mjOBJ_GEOM, "box_geom")
         result = sim.set_geom_properties(geom_name="box_geom", size=[0.25, 0.3, 0.35])
         assert result["status"] == "success"
@@ -750,16 +749,23 @@ class TestRuntimeModification:
         assert new_size[1] == pytest.approx(0.3)
         assert new_size[2] == pytest.approx(0.35)
 
-    def test_set_geom_size_shorter_than_three_leaves_tail_untouched(self, sim):
-        """A partial size list updates only the entries provided and leaves the
-        remaining half-extents at their compiled value."""
+    def test_set_geom_size_shorter_than_the_type_defines_is_rejected(self, sim):
+        """A size vector shorter than the geom's type defines is refused.
+
+        This previously wrote the components provided and left the rest at their
+        compiled value, so ``size=[0.2]`` on a box resized x only and reported
+        success for a box the caller never described (0.2 x old_y x old_z). There
+        is no meaningful value to invent for the omitted components, so the whole
+        write is refused and the compiled half-extents stay intact.
+        """
         geom_id = mj.mj_name2id(sim._world._model, mj.mjtObj.mjOBJ_GEOM, "box_geom")
-        original_tail = float(sim._world._model.geom_size[geom_id][2])
+        original = sim._world._model.geom_size[geom_id].copy()
         result = sim.set_geom_properties(geom_name="box_geom", size=[0.2])
-        assert result["status"] == "success"
-        new_size = sim._world._model.geom_size[geom_id]
-        assert new_size[0] == pytest.approx(0.2)
-        assert float(new_size[2]) == pytest.approx(original_tail)
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "exactly 3 component(s)" in text
+        assert "box" in text
+        assert sim._world._model.geom_size[geom_id] == pytest.approx(original)
 
     def test_set_geom_size_grow_recomputes_rbound_and_aabb(self, sim):
         """Growing a size-defined primitive refreshes its collision bounds.
