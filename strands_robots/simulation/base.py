@@ -957,6 +957,50 @@ class SimEngine(ABC):
         return None
 
     @staticmethod
+    def _validate_control_substeps(control_substeps: Any, method: str) -> dict[str, Any] | None:
+        """Reject a ``control_substeps`` override the rollout cannot honor.
+
+        ``control_substeps`` is how many physics steps are integrated per
+        applied action. ``None`` (the default) means "derive it from the
+        backend's physics timestep so the arm tracks the full control period",
+        which is why ``None`` is accepted here. Any explicit value must be a
+        positive integer: ``0`` / a negative value was previously clamped to a
+        single physics step by ``max(1, int(override))``, which is precisely the
+        under-integration pathology
+        :meth:`~strands_robots.simulation.policy_runner.PolicyRunner._control_substeps`
+        exists to avoid - the arm integrates ~2 ms of a 20 ms control period, so
+        the rollout reports ``status="success"`` while the policy looks like a
+        no-op. A float (``2.7``) was silently truncated, ``True`` acted as a
+        silent 1 substep (``bool`` is an ``int`` subclass, so it is rejected
+        explicitly as in :meth:`_validate_positive_frequency`), and ``nan`` /
+        ``inf`` reached ``int()`` deep inside the runner and surfaced as a bare
+        ``ValueError``/``OverflowError`` instead of the structured tool-error
+        dict the public API contracts.
+
+        The positive-integer domain itself is delegated to
+        :meth:`_validate_positive_int` so this guard and the rollout count knobs
+        cannot drift apart.
+
+        Args:
+            control_substeps: The caller-supplied value to validate.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None`` when the
+            value is valid (including ``None``, which means "auto-derive").
+        """
+        if control_substeps is None:
+            return None
+        if isinstance(control_substeps, bool):
+            return {
+                "status": "error",
+                "content": [
+                    {"text": f"{method}: control_substeps must be a positive integer, got {control_substeps!r}."}
+                ],
+            }
+        return SimEngine._validate_positive_int(control_substeps, "control_substeps", method)
+
+    @staticmethod
     def _validate_positive_frequency(control_frequency: Any, method: str) -> dict[str, Any] | None:
         """Reject a non-positive or non-numeric ``control_frequency`` at the public API.
 
@@ -1253,6 +1297,14 @@ class SimEngine(ABC):
             control_frequency: Target Hz for policy queries. Must be a
                 positive number; a non-positive, non-numeric, or bool value
                 is reported as a structured caller error.
+            control_substeps: Explicit physics steps to integrate per applied
+                action, overriding the ``control_frequency``-derived value.
+                Must be a positive integer; ``0``, a negative value, a float,
+                or a bool is reported as a structured caller error rather than
+                collapsing to a single physics step (which under-integrates
+                each control period so the arm barely moves while the rollout
+                still reports success). ``None`` (default) derives it from
+                ``control_frequency`` and the backend's physics timestep.
             action_horizon: Lower bound on actions consumed from each
                 policy chunk before re-querying. The effective interval is
                 ``max(action_horizon, policy.execution_horizon)`` (see
@@ -1401,6 +1453,8 @@ class SimEngine(ABC):
         if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "run_policy"):
             return err
         if err := self._validate_action_horizon(action_horizon, "run_policy"):
+            return err
+        if err := self._validate_control_substeps(control_substeps, "run_policy"):
             return err
 
         if robot_name not in self.list_robots():
@@ -2068,7 +2122,10 @@ class SimEngine(ABC):
         :meth:`PolicyRunner.evaluate` so the eval loop steps physics for the
         full control period per action (same servo-tracking semantics as
         :meth:`run_policy`). Without these the arm under-steps and the policy
-        looks like a no-op (the arm under-steps each control period).
+        looks like a no-op (the arm under-steps each control period). An explicit
+        ``control_substeps`` must be a positive integer - ``0``/negative/float
+        is rejected with a structured error instead of collapsing to a single
+        physics step, which would reinstate that same no-op.
 
         ``async_rtc`` (default ``False``) opts into overlapping policy
         inference with action-chunk execution, evaluating a chunk-emitting
@@ -2151,6 +2208,8 @@ class SimEngine(ABC):
         if err := self._validate_positive_int(max_steps, "max_steps", "eval_policy"):
             return err
         if err := self._validate_positive_frequency(control_frequency, "eval_policy"):
+            return err
+        if err := self._validate_control_substeps(control_substeps, "eval_policy"):
             return err
         # Coerce to a plain Python float now the value is validated: a NumPy
         # scalar (accepted above via numbers.Real) flows into 1 / control_frequency
@@ -2290,7 +2349,10 @@ class SimEngine(ABC):
                 effective episode horizon.
             control_substeps: Explicit physics substeps per action, overriding
                 the ``control_frequency``-derived value (mirrors
-                :meth:`eval_policy`). ``None`` (default) derives it from
+                :meth:`eval_policy`). Must be a positive integer; ``0``,
+                negative, float and bool values are rejected with a structured
+                error rather than collapsing to a single under-integrated
+                physics step. ``None`` (default) derives it from
                 ``control_frequency``.
             policy_object: An already-built :class:`Policy` to evaluate,
                 skipping the ``create_policy`` round-trip (mirrors
@@ -2330,6 +2392,8 @@ class SimEngine(ABC):
         if err := self._validate_positive_int(n_episodes, "n_episodes", "evaluate_benchmark"):
             return err
         if err := self._validate_positive_frequency(control_frequency, "evaluate_benchmark"):
+            return err
+        if err := self._validate_control_substeps(control_substeps, "evaluate_benchmark"):
             return err
         # Coerce to a plain Python float now the value is validated: a NumPy
         # scalar (accepted above via numbers.Real) flows into 1 / control_frequency

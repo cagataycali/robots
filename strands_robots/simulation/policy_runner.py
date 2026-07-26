@@ -789,9 +789,28 @@ class PolicyRunner:
         ``mj_step``), so the arm integrated ~10% of the way toward each target
         before the next action overwrote ``ctrl`` - rollouts looked like the
         policy was a no-op even when commanding valid targets.
+
+        Args:
+            control_frequency: Control-loop rate in Hz, used with the backend's
+                physics timestep to derive the substep count.
+            override: Explicit substeps per action, or ``None`` to derive.
+
+        Returns:
+            Physics steps to advance per applied action (always ``>= 1``).
+
+        Raises:
+            ValueError: If ``override`` is not a positive integer. It used to be
+                clamped with ``max(1, int(override))``, so ``0``/``-5`` silently
+                collapsed to a single physics step - reinstating the exact
+                under-integration this helper exists to prevent - and a float
+                was truncated. The public entry points reject such a value with
+                a structured error before reaching the runner; this raise is the
+                guarantee for callers driving ``PolicyRunner`` directly.
         """
         if override is not None:
-            return max(1, int(override))
+            if isinstance(override, bool) or not isinstance(override, int) or override < 1:
+                raise ValueError(f"control_substeps must be a positive integer, got {override!r}.")
+            return override
         dt = None
         try:
             dt = self.sim.physics_timestep()
@@ -1126,18 +1145,10 @@ class PolicyRunner:
             # per action and barely moves - the policy looks like a no-op even
             # though it is sending valid targets. Derive substeps from the
             # backend's physics timestep; fall back to 1 when unknown.
-            if control_substeps is not None:
-                n_substeps = max(1, int(control_substeps))
-            else:
-                _dt = None
-                try:
-                    _dt = self.sim.physics_timestep()
-                except Exception:  # noqa: BLE001 - never fail the run on a probe
-                    _dt = None
-                if _dt and _dt > 0 and control_frequency > 0:
-                    n_substeps = max(1, round((1.0 / control_frequency) / _dt))
-                else:
-                    n_substeps = 1
+            # Single source of truth for the derivation AND for the
+            # positive-integer contract on an explicit override: an inline copy
+            # here drifted from the shared helper the eval paths use.
+            n_substeps = self._control_substeps(control_frequency, control_substeps)
             logger.info(
                 "PolicyRunner: control_frequency=%.1f Hz, physics substeps/action=%d",
                 control_frequency,

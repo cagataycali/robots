@@ -448,9 +448,13 @@ class TestControlSubsteps:
         assert dt and dt > 0
         # 50 Hz control over a 2 ms physics dt -> 10 substeps per action.
         assert runner._control_substeps(50.0) == round((1.0 / 50.0) / dt)
-        # Explicit override wins and is floored at 1.
+        # Explicit override wins. A non-positive override is NOT floored to 1:
+        # clamping it silently reinstated the single-physics-step
+        # under-integration this helper exists to prevent, so it raises (the
+        # public entry points reject it with a structured error first).
         assert runner._control_substeps(50.0, override=7) == 7
-        assert runner._control_substeps(50.0, override=0) == 1
+        with pytest.raises(ValueError, match="control_substeps"):
+            runner._control_substeps(50.0, override=0)
 
     def test_evaluate_steps_full_control_period(self, sim_with_robot):
         """A constant-target policy must actually move the arm in evaluate().

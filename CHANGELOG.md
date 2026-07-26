@@ -5,6 +5,46 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `control_substeps` is honored or rejected, never silently clamped
+
+`control_substeps` sets how many physics steps are integrated per applied
+action. `PolicyRunner._control_substeps` resolved an explicit value with
+`max(1, int(override))`, so every value it could not honor was accepted and
+collapsed to a single physics step - reinstating exactly the under-integration
+that helper exists to prevent (a position-servo arm reaches ~10% of each target
+before the next action overwrites `ctrl`, so the rollout reports success while
+the policy looks like a no-op):
+
+```python
+sim.run_policy(robot_name="panda", n_steps=120, control_frequency=50.0,
+               control_substeps=0)
+# -> success: "120 steps | sim_t=0.240s"   (0.240 s of physics for 2.4 s of
+#                                           control - 1 substep, not 10)
+sim.run_policy(..., control_substeps=-5)     # -> success, same single step
+sim.run_policy(..., control_substeps=2.7)    # -> success, truncated to 2
+sim.run_policy(..., control_substeps=True)   # -> success, acts as 1
+sim.run_policy(..., control_substeps=float("nan"))
+# -> error: "Policy failed: cannot convert float NaN to integer"
+#           (bare ValueError from inside the runner; never names the parameter)
+```
+
+Every sibling knob on those signatures was already guarded (`action_horizon`
+>= 1, `n_episodes` / `max_steps` positive ints, `control_frequency` > 0).
+`control_substeps` now shares that contract: `SimEngine._validate_control_substeps`
+accepts `None` (auto-derive from the backend physics timestep) and otherwise
+requires a positive integer, rejecting `bool` explicitly as
+`_validate_positive_frequency` does, and is called from `run_policy`,
+`eval_policy` and `evaluate_benchmark` before any policy is built:
+
+```python
+sim.run_policy(..., control_substeps=0)
+# -> error: "run_policy: control_substeps must be a positive integer, got 0."
+```
+
+`PolicyRunner._control_substeps` now raises `ValueError` on such an override
+instead of clamping it, so callers driving the runner directly also fail loudly,
+and `PolicyRunner.run` resolves substeps through that shared helper rather than
+its own inline copy of the derivation.
 ### Fixed: rollout entry points reject a `duration` they cannot run
 
 `duration` is the DEFAULT rollout horizon: with no `n_steps` / `max_steps` the
