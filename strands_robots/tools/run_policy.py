@@ -252,6 +252,17 @@ def run_policy(
         if video_error := VideoConfig.validation_error(video):
             return _err(f"run_policy: {video_error}")
 
+    # Same reason, for the provider keyword bags: a non-mapping policy_config /
+    # policy_kwargs must be rejected before step 2 creates a dataset and starts
+    # recording, otherwise the tool leaves an empty dataset behind and reports
+    # every episode as raised. Imported here rather than at module scope to
+    # match the lazy-import convention the rest of this tool follows.
+    from strands_robots.policies import policy_mapping_error
+
+    for _param, _value in (("policy_config", policy_config), ("policy_kwargs", policy_kwargs)):
+        if mapping_error := policy_mapping_error(_value, _param):
+            return _err(f"run_policy: {mapping_error}")
+
     # ---- 2. Optional: start recording -----------------------------------
     recording_started = False
     if dataset_root is not None:

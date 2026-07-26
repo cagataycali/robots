@@ -3666,6 +3666,14 @@ class MuJoCoSimEngine(
         # already been told the policy started and the robot marked running.
         if err := self._validate_video_config(video, "start_policy"):
             return err
+        # Likewise for the provider keyword bags: a non-mapping policy_config /
+        # policy_kwargs only fails when create_policy / get_actions splats it,
+        # i.e. inside the future, so without this guard the caller receives a
+        # false "started" for a rollout that never produced an action.
+        if err := self._validate_policy_mapping(policy_config, "policy_config", "start_policy"):
+            return err
+        if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "start_policy"):
+            return err
 
         # Concurrent multi-robot policies run on disjoint ctrl slices (physics
         # serialized by _lock). For SYNCHRONIZED multi-robot *recording* (both

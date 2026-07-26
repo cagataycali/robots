@@ -2,7 +2,7 @@
 
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
 from strands_robots.policies.base import Policy
 from strands_robots.registry import import_policy_class, list_policy_providers, resolve_policy
@@ -136,6 +136,46 @@ def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], d
 
     # 3. Standard lookup from policies.json.
     return provider, import_policy_class(provider), dict(kwargs)
+
+
+# ``policy_config`` (and the per-call ``policy_kwargs``) are opaque provider
+# keyword bags: callers hand them to ``create_policy`` / ``get_actions``, which
+# splat them with ``**``. A non-mapping value therefore fails inside CPython's
+# call machinery with a bare ``TypeError`` naming this module's internals, which
+# tells the caller nothing about which parameter to fix. Callers validate the
+# value against this helper first and wrap the message in their own error
+# envelope, mirroring ``VideoConfig.validation_error``.
+_POLICY_MAPPING_HINTS: dict[str, str] = {
+    "policy_config": (
+        "provider kwargs forwarded to create_policy, e.g. policy_config={'host': '127.0.0.1', 'port': 5555}"
+    ),
+    "policy_kwargs": ("per-call kwargs forwarded to policy.get_actions, e.g. policy_kwargs={'target_pose': [...]}"),
+}
+
+
+def policy_mapping_error(value: object, param: str = "policy_config") -> str | None:
+    """Describe why ``value`` cannot be used as a provider keyword mapping.
+
+    ``policy_config`` / ``policy_kwargs`` are free-form dicts with no signature
+    to bounce off, so a value of the wrong *shape* - a ``"host=1"`` string, a
+    list of pairs, a JSON blob an agent forgot to parse - is only detected when
+    CPython splats it, far from the call the caller made.
+
+    Args:
+        value: The caller-supplied value, or ``None`` (always accepted: the
+            parameter is optional).
+        param: Parameter name to quote in the message; also selects the
+            example shown. Unknown names fall back to a generic hint.
+
+    Returns:
+        A single-sentence explanation naming the parameter, the type received
+        and a correct example, or ``None`` when ``value`` is usable as ``**``
+        keyword arguments.
+    """
+    if value is None or isinstance(value, Mapping):
+        return None
+    hint = _POLICY_MAPPING_HINTS.get(param, "keyword arguments")
+    return f"{param} must be a dict of {hint}; got {type(value).__name__} ({value!r})."
 
 
 def create_policy(provider: str, **kwargs) -> Policy:

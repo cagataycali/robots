@@ -5,6 +5,43 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: rollout entry points reject a `policy_config` / `policy_kwargs` they cannot splat
+
+`policy_config` (provider kwargs for `create_policy`) and `policy_kwargs` (per-call
+kwargs for `Policy.get_actions`) are opaque dicts that reach their consumer through
+`**`, so a value of the wrong *shape* was only detected by CPython's call machinery,
+far from the call the caller made:
+
+```python
+sim.run_policy(robot_name="arm1", policy_provider="mock", policy_config="host=127.0.0.1")
+# -> TypeError: strands_robots.policies.factory.preflight_policy() argument
+#               after ** must be a mapping, not str
+
+sim.start_policy(robot_name="arm1", policy_provider="mock", policy_config=["host=127.0.0.1"])
+# -> success: "Policy started on 'arm1' (async)"      (nothing ever ran)
+
+sim.run_policy(robot_name="arm1", policy_provider="mock", policy_kwargs="pick up the cube")
+# -> error: "Policy failed: ...MockPolicy.get_actions() argument after **
+#            must be a mapping, not str"              (after the rollout began)
+```
+
+The `start_policy` case is the damaging one: the splat failed on the background
+thread, inside the future, so the caller was told a policy had started when no
+action was ever produced. The blocking paths raised a bare `TypeError` out of the
+library naming an internal helper rather than the parameter to fix, and the
+`policy_kwargs` variant only surfaced once the control loop was already running -
+after a `run_policy` tool call could have created a dataset and started recording.
+
+Both parameters are now validated at every public entry point (`run_policy`,
+`start_policy`, `eval_policy`, `evaluate_benchmark`, and the multi-episode
+`run_policy` tool) before a policy is created, a thread is submitted, or a
+recorder is opened. The check is the new public
+`strands_robots.policies.policy_mapping_error(value, param)` helper, which names
+the parameter, the type received and a correct example - the same shape as
+`VideoConfig.validation_error`. Mappings, empty dicts and `None` behave exactly
+as before.
+
+
 ### Fixed: `add_object(material=...)` rejects keys it cannot honor
 
 Every key of the `material` spec is optional and was read with `dict.get()`, so

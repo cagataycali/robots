@@ -1015,6 +1015,36 @@ class SimEngine(ABC):
             return None
         return {"status": "error", "content": [{"text": f"{method}: {video_error}"}]}
 
+    @staticmethod
+    def _validate_policy_mapping(value: Any, param: str, method: str) -> dict[str, Any] | None:
+        """Reject a ``policy_config`` / ``policy_kwargs`` that cannot be splatted.
+
+        Both parameters are opaque keyword bags reaching their consumer through
+        ``**``: ``policy_config`` lands in ``create_policy``, ``policy_kwargs``
+        in ``policy.get_actions``. A value of the wrong shape used to surface as
+        a bare ``TypeError`` from CPython's call machinery, naming a library
+        internal instead of the parameter the caller got wrong - and on the
+        background-thread path (``start_policy``) it was raised inside the
+        future, so the caller was told the policy had started when no rollout
+        ever ran. Checking at the public entry point, before any policy is
+        created or a thread is submitted, turns both into an actionable error.
+
+        Args:
+            value: The caller-supplied value, or ``None``.
+            param: ``"policy_config"`` or ``"policy_kwargs"``.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict to surface, or
+            ``None`` when the value is valid.
+        """
+        from strands_robots.policies import policy_mapping_error
+
+        message = policy_mapping_error(value, param)
+        if message is None:
+            return None
+        return {"status": "error", "content": [{"text": f"{method}: {message}"}]}
+
     def run_policy(
         self,
         robot_name: str | None = None,
@@ -1196,6 +1226,10 @@ class SimEngine(ABC):
             return err
 
         if err := self._validate_video_config(video, "run_policy"):
+            return err
+        if err := self._validate_policy_mapping(policy_config, "policy_config", "run_policy"):
+            return err
+        if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "run_policy"):
             return err
         if err := self._validate_action_horizon(action_horizon, "run_policy"):
             return err
@@ -1937,6 +1971,10 @@ class SimEngine(ABC):
 
         if err := self._validate_video_config(video, "eval_policy"):
             return err
+        if err := self._validate_policy_mapping(policy_config, "policy_config", "eval_policy"):
+            return err
+        if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "eval_policy"):
+            return err
         if err := self._validate_action_horizon(action_horizon, "eval_policy"):
             return err
         if err := self._validate_positive_int(n_episodes, "n_episodes", "eval_policy"):
@@ -2113,6 +2151,10 @@ class SimEngine(ABC):
         from strands_robots.simulation.benchmark import get_benchmark
 
         if err := self._validate_video_config(video, "evaluate_benchmark"):
+            return err
+        if err := self._validate_policy_mapping(policy_config, "policy_config", "evaluate_benchmark"):
+            return err
+        if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "evaluate_benchmark"):
             return err
         if err := self._validate_action_horizon(action_horizon, "evaluate_benchmark"):
             return err

@@ -47,6 +47,7 @@ from strands_robots.policies.factory import (
     UntrustedRemoteCodeError,
     create_policy,
     list_providers,
+    policy_mapping_error,
     preflight_policy,
     register_policy,
 )
@@ -67,6 +68,7 @@ __all__ = [
     "CompositePolicy",
     "create_policy",
     "preflight_policy",
+    "policy_mapping_error",
     "register_policy",
     "list_providers",
     "list_policy_types",
