@@ -177,16 +177,18 @@ class TestRouterNameRobotNameAlias:
 
 
 class TestRouterKwargsPassthrough:
-    """Methods with **kwargs in signature accept unknown params without error."""
+    """Methods declaring **kwargs receive the residual keys and own the check.
 
-    def test_router_skips_unknown_check_for_var_keyword_methods(self, sim):
-        # The router's unknown-parameter guard is skipped only for methods that
-        # genuinely declare **kwargs; extra keys are dropped (not rejected).
-        # Verified directly against the validator, because no dispatchable
-        # action currently relies on this branch: add_object used to, but its
-        # signature is identical across backends and now rejects unknown params
-        # instead of silently dropping them (see
-        # test_add_object_rejects_unknown_kwargs.py).
+    The router's unknown-parameter guard is skipped for those methods, so it
+    must hand the residual keys over rather than drop them: dropping would leave
+    the input neither validated nor used, which is how ``randomize`` /
+    ``set_obs_noise`` came to report a misspelled parameter as a successful
+    no-op (see test_domain_randomization_rejects_unknown_params.py). A
+    forwarding sink passes the keys to its callee; a discarding sink rejects
+    them. Verified directly against the validator with a signature-only stub.
+    """
+
+    def test_router_forwards_residual_keys_to_var_keyword_methods(self, sim):
         import inspect
 
         def fake(self, name, **kwargs):  # noqa: ANN001, ANN002, ANN202
@@ -195,8 +197,18 @@ class TestRouterKwargsPassthrough:
         sig = inspect.signature(fake)
         kwargs, err = sim._validate_and_build_kwargs("fake", "fake", sig, {"name": "x", "future_flag": True})
         assert err is None
-        # only declared params are forwarded; the extra key is dropped silently
-        assert kwargs == {"name": "x"}
+        assert kwargs == {"name": "x", "future_flag": True}
+
+    def test_router_still_rejects_unknown_keys_without_var_keyword(self, sim):
+        import inspect
+
+        def fake(self, name):  # noqa: ANN001, ANN202
+            """Signature-only stub; never called, its body is irrelevant."""
+
+        sig = inspect.signature(fake)
+        kwargs, err = sim._validate_and_build_kwargs("fake", "fake", sig, {"name": "x", "future_flag": True})
+        assert kwargs is None
+        assert err is not None and "future_flag" in err["content"][0]["text"]
 
 
 class TestToolSpecMethodParity:

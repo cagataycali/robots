@@ -5,6 +5,36 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `randomize` / `set_obs_noise` reject parameters they cannot honor
+
+Both methods declare `**kwargs` to match the `**kwargs`-typed
+`SimEngine.randomize` / `SimEngine.set_obs_noise` base signatures, and neither
+forwards it anywhere - so every keyword the method did not declare was dropped
+and the call still answered `status="success"`:
+
+```python
+sim.randomize(randomize_position=True, position_noise=0.05)   # singular typo
+# -> success: "Domain Randomization applied: Colors ... Lighting ..."   (positions untouched)
+sim.set_obs_noise(joint_pos_stdev=0.05)                       # "stdev" typo
+# -> success: "Sensor noise: joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0"
+```
+
+A data-collection or eval loop asking for object-position randomization or
+sensor noise was therefore told the request had been applied while the world and
+the observations were never perturbed. The action dispatcher's own
+unknown-parameter guard (`Unknown parameter 'nsteps' for action 'step'. Valid:
+['n_steps']`) is skipped for `**kwargs` methods, so the direct Python API and the
+agent dispatch path both silently accepted the misspelling.
+
+Both methods now return an error naming the unusable keys and the valid set, on
+the MuJoCo and Newton backends. Newton still answers a truthy
+`randomize_positions` with its specific unsupported-axis error (that key, and its
+`position_noise` companion, stay accepted for MuJoCo-signature parity). The
+dispatcher now forwards residual keys to `**kwargs` methods instead of dropping
+them, so a genuine forwarding sink (`attach_teleop`, `stream_dataset`) also
+receives the options an agent passes.
+
+
 ### Fixed: MuJoCo `get_camera_params` answers for the free (`"default"`) camera
 
 `get_frame` renders the free camera (`None` / `""` / `"default"` / `"free"`) and

@@ -4190,7 +4190,11 @@ class MuJoCoSimEngine(
         """
         # Strip self + VAR_POSITIONAL (*args) + VAR_KEYWORD (**kwargs) for signature
         # introspection; **kwargs methods accept arbitrary inputs, so we skip the
-        # unknown-key check for them.
+        # unknown-key check for them. Those methods own the check instead: the
+        # forwarding sinks (attach_teleop, stream_dataset) hand the residual keys
+        # to their callee, and the discarding ones (randomize, set_obs_noise)
+        # reject them via unknown_kwargs_error - otherwise skipping here would
+        # make a misspelled parameter a silent no-op on exactly those actions.
         named_params = {
             n: p
             for n, p in sig.parameters.items()
@@ -4273,6 +4277,14 @@ class MuJoCoSimEngine(
                     "status": "error",
                     "content": [{"text": f"Action '{action}' requires parameter '{param_name}'."}],
                 }
+
+        # 4) Residual keys for **kwargs methods. The unknown-key check above is
+        # skipped for them, so dropping the keys here too would leave the input
+        # unvalidated AND unused: a forwarding sink would never see the option
+        # the caller asked for, and a discarding sink could not reject a
+        # misspelling. Hand them over and let the method decide.
+        if method_has_var_keyword:
+            kwargs.update({k: v for k, v in remapped.items() if k not in accepted_field_names})
 
         return kwargs, None
 

@@ -18,6 +18,21 @@ sim.randomize(
 )
 ```
 
+**Unknown parameters are rejected.** `randomize()` and `set_obs_noise()` both
+declare `**kwargs` to match the backend-agnostic `SimEngine` signature, so a
+keyword they do not honor (`randomize_position` singular, `position_range`,
+`joint_pos_stdev`) would otherwise be dropped and the call still reported as
+applied. Instead they return `status=error` naming the unusable keys and the
+valid set - a misspelled axis can never look like a successful randomization:
+
+```python
+sim.randomize(randomize_position=True)   # singular
+# status=error: Unknown parameter(s) ['randomize_position'] for action 'randomize'.
+#              Valid: ['color_range', 'friction_range', 'mass_range', 'position_noise',
+#                      'randomize_colors', 'randomize_lighting', 'randomize_physics',
+#                      'randomize_positions', 'seed']
+```
+
 **Destructive** - writes into MuJoCo model arrays. To restore: `load_scene(...)` or recreate the sim.
 
 `randomize()` leaves the sim in a forwarded, render-ready state: the next `render()` / `get_observation()` reflects the perturbation immediately, with no manual `step()` in between. This matters for lighting in particular - the renderer reads light positions from the derived `data.light_xpos`, not `model.light_pos`, so a light-position jitter only reaches a render after a forward.

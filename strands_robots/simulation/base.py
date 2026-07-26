@@ -94,6 +94,42 @@ def reject_setup_kwargs(kwargs: Mapping[str, Any]) -> None:
     )
 
 
+def unknown_kwargs_error(method: str, kwargs: Mapping[str, Any], accepted: Sequence[str]) -> dict[str, Any] | None:
+    """Return a tool-envelope error for keyword arguments a method cannot use.
+
+    Some engine methods declare ``**kwargs`` only to keep the ``**kwargs``-typed
+    :class:`SimEngine` base signature, then drop the residual keys. For a
+    *forwarding* sink (``attach_teleop``, ``stream_dataset``) dropping is right -
+    the keys belong to the callee. For a *discarding* sink it turns a misspelled
+    or invented parameter into a successful no-op: a caller asking for
+    object-position randomization or sensor noise is told the request was
+    applied when nothing happened. Discarding sinks call this helper instead, so
+    an unusable parameter is named rather than swallowed - the same contract the
+    action dispatcher already enforces for methods without ``**kwargs``.
+
+    Args:
+        method: Method (and action) name to quote in the message.
+        kwargs: The residual keyword arguments the method would otherwise drop.
+        accepted: Every keyword the method honors, including any it reads out of
+            its own ``**kwargs`` (Newton's ``randomize`` answers
+            ``randomize_positions`` with a dedicated unsupported-axis error).
+            Also listed as the "Valid:" hint.
+
+    Returns:
+        ``None`` when every key in ``kwargs`` is accepted, otherwise a
+        ``status="error"`` result dict naming the unusable keys. An error dict
+        rather than a raised exception because these methods are dispatched as
+        agent tool actions, which must not raise past dispatch.
+    """
+    unexpected = sorted(k for k in kwargs if k not in accepted)
+    if not unexpected:
+        return None
+    return {
+        "status": "error",
+        "content": [{"text": (f"Unknown parameter(s) {unexpected} for action '{method}'. Valid: {sorted(accepted)}")}],
+    }
+
+
 class SimEngine(ABC):
     """Abstract base class for simulation engines.
 
@@ -2247,7 +2283,11 @@ class SimEngine(ABC):
     def randomize(self, **kwargs: Any) -> dict[str, Any]:
         """Apply domain randomization.
 
-        Concrete backends define their own parameter signatures.
+        Concrete backends define their own parameter signatures. Because this
+        base signature is ``**kwargs``-typed, an override inherits a sink that
+        would swallow any keyword it does not declare; backends must reject the
+        residual keys (see :func:`unknown_kwargs_error`) so a misspelled axis
+        cannot report success while leaving that axis untouched.
         Override per backend.
         """
         raise NotImplementedError("randomize not implemented by this backend")
@@ -2257,7 +2297,9 @@ class SimEngine(ABC):
 
         Models real-sensor measurement noise (joint encoders, camera frames)
         so policies are not trained on noise-free observations. Concrete
-        backends define their own parameter signatures. Override per backend.
+        backends define their own parameter signatures and, as for
+        :meth:`randomize`, must reject keywords they do not declare rather than
+        let this ``**kwargs``-typed signature swallow them. Override per backend.
         """
         raise NotImplementedError("set_obs_noise not implemented by this backend")
 
