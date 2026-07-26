@@ -24,7 +24,7 @@ import numbers
 import os
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, SupportsFloat
+from typing import TYPE_CHECKING, Any, SupportsFloat, cast
 
 if TYPE_CHECKING:
     import numpy as np
@@ -328,6 +328,17 @@ class SimEngine(ABC):
         the local terrain surface (raised by the heightfield height beneath
         it) at ``add_robot`` and on ``reset()``, so its feet are not buried
         below the raised terrain.
+
+        ``timestep`` (seconds) and ``gravity`` must be values the engine can
+        honor, on the same terms the ``set_timestep`` / ``set_gravity`` setters
+        enforce: ``timestep`` a finite number ``> 0`` (``0`` is rejected, never
+        coalesced to the engine default), ``gravity`` a 3-element vector of
+        finite numbers or a real scalar taken as the z-component. A value the
+        backend cannot apply is rejected with a structured error rather than
+        compiled into the world - a world built around a negative or ``nan``
+        ``dt`` integrates backwards or to ``nan`` while every subsequent call
+        still reports ``status="success"``. ``None`` means "use the engine
+        default".
         """
         ...
 
@@ -989,6 +1000,103 @@ class SimEngine(ABC):
                 "content": [{"text": f"{method}: control_frequency must be > 0, got {control_frequency!r}."}],
             }
         return None
+
+    @staticmethod
+    def _validate_timestep(timestep: Any, method: str, param: str = "timestep") -> dict[str, Any] | None:
+        """Reject a physics timestep the integrator cannot honor.
+
+        The timestep is the ``dt`` every physics substep advances by, so a
+        non-positive or non-finite value poisons the whole world rather than
+        one call: a negative ``dt`` runs the integrator backwards (sim time
+        counts down, accelerations blow up) and a ``nan`` makes every state
+        ``nan`` - both while the creating call still reports
+        ``status="success"``. ``0`` is equally unusable, and must be rejected
+        rather than coalesced to the engine default: a caller that passed
+        ``0`` and was silently given ``0.002`` never learns its value was
+        discarded. This is the same contract
+        :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.set_timestep`
+        already enforces, so the value cannot be set at world creation on
+        terms the setter would refuse.
+
+        Args:
+            timestep: The caller-supplied value. Anything ``float()`` accepts
+                is coerced (so a NumPy scalar passes); ``bool`` is rejected
+                explicitly since ``True`` would act as a silent 1-second step.
+            method: Public method name, used to prefix the error message.
+            param: Parameter name to quote - ``"timestep"`` for a caller
+                argument, or the name of the engine default it fell back to.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict to surface, or
+            ``None`` when the value is usable.
+        """
+        message = f"{method}: {param} must be a finite positive number, got {timestep!r}."
+        if isinstance(timestep, bool):
+            return {"status": "error", "content": [{"text": message}]}
+        try:
+            value = float(timestep)
+        except (TypeError, ValueError):
+            return {"status": "error", "content": [{"text": message}]}
+        if not math.isfinite(value) or value <= 0:
+            return {"status": "error", "content": [{"text": message}]}
+        return None
+
+    @staticmethod
+    def _normalize_gravity(
+        gravity: Any, method: str, param: str = "gravity"
+    ) -> tuple[list[float] | None, dict[str, Any] | None]:
+        """Coerce a gravity argument to three finite floats, or explain why not.
+
+        Gravity reaches the engine as a raw vector assignment (MuJoCo:
+        ``model.opt.gravity[:] = ...``), so a mis-shaped value either raises a
+        binding-level ``TypeError`` naming the physics library's internals
+        instead of the parameter the caller got wrong, or - for values that
+        happen to be assignable - lands in the world while the result echoes
+        the caller's input as if it had been applied. Callers therefore
+        normalize through this helper and store the returned components, so
+        what the result reports is what the engine received.
+
+        Exactly one element of the returned tuple is non-``None``.
+
+        Args:
+            gravity: A 3-element ``[x, y, z]`` sequence, or a real scalar taken
+                as the z-component (``[0, 0, z]``, matching
+                :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.set_gravity`).
+            method: Public method name, used to prefix the error message.
+            param: Parameter name to quote in the message.
+
+        Returns:
+            ``(components, None)`` with three finite floats, or
+            ``(None, error_dict)`` describing what is wrong with the value.
+        """
+        # Accept any real scalar (numbers.Real) as a z-only gravity so a value
+        # computed as a NumPy scalar (np.float32 / np.int64) is treated like a
+        # plain float. A NumPy array is not numbers.Real, so it still takes the
+        # vector path below.
+        if isinstance(gravity, numbers.Real):
+            components = [0.0, 0.0, float(gravity)]
+        else:
+            try:
+                vector = cast("Sequence[Any]", gravity)
+                if len(vector) != 3:
+                    return None, {
+                        "status": "error",
+                        "content": [
+                            {"text": f"{method}: '{param}' must be a 3-element list [x,y,z], got {len(vector)}"}
+                        ],
+                    }
+                components = [float(g) for g in vector]
+            except (TypeError, ValueError) as e:
+                return None, {
+                    "status": "error",
+                    "content": [{"text": f"{method}: '{param}' must be a 3-element list of numbers ({e})"}],
+                }
+        if not all(math.isfinite(g) for g in components):
+            return None, {
+                "status": "error",
+                "content": [{"text": f"{method}: all components must be finite, got {components}"}],
+            }
+        return components, None
 
     @staticmethod
     def _validate_video_config(video: Any, method: str) -> dict[str, Any] | None:

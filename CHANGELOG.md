@@ -5,6 +5,52 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `create_world` rejects a timestep / gravity it cannot honor
+
+`set_timestep` and `set_gravity` have always validated their input and returned
+a structured error. `create_world`, which sets those same two values before any
+setter can be called, validated neither, so a world could be created on terms
+the setters would refuse:
+
+```python
+sim.create_world(timestep=-0.002)
+# -> success: "Timestep: -0.002s (-500Hz physics)"
+sim.step(250)
+# -> success: "+250 steps | t=-0.5000s"   (integrator running backwards;
+#                                          a dropped ball rises)
+sim.create_world(timestep=0)
+# -> success: "Timestep: 0.002s (500Hz physics)"   (value silently discarded)
+sim.create_world(timestep=float("nan"))
+# -> success: "Timestep: nans (nanHz physics)"
+sim.create_world(gravity=[0, -9.81])
+# -> TypeError: incompatible function arguments ... mujoco._specs.MjOption
+sim.create_world(gravity=["0", "0", "-9.81"])
+# -> success: "Gravity: ['0', '0', '-9.81']"   (echoes input, not what was applied)
+```
+
+A bad `dt` poisons the world rather than one call: every later `step`,
+`run_policy` and `eval_policy` still reports `status="success"` while physics
+integrates backwards or to `nan`. `timestep=0` was coalesced by a
+`timestep or self.default_timestep` fallback, so a caller that asked for `0`
+was silently given `0.002`.
+
+`timestep` and `gravity` are now validated at `create_world` on exactly the
+setters' terms - shared helpers (`SimEngine._validate_timestep`,
+`SimEngine._normalize_gravity`) are the single source of truth for both entry
+points, so their accepted domains cannot diverge:
+
+```
+create_world: timestep must be a finite positive number, got -0.002.
+create_world: 'gravity' must be a 3-element list [x,y,z], got 2
+```
+
+The effective timestep is validated, so an unusable engine default
+(`Simulation(default_timestep=-0.002)`) is reported under its own name instead
+of compiling into the world. Gravity is stored coerced, so the result reports
+the floats the model received. The MuJoCo, Newton and Isaac backends all apply
+the guard; `0` is now an error rather than a silent fallback to the default.
+
+
 ### Fixed: rollout entry points reject a `policy_config` / `policy_kwargs` they cannot splat
 
 `policy_config` (provider kwargs for `create_policy`) and `policy_kwargs` (per-call

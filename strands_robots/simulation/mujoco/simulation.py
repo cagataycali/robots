@@ -509,6 +509,14 @@ class MuJoCoSimEngine(
         height beneath it) at ``add_robot`` and on every ``reset()``, rather
         than at the flat-ground keyframe height that would leave its feet
         buried below the raised terrain.
+
+        ``timestep`` and ``gravity`` are validated exactly as
+        :meth:`set_timestep` / :meth:`set_gravity` validate them - a finite
+        ``timestep > 0`` (``0`` is an error, not a silent fallback to the
+        engine default) and a 3-element finite ``gravity`` vector (or a real
+        scalar taken as the z-component). A value MuJoCo cannot integrate is
+        rejected with a structured error instead of being compiled into
+        ``model.opt``. ``None`` selects the engine default for either.
         """
         # mujoco verified at __init__
 
@@ -542,15 +550,25 @@ class MuJoCoSimEngine(
                 "content": [{"text": "World already exists. Use action='destroy' first, or action='reset'."}],
             }
 
+        # Validate the physics parameters on the same terms set_timestep /
+        # set_gravity enforce: a world must not be created with a dt or a
+        # gravity vector the setters would refuse. The effective timestep is
+        # checked (not just the argument) so an unusable engine default is
+        # reported under its own name instead of compiling into the world.
+        effective_timestep = self.default_timestep if timestep is None else timestep
+        timestep_param = "default_timestep" if timestep is None else "timestep"
+        if err := self._validate_timestep(effective_timestep, "create_world", timestep_param):
+            return err
         if gravity is None:
             _gravity = [0.0, 0.0, -9.81]
-        elif isinstance(gravity, (int, float)):
-            _gravity = [0.0, 0.0, float(gravity)]
         else:
-            _gravity = list(gravity)
+            normalized, gravity_error = self._normalize_gravity(gravity, "create_world")
+            if normalized is None:
+                return cast("dict[str, Any]", gravity_error)
+            _gravity = normalized
 
         self._world = SimWorld(
-            timestep=timestep or self.default_timestep,
+            timestep=float(effective_timestep),
             gravity=_gravity,
             ground_plane=ground_plane,
             terrain=terrain,
@@ -3124,35 +3142,12 @@ class MuJoCoSimEngine(
         # set_gravity during a running policy races the worker thread
         if err := self._require_no_running_policy("set_gravity"):
             return err
-        # Accept any real scalar (numbers.Real) as a z-only gravity so a value
-        # computed as a NumPy scalar (np.float32 / np.int64 / np.degrees(...)) is
-        # treated like a plain float, not refused with a misleading "has no len()".
-        # A NumPy array is not numbers.Real, so it still takes the vector path.
-        if isinstance(gravity, numbers.Real):
-            components = [0.0, 0.0, float(gravity)]
-        else:
-            # Any other value must be a 3-element sized vector (list / tuple /
-            # NumPy array). Validate length/dtype before the numpy broadcast.
-            try:
-                vector = cast("Sequence[float]", gravity)
-                if len(vector) != 3:
-                    return {
-                        "status": "error",
-                        "content": [
-                            {"text": f"set_gravity: 'gravity' must be a 3-element list [x,y,z], got {len(vector)}"}
-                        ],
-                    }
-                components = [float(g) for g in vector]
-            except (TypeError, ValueError) as e:
-                return {
-                    "status": "error",
-                    "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list of numbers ({e})"}],
-                }
-        if not all(math.isfinite(g) for g in components):
-            return {
-                "status": "error",
-                "content": [{"text": f"set_gravity: all components must be finite, got {components}"}],
-            }
+        # Shape/dtype/finiteness live in the shared normalizer so create_world
+        # accepts exactly what this setter accepts (a 3-element vector, or a
+        # real scalar - including a NumPy scalar - as the z-component).
+        components, gravity_error = self._normalize_gravity(gravity, "set_gravity")
+        if components is None:
+            return cast("dict[str, Any]", gravity_error)
         with self._lock:
             self._world._model.opt.gravity[:] = components
             self._world.gravity = components
@@ -3173,19 +3168,11 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("set_timestep"):
             return err
-        # reject non-positive; warn on huge values
-        try:
-            timestep = float(timestep)
-        except (TypeError, ValueError):
-            return {
-                "status": "error",
-                "content": [{"text": f"set_timestep: must be a positive number, got {timestep!r}"}],
-            }
-        if not math.isfinite(timestep) or timestep <= 0:
-            return {
-                "status": "error",
-                "content": [{"text": f"set_timestep: must be a finite positive number, got {timestep}"}],
-            }
+        # Shared with create_world so a world cannot be created with a dt this
+        # setter would refuse; warn (not reject) on huge-but-usable values.
+        if err := self._validate_timestep(timestep, "set_timestep"):
+            return err
+        timestep = float(timestep)
         warn = ""
         if timestep > 0.1:
             warn = f" Warning: unusually large timestep (>{0.1}s); physics may be unstable"

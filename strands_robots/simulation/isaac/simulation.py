@@ -751,6 +751,13 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     }
                 ],
             }
+        # A world must not be built around a dt the integrator cannot honor
+        # (negative, zero, nan): physics_dt drives every stage step, so an
+        # unusable value corrupts the world rather than one call.
+        effective_timestep = self._config.physics_dt if timestep is None else timestep
+        timestep_param = "physics_dt" if timestep is None else "timestep"
+        if err := self._validate_timestep(effective_timestep, "create_world", timestep_param):
+            return err
         # Isaac's ``PhysicsContext.set_gravity`` takes a single signed scalar
         # (the gravity along -Z); the backend cannot apply an off-axis vector.
         # A non-Z-aligned override was previously silently reduced to its

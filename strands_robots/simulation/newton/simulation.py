@@ -31,7 +31,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -289,10 +289,25 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     }
                 ],
             }
+        # Same contract as set_timestep / set_gravity (and the MuJoCo backend):
+        # never build a world around a dt or gravity vector the setters would
+        # refuse. The effective timestep is validated so an unusable engine
+        # default surfaces under its own name rather than driving the solver.
+        effective_timestep = self.default_timestep if timestep is None else timestep
+        timestep_param = "default_timestep" if timestep is None else "timestep"
+        if err := self._validate_timestep(effective_timestep, "create_world", timestep_param):
+            return err
+        if gravity is None:
+            components = [0.0, 0.0, -9.81]
+        else:
+            normalized, gravity_error = self._normalize_gravity(gravity, "create_world")
+            if normalized is None:
+                return cast("dict[str, Any]", gravity_error)
+            components = normalized
         with self._lock:
             self._world = SimWorld(
-                timestep=timestep or self.default_timestep,
-                gravity=gravity or [0.0, 0.0, -9.81],
+                timestep=float(effective_timestep),
+                gravity=components,
                 ground_plane=ground_plane,
             )
             self._rebuild()
