@@ -1799,6 +1799,15 @@ class SimEngine(ABC):
         the dataset fps), so a position-servo robot reproduces the recorded
         trajectory instead of under-integrating it.
 
+        ``action_key_map`` binds recorded action-vector indices to action keys
+        (default: :meth:`robot_action_keys`). It must be a non-empty list/tuple
+        of unique strings whose length matches the recorded action width; a bare
+        string, a non-string entry, a duplicate key or a width mismatch is
+        rejected rather than truncated to fit. A ``"success"`` status therefore
+        means every recorded frame actually reached the actuators - a frame that
+        ``send_action`` could not apply aborts the replay with the frame index,
+        the frames applied so far and the unresolved keys.
+
         Override per backend for optimised replay (e.g. direct ctrl
         writes) only when measured necessary.
         """
@@ -2490,7 +2499,10 @@ class SimEngine(ABC):
                 "replay_episode": (
                     "(repo_id: str, robot_name=None, episode=0, root=None, "
                     "speed=1.0, action_key_map=None) -> dict  # replay a recorded "
-                    "LeRobotDataset episode through the sim"
+                    "LeRobotDataset episode through the sim; action_key_map needs "
+                    "one unique key per recorded action index (default: "
+                    "robot_action_keys) and status='success' means every frame "
+                    "reached the actuators"
                 ),
                 "list_robots": "() -> list[str]",
                 "get_features": (

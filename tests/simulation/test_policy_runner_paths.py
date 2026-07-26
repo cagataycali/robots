@@ -254,9 +254,18 @@ def test_replay_with_tensor_like_actions(monkeypatch):
     assert r["status"] == "success"
 
 
-def test_replay_with_action_vector_larger_than_joint_count(monkeypatch):
-    """When dataset has more action dims than robot joints, replay truncates
-    (``break`` path in the replay loop)."""
+def test_replay_rejects_action_vector_wider_than_action_keys(monkeypatch):
+    """A recorded vector wider than the action-key map is rejected, not truncated.
+
+    Replay's contract is fidelity: reproduce the recorded trajectory. A dataset
+    with 5 action dims cannot be reproduced on a 3-actuator robot -- the last two
+    recorded DOFs have no key to be written through. Truncating them (the former
+    behaviour) reported ``status="success"`` with ``Frames: 2/2`` for a replay
+    that dropped 40% of every commanded action, so the caller had no signal that
+    the dataset and the robot did not match. ``send_action`` already rejects a
+    raw action vector whose length differs from the actuator count instead of
+    truncating it; replay now matches that.
+    """
 
     class _FatDataset:
         fps = 30
@@ -265,7 +274,7 @@ def test_replay_with_action_vector_larger_than_joint_count(monkeypatch):
             return 2
 
         def __getitem__(self, idx):
-            # 5 values but robot only has 3 joints → extras must be dropped
+            # 5 recorded values but the robot exposes only 3 action keys.
             return {"action": [0.1, 0.2, 0.3, 0.4, 0.5]}
 
     def loader(repo_id, episode, root):
@@ -278,7 +287,13 @@ def test_replay_with_action_vector_larger_than_joint_count(monkeypatch):
     monkeypatch.setattr(dr, "load_lerobot_episode", loader, raising=False)
 
     r = PolicyRunner(sim).replay(repo_id="fake/fat", speed=100.0)
-    assert r["status"] == "success"
+    assert r["status"] == "error"
+    text = r["content"][0]["text"]
+    assert "5 values" in text and "3 action keys" in text
+    # Nothing was applied, and the report says so instead of claiming 2/2.
+    assert "Applied 0/2 frames" in text
+    # No action reached the sim: the mismatch is caught before the first send.
+    assert not [c for c in sim.calls if c[0] == "send_action"]
 
 
 def test_replay_reads_actions_without_video_decode(monkeypatch):

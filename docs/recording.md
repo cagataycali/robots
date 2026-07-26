@@ -375,6 +375,45 @@ ds = LeRobotDataset(repo_id="user/my_dataset", root="/tmp/my_dataset")
 print(len(ds), ds[0].keys())
 ```
 
+## Replay an episode
+
+`sim.replay_episode(repo_id, robot_name=..., episode=0, root=None, speed=1.0)`
+plays a recorded episode back through the sim: each recorded frame is one
+control step, applied via `send_action` and integrated for a full control period
+derived from the dataset fps, so a position-servo robot reproduces the recorded
+trajectory. `speed` scales only the wall-clock playback rate.
+
+Each recorded action index is bound to an action key. By default those are
+`robot_action_keys(robot_name)` — the robot's **actuator** keys, which is the
+ordering the recorder writes the `action` column in. Pass `action_key_map` only
+when the dataset's action ordering differs:
+
+```python
+sim.replay_episode(
+    "user/my_dataset",
+    robot_name="so101",
+    root="/tmp/my_dataset",
+    action_key_map=["1", "2", "3", "4", "5", "6"],  # one key per action index
+)
+```
+
+`action_key_map` must be a non-empty list/tuple of unique strings whose length
+equals the recorded action vector's width. A bare string (consumed one key per
+character), a non-string entry, a duplicate key, or a width mismatch is rejected
+with an actionable error before the dataset is fetched — never truncated to fit.
+
+A `"success"` status means **every** frame reached the actuators. If a recorded
+action cannot be applied — e.g. the mapped keys resolve to no actuator on this
+robot — the replay aborts at that frame and returns `status="error"` with the
+frame index, how many frames were applied, and the unresolved keys:
+
+```python
+result = sim.replay_episode("user/my_dataset", robot_name="so101", action_key_map=["wrong"] * 6)
+result["status"]                                  # "error"
+result["content"][1]["json"]["unresolved_keys"]   # ['wrong', ...]
+result["content"][1]["json"]["frames_applied"]    # 0
+```
+
 ## Stream back (no full download)
 
 `sim.stream_dataset()` is the in-process counterpart to `start_recording` /

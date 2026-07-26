@@ -544,6 +544,55 @@ def _extract_result_json(result: object) -> dict[str, Any] | None:
     return None
 
 
+def _validate_action_key_map(action_key_map: Any) -> dict[str, Any] | None:
+    """Reject a ``replay`` ``action_key_map`` no backend could honor.
+
+    ``action_key_map`` binds recorded action-vector indices to the action keys
+    ``send_action`` resolves, so it must be an ordered collection of unique
+    strings. Three shapes are silently unusable and are rejected here:
+
+    * a bare ``str`` - ``list("gripper")`` yields one key per character;
+    * a non-string entry - it cannot name an actuator or joint;
+    * a duplicate key - two recorded indices would write the same actuator,
+      the later index silently overwriting the earlier one.
+
+    An empty collection is rejected too: it maps no recorded value at all.
+
+    Args:
+        action_key_map: The caller-supplied map (``None`` selects the default
+            ``robot_action_keys`` ordering and is always accepted).
+
+    Returns:
+        An agent-tool error dict describing the problem, or ``None`` when the
+        map is usable.
+    """
+    if action_key_map is None:
+        return None
+
+    def _error(text: str) -> dict[str, Any]:
+        return {"status": "error", "content": [{"text": f"replay: {text}"}]}
+
+    if isinstance(action_key_map, str | bytes):
+        return _error(
+            f"action_key_map must be a list of action keys, not a bare string (got {action_key_map!r}); "
+            "a string is consumed one character per action index."
+        )
+    if not isinstance(action_key_map, list | tuple):
+        return _error(f"action_key_map must be a list or tuple of action keys (got {type(action_key_map).__name__}).")
+    if not action_key_map:
+        return _error("action_key_map is empty; pass one action key per recorded action-vector index.")
+    bad = [key for key in action_key_map if not isinstance(key, str)]
+    if bad:
+        return _error(f"action_key_map entries must be action-key strings; got non-string entries {bad!r}.")
+    duplicates = sorted({key for key in action_key_map if action_key_map.count(key) > 1})
+    if duplicates:
+        return _error(
+            f"action_key_map has duplicate keys {duplicates}; each recorded action index needs its own key "
+            "(a repeated key silently overwrites the earlier index's value)."
+        )
+    return None
+
+
 class CooperativeStop(BaseException):
     """Raised by an ``on_frame`` hook to cooperatively stop a run.
 
@@ -1581,9 +1630,19 @@ class PolicyRunner:
                 *actuator* keys, which is the ordering the LeRobotDataset
                 recorder writes the ``action`` column in (a robot's actuators
                 are not always its joints; see :meth:`SimEngine.robot_action_keys`).
+                Must be a non-empty list/tuple of unique strings; a bare
+                string, a non-string entry or a duplicate key is rejected with
+                a structured error. Its length must equal the recorded action
+                vector's width - a mismatch is rejected rather than
+                positionally truncated.
 
         Returns:
-            Standard status dict with per-frame stats.
+            Standard status dict with per-frame stats. Replay aborts with an
+            ``"error"`` status when a recorded frame cannot actually be applied
+            (unresolvable action keys, or a recorded vector whose width does not
+            match the action-key map), reporting how many frames were applied
+            before the abort. A successful status therefore means every frame
+            reached the actuators.
         """
         # ``speed`` is a playback-rate multiplier used as the divisor in
         # ``frame_interval = 1 / (dataset_fps * speed)`` and, once computed,
@@ -1621,6 +1680,17 @@ class PolicyRunner:
         # bare "object cannot be interpreted as an integer" TypeError in
         # ``time.sleep`` and is not natively JSON-serialisable.
         speed = float(speed)
+
+        # ``action_key_map`` binds recorded action-vector indices to action keys
+        # ``send_action`` must resolve. A malformed map cannot be honored by any
+        # backend, and pre-fix nothing checked its shape: a bare string was
+        # ``list()``-ed into one key PER CHARACTER, a duplicate key made two
+        # recorded indices write the same actuator (the later one silently
+        # winning), and neither showed up in the result. Reject the shape here,
+        # before the (potentially multi-minute) dataset download.
+        key_map_error = _validate_action_key_map(action_key_map)
+        if key_map_error is not None:
+            return key_map_error
 
         try:
             from strands_robots.dataset_recorder import load_lerobot_episode
@@ -1714,13 +1784,85 @@ class PolicyRunner:
                 if hasattr(action_vals, "tolist"):
                     action_vals = action_vals.tolist()
 
-                action_dict: dict[str, Any] = {}
-                for i, val in enumerate(action_vals):
-                    if i >= len(action_keys):
-                        break
-                    action_dict[action_keys[i]] = float(val)
+                # A recorded vector whose width differs from the action-key
+                # map cannot be replayed faithfully: the surplus values have no
+                # key (silently DROPPED pre-fix, e.g. a 2-key map swallowing a
+                # 6-DOF recording's last four joints) or the surplus keys never
+                # receive a value. Reject it with the recorded-vs-expected
+                # widths, mirroring how ``send_action`` rejects a raw action
+                # vector whose length does not match the actuator count instead
+                # of truncating it.
+                if len(action_vals) != len(action_keys):
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Replay aborted at frame {frame_idx}: recorded action vector has "
+                                    f"{len(action_vals)} values but {len(action_keys)} action keys are "
+                                    f"mapped ({action_keys}). Applied {frames_applied}/{episode_length} "
+                                    "frames. Pass an action_key_map with one key per recorded action "
+                                    f"value, or replay onto a robot whose actuators match the recording."
+                                )
+                            },
+                            {
+                                "json": {
+                                    "episode": episode,
+                                    "robot_name": resolved_robot,
+                                    "frame": frame_idx,
+                                    "recorded_action_width": len(action_vals),
+                                    "action_keys": action_keys,
+                                    "frames_applied": frames_applied,
+                                    "total_frames": episode_length,
+                                }
+                            },
+                        ],
+                    }
 
-                self.sim.send_action(action_dict, robot_name=resolved_robot, n_substeps=n_substeps)
+                action_dict: dict[str, Any] = {action_keys[i]: float(val) for i, val in enumerate(action_vals)}
+
+                # ``send_action`` reports unresolvable keys as an "error" status
+                # (with an ``unresolved_keys`` json block). Pre-fix that result
+                # was DISCARDED, so a typo'd action_key_map dropped every value
+                # at the actuator boundary while replay still reported
+                # ``status="success"`` and ``Frames: N/N`` - the recorded
+                # trajectory never reached the robot. Abort on the first
+                # unapplied frame instead of finishing a replay that is not
+                # happening.
+                send_result = self.sim.send_action(action_dict, robot_name=resolved_robot, n_substeps=n_substeps)
+                if isinstance(send_result, dict) and send_result.get("status") == "error":
+                    detail = next(
+                        (
+                            str(block["text"])
+                            for block in send_result.get("content", []) or []
+                            if isinstance(block, dict) and "text" in block
+                        ),
+                        "",
+                    )
+                    payload: dict[str, Any] = {
+                        "episode": episode,
+                        "robot_name": resolved_robot,
+                        "frame": frame_idx,
+                        "action_keys": action_keys,
+                        "frames_applied": frames_applied,
+                        "total_frames": episode_length,
+                    }
+                    send_json = _extract_result_json(send_result)
+                    if send_json is not None:
+                        payload.update(send_json)
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Replay aborted at frame {frame_idx}: the recorded action could not be "
+                                    f"applied to '{resolved_robot}'. Applied {frames_applied}/{episode_length} "
+                                    f"frames. {detail}"
+                                )
+                            },
+                            {"json": payload},
+                        ],
+                    }
                 frames_applied += 1
 
             sleep_time = frame_interval - (time.time() - step_start)

@@ -5,6 +5,36 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `replay_episode` reports the frames it could not apply
+
+`replay_episode` mapped each recorded action-vector index onto an action key and
+wrote it through `send_action`, then **discarded** `send_action`'s result -
+including the `status="error"` + `unresolved_keys` breakdown it returns precisely
+so callers can self-correct instead of silently losing commands. Every way of
+getting the mapping wrong therefore reported a full-fidelity replay that never
+reached the robot:
+
+```python
+sim.replay_episode("user/ds", robot_name="so101", action_key_map=["shoulder_pan", ...])
+# -> success: "Frames: 120/120"   (wrong namespace: nothing applied, arm motionless)
+sim.replay_episode("user/ds", robot_name="so101", action_key_map="gripper")
+# -> success: "Frames: 120/120"   (a bare string is consumed one key PER CHARACTER)
+sim.replay_episode("user/ds", robot_name="so101", action_key_map=["1", "2"])
+# -> success: "Frames: 120/120"   (a 6-DOF recording's last four joints dropped)
+```
+
+`run_policy` already inspects `send_action`'s status (it counts action errors and
+fail-fasts a rollout where nothing resolves); replay now does too. A frame that
+could not be applied aborts the replay with `status="error"`, the frame index,
+how many frames were applied and the backend's unresolved-key breakdown, so a
+`"success"` status means every recorded frame reached the actuators.
+
+A recorded vector whose width differs from the action-key map is also rejected
+instead of positionally truncated (matching `send_action`, which rejects a raw
+action vector whose length does not match the actuator count), and a malformed
+`action_key_map` - a bare string, a non-string entry, a duplicate key or an empty
+list - is rejected before the dataset is fetched.
+
 ### Fixed: `randomize` / `set_obs_noise` reject parameters they cannot honor
 
 Both methods declare `**kwargs` to match the `**kwargs`-typed
