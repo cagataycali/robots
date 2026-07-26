@@ -5,6 +5,36 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `safe_join` symlink traversal escape
+
+`safe_join` (used by the asset resolver and downloader to sanitise
+registry-sourced and user-supplied path components) verified containment only
+lexically via `os.path.normpath`, which cannot see through symlinks. A component
+such as `link/passwd`, where `<base>/link` targets a directory outside `<base>`
+(e.g. `/etc`), stayed lexically under the base yet resolved outside it, escaping
+the guard. Containment is now re-verified after full symlink resolution
+(`Path.resolve()` on both sides), so symlinked escapes are rejected while
+symlinks that resolve back inside the base remain allowed.
+
+Both clone-based asset download paths - the MuJoCo Menagerie fallback and a
+custom `asset.source` GitHub repo - now route through the hardened guard,
+closing three escapes a compromised repository could use to write host files
+into the asset cache:
+
+- the copied directory (the Menagerie robot directory, or the registry-declared
+  `subdir` of a GitHub source) is resolved with
+  `safe_join(..., resolve_symlinks=True)`, so a directory that is itself a
+  symlink out of the clone is rejected, as is a lexical `../` component in
+  `subdir`;
+- symlinks nested *inside* an otherwise legitimate asset directory are dropped
+  at copy time, since `shutil.copytree(symlinks=False)` would follow them.
+
+Both checks are required and neither subsumes the other: `copytree` follows a
+symlinked *root* before its `ignore` callback ever runs, so the entry filter
+cannot see a symlinked root, and the root check cannot see nested links.
+Rejections are reported as a `failed: ...` status for the affected robot, so a
+malicious entry cannot fail silently.
+
 ### Fixed: MuJoCo `get_camera_params` answers for the free (`"default"`) camera
 
 `get_frame` renders the free camera (`None` / `""` / `"default"` / `"free"`) and
