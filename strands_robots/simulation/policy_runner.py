@@ -31,6 +31,7 @@ methods (e.g. MuJoCo acquires a lock inside ``send_action`` / ``step``).
 
 from __future__ import annotations
 
+import difflib
 import logging
 import math
 import numbers
@@ -175,6 +176,21 @@ def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
     return None
 
 
+# Canonical :class:`VideoConfig` field -> the dict keys accepted for it, canonical
+# key first followed by the legacy/tool_spec aliases. Single source of truth for
+# both the schema check (``VideoConfig.validation_error``) and the value lookup
+# (``VideoConfig.from_dict``), so the accepted set cannot drift between the two.
+_VIDEO_KEY_ALIASES: dict[str, tuple[str, ...]] = {
+    "path": ("path", "record_video", "output_path"),
+    "fps": ("fps", "video_fps"),
+    "camera": ("camera", "video_camera", "camera_name"),
+    "width": ("width", "video_width"),
+    "height": ("height", "video_height"),
+}
+
+_VIDEO_ACCEPTED_KEYS: tuple[str, ...] = tuple(sorted(key for aliases in _VIDEO_KEY_ALIASES.values() for key in aliases))
+
+
 @dataclass(frozen=True)
 class VideoConfig:
     """Configuration for optional MP4 recording during :meth:`PolicyRunner.run`.
@@ -215,18 +231,135 @@ class VideoConfig:
         """
         return bool(self.path)
 
+    @staticmethod
+    def _pick(d: dict[str, Any], field: str, default: Any = None) -> Any:
+        """First present, non-``None`` value among ``field``'s accepted keys.
+
+        Looks the canonical key up first, then the legacy aliases, so
+        ``{"path": ..., "output_path": ...}`` resolves to the canonical one.
+        Membership - not truthiness - decides: a caller-supplied ``0`` is
+        returned as ``0`` (and rejected by :meth:`validation_error`) instead of
+        collapsing into ``default`` the way an ``or`` chain would.
+
+        Args:
+            d: The caller's video-config dict.
+            field: Canonical field name (a key of the alias map).
+            default: Returned when no accepted key carries a value.
+
+        Returns:
+            The caller's value, or ``default``.
+        """
+        for key in _VIDEO_KEY_ALIASES[field]:
+            value = d.get(key)
+            if value is not None:
+                return value
+        return default
+
+    @staticmethod
+    def _positive_int_error(value: Any, key: str) -> str | None:
+        """Error text when ``value`` is not a usable positive whole number.
+
+        ``fps`` / ``width`` / ``height`` are frame counts and pixel counts:
+        only a positive whole number can be honored. Accepts any real scalar
+        with an integral value (so a NumPy ``np.int64`` height or a ``30.0``
+        computed from a config float passes) and rejects ``bool`` explicitly -
+        an ``int`` subclass whose ``True`` would act as a silent 1.
+
+        Args:
+            value: The caller-supplied value.
+            key: The dict key it came from, used in the message.
+
+        Returns:
+            An error message, or ``None`` when the value is usable.
+        """
+        message = f"video: {key} must be a positive whole number, got {value!r}."
+        if isinstance(value, bool) or not isinstance(value, numbers.Real):
+            return message
+        numeric = float(value)
+        # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it
+        # out of the integrality check below.
+        if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
+            return message
+        return None
+
+    @classmethod
+    def validation_error(cls, d: Any) -> str | None:
+        """Error text when ``d`` is not a video config this class can honor.
+
+        Recording options arrive as a free-form dict (LLM tool call or direct
+        API), so a mistyped key has no signature to bounce off. Silently
+        ignoring one is the worst outcome: ``{"filename": "/tmp/a.mp4"}``
+        leaves ``path`` unset and the rollout reports ``status="success"``
+        with no MP4 anywhere, and ``{"path": p, "resolution": [320, 240]}``
+        records at the default 640x480 while the caller believes otherwise.
+        This rejects any key outside the accepted set (with a closest-match
+        hint) and any known key whose value cannot be honored.
+
+        Args:
+            d: The caller's ``video`` argument. ``None`` (recording off) and an
+                empty dict are valid.
+
+        Returns:
+            An error message describing the first problem found, or ``None``
+            when the config is usable.
+        """
+        if d is None:
+            return None
+        if not isinstance(d, dict):
+            return f"video must be a dict of recording options, got {type(d).__name__}."
+        accepted = ", ".join(_VIDEO_ACCEPTED_KEYS)
+        for key in d:
+            if key in _VIDEO_ACCEPTED_KEYS:
+                continue
+            # Match case-insensitively so "FPS"/"Path" suggest their canonical
+            # spelling; the cutoff is deliberately tight so an unrelated key
+            # ("filename", "resolution") gets the accepted list rather than a
+            # misleading nearest-neighbour.
+            close = difflib.get_close_matches(str(key).lower(), _VIDEO_ACCEPTED_KEYS, n=1, cutoff=0.7)
+            hint = f" Did you mean {close[0]!r}?" if close else ""
+            return f"video: unknown key {key!r}.{hint} Accepted keys: {accepted}."
+        for field in ("path", "camera"):
+            value = cls._pick(d, field)
+            if value is not None and not isinstance(value, str):
+                return f"video: {field} must be a string, got {value!r}."
+        for field in ("fps", "width", "height"):
+            value = cls._pick(d, field)
+            if value is None:
+                continue
+            if error := cls._positive_int_error(value, field):
+                return error
+        return None
+
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> VideoConfig | None:
-        """Build from a plain dict (tool_spec dispatcher path). ``None`` passthrough."""
+        """Build from a plain dict (tool_spec dispatcher path). ``None`` passthrough.
+
+        Accepts both canonical keys and the legacy/tool_spec aliases listed in
+        :meth:`validation_error`.
+
+        Args:
+            d: Video-config dict, or ``None``/empty for "no recording".
+
+        Returns:
+            The config, or ``None`` when ``d`` is empty.
+
+        Raises:
+            ValueError: When ``d`` carries a key or value that cannot be
+                honored (see :meth:`validation_error`). Public entry points
+                (``run_policy`` / ``eval_policy`` / ``evaluate_benchmark`` /
+                ``start_policy``) check first and return a structured tool
+                error, so this raise is the guard for direct construction.
+        """
         if not d:
             return None
-        # Accept both canonical keys and legacy/tool_spec aliases.
+        if error := cls.validation_error(d):
+            raise ValueError(error)
         return cls(
-            path=d.get("path") or d.get("record_video") or d.get("output_path"),
-            fps=int(d.get("fps") or d.get("video_fps") or 30),
-            camera=d.get("camera") or d.get("video_camera") or d.get("camera_name"),
-            width=int(d.get("width") or d.get("video_width") or 640),
-            height=int(d.get("height") or d.get("video_height") or 480),
+            path=cls._pick(d, "path"),
+            fps=int(cls._pick(d, "fps", 30)),
+            camera=cls._pick(d, "camera"),
+            width=int(cls._pick(d, "width", 640)),
+            height=int(cls._pick(d, "height", 480)),
         )
 
 

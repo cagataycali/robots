@@ -240,6 +240,18 @@ def run_policy(
             "video={'path': '/tmp/rollout.mp4', 'fps': 30, 'camera': 'camera1'}."
         )
 
+    if video is not None:
+        # Check the video schema here, not on the first forwarded run_policy
+        # call: this tool may start a dataset recording (below) before the
+        # episode loop, so a mistyped key must be rejected while nothing has
+        # been set up yet. Imported lazily (like PolicyRunner in
+        # _finalize_episode) and only when recording options were actually
+        # supplied, so a rollout without video never touches the sim stack.
+        from strands_robots.simulation.policy_runner import VideoConfig
+
+        if video_error := VideoConfig.validation_error(video):
+            return _err(f"run_policy: {video_error}")
+
     # ---- 2. Optional: start recording -----------------------------------
     recording_started = False
     if dataset_root is not None:

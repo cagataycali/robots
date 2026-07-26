@@ -641,6 +641,27 @@ class TestVideoPassthrough:
         assert "video must be a dict" in result["content"][0]["text"]
         assert sim.run_policy_calls == []
 
+    def test_rejects_unknown_video_key_before_recording_starts(self, tmp_path: Path) -> None:
+        """A mistyped option must be caught before any dataset is opened.
+
+        The tool starts a recording before the episode loop, so deferring the
+        check to the first forwarded ``run_policy`` call would leave a dataset
+        on disk and N failed episodes behind a caller mistake that costs
+        nothing to detect up front.
+        """
+        sim = _FakeSim()
+        result = run_policy(
+            sim,
+            n_episodes=1,
+            n_steps=4,
+            dataset_root=str(tmp_path / "ds"),
+            video={"filename": str(tmp_path / "rollout.mp4")},
+        )
+        assert result["status"] == "error"
+        assert "unknown key 'filename'" in result["content"][0]["text"]
+        assert sim.run_policy_calls == []
+        assert sim.start_recording_calls == []
+
     def test_video_paths_reports_only_existing_files(self, tmp_path: Path) -> None:
         sim = _FakeSim()
         # _FakeSim never actually writes an MP4, so video_paths must be empty

@@ -106,7 +106,10 @@ run_policy(
 ```
 
 `video["path"]` is required to enable recording; a falsy/absent path disables
-it. For `n_episodes > 1` an `_ep{i}` suffix is inserted before the extension
+it. Only the keys above are accepted: any other key (`filename`, `resolution`,
+...) is rejected with an error listing the accepted set, so a mistyped option
+cannot silently produce a rollout with no video or a video at the wrong
+resolution. For `n_episodes > 1` an `_ep{i}` suffix is inserted before the extension
 (`/tmp/rollout_ep0.mp4`, `_ep1`, ...) so episodes do not overwrite one another -
 matching the facade's own multi-episode naming. The returned `{"json": {...}}`
 block carries `video_paths`, the list of MP4s that actually landed on disk

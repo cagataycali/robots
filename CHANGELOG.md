@@ -64,6 +64,39 @@ cannot see a symlinked root, and the root check cannot see nested links.
 Rejections are reported as a `failed: ...` status for the affected robot, so a
 malicious entry cannot fail silently.
 
+### Fixed: rollout `video={...}` configs reject options they cannot honor
+
+Recording options reach `run_policy` / `start_policy` / `eval_policy` /
+`evaluate_benchmark` as a free-form dict, so a mistyped key had no signature to
+bounce off and was dropped silently. Three ways that misled the caller:
+
+```python
+sim.run_policy(robot_name="arm", video={"filename": "/tmp/a.mp4"})       # success, no MP4 anywhere
+sim.run_policy(robot_name="arm", video={"path": p, "resolution": [320, 240]})  # recorded 640x480
+sim.run_policy(robot_name="arm", video={"path": p, "fps": 0})            # recorded at 30 fps
+```
+
+The first is the worst: `path` stayed unset, so recording was off and the
+rollout still reported `status="success"` - the caller only found out by looking
+for a file that was never written. The `fps`/`width`/`height` cases came from an
+`or` chain (`int(d.get("fps") or 30)`) that treated a caller-supplied `0` as
+"not supplied".
+
+`VideoConfig` now owns one accepted-key set (canonical keys plus the documented
+`record_video` / `video_fps` / `camera_name` / `video_width` / `video_height`
+aliases) and validates against it. An unknown key is rejected with the accepted
+list and a closest-match hint (`{"pathh": ...}` -> "Did you mean 'path'?");
+`fps` / `width` / `height` must be positive whole numbers (`0`, `-1`, `29.97`
+and `True` are refused); `path` / `camera` must be strings. Alias resolution is
+now membership-based, so a supplied `0` reaches the validator instead of
+collapsing into the default.
+
+The check runs at the public entry points before a policy is created or a
+background thread is submitted, so `start_policy` reports the error instead of a
+false "started", and the `run_policy` agent tool rejects the config before it
+opens a dataset. Well-formed configs, the legacy aliases, and the documented
+"absent path means recording off" case are unchanged.
+
 ### Fixed: MuJoCo `get_camera_params` answers for the free (`"default"`) camera
 
 `get_frame` renders the free camera (`None` / `""` / `"default"` / `"free"`) and

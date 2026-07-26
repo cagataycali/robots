@@ -987,6 +987,31 @@ class SimEngine(ABC):
             }
         return None
 
+    @staticmethod
+    def _validate_video_config(video: Any, method: str) -> dict[str, Any] | None:
+        """Reject a ``video`` recording config the rollout cannot honor.
+
+        ``video`` is a free-form dict, so a mistyped key has no signature to
+        bounce off and used to be dropped silently: a rollout asked to record
+        at ``{"filename": ...}`` reported ``status="success"`` having written
+        no MP4, and one asked for ``{"resolution": [320, 240]}`` recorded at
+        the default 640x480. Checking it at the public entry point (before any
+        policy is created or a background thread is submitted) turns both into
+        an actionable error. Returns a structured ``{"status": "error", ...}``
+        dict to surface, or ``None`` when the config is valid.
+
+        Args:
+            video: The caller-supplied ``video`` dict, or ``None``.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending key, or ``None``.
+        """
+        video_error = VideoConfig.validation_error(video)
+        if video_error is None:
+            return None
+        return {"status": "error", "content": [{"text": f"{method}: {video_error}"}]}
+
     def run_policy(
         self,
         robot_name: str | None = None,
@@ -1049,6 +1074,12 @@ class SimEngine(ABC):
                 ``fps`` (int, default 30), ``camera`` (str, default backend
                 default), ``width`` (int, default 640), ``height`` (int,
                 default 480). See :class:`~strands_robots.simulation.policy_runner.VideoConfig`.
+                Any other key - and any ``fps``/``width``/``height`` that is
+                not a positive whole number - is reported as a caller error
+                naming the offending key, rather than being dropped (which
+                used to turn a mistyped ``path`` into a "successful" rollout
+                with no MP4, and a mistyped size into a default-resolution
+                recording).
                 For extension points beyond video (custom telemetry,
                 dataset recording), backends plug into
                 ``PolicyRunner.run``'s ``on_frame`` hook via
@@ -1161,6 +1192,8 @@ class SimEngine(ABC):
         if err := self._validate_positive_int(n_episodes, "n_episodes", "run_policy"):
             return err
 
+        if err := self._validate_video_config(video, "run_policy"):
+            return err
         if err := self._validate_action_horizon(action_horizon, "run_policy"):
             return err
 
@@ -1890,6 +1923,8 @@ class SimEngine(ABC):
                 "content": [{"text": self._unknown_robot_msg(resolved_robot)}],
             }
 
+        if err := self._validate_video_config(video, "eval_policy"):
+            return err
         if err := self._validate_action_horizon(action_horizon, "eval_policy"):
             return err
         if err := self._validate_positive_int(n_episodes, "n_episodes", "eval_policy"):
@@ -2065,6 +2100,8 @@ class SimEngine(ABC):
         from strands_robots.policies import create_policy
         from strands_robots.simulation.benchmark import get_benchmark
 
+        if err := self._validate_video_config(video, "evaluate_benchmark"):
+            return err
         if err := self._validate_action_horizon(action_horizon, "evaluate_benchmark"):
             return err
         if err := self._validate_positive_int(n_episodes, "n_episodes", "evaluate_benchmark"):

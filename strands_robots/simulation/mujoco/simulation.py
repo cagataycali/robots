@@ -3647,6 +3647,11 @@ class MuJoCoSimEngine(
             return horizon_error
         if err := self._validate_action_horizon(action_horizon, "start_policy"):
             return err
+        # Same reason as the horizon guards above: a malformed video config
+        # would otherwise be rejected inside the future, after the caller has
+        # already been told the policy started and the robot marked running.
+        if err := self._validate_video_config(video, "start_policy"):
+            return err
 
         # Concurrent multi-robot policies run on disjoint ctrl slices (physics
         # serialized by _lock). For SYNCHRONIZED multi-robot *recording* (both
