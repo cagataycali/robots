@@ -168,7 +168,7 @@
     },
     "material": {
       "type": "object",
-      "description": "Optional visual material/texture for add_object (MuJoCo backend). Keys: reflectance|specular|shininess (float 0..1; specular=0,shininess=0 = matte), texture (absolute image path) OR builtin (checker|gradient|flat) with rgb1/rgb2 ([r,g,b]) + texdim (int, default 512), texrepeat ([u,v]). Omit for a flat color-only surface. Invalid texture path or unknown builtin fails loudly.",
+      "description": "Optional visual material/texture for add_object (MuJoCo backend). Keys: reflectance|specular|shininess (float 0..1; specular=0,shininess=0 = matte), texture (absolute image path) OR builtin (checker|gradient|flat) with rgb1/rgb2 ([r,g,b]) + texdim (int, default 512), texrepeat ([u,v]). Omit for a flat color-only surface. Invalid texture path, unknown builtin, empty {}, rgb1/rgb2/texdim without builtin, or any key outside the list above fails loudly (never silently ignored).",
       "properties": {
         "reflectance": { "type": "number" },
         "specular": { "type": "number" },

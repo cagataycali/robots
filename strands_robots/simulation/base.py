@@ -529,7 +529,10 @@ class SimEngine(ABC):
         spec. ``None`` keeps the flat ``color`` rgba (unchanged); a backend
         that supports it (MuJoCo) attaches a real material so surfaces can be
         matte or textured. Backends that do not support it should reject a
-        non-``None`` ``material`` loudly rather than silently ignore it.
+        non-``None`` ``material`` loudly rather than silently ignore it. A
+        supporting backend must likewise reject material keys it cannot honor
+        (a typo, or a field from another renderer) instead of dropping them --
+        a dropped key renders the backend default while reporting success.
         """
         ...
 
@@ -2457,7 +2460,8 @@ class SimEngine(ABC):
                     "(cube/sphere/.../mesh) to the scene. material is an optional "
                     "dict for matte/textured surfaces: keys reflectance|specular|"
                     "shininess (0..1), texture (abs image path) OR builtin "
-                    "(checker|gradient|flat) + rgb1/rgb2/texdim, texrepeat [u,v]"
+                    "(checker|gradient|flat) + rgb1/rgb2/texdim, texrepeat [u,v]; "
+                    "any other key (or an empty dict) is rejected, never ignored"
                 ),
                 "remove_object": "(name: str) -> dict  # remove a previously added object",
                 "remove_robot": (

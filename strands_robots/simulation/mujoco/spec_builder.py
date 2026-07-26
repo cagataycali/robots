@@ -19,9 +19,11 @@ transformation goes through MuJoCo's own AST.
 
 from __future__ import annotations
 
+import difflib
 import logging
 import os
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Final
 
 import numpy as np
 
@@ -37,6 +39,72 @@ from strands_robots.simulation.terrain import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Accepted keys of the ``add_object(material=...)`` spec. Single source of truth
+# shared by :func:`material_spec_error` and :meth:`SpecBuilder._build_material`.
+MATERIAL_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "reflectance",
+        "specular",
+        "shininess",
+        "texrepeat",
+        "texture",
+        "builtin",
+        "rgb1",
+        "rgb2",
+        "texdim",
+    }
+)
+
+# Keys that only mean something for a procedural (``builtin``) texture.
+_BUILTIN_ONLY_KEYS: Final[tuple[str, ...]] = ("rgb1", "rgb2", "texdim")
+
+
+def material_spec_error(obj_name: str, material: Any) -> str | None:
+    """Validate an ``add_object(material=...)`` spec's shape.
+
+    Every key of the material spec is optional, so a key the builder does not
+    recognise (a typo such as ``"rgb_1"``, or a field borrowed from another
+    renderer such as ``"roughness"``) would otherwise be dropped and the
+    surface would compile with MuJoCo's glossy defaults while the call still
+    reported success. Reject those keys instead.
+
+    Args:
+        obj_name: Object name, used to make the message actionable.
+        material: The caller-supplied material spec.
+
+    Returns:
+        An error message, or ``None`` when the spec's shape is honorable.
+        Value-level checks (texture file exists, ``builtin`` name known,
+        ``texture``/``builtin`` mutually exclusive) live in
+        :meth:`SpecBuilder._build_material`.
+    """
+    accepted = ", ".join(sorted(MATERIAL_KEYS))
+    prefix = f"add_object material for {obj_name!r}: "
+    if not isinstance(material, Mapping):
+        return f"{prefix}expected a dict of material options, got {type(material).__name__}. Accepted keys: {accepted}."
+    if not material:
+        return (
+            f"{prefix}material={{}} has no effect - omit material= to keep the "
+            f"flat 'color' rgba, or set at least one of: {accepted}."
+        )
+    unknown = [key for key in material if key not in MATERIAL_KEYS]
+    if unknown:
+        described = []
+        for key in sorted(unknown, key=str):
+            close = difflib.get_close_matches(str(key).lower(), sorted(MATERIAL_KEYS), n=1, cutoff=0.7)
+            described.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
+        return f"{prefix}unknown material key(s): {', '.join(described)}. Accepted keys: {accepted}."
+    if material.get("builtin") is None:
+        orphans = [key for key in _BUILTIN_ONLY_KEYS if material.get(key) is not None]
+        if orphans:
+            return (
+                f"{prefix}{', '.join(orphans)} only colour/size a procedural "
+                "texture and are ignored without it - set builtin='checker'|'gradient'|'flat', "
+                "or drop them (an image 'texture' is coloured by the file itself, tinted by "
+                "the geom 'color' rgba)."
+            )
+    return None
 
 
 # MuJoCo geom-type enum mapping. Populated lazily on first call so module
@@ -468,14 +536,18 @@ class SpecBuilder:
               texture, coloured by ``rgb1`` / ``rgb2`` (each ``[r, g, b]``)
               and sized ``texdim`` (default 512) per side.
 
-        Fails loudly (``ValueError``) on a missing texture file, an unknown
-        ``builtin`` name, or both ``texture`` and ``builtin`` set -- there is
-        no silent fallback to the flat-plastic default. The geom keeps its
-        ``rgba`` (which tints an image/solid material), so callers can still
-        colour a procedural/solid surface via ``color=``.
+        Fails loudly (``ValueError``) on a key outside :data:`MATERIAL_KEYS`,
+        an empty spec, ``rgb1``/``rgb2``/``texdim`` without ``builtin``, a
+        missing texture file, an unknown ``builtin`` name, or both ``texture``
+        and ``builtin`` set -- there is no silent fallback to the flat-plastic
+        default. The geom keeps its ``rgba`` (which tints an image/solid
+        material), so callers can still colour a procedural/solid surface via
+        ``color=``.
         """
+        if (shape_err := material_spec_error(obj.name, obj.material)) is not None:
+            raise ValueError(shape_err)
         mujoco = _ensure_mujoco()
-        mat_spec = obj.material or {}
+        mat_spec: Mapping[str, Any] = obj.material or {}
         mat_name = f"{obj.name}_mat"
         tex_name = f"{obj.name}_tex"
 

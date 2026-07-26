@@ -5,6 +5,43 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `add_object(material=...)` rejects keys it cannot honor
+
+Every key of the `material` spec is optional and was read with `dict.get()`, so
+any key the builder does not recognise was dropped while `add_object` still
+answered `status="success"`:
+
+```python
+sim.add_object("tile", material={"builtin": "checker", "rgb_1": [1, 0, 0], "rgb_2": [0, 0, 1]})
+# -> success: "'tile' added: box at [0.0, 0.0, 0.05], ..."   (default grey checker)
+sim.add_object("ball", material={"roughness": 0.2})
+# -> success                                                  (glossy default, no material effect)
+sim.add_object("cube", material={})
+# -> success                                                  (glossy default)
+```
+
+The point of `material=` is to narrow the sim-to-real visual gap, so a silently
+dropped key produces exactly the wrong thing: the synthetic-looking default
+surface, reported as applied. `rgb1`/`rgb2`/`texdim` without a `builtin` had the
+same shape - they only colour/size a procedural texture, so alone they compiled
+the plain default. A non-dict `material` raised a bare `AttributeError` out of
+the builder instead of a structured error.
+
+`material` specs are now validated against a single accepted-key set before any
+scene mutation, on both the direct `SpecBuilder` path and the live
+`Simulation.add_object` / agent-tool path. Unknown keys are named with a
+suggestion when they are near-misses:
+
+```
+add_object material for 'tile': unknown material key(s): 'rgb_1' (did you mean
+'rgb1'?), 'rgb_2' (did you mean 'rgb2'?). Accepted keys: builtin, reflectance,
+rgb1, rgb2, shininess, specular, texdim, texrepeat, texture.
+```
+
+Honored specs are unchanged, and a rejected add leaves no object registered and
+no orphan asset behind, so the same name re-adds cleanly.
+
+
 ### Fixed: `replay_episode` reports the frames it could not apply
 
 `replay_episode` mapped each recorded action-vector index onto an action key and

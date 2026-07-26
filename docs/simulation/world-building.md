@@ -185,7 +185,21 @@ sim.add_object("floor_tile", shape="box", size=[0.3, 0.3, 0.01], is_static=True,
 Specify **either** `texture` **or** `builtin`, not both. An invalid texture
 path, an unknown `builtin` name, or specifying both fails loudly with a
 `ValueError` (returned as a `status=error` dict through the agent tool) - there
-is no silent fallback to the flat-plastic default. For natural surfaces prefer
+is no silent fallback to the flat-plastic default.
+
+Only the keys in the table above are accepted. A key outside it (a typo such as
+`rgb_1`, or a field borrowed from another renderer such as `roughness`), an
+empty `material={}`, or `rgb1`/`rgb2`/`texdim` without `builtin` is rejected the
+same way - the alternative is an object that compiles with MuJoCo's glossy
+defaults while `add_object` reports success:
+
+```python
+sim.add_object("cube", material={"builtin": "checker", "rgb_1": [1, 0, 0]})
+# status=error: unknown material key(s): 'rgb_1' (did you mean 'rgb1'?).
+#               Accepted keys: builtin, reflectance, rgb1, rgb2, shininess, ...
+```
+
+For natural surfaces prefer
 an **image texture**; the `checker` builtin reads as a literal checkerboard.
 Materials are currently supported by the MuJoCo backend; the Newton backend
 rejects a non-`None` `material` rather than silently ignoring it.

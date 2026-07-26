@@ -89,7 +89,11 @@ from strands_robots.simulation.mujoco.scene_ops import (
     replace_scene_mjcf,
     reposition_body_in_scene,
 )
-from strands_robots.simulation.mujoco.spec_builder import SpecBuilder, _validate_size
+from strands_robots.simulation.mujoco.spec_builder import (
+    SpecBuilder,
+    _validate_size,
+    material_spec_error,
+)
 from strands_robots.simulation.policy_runner import CooperativeStop
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.teleop_mixin import TeleopMixin
@@ -2386,7 +2390,11 @@ class MuJoCoSimEngine(
         procedural builtin (``{"builtin": "checker", "rgb1": [...], "rgb2":
         [...]}``). See :meth:`SpecBuilder._build_material` for the full schema;
         an invalid texture path or unknown builtin fails loudly (no silent
-        fallback to flat plastic).
+        fallback to flat plastic). Only the keys in
+        :data:`~strands_robots.simulation.mujoco.spec_builder.MATERIAL_KEYS`
+        are accepted -- a misspelled or unsupported key (``"rgb_1"``,
+        ``"roughness"``) is rejected rather than dropped, because a dropped key
+        renders the default glossy surface while still reporting success.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2447,6 +2455,12 @@ class MuJoCoSimEngine(
         # caller gets a clear error rather than a confusing recompile failure.
         if size is not None and (size_err := _validate_size(shape, list(size))) is not None:
             return {"status": "error", "content": [{"text": size_err}]}
+
+        # A material key the builder cannot honor (typo / another renderer's
+        # field name) would otherwise be dropped and the object would compile
+        # with MuJoCo's glossy defaults while this call reported success.
+        if material is not None and (mat_err := material_spec_error(name, material)) is not None:
+            return {"status": "error", "content": [{"text": mat_err}]}
 
         obj = SimObject(
             name=name,

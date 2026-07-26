@@ -72,6 +72,7 @@ _EXPECTED_FUNCTIONS = {
     "scene_ops.py::remove_equality_constraint",
     "scene_ops.py::replace_scene_mjcf",
     "scene_ops.py::reposition_body_in_scene",
+    "spec_builder.py::material_spec_error",
 }
 
 
