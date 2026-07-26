@@ -84,10 +84,14 @@ class TestNormalizeSize:
         # An ellipsoid's three full diameters become per-axis radii (each /2).
         assert _normalize_size("ellipsoid", [0.1, 0.2, 0.3]) == [0.05, 0.1, 0.15]
 
-    def test_ellipsoid_falls_back_to_default_radii_when_size_too_short(self):
-        # A malformed (<3 component) size must not raise; it falls back to the
-        # documented 0.05 default extents (-> 0.025 per-axis radius).
-        assert _normalize_size("ellipsoid", []) == [0.025, 0.025, 0.025]
+    def test_ellipsoid_size_too_short_raises_instead_of_defaulting(self):
+        # Corrected contract: a <3 component ellipsoid size cannot express the
+        # request, and completing it from a hardcoded default compiled a
+        # differently-sized geom while add_object reported success (echoing the
+        # size the caller asked for). It is now rejected, so the caller learns
+        # which components the shape consumes.
+        with pytest.raises(ValueError, match=r"needs 3 'size' component"):
+            _normalize_size("ellipsoid", [])
 
     def test_unknown_shape_raises(self):
         with pytest.raises(ValueError, match="Cannot normalize size"):

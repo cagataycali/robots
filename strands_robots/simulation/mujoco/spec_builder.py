@@ -138,16 +138,62 @@ def _geom_type(shape: str) -> int:
         raise ValueError(f"Unsupported shape {shape!r}. Supported: {supported}.") from e
 
 
+# Per-shape ``size`` contract: how many leading components the shape actually
+# consumes, plus the layout to quote back at a caller who supplied the wrong
+# count. A shape that consumes component i needs a vector of at least i + 1
+# components -- a shorter one cannot express the request at all, so it is
+# rejected instead of being padded from a backend default (which would compile
+# a differently-sized object while reporting success). ``plane`` needs only its
+# x half-width (y mirrors x when omitted); ``mesh`` takes its extent from the
+# asset and consumes nothing.
+_SIZE_LAYOUT: dict[str, tuple[int, str]] = {
+    "box": (3, "[x, y, z] full edge lengths"),
+    "ellipsoid": (3, "[x, y, z] full diameters"),
+    "sphere": (1, "[diameter]"),
+    "cylinder": (3, "[diameter, unused, full height]"),
+    "capsule": (3, "[diameter, unused, full height]"),
+    "plane": (1, "[x] or [x, y] visual half-widths"),
+    "mesh": (0, "unused - the asset's own units define the extent"),
+}
+
+# ``SimObject.size`` is a 3-vector, and every shape above consumes at most its
+# first three components, so a longer vector carries values no shape can honor.
+_MAX_SIZE_COMPONENTS = 3
+
+
 def _validate_size(shape: str, size: list[float]) -> str | None:
-    """Return an error message if ``size`` has a non-positive meaningful extent.
+    """Return an error message if ``size`` cannot be honored for ``shape``.
 
     ``size`` follows the full-extent convention used by
     :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.add_object`
-    (meters along each axis, halved internally to MuJoCo's half-extents). Only
-    the components a given shape actually consumes are checked, so a cylinder
-    may legitimately pass ``size[1] == 0`` (it is ignored). ``mesh`` ignores
-    ``size`` entirely. Returns ``None`` when the size is acceptable.
+    (meters along each axis, halved internally to MuJoCo's half-extents). Two
+    classes are rejected:
+
+    * A **component count** the shape cannot consume -- fewer components than
+      :data:`_SIZE_LAYOUT` requires (a box needs all three), or more than three
+      (nothing consumes a fourth). A short vector used to be replaced wholesale
+      by a hardcoded default, so ``size=[0.5]`` on a box compiled a 10 cm cube
+      while the call reported success and echoed the requested ``[0.5]``.
+    * A **non-positive** value in a component the shape consumes. Only consumed
+      components are checked, so a cylinder may legitimately pass
+      ``size[1] == 0`` (it is ignored).
+
+    Returns ``None`` when the size is acceptable.
     """
+    required, layout = _SIZE_LAYOUT.get(shape, (0, ""))
+    if len(size) > _MAX_SIZE_COMPONENTS:
+        return (
+            f"add_object: 'size' takes at most {_MAX_SIZE_COMPONENTS} components, got "
+            f"{len(size)} (size={list(size)}). 'size' is the full extent in meters "
+            "along each axis (not MuJoCo's half-extent)."
+        )
+    if len(size) < required:
+        return (
+            f"add_object: {shape} needs {required} 'size' component(s) {layout}, got "
+            f"{len(size)} (size={list(size)}). 'size' is the full extent in meters "
+            "along each axis (not MuJoCo's half-extent); pass every component the "
+            "shape consumes rather than a partial vector."
+        )
     if shape == "mesh":
         return None
     if shape in ("box", "ellipsoid"):
@@ -162,8 +208,6 @@ def _validate_size(shape: str, size: list[float]) -> str | None:
         # Unknown shapes are rejected by _geom_type; nothing to validate here.
         return None
     for idx, axis in used:
-        if idx >= len(size):
-            continue
         if size[idx] <= 0:
             return (
                 f"add_object: {shape} {axis} extent must be > 0, got "
@@ -186,31 +230,31 @@ def _normalize_size(shape: str, size: list[float]) -> list[float]:
     * ``plane``:     ``[hx, hy, grid_spacing]`` (hx/hy are half-sizes)
     * ``mesh``:      ``[]``            (mesh asset dictates extent; size ignored)
 
-    ``SimObject.size`` is always 3 floats. Box/ellipsoid use all 3 as full
-    extents, sphere uses ``size[0]`` as diameter (MuJoCo halves it to radius),
-    cylinder/capsule use ``size[0]`` as diameter and ``size[2]`` as full height
-    (both halved). Plane is the one exception: ``size[0]``/``size[1]`` are
-    passed through unchanged as MuJoCo's visual half-widths (a plane is
-    infinite for collision, so only its rendered grid extent matters).
+    Box/ellipsoid use all 3 components as full extents, sphere uses ``size[0]``
+    as diameter (MuJoCo halves it to radius), cylinder/capsule use ``size[0]``
+    as diameter and ``size[2]`` as full height (both halved). Plane is the one
+    exception: ``size[0]``/``size[1]`` are passed through unchanged as MuJoCo's
+    visual half-widths (a plane is infinite for collision, so only its rendered
+    grid extent matters) and ``size[1]`` mirrors ``size[0]`` when omitted.
+
+    Raises:
+        ValueError: When :func:`_validate_size` rejects ``size`` -- too few
+            components for the shape to consume, more than three, or a
+            non-positive consumed extent. Every component this function reads
+            is guaranteed present by that check, so a partial vector is never
+            silently completed from a default.
     """
     if (msg := _validate_size(shape, size)) is not None:
         raise ValueError(msg)
-    if shape == "box":
-        sx, sy, sz = size if len(size) >= 3 else (0.1, 0.1, 0.1)
-        return [sx / 2, sy / 2, sz / 2]
+    if shape in ("box", "ellipsoid"):
+        return [size[0] / 2, size[1] / 2, size[2] / 2]
     if shape == "sphere":
         # Legacy builder used size[0]/2 as radius - preserve that.
-        radius = size[0] / 2 if size else 0.025
-        return [radius, 0.0, 0.0]
+        return [size[0] / 2, 0.0, 0.0]
     if shape in ("cylinder", "capsule"):
-        radius = size[0] / 2 if size else 0.025
-        half_h = size[2] / 2 if len(size) > 2 else 0.05
-        return [radius, half_h, 0.0]
-    if shape == "ellipsoid":
-        sx, sy, sz = size if len(size) >= 3 else (0.05, 0.05, 0.05)
-        return [sx / 2, sy / 2, sz / 2]
+        return [size[0] / 2, size[2] / 2, 0.0]
     if shape == "plane":
-        sx = size[0] if size else 1.0
+        sx = size[0]
         sy = size[1] if len(size) > 1 else sx
         return [sx, sy, 0.01]
     if shape == "mesh":

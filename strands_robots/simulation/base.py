@@ -536,6 +536,22 @@ class SimEngine(ABC):
         ``add_object`` docstring for the exact per-shape semantics and an
         example. Returns an agent-tool status dict.
 
+        A backend MUST NOT discard ``size`` components the caller did supply.
+        When the vector is shorter than the shape consumes it either rejects it
+        (MuJoCo: the per-shape component count is part of the contract) or pads
+        only the missing *trailing* components from a documented default
+        (Isaac). Replacing the whole vector with a backend default compiles a
+        differently-sized object while reporting success -- and the reported
+        size echoes what was asked for, not what was built.
+
+        A backend MUST NOT discard ``size`` components the caller did supply.
+        When the vector is shorter than the shape consumes it either rejects it
+        (MuJoCo: the per-shape component count is part of the contract) or pads
+        the missing *trailing* components from a documented default (Isaac).
+        Replacing the whole vector with a backend default compiles a
+        differently-sized object while reporting success -- and the reported
+        size echoes what was asked for, not what was built.
+
         ``material`` (optional): backend-specific visual material/texture
         spec. ``None`` keeps the flat ``color`` rgba (unchanged); a backend
         that supports it (MuJoCo) attaches a real material so surfaces can be

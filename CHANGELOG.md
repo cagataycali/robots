@@ -5,6 +5,42 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `add_object` honors every `size` component or rejects the vector
+
+The MuJoCo backend documents an exact per-shape `size` layout (full extents in
+meters). A vector shorter than the shape consumes was replaced *wholesale* by a
+hardcoded default, discarding the extents the caller did pass while reporting
+success - and echoing back the requested size, not the one that was built:
+
+```python
+sim.add_object("crate", shape="box", size=[0.5], position=[0, 0, 0.25])
+# -> success: "'crate' added: box at [0.0, 0.0, 0.25], size=[0.5], 0.1kg"
+#    compiled geom_size == [0.05, 0.05, 0.05] -> a 10 cm cube, not 50 cm.
+#    It then falls 20 cm and rests at z=0.05 instead of the expected z=0.25.
+
+sim.add_object("dish", shape="ellipsoid", size=[0.3, 0.3])   # -> success, 5 cm
+sim.add_object("post", shape="cylinder", size=[0.2])         # -> success, 10 cm tall
+sim.add_object("void", shape="box", size=[])                 # -> success, 5 cm
+sim.add_object("over", shape="box", size=[0.1, 0.1, 0.1, 0.1])
+# -> error: "Failed to inject 'over': spec recompile refused."  (never names size)
+```
+
+Three different fallback defaults were in play across two layers (the
+documented `[0.05, 0.05, 0.05]`, plus `(0.1, 0.1, 0.1)` for a short box and
+`0.025` / `1.0` inside the normalizer), so which wrong size you got depended on
+how short the vector was.
+
+`_validate_size` now checks the component count against the per-shape layout
+before any scene mutation, so both entry points that normalize a size
+(`add_object` and the `patch_scene_mjcf` `add_geom` op) reject a vector they
+cannot honor with a message naming the shape, the required components and the
+full-extent convention. The now-unreachable padding defaults are removed from
+`_normalize_size`, which raises for direct builder callers. The legitimately
+shorter documented layouts still work (`sphere=[diameter]`, `plane=[x]`), a
+4-component size is rejected up front instead of failing the recompile, and
+omitting `size` still yields the documented 5 cm box. The `size` parameter now
+carries the per-shape component count in the agent tool spec.
+
 ### Fixed: `control_substeps` is honored or rejected, never silently clamped
 
 `control_substeps` sets how many physics steps are integrated per applied

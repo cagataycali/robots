@@ -132,6 +132,33 @@ for i in range(5):
     )
 ```
 
+## Object size
+
+`size` is the **full extent in meters** along each local axis - not MuJoCo's
+native half-extent. It is halved when the geom is compiled, so
+`size=[0.05, 0.05, 0.05]` is a 5 cm cube.
+
+Pass every component the shape consumes; a partial vector is rejected rather
+than completed from a default, because a completed vector compiles a
+differently-sized object while `add_object` reports success:
+
+| Shape | Components consumed |
+|-------|---------------------|
+| `box` / `ellipsoid` | `[x, y, z]` - all three full edge lengths / diameters |
+| `cylinder` / `capsule` | `[diameter, unused, full height]` - three (index 1 is ignored) |
+| `sphere` | `[diameter]` - one is enough |
+| `plane` | `[x]` or `[x, y]` visual half-widths (`y` mirrors `x` when omitted) |
+| `mesh` | none - the asset's own units define the extent |
+
+At most 3 components are accepted; omit `size` entirely for the 5 cm default.
+
+```python
+sim.add_object("crate", shape="box", size=[0.5])
+# status=error: box needs 3 'size' component(s) [x, y, z] full edge lengths,
+#               got 1 (size=[0.5]). ...
+sim.add_object("crate", shape="box", size=[0.5, 0.5, 0.5])   # 50 cm crate
+```
+
 ## Mesh objects
 
 Beyond primitives, `add_object` can inject a triangle-mesh asset (STL/OBJ) into

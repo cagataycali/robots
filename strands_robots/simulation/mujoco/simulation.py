@@ -2380,8 +2380,15 @@ class MuJoCoSimEngine(
                 origin).
             orientation: wxyz quaternion (default identity).
             size: Full extents in meters per the per-shape table above. Defaults
-                to ``[0.05, 0.05, 0.05]`` (a 5 cm box). Every meaningful
-                component must be > 0; a non-positive extent is rejected.
+                to ``[0.05, 0.05, 0.05]`` (a 5 cm box) when omitted. Must carry
+                every component the shape consumes -- 3 for ``box`` /
+                ``ellipsoid`` / ``cylinder`` / ``capsule``, at least 1 for
+                ``sphere`` / ``plane`` -- and at most 3 in total. A partial
+                vector (``size=[0.5]`` on a box) is rejected rather than
+                completed from a backend default, because a completed vector
+                compiles a differently-sized object while reporting success.
+                Every consumed component must be > 0; a non-positive extent is
+                rejected.
             color: RGBA in 0..1 (default mid-grey).
             mass: Body mass in kg for dynamic objects (default 0.1); ignored when
                 ``is_static``.
@@ -2396,8 +2403,9 @@ class MuJoCoSimEngine(
             running, the name is taken, ``position``/``orientation``/``color``/
             ``size`` contains a non-finite (``nan``/``inf``) or non-numeric
             element or ``position``/``orientation`` is the wrong length (3 / 4),
-            ``size`` has a non-positive extent,
-            ``shape="mesh"`` is missing ``mesh_path``, or the recompile fails.
+            ``size`` has a non-positive extent or a component count the shape
+            cannot consume, ``shape="mesh"`` is missing ``mesh_path``, or the
+            recompile fails.
 
         Example:
             >>> sim.add_object("cube", shape="box", size=[0.05, 0.05, 0.05])  # 5 cm cube
@@ -2488,7 +2496,11 @@ class MuJoCoSimEngine(
             shape=shape,
             position=position or [0.0, 0.0, 0.0],
             orientation=orientation or [1.0, 0.0, 0.0, 0.0],
-            size=size or [0.05, 0.05, 0.05],
+            # ``size is None`` means "omitted" -> the documented 5 cm default. An
+            # explicitly supplied vector is passed through verbatim: ``or`` would
+            # read an empty list as omitted and substitute the default for a
+            # request _validate_size has already rejected.
+            size=[0.05, 0.05, 0.05] if size is None else list(size),
             color=color or [0.5, 0.5, 0.5, 1.0],
             mass=mass,
             mesh_path=mesh_path,

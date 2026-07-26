@@ -149,7 +149,8 @@
       "type": "array",
       "items": {
         "type": "number"
-      }
+      },
+      "description": "Object size for add_object, as FULL extents in meters per axis (not MuJoCo half-extents). Pass every component the shape consumes: box/ellipsoid [x,y,z], cylinder/capsule [diameter,unused,height], sphere [diameter], plane [x] or [x,y] half-widths; mesh ignores it. At most 3 components. A partial vector (e.g. [0.5] for a box) is rejected, not padded - omit size entirely for the 5 cm default."
     },
     "color": {
       "type": "array",
