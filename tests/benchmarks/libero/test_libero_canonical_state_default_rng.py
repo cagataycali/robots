@@ -55,7 +55,7 @@ class _Sim:
         self._world = world
 
 
-def _make_sim() -> _Sim:
+def _make_sim() -> Any:
     model = mujoco.MjModel.from_xml_string(_SCENE_XML)
     data = mujoco.MjData(model)
     return _Sim(_World(model, data))
