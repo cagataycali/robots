@@ -55,6 +55,31 @@ diagnosis:
   readable. `verify_dataset` names each broken shard as a problem and runs the
   remaining checks against the readable files.
 
+### Fixed: in-process LeRobot training - resume, LoRA, and warm-start correctness
+
+Three defects on the in-process `train(cfg)` path (the subprocess CLI path was
+already correct):
+
+- **`resume=True` could never start.** lerobot recovers `--config_path` from
+  `sys.argv`, which the in-process path never populates, so
+  `TrainPipelineConfig.validate()` rejected the run. The resume config is now
+  rebuilt from the checkpoint's own `train_config.json`
+  (`TrainPipelineConfig.from_pretrained`) with only the managed run-control
+  fields reapplied, so the checkpoint's serialized `optimizer`/`scheduler`/
+  `policy` carry over as they do on the CLI - previously the spec-built config
+  left `optimizer=None` and `make_optimizer_and_scheduler` raised before the
+  first step. A checkpoint config that exists but does not deserialize now
+  raises a `ValueError` naming the file and pointing at `resume=False`, instead
+  of leaking the parser's pathless decoding error.
+- **LoRA was inverted.** `policy_cfg.use_peft = True` means "load
+  `pretrained_path` as a PEFT adapter repo" in lerobot, so pre-setting it broke
+  both LoRA-from-base and LoRA-from-scratch. `cfg.peft` alone now drives
+  `wrap_with_peft`.
+- **`base_model` warm start silently mismatched.** Checkpoint weights were
+  loaded (`strict=False`) against an all-defaults policy config, so any base
+  trained with non-default hyperparameters lost them without warning. The
+  config is now read from the checkpoint via `PreTrainedConfig.from_pretrained`.
+
 ### Fixed: AWS IoT mesh backend dead paths (peer discovery, camera ref, profile scoping, reconnect leak)
 
 Seven verified defects that left the pure-`iot` and `bridge` mesh backends

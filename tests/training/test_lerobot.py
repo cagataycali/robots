@@ -1720,44 +1720,66 @@ class TestInProcessTrainerCorrectness:
             assert sys.argv == saved
         assert sys.argv == saved
 
-    def test_resume_populates_optimizer_from_checkpoint_config(self, spec, tmp_path):
-        """Regression: resume must populate cfg.optimizer from the checkpoint.
+    def test_resume_carries_checkpoint_optimizer_values(self, spec, tmp_path):
+        """Resume must inherit the checkpoint's optimizer VALUES, not just a preset.
 
-        On resume, lerobot's validate() skips optimizer preset application
-        (``not self.resume`` guard), so cfg.optimizer stays None when the config
-        is built fresh. make_optimizer_and_scheduler then raises ValueError
-        before the training loop. The fix reads the checkpoint's serialized
-        optimizer/scheduler from train_config.json.
+        lerobot's validate() applies the optimizer preset only when NOT resuming,
+        so a spec-built resume config leaves optimizer=None and
+        make_optimizer_and_scheduler raises before the train loop. Rebuilding
+        from the checkpoint must carry the serialized optimizer verbatim -- a
+        run resumed with a hand-tuned learning rate has to keep it, otherwise
+        the resumed schedule silently differs from the interrupted one.
         """
         pytest.importorskip("lerobot")
 
-        # Write a checkpoint with a serialized optimizer config (mimicking what
-        # lerobot writes on a real training run).
-        last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
-        last.mkdir(parents=True)
-        saved_config = {
-            "optimizer": {
-                "type": "AdamW",
-                "lr": 1e-4,
-                "betas": [0.95, 0.999],
-                "eps": 1e-8,
-                "weight_decay": 1e-4,
-            },
-            "scheduler": {
-                "type": "cosine",
-                "num_warmup_steps": 500,
-            },
-        }
-        (last / "train_config.json").write_text(json.dumps(saved_config))
+        out = tmp_path / "out"
+        last = self._train_checkpoint(out, out)
+        # Rewrite the serialized optimizer with a non-preset learning rate, the
+        # way a run launched with a tuned lr persists it into train_config.json.
+        saved = json.loads((last / "train_config.json").read_text())
+        assert saved["optimizer"]["type"] == "adamw"
+        saved["optimizer"]["lr"] = 3.7e-6
+        (last / "train_config.json").write_text(json.dumps(saved))
 
-        spec.output_dir = str(tmp_path / "out")
+        spec.output_dir = str(out)
         spec.resume = True
         trainer = LerobotTrainer(device="cpu")
         cfg = trainer.build_config(spec)
 
-        # The fix must have populated optimizer from the checkpoint's config.
         assert cfg.optimizer is not None, (
             "cfg.optimizer must be populated from the checkpoint's "
             "train_config.json on resume, otherwise make_optimizer_and_scheduler "
             "raises ValueError before the training loop starts."
         )
+        assert cfg.optimizer.lr == pytest.approx(3.7e-6), (
+            "the resumed run must keep the checkpoint's learning rate, not fall back to the policy preset default"
+        )
+
+    def test_resume_with_undecodable_checkpoint_config_raises_actionable_error(self, spec, tmp_path):
+        """A checkpoint config that will not decode must name the file it came from.
+
+        A truncated / hand-edited / version-skewed train_config.json used to
+        surface draccus' bare DecodingError, which names neither the offending
+        path nor a way forward. Resume is fatal in that case (falling back to a
+        fresh build re-enters the optimizer=None crash), so it must raise an
+        error that points at the file and at resume=False.
+        """
+        pytest.importorskip("lerobot")
+
+        last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
+        last.mkdir(parents=True)
+        cfg_file = last / "train_config.json"
+        # 'AdamW' is not a registered optimizer choice name (lerobot registers
+        # 'adamw'), so this decodes no further than the optimizer field -- the
+        # shape a config written by an incompatible version arrives in.
+        cfg_file.write_text(json.dumps({"optimizer": {"type": "AdamW", "lr": 1e-4}}))
+
+        spec.output_dir = str(tmp_path / "out")
+        spec.resume = True
+        trainer = LerobotTrainer(device="cpu")
+
+        with pytest.raises(ValueError) as excinfo:
+            trainer.build_config(spec)
+        message = str(excinfo.value)
+        assert str(cfg_file) in message, "the error must name the checkpoint config path"
+        assert "resume=False" in message, "the error must offer a way forward"

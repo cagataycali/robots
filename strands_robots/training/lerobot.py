@@ -864,6 +864,13 @@ class LerobotTrainer(Trainer):
         reapplied on top. Returns ``None`` when no resumable checkpoint exists on
         disk, so the caller falls back to a fresh build and lerobot reports its own
         resume error rather than this method raising.
+
+        Raises:
+            ValueError: the checkpoint's ``train_config.json`` exists but cannot
+                be deserialized into a ``TrainPipelineConfig`` (truncated,
+                hand-edited, or written by an incompatible lerobot version).
+                Raised in place of draccus' bare ``DecodingError``, which names
+                neither the offending file nor a way forward.
         """
         from pathlib import Path
 
@@ -874,8 +881,24 @@ class LerobotTrainer(Trainer):
             return None
 
         # from_pretrained takes the pretrained_model DIRECTORY holding
-        # train_config.json (the dir latest_checkpoint returns).
-        cfg = TrainPipelineConfig.from_pretrained(os.path.dirname(cfg_file))
+        # train_config.json (the dir latest_checkpoint returns). A checkpoint
+        # config that exists but will not decode is fatal for resume: falling
+        # back to a fresh build would re-enter the optimizer=None crash this
+        # method exists to prevent, so fail loudly with the file path and the
+        # two ways out instead of leaking draccus' pathless DecodingError.
+        # The broad catch is a translate-and-reraise (nothing is swallowed): the
+        # decoder's error taxonomy spans draccus DraccusException, json/ValueError
+        # and OSError, and it is lerobot's to change.
+        try:
+            cfg = TrainPipelineConfig.from_pretrained(os.path.dirname(cfg_file))
+        except Exception as e:
+            raise ValueError(
+                f"Cannot resume: the checkpoint config at '{cfg_file}' did not "
+                f"deserialize into a lerobot TrainPipelineConfig ({type(e).__name__}: {e}). "
+                "The file is truncated, hand-edited, or was written by an incompatible "
+                "lerobot version. Either point output_dir at an intact checkpoint or "
+                "set resume=False to start a fresh run."
+            ) from e
 
         cfg.resume = True
         # output_dir MUST stay the resumed run's dir; validate() derives
