@@ -3639,16 +3639,22 @@ class MuJoCoSimEngine(
 
         # Validate the step horizon synchronously, before submitting to the
         # executor. run_policy runs on a background thread, so a malformed
-        # horizon (n_steps <= 0, control_frequency <= 0) would otherwise be
-        # reported only inside the future - the caller would receive a false
-        # "started" success and the robot would be left marked as running. The
-        # control_frequency guard covers the duration path too (n_steps omitted),
-        # which _resolve_horizon only checks when n_steps is given.
+        # horizon (duration <= 0, n_steps <= 0, control_frequency <= 0) would
+        # otherwise be reported only inside the future - the caller would
+        # receive a false "started" success and the robot would be left marked
+        # as running. Both horizon knobs are covered: the step count via
+        # _resolve_horizon, and the wall-clock duration it falls back to (the
+        # default path, when n_steps is omitted) via _validate_duration.
         if err := self._validate_positive_frequency(control_frequency, "start_policy"):
             return err
-        _, _, horizon_error = self._resolve_horizon(n_steps, max_steps, control_frequency, duration)
+        resolved_duration, resolved_n_steps, horizon_error = self._resolve_horizon(
+            n_steps, max_steps, control_frequency, duration, "start_policy"
+        )
         if horizon_error is not None:
             return horizon_error
+        if resolved_n_steps is None:
+            if err := self._validate_duration(resolved_duration, "start_policy"):
+                return err
         if err := self._validate_action_horizon(action_horizon, "start_policy"):
             return err
         # Same reason as the horizon guards above: a malformed video config
@@ -3882,7 +3888,12 @@ class MuJoCoSimEngine(
                 recorded task is the first robot's instruction (LeRobot stores
                 one task per frame).
             duration: Episode length in seconds (steps = duration x freq).
+                Used only when no ``n_steps`` / ``max_steps`` is given. Must be
+                a finite positive number; a non-positive, non-finite, or
+                non-numeric value is a caller error, not a zero-step rollout
+                reported as a success.
             control_frequency: Target Hz for policy action queries / physics.
+                Must be a positive number.
             action_horizon: How many actions to consume from each policy's
                 returned chunk before re-querying it (open-loop chunk
                 execution, mirrors ``run_policy``). Either a single int applied
@@ -3954,16 +3965,21 @@ class MuJoCoSimEngine(
                 next(iter(policies)),
             )
 
-        # Resolve horizon (n_steps / max_steps override duration).
-        if n_steps is None and max_steps is not None:
-            n_steps = int(max_steps)
-        if n_steps is not None:
-            if n_steps <= 0 or control_frequency <= 0:
-                return {
-                    "status": "error",
-                    "content": [{"text": "run_multi_policy: n_steps and control_frequency must be > 0."}],
-                }
-            duration = float(n_steps) / float(control_frequency)
+        # Resolve horizon (n_steps / max_steps override duration) through the
+        # shared helpers, so this loop guards the same domain as run_policy: a
+        # hand-rolled check only fired on the n_steps path, leaving the default
+        # duration path to compute total_steps = int(duration * frequency) = 0
+        # and report a rollout that never ran as a success.
+        if err := self._validate_positive_frequency(control_frequency, "run_multi_policy"):
+            return err
+        duration, n_steps, horizon_error = self._resolve_horizon(
+            n_steps, max_steps, control_frequency, duration, "run_multi_policy"
+        )
+        if horizon_error is not None:
+            return horizon_error
+        if n_steps is None:
+            if err := self._validate_duration(duration, "run_multi_policy"):
+                return err
 
         # Normalize action_horizon to a per-robot mapping. >=1 actions are
         # consumed open-loop from each policy's chunk before re-querying.

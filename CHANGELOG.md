@@ -5,6 +5,59 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: rollout entry points reject a `duration` they cannot run
+
+`duration` is the DEFAULT rollout horizon: with no `n_steps` / `max_steps` the
+rollout length is `int(duration * control_frequency)` control steps. The step
+count and the frequency were both validated; the duration was not, so a rollout
+that could never execute a single step reported success:
+
+```python
+sim.run_policy(robot_name="arm1", duration=-1.0)
+# -> success: "Policy complete on 'arm1' | 0.0s | 0 steps"   (nothing ran)
+
+sim.run_policy(robot_name="arm1", duration=0, video={"path": "/tmp/rollout.mp4"})
+# -> success: "Video requested but 0 frames captured"        (no MP4 written)
+
+sim.start_policy(robot_name="arm1", duration=-1.0)
+# -> success: "Policy started on 'arm1' (async)"             (nothing ran)
+
+sim.run_multi_policy(policies, duration=0.0)
+# -> success: "0 synchronized steps"
+
+sim.run_policy(robot_name="arm1", duration=float("nan"))
+# -> error: "Policy failed: cannot convert float NaN to integer"
+```
+
+The `start_policy` case is the damaging one: the caller is told the policy
+started and the robot is marked running, with no later signal that zero steps
+executed. The `video` case silently breaks the artifact contract - success with
+no file on disk. `nan`/`inf` never survived the arithmetic at all and surfaced
+as a `ValueError`/`OverflowError` message naming a library internal instead of
+the parameter to fix.
+
+`duration` is now validated at every public entry point that accepts it
+(`run_policy`, `start_policy`, `run_multi_policy`) before a policy is created or
+a background thread is submitted, by the new `SimEngine._validate_duration`.
+Its accepted domain mirrors `_validate_positive_frequency` - the other factor in
+the same `duration * control_frequency` product - so the two cannot diverge: any
+finite positive real scalar (NumPy scalars included), with `bool` and
+`nan`/`inf` rejected explicitly.
+
+The guard fires only when `duration` actually sets the horizon: passing an
+explicit `n_steps` recomputes `duration` from it, so `run_policy(n_steps=2,
+duration=0)` still runs its two steps rather than rejecting a value the rollout
+never reads.
+
+`run_multi_policy` resolved its horizon with an inline copy of the conversion
+whose guard only fired on the `n_steps` path; it now uses the shared
+`_resolve_horizon` + `_validate_positive_frequency` + `_validate_duration`, so a
+zero control frequency on the duration path is reported instead of reaching
+`1 / control_frequency`. Horizon errors also now name the method the caller
+actually called (`start_policy: n_steps must be > 0`, `run_multi_policy: ...`)
+rather than always `run_policy`.
+
+
 ### Fixed: `create_world` rejects a timestep / gravity it cannot honor
 
 `set_timestep` and `set_gravity` have always validated their input and returned

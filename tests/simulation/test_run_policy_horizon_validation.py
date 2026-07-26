@@ -398,3 +398,137 @@ class TestNStepsExactHorizon:
         # governs: 0.2 s @ 50 Hz -> 10 steps.
         result = sim.run_policy("arm1", duration=0.2, control_frequency=50.0, fast_mode=True)
         assert _reported_n_steps(result) == 10
+
+
+class TestDurationGuards:
+    """The wall-clock ``duration`` horizon must be guarded like the step count.
+
+    ``duration`` is the DEFAULT horizon knob: with no ``n_steps`` the rollout
+    length is ``int(duration * control_frequency)`` control steps. A value
+    ``<= 0`` produced zero steps and reported ``status="success"`` for a
+    rollout that never queried the policy and never stepped physics; a
+    non-finite value did not even survive the arithmetic (``nan`` raised
+    ``ValueError: cannot convert float NaN to integer``, ``inf`` an
+    ``OverflowError``) and surfaced as a message naming a library internal
+    instead of the parameter the caller got wrong.
+    """
+
+    @pytest.mark.parametrize("bad", [0, 0.0, -1, -0.5, -50.0])
+    def test_non_positive_duration_errors(self, sim, bad):
+        text = _err_text(sim.run_policy("arm1", duration=bad, fast_mode=True))
+        assert "duration must be > 0" in text
+        assert repr(bad) in text
+
+    @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+    def test_non_finite_duration_errors(self, sim, bad):
+        # nan is never <= 0, so it must be rejected on finiteness before the
+        # comparison; pre-fix it reached int(nan * frequency) and raised.
+        text = _err_text(sim.run_policy("arm1", duration=bad, fast_mode=True))
+        assert "duration must be > 0" in text
+
+    @pytest.mark.parametrize("bad", ["2.0", None, [1.0]])
+    def test_non_numeric_duration_errors(self, sim, bad):
+        text = _err_text(sim.run_policy("arm1", duration=bad, fast_mode=True))
+        assert "duration must be > 0" in text
+
+    def test_bool_duration_errors(self, sim):
+        # bool is an int subclass: True would act as a silent 1-second rollout.
+        text = _err_text(sim.run_policy("arm1", duration=True, fast_mode=True))
+        assert "duration must be > 0" in text
+
+    def test_duration_error_is_ascii(self, sim):
+        text = _err_text(sim.run_policy("arm1", duration=-1.0, fast_mode=True))
+        assert text.isascii(), text
+        assert "run_policy" in text
+
+    def test_guard_runs_before_robot_lookup(self, sim):
+        # The horizon guards precede the robot lookup, so the caller is told
+        # about the parameter they control rather than about a robot name that
+        # is only wrong in passing.
+        text = _err_text(sim.run_policy("no_such_robot", duration=0, fast_mode=True))
+        assert "duration must be > 0" in text
+
+    def test_numpy_scalar_duration_accepted(self, sim):
+        # Mirrors the control_frequency contract: any finite positive real
+        # scalar is valid, including a NumPy scalar read out of a config array.
+        result = sim.run_policy("arm1", duration=np.float32(0.2), control_frequency=50.0, fast_mode=True)
+        assert result["status"] == "success", result
+        assert _reported_n_steps(result) == 10
+
+    def test_explicit_step_horizon_wins_over_unused_duration(self, sim):
+        # With an n_steps the duration is recomputed from it and never read, so
+        # the guard must not reject a value the rollout does not use.
+        result = sim.run_policy("arm1", n_steps=2, duration=0, control_frequency=50.0, fast_mode=True)
+        assert result["status"] == "success", result
+        assert _reported_n_steps(result) == 2
+
+    def test_rejected_duration_does_not_write_requested_video(self, sim, tmp_path):
+        # The most damaging shape of the bug: a recording rollout reported
+        # success while writing no MP4 at all, because zero frames were
+        # captured. The request is now refused up front.
+        out = tmp_path / "rollout.mp4"
+        text = _err_text(sim.run_policy("arm1", duration=-1.0, video={"path": str(out)}, fast_mode=True))
+        assert "duration must be > 0" in text
+        assert not out.exists()
+
+
+class TestStartPolicyDurationGuard:
+    """start_policy must reject a bad duration synchronously.
+
+    The rollout runs on a background thread, so an unguarded duration was
+    reported as "started" while the future ran zero steps - the caller had no
+    way to learn the rollout never happened.
+    """
+
+    @pytest.mark.parametrize("bad", [0, -1.0, float("nan")])
+    def test_bad_duration_errors_synchronously(self, sim, bad):
+        text = _err_text(sim.start_policy("arm1", duration=bad))
+        assert "duration must be > 0" in text
+
+    def test_rejected_start_does_not_mark_robot_running(self, sim):
+        result = sim.start_policy("arm1", duration=-1.0)
+        assert result["status"] == "error"
+        assert "arm1" not in sim._policy_threads
+        # A well-formed start on the same robot still succeeds afterwards.
+        ok = sim.start_policy("arm1", n_steps=2, control_frequency=50.0, fast_mode=True)
+        assert ok["status"] == "success", ok
+        sim.stop_policy("arm1")
+
+    def test_horizon_error_names_start_policy(self, sim):
+        text = _err_text(sim.start_policy("arm1", n_steps=0))
+        assert "start_policy: n_steps must be > 0" in text
+
+
+class TestRunMultiPolicyHorizonGuards:
+    """run_multi_policy shares the horizon contract of run_policy.
+
+    It resolved the horizon with its own inline check that only fired when an
+    explicit ``n_steps`` was passed, so the default duration path computed
+    ``total_steps = int(duration * control_frequency) == 0`` and reported a
+    synchronized multi-robot rollout that never ran as a success.
+    """
+
+    @pytest.fixture
+    def policies(self):
+        from strands_robots.policies import MockPolicy
+
+        return {"arm1": MockPolicy()}
+
+    @pytest.mark.parametrize("bad", [0, -1.0, float("nan"), "2.0"])
+    def test_bad_duration_errors(self, sim, policies, bad):
+        text = _err_text(sim.run_multi_policy(policies, duration=bad))
+        assert "run_multi_policy: duration must be > 0" in text
+
+    def test_non_positive_n_steps_errors(self, sim, policies):
+        text = _err_text(sim.run_multi_policy(policies, n_steps=0))
+        assert "run_multi_policy: n_steps must be > 0" in text
+
+    def test_non_positive_control_frequency_errors_on_duration_path(self, sim, policies):
+        # Pre-fix the frequency was only checked alongside n_steps, so the
+        # duration path reached 1 / control_frequency with a zero divisor.
+        text = _err_text(sim.run_multi_policy(policies, duration=0.2, control_frequency=0))
+        assert "run_multi_policy: control_frequency must be > 0" in text
+
+    def test_valid_horizon_still_runs(self, sim, policies):
+        result = sim.run_multi_policy(policies, n_steps=2, control_frequency=50.0)
+        assert result["status"] == "success", result

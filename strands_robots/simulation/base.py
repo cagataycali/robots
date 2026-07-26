@@ -853,6 +853,7 @@ class SimEngine(ABC):
         max_steps: int | None,
         control_frequency: float,
         duration: float,
+        method: str = "run_policy",
     ) -> tuple[float, int | None, dict[str, Any] | None]:
         """Resolve a step horizon into a wall-clock duration.
 
@@ -869,7 +870,10 @@ class SimEngine(ABC):
                 is ``None``.
             control_frequency: Target control-loop frequency in Hz.
             duration: Fallback wall-clock duration used when no step horizon
-                is given.
+                is given. Returned unchanged when no horizon is given, so the
+                caller must still validate it with :meth:`_validate_duration`
+                (this helper only owns the horizon-to-duration conversion).
+            method: Public method name, used to prefix the error message.
 
         Returns:
             A ``(duration, n_steps, error)`` tuple. When ``error`` is non-None
@@ -887,7 +891,7 @@ class SimEngine(ABC):
                     n_steps,
                     {
                         "status": "error",
-                        "content": [{"text": f"run_policy: n_steps must be > 0, got {n_steps}."}],
+                        "content": [{"text": f"{method}: n_steps must be > 0, got {n_steps}."}],
                     },
                 )
             # control_frequency is validated as a positive number at the public
@@ -1099,6 +1103,51 @@ class SimEngine(ABC):
         return components, None
 
     @staticmethod
+    def _validate_duration(duration: Any, method: str) -> dict[str, Any] | None:
+        """Reject a rollout ``duration`` that cannot produce a single control step.
+
+        ``duration`` is the default horizon knob: when no ``n_steps`` /
+        ``max_steps`` is given, the rollout length is ``int(duration *
+        control_frequency)`` control steps. A value ``<= 0`` yields zero steps,
+        which used to be reported as ``status="success"`` for a rollout that
+        never queried the policy and never stepped physics - and, when a
+        ``video`` was requested, wrote no MP4 while still claiming success. A
+        non-finite value never reached that arithmetic intact either: ``nan``
+        surfaced as a bare ``ValueError`` ("cannot convert float NaN to
+        integer") naming a library internal, and ``inf`` as an
+        ``OverflowError``. Validating at the public entry point - before any
+        policy is created or a background thread is submitted - turns all of
+        these into an actionable caller error.
+
+        The accepted domain mirrors :meth:`_validate_positive_frequency` (the
+        other knob in the same ``duration * control_frequency`` product), so
+        the two cannot diverge: any finite positive real scalar, including a
+        NumPy scalar such as ``np.float32(2.5)``; ``bool`` is rejected
+        explicitly (an ``int`` subclass, ``True`` would act as a silent 1
+        second) and ``nan``/``inf`` are rejected before the ``<= 0`` comparison
+        so a ``nan`` - which is never ``<= 0`` - cannot slip through.
+
+        Args:
+            duration: The caller-supplied value to validate.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None`` when the
+            value is valid.
+        """
+        if (
+            isinstance(duration, bool)
+            or not isinstance(duration, numbers.Real)
+            or not math.isfinite(float(duration))
+            or float(duration) <= 0
+        ):
+            return {
+                "status": "error",
+                "content": [{"text": f"{method}: duration must be > 0, got {duration!r}."}],
+            }
+        return None
+
+    @staticmethod
     def _validate_video_config(video: Any, method: str) -> dict[str, Any] | None:
         """Reject a ``video`` recording config the rollout cannot honor.
 
@@ -1195,7 +1244,12 @@ class SimEngine(ABC):
                 ``use_processor``, ``processor_overrides``, ``device``,
                 ...). Forwarded verbatim to ``create_policy``.
             instruction: Natural-language instruction for the policy.
-            duration: Wall-clock seconds to run.
+            duration: Wall-clock seconds to run. Used only when no ``n_steps``
+                / ``max_steps`` is given (the step count wins and ``duration``
+                is recomputed from it). Must be a finite positive number; a
+                non-positive, non-finite, non-numeric, or bool value is
+                reported as a structured caller error rather than running a
+                zero-step rollout that reports success.
             control_frequency: Target Hz for policy queries. Must be a
                 positive number; a non-positive, non-numeric, or bool value
                 is reported as a structured caller error.
@@ -1329,6 +1383,13 @@ class SimEngine(ABC):
         duration, n_steps, horizon_error = self._resolve_horizon(n_steps, max_steps, control_frequency, duration)
         if horizon_error is not None:
             return horizon_error
+
+        # ``duration`` only sets the horizon when no step count was given - with
+        # an ``n_steps`` the resolution above recomputes it - so validate the
+        # value the rollout will actually run on, and only then.
+        if n_steps is None:
+            if err := self._validate_duration(duration, "run_policy"):
+                return err
 
         if err := self._validate_positive_int(n_episodes, "n_episodes", "run_policy"):
             return err
