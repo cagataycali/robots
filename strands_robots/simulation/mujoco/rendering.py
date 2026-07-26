@@ -1237,7 +1237,7 @@ class RenderingMixin:
     ) -> "CameraParams":
         """Return pinhole :class:`~strands_robots.rendering.CameraParams`.
 
-        Intrinsics ``K`` come from the camera's vertical FOV
+        Named cameras: intrinsics ``K`` come from the camera's vertical FOV
         (``model.cam_fovy``, square pixels, principal point at the image
         center); the world-from-camera pose comes from
         ``data.cam_xpos`` / ``data.cam_xmat``. MuJoCo's camera basis already
@@ -1245,28 +1245,38 @@ class RenderingMixin:
         so the pose maps across without correction. Clip planes are
         ``model.vis.map.{znear,zfar} * model.stat.extent``.
 
-        Holds ``self._lock`` and forward-steps kinematics (``mj_forward``, a
-        write to ``mj_data``) so freshly placed cameras have a valid pose even
-        before the first ``step()``.
+        Free camera (``None`` / ``""`` / ``"default"`` / ``"free"``): the same
+        view :meth:`get_frame` and :meth:`render` produce for ``cam_id = -1``,
+        so the two APIs stay symmetric and the hybrid compositor can composite
+        the default view. The pose is reconstructed from
+        ``mjv_defaultFreeCamera`` -- MuJoCo's own free-camera defaults, i.e.
+        ``model.vis.global_.{azimuth,elevation}`` about ``model.stat.center``
+        at ``1.5 * model.stat.extent`` -- and ``K`` from
+        ``model.vis.global_.fovy``. That view is a deterministic function of
+        the compiled model, so the params describe exactly what the renderer
+        draws.
+
+        Holds ``self._lock``. For a named camera it also forward-steps
+        kinematics (``mj_forward``, a write to ``mj_data``) so freshly placed
+        cameras have a valid pose even before the first ``step()``; the free
+        camera is derived from the model alone and needs no such write.
 
         Args:
-            camera_name: a named camera. The free camera has no model-fixed
-                pose and is rejected with ``ValueError``.
+            camera_name: a named camera, or a free-camera token (``None`` /
+                ``""`` / ``"default"`` / ``"free"``).
             width: image width to compute ``K`` for; ``None`` uses the
-                camera's configured resolution.
+                camera's configured resolution (the engine default for the
+                free camera).
             height: image height to compute ``K`` for.
 
         Raises:
             RuntimeError: no world created.
-            ValueError: free camera requested.
+            ValueError: the free camera is orthographic (``<visual><global
+                orthographic="true"/>``), which no pinhole ``K`` can represent.
             KeyError: unknown camera name.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             raise RuntimeError(_NO_WORLD_MSG)
-        if camera_name in (None, "", "default", "free"):
-            raise ValueError(
-                "The free camera has no model-fixed pose/intrinsics; use a named camera added via add_camera()."
-            )
 
         mj = _ensure_mujoco()
         import numpy as _np
@@ -1274,24 +1284,22 @@ class RenderingMixin:
         from strands_robots.rendering import CameraParams
 
         model = self._world._model
-        cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
-        if cam_id < 0:
-            raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
+        # The free camera is not a model camera: it has no name to resolve and
+        # no SimCamera entry, so its resolution and default size differ.
+        free_camera = camera_name in (None, "", "default", "free")
+        cam_cfg = None if free_camera else self._world.cameras.get(camera_name)
 
-        cam_cfg = self._world.cameras.get(camera_name)
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else int(width)
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else int(height)
 
         with self._lock:
-            # Make sure cam_xpos / cam_xmat reflect the latest qpos (a WRITE
-            # to mj_data -- hence the lock).
-            mj.mj_forward(model, self._world._data)
-            R = self._world._data.cam_xmat[cam_id].reshape(3, 3).copy()
-            t = self._world._data.cam_xpos[cam_id].copy()
-            fovy_deg = float(model.cam_fovy[cam_id])
             extent = float(model.stat.extent)
             znear = extent * float(model.vis.map.znear)
             zfar = extent * float(model.vis.map.zfar)
+            if free_camera:
+                R, t, fovy_deg = self._free_camera_pose(mj, _np, model)
+            else:
+                R, t, fovy_deg = self._named_camera_pose(mj, model, self._world._data, camera_name)
 
         fy = 0.5 * h / _np.tan(_np.deg2rad(fovy_deg) / 2.0)
         fx = fy  # MuJoCo uses square pixels; intrinsics from vertical FOV are symmetric.
@@ -1300,6 +1308,88 @@ class RenderingMixin:
         T_world_cam[:3, :3] = R
         T_world_cam[:3, 3] = t
         return CameraParams(K=K, T_world_cam=T_world_cam, width=w, height=h, znear=znear, zfar=zfar)
+
+    def _named_camera_pose(
+        self, mj: Any, model: Any, data: Any, camera_name: str | None
+    ) -> "tuple[np.ndarray, np.ndarray, float]":
+        """Return ``(R, t, fovy_deg)`` for the model camera ``camera_name``.
+
+        Caller must hold ``self._lock``: this forward-steps kinematics
+        (``mj_forward``, a WRITE to ``mj_data``) so that a camera placed since
+        the last ``step()`` still reports a valid ``cam_xpos``/``cam_xmat``.
+
+        Args:
+            mj: the imported ``mujoco`` module.
+            model: the compiled ``MjModel``.
+            data: the ``MjData`` whose kinematics are forward-stepped and read.
+            camera_name: name of a camera in the compiled model.
+
+        Returns:
+            ``(R, t, fovy_deg)`` -- 3x3 world-from-camera rotation, camera
+            position in world coordinates, and the vertical FOV in degrees.
+
+        Raises:
+            KeyError: no camera of that name exists in the model.
+        """
+        cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+        if cam_id < 0:
+            raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
+        mj.mj_forward(model, data)
+        R = data.cam_xmat[cam_id].reshape(3, 3).copy()
+        t = data.cam_xpos[cam_id].copy()
+        return R, t, float(model.cam_fovy[cam_id])
+
+    @staticmethod
+    def _free_camera_pose(mj: Any, np_mod: Any, model: Any) -> "tuple[np.ndarray, np.ndarray, float]":
+        """Return ``(R, t, fovy_deg)`` for the free camera of ``model``.
+
+        ``mujoco.Renderer.update_scene(data)`` (no camera argument, i.e. the
+        view :meth:`render` and :meth:`get_frame` draw) builds its camera with
+        ``mjv_defaultFreeCamera``, so this reads the same defaults back:
+        ``azimuth``/``elevation`` (degrees) orbiting ``lookat`` at
+        ``distance``, with the vertical FOV from ``model.vis.global_.fovy``.
+
+        The azimuth/elevation -> basis conversion mirrors MuJoCo's internal
+        ``mjv_updateCamera``: ``forward`` is the unit vector at those spherical
+        angles, ``up`` is the same vector rotated a quarter turn in the
+        elevation plane, and the eye sits ``distance`` back along ``-forward``.
+        The returned rotation is the world-from-camera basis in the OpenGL
+        optical convention (columns ``[right, up, -forward]``), matching the
+        named-camera path's ``cam_xmat``.
+
+        Args:
+            mj: the imported ``mujoco`` module.
+            np_mod: the imported ``numpy`` module.
+            model: the compiled ``MjModel``.
+
+        Returns:
+            ``(R, t, fovy_deg)`` -- 3x3 world-from-camera rotation, camera
+            position in world coordinates, and the vertical FOV in degrees.
+
+        Raises:
+            ValueError: the free camera is orthographic, which has no pinhole
+                intrinsics (a silently wrong perspective ``K`` is worse than a
+                loud refusal).
+        """
+        cam = mj.MjvCamera()
+        cam.type = mj.mjtCamera.mjCAMERA_FREE
+        mj.mjv_defaultFreeCamera(model, cam)
+        if bool(cam.orthographic):
+            raise ValueError(
+                'The free camera is orthographic (<visual><global orthographic="true"/>); '
+                "a pinhole CameraParams cannot represent an orthographic projection. "
+                "Add a perspective camera with add_camera() and pass its name."
+            )
+        az = float(np_mod.deg2rad(cam.azimuth))
+        el = float(np_mod.deg2rad(cam.elevation))
+        cos_el, sin_el = np_mod.cos(el), np_mod.sin(el)
+        forward = np_mod.array([cos_el * np_mod.cos(az), cos_el * np_mod.sin(az), sin_el], dtype=np_mod.float64)
+        up = np_mod.array([-sin_el * np_mod.cos(az), -sin_el * np_mod.sin(az), cos_el], dtype=np_mod.float64)
+        t = np_mod.asarray(cam.lookat, dtype=np_mod.float64).copy() - float(cam.distance) * forward
+        z_axis = -forward
+        x_axis = np_mod.cross(up, z_axis)
+        R = np_mod.column_stack([x_axis, up, z_axis])
+        return R, t, float(model.vis.global_.fovy)
 
     def _list_camera_names(self) -> list[str]:
         """helper to list all camera names (model-defined + SimCamera aliases)

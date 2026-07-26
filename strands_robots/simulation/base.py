@@ -2297,7 +2297,10 @@ class SimEngine(ABC):
 
         Args:
             camera_name: name of a camera previously added via ``add_camera``.
-                The free camera has no model-fixed pose and is rejected.
+                Backends with a free camera also accept their free-cam tokens
+                here, reporting the same view :meth:`get_frame` renders, so the
+                two APIs stay symmetric (MuJoCo: ``None`` / ``""`` /
+                ``"default"`` / ``"free"``).
             width: image width to compute ``K`` for; ``None`` uses the
                 camera's configured resolution.
             height: image height to compute ``K`` for; ``None`` uses the
@@ -2305,8 +2308,9 @@ class SimEngine(ABC):
 
         Raises:
             KeyError: unknown camera name.
-            ValueError: free camera requested, or a resolution the backend
-                cannot honor.
+            ValueError: a camera whose projection no pinhole ``K`` can
+                represent (e.g. an orthographic camera), or a resolution the
+                backend cannot honor.
             RuntimeError: no world created.
             NotImplementedError: backend has no camera-params path.
         """

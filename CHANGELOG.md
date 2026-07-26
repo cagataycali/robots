@@ -5,6 +5,32 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: MuJoCo `get_camera_params` answers for the free (`"default"`) camera
+
+`get_frame` renders the free camera (`None` / `""` / `"default"` / `"free"`) and
+`list_cameras()` advertises `"default"` first, but `get_camera_params` rejected
+those tokens with `ValueError("The free camera has no model-fixed
+pose/intrinsics")`. The two halves of the raw-frame API therefore disagreed on
+which cameras exist, and `HybridCompositor.render()` - whose own signature
+defaults to `camera_name="default"` - raised on the documented zero-config path:
+
+```python
+frame = HybridCompositor(sim, background=PanoramaBackground()).render()  # ValueError
+```
+
+The premise was wrong: MuJoCo's free view is a deterministic function of the
+compiled model. `get_camera_params` now reconstructs it from
+`mjv_defaultFreeCamera` - the same defaults `mujoco.Renderer.update_scene(data)`
+uses for `cam_id = -1` (`vis.global_.{azimuth,elevation}` orbiting `stat.center`
+at `1.5 * stat.extent`, vertical FOV from `vis.global_.fovy`) - so the reported
+pose/intrinsics describe exactly the frame `get_frame("default")` returns
+(verified pixel-for-pixel against an equivalent named camera). Named-camera
+behaviour is unchanged.
+
+An orthographic free camera (`<visual><global orthographic="true"/>`) is now
+refused with an actionable `ValueError` instead of being handed perspective
+intrinsics no parallel projection can satisfy.
+
 ### Fixed: AWS IoT mesh backend dead paths (peer discovery, camera ref, profile scoping, reconnect leak)
 
 Seven verified defects that left the pure-`iot` and `bridge` mesh backends
