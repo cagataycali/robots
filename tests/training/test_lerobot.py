@@ -5,6 +5,7 @@ end-to-end sim->train->load is exercised separately.
 """
 
 import json
+import sys
 
 import pytest
 
@@ -24,7 +25,7 @@ def dataset_root(tmp_path):
 def spec(dataset_root, tmp_path):
     return TrainSpec(
         dataset_root=dataset_root,
-        base_model="lerobot/act_aloha_sim",
+        base_model="",
         output_dir=str(tmp_path / "out"),
         steps=200,
         global_batch_size=8,
@@ -181,6 +182,7 @@ class TestQuantileHelpers:
 
 class TestBuildCommand:
     def test_single_gpu_core_flags(self, spec):
+        spec.base_model = "lerobot/act_aloha_sim"  # argv-parity only; no load
         cmd = LerobotTrainer(device="cpu").build_command(spec)
         # build_command is now a PURE argv-parity helper (no launcher prefix);
         # the module path is the first token.
@@ -264,7 +266,7 @@ class TestBuildConfig:
         assert cfg.policy.type == "act"
         assert cfg.policy.device == "cpu"
         assert cfg.policy.push_to_hub is False
-        assert str(cfg.policy.pretrained_path) == "lerobot/act_aloha_sim"
+        assert cfg.policy.pretrained_path is None
         assert cfg.steps == 200
         assert cfg.batch_size == 8
         assert cfg.save_freq == 100
@@ -281,7 +283,9 @@ class TestBuildConfig:
         assert cfg.peft.method_type == "LORA"
         assert cfg.peft.r == 16
         assert cfg.peft.target_modules == "q_proj,v_proj"
-        assert cfg.policy.use_peft is True
+        # strands must NOT pre-set use_peft: make_policy would then misread the
+        # base checkpoint as a PEFT adapter repo. cfg.peft alone drives wrapping.
+        assert cfg.policy.use_peft is False
 
     def test_val_split_episodes(self, spec):
         pytest.importorskip("lerobot")
@@ -559,12 +563,22 @@ class TestBuildConfigAdditionalBranches:
         pytest.importorskip("lerobot")
         last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
         last.mkdir(parents=True)
-        (last / "train_config.json").write_text("{}")
+        # A real checkpoint's train_config.json is a fully-serialized
+        # TrainPipelineConfig, never an empty stub: _build_resume_config rebuilds
+        # the config via TrainPipelineConfig.from_pretrained (draccus), which
+        # rejects a config missing required fields like `dataset`. Serialize a
+        # real fresh-built config so resume exercises the true round-trip.
+        trainer = LerobotTrainer(device="cpu")
+        trainer._build_policy_config(spec)._save_pretrained(last)
         spec.output_dir = str(tmp_path / "out")
         spec.resume = True
-        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        cfg = trainer.build_config(spec)
         # checkpoint_path is pretrained_model.parent.parent == the "last" dir.
         assert str(cfg.checkpoint_path) == str(last.parent)
+        # The checkpoint's config survives the from_pretrained round-trip (not a
+        # defaults-only fresh build): the dataset field is restored verbatim. For
+        # the local-root spec fixture, _dataset_source resolves repo_id="local".
+        assert cfg.dataset.repo_id == "local"
 
 
 class TestResolveDotted:
@@ -1564,3 +1578,208 @@ class TestLerobotDdpWorker:
         assert recorder["cfg"] is sentinel
         # ...but only rank 0 writes the shared log, so a non-zero rank leaves it absent.
         assert not log_path.exists()
+
+
+class TestInProcessTrainerCorrectness:
+    """Regression tests for the in-process trainer's resume / LoRA / warm-start.
+
+    Each test fails on the pre-fix code and passes after:
+      * resume: cfg.validate() needs --config_path on sys.argv (argv shim);
+      * LoRA: strands must not pre-set policy_cfg.use_peft (inverts lerobot);
+      * warm start: base_model must load the checkpoint's own saved config.
+    """
+
+    def _act_checkpoint(self, tmp_path, **overrides):
+        """Write a local ACT checkpoint config.json with non-default fields."""
+        from lerobot.policies.factory import make_policy_config
+
+        ckpt = tmp_path / "base_ckpt"
+        ckpt.mkdir()
+        base = make_policy_config("act")
+        for key, value in overrides.items():
+            setattr(base, key, value)
+        base.save_pretrained(ckpt)
+        return ckpt
+
+    def test_base_model_warm_start_reads_checkpoint_config(self, spec, tmp_path):
+        pytest.importorskip("lerobot")
+        # A base checkpoint trained with a non-default chunk_size (default 100).
+        ckpt = self._act_checkpoint(tmp_path, chunk_size=42, n_action_steps=42)
+        spec.base_model = str(ckpt)
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # Pre-fix: make_policy_config defaults -> chunk_size 100 (checkpoint ignored).
+        assert cfg.policy.chunk_size == 42
+        assert cfg.policy.n_action_steps == 42
+        assert str(cfg.policy.pretrained_path) == str(ckpt)
+        # Managed overrides still applied on top of the loaded config.
+        assert cfg.policy.device == "cpu"
+        assert cfg.policy.push_to_hub is False
+
+    def test_lora_base_model_does_not_preset_use_peft(self, spec, tmp_path):
+        pytest.importorskip("lerobot")
+        ckpt = self._act_checkpoint(tmp_path)
+        spec.base_model = str(ckpt)
+        spec.method = "lora"
+        spec.lora_r = 8
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # cfg.peft drives wrap_with_peft on the loaded base; use_peft must stay
+        # False so make_policy loads the plain base checkpoint, not an adapter repo.
+        assert cfg.peft is not None
+        assert cfg.peft.method_type == "LORA"
+        assert cfg.policy.use_peft is False
+        assert str(cfg.policy.pretrained_path) == str(ckpt)
+
+    def _train_checkpoint(self, tmp_path, output_dir, **policy_overrides):
+        """Write a resumable checkpoint: <out>/checkpoints/last/pretrained_model.
+
+        Persists a full ``TrainPipelineConfig`` (via draccus ``save_pretrained``)
+        exactly as lerobot writes ``train_config.json`` at save time -- so the
+        serialized ``optimizer``/``scheduler``/``policy`` are present, which is
+        the whole point of resuming from the checkpoint rather than the spec.
+        """
+        from lerobot.configs.default import DatasetConfig
+        from lerobot.configs.train import TrainPipelineConfig
+        from lerobot.policies.factory import make_policy_config
+
+        policy = make_policy_config("act")
+        for key, value in policy_overrides.items():
+            setattr(policy, key, value)
+        # Force push_to_hub off, mirroring the production build_config path
+        # (lerobot.py sets policy_cfg.push_to_hub = False). Otherwise lerobot's
+        # validate() raises "'repo_id' argument missing" because the policy config
+        # defaults push_to_hub truthy without a repo_id.
+        if hasattr(policy, "push_to_hub"):
+            policy.push_to_hub = False
+        # A minimal but VALID pipeline config: validate() fills optimizer/scheduler
+        # from the policy preset on a fresh (non-resume) build, so this is exactly
+        # what lerobot serializes into a real checkpoint's train_config.json.
+        # ``dataset`` is a required field on TrainPipelineConfig (no default), so
+        # pass a minimal DatasetConfig mirroring the production build path.
+        ckpt_cfg = TrainPipelineConfig(
+            dataset=DatasetConfig(repo_id="dummy/resume-fixture"),
+            policy=policy,
+            output_dir=output_dir,
+            steps=100,
+        )
+        ckpt_cfg.validate()
+        last = output_dir / "checkpoints" / "last" / "pretrained_model"
+        last.mkdir(parents=True)
+        ckpt_cfg.save_pretrained(last)
+        return last
+
+    def test_resume_rebuilds_config_from_checkpoint(self, spec, tmp_path):
+        pytest.importorskip("lerobot")
+        from strands_robots.training._inproc import resume_argv
+
+        out = tmp_path / "out"
+        # Checkpoint trained with a non-default chunk_size (default 100).
+        last = self._train_checkpoint(out, out, chunk_size=42, n_action_steps=42)
+        spec.output_dir = str(out)
+        spec.resume = True
+        spec.steps = 500  # resume to a larger step target
+        trainer = LerobotTrainer(device="cpu")
+        cfg = trainer.build_config(spec)
+
+        # MUST FIX regression: a spec-built resume cfg leaves optimizer/scheduler
+        # unset (validate() skips the preset when resuming) and make_optimizer_
+        # and_scheduler raises before the train loop. Rebuilding from the
+        # checkpoint carries them, so the run can actually start.
+        assert cfg.resume is True
+        assert cfg.optimizer is not None
+        # Policy config comes from the checkpoint, not make_policy_config defaults.
+        assert cfg.policy.chunk_size == 42
+        assert cfg.policy.n_action_steps == 42
+        # Managed run-control overrides reapplied on top of the loaded config.
+        assert cfg.steps == 500
+        assert str(cfg.output_dir) == str(out)
+
+        cfg_path = trainer._resume_config_path(spec.output_dir)
+        assert cfg_path is not None
+        # validate() still resolves the checkpoint via the argv shim (the flag
+        # lerobot recovers off sys.argv), now on a cfg that also carries optimizer.
+        with resume_argv(cfg_path):
+            cfg.validate()
+        assert str(cfg.policy.pretrained_path) == str(last)
+
+    def test_resume_without_checkpoint_falls_back_to_fresh_build(self, spec, tmp_path):
+        pytest.importorskip("lerobot")
+        # resume=True but no checkpoint on disk: build_config must NOT raise;
+        # it falls through to a fresh build so lerobot reports its own resume error.
+        spec.output_dir = str(tmp_path / "out")
+        spec.resume = True
+        trainer = LerobotTrainer(device="cpu")
+        assert trainer._resume_config_path(spec.output_dir) is None
+        cfg = trainer.build_config(spec)  # no AttributeError / no crash
+        assert cfg.resume is True
+
+    def test_resume_argv_noop_when_config_path_falsy(self):
+        from strands_robots.training._inproc import resume_argv
+
+        saved = list(sys.argv)
+        with resume_argv(None):
+            assert sys.argv == saved
+        assert sys.argv == saved
+
+    def test_resume_carries_checkpoint_optimizer_values(self, spec, tmp_path):
+        """Resume must inherit the checkpoint's optimizer VALUES, not just a preset.
+
+        lerobot's validate() applies the optimizer preset only when NOT resuming,
+        so a spec-built resume config leaves optimizer=None and
+        make_optimizer_and_scheduler raises before the train loop. Rebuilding
+        from the checkpoint must carry the serialized optimizer verbatim -- a
+        run resumed with a hand-tuned learning rate has to keep it, otherwise
+        the resumed schedule silently differs from the interrupted one.
+        """
+        pytest.importorskip("lerobot")
+
+        out = tmp_path / "out"
+        last = self._train_checkpoint(out, out)
+        # Rewrite the serialized optimizer with a non-preset learning rate, the
+        # way a run launched with a tuned lr persists it into train_config.json.
+        saved = json.loads((last / "train_config.json").read_text())
+        assert saved["optimizer"]["type"] == "adamw"
+        saved["optimizer"]["lr"] = 3.7e-6
+        (last / "train_config.json").write_text(json.dumps(saved))
+
+        spec.output_dir = str(out)
+        spec.resume = True
+        trainer = LerobotTrainer(device="cpu")
+        cfg = trainer.build_config(spec)
+
+        assert cfg.optimizer is not None, (
+            "cfg.optimizer must be populated from the checkpoint's "
+            "train_config.json on resume, otherwise make_optimizer_and_scheduler "
+            "raises ValueError before the training loop starts."
+        )
+        assert cfg.optimizer.lr == pytest.approx(3.7e-6), (
+            "the resumed run must keep the checkpoint's learning rate, not fall back to the policy preset default"
+        )
+
+    def test_resume_with_undecodable_checkpoint_config_raises_actionable_error(self, spec, tmp_path):
+        """A checkpoint config that will not decode must name the file it came from.
+
+        A truncated / hand-edited / version-skewed train_config.json used to
+        surface draccus' bare DecodingError, which names neither the offending
+        path nor a way forward. Resume is fatal in that case (falling back to a
+        fresh build re-enters the optimizer=None crash), so it must raise an
+        error that points at the file and at resume=False.
+        """
+        pytest.importorskip("lerobot")
+
+        last = tmp_path / "out" / "checkpoints" / "last" / "pretrained_model"
+        last.mkdir(parents=True)
+        cfg_file = last / "train_config.json"
+        # 'AdamW' is not a registered optimizer choice name (lerobot registers
+        # 'adamw'), so this decodes no further than the optimizer field -- the
+        # shape a config written by an incompatible version arrives in.
+        cfg_file.write_text(json.dumps({"optimizer": {"type": "AdamW", "lr": 1e-4}}))
+
+        spec.output_dir = str(tmp_path / "out")
+        spec.resume = True
+        trainer = LerobotTrainer(device="cpu")
+
+        with pytest.raises(ValueError) as excinfo:
+            trainer.build_config(spec)
+        message = str(excinfo.value)
+        assert str(cfg_file) in message, "the error must name the checkpoint config path"
+        assert "resume=False" in message, "the error must offer a way forward"

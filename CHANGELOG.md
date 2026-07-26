@@ -34,6 +34,35 @@ dispatcher now forwards residual keys to `**kwargs` methods instead of dropping
 them, so a genuine forwarding sink (`attach_teleop`, `stream_dataset`) also
 receives the options an agent passes.
 
+### Fixed: `safe_join` symlink traversal escape
+
+`safe_join` (used by the asset resolver and downloader to sanitise
+registry-sourced and user-supplied path components) verified containment only
+lexically via `os.path.normpath`, which cannot see through symlinks. A component
+such as `link/passwd`, where `<base>/link` targets a directory outside `<base>`
+(e.g. `/etc`), stayed lexically under the base yet resolved outside it, escaping
+the guard. Containment is now re-verified after full symlink resolution
+(`Path.resolve()` on both sides), so symlinked escapes are rejected while
+symlinks that resolve back inside the base remain allowed.
+
+Both clone-based asset download paths - the MuJoCo Menagerie fallback and a
+custom `asset.source` GitHub repo - now route through the hardened guard,
+closing three escapes a compromised repository could use to write host files
+into the asset cache:
+
+- the copied directory (the Menagerie robot directory, or the registry-declared
+  `subdir` of a GitHub source) is resolved with
+  `safe_join(..., resolve_symlinks=True)`, so a directory that is itself a
+  symlink out of the clone is rejected, as is a lexical `../` component in
+  `subdir`;
+- symlinks nested *inside* an otherwise legitimate asset directory are dropped
+  at copy time, since `shutil.copytree(symlinks=False)` would follow them.
+
+Both checks are required and neither subsumes the other: `copytree` follows a
+symlinked *root* before its `ignore` callback ever runs, so the entry filter
+cannot see a symlinked root, and the root check cannot see nested links.
+Rejections are reported as a `failed: ...` status for the affected robot, so a
+malicious entry cannot fail silently.
 
 ### Fixed: MuJoCo `get_camera_params` answers for the free (`"default"`) camera
 
@@ -84,6 +113,31 @@ diagnosis:
   `unreadable_files` list (`"<path>: <error>"`), and raises only when NO shard is
   readable. `verify_dataset` names each broken shard as a problem and runs the
   remaining checks against the readable files.
+
+### Fixed: in-process LeRobot training - resume, LoRA, and warm-start correctness
+
+Three defects on the in-process `train(cfg)` path (the subprocess CLI path was
+already correct):
+
+- **`resume=True` could never start.** lerobot recovers `--config_path` from
+  `sys.argv`, which the in-process path never populates, so
+  `TrainPipelineConfig.validate()` rejected the run. The resume config is now
+  rebuilt from the checkpoint's own `train_config.json`
+  (`TrainPipelineConfig.from_pretrained`) with only the managed run-control
+  fields reapplied, so the checkpoint's serialized `optimizer`/`scheduler`/
+  `policy` carry over as they do on the CLI - previously the spec-built config
+  left `optimizer=None` and `make_optimizer_and_scheduler` raised before the
+  first step. A checkpoint config that exists but does not deserialize now
+  raises a `ValueError` naming the file and pointing at `resume=False`, instead
+  of leaking the parser's pathless decoding error.
+- **LoRA was inverted.** `policy_cfg.use_peft = True` means "load
+  `pretrained_path` as a PEFT adapter repo" in lerobot, so pre-setting it broke
+  both LoRA-from-base and LoRA-from-scratch. `cfg.peft` alone now drives
+  `wrap_with_peft`.
+- **`base_model` warm start silently mismatched.** Checkpoint weights were
+  loaded (`strict=False`) against an all-defaults policy config, so any base
+  trained with non-default hyperparameters lost them without warning. The
+  config is now read from the checkpoint via `PreTrainedConfig.from_pretrained`.
 
 ### Fixed: AWS IoT mesh backend dead paths (peer discovery, camera ref, profile scoping, reconnect leak)
 

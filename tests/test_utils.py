@@ -82,6 +82,44 @@ class TestSafeJoin:
         result = safe_join(tmp_path, ".")
         assert result == tmp_path
 
+    def test_rejects_symlink_escape_when_resolving(self, tmp_path):
+        from strands_robots.utils import safe_join
+
+        # A symlink whose target lies outside *base* stays lexically under base
+        # yet resolves outside it; with resolve_symlinks it must be rejected.
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret").write_text("x")
+        base = tmp_path / "base"
+        base.mkdir()
+        (base / "link").symlink_to(outside)
+        with pytest.raises(ValueError, match="via symlink"):
+            safe_join(base, "link/secret", resolve_symlinks=True)
+
+    def test_symlink_escape_allowed_by_default(self, tmp_path):
+        from strands_robots.utils import safe_join
+
+        # Default (lexical) mode returns the managed path even when a component
+        # is a symlink: the asset cache intentionally symlinks robot dirs to
+        # installed packages outside the cache, and must not be rejected.
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        base = tmp_path / "base"
+        base.mkdir()
+        (base / "link").symlink_to(outside)
+        assert safe_join(base, "link/model.xml") == base / "link" / "model.xml"
+
+    def test_allows_symlink_within_base_when_resolving(self, tmp_path):
+        from strands_robots.utils import safe_join
+
+        # A symlink that resolves back inside *base* must still be permitted so
+        # the symlink hardening does not over-block legitimate asset layouts.
+        base = tmp_path / "base"
+        (base / "real").mkdir(parents=True)
+        (base / "alias").symlink_to(base / "real")
+        result = safe_join(base, "alias/model.xml", resolve_symlinks=True)
+        assert result == base / "alias" / "model.xml"
+
 
 class TestGetSearchPaths:
     """Tests for the centralised search-path resolver."""

@@ -55,7 +55,7 @@ import shutil
 import time
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.training._inproc import call_callable, elastic_launch_callable
+from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -826,11 +826,95 @@ class LerobotTrainer(Trainer):
         dataclass tree ``train(cfg)`` consumes directly (no argv). Dispatches to
         the reward-model path when ``extra['reward_model']`` is set, else the
         default policy path.
+
+        On ``resume``, the config is rebuilt FROM THE CHECKPOINT rather than
+        from the spec (see :meth:`_build_resume_config`): a spec-built resume
+        config leaves ``optimizer``/``scheduler`` unset (lerobot's ``validate()``
+        applies the preset only when NOT resuming), so lerobot's factory raises
+        before the train loop.
         """
+        if spec.resume:
+            resume_cfg = self._build_resume_config(spec)
+            if resume_cfg is not None:
+                return resume_cfg
+            # No resumable checkpoint on disk: fall through to a fresh build so
+            # validate() surfaces lerobot's own resume error, not an AttributeError.
         rm = self._reward_model_dict(spec)
         if rm is not None:
             return self._build_reward_model_config(spec, rm)
         return self._build_policy_config(spec)
+
+    def _build_resume_config(self, spec: TrainSpec) -> TrainPipelineConfig | None:
+        """Rebuild the ``TrainPipelineConfig`` from the checkpoint's own config.
+
+        Mirrors lerobot's CLI resume: the CLI passes ``--config_path`` and draccus
+        deserializes the checkpoint's ``train_config.json`` as the BASE config, so
+        the resumed run inherits the checkpoint's serialized ``optimizer`` and
+        ``scheduler``. lerobot's ``validate()`` applies the optimizer preset only
+        when NOT resuming (``elif self.use_policy_training_preset and not
+        self.resume``), so a fresh spec-built resume cfg keeps ``optimizer=None``
+        and ``make_optimizer_and_scheduler`` raises ``ValueError("Optimizer config
+        is required ...")`` before the train loop. The checkpoint's policy config
+        is likewise ignored on a fresh build (defaults-only -- the same silent
+        mismatch class as the ``base_model`` warm-start path).
+
+        Loading via ``TrainPipelineConfig.from_pretrained`` restores
+        ``optimizer``/``scheduler``/``policy`` verbatim; only the managed
+        run-control overrides (output_dir, steps, save_freq, wandb off, seed) are
+        reapplied on top. Returns ``None`` when no resumable checkpoint exists on
+        disk, so the caller falls back to a fresh build and lerobot reports its own
+        resume error rather than this method raising.
+
+        Raises:
+            ValueError: the checkpoint's ``train_config.json`` exists but cannot
+                be deserialized into a ``TrainPipelineConfig`` (truncated,
+                hand-edited, or written by an incompatible lerobot version).
+                Raised in place of draccus' bare ``DecodingError``, which names
+                neither the offending file nor a way forward.
+        """
+        from pathlib import Path
+
+        from lerobot.configs.train import TrainPipelineConfig
+
+        cfg_file = self._resume_config_path(spec.output_dir)
+        if cfg_file is None:
+            return None
+
+        # from_pretrained takes the pretrained_model DIRECTORY holding
+        # train_config.json (the dir latest_checkpoint returns). A checkpoint
+        # config that exists but will not decode is fatal for resume: falling
+        # back to a fresh build would re-enter the optimizer=None crash this
+        # method exists to prevent, so fail loudly with the file path and the
+        # two ways out instead of leaking draccus' pathless DecodingError.
+        # The broad catch is a translate-and-reraise (nothing is swallowed): the
+        # decoder's error taxonomy spans draccus DraccusException, json/ValueError
+        # and OSError, and it is lerobot's to change.
+        try:
+            cfg = TrainPipelineConfig.from_pretrained(os.path.dirname(cfg_file))
+        except Exception as e:
+            raise ValueError(
+                f"Cannot resume: the checkpoint config at '{cfg_file}' did not "
+                f"deserialize into a lerobot TrainPipelineConfig ({type(e).__name__}: {e}). "
+                "The file is truncated, hand-edited, or was written by an incompatible "
+                "lerobot version. Either point output_dir at an intact checkpoint or "
+                "set resume=False to start a fresh run."
+            ) from e
+
+        cfg.resume = True
+        # output_dir MUST stay the resumed run's dir; validate() derives
+        # checkpoint_path from it (mirrors _apply_common_config on the fresh path).
+        if spec.output_dir:
+            cfg.output_dir = Path(spec.output_dir)
+        cfg.checkpoint_path = Path(cfg_file).parent.parent
+        # Run-control fields the caller legitimately re-specifies on resume.
+        cfg.steps = spec.steps
+        cfg.save_freq = spec.save_freq
+        if spec.seed is not None:
+            cfg.seed = spec.seed
+        if hasattr(cfg, "wandb") and hasattr(cfg.wandb, "enable"):
+            cfg.wandb.enable = False
+        self._apply_extra_passthrough(cfg, spec)
+        return cfg
 
     def _build_dataset_config(self, spec: TrainSpec) -> Any:
         """Shared ``DatasetConfig`` for both the policy and reward-model paths."""
@@ -858,6 +942,37 @@ class LerobotTrainer(Trainer):
             ckpt_cfg = self._resume_config_path(spec.output_dir)
             if ckpt_cfg:
                 cfg.checkpoint_path = Path(ckpt_cfg).parent.parent
+
+    def _populate_resume_optimizer(self, cfg: Any, spec: TrainSpec) -> None:
+        """Populate optimizer/scheduler for a resumed in-process run.
+
+        On resume, lerobot's validate() skips the optimizer preset application
+        (``not self.resume`` guard), expecting the config was deserialized from
+        the checkpoint's train_config.json (which carries the serialized
+        optimizer/scheduler). The in-process path builds the config fresh from
+        the spec, so cfg.optimizer stays None and make_optimizer_and_scheduler
+        raises before the training loop.
+
+        Resolution: apply the policy's optimizer/scheduler preset ourselves,
+        mirroring what validate() does on the non-resume (fresh-train) path.
+        On the CLI resume path the preset comes from the deserialized checkpoint
+        config; since we build cfg.policy from the checkpoint's saved config
+        (via PreTrainedConfig.from_pretrained in the base_model path, or
+        make_policy_config for fresh resume), the preset is already correct.
+        """
+        if cfg.optimizer is None and cfg.policy is not None:
+            try:
+                cfg.optimizer = cfg.policy.get_optimizer_preset()
+                logger.debug("Resume: populated optimizer from policy preset.")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Resume: failed to get optimizer preset: %s", e)
+
+        if getattr(cfg, "scheduler", None) is None and cfg.policy is not None:
+            try:
+                cfg.scheduler = cfg.policy.get_scheduler_preset()
+                logger.debug("Resume: populated scheduler from policy preset.")
+            except Exception as e:  # noqa: BLE001
+                logger.warning("Resume: failed to get scheduler preset: %s", e)
 
     def _apply_extra_passthrough(self, cfg: TrainPipelineConfig, spec: TrainSpec) -> None:
         """Typed passthrough for remaining ``extra.*`` keys (validate()-gated).
@@ -932,13 +1047,25 @@ class LerobotTrainer(Trainer):
 
         ptype = self._resolve_policy_type(spec)
 
-        policy_cfg = make_policy_config(ptype)
+        if spec.base_model:
+            # Warm start: load the checkpoint's OWN saved config (architecture
+            # hyperparameters - chunk_size, vision backbone, hidden dims, ...)
+            # rather than make_policy_config's all-defaults. lerobot's make_policy
+            # feeds this config verbatim to from_pretrained (strict=False), so a
+            # defaults-only config silently loads mismatched/partial weights from a
+            # base trained with non-default hyperparameters. Mirror lerobot's own
+            # --policy.path flow, which builds PreTrainedConfig.from_pretrained
+            # first and then loads the weights against it.
+            from lerobot.configs.policies import PreTrainedConfig
+
+            policy_cfg = PreTrainedConfig.from_pretrained(spec.base_model)
+            policy_cfg.pretrained_path = Path(spec.base_model)
+        else:
+            policy_cfg = make_policy_config(ptype)
         if hasattr(policy_cfg, "device"):
             policy_cfg.device = self.device
         if hasattr(policy_cfg, "push_to_hub"):
             policy_cfg.push_to_hub = False
-        if spec.base_model:
-            policy_cfg.pretrained_path = Path(spec.base_model)
         if spec.method == "expert_only" and hasattr(policy_cfg, "train_expert_only"):
             policy_cfg.train_expert_only = True
         if spec.learning_rate is not None:
@@ -978,8 +1105,13 @@ class LerobotTrainer(Trainer):
                     "to a version that supports them, or drop them from the spec."
                 )
             peft_cfg = PeftConfig(**peft_kwargs)
-            if hasattr(policy_cfg, "use_peft"):
-                policy_cfg.use_peft = True
+            # Do NOT set policy_cfg.use_peft here. lerobot never sets use_peft
+            # before training; make_policy reads use_peft=True as "load
+            # pretrained_path as a PEFT ADAPTER repo" (PeftConfig.from_pretrained),
+            # which crashes on a plain base checkpoint, and rejects use_peft=True
+            # with no checkpoint outright. Setting cfg.peft alone is what triggers
+            # lerobot_train's wrap_with_peft on the freshly loaded base policy;
+            # use_peft is flipped by lerobot itself only after wrapping.
 
         cfg = TrainPipelineConfig(
             dataset=self._build_dataset_config(spec),
@@ -993,6 +1125,8 @@ class LerobotTrainer(Trainer):
             peft=peft_cfg,
         )
         self._apply_common_config(cfg, spec)
+        if spec.resume:
+            self._populate_resume_optimizer(cfg, spec)
 
         # RA-BC sample weighting: lerobot >= 0.6.0 configures it via a NESTED
         # SampleWeightingConfig on TrainPipelineConfig (cfg.sample_weighting),
@@ -1103,7 +1237,12 @@ class LerobotTrainer(Trainer):
             else:
                 from lerobot.scripts.lerobot_train import train as lerobot_train
 
-                call_callable(lerobot_train, cfg, log_path=log_path)
+                # On resume, lerobot's validate() reads the checkpoint's
+                # train_config.json path back off sys.argv (--config_path); the
+                # in-process call has no argv, so inject it for the call.
+                resume_cfg = self._resume_config_path(spec.output_dir) if spec.resume else None
+                with resume_argv(resume_cfg):
+                    call_callable(lerobot_train, cfg, log_path=log_path)
         except Exception as e:  # noqa: BLE001 - convert ANY failure to a result
             train_error = e
             logger.error("LerobotTrainer in-process train failed: %s", e)
@@ -1200,7 +1339,11 @@ def _lerobot_worker(policy_type: str, device: str, spec: TrainSpec, log_path: st
     from lerobot.scripts.lerobot_train import train as lerobot_train
 
     is_rank0 = _os.environ.get("LOCAL_RANK", "0") == "0"
-    call_callable(lerobot_train, cfg, log_path=log_path if is_rank0 else None)
+    # Resume needs --config_path on sys.argv for lerobot's validate() (see
+    # resume_argv); each spawned worker builds its own cfg and must inject it too.
+    resume_cfg = trainer._resume_config_path(spec.output_dir) if spec.resume else None
+    with resume_argv(resume_cfg):
+        call_callable(lerobot_train, cfg, log_path=log_path if is_rank0 else None)
 
 
 def _expand_big_number(token: str) -> float | None:

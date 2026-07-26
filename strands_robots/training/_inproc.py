@@ -34,7 +34,7 @@ import contextlib
 import io
 import logging
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -103,6 +103,31 @@ class capture_to_file:
                 self._fh.close()
             if self._stream is not None:
                 self._stream.close()
+
+
+@contextlib.contextmanager
+def resume_argv(config_path: str | None) -> Iterator[None]:
+    """Expose ``--config_path=<train_config.json>`` on ``sys.argv`` for a resume.
+
+    lerobot's ``TrainPipelineConfig.validate()`` resolves a resumed run by reading
+    ``--config_path`` back off ``sys.argv`` (``parser.parse_arg``): draccus has
+    already consumed the flag by the time ``validate()`` runs, so it is recovered
+    from the raw args rather than the config object. The in-process path builds the
+    ``TrainPipelineConfig`` directly and never populates ``sys.argv``, so a
+    ``resume=True`` config would raise ``ValueError("A config_path is expected when
+    resuming a run...")`` before training starts. This context manager injects the
+    flag for the duration of the ``train(cfg)`` call and restores the original
+    ``sys.argv`` in a ``finally``. A no-op when ``config_path`` is falsy.
+    """
+    if not config_path:
+        yield
+        return
+    saved_argv = sys.argv
+    sys.argv = [*saved_argv, f"--config_path={config_path}"]
+    try:
+        yield
+    finally:
+        sys.argv = saved_argv
 
 
 def call_callable(

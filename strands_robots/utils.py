@@ -186,22 +186,34 @@ def resolve_asset_path(relative_or_absolute: str | Path | None, default_name: st
 #
 
 
-def safe_join(base: Path, untrusted: str) -> Path:
+def safe_join(base: Path, untrusted: str, *, resolve_symlinks: bool = False) -> Path:
     """Join *base* with an untrusted relative path, rejecting traversal.
 
     Used to protect against ``../`` escapes in registry-sourced or
-    user-supplied path components before they reach the filesystem.
+    user-supplied path components before they reach the filesystem. Containment
+    is always verified lexically; set *resolve_symlinks* to additionally reject
+    symlinked components that escape *base* after resolution.
 
     Args:
         base: Trusted base directory.
         untrusted: Relative path component (may contain ``/`` but must not
             escape *base*).
+        resolve_symlinks: When ``True``, containment is re-verified after full
+            symlink resolution so a symlinked component that points outside
+            *base* (e.g. ``base/link -> /etc`` followed by ``link/passwd``) is
+            rejected. Enable this when *base* is an untrusted or externally
+            sourced tree - e.g. a freshly cloned repository - whose symlinks may
+            escape. Leave ``False`` (the default) for the managed asset cache,
+            whose robot directories are intentionally symlinked to installed
+            ``robot_descriptions`` packages that legitimately live outside the
+            cache; resolving those would wrongly reject them.
 
     Returns:
         Normalised absolute Path under *base*.
 
     Raises:
-        ValueError: If the resulting path would escape *base*.
+        ValueError: If the resulting path would escape *base* (lexically, or via
+            a symlink when *resolve_symlinks* is set).
 
     Example::
 
@@ -212,6 +224,17 @@ def safe_join(base: Path, untrusted: str) -> Path:
     base_norm = Path(os.path.normpath(base))
     if not (joined == base_norm or str(joined).startswith(str(base_norm) + os.sep)):
         raise ValueError(f"Path traversal blocked: {untrusted!r} escapes {base}")
+    if resolve_symlinks:
+        # Lexical normalisation cannot see through symlinks: a component such as
+        # ``link/passwd`` where ``base/link`` targets ``/etc`` stays lexically
+        # under *base* yet resolves outside it. ``resolve(strict=False)``
+        # resolves the existing prefix and appends the remainder lexically for
+        # not-yet-created files; resolving *base* too keeps a symlinked base
+        # prefix (e.g. /tmp on macOS) consistent on both sides.
+        base_resolved = base_norm.resolve()
+        joined_resolved = joined.resolve()
+        if not (joined_resolved == base_resolved or str(joined_resolved).startswith(str(base_resolved) + os.sep)):
+            raise ValueError(f"Path traversal blocked: {untrusted!r} escapes {base} via symlink")
     return joined
 
 
