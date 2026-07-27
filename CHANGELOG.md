@@ -46,6 +46,39 @@ reports identically regardless of which optional extras an install has. Usable
 rates are unchanged: `30`, `30.0` and a NumPy integer all still record, and a
 recorded episode reopens at the requested rate.
 
+### Fixed: caller-supplied vectors are read by membership, not truthiness
+
+`add_object`, `add_robot`, `add_camera`, `move_object` and `apply_force` decided
+whether a vector parameter had been supplied by testing the vector itself
+(`position or [0.0, 0.0, 0.0]`, `if position:`, `np.array(force or [0, 0, 0])`).
+Two failure modes followed from that.
+
+A NumPy vector - what pose arithmetic, an observation row or a computed wrench
+actually is - has no boolean value, so it raised a bare `ValueError` straight
+through the structured tool-result contract, on all nine affected parameters:
+
+```python
+sim.add_object(name="cube", position=base + np.array([0.1, 0.0, 0.0]))
+# -> ValueError: The truth value of an array with more than one element is ambiguous
+sim.apply_force(body_name="cube", force=np.array([8.0, 0.0, 0.0]))
+# -> same ValueError, past the {"status": ...} envelope
+```
+
+An empty vector is falsy, so it read as "omitted" and the default was applied
+under a `success` result: `add_camera(position=[])` placed the camera at the
+default `[1, 1, 1]`, and `move_object(position=[])` moved nothing while
+reporting `"'cube' moved to same"` (on a static object it reached MuJoCo's spec
+setter and raised a bare pybind `TypeError`).
+
+A vector parameter is now supplied when it is not `None`. A supplied vector is
+validated for length and finiteness and normalized to plain floats by the shared
+`_coerce_pose_vector`, so an accepted NumPy input does not outlive that boundary
+and leak `np.float64(0.05)` into status text or into the `list[float]` fields of
+`SimObject` / `SimRobot`. Omitting a vector still takes its documented default.
+`move_object` also reports the components it actually applied - an
+orientation-only move was reported as `"moved to same"` even though the rotation
+was written.
+
 ### Fixed: the plain-MP4 camera recorder rejects frame and pixel counts it cannot honor
 
 `start_cameras_recording` and `start_cameras_recording_synchronous` never

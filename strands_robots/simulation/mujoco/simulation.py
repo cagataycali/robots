@@ -240,6 +240,47 @@ def _validate_pose_vector(method: str, param_name: str, vec: Any, expected_len: 
 # default and the per-robot mapping fallback cannot drift apart.
 _DEFAULT_ACTION_HORIZON = 8
 
+
+def _coerce_pose_vector(
+    method: str, param_name: str, vec: Any, expected_len: int
+) -> tuple[list[float] | None, str | None]:
+    """Validate an optional pose vector and normalize it to plain floats.
+
+    Membership, not truthiness: a pose parameter is "supplied" when it is not
+    ``None``. Testing the vector itself (``if position:``, ``position or
+    <default>``) is wrong twice over. A NumPy array - the natural product of any
+    pose arithmetic, and what every docstring here advertises as accepted -
+    raises a bare ``ValueError: truth value of an array ... is ambiguous``
+    through the structured tool-result contract, and an empty vector reads as
+    "omitted", so the default is substituted (or the write skipped) while the
+    call reports success.
+
+    Normalizing to a ``list[float]`` keeps the accepted NumPy input from
+    outliving this boundary: the pose is stored on :class:`SimObject` /
+    :class:`SimRobot` (both annotated ``list[float]``), echoed in the status
+    text, and written into the spec, so a raw ``np.float64`` element would leak
+    ``np.float64(0.05)`` into agent-visible output.
+
+    Args:
+        method: Calling method name, used in error text.
+        param_name: Parameter name, used in error text.
+        vec: The caller's value, or ``None`` when the parameter was omitted.
+        expected_len: Component count the target buffer defines (3 for a
+            position, 4 for a wxyz quaternion).
+
+    Returns:
+        ``(None, None)`` when ``vec`` is ``None`` (omitted - the caller applies
+        its own default), ``(floats, None)`` for an acceptable vector, or
+        ``(None, error_message)`` for a wrong length, a non-numeric element or a
+        ``nan``/``inf`` component.
+    """
+    if vec is None:
+        return None, None
+    if (err := _validate_pose_vector(method, param_name, vec, expected_len)) is not None:
+        return None, err
+    return [float(v) for v in vec], None
+
+
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
 # Tool schema is 357 lines of JSON. `tool_spec` property is on the LLM hot path
@@ -1158,12 +1199,11 @@ class MuJoCoSimEngine(
         # element raises a bare MuJoCo `add_frame(): incompatible function
         # arguments` TypeError that escapes the structured-error contract. NumPy
         # scalar components are accepted.
-        if position is not None and (e := _validate_pose_vector("add_robot", "position", position, 3)) is not None:
+        position, e = _coerce_pose_vector("add_robot", "position", position, 3)
+        if e is not None:
             return {"status": "error", "content": [{"text": e}]}
-        if (
-            orientation is not None
-            and (e := _validate_pose_vector("add_robot", "orientation", orientation, 4)) is not None
-        ):
+        orientation, e = _coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        if e is not None:
             return {"status": "error", "content": [{"text": e}]}
 
         # Remember whether the caller supplied a `name` (vs an auto-derived
@@ -1252,8 +1292,12 @@ class MuJoCoSimEngine(
         robot = SimRobot(
             name=name,
             urdf_path=resolved_path,
-            position=position or [0.0, 0.0, 0.0],
-            orientation=orientation or [1.0, 0.0, 0.0, 0.0],
+            # ``is None`` means "omitted" -> the documented default. ``or`` would
+            # additionally read a NumPy pose as ambiguous (a bare ValueError) and
+            # an empty vector as omitted; _coerce_pose_vector already rejected
+            # the latter and normalized the former to plain floats.
+            position=[0.0, 0.0, 0.0] if position is None else position,
+            orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
             data_config=data_config,
             namespace=f"{name}/",
         )
@@ -2556,12 +2600,11 @@ class MuJoCoSimEngine(
         # non-numeric element (e.g. ["a", ...]) raises a bare TypeError inside
         # MuJoCo's add_geom or the size <= 0 comparison, escaping the
         # structured-error contract. NumPy scalar components are accepted.
-        if position is not None and (e := _validate_pose_vector("add_object", "position", position, 3)) is not None:
+        position, e = _coerce_pose_vector("add_object", "position", position, 3)
+        if e is not None:
             return {"status": "error", "content": [{"text": e}]}
-        if (
-            orientation is not None
-            and (e := _validate_pose_vector("add_object", "orientation", orientation, 4)) is not None
-        ):
+        orientation, e = _coerce_pose_vector("add_object", "orientation", orientation, 4)
+        if e is not None:
             return {"status": "error", "content": [{"text": e}]}
         if size is not None and (e := _validate_finite_vector("add_object", "size", size)) is not None:
             return {"status": "error", "content": [{"text": e}]}
@@ -2626,13 +2669,20 @@ class MuJoCoSimEngine(
         obj = SimObject(
             name=name,
             shape=shape,
-            position=position or [0.0, 0.0, 0.0],
-            orientation=orientation or [1.0, 0.0, 0.0, 0.0],
+            # ``is None`` means "omitted" -> the documented default. ``or`` would
+            # additionally read a NumPy pose as ambiguous (a bare ValueError) and
+            # an empty vector as omitted; _coerce_pose_vector already rejected
+            # the latter and normalized the former to plain floats.
+            position=[0.0, 0.0, 0.0] if position is None else position,
+            orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
             # ``size is None`` means "omitted" -> the documented 5 cm default. An
             # explicitly supplied vector is passed through verbatim: ``or`` would
             # read an empty list as omitted and substitute the default for a
-            # request _validate_size has already rejected.
-            size=[0.05, 0.05, 0.05] if size is None else list(size),
+            # request _validate_size has already rejected. Elements are floated
+            # for the same reason poses are - ``list(np.array([0.05] * 3))``
+            # keeps NumPy scalars, which leak as ``np.float64(0.05)`` into this
+            # object's status text and ``list_objects``.
+            size=[0.05, 0.05, 0.05] if size is None else [float(v) for v in size],
             # ``color is None`` means "omitted" -> the documented mid-grey
             # default. A supplied colour arrives here already coerced to 4
             # components; ``or`` would read an empty list as omitted and paint
@@ -2734,12 +2784,16 @@ class MuJoCoSimEngine(
           other joints' state), just like ``add_object`` / ``remove_object``.
 
         ``position`` must be a 3-element vector and ``orientation`` a 4-element
-        wxyz quaternion; each must contain only finite real numbers (NumPy
-        scalars accepted). A wrong-length, non-numeric, or nan/inf pose is
-        rejected up front rather than raising a bare ``ValueError`` past the
-        tool-result contract or silently writing a non-finite value into
-        ``data.qpos`` (which ``mj_forward`` would propagate through the whole
-        physics state).
+        wxyz quaternion; each must contain only finite real numbers. The vector
+        itself may be a list, a tuple or a NumPy array (pose arithmetic produces
+        arrays), and its elements may be NumPy scalars. A wrong-length,
+        non-numeric, or nan/inf pose is rejected up front rather than raising a
+        bare ``ValueError`` past the tool-result contract or silently writing a
+        non-finite value into ``data.qpos`` (which ``mj_forward`` would propagate
+        through the whole physics state). "Supplied" means "not ``None``": an
+        empty vector is a wrong-length request, not an omission, so it is
+        rejected instead of leaving the component unchanged under a success
+        result. The returned text names the components actually applied.
 
         Returns ``status="error"`` if the object is unknown, the pose is
         invalid, or the static-body recompile fails - it never reports success
@@ -2760,9 +2814,11 @@ class MuJoCoSimEngine(
         # mj_forward silently poisons the whole physics state. Only validate a
         # component that is actually supplied (None leaves it unchanged; the
         # move logic below treats a falsy value as "no change").
-        if position and (perr := _validate_pose_vector("move_object", "position", position, 3)) is not None:
+        position, perr = _coerce_pose_vector("move_object", "position", position, 3)
+        if perr is not None:
             return {"status": "error", "content": [{"text": perr}]}
-        if orientation and (oerr := _validate_pose_vector("move_object", "orientation", orientation, 4)) is not None:
+        orientation, oerr = _coerce_pose_vector("move_object", "orientation", orientation, 4)
+        if oerr is not None:
             return {"status": "error", "content": [{"text": oerr}]}
 
         mj = self._mj
@@ -2780,11 +2836,11 @@ class MuJoCoSimEngine(
                 # through data.qpos + a forward pass (no recompile).
                 qpos_addr = model.jnt_qposadr[jnt_id]
                 moved = False
-                if position:
+                if position is not None:
                     data.qpos[qpos_addr : qpos_addr + 3] = position
                     self._world.objects[name].position = position
                     moved = True
-                if orientation:
+                if orientation is not None:
                     data.qpos[qpos_addr + 3 : qpos_addr + 7] = orientation
                     self._world.objects[name].orientation = orientation
                     moved = True
@@ -2818,7 +2874,16 @@ class MuJoCoSimEngine(
                 if orientation is not None:
                     self._world.objects[name].orientation = orientation
 
-        return {"status": "success", "content": [{"text": f"'{name}' moved to {position or 'same'}"}]}
+        # Report what was actually applied. ``position or 'same'`` claimed
+        # "moved to same" for an orientation-only move (which DID change the
+        # pose) and raised on a NumPy position.
+        applied = [
+            f"{label} {vec}" for label, vec in (("position", position), ("orientation", orientation)) if vec is not None
+        ]
+        return {
+            "status": "success",
+            "content": [{"text": f"'{name}' moved to {', '.join(applied) if applied else 'same'}"}],
+        }
 
     def list_objects(self) -> dict[str, Any]:
         """List every object in the scene with its shape, position, and mass.
@@ -2885,7 +2950,10 @@ class MuJoCoSimEngine(
         ``<robot>/<body>`` (e.g. ``so101/gripper`` is the SO101 wrist mount).
 
         Validation: ``position`` and ``target`` must each be 3 finite numbers
-        (NumPy scalars accepted); ``fov`` must be a finite angle in ``(0, 180)``
+        (a list, tuple or NumPy array; NumPy scalar elements accepted). Omit a
+        vector to take its default - an empty vector is a wrong-length request
+        and is rejected rather than silently placing the camera at the default
+        pose. ``fov`` must be a finite angle in ``(0, 180)``
         degrees; and ``width``/``height`` must be positive ints within the
         offscreen framebuffer cap (same bounds ``render`` enforces). Invalid
         values are rejected here at config time with an actionable error rather
@@ -2898,9 +2966,19 @@ class MuJoCoSimEngine(
         if err := self._require_no_running_policy("add_camera"):
             return err
 
-        # validate position / target shape before we bake them into XML.
-        pos = position or [1.0, 1.0, 1.0]
-        tgt = target or [0.0, 0.0, 0.0]
+        # Validate position / target shape before we bake them into XML.
+        # Membership, not truthiness: ``position or <default>`` raised a bare
+        # ValueError on a NumPy pose (what the docstring above advertises as
+        # accepted) and read an empty vector as "omitted", quietly placing the
+        # camera at the default [1, 1, 1] under a success result.
+        position, _perr = _coerce_pose_vector("add_camera", "position", position, 3)
+        if _perr is not None:
+            return {"status": "error", "content": [{"text": _perr}]}
+        target, _terr = _coerce_pose_vector("add_camera", "target", target, 3)
+        if _terr is not None:
+            return {"status": "error", "content": [{"text": _terr}]}
+        pos = [1.0, 1.0, 1.0] if position is None else position
+        tgt = [0.0, 0.0, 0.0] if target is None else target
         for _lbl, _vec in (("position", pos), ("target", tgt)):
             # Validate shape AND finiteness up front. The degenerate-orientation
             # check below does ``abs(pos[i] - tgt[i])`` element-wise, so a

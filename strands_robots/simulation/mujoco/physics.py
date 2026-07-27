@@ -525,6 +525,9 @@ class PhysicsMixin:
 
         To stop the force: ``apply_force(body, force=[0, 0, 0])``.
 
+        Each vector may be a list, a tuple or a NumPy array (a computed wrench
+        is an array), and every element must be a finite real number.
+
         Args:
             body_name: Target body name.
             force: [fx, fy, fz] in world frame (Newtons).
@@ -593,11 +596,16 @@ class PhysicsMixin:
         if body_id < 0:
             return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
 
-        f = np.array(force or [0, 0, 0], dtype=np.float64)
-        t = np.array(torque or [0, 0, 0], dtype=np.float64)
+        # Membership, not truthiness: a vector is supplied when it is not None.
+        # ``force or [0, 0, 0]`` raised a bare "truth value of an array with more
+        # than one element is ambiguous" ValueError - through the structured
+        # tool-result contract - for a NumPy force/torque/point, which is what
+        # any computed wrench (``mass * accel``, a Jacobian row) actually is.
         # Note: explicit [0,0,0] is a valid "clear the latched force" command; we only
         # reject the case where the caller forgot both args (handled above).
-        p = np.array(point, dtype=np.float64) if point else data.xipos[body_id].copy()
+        f = np.array([0.0, 0.0, 0.0] if force is None else force, dtype=np.float64)
+        t = np.array([0.0, 0.0, 0.0] if torque is None else torque, dtype=np.float64)
+        p = np.array(point, dtype=np.float64) if point is not None else data.xipos[body_id].copy()
 
         # Zero the buffer first so calls are idempotent (replace, not accumulate).
         # NOTE: MuJoCo does NOT reset qfrc_applied in mj_step - the force
