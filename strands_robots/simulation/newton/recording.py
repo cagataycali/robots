@@ -87,7 +87,9 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             repo_id: HuggingFace dataset id (``owner/name``) or a local path.
             task: Default task description recorded with every frame.
             fps: Recording frame rate. Must be a positive whole number;
-                a rate no dataset can be written at is rejected up front.
+                a rate no dataset can be written at is rejected up front. When
+                an existing dataset is RESUMED (``overwrite=False``) it must
+                equal that dataset's on-disk rate, which a resume cannot change.
             root: Explicit on-disk dataset directory (overrides the repo_id
                 cache-path resolution).
             push_to_hub: Publish to the Hub at ``stop_recording``.
@@ -251,7 +253,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             if resume_existing:
                 logger.info("Resuming existing dataset for append: %s", dataset_dir)
                 resumed = _DatasetRecorder.resume(repo_id=repo_id, root=root, task=task, vcodec=vcodec)
-                self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims)
+                self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, fps=fps)
                 world._backend_state["dataset_recorder"] = resumed
             else:
                 world._backend_state["dataset_recorder"] = _DatasetRecorder.create(

@@ -153,7 +153,9 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
             task: Default task description recorded with every frame.
             fps: Recording frame rate (metadata; see pacing note above).
                 Must be a positive whole number; a rate no dataset can be
-                written at is rejected up front.
+                written at is rejected up front. When an existing dataset is
+                RESUMED (``overwrite=False``) it must equal that dataset's
+                on-disk rate, which a resume cannot change.
             root: Explicit on-disk dataset directory (overrides the repo_id
                 cache-path resolution).
             push_to_hub: Publish to the Hub at ``stop_recording``.
@@ -302,7 +304,7 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 if resume_existing:
                     logger.info("Resuming existing dataset for append: %s", dataset_dir)
                     resumed = _DatasetRecorder.resume(repo_id=repo_id, root=root, task=task, vcodec=vcodec)
-                    self._verify_resume_schema(resumed, joint_names, camera_keys, camera_dims, action_names)
+                    self._verify_resume_schema(resumed, joint_names, camera_keys, camera_dims, action_names, fps=fps)
                     state["dataset_recorder"] = resumed
                 else:
                     state["dataset_recorder"] = _DatasetRecorder.create(

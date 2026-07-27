@@ -73,6 +73,51 @@ def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | No
     return None
 
 
+def _resumed_dataset_fps(recorder: Any) -> int | None:
+    """Read the on-disk frame rate of a resumed dataset, or None if unavailable.
+
+    ``LeRobotDataset`` exposes ``fps`` directly and via ``meta.fps``; both are
+    probed so a layout that only carries the metadata object still compares.
+
+    Only a positive WHOLE rate is reported. A dataset whose on-disk rate is
+    fractional cannot be appended to at any rate ``start_recording`` accepts
+    (it requires a positive whole number), so there is no value to advise the
+    caller to pass and the comparison is skipped rather than dead-ending a
+    resume - matching the best-effort posture of the rest of the schema check.
+
+    Args:
+        recorder: The resumed ``DatasetRecorder``.
+
+    Returns:
+        The dataset frame rate as an int, or ``None`` when the dataset does not
+        report a usable whole rate (an unexpected LeRobot layout must not block
+        a valid resume).
+    """
+    dataset = getattr(recorder, "dataset", None)
+    for value in (getattr(dataset, "fps", None), getattr(getattr(dataset, "meta", None), "fps", None)):
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            continue
+        if value > 0 and float(value).is_integer():
+            return int(value)
+    return None
+
+
+def _resume_schema_error(diffs: list[str]) -> str:
+    """Format the resume-refusal message from the collected schema differences.
+
+    Args:
+        diffs: One human-readable line per divergence found.
+
+    Returns:
+        The full error message, listing every difference.
+    """
+    return (
+        "Cannot resume recording: the current scene does not match the existing dataset schema. "
+        "Use overwrite=True for a fresh dataset, or restore the original scene. Differences:\n  - "
+        + "\n  - ".join(diffs)
+    )
+
+
 class DatasetRecordingMixin:
     """Engine-independent recording lifecycle shared by sim backends.
 
@@ -690,6 +735,8 @@ class DatasetRecordingMixin:
         camera_keys: list[str],
         camera_dims: dict[str, tuple[int, int]],
         action_names: list[str] | None = None,
+        *,
+        fps: int,
     ) -> None:
         """Verify the live scene matches the resumed dataset's on-disk schema.
 
@@ -699,10 +746,19 @@ class DatasetRecordingMixin:
         mismatch would only surface as a cryptic per-feature shape error on the
         next ``add_frame``. Compare here and raise a clear schema diff instead.
 
-        Compares the expected ``observation.state`` joint names and each
-        ``observation.images.*`` camera (presence + height/width). Best-effort:
-        if the dataset does not expose ``features`` we skip silently rather than
-        block a valid resume on an unexpected LeRobot layout.
+        Compares the expected ``observation.state`` joint names, each
+        ``observation.images.*`` camera (presence + height/width), and the
+        dataset frame rate. Best-effort: if the dataset does not expose
+        ``features`` / ``fps`` we skip that comparison rather than block a valid
+        resume on an unexpected LeRobot layout.
+
+        ``fps`` is checked here because a resumed dataset keeps the rate it was
+        created at - ``LeRobotDataset.resume`` takes no ``fps`` - so a differing
+        request cannot be honored. Appending anyway timestamps the new frames at
+        the on-disk rate while they were captured at the requested one, which
+        writes a wrong timebase into the dataset: episodes recorded at different
+        cadences become indistinguishable, and a policy trained on them reads
+        the wrong dt (and so the wrong velocities) for every appended episode.
 
         Args:
             recorder: The resumed DatasetRecorder.
@@ -715,15 +771,30 @@ class DatasetRecordingMixin:
             action_names: Action-column names the current scene will emit
                 (actuator keys; namespaced for multi-robot scenes). When None
                 the action feature is not compared.
+            fps: Frame rate the caller asked to record at. Must equal the
+                resumed dataset's on-disk rate; keyword-only and required so no
+                backend can resume without comparing it.
 
         Raises:
             ValueError: If the live scene schema diverges from the on-disk one.
         """
+        diffs: list[str] = []
+
+        # Frame rate first: it is carried by the dataset metadata rather than
+        # the feature dict, so it is comparable even on a LeRobot layout whose
+        # ``features`` mapping is missing (the early return below).
+        disk_fps = _resumed_dataset_fps(recorder)
+        if disk_fps is not None and disk_fps != int(fps):
+            diffs.append(
+                f"dataset fps differs: on-disk={disk_fps} vs requested={int(fps)} "
+                f"(a resumed dataset keeps its on-disk rate; pass fps={disk_fps} to append at it)"
+            )
+
         features = getattr(getattr(recorder, "dataset", None), "features", None)
         if not isinstance(features, dict):
+            if diffs:
+                raise ValueError(_resume_schema_error(diffs))
             return
-
-        diffs: list[str] = []
 
         state = features.get("observation.state")
         if isinstance(state, dict):
@@ -759,8 +830,4 @@ class DatasetRecordingMixin:
             diffs.append(f"camera '{cam}' is in the on-disk schema but not in the current scene")
 
         if diffs:
-            raise ValueError(
-                "Cannot resume recording: the current scene does not match the existing dataset schema. "
-                "Use overwrite=True for a fresh dataset, or restore the original scene. Differences:\n  - "
-                + "\n  - ".join(diffs)
-            )
+            raise ValueError(_resume_schema_error(diffs))

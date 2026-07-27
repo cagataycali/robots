@@ -221,6 +221,63 @@ def test_b12_multi_episode_resume_appends(sim_with_two_robots, tmp_path):
     assert ds.meta.total_episodes == 2, f"expected 2 episodes, got {ds.meta.total_episodes}"
 
 
+def test_resume_at_a_different_fps_is_refused_and_leaves_the_dataset_intact(sim_with_two_robots, tmp_path):
+    """Appending to an existing dataset at a different ``fps`` is rejected.
+
+    A resumed dataset keeps the rate it was created at (``LeRobotDataset.resume``
+    takes no ``fps``), so a differing request cannot be honored. Pre-fix the
+    second ``start_recording`` returned ``status="success"`` and reported the
+    requested rate while every appended frame was timestamped at the on-disk one
+    - two episodes captured at different cadences became indistinguishable on
+    disk. The refusal must also leave the existing dataset untouched.
+    """
+    from strands_robots.dataset_recorder import has_lerobot_dataset
+
+    if not has_lerobot_dataset():
+        pytest.skip("lerobot not installed")
+
+    sim = sim_with_two_robots
+    root = str(tmp_path / "fpsmix")
+
+    r = sim.start_recording(repo_id="local/fpsmix", fps=20, root=root, overwrite=True)
+    assert r["status"] == "success", r
+    sim.run_policy(
+        robot_name="alpha",
+        policy_provider="mock",
+        instruction="ep0",
+        duration=0.3,
+        control_frequency=20.0,
+        fast_mode=True,
+    )
+    assert sim.stop_recording()["status"] == "success"
+
+    r = sim.start_recording(repo_id="local/fpsmix", fps=40, root=root, overwrite=False)
+    assert r["status"] == "error", f"resume at a different fps must be refused: {r}"
+    text = r["content"][0]["text"]
+    assert "fps" in text and "on-disk=20" in text and "requested=40" in text, text
+
+    # The dataset the caller already recorded is intact and still at its rate.
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+
+    ds = LeRobotDataset(repo_id="local/fpsmix", root=root)
+    assert ds.meta.fps == 20
+    assert ds.meta.total_episodes == 1
+
+    # The same rate still appends, so the guard only rejects the unhonorable case.
+    r = sim.start_recording(repo_id="local/fpsmix", fps=20, root=root, overwrite=False)
+    assert r["status"] == "success", r
+    sim.run_policy(
+        robot_name="alpha",
+        policy_provider="mock",
+        instruction="ep1",
+        duration=0.3,
+        control_frequency=20.0,
+        fast_mode=True,
+    )
+    assert sim.stop_recording()["status"] == "success"
+    assert LeRobotDataset(repo_id="local/fpsmix", root=root).meta.total_episodes == 2
+
+
 def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
     """B4 fix: run_multi_policy drives BOTH robots in one synchronized loop and
     records them into ONE merged frame per timestep - so every frame co-observes

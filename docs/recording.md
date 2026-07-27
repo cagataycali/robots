@@ -65,6 +65,20 @@ When `root` already contains a LeRobotDataset (a `meta/` directory),
 LeRobotDataset, and is **not empty** is left untouched and reported as an error
 rather than clobbered - pass `overwrite=True` or choose a new/empty `root`.
 
+A resume inherits the existing dataset's schema, so `fps` must match the rate it
+was created at - a resume cannot change it. Requesting a different rate is
+refused, naming the on-disk value, rather than appending frames timestamped on
+the dataset's timebase instead of the one they were captured at:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", root=root, fps=60)  # dataset is 30 fps
+# -> error: "dataset fps differs: on-disk=30 vs requested=60
+#            (a resumed dataset keeps its on-disk rate; pass fps=30 to append at it)"
+```
+
+Pass `fps=30` to append at the dataset's rate, or `overwrite=True` to record a
+fresh dataset at 60.
+
 When you drive recording through the `run_policy` tool (which owns the
 `start_recording` -> rollout -> `stop_recording` cycle), forward the same
 subset with `dataset_cameras=`:

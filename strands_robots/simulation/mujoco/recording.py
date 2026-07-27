@@ -84,7 +84,11 @@ class RecordingMixin(DatasetRecordingMixin):
                 be written and is rejected up front rather than aborting the
                 rollout behind a ``status="success"`` return. Set it to the
                 ``run_policy`` ``control_frequency`` so recorded timestamps
-                match the cadence frames were captured at.
+                match the cadence frames were captured at. When an existing
+                dataset is RESUMED (``overwrite=False``), it must equal that
+                dataset's on-disk rate: a resumed dataset keeps the rate it was
+                created at, so a differing request is refused with the on-disk
+                value rather than silently appending frames on a wrong timebase.
             root: On-disk dataset directory (defaults to the LeRobot cache under
                 ``repo_id``). An existing EMPTY directory (e.g. from
                 ``tempfile.mkdtemp()``) is accepted and recorded into; an
@@ -363,7 +367,7 @@ class RecordingMixin(DatasetRecordingMixin):
                 # a camera resolution between episodes would otherwise yield a
                 # cryptic per-feature shape error on the next add_frame. Compare
                 # up front and raise a clear schema-diff instead.
-                self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, action_names)
+                self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, action_names, fps=fps)
                 self._world._backend_state["dataset_recorder"] = resumed
             else:
                 self._world._backend_state["dataset_recorder"] = _DatasetRecorder.create(

@@ -5,6 +5,43 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: resuming a dataset recording at a different frame rate is refused
+
+`start_recording(overwrite=False)` on an existing dataset resumes it, and
+`LeRobotDataset.resume` takes no `fps` - the dataset keeps the rate it was
+created at. The requested rate was nevertheless accepted and reported back:
+
+```python
+sim.start_recording(repo_id="local/demo", fps=30, root=root, overwrite=True)
+sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=24, control_frequency=30.0)
+sim.stop_recording()
+
+sim.start_recording(repo_id="local/demo", fps=60, root=root)   # resume
+# -> success: "Recording to LeRobotDataset: local/demo ... @ 60fps"
+sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=24, control_frequency=60.0)
+sim.stop_recording()                                            # -> success
+```
+
+Both episodes were written at 30 fps. The second was captured at 60 Hz
+(0.383 s of rollout) but timestamped across 0.767 s, so two episodes recorded at
+different cadences became indistinguishable on disk and every appended episode
+carried a wrong `dt` for training.
+
+The frame rate is now compared against the resumed dataset like the rest of the
+schema (joint columns, action columns, camera resolutions) and a mismatch is
+refused with the value that would append:
+
+```
+Cannot resume recording: the current scene does not match the existing dataset schema.
+Use overwrite=True for a fresh dataset, or restore the original scene. Differences:
+  - dataset fps differs: on-disk=30 vs requested=60 (a resumed dataset keeps its
+    on-disk rate; pass fps=30 to append at it)
+```
+
+Resuming at the dataset's own rate still appends as before. The comparison is
+shared by the MuJoCo, Newton and Isaac backends (`fps` is a required
+keyword-only argument of the schema check, so no backend can resume without it).
+
 ### Fixed: a dataset recording is refused at a frame rate it cannot be written at
 
 `start_recording` never validated `fps`. LeRobot itself only rejects `fps <= 0`,
