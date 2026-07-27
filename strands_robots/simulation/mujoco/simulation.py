@@ -2401,8 +2401,9 @@ class MuJoCoSimEngine(
                 than completed from the backend default, because a completed
                 colour paints a surface the caller never asked for while
                 reporting success.
-            mass: Body mass in kg for dynamic objects (default 0.1); ignored when
-                ``is_static``.
+            mass: Body mass in kg for dynamic objects (default 0.1); must be a
+                finite number > 0 (the same domain ``set_body_properties``
+                enforces). Ignored when ``is_static``.
             is_static: Fix the body in the world. ``shape="plane"`` forces this
                 True; other shapes default to dynamic.
             mesh_path: Mesh asset path; required and only used when
@@ -2415,8 +2416,9 @@ class MuJoCoSimEngine(
             ``size`` contains a non-finite (``nan``/``inf``) or non-numeric
             element or ``position``/``orientation``/``color`` is the wrong length
             (3 / 4 / 3-or-4), ``size`` has a non-positive extent or a component
-            count the shape cannot consume, ``shape="mesh"`` is missing
-            ``mesh_path``, or the recompile fails.
+            count the shape cannot consume, ``mass`` is not a finite number > 0
+            for a dynamic object, ``shape="mesh"`` is missing ``mesh_path``, or
+            the recompile fails.
 
         Example:
             >>> sim.add_object("cube", shape="box", size=[0.05, 0.05, 0.05])  # 5 cm cube
@@ -2506,6 +2508,38 @@ class MuJoCoSimEngine(
         # caller gets a clear error rather than a confusing recompile failure.
         if size is not None and (size_err := _validate_size(shape, list(size))) is not None:
             return {"status": "error", "content": [{"text": size_err}]}
+
+        # A dynamic body's mass divides every force acting on it, so a value
+        # outside (0, inf) is unusable: inf compiled successfully and made the
+        # first step produce nan, which the shared state vector then spread to
+        # every OTHER body in the world, while 0/negative/nan aborted the
+        # recompile with a generic "spec recompile refused" that named neither
+        # the parameter nor MuJoCo's mjMINVAL invariant. Checked only for a
+        # dynamic body, which is where the value reaches body_mass - a static
+        # body has no mass in the compiled model, and the result says "static"
+        # rather than quoting a mass, so nothing is silently dishonored there.
+        if not is_static:
+            if (mass_err := self._validate_mass(mass, "add_object")) is not None:
+                return mass_err
+            # MuJoCo additionally refuses to compile a moving body lighter than
+            # mjMINVAL ("mass and inertia of moving bodies must be larger than
+            # mjMINVAL"), which is the last mass value that reached the generic
+            # recompile refusal. Name the floor instead, so every mass this
+            # method accepts is one the compiler accepts.
+            minimum = float(_ensure_mujoco().mjMINVAL)
+            if float(mass) < minimum:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"add_object: 'mass' must be >= MuJoCo's mjMINVAL ({minimum:g} kg) "
+                                f"for a dynamic body, got {float(mass)!r}; a lighter body cannot be "
+                                "integrated. Use is_static=True for an immovable body."
+                            )
+                        }
+                    ],
+                }
 
         # A material key the builder cannot honor (typo / another renderer's
         # field name) would otherwise be dropped and the object would compile

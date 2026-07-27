@@ -551,6 +551,12 @@ class SimEngine(ABC):
         the backend's default colour paints a surface the caller never asked
         for under a success result.
 
+        ``mass`` must be a finite number greater than zero for a dynamic
+        object. A backend MUST NOT establish a body on a mass its own
+        ``set_body_properties`` would refuse: a non-finite mass makes the first
+        integration step produce ``nan`` and, because the solver shares one
+        state vector, poisons every other body in the world too.
+
         ``material`` (optional): backend-specific visual material/texture
         spec. ``None`` keeps the flat ``color`` rgba (unchanged); a backend
         that supports it (MuJoCo) attaches a real material so surfaces can be
@@ -1102,6 +1108,53 @@ class SimEngine(ABC):
             return {"status": "error", "content": [{"text": message}]}
         if not math.isfinite(value) or value <= 0:
             return {"status": "error", "content": [{"text": message}]}
+        return None
+
+    @staticmethod
+    def _validate_mass(mass: Any, method: str, param: str = "mass") -> dict[str, Any] | None:
+        """Reject a body mass the physics engine cannot honor.
+
+        A dynamic body's mass is the divisor of every force applied to it, so a
+        value outside ``(0, inf)`` does not merely mis-size one object - it
+        poisons the whole world on the next step. ``inf`` makes the very first
+        integration produce ``nan`` acceleration, and because the solver shares
+        one state vector, every *other* body's ``qpos``/``qvel`` goes ``nan``
+        with it. ``0`` and negatives violate MuJoCo's
+        "mass and inertia of moving bodies must be larger than mjMINVAL"
+        invariant, which surfaces as a compile refusal that names neither the
+        parameter nor the reason. This is the same domain
+        :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.set_body_properties`
+        already enforces when it writes the same ``body_mass`` field, so a mass
+        cannot be established at creation on terms the setter would refuse.
+
+        Args:
+            mass: The caller-supplied value. Anything ``float()`` accepts is
+                coerced (so a NumPy scalar passes); ``bool`` is rejected
+                explicitly since ``True`` would act as a silent 1 kg body.
+            method: Public method name, used to prefix the error message.
+            param: Parameter name to quote in the message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict to surface, or
+            ``None`` when the value is usable.
+        """
+        if isinstance(mass, bool):
+            return {
+                "status": "error",
+                "content": [{"text": f"{method}: '{param}' must be a positive number, got {mass!r}"}],
+            }
+        try:
+            value = float(mass)
+        except (TypeError, ValueError):
+            return {
+                "status": "error",
+                "content": [{"text": f"{method}: '{param}' must be a positive number, got {mass!r}"}],
+            }
+        if not math.isfinite(value) or value <= 0:
+            return {
+                "status": "error",
+                "content": [{"text": f"{method}: '{param}' must be a finite number > 0, got {value}"}],
+            }
         return None
 
     @staticmethod

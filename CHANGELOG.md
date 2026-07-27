@@ -5,6 +5,49 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: `add_object` rejects a mass it cannot honor, and a refused add never bricks the scene
+
+`add_object` validated `position`, `orientation`, `color` and `size` but wrote
+`mass` straight into the spec, even though `set_body_properties` - which writes
+the same `body_mass` field - has always required a finite value `> 0`:
+
+```python
+sim.add_object("neighbour", shape="box", position=[0, 0, 0.6], mass=1.0)
+sim.add_object("blackhole", shape="box", position=[0.4, 0, 0.6], mass=float("inf"))
+# -> success. One step later every qpos/qvel in the world is nan, including
+#    'neighbour', which stops falling and never moves again.
+```
+
+`mass=0`, negatives and `nan` took the other route: the recompile refused them
+and the result read `Failed to inject 'crate': spec recompile refused.` -
+MuJoCo's actual reason ("mass and inertia of moving bodies must be larger than
+mjMINVAL") only reached the log. A positive mass below `mjMINVAL` behaved the
+same way.
+
+Worse, a mass the spec write itself rejected (a non-numeric value) raised
+*after* the body had been inserted, and the injector rolled back only the mesh
+asset. The half-built body stayed in the spec, so every later scene mutation
+failed to recompile - a valid `add_object`, an `add_camera`, anything - and one
+bad call bricked the world for good. An unsupported `shape` leaked the same way
+(its type lookup also raises after the insert), leaving the name permanently
+taken so a corrected retry failed with `repeated name`.
+
+Now the mass domain is a shared `SimEngine._validate_mass` used by both
+`add_object` and `set_body_properties` (their accepted values cannot diverge),
+MuJoCo's `mjMINVAL` floor is named rather than left to the compiler, and
+`SpecBuilder.add_object` is atomic over its own mutation: a raise after the body
+is inserted (an unsupported shape, or a name that collides with a body already
+in the scene) rolls back only the body this call added and re-raises, so the
+error a caller receives is the actual reason and the object name stays reusable.
+The rollback deletes the surplus body by enumeration rather than by name: on a
+name collision MuJoCo raises `repeated name` but still inserts the duplicate,
+and resolving the name would have deleted the pre-existing healthy body and left
+the empty orphan holding its name - corrupting the very scene the guard protects.
+`SpecBuilder.remove_body` also scans `spec.bodies` when `spec.body(name)` cannot
+see a body added since the last compile - previously such a rollback silently
+removed nothing. `mass` remains ignored for `is_static=True` objects, where
+MuJoCo derives it from the geom density.
+
 ### Fixed: `add_object` honors every `color` component or rejects the vector
 
 A MuJoCo geom stores its colour in a 4-component `rgba` row, so only an RGB

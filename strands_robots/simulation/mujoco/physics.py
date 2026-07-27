@@ -362,11 +362,19 @@ class PhysicsMixin:
         _lock: "threading.RLock"
         _world: "SimWorld | None"
 
-        def _require_no_running_policy(
-            self, action_name: str, robot_name: str | None = None
-        ) -> dict[str, Any] | None: ...
-        def _require_world(self) -> dict[str, Any] | None: ...
-        def _unknown_robot_msg(self, requested: str) -> str: ...
+        # Bodies are one-line docstrings rather than ``...`` because an
+        # ellipsis body is an expression statement with no effect.
+        def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
+            """Refuse a mutation while a policy thread is stepping the world."""
+
+        def _require_world(self) -> dict[str, Any] | None:
+            """Refuse a call made before ``create_world``."""
+
+        def _unknown_robot_msg(self, requested: str) -> str:
+            """Build the "robot not found" message with close-match hints."""
+
+        def _validate_mass(self, mass: Any, method: str, param: str = "mass") -> dict[str, Any] | None:
+            """Reject a body mass the physics engine cannot honor."""
 
     # State Checkpointing
 
@@ -1479,20 +1487,12 @@ class PhysicsMixin:
         if err := self._require_no_running_policy("set_body_properties"):
             return err
 
-        # mass must be > 0 (physics invariant)
+        # mass must be > 0 (physics invariant). Shared with add_object so a
+        # mass cannot be established at creation on terms this setter refuses.
         if mass is not None:
-            try:
-                mass = float(mass)
-            except (TypeError, ValueError):
-                return {
-                    "status": "error",
-                    "content": [{"text": f"set_body_properties: 'mass' must be a positive number, got {mass!r}"}],
-                }
-            if not math.isfinite(mass) or mass <= 0:
-                return {
-                    "status": "error",
-                    "content": [{"text": f"set_body_properties: 'mass' must be a finite number > 0, got {mass}"}],
-                }
+            if err := self._validate_mass(mass, "set_body_properties"):
+                return err
+            mass = float(mass)
 
         mj = _ensure_mujoco()
         model = self._world._model
