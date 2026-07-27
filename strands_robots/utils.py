@@ -2,8 +2,11 @@
 
 import importlib
 import logging
+import math
+import numbers
 import os
 from pathlib import Path
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -294,3 +297,41 @@ def process_rss_mb() -> float | None:
         return float(maxrss) / divisor
     except (ImportError, ValueError, OSError):
         return None
+
+
+def positive_whole_number_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable positive whole number.
+
+    Shared domain for every media knob that counts frames or pixels - the
+    recorders' ``fps``, ``width``, ``height`` and in-memory frame cap, the
+    ``run_policy(video=...)`` dict fields, and the
+    :func:`~strands_robots.rendering.encode_clip` playback rate. It lives here
+    rather than beside one of its callers because those callers sit in different
+    layers (:mod:`strands_robots.rendering` must not depend on
+    :mod:`strands_robots.simulation`), and the accepted domain must not diverge
+    between them. Only a positive whole number can be honored: ``0`` makes the capture loop's ``1 / fps``
+    period undefined, a negative rate is rejected by the ffmpeg writer, and a
+    zero/negative frame cap drops every frame. Accepts any real scalar with an
+    integral value (so a NumPy ``np.int64`` height or a ``30.0`` computed from a
+    config float passes) and rejects ``bool`` explicitly - an ``int`` subclass
+    whose ``True`` would act as a silent 1.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter (or dict key) it came from, used in the message.
+        context: Message prefix identifying the surface that received it -
+            ``"video"`` for the :class:`VideoConfig` dict, the method name for a
+            keyword parameter.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    message = f"{context}: {param} must be a positive whole number, got {value!r}."
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return message
+    numeric = float(value)
+    # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it
+    # out of the integrality check below.
+    if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
+        return message
+    return None

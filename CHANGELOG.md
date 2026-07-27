@@ -42,6 +42,42 @@ Resuming at the dataset's own rate still appends as before. The comparison is
 shared by the MuJoCo, Newton and Isaac backends (`fps` is a required
 keyword-only argument of the schema check, so no backend can resume without it).
 
+### Fixed: a clip is encoded at the requested frame rate, or refused
+
+`encode_clip` - the shared MP4/GIF encoder behind the camera recorders and the
+render pipelines - never validated `fps`, and each container silently invented a
+different rate for the same unusable value:
+
+```python
+from strands_robots.rendering import encode_clip
+
+encode_clip(frames, "clip.gif", fps=0)   # -> clip.gif at 1 fps (clamped)
+encode_clip(frames, "clip.mp4", fps=0)   # -> clip.mp4 at 16 fps (ffmpeg default)
+encode_clip(frames, "clip.mp4", fps=-5)  # -> returns the path; no file was written
+encode_clip(frames, "clip.mp4", fps=2.7) # -> clip.mp4 at 2 fps (truncated)
+```
+
+The GIF writer clamped the rate (`duration=1000.0 / max(1, int(fps))`), so `0`
+and every negative rate became a 1 fps clip; the MP4 writer passed the value to
+ffmpeg, which substituted its own default for `0`, refused a negative rate
+without writing anything, and truncated a fractional one. `fps=True` - an `int`
+subclass - encoded at 1 fps, and `nan`/`inf`/`None`/`"20"` dead-ended in a bare
+`int()` `ValueError`/`OverflowError`/`TypeError` that never named the parameter.
+In every case the output path was returned, so a caller had no signal that the
+clip it names is mistimed or absent.
+
+`fps` is now validated against the same positive-whole-number domain the
+recorders and `run_policy(video=...)` already share (moved to
+`strands_robots.utils.positive_whole_number_error`, which both the simulation
+and rendering layers can depend on), raising `ValueError` before any encoder is
+probed. `encode_clip` additionally raises `RuntimeError` when the encoder wrote
+no clip despite accepting the frames - previously a `macro_block_size` that
+rounds the frame size to dimensions libx264 refuses also returned a path to a
+file that does not exist. The Isaac camera flush now reports such a refusal on
+its artifact line (with `flush_error`, matching the MuJoCo backend) instead of
+letting it escape `stop_cameras_recording` and instead of counting buffered
+frames as written.
+
 ### Fixed: a dataset recording is refused at a frame rate it cannot be written at
 
 `start_recording` never validated `fps`. LeRobot itself only rejects `fps <= 0`,

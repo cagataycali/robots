@@ -3325,32 +3325,45 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             errors = state["errors"][cam]
             frames_written = 0
             size_kb = 0.0
+            flush_error = None
             if frames_buffer:
                 # Shared encoder (strands_robots.rendering.video, issue #1537);
                 # same imageio/libx264 invocation as the previous inline writer.
                 try:
                     encode_clip(frames_buffer, path, fps=state["fps"])
+                    frames_written = len(frames_buffer)
                 except ImportError:
                     return {
                         "status": "error",
                         "content": [{"text": "imageio not installed. pip install imageio imageio-ffmpeg"}],
                     }
-                frames_written = len(frames_buffer)
+                except RuntimeError as e:
+                    # ``encode_clip`` refused to hand back a clip it never
+                    # wrote. Report the reason on the artifact line (this
+                    # method's contract is best-effort and never-raise) and
+                    # keep ``frames_written`` at 0 rather than claiming frames
+                    # that reached no file.
+                    flush_error = f"{type(e).__name__}: {e}"
+                    logger.warning("camera recorder flush failed for %r -> %s: %s", cam, path, flush_error)
                 if _os.path.exists(path):
                     size_kb = _os.path.getsize(path) / 1024
-            lines.append(
+            line = (
                 f"   {cam:20s} {frames_written:>5d} frames  {size_kb:>7.1f} KB  "
                 f"({errors} errors)  -> {_os.path.basename(path)}"
             )
-            artifacts.append(
-                {
-                    "camera": cam,
-                    "path": path,
-                    "frames": frames_written,
-                    "errors": errors,
-                    "size_kb": size_kb,
-                }
-            )
+            if flush_error:
+                line += f"  [flush failed: {flush_error}]"
+            lines.append(line)
+            artifact = {
+                "camera": cam,
+                "path": path,
+                "frames": frames_written,
+                "errors": errors,
+                "size_kb": size_kb,
+            }
+            if flush_error:
+                artifact["flush_error"] = flush_error
+            artifacts.append(artifact)
 
         return {
             "status": "success",

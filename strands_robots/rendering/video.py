@@ -19,7 +19,7 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_whole_number_error, require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +43,9 @@ def encode_clip(
             share one shape.
         path: output file path; the extension selects the container
             (``.gif`` -> GIF, anything else -> MP4 via ffmpeg).
-        fps: playback frame rate.
+        fps: playback frame rate, a positive whole number of frames per
+            second (the shared media domain - see
+            :func:`~strands_robots.utils.positive_whole_number_error`).
         quality: imageio/ffmpeg quality knob (0-10, higher is better).
             Ignored for GIF.
         macro_block_size: libx264 macro-block rounding; ``1`` preserves the
@@ -56,9 +58,18 @@ def encode_clip(
     Raises:
         ImportError: if ``imageio`` (and, for MP4, ``imageio-ffmpeg``) is not
             installed.
-        ValueError: if ``frames`` is empty -- an empty clip write would
-            silently produce a corrupt/zero-length artifact.
+        ValueError: if ``frames`` is empty, or if ``fps`` is not a positive
+            whole number -- either would silently produce a corrupt or
+            wrongly-timed artifact rather than the requested clip.
+        RuntimeError: if the encoder wrote no clip despite accepting the
+            frames (for example a ``macro_block_size`` that rounds the frame
+            size to dimensions libx264 refuses), so the returned path always
+            names a clip that exists.
     """
+    # Guard the caller's parameters before probing the optional encoder, so
+    # the same mistake reports identically whether or not imageio is installed.
+    if text := positive_whole_number_error(fps, "fps", "encode_clip"):
+        raise ValueError(text)
     require_optional(
         "imageio",
         pip_install="imageio imageio-ffmpeg",
@@ -75,14 +86,24 @@ def encode_clip(
         out.parent.mkdir(parents=True, exist_ok=True)
     if out.suffix.lower() == ".gif":
         # Pillow's GIF writer takes per-frame duration (ms), not fps.
-        imageio.mimsave(str(out), frame_list, duration=1000.0 / max(1, int(fps)))
-        return out
-    writer = imageio.get_writer(str(out), fps=int(fps), quality=quality, macro_block_size=macro_block_size)
-    try:
-        for frame in frame_list:
-            writer.append_data(frame)
-    finally:
-        writer.close()
+        imageio.mimsave(str(out), frame_list, duration=1000.0 / int(fps))
+    else:
+        writer = imageio.get_writer(str(out), fps=int(fps), quality=quality, macro_block_size=macro_block_size)
+        try:
+            for frame in frame_list:
+                writer.append_data(frame)
+        finally:
+            writer.close()
+    # The ffmpeg writer reports a refused encode on its own stderr and closes
+    # without writing anything, so without this check the caller is handed a
+    # path to a clip that does not exist.
+    if not out.exists() or out.stat().st_size == 0:
+        raise RuntimeError(
+            f"encode_clip: the encoder wrote no clip to {out} for {len(frame_list)} "
+            f"frames of shape {frame_list[0].shape} at {int(fps)}fps (quality={quality}, "
+            f"macro_block_size={macro_block_size}); see the encoder output above for the "
+            "refusal reason."
+        )
     return out
 
 
