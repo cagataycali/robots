@@ -41,6 +41,43 @@ Use overwrite=True for a fresh dataset, or restore the original scene. Differenc
 Resuming at the dataset's own rate still appends as before. The comparison is
 shared by the MuJoCo, Newton and Isaac backends (`fps` is a required
 keyword-only argument of the schema check, so no backend can resume without it).
+### Fixed: domain randomization refuses ranges, noise amplitudes and seeds it cannot apply
+
+`randomize` writes its numeric arguments straight into the live MuJoCo model
+(`body_mass`, `body_inertia`, `geom_friction`, `geom_rgba`) and into
+`data.qpos`, and `set_obs_noise` stores a seed that is only drawn from later.
+Neither validated those values, so a range with no usable sampling interval
+either raised past the tool envelope or, worse, succeeded and left a world that
+models nothing:
+
+```python
+sim.randomize(randomize_physics=True, mass_range=(-1.0, -1.0))
+# -> success: "Physics: 3 geoms friction-scaled, 2 bodies mass-scaled"
+# body_mass is now -1 kg, so the crate FALLS UPWARD: 0.30 m -> 1.25 m in 220 steps
+
+sim.randomize(randomize_physics=True, mass_range=(0.0, 0.0))
+# -> success; the massless body then hovers, immune to gravity
+
+sim.randomize(randomize_physics=True, friction_range=(-2.0, -1.0))
+# -> success, with a negative Coulomb friction coefficient
+
+sim.randomize(mass_range=0.5)          # TypeError past the tool envelope
+sim.randomize(color_range=(0.1,))      # IndexError
+sim.randomize(randomize_positions=True, position_noise=float("nan"))  # OverflowError
+sim.set_obs_noise(joint_pos_std=0.01, seed=2.5)  # TypeError from default_rng
+```
+
+The Newton backend already refused the three shared ranges, through a private
+copy of the rule. That rule is now the shared
+`strands_robots.simulation.base.randomization_range_error`, joined by
+`finite_non_negative_error` (the sensor-noise standard deviations and
+`position_noise`) and `randomization_seed_error`, and both backends call all
+three from both `randomize` and `set_obs_noise` - so their accepted domains
+cannot diverge again. `mass_range` is additionally required to be strictly
+positive: a zero multiplier leaves a massless body that ignores gravity rather
+than a lighter one. Usable values are unaffected, including a zero lower bound
+for `friction_range` (a frictionless surface) and `color_range` (a black
+channel).
 
 ### Fixed: a dataset recording is refused at a frame rate it cannot be written at
 
