@@ -142,6 +142,86 @@ def _compile_bool_group(
     return check
 
 
+def compile_bool_clause(clause: Any, *, context: str) -> Callable[[SimEngine], bool]:
+    """Compile a predicate-DSL bool clause into a single ``(sim) -> bool`` callable.
+
+    Accepts either shape the DSL uses for a boolean condition:
+
+    * a single predicate call - ``{"predicate": "body_above_z", "body": "cube", "z": 0.2}``
+    * an ``{"all": [...]}`` / ``{"any": [...]}`` group, as used by a spec's
+      ``success`` / ``failure`` clauses
+
+    This is the entry point for callers that take a bool condition outside a
+    benchmark spec (``run_policy(stop_when=...)``). Unlike a spec clause there
+    is no meaningful default: a clause that names no predicate would compile to
+    a condition that never fires, so the caller's condition would be accepted
+    and then silently ignored. Such a clause is rejected instead.
+
+    Nothing here reaches ``eval`` / ``exec`` - predicate names are looked up in
+    the closed :data:`~strands_robots.simulation.predicates.PREDICATE_REGISTRY`
+    and the remaining keys are forwarded to the factory as kwargs - so a clause
+    is safe to accept from untrusted (LLM-authored) input.
+
+    Args:
+        clause: The predicate call or all/any group to compile.
+        context: Name used to prefix error messages (e.g. ``"stop_when"``).
+
+    Returns:
+        A callable evaluating the clause against a live engine.
+
+    Raises:
+        ValueError: If the clause is not a dict, mixes a single call with a
+            group, names an unknown predicate, names no predicate at all, or
+            supplies kwargs the predicate factory rejects.
+    """
+    if not isinstance(clause, dict):
+        raise ValueError(
+            f"{context}: expected a predicate call like "
+            "{'predicate': 'body_above_z', 'body': 'cube', 'z': 0.2} or an "
+            f"{{'all': [...]}} / {{'any': [...]}} group, got {type(clause).__name__}"
+        )
+    try:
+        return _compile_clause_body(clause, context=context)
+    except ValueError as exc:
+        # The DSL compiler prefixes its own messages with ``context``, but an
+        # unknown predicate name propagates verbatim from ``make_predicate``
+        # (it already carries the valid list). Prefix it here so the caller also
+        # learns WHICH argument was wrong, without double-prefixing the rest.
+        message = str(exc)
+        raise ValueError(message if message.startswith(context) else f"{context}: {message}") from exc
+
+
+def _compile_clause_body(clause: dict[str, Any], *, context: str) -> Callable[[SimEngine], bool]:
+    """Compile a validated-as-dict bool clause; see :func:`compile_bool_clause`."""
+    if "predicate" in clause:
+        group_keys = sorted(set(clause) & {"all", "any"})
+        if group_keys:
+            raise ValueError(
+                f"{context}: a single predicate call cannot also carry {group_keys}; "
+                "either drop 'predicate' and list the calls under 'all'/'any', or drop "
+                "the group keys"
+            )
+        call = _compile_call(clause, context=context, require_kind="bool")
+        # ``_compile_call`` is typed ``-> Callable[[SimEngine], Any]`` because it
+        # also compiles float-valued reward terms; ``require_kind="bool"`` has
+        # already rejected those, so coercing here only narrows the type.
+        return lambda sim: bool(call(sim))
+
+    unknown = set(clause) - {"all", "any"}
+    if unknown:
+        raise ValueError(
+            f"{context}: unknown keys {sorted(unknown)}; expected a single predicate call "
+            "('predicate' plus its kwargs) or an 'all' / 'any' group"
+        )
+    if not (clause.get("all") or clause.get("any")):
+        raise ValueError(
+            f"{context}: names no predicate, so the condition could never fire. "
+            "Provide a predicate call or a non-empty 'all' / 'any' list; omit the "
+            "argument entirely to run without this condition."
+        )
+    return _compile_bool_group(clause, default=False, context=context)
+
+
 def _compile_call(entry: Any, *, context: str, require_kind: str | None = None) -> Callable[[SimEngine], Any]:
     """Compile one ``{predicate: <name>, **kwargs}`` entry to a callable.
 

@@ -5,6 +5,46 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `run_policy(stop_when=...)` ends a rollout on a world state, plus `stopped_reason` telemetry
+
+`duration` / `n_steps` gave a rollout only an arithmetic horizon, so an agent
+using a policy as a retryable primitive had to guess an episode length and then
+inspect the world afterwards to find out whether the guess was long enough.
+`run_policy` (and `eval_policy`'s sibling `success_fn`) now has a semantic
+horizon: `stop_when=` takes a predicate-DSL clause - the same schema a benchmark
+spec's `success` clause uses - and the rollout returns as soon as the world
+satisfies it:
+
+```python
+sim.run_policy(
+    robot_name="so100",
+    instruction="pick up the red cube",
+    n_steps=300,                                              # budget
+    stop_when={"predicate": "body_above_z", "body": "cube", "z": 0.2},
+)
+# -> success, n_steps=41, stopped_reason="predicate"
+```
+
+A single call or an `{"all": [...]}` / `{"any": [...]}` group is accepted, over
+the closed `PREDICATE_REGISTRY` (`grasped`, `body_on`, `body_inside`,
+`contact_between`, `distance_less_than`, ...); programmatic callers may pass a
+`(sim) -> bool` callable. Predicates are evaluated against the sim after every
+applied action on both the synchronous and the async-RTC path. The clause is
+compiled before the policy is built, so an unknown predicate name, a clause that
+names no predicate (`{}`, `{"all": []}`) or a non-dict value is a structured
+caller error naming `stop_when` - never a condition that is accepted and then
+silently never checked. Nothing in a clause reaches `eval`/`exec`, so
+`stop_when` is exposed in the simulation tool schema and `describe()`.
+
+The rollout result json also carries `stopped_reason`:
+`"budget"` (ran the full horizon), `"predicate"` (`stop_when` fired),
+`"cancelled"` (a cooperative stop such as `stop_policy()`) or `"error"`.
+`stopped_early` was `True` for all three non-budget outcomes, so an agent
+deciding whether to retry could not tell a goal-reaching rollout from a
+cancelled one. `stop_when` composes with capture - the frame that satisfied the
+condition is in an active dataset recording and in a `video={...}` MP4 - and
+`n_episodes=N` applies the condition per episode.
+
 ### Fixed: `set_geom_properties` honors every vector component or rejects the vector
 
 `color`, `friction` and `size` each target a MuJoCo buffer with a fixed component

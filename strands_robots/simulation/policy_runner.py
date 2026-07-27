@@ -605,6 +605,19 @@ class CooperativeStop(BaseException):
     """
 
 
+class StopConditionMet(CooperativeStop):
+    """Raised inside :meth:`PolicyRunner.run` when ``stop_when`` fires.
+
+    A subclass of :class:`CooperativeStop` so both end the rollout on the same
+    graceful path (``stopped_early=True``, ``status="success"``), while staying
+    distinguishable in the result: a ``stop_when`` condition that fired reports
+    ``stopped_reason="predicate"`` and a caller-requested stop reports
+    ``stopped_reason="cancelled"``. An agent deciding whether to retry a
+    rollout needs that distinction - "the world reached the goal state" and
+    "someone cancelled me" are opposite outcomes.
+    """
+
+
 class _ChunkPipeline:
     """Yield ``(observation, action)`` pairs for a policy rollout.
 
@@ -892,6 +905,7 @@ class PolicyRunner:
         seed: int | None = None,
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
+        stop_when: Callable[[SimEngine], bool] | None = None,
     ) -> dict[str, Any]:
         """Run ``policy`` on ``robot_name`` for ``duration`` seconds.
 
@@ -992,6 +1006,20 @@ class PolicyRunner:
                 :meth:`run` returns), so the abort is bounded by ONE inference,
                 not the whole rollout. ``None`` (default) waits without a deadline
                 (historical behaviour). Ignored on the synchronous path.
+            stop_when: Optional semantic stop condition ``(sim) -> bool``,
+                evaluated against the live engine after every applied action on
+                both the synchronous and the async-RTC path. When it returns
+                truthy the rollout returns immediately with
+                ``status="success"``, ``stopped_early=True`` and
+                ``stopped_reason="predicate"`` - so a rollout ends when the
+                world reaches a state, not only when the step budget runs out.
+                The condition is evaluated AFTER the ``on_frame`` hook and the
+                video capture for that step, so a recording or MP4 contains the
+                frame that satisfied it. An exception raised by the condition is
+                not swallowed: it ends the rollout with ``status="error"`` and
+                ``stopped_reason="error"``, because a condition that cannot be
+                evaluated cannot be reported as either met or unmet.
+                ``None`` (default) runs to the step budget.
 
         Returns:
             ``{"status": "success"|"error", "content": [{"text": ...},
@@ -1092,6 +1120,12 @@ class PolicyRunner:
             return _video_err
 
         stopped_early = False
+        # Why the rollout ended, as a typed field an agent can branch on:
+        # "budget" (ran the full horizon), "predicate" (``stop_when`` fired),
+        # "cancelled" (a ``CooperativeStop`` from the on_frame hook, e.g.
+        # ``stop_policy()``) or "error". ``stopped_early`` alone conflates the
+        # last three.
+        stopped_reason = "budget"
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
         # Open-loop chunk replay consumes H actions from ONE observation. That
@@ -1273,6 +1307,16 @@ class PolicyRunner:
                 if vwriter is not None:
                     vwriter.capture(step_count)
 
+                # Semantic stop, checked after the frame for this step has been
+                # recorded/captured so the dataset and the MP4 both contain the
+                # state that satisfied the condition. Raising (rather than
+                # setting a flag) is what makes the check work identically on the
+                # synchronous and the async-RTC path: _apply is the single point
+                # both funnel actions through, and the exception unwinds the
+                # chunk loop without draining the rest of the chunk.
+                if stop_when is not None and stop_when(self.sim):
+                    raise StopConditionMet
+
                 if not fast_mode:
                     time.sleep(action_sleep)
 
@@ -1453,21 +1497,31 @@ class PolicyRunner:
                             step_obs = observation
                         _apply(step_obs, action_dict)
 
+        except StopConditionMet:
+            # Subclass of CooperativeStop, so it must be caught first.
+            stopped_early = True
+            stopped_reason = "predicate"
         except CooperativeStop:
             stopped_early = True
+            stopped_reason = "cancelled"
         except Exception as e:
             if vwriter is not None:
                 vwriter.close()
             logger.exception("PolicyRunner.run failed")
             return {
                 "status": "error",
-                "content": [{"text": f"Policy failed: {e}"}, {"json": _rtc_telemetry()}],
+                "content": [
+                    {"text": f"Policy failed: {e}"},
+                    {"json": {**_rtc_telemetry(), "stopped_reason": "error"}},
+                ],
             }
 
         # Either finished all steps or was cooperatively stopped
         elapsed = time.time() - start_time
         sim_time = self._maybe_sim_time()
         prefix = "Policy stopped" if stopped_early else "Policy complete"
+        if stopped_reason == "predicate":
+            prefix = "Policy stopped (stop_when condition met)"
         text = (
             f"{prefix} on '{robot_name}'\n{type(policy).__name__} | {instruction}\n{elapsed:.1f}s | {step_count} steps"
         )
@@ -1512,6 +1566,7 @@ class PolicyRunner:
             "n_steps": step_count,
             "elapsed_s": round(elapsed, 3),
             "stopped_early": stopped_early,
+            "stopped_reason": stopped_reason,
             "action_errors": _action_errors,
             "video_path": None,
             "video_frames": 0,

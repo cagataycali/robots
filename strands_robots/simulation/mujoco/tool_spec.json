@@ -394,6 +394,11 @@
       "description": "Provider-specific config dict forwarded to strands_robots.policies.create_policy. Contents depend on policy_provider. For 'groot': host, port, api_token, observation_mapping, action_mapping. For 'lerobot_local': pretrained_name_or_path, device, trust_remote_code, actions_per_step, use_processor, processor_overrides, observation_mapping, action_mapping. For 'mock': {} is fine.",
       "additionalProperties": true
     },
+    "stop_when": {
+      "type": "object",
+      "description": "Semantic stop condition for run_policy: the rollout returns as soon as the world reaches this state instead of running the whole step budget. Either one predicate call - {\"predicate\": \"body_above_z\", \"body\": \"cube\", \"z\": 0.2} - or a group {\"all\": [call, ...]} / {\"any\": [call, ...]}. Predicate names come from the closed predicate registry used by benchmark success clauses (body_above_z, body_below_z, body_on, body_inside, grasped, contact_between, distance_less_than, inside_region, joint_above, joint_below, ...); an unknown name or an empty clause is rejected. The result json reports stopped_reason='predicate' when it fired, 'budget' when the horizon ran out.",
+      "additionalProperties": true
+    },
     "cameras": {
       "type": "array",
       "items": {

@@ -129,7 +129,7 @@ A vector lets a policy's raw action chunk drive the arm directly without first z
 
 | Action | Key params |
 |--------|-----------|
-| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None`, `seed=None`, `async_rtc=None`, `rtc_inference_timeout_s=None` |
+| `run_policy` | `robot_name` (required), `policy_provider="mock"`, `policy_config={}`, `policy_object=None`, `instruction=""`, `duration=10.0`, `control_frequency=50.0`, `action_horizon=8`, `n_steps=None`, `stop_when=None`, `seed=None`, `async_rtc=None`, `rtc_inference_timeout_s=None` |
 | `start_policy` | same args, async/non-blocking |
 | `stop_policy` | `robot_name` (optional, defaults to `""`) |
 | `list_policies_running` | - |
@@ -141,6 +141,41 @@ When a policy is run via `run_policy` / `eval_policy` / `run_multi_policy`, the 
 The step horizon is given either as `duration` (seconds) or as `n_steps` (`duration = n_steps / control_frequency`; `n_steps` wins when both are set, and the legacy `max_steps` is an alias for `n_steps`). A non-positive `n_steps` or `control_frequency` is rejected up front with a structured `status="error"` dict naming the bad parameter - `start_policy` validates synchronously before the background rollout starts, so a malformed horizon never returns a false "started" success. `eval_policy` likewise rejects a non-positive `n_episodes`, `max_steps`, or `control_frequency` at the entry point (before `create_policy`), so a typo cannot produce a "successful" evaluation over zero or negative episodes. The same entry-point check covers the two provider keyword bags: `policy_config` (splatted into `create_policy`) and `policy_kwargs` (splatted into `policy.get_actions`) must be dicts, so a `policy_config="host=127.0.0.1"` string returns a structured error naming the parameter instead of a bare `TypeError` from the splat - and, on the `start_policy` path, instead of a false "started" for a rollout that never produced an action.
 
 Pass `seed=` to `run_policy` / `start_policy` for a reproducible single rollout: it reseeds Python / NumPy / torch / cuDNN and forwards `policy.reset(seed=...)`, so a stochastic policy (VLA action-chunk sampling, diffusion noise) produces the same trajectory on re-run of the same scene. Without a seed the rollout draws from the process-global RNG and can differ run to run. `eval_policy` already seeds per episode via the same mechanism.
+
+### Stopping on a world state (`stop_when`)
+
+`duration` / `n_steps` give a rollout an *arithmetic* horizon. `stop_when=` gives it a **semantic** one: the rollout returns as soon as the world reaches a state, so a policy call becomes a retryable primitive an agent can invoke, inspect and re-invoke rather than a fixed-length episode it has to guess the length of.
+
+```python
+result = sim.run_policy(
+    robot_name="so100",
+    policy_provider="lerobot_local",
+    policy_config={"pretrained_name_or_path": "lerobot/act_so100"},
+    instruction="pick up the red cube",
+    n_steps=300,                                 # budget - the upper bound
+    stop_when={"predicate": "body_above_z", "body": "cube", "z": 0.2},
+)
+```
+
+The clause uses the same predicate DSL as a benchmark spec's `success` clause, so anything a benchmark can score, a rollout can stop on:
+
+- a single call - `{"predicate": "grasped", "body": "cube", "gripper_prefix": "so100"}`
+- an `all` group (every predicate must hold) or an `any` group (at least one), each a list of calls
+
+Predicate names come from the closed registry in `strands_robots.simulation.predicates` (`body_above_z`, `body_below_z`, `body_on`, `body_inside`, `grasped`, `contact_between`, `distance_less_than`, `inside_region`, `joint_above`, `joint_below`, ...); `PREDICATE_REGISTRY` is the full list. Nothing in a clause reaches `eval` / `exec` - names are looked up in that registry and the remaining keys are forwarded to the factory as kwargs - so a clause is safe to accept from an agent, and `stop_when` is exposed in the simulation tool schema for exactly that reason. Programmatic callers may pass a `(sim) -> bool` callable instead, mirroring `eval_policy(success_fn=...)`.
+
+Predicates are evaluated against the **sim** (matching benchmark semantics, not the observation dict) after every applied action, on both the synchronous and the async-RTC path - on the latter within one action of the condition becoming true, since the check runs per applied action rather than per chunk. The clause is compiled *before* the policy is built, so an unknown predicate name, an empty clause, or a non-dict value is a structured `status="error"` naming `stop_when` rather than a rollout that silently runs to its budget while reporting success.
+
+The result json reports **why** the rollout ended, as `stopped_reason`:
+
+| `stopped_reason` | Meaning |
+|------------------|---------|
+| `budget` | Ran the full `n_steps` / `duration` horizon |
+| `predicate` | `stop_when` fired; `n_steps` is the steps actually executed |
+| `cancelled` | A cooperative stop (`stop_policy()`, or an `on_frame` hook raising `CooperativeStop`) |
+| `error` | The rollout failed, including a `stop_when` condition that raised |
+
+`stopped_early` remains `True` for all three non-budget outcomes; `stopped_reason` is what lets a caller tell "the goal was reached" from "someone cancelled me" without parsing prose. `stop_when` composes with capture: the frame that satisfied the condition is included in an active dataset recording and in a `video={...}` MP4, and `n_episodes=N` applies the condition per episode, so a collection run yields N goal-reaching episodes of exactly the length each one needed.
 
 ### Async-RTC chunk pipeline (latency masking)
 
@@ -179,7 +214,7 @@ A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and `rtc
 
 **Async-RTC in `eval_policy` (opt-in).** The success-rate eval path (`eval_policy` / `evaluate(success_fn=...)`) accepts the same `async_rtc` and `rtc_inference_timeout_s`, but defaults to `async_rtc=False`. The synchronous eval pauses the world during inference, so the success-rate is bit-stable and reproducible (the policy always sees the seam observation). Setting `async_rtc=True` evaluates a chunk-emitting policy under the realistic control latency it faces in deployment: the prefetch feeds the policy a slightly staler (mid-chunk) observation at the seam, so the measured success-rate can shift - that is the point, it measures robustness to inference latency. Either way the eval `{"json": {...}}` payload now carries the same six `rtc_*` fields (inference timing is reported even on the synchronous path). `async_rtc=True` is rejected on the benchmark/spec path (`evaluate_benchmark` / `evaluate(spec=...)`), which stays synchronous for bit-stable reproducibility; use `run_policy(async_rtc=...)` for benchmark-style wall-clock latency masking.
 
-`run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`, `stopped_early`, `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames`, `sim_time_s` (when the backend reports it) and the six `rtc_*` async-RTC telemetry fields above - so an agent can read the outcome programmatically (did it move? how many steps? was inference masked?) without regex-parsing the prose. The `status` reflects whether the robot *moved*, not merely whether every key resolved: a run where **no** step resolved any key (the robot never moved) returns `status="error"`, while a run where some keys resolve every step - e.g. a policy trained on a superset embodiment that emits one extra key the robot lacks - is operational and returns `status="success"` with a non-fatal `N/M action steps had unresolved keys` note and a `partial_action_failure_rate`.
+`run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps` (the steps actually executed), `elapsed_s`, `stopped_early`, `stopped_reason` (`budget` / `predicate` / `cancelled` / `error`), `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames`, `sim_time_s` (when the backend reports it) and the six `rtc_*` async-RTC telemetry fields above - so an agent can read the outcome programmatically (did it move? how many steps? was inference masked?) without regex-parsing the prose. The `status` reflects whether the robot *moved*, not merely whether every key resolved: a run where **no** step resolved any key (the robot never moved) returns `status="error"`, while a run where some keys resolve every step - e.g. a policy trained on a superset embodiment that emits one extra key the robot lacks - is operational and returns `status="success"` with a non-fatal `N/M action steps had unresolved keys` note and a `partial_action_failure_rate`.
 
 `eval_policy` accepts the same `video={...}` recording config as `run_policy` (`path` enables it, plus `fps` / `camera` / `width` / `height` - an unknown key or a non-positive size is a caller error, never silently ignored), but writes **one MP4 per episode** with `_ep{i}` inserted into the filename (`eval.mp4` -> `eval_ep0.mp4`, `eval_ep1.mp4`, ...), so a multi-episode evaluation can be *watched* to see why episodes fail rather than only read as an aggregate `success_rate`. The written files are listed in the result json `video_paths`; the output path is validated and the camera probed up-front, so a bad camera fails the eval immediately instead of after N episodes of empty MP4s. `evaluate_benchmark` accepts the same `video={...}` config and records one MP4 per episode too, so a benchmark evaluation can be watched to see why episodes fail. Frames are captured synchronously on the eval thread (render is read-only over `mjData`), so recording does not perturb the bit-stable benchmark rollout.
 | `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |

@@ -1009,6 +1009,52 @@ class SimEngine(ABC):
         return SimEngine._validate_positive_int(control_substeps, "control_substeps", method)
 
     @staticmethod
+    def _compile_stop_when(
+        stop_when: Any, method: str
+    ) -> tuple[Callable[[SimEngine], bool] | None, dict[str, Any] | None]:
+        """Resolve a ``stop_when`` argument into a callable condition.
+
+        ``stop_when`` is the rollout's semantic horizon: it ends the rollout
+        when the world reaches a state, instead of when the step budget runs
+        out. Two forms are accepted - a predicate-DSL clause (the same schema a
+        benchmark spec's ``success`` clause uses, which is the only form an
+        agent tool call can express) and, for programmatic callers, a plain
+        ``(sim) -> bool`` callable, mirroring
+        :meth:`~strands_robots.simulation.policy_runner.PolicyRunner.evaluate`'s
+        ``success_fn``.
+
+        A malformed clause is reported as a structured caller error rather than
+        being dropped: a rollout that silently ignored the condition would run
+        the full budget and report ``status="success"``, so the caller would
+        read "the condition never fired" from a run that never checked it.
+        Compilation happens here, before the expensive ``create_policy`` weight
+        load, so a typo in a predicate name costs nothing.
+
+        Args:
+            stop_when: ``None``, a callable, or a predicate-DSL clause dict.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            ``(condition, None)`` on success (``condition`` is ``None`` when no
+            ``stop_when`` was supplied), or ``(None, error_dict)``.
+        """
+        if stop_when is None:
+            return None, None
+        if callable(stop_when):
+            return stop_when, None
+        # Imported here (not at module scope) to keep the predicate-DSL compiler
+        # off the import path of every engine; base.py is imported by all of them.
+        from strands_robots.simulation.benchmark_spec import compile_bool_clause
+
+        try:
+            return compile_bool_clause(stop_when, context=f"{method}: stop_when"), None
+        except (ValueError, TypeError) as exc:
+            return None, {
+                "status": "error",
+                "content": [{"text": str(exc)}],
+            }
+
+    @staticmethod
     def _validate_positive_frequency(control_frequency: Any, method: str) -> dict[str, Any] | None:
         """Reject a non-positive or non-numeric ``control_frequency`` at the public API.
 
@@ -1277,6 +1323,7 @@ class SimEngine(ABC):
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
         wbc_install_torque_control: bool = True,
+        stop_when: dict[str, Any] | Callable[[SimEngine], bool] | None = None,
     ) -> dict[str, Any]:
         """Run a policy loop in the simulation (blocking).
 
@@ -1408,12 +1455,35 @@ class SimEngine(ABC):
                 falls over without it. Set ``False`` to manage the controller
                 yourself or to drive a torque-actuated scene directly. No-op for
                 non-WBC policies and on backends without the hook.
+            stop_when: Optional semantic stop condition - the rollout returns as
+                soon as the world reaches a state, instead of only when the step
+                budget runs out. Either a predicate-DSL clause using the same
+                schema as a benchmark spec's ``success`` clause - a single call
+                ``{"predicate": "body_above_z", "body": "cube", "z": 0.2}`` or an
+                ``{"all": [...]}`` / ``{"any": [...]}`` group over the predicates
+                in
+                :data:`~strands_robots.simulation.predicates.PREDICATE_REGISTRY`
+                - or, for programmatic callers, a ``(sim) -> bool`` callable.
+                Predicates are evaluated against the SIM (matching benchmark
+                semantics), after every applied action, on both the synchronous
+                and the async-RTC path; the clause is compiled and validated
+                before the policy is built, so an unknown predicate name or an
+                empty clause is a caller error rather than a rollout that
+                quietly never stops. The DSL never reaches ``eval``/``exec``, so
+                a clause is safe to accept from an agent. Composes with an active
+                recording: frames up to and including the stopping step are
+                captured, and episode-flush semantics are unchanged. ``None``
+                (default) runs the full horizon.
 
         Returns:
             Standard status dict with an agent-consumable ``{"json": {...}}``
             content block alongside the human-readable ``text``. The json block
-            carries the rollout facts as typed fields (``n_steps``,
-            ``elapsed_s``, ``stopped_early``, ``action_errors``, ``video_path``,
+            carries the rollout facts as typed fields (``n_steps`` - the steps
+            actually executed, which is below the requested horizon when
+            ``stop_when`` fired - ``elapsed_s``, ``stopped_early``,
+            ``stopped_reason`` (``"budget"`` | ``"predicate"`` | ``"cancelled"``
+            | ``"error"``, so a caller can tell a goal-reaching rollout from a
+            cancelled or exhausted one), ``action_errors``, ``video_path``,
             ``video_frames``, ``positional_fallback_used``,
             ``generic_state_keys_used``, ``missing_state_keys_used``, ...) so callers can self-correct
             programmatically without parsing the text. The two routing-
@@ -1464,6 +1534,9 @@ class SimEngine(ABC):
             return err
         if err := self._validate_control_substeps(control_substeps, "run_policy"):
             return err
+        stop_condition, stop_when_error = self._compile_stop_when(stop_when, "run_policy")
+        if stop_when_error is not None:
+            return stop_when_error
 
         if robot_name not in self.list_robots():
             return {
@@ -1540,6 +1613,7 @@ class SimEngine(ABC):
                     seed=seed,
                     async_rtc=async_rtc,
                     rtc_inference_timeout_s=rtc_inference_timeout_s,
+                    stop_when=stop_condition,
                 )
                 completed = 1 if result.get("status") == "success" else 0
                 contract = self._episode_contract_fields(
@@ -1571,6 +1645,7 @@ class SimEngine(ABC):
                 reset_between=reset_between,
                 async_rtc=async_rtc,
                 rtc_inference_timeout_s=rtc_inference_timeout_s,
+                stop_when=stop_condition,
             )
         finally:
             if controller_cleanup is not None:
@@ -1597,6 +1672,7 @@ class SimEngine(ABC):
         reset_between: bool,
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
+        stop_when: Callable[[SimEngine], bool] | None = None,
     ) -> dict[str, Any]:
         """Run ``n_episodes`` sequential rollouts; shared multi-episode driver.
 
@@ -1607,7 +1683,11 @@ class SimEngine(ABC):
         ``False`` - so a single call yields N correctly delimited dataset
         episodes instead of one merged episode. Aborts early (returning a
         structured error with the episodes completed so far) if a rollout, an
-        episode flush, or a reset fails.
+        episode flush, or a reset fails. A ``stop_when`` condition is applied
+        per episode: each rollout ends as soon as the condition holds, so a
+        multi-episode collection run yields N episodes of exactly the length
+        each one needed (the per-episode ``stopped_reason`` records which ended
+        on the condition and which ran out of budget).
         """
         episodes: list[dict[str, Any]] = []
         episodes_saved = 0
@@ -1633,6 +1713,7 @@ class SimEngine(ABC):
                 seed=ep_seed,
                 async_rtc=async_rtc,
                 rtc_inference_timeout_s=rtc_inference_timeout_s,
+                stop_when=stop_when,
             )
             ep_json = self._extract_json_payload(result)
             ep_record: dict[str, Any] = {"episode": ep, **ep_json}
@@ -2753,7 +2834,15 @@ class SimEngine(ABC):
                     "add_robot, completing the add/remove pair alongside "
                     "remove_object"
                 ),
-                "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, reset_between=True, ...) -> dict",
+                "run_policy": (
+                    "(robot_name: str, policy_provider='mock', n_episodes=1, "
+                    "reset_between=True, stop_when=None, ...) -> dict  # stop_when "
+                    "takes a predicate-DSL clause ({'predicate': 'body_above_z', "
+                    "'body': 'cube', 'z': 0.2} or an all/any group over the same "
+                    "predicates a benchmark success clause uses) and ends the "
+                    "rollout as soon as the world reaches that state; the result "
+                    "json reports stopped_reason=budget|predicate|cancelled|error"
+                ),
                 "start_policy": "(robot_name: str, policy_provider='mock', ...) -> dict",
                 "eval_policy": (
                     "(robot_name: str, policy_provider='mock', n_episodes=1, "

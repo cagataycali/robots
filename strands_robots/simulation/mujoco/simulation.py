@@ -3812,6 +3812,7 @@ class MuJoCoSimEngine(
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
         wbc_install_torque_control: bool = True,
+        stop_when: dict[str, Any] | Callable[[SimEngine], bool] | None = None,
     ) -> dict[str, Any]:
         """MuJoCo ``run_policy`` override: pre-flight world check + graceful stop.
 
@@ -3827,7 +3828,12 @@ class MuJoCoSimEngine(
         :meth:`SimEngine.run_policy` for first-class multi-episode dataset
         collection: ``n_episodes > 1`` runs that many rollouts back-to-back,
         flushing a ``save_episode`` boundary after each (when recording) and
-        resetting between episodes. See :meth:`SimEngine.run_policy`.
+        resetting between episodes. ``stop_when`` is forwarded likewise, so a
+        rollout driven through this backend can end on a world state (see
+        :meth:`SimEngine.run_policy` for the clause schema and the
+        ``stopped_reason`` telemetry). Every parameter here is forwarded
+        verbatim; the override adds only the pre-flight world check and the
+        cancellation flag cleanup. See :meth:`SimEngine.run_policy`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -3860,6 +3866,7 @@ class MuJoCoSimEngine(
                 async_rtc=async_rtc,
                 rtc_inference_timeout_s=rtc_inference_timeout_s,
                 wbc_install_torque_control=wbc_install_torque_control,
+                stop_when=stop_when,
             )
         finally:
             if self._world is not None and robot_name in self._world.robots:
