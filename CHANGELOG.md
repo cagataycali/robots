@@ -5,6 +5,42 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: a cuRobo goal embedded in the instruction survives neighbouring braces
+
+`CuroboPolicy.get_actions` reads the goal from the well-known `target_pose` /
+`target_joints` kwargs and falls back to parsing a JSON object out of the
+natural-language instruction for LLM-driven workflows. The fallback took the
+span from the FIRST `{` to the LAST `}` in the string, so any brace elsewhere in
+the instruction swallowed the payload into an unparseable span:
+
+```python
+policy.get_actions_sync(
+    {"observation.state": [0.0] * 6},
+    'pick up the {block} and go to {"target_pose": [0.4, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0]}',
+)
+# ValueError: CuroboPolicy.get_actions requires at least one of
+#   target_pose=[x,y,z,qw,qx,qy,qz] or target_joints={joint:value} ...
+```
+
+The goal was right there in the input; the span `{block} and go to {"target_pose":
+...}` simply is not JSON, so the parse returned no goal and the caller reported a
+missing one. The same happened with a brace after the payload (`... {"target_pose":
+[...]} then release the {clamp}`).
+
+Each candidate `{` is now decoded with `json.JSONDecoder.raw_decode`, which ends
+the object at its own closing brace, and the first object carrying a top-level
+goal field wins. A payload that merely nests a goal
+(`{"goal": {"target_pose": [...]}}`) is still not a goal - only top-level fields
+count, unchanged.
+
+Two side effects of the old regex are gone with it. `re.search(r"\{.*\}", ...,
+re.DOTALL)` restarted a full-length scan at every `{` when the braces never
+balanced, so a long LLM-authored instruction stalled the 50Hz caller
+(quadratic; 3.1 s for 100k unclosed braces, and `py/polynomial-redos` in code
+scanning). And an instruction that mentions a goal field whose JSON does not
+decode is now logged at WARNING instead of being indistinguishable from an
+instruction that never carried one.
+
 ### Fixed: resuming a dataset recording at a different frame rate is refused
 
 `start_recording(overwrite=False)` on an existing dataset resumes it, and

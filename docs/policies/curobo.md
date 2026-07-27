@@ -88,7 +88,10 @@ so a goal can flow across providers without coupling to a backend:
 Pass exactly one of `target_pose` / `target_joints`. When neither is given,
 the policy makes a best-effort parse of a JSON `target_pose` / `target_joints`
 payload embedded in the instruction (for LLM-agent flows); if none is found it
-raises `ValueError`.
+raises `ValueError`. Each `{...}` object in the instruction is decoded on its
+own, so prose braces before or after the payload are harmless, and only a
+**top-level** goal field counts - a goal nested inside a wrapper object
+(`{"goal": {"target_pose": [...]}}`) is not read as a goal.
 
 ## Trajectory chunking
 
