@@ -31,6 +31,35 @@ cannot diverge again. Direct joint/position/torque actuators are unchanged (the
 unit mapping applies to tendon transmissions only), and a mapped tendon command
 no longer emits a spurious "MuJoCo will clamp it" warning through the
 actuator-name spelling.
+### Fixed: sim teardown releases MuJoCo whatever the mesh handle is
+
+`Simulation.cleanup()` detaches from the peer mesh before it tears down MuJoCo,
+and a failure in that first step aborted everything after it - the compiled
+model/data, the renderers and the ThreadPoolExecutor all stayed alive:
+
+```python
+sim = Simulation(mesh=True)   # annotated `bool`, so True was the type-clean value
+sim.create_world()
+sim.cleanup()
+# -> AttributeError: 'bool' object has no attribute 'stop'
+#    sim._world still holds the live MjModel/MjData; the executor is still up.
+```
+
+`mesh=` is a hook for an already-started mesh client (the object `init_mesh`
+returns), not a boolean opt-in switch - the engine only ever calls `.stop()` on
+it. The `bool` annotation inverted that: `mesh=True` type-checked and broke
+teardown, while passing an actual client was an `arg-type` error. A truthy value
+without a callable `stop` is now rejected at construction with a message naming
+both supported ways to attach a mesh (`Robot(name, mode="sim", mesh=True)`, or
+assigning `sim.mesh` after construction), and the parameter is typed for the
+client it takes.
+
+A real client whose `stop()` raises (transport already closed, peer-registry
+error) leaked the same resources. That stop is now best-effort - logged and
+stepped over - matching the per-robot `_detach_robot_from_mesh` loop directly
+above it in `cleanup` and `HardwareRobot.cleanup`, so `cleanup()` / `destroy()` /
+`__exit__` always reach the MuJoCo teardown. The handle is cleared afterwards, so
+a second `cleanup()` never stops a client twice.
 
 ### Fixed: `add_object` rejects a mass it cannot honor, and a refused add never bricks the scene
 

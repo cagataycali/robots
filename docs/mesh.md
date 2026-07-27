@@ -88,6 +88,26 @@ follower.stop_teleop("leader")
 
 `get_teleop_status()` on either side inspects current teleop state.
 
+## Attach a mesh to a Simulation
+
+`Robot(name, mode="sim", mesh=True)` is the normal path: it resolves the
+`STRANDS_MESH` kill switch, starts a client, and stores it on the engine. To
+attach one to a `Simulation` you built yourself, start the client and assign it:
+
+```python
+from strands_robots.mesh import init_mesh
+from strands_robots.simulation import create_simulation
+
+sim = create_simulation("mujoco")
+sim.mesh = init_mesh(sim, peer_id="bench-sim")   # None when mesh is disabled
+```
+
+The `Simulation(mesh=...)` constructor argument takes that same started client -
+it is not a boolean opt-in switch, and a truthy value with no `.stop()` (notably
+`mesh=True`) is rejected at construction. `cleanup()` stops the client before it
+tears down MuJoCo; a stop that fails is logged and stepped over, so the world,
+renderers and executor are always released.
+
 ## Disable
 
 | Method | Scope |

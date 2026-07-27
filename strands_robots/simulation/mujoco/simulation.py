@@ -140,6 +140,40 @@ def _jnt_qpos_width(mj: Any, jnt_type: int) -> int:
     return 1
 
 
+def _validated_mesh_handle(mesh: Any) -> Any:
+    """Normalize the constructor ``mesh`` argument to a stoppable client or None.
+
+    ``mesh`` is a hook for an already-started mesh client (see
+    :func:`strands_robots.mesh.init_mesh`), not a boolean opt-in switch: the
+    engine only ever calls ``.stop()`` on it during teardown. A truthy value
+    without a callable ``stop`` cannot be honored - ``cleanup()`` would abort
+    on it and leave the MuJoCo world, renderers, and the executor alive - so
+    it is rejected at construction, where the caller can still fix the call.
+
+    Args:
+        mesh: The raw constructor argument. Falsy (``None`` / ``False``) means
+            "standalone, never joined a mesh".
+
+    Returns:
+        ``None`` for a falsy value, otherwise ``mesh`` unchanged.
+
+    Raises:
+        TypeError: If ``mesh`` is truthy but exposes no callable ``stop``. The
+            message names the two supported ways to attach a mesh.
+    """
+    if not mesh:
+        return None
+    if callable(getattr(mesh, "stop", None)):
+        return mesh
+    raise TypeError(
+        f"mesh={mesh!r} is not a mesh client: mesh= takes an already-started client "
+        f"exposing .stop() (got {type(mesh).__name__}), because the engine only stops it "
+        "during teardown. To join a mesh use Robot(name, mode='sim', mesh=True), which "
+        "resolves the STRANDS_MESH kill switch and attaches a client; or attach one "
+        "yourself after construction: sim.mesh = init_mesh(sim, peer_id=...)."
+    )
+
+
 def _validate_finite_vector(method: str, param_name: str, vec: Any) -> str | None:
     """Return an error message if any element of ``vec`` is not a finite number.
 
@@ -240,7 +274,7 @@ class MuJoCoSimEngine(
         default_timestep: float = 0.002,
         default_width: int = 640,
         default_height: int = 480,
-        mesh: bool = False,
+        mesh: Any = None,
         peer_id: str | None = None,
         ros2_bridge: bool = False,
         ros2_domain: int = 0,
@@ -256,13 +290,19 @@ class MuJoCoSimEngine(
             default_width: Default render width (pixels) used when a
                 caller does not pass explicit dimensions to ``render``.
             default_height: Default render height (pixels).
-            mesh: Optional mesh-networking hook. Falsy (default) keeps
-                the Simulation standalone - all mesh code paths are
-                no-ops. When set to a live mesh-client object exposing
-                ``.stop()``, ``cleanup()`` will detach this Simulation
-                from the peer network before tearing down the MuJoCo
-                world. The attribute is plain (not a property), so
-                consumers may attach a client after construction.
+            mesh: Optional mesh-networking hook: an already-started mesh
+                client exposing ``.stop()`` (see
+                :func:`strands_robots.mesh.init_mesh`), which ``cleanup()``
+                stops to detach this Simulation from the peer network before
+                tearing down the MuJoCo world. Falsy (``None``, the default)
+                keeps the Simulation standalone - all mesh code paths are
+                no-ops. A truthy value that is not stoppable (notably
+                ``mesh=True``) is rejected with a ``TypeError``: it is not a
+                boolean opt-in switch, and the engine has nothing to stop.
+                To join a mesh, use ``Robot(name, mode="sim", mesh=True)``,
+                which resolves the ``STRANDS_MESH`` kill switch and attaches a
+                client. The attribute is plain (not a property), so consumers
+                may also attach a client after construction.
             peer_id: Stable identifier the mesh transport uses to
                 address this Simulation. Opaque to MuJoCo itself; only
                 consulted when ``mesh`` is truthy.
@@ -291,7 +331,7 @@ class MuJoCoSimEngine(
         # downstream code can swap in a real mesh client after
         # construction without a setter dance. See the ``mesh`` /
         # ``peer_id`` docstring entries above for the contract.
-        self.mesh: Any = mesh if mesh else None
+        self.mesh: Any = _validated_mesh_handle(mesh)
         self.peer_id: str | None = peer_id
 
         # Additive sensor-noise config + reproducible RNG (set_obs_noise).
@@ -4621,7 +4661,20 @@ class MuJoCoSimEngine(
             for r in list(self._world.robots.values()):
                 self._detach_robot_from_mesh(r)
         if self.mesh:
-            self.mesh.stop()
+            # Best-effort, mirroring the per-robot ``_detach_robot_from_mesh``
+            # loop above: a mesh client that fails to stop (transport already
+            # closed, peer registry error) must not abort the teardown of the
+            # MuJoCo world, renderers, and the executor below.
+            try:
+                self.mesh.stop()
+            except Exception as exc:  # noqa: BLE001 - teardown continues regardless
+                logger.warning(
+                    "cleanup: failed to stop mesh client (peer_id=%s): %s",
+                    self.peer_id or "?",
+                    exc,
+                )
+            finally:
+                self.mesh = None
 
         timeout = policy_stop_timeout if policy_stop_timeout is not None else self._DEFAULT_POLICY_STOP_TIMEOUT
 
