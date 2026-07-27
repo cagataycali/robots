@@ -247,7 +247,7 @@
     },
     "fps": {
       "type": "integer",
-      "description": "Video frames per second (for run_policy record_video)"
+      "description": "Frames per second: video rate for run_policy record_video, dataset rate for start_recording. Must be a positive whole number."
     },
     "randomize_colors": {
       "type": "boolean"

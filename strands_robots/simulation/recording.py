@@ -34,6 +34,45 @@ from typing import TYPE_CHECKING, Any
 logger = logging.getLogger(__name__)
 
 
+def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | None:
+    """Reject a LeRobotDataset recording option no dataset can be written at.
+
+    Pre-flight guard shared by every backend's ``start_recording`` (MuJoCo,
+    Newton, Isaac), so the three surfaces cannot disagree on what a usable
+    ``fps`` is. ``fps`` is a frame count per second, so the accepted domain is
+    the shared one the plain-MP4 recorders and the ``run_policy(video=...)``
+    dict already enforce
+    (:func:`~strands_robots.simulation.policy_runner.positive_whole_number_error`):
+    a positive whole number.
+
+    Without this guard an unusable ``fps`` was reported as ``status="success"``
+    and then cost the caller the episode: LeRobot only rejects ``fps <= 0``, so
+    a fractional ``2.7`` or a ``nan`` created the dataset, killed the video
+    encoder thread on the first frame and aborted the rollout ("on_frame hook
+    failed 5 times in a row"), after which ``stop_recording`` could not save the
+    pending frames; ``fps=True`` silently recorded a 1 fps dataset (an ``int``
+    subclass acting as a 1); and ``fps="30"`` dead-ended in a raw
+    ``TypeError: '<=' not supported between instances of 'str' and 'int'``
+    instead of naming the parameter.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        fps: Caller-supplied dataset frame rate.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming ``fps``, or
+        ``None`` when the value is usable.
+    """
+    # Imported lazily: ``policy_runner`` pulls in the rollout machinery, and
+    # this module sits below it in the import graph (backends import the mixin
+    # while constructing their engine class).
+    from strands_robots.simulation.policy_runner import positive_whole_number_error
+
+    if text := positive_whole_number_error(fps, "fps", method):
+        return {"status": "error", "content": [{"text": text}]}
+    return None
+
+
 class DatasetRecordingMixin:
     """Engine-independent recording lifecycle shared by sim backends.
 

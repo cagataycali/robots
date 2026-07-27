@@ -169,7 +169,9 @@ def run_policy(
             recording (smoke-test mode).
         dataset_repo_id: Forwarded to ``start_recording``.
         dataset_task: Task label forwarded to ``start_recording``.
-        dataset_fps: Dataset FPS forwarded to ``start_recording``.
+        dataset_fps: Dataset FPS forwarded to ``start_recording``. Must be a
+            positive whole number; an unusable rate is reported before the
+            rollout starts instead of aborting the episode mid-flight.
         dataset_cameras: Camera names to record into the dataset.
             When set, forwarded as ``start_recording(cameras=...)``
             (supported by both the MuJoCo and Newton backends) to

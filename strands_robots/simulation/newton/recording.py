@@ -27,7 +27,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.simulation.recording import DatasetRecordingMixin
+from strands_robots.simulation.recording import (
+    DatasetRecordingMixin,
+    dataset_recording_option_error,
+)
 
 if TYPE_CHECKING:
     from strands_robots.simulation.models import SimWorld
@@ -83,7 +86,8 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         Args:
             repo_id: HuggingFace dataset id (``owner/name``) or a local path.
             task: Default task description recorded with every frame.
-            fps: Recording frame rate.
+            fps: Recording frame rate. Must be a positive whole number;
+                a rate no dataset can be written at is rejected up front.
             root: Explicit on-disk dataset directory (overrides the repo_id
                 cache-path resolution).
             push_to_hub: Publish to the Hub at ``stop_recording``.
@@ -110,6 +114,15 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+
+        # Reject an fps no dataset can be written at before creating or
+        # resuming the recorder: an unusable rate was reported as success and
+        # then cost the caller the whole episode (see
+        # dataset_recording_option_error). Checked ahead of the lerobot-extra
+        # probe so the same caller mistake reports the same way regardless of
+        # which optional extras this install has.
+        if error := dataset_recording_option_error("start_recording", fps):
+            return error
 
         _DatasetRecorder: Any = None
         _has_lerobot = False

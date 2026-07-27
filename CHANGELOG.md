@@ -5,6 +5,47 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: a dataset recording is refused at a frame rate it cannot be written at
+
+`start_recording` never validated `fps`. LeRobot itself only rejects `fps <= 0`,
+so every other unusable rate was accepted on all three backends and cost the
+caller the episode after `status="success"` had already been returned:
+
+```python
+sim.start_recording(repo_id="local/demo", fps=2.7, root=root)
+# -> success: "Recording to LeRobotDataset: local/demo ... @ 2.7fps"
+sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=6)
+# -> error: "on_frame hook failed 5 times in a row; aborting episode"
+sim.stop_recording()
+# -> error: "failed to save the final episode (1 pending frames)"
+```
+
+A fractional or `nan` rate created the dataset and then killed the per-camera
+video encoder thread on the first frame, so the rollout aborted and the pending
+frames could never be saved. `fps=True` - an `int` subclass - silently recorded
+a 1 fps dataset, giving every frame a 1-second timestamp for anything later
+trained on it. `fps="30"`, `None` and a list dead-ended in a raw
+`TypeError: '<=' not supported between instances of 'str' and 'int'` that never
+named the parameter. Through the `run_policy` agent tool the same
+`dataset_fps=2.5` reported `1/1 episodes ok` alongside
+`parquet-truth: total_episodes=0, total_frames=0`.
+
+`fps` is a frame count, so the accepted domain is now the positive-whole-number
+one the plain-MP4 recorders and the `run_policy(video=...)` dict already share
+(`positive_whole_number_error`), checked by a single
+`dataset_recording_option_error` guard the MuJoCo, Newton and Isaac
+`start_recording` implementations all call before any recorder is created:
+
+```python
+sim.start_recording(repo_id="local/demo", fps=2.7, root=root)
+# -> error: "start_recording: fps must be a positive whole number, got 2.7."
+```
+
+The guard runs ahead of the `lerobot`-extra probe, so the same caller mistake
+reports identically regardless of which optional extras an install has. Usable
+rates are unchanged: `30`, `30.0` and a NumPy integer all still record, and a
+recorded episode reopens at the requested rate.
+
 ### Fixed: the plain-MP4 camera recorder rejects frame and pixel counts it cannot honor
 
 `start_cameras_recording` and `start_cameras_recording_synchronous` never

@@ -12,7 +12,10 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
-from strands_robots.simulation.recording import DatasetRecordingMixin
+from strands_robots.simulation.recording import (
+    DatasetRecordingMixin,
+    dataset_recording_option_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +79,12 @@ class RecordingMixin(DatasetRecordingMixin):
         rather than freezing on the chunk-start observation.
 
         Args:
+            fps: Dataset frame rate recorded in the LeRobot metadata. Must be a
+                positive whole number - a fractional or non-numeric rate cannot
+                be written and is rejected up front rather than aborting the
+                rollout behind a ``status="success"`` return. Set it to the
+                ``run_policy`` ``control_frequency`` so recorded timestamps
+                match the cadence frames were captured at.
             root: On-disk dataset directory (defaults to the LeRobot cache under
                 ``repo_id``). An existing EMPTY directory (e.g. from
                 ``tempfile.mkdtemp()``) is accepted and recorded into; an
@@ -111,6 +120,15 @@ class RecordingMixin(DatasetRecordingMixin):
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+
+        # Reject an fps no dataset can be written at before creating or
+        # resuming the recorder: an unusable rate was reported as success and
+        # then cost the caller the whole episode (see
+        # dataset_recording_option_error). Checked ahead of the lerobot-extra
+        # probe so the same caller mistake reports the same way regardless of
+        # which optional extras this install has.
+        if error := dataset_recording_option_error("start_recording", fps):
+            return error
 
         _DatasetRecorder: Any = None
         _has_lerobot = False
