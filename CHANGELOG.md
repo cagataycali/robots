@@ -5,6 +5,26 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: a leader arm is refused by Robot() instead of built as a follower
+
+`so101_leader` was an alias of the `so101` registry entry, whose
+`hardware.lerobot_type` is `so101_follower`. Naming the leader therefore built a
+follower driver on the leader's own motor bus:
+
+```python
+Robot("so101_leader", mode="real", port="/dev/ttyACM1")
+# before: HardwareRobot(tool_name="so101", robot="so101_follower", port="/dev/ttyACM1")
+```
+
+That torque-enables the arm the operator is holding and drives it as a rigid
+position servo against the hand on it - and the resulting tool answered to
+`so101`, so nothing in the session named the swap. The alias is gone, and
+`Robot()` now refuses every `*_leader` name with a `ValueError` naming the
+teleoperator route (`Teleoperator(...)` + `attach_teleop(...)`) rather than the
+generic registry listing, which would have invited a retry with the follower
+name on the same port. `so101_follower` / `so101_dualcam` / `so101_tricam` and
+every other alias resolve as before.
+
 ### Fixed: get_camera_params refuses an image size it cannot produce intrinsics for
 
 `render`, `render_depth` and `get_frame` all validate `width`/`height` through

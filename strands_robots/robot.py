@@ -131,6 +131,20 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
         and not (has_sim(canonical) or has_hardware(canonical))
         and not is_discoverable(canonical)
     ):
+        # A leader arm is an input device, not a robot: it carries the same
+        # servo bus and USB-serial shape as its follower, so "so101_leader"
+        # reads as a plausible Robot() name. Answering it with the generic
+        # registry listing invites the caller to retry with the follower name
+        # on the leader's port - the exact mistake that torque-enables the arm
+        # a human is holding. Name the teleoperator entry point instead.
+        if canonical.endswith("_leader"):
+            raise ValueError(
+                f"{original!r} is a teleoperator (leader) device, not a robot. "
+                f"Build it with ``Teleoperator({canonical!r}, port=...)`` and attach it to the "
+                f"follower it drives: ``Robot('<follower>', mode='real', port=...)"
+                f".attach_teleop({canonical!r}, port=...)``. Passing a leader to ``Robot()`` would "
+                "drive the arm a human is holding as a position servo."
+            )
         raise ValueError(
             f"Unknown robot {original!r} (resolved to {canonical!r}). "
             "Pass a registered name (see ``list_robots()``), one of the "
