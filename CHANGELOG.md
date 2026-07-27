@@ -5,6 +5,36 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Added: `get_world_point` - unproject picked pixels to metric world coordinates
+
+`get_frame` (metric depth) and `get_camera_params` (pinhole `K` + world-from-camera
+pose) existed, but nothing joined them: locating something visible in the world
+meant reading a privileged simulator pose (`get_body_state`), which no hardware
+deployment can do, or writing the unprojection by hand per caller. The only
+agent-facing depth was `render_depth`, whose normalized grayscale PNG discards
+per-pixel metric values.
+
+`SimEngine.get_world_point` closes that gap as a concrete facade - one
+implementation shared by every backend that renders depth:
+
+```python
+sim.render(camera_name="front")                     # look, pick pixels
+sim.get_world_point("front", pixels=[[161, 104], [165, 104], [157, 104],
+                                     [161, 107], [161, 101]])
+# -> success: "World point [0.2043, 0.0981, 0.3047] m - median of 5/5 pixels
+#              on camera 'front'"
+```
+
+Each pixel is unprojected independently and the reported `point` is the per-axis
+median, so a single bad sample cannot drag the answer; `points` / `depths` are
+aligned to the requested `pixels` with `None` where a pixel was dropped. Nothing
+is fabricated: a background pixel is dropped and reported in `dropped`, all-background
+is an error naming the far clip, a backend without depth (Newton) returns a
+structured error, and a malformed, fractional or out-of-frame pixel is rejected
+naming the pixel and the fix. Advertised through `tool_spec.json` and
+`describe()`, so an agent can find it without guessing.
+
+
 ### Fixed: `set_geom_properties` honors every vector component or rejects the vector
 
 `color`, `friction` and `size` each target a MuJoCo buffer with a fixed component

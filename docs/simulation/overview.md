@@ -78,15 +78,41 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `render(camera_name="default", width=None, height=None)` | PNG in `content[...]["image"]["source"]["bytes"]`; no `frame` key |
 | `render_depth(camera_name="default", width=None, height=None)` | Viewable grayscale depth PNG `image` block (near=bright, far=dark) + metric `depth_min`/`depth_max` (meters) in the `json` block |
 | `render_all(cameras=None, width=None, height=None)` | One `image` block per camera (multi-view snapshot) |
+| `get_world_point(camera_name="default", pixels=[[u, v], ...], width=None, height=None)` | Unproject picked pixels to metric world `[x, y, z]` through the camera's depth. `json` block: `point` (per-axis median over the pixels), `points`/`depths` aligned to `pixels` (`null` where dropped), `n_valid`, `n_requested`, `dropped` |
 | `open_viewer` / `close_viewer` | Interactive MuJoCo passive viewer |
 
 !!! note "Get a numpy frame"
     `sim.get_observation(robot_name)[camera_name]` → `np.uint8 (H, W, 3)`
 
 !!! tip "Discover the render surface"
-    `render`, `render_depth`, and `render_all` are all listed in
-    `sim.describe()["methods"]`, so an agent can enumerate the full rendering
+    `render`, `render_depth`, `render_all`, and `get_world_point` are all listed
+    in `sim.describe()["methods"]`, so an agent can enumerate the full rendering
     surface in one call instead of guessing method names.
+
+### Grounding a pixel in the world
+
+`get_world_point` answers "where is the thing I can see" from the image alone:
+
+```python
+sim.render(camera_name="front")                     # look, pick pixels
+sim.get_world_point("front", pixels=[[161, 104], [165, 104], [157, 104],
+                                     [161, 107], [161, 101]])
+# -> "World point [0.2043, 0.0981, 0.3047] m - median of 5/5 pixels ..."
+```
+
+`u` is the column from the left, `v` the row from the top, both whole numbers
+inside the rendered frame. Pick points on the middle of a visible surface (not a
+rim, edge, shadow or reflection) and pass several: each is unprojected
+independently and the reported `point` is their per-axis median, so one bad
+sample cannot drag the result. Pixels whose depth is background are dropped and
+reported in `dropped`; when every pixel is background the call is an error, never
+a far-plane coordinate. Re-render and re-pick after anything moves.
+
+`get_body_state(name)` is the alternative: exact simulator truth, and the right
+tool for scripted data generation and success checks. `get_world_point` is the
+one that transfers - the same call works against a real RGB-D camera - so use it
+when the grounding must come from the image. Backends that render no depth
+(Newton) return a structured error rather than a fabricated point.
 
 ## Physics
 

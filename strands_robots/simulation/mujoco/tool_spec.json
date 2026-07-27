@@ -30,6 +30,7 @@
         "list_policies_running",
         "render",
         "render_depth",
+    "get_world_point",
         "get_contacts",
         "step",
         "set_gravity",
@@ -364,6 +365,16 @@
         }
       },
       "description": "Multiple ray directions for multi_raycast"
+    },
+    "pixels": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      },
+      "description": "Image coordinates [[u, v], ...] for get_world_point - u is the column from the left, v the row from the top, both whole numbers inside the rendered frame. Pick several pixels on the visible surface of the target (render the camera first); the reported world point is their per-axis median and background pixels are dropped."
     },
     "exclude_body": {
       "type": "integer",

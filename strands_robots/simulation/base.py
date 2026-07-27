@@ -2712,6 +2712,262 @@ class SimEngine(ABC):
         """
         raise NotImplementedError("get_camera_params not implemented by this backend")
 
+    # Pixel-to-world grounding: a concrete facade over get_frame /
+    # get_camera_params, so every backend that renders metric depth gets the
+    # same unprojection math and the same error contract.
+
+    @staticmethod
+    def _validate_pixels(pixels: Any, method: str) -> tuple[list[tuple[int, int]] | None, dict[str, Any] | None]:
+        """Coerce ``pixels`` into whole-number ``(u, v)`` image samples.
+
+        Args:
+            pixels: The caller-supplied value: a sequence of ``[u, v]`` pairs.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            ``(samples, None)`` with one ``(u, v)`` integer pair per input
+            pixel, or ``(None, error)`` with a structured error dict. Bounds
+            against the image are NOT checked here - the frame size is only
+            known once the camera has been rendered.
+        """
+
+        def _err(text: str) -> dict[str, Any]:
+            return {"status": "error", "content": [{"text": f"{method}: {text}"}]}
+
+        shape_hint = "pass [[u, v], ...] with u = column from the left, v = row from the top"
+        if pixels is None:
+            return None, _err(f"'pixels' is required - {shape_hint}.")
+        if isinstance(pixels, str | bytes | Mapping) or not hasattr(pixels, "__len__"):
+            return None, _err(
+                f"'pixels' must be a sequence of [u, v] pairs, got {type(pixels).__name__} - {shape_hint}."
+            )
+        samples = list(pixels)
+        if not samples:
+            return None, _err(
+                f"'pixels' is empty - {shape_hint}. At least one pixel is required; "
+                "several spread over the target surface make the reported median robust."
+            )
+        out: list[tuple[int, int]] = []
+        for index, pixel in enumerate(samples):
+            if isinstance(pixel, str | bytes | Mapping) or not hasattr(pixel, "__len__"):
+                return None, _err(f"'pixels'[{index}] must be a [u, v] pair, got {type(pixel).__name__}.")
+            pair = list(pixel)
+            if len(pair) != 2:
+                return None, _err(f"'pixels'[{index}] must be a [u, v] pair of 2 numbers, got {len(pair)}.")
+            coords: list[int] = []
+            for axis, value in zip(("u", "v"), pair, strict=True):
+                if isinstance(value, bool) or not isinstance(value, numbers.Real):
+                    return None, _err(
+                        f"'pixels'[{index}] {axis} must be an image coordinate, got {type(value).__name__}."
+                    )
+                numeric = float(value)
+                if not math.isfinite(numeric) or numeric != int(numeric):
+                    return None, _err(
+                        f"'pixels'[{index}] {axis} must be a whole image coordinate, got {value!r}. "
+                        "Depth is sampled once per pixel, so a fractional coordinate has no depth - "
+                        "round to the pixel you mean."
+                    )
+                coords.append(int(numeric))
+            out.append((coords[0], coords[1]))
+        return out, None
+
+    @staticmethod
+    def _render_failure_error(method: str, exc: Exception) -> dict[str, Any]:
+        """Wrap a render/camera-params failure in the agent-tool error envelope.
+
+        ``KeyError`` stringifies to a quoted repr of its argument (``"Camera
+        'x' not found."``), which reads as a stray quote in an error message, so
+        the argument is unwrapped.
+
+        Args:
+            method: Public method name, used to prefix the error message.
+            exc: The exception raised by ``get_frame`` / ``get_camera_params``.
+
+        Returns:
+            An error dict carrying the exception's own message.
+        """
+        detail = exc.args[0] if isinstance(exc, KeyError) and exc.args else str(exc)
+        return {"status": "error", "content": [{"text": f"{method}: {detail}"}]}
+
+    def get_world_point(
+        self,
+        camera_name: str = "default",
+        pixels: Sequence[Sequence[float]] | None = None,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> dict[str, Any]:
+        """Unproject image pixels to metric world coordinates.
+
+        Renders one fresh frame of ``camera_name`` (:meth:`get_frame`), looks up
+        the metric depth at each requested pixel, and unprojects it through that
+        camera's pinhole model (:meth:`get_camera_params`)::
+
+            p_cam   = [ (u - cx) / fx * d,  -(v - cy) / fy * d,  -d ]
+            p_world = T_world_cam @ p_cam
+
+        The sign pattern is the OpenGL optical convention ``CameraParams``
+        documents (+X right, +Y **up**, -Z forward) meeting the image convention
+        (``v`` grows downward), and ``d`` is the metric distance along the
+        optical axis that :meth:`get_frame` returns.
+
+        This is the deployment-shaped way for an agent to locate something it can
+        see: the same call works against a real RGB-D camera, whereas
+        :meth:`get_body_state` reads privileged simulator truth that no
+        hardware deployment has. Prefer ``get_body_state`` for scripted data
+        generation and success checks; prefer this when the grounding has to
+        come from the image.
+
+        Choosing pixels: render the camera first and pick points on the visible
+        surface you mean - the middle of a face, not a rim, edge, shadow,
+        reflection or background pixel. Pass several (5 is a good default): each
+        is unprojected independently and the reported ``point`` is the per-axis
+        median, so one bad sample cannot drag the result. Any pixel whose depth
+        is background (at the far clip) or otherwise unusable is dropped from the
+        median and reported, rather than contributing a fabricated coordinate.
+        Re-render and re-pick after anything moves - a stale pixel is a stale
+        point.
+
+        Accuracy is bounded by the backend's depth buffer (a float32 nonlinear
+        buffer between ``znear`` and ``zfar``): millimetre-scale on a table-top
+        scene, degrading as ``zfar`` grows. A curved or steeply oblique surface
+        adds error of its own, since neighbouring pixels then sample visibly
+        different geometry - one more reason to pick the middle of a face.
+
+        Args:
+            camera_name: Camera to render, as accepted by :meth:`get_frame`
+                (``list_cameras()`` enumerates the valid names; backends with a
+                free camera also accept their free-cam tokens).
+            pixels: Sequence of ``[u, v]`` image coordinates - ``u`` is the
+                column from the left, ``v`` the row from the top. Whole numbers
+                only; every coordinate must lie inside the rendered frame.
+            width: Render width in pixels; ``None`` uses the camera's
+                configured resolution. Intrinsics are computed for the frame
+                actually rendered, so a pixel picked off a ``render`` at one
+                resolution must be unprojected at that same resolution.
+            height: Render height in pixels; ``None`` uses the camera's
+                configured resolution.
+
+        Returns:
+            Agent-tool dict. On success the ``json`` block carries ``point``
+            (the per-axis median ``[x, y, z]`` in meters), ``points`` (one
+            ``[x, y, z]`` per requested pixel, ``None`` where the pixel was
+            dropped), ``depths`` (aligned the same way), ``n_valid``,
+            ``n_requested``, ``dropped`` (indices into ``pixels``), ``camera``,
+            ``width`` and ``height``. Errors - an unknown camera, a malformed or
+            out-of-frame pixel, a backend with no depth path (e.g. Newton), or
+            every pixel landing on background - come back as
+            ``{"status": "error", ...}`` naming what to fix; a world point is
+            never fabricated.
+        """
+        import numpy as _np
+
+        method = "get_world_point"
+        samples, pixel_error = self._validate_pixels(pixels, method)
+        if samples is None:
+            return cast("dict[str, Any]", pixel_error)
+
+        try:
+            _rgb, depth = self.get_frame(camera_name, width=width, height=height)
+        except (KeyError, ValueError, RuntimeError, NotImplementedError) as e:
+            return self._render_failure_error(method, e)
+
+        if depth is None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"{method}: camera '{camera_name}' renders no depth on this backend "
+                            f"({type(self).__name__}.get_frame returned depth=None), so no pixel can be "
+                            "unprojected. Use get_body_state(name) for object pose on this backend."
+                        )
+                    }
+                ],
+            }
+
+        frame_h, frame_w = int(depth.shape[0]), int(depth.shape[1])
+        try:
+            cam = self.get_camera_params(camera_name, width=frame_w, height=frame_h)
+        except (KeyError, ValueError, RuntimeError, NotImplementedError) as e:
+            return self._render_failure_error(method, e)
+
+        fx, fy = float(cam.K[0, 0]), float(cam.K[1, 1])
+        cx, cy = float(cam.K[0, 2]), float(cam.K[1, 2])
+        rotation = _np.asarray(cam.T_world_cam, dtype=_np.float64)[:3, :3]
+        translation = _np.asarray(cam.T_world_cam, dtype=_np.float64)[:3, 3]
+        # Background pixels are pinned to the far clip; treat the last epsilon of
+        # the range as background rather than as a point 50m away.
+        far_cutoff = float(cam.zfar) * (1.0 - 1e-6)
+
+        points: list[list[float] | None] = []
+        depths: list[float | None] = []
+        dropped: list[int] = []
+        valid: list[list[float]] = []
+        for index, (u, v) in enumerate(samples):
+            if not (0 <= u < frame_w and 0 <= v < frame_h):
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"{method}: 'pixels'[{index}] = [{u}, {v}] is outside the "
+                                f"{frame_w}x{frame_h} frame of camera '{camera_name}' "
+                                f"(u in [0, {frame_w - 1}], v in [0, {frame_h - 1}])."
+                            )
+                        }
+                    ],
+                }
+            sample_depth = float(depth[v, u])
+            if not math.isfinite(sample_depth) or sample_depth <= 0.0 or sample_depth >= far_cutoff:
+                points.append(None)
+                depths.append(None)
+                dropped.append(index)
+                continue
+            p_cam = _np.array(
+                [(u - cx) / fx * sample_depth, -(v - cy) / fy * sample_depth, -sample_depth],
+                dtype=_np.float64,
+            )
+            p_world = rotation @ p_cam + translation
+            xyz = [float(p_world[0]), float(p_world[1]), float(p_world[2])]
+            points.append(xyz)
+            depths.append(sample_depth)
+            valid.append(xyz)
+
+        if not valid:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"{method}: none of the {len(samples)} requested pixels carried usable depth on "
+                            f"camera '{camera_name}' - every sample is background at the far clip "
+                            f"(zfar={cam.zfar:.3f}m). Render the camera and pick pixels on a visible "
+                            "object surface."
+                        )
+                    }
+                ],
+            }
+
+        median = [float(axis) for axis in _np.median(_np.asarray(valid, dtype=_np.float64), axis=0)]
+        result: dict[str, Any] = {
+            "point": median,
+            "points": points,
+            "depths": depths,
+            "n_valid": len(valid),
+            "n_requested": len(samples),
+            "dropped": dropped,
+            "camera": camera_name,
+            "width": frame_w,
+            "height": frame_h,
+        }
+        text = (
+            f"World point [{median[0]:.4f}, {median[1]:.4f}, {median[2]:.4f}] m - median of "
+            f"{len(valid)}/{len(samples)} pixels on camera '{camera_name}'"
+        )
+        if dropped:
+            text += f"; dropped pixels {dropped} (background depth)"
+        return {"status": "success", "content": [{"text": text}, {"json": result}]}
+
     # Discovery / introspection
 
     def describe(self) -> dict[str, Any]:
@@ -2800,6 +3056,16 @@ class SimEngine(ABC):
                     "run_policy reports unresolved keys"
                 ),
                 "render": "(camera_name='default', width=None, height=None) -> dict",
+                "get_world_point": (
+                    "(camera_name='default', pixels=[[u, v], ...], width=None, "
+                    "height=None) -> dict  # unproject image pixels to metric "
+                    "world xyz using the camera's depth - the grounding read for "
+                    "'where is the thing I can see', reported as the per-axis "
+                    "median over the pixels so one bad sample cannot drag it. "
+                    "Render the camera first and pick pixels on the visible "
+                    "surface; background pixels are dropped, never fabricated. "
+                    "get_body_state is the privileged-truth alternative"
+                ),
                 "create_world": (
                     "(timestep=None, gravity=None, ground_plane=True, terrain=None, "
                     "difficulty=1.0) -> dict  # create a fresh simulation world - the "
