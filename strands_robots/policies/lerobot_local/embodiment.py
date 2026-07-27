@@ -157,6 +157,57 @@ def _convert_joint_vector(
     return out
 
 
+# Hardware observation detection
+
+
+def _is_joint_scalar(value: object) -> bool:
+    """Whether ``value`` is a single numeric joint reading.
+
+    Accepts python and numpy scalars plus 0-d arrays/tensors; rejects ``bool``
+    (a driver status flag is not a joint reading, and ``bool`` is an ``int``
+    subclass so the exclusion has to be explicit) and anything with more than
+    one element.
+
+    The dtype coverage is the point: ``isinstance(np.float64(1.0), float)`` is
+    True but ``isinstance(np.float32(1.0), float)`` is False, so a predicate
+    written as "plain floats, and numpy only if that found nothing" answers
+    differently for a float32 observation than for a float64 one - and
+    differently again for an observation that mixes the two.
+    """
+    if isinstance(value, bool):
+        return False
+    if isinstance(value, (int, float, np.floating, np.integer)):
+        return True
+    if isinstance(value, np.ndarray):
+        return value.ndim == 0
+    # 0-d torch tensor, without importing torch here (this module stays light).
+    return getattr(value, "ndim", None) == 0 and hasattr(value, "item")
+
+
+def hardware_pos_keys(observation: dict[str, Any]) -> list[str]:
+    """Ordered ``'<motor>.pos'`` keys of ``observation`` carrying a joint reading.
+
+    The single source of truth for "does this observation come from real
+    hardware?", shared by the state side (:class:`PackStateProcessorStep`) and
+    the action side (``LerobotLocalPolicy._hardware_action_keys``).
+
+    Both sides bind their vectors positionally, so the returned order - the
+    observation's own insertion order, i.e. lerobot motor order - is part of the
+    contract.
+
+    Args:
+        observation: A raw robot/sim observation dict.
+
+    Returns:
+        The matching keys, in observation order.
+    """
+    return [
+        key
+        for key, value in observation.items()
+        if isinstance(key, str) and key.endswith(".pos") and _is_joint_scalar(value)
+    ]
+
+
 # Action diagnostics
 
 
@@ -389,13 +440,7 @@ def register_pack_state_step() -> type | None:
                 # double-convert). Observation insertion order is lerobot motor
                 # order (shoulder_pan..gripper), which matches the positional
                 # sim state_keys, so a straight collection is index-aligned.
-                pos_keys = [
-                    k
-                    for k in observation
-                    if k.endswith(".pos")
-                    and isinstance(observation[k], (int, float, np.floating, np.ndarray))
-                    and (not isinstance(observation[k], np.ndarray) or observation[k].ndim == 0)
-                ]
+                pos_keys = hardware_pos_keys(observation)
                 if len(pos_keys) >= len(self.state_keys) and self.state_keys:
                     n = len(self.state_keys)
                     hw_vals = [float(observation[k]) for k in pos_keys[:n]]
