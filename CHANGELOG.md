@@ -78,6 +78,11 @@ its artifact line (with `flush_error`, matching the MuJoCo backend) instead of
 letting it escape `stop_cameras_recording` and instead of counting buffered
 frames as written.
 
+Isaac's `start_cameras_recording` now pre-flights `fps` and
+`max_frames_per_camera` against that same domain, as the MuJoCo recorder already
+did, so a rate the flush cannot encode at is refused before a rollout's frames
+are buffered rather than after they have been captured and lost.
+
 ### Fixed: a dataset recording is refused at a frame rate it cannot be written at
 
 `start_recording` never validated `fps`. LeRobot itself only rejects `fps <= 0`,
