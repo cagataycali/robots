@@ -37,6 +37,11 @@ logger = logging.getLogger(__name__)
 _DEFAULT_MAX_RENDER_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
+def _is_pixel_count(value: Any) -> bool:
+    """True when ``value`` is usable as a pixel dimension (an int, not a bool)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
 def _render_sandbox_root() -> Path:
     """Resolve the directory render() may write into (read at call time).
 
@@ -193,7 +198,11 @@ class RenderingMixin:
         """reject non-positive render dims; convert MuJoCo's framebuffer
         overflow to a plain-English message that tells the LLM the actual cap.
         """
-        if not isinstance(width, int) or not isinstance(height, int):
+        # bool is an int subclass, so `isinstance(True, int)` passes: True would
+        # be taken as a 1-pixel dimension and reach MuJoCo, which rejects it
+        # with a bare "an integer is required". A truth value is never a pixel
+        # count - name the type here instead.
+        if not _is_pixel_count(width) or not _is_pixel_count(height):
             return {
                 "status": "error",
                 "content": [
@@ -1354,13 +1363,19 @@ class RenderingMixin:
                 ``""`` / ``"default"`` / ``"free"``).
             width: image width to compute ``K`` for; ``None`` uses the
                 camera's configured resolution (the engine default for the
-                free camera).
-            height: image height to compute ``K`` for.
+                free camera). An explicit value must be a positive whole
+                number within the offscreen framebuffer cap - the same
+                dimension contract :meth:`render` and :meth:`get_frame`
+                enforce, so the params always describe a renderable frame.
+            height: image height to compute ``K`` for; same contract as
+                ``width``.
 
         Raises:
             RuntimeError: no world created.
             ValueError: the free camera is orthographic (``<visual><global
-                orthographic="true"/>``), which no pinhole ``K`` can represent.
+                orthographic="true"/>``), which no pinhole ``K`` can represent;
+                or ``width``/``height`` is not a positive whole number, or
+                exceeds the offscreen framebuffer cap.
             KeyError: unknown camera name.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
@@ -1377,8 +1392,16 @@ class RenderingMixin:
         free_camera = camera_name in (None, "", "default", "free")
         cam_cfg = None if free_camera else self._world.cameras.get(camera_name)
 
-        w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else int(width)
-        h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else int(height)
+        w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
+        h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
+        # K is only meaningful for an image the renderer can actually produce:
+        # fx/fy/cx/cy are all linear in the size, so a non-positive dimension
+        # yields a singular (h == 0) or axis-flipped (h < 0) K, and a size past
+        # the offscreen framebuffer cap describes a frame render()/get_frame()
+        # refuse to draw. Same guard, same message as those two call sites -
+        # raised here because this API reports failure by exception.
+        if err := self._validate_render_dims(w, h):
+            raise ValueError(err["content"][0]["text"])
 
         with self._lock:
             extent = float(model.stat.extent)

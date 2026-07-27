@@ -5,6 +5,33 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: get_camera_params refuses an image size it cannot produce intrinsics for
+
+`render`, `render_depth` and `get_frame` all validate `width`/`height` through
+the same guard - positive whole numbers within the offscreen framebuffer cap.
+`get_camera_params`, which builds the pinhole `K` describing the very frame
+those three render, validated nothing and coerced with `int(...)`. Every
+dimension its siblings reject was accepted:
+
+```python
+cam = sim.get_camera_params("look", height=-48)   # returned CameraParams
+cam.K[1][1]                                       # -41.57  (fy negative: Y axis flipped)
+# unprojecting the cube-top pixel with it recovers (-1.080, 0.000, 1.709) m
+# instead of (0.000, 0.000, 0.100) m - a 1.94 m error, no error raised
+
+sim.get_camera_params("look", height=0)           # fy = 0.0 -> K singular (rank 2)
+sim.get_camera_params("look", width=2.7)          # silently truncated to 2 px
+sim.get_camera_params("look", width="640")        # string accepted by int()
+sim.get_camera_params("look", width=5000, height=5000)
+sim.render("look", width=5000, height=5000)       # status=error: exceeds the 4096 cap
+```
+
+`get_camera_params` now applies the same guard as its three siblings and raises
+`ValueError` carrying the identical message text, so the params always describe
+a frame the renderer can actually draw. The shared guard also names `bool`
+explicitly (`isinstance(True, int)` is true, so `width=True` previously reached
+MuJoCo and came back as "an integer is required").
+
 ### Fixed: a cuRobo goal embedded in the instruction survives neighbouring braces
 
 `CuroboPolicy.get_actions` reads the goal from the well-known `target_pose` /
