@@ -88,6 +88,84 @@ _JOINT_NAME_PATTERN = r"^[A-Za-z][A-Za-z0-9_-]*$"
 # rather than silently consuming RAM.
 _MAX_TRAJECTORY_WAYPOINTS = 100_000
 
+# Well-known goal fields (issue #300) an LLM may pack into the natural-language
+# instruction as a JSON object. Doubles as the pre-filter for the fallback
+# parse: an instruction that mentions neither field cannot carry a goal, so no
+# JSON decode is attempted for it.
+_GOAL_PAYLOAD_KEYS = ("target_pose", "target_joints")
+
+# Cap on how many ``{`` offsets the fallback parse will try to decode. A failed
+# decode attempt costs O(len(instruction)) in the worst case, so an unbounded
+# scan over an LLM-authored string is a quadratic-time surface; the cap makes
+# the work linear in the instruction length. A goal that is not inside one of
+# the first candidate objects is reported as unparseable rather than hunted for.
+_MAX_GOAL_PAYLOAD_CANDIDATES = 32
+
+
+def _opens_a_json_object(text: str, brace: int) -> bool:
+    """True when ``text[brace]`` could start a JSON object.
+
+    A JSON object is ``{`` then whitespace then either a ``"``-quoted key or the
+    closing ``}``. Anything else (``{gripper}``, ``{{``) is prose and is not
+    worth a decode attempt.
+    """
+    probe = brace + 1
+    while probe < len(text) and text[probe] in " \t\r\n":
+        probe += 1
+    return probe < len(text) and text[probe] in '"}'
+
+
+def _find_goal_payload(instruction: str) -> dict[str, Any] | None:
+    """Return the JSON object embedded in ``instruction`` that carries a goal.
+
+    Walks the ``{`` offsets in the instruction and decodes each one with
+    :meth:`json.JSONDecoder.raw_decode`, which ends the object at its own
+    closing brace instead of assuming the payload runs to the last ``}`` in the
+    string. Instructions that mention no goal field at all are rejected without
+    a decode. A decoded object without a top-level goal field is
+    skipped whole - only a top-level ``target_pose`` / ``target_joints`` counts
+    as a goal, so a payload that merely nests one is not a goal (unchanged).
+
+    Returns ``None`` when no candidate yields such an object; when the
+    instruction does mention a goal field, that outcome is logged so a
+    malformed payload is not silently indistinguishable from no payload.
+    """
+    if not any(key in instruction for key in _GOAL_PAYLOAD_KEYS):
+        return None
+    decoder = json.JSONDecoder()
+    idx = instruction.find("{")
+    attempts = 0
+    while idx != -1 and attempts < _MAX_GOAL_PAYLOAD_CANDIDATES:
+        if not _opens_a_json_object(instruction, idx):
+            # Prose braces (``{gripper}``, ``{{``) cannot open a JSON object, so
+            # they are skipped without spending a decode attempt - the candidate
+            # budget is a backstop against a pathological string, not a limit on
+            # how much prose may precede the payload.
+            idx = instruction.find("{", idx + 1)
+            continue
+        attempts += 1
+        try:
+            payload, end = decoder.raw_decode(instruction, idx)
+        except ValueError:
+            # Not the start of a complete JSON value (prose braces, a typo in
+            # the payload). Try the next opening brace.
+            idx = instruction.find("{", idx + 1)
+            continue
+        if isinstance(payload, dict) and any(key in payload for key in _GOAL_PAYLOAD_KEYS):
+            return payload
+        # A complete value that is not a goal: resume after it rather than
+        # descending into the braces it contains.
+        idx = instruction.find("{", max(end, idx + 1))
+    logger.warning(
+        "curobo: the instruction mentions a goal field but no JSON object carrying "
+        "a top-level target_pose/target_joints could be decoded from it (%d candidate "
+        "offsets tried over %d characters). Pass the goal as target_pose= / "
+        "target_joints= kwargs instead of embedding it in the instruction text.",
+        attempts,
+        len(instruction),
+    )
+    return None
+
 
 class CuroboPolicy(Policy):
     """In-process cuRobo ``MotionPlanner`` wrapper.
@@ -911,18 +989,15 @@ class CuroboPolicy(Policy):
 
         Returns ``(None, None)`` when no goal is found - the caller will
         then raise :class:`ValueError`.
+
+        Extraction is delegated to :func:`_find_goal_payload`, which bounds the
+        object at its own closing brace; the goal survives prose that carries
+        braces of its own on either side of it.
         """
         if not instruction or not isinstance(instruction, str):
             return None, None
-        # Try to find a JSON object embedded in the instruction.
-        match = re.search(r"\{.*\}", instruction, re.DOTALL)
-        if not match:
-            return None, None
-        try:
-            payload = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None, None
-        if not isinstance(payload, dict):
+        payload = _find_goal_payload(instruction)
+        if payload is None:
             return None, None
         target_pose = payload.get("target_pose")
         target_joints = payload.get("target_joints")

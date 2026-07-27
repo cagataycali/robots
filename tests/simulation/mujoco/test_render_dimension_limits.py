@@ -8,10 +8,20 @@ framebuffer cap, and a non-positive byte budget. The dimension guards
 short-circuit before any GL context is created, so they are deterministic even
 on a headless host.
 
-``render_depth`` shares the same ``_validate_render_dims`` guard as ``render``
-but through an independent call site, so it is pinned with its own parity
-suite: a refactor that drops the depth-path guard (letting a 8000x8000 depth
-request reach the offscreen framebuffer) would slip past the RGB tests alone.
+``render_depth`` and ``get_camera_params`` share the same
+``_validate_render_dims`` guard as ``render`` but through independent call
+sites, so each is pinned with its own suite plus a cross-call-site parity
+suite: a refactor that drops one of them (letting a 8000x8000 depth request
+reach the offscreen framebuffer, or building a pinhole ``K`` for a 0-pixel
+image) would slip past the RGB tests alone.
+
+``get_camera_params`` reports failure by exception rather than by an
+agent-tool dict, and its dimensions are not merely a buffer size: ``fx``,
+``fy``, ``cx`` and ``cy`` are all linear in the image size, so a 0 height
+yields a singular ``K`` (``fy == 0``, no unprojection possible) and a negative
+height yields an axis-flipped ``K`` that silently mirrors every unprojected
+point. A size past the framebuffer cap describes a frame ``render`` and
+``get_frame`` refuse to draw, breaking the symmetry those three APIs promise.
 """
 
 import pytest
@@ -106,3 +116,81 @@ class TestRenderMaxBytesCap:
         monkeypatch.setenv("STRANDS_ROBOTS_RENDER_MAX_BYTES", "0")
         with pytest.raises(ValueError, match="must be positive"):
             _max_render_bytes()
+
+
+class TestCameraParamsDimensionCaps:
+    """``get_camera_params`` must honor the same dimension contract as ``render``.
+
+    It builds intrinsics for a caller-supplied image size, so a dimension the
+    renderer cannot produce yields a ``K`` describing a frame that does not
+    exist. Failure is reported by ``ValueError`` (this API returns a
+    ``CameraParams``, not an agent-tool dict).
+    """
+
+    @pytest.mark.parametrize(
+        ("width", "height"),
+        [(0, 240), (320, 0), (-64, 240), (320, -48)],
+    )
+    def test_non_positive_dimensions_rejected(self, sim_with_world, width, height):
+        """A 0 height would give a singular K; a negative one an axis-flipped K."""
+        with pytest.raises(ValueError, match="must be > 0"):
+            sim_with_world.get_camera_params(camera_name="default", width=width, height=height)
+
+    @pytest.mark.parametrize("width", [2.7, "640", [320]])
+    def test_non_integer_dimensions_rejected(self, sim_with_world, width):
+        """A fractional/string/sequence width is refused, not silently truncated."""
+        with pytest.raises(ValueError, match="must be int"):
+            sim_with_world.get_camera_params(camera_name="default", width=width, height=240)
+
+    def test_bool_dimension_rejected_by_type(self, sim_with_world):
+        """``True`` is an int subclass but never a pixel count."""
+        with pytest.raises(ValueError, match="got bool/int"):
+            sim_with_world.get_camera_params(camera_name="default", width=True, height=240)
+
+    def test_dimensions_over_absolute_ceiling_rejected(self, sim_with_world):
+        """Params for a frame past the hard 4096 ceiling are refused."""
+        with pytest.raises(ValueError, match="absolute maximum"):
+            sim_with_world.get_camera_params(camera_name="default", width=8000, height=480)
+
+    def test_dimensions_over_model_offscreen_cap_rejected(self, sim_with_world):
+        """Past the model's offscreen framebuffer cap is refused with the cap named."""
+        cap_w = int(sim_with_world._world._model.vis.global_.offwidth)
+        with pytest.raises(ValueError, match="offscreen framebuffer cap"):
+            sim_with_world.get_camera_params(camera_name="default", width=cap_w + 1, height=48)
+
+    def test_valid_dimensions_scale_the_intrinsics(self, sim_with_world):
+        """Accepted dimensions still produce K linear in the image size."""
+        sim_with_world.add_camera("look", position=[0.6, 0.0, 0.4], target=[0.0, 0.0, 0.1], width=320, height=240)
+
+        base = sim_with_world.get_camera_params(camera_name="look")
+        assert (base.width, base.height) == (320, 240)
+
+        doubled = sim_with_world.get_camera_params(camera_name="look", width=640, height=480)
+        assert (doubled.width, doubled.height) == (640, 480)
+        assert doubled.K[1][1] == pytest.approx(2.0 * base.K[1][1])
+        assert doubled.K[0][2] == pytest.approx(2.0 * base.K[0][2])
+        assert doubled.K[1][2] == pytest.approx(2.0 * base.K[1][2])
+
+
+class TestRenderDimensionGuardParity:
+    """Every dimension ``render`` rejects, ``get_camera_params`` rejects too.
+
+    The three render-dimension call sites (``render``, ``get_frame`` /
+    ``render_depth``, ``get_camera_params``) describe the same image. An
+    accepted domain that diverges between them lets a caller hold intrinsics
+    for a frame no call can render.
+    """
+
+    @pytest.mark.parametrize(
+        ("width", "height"),
+        [(0, 240), (320, 0), (-64, 240), (320, -48), (2.7, 240), ("640", 240), (True, 240), (8000, 480)],
+    )
+    def test_render_and_camera_params_reject_identically(self, sim_with_world, width, height):
+        """Same rejection, same message text, through both call sites."""
+        rendered = sim_with_world.render(camera_name="default", width=width, height=height)
+        assert rendered["status"] == "error"
+        expected = rendered["content"][0]["text"]
+
+        with pytest.raises(ValueError) as excinfo:
+            sim_with_world.get_camera_params(camera_name="default", width=width, height=height)
+        assert str(excinfo.value) == expected

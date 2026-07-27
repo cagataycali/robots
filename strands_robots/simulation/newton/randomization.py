@@ -30,7 +30,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.base import unknown_kwargs_error
+from strands_robots.simulation.base import (
+    finite_non_negative_error,
+    randomization_range_error,
+    randomization_seed_error,
+    unknown_kwargs_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -122,10 +127,13 @@ class DomainRandomizationMixin:
             randomize_colors: Resample per-shape RGB.
             randomize_lighting: Jitter the directional-light orientation.
             randomize_physics: Scale per-body mass and per-shape friction.
-            mass_range: ``(lo, hi)`` multiplicative scale on body mass.
+            mass_range: ``(lo, hi)`` multiplicative scale on body mass. Must
+                be strictly positive: a zero multiplier leaves a massless body
+                that ignores gravity rather than a lighter one.
             friction_range: ``(lo, hi)`` multiplicative scale on shape friction.
             color_range: ``(lo, hi)`` for uniform RGB sampling.
-            seed: Optional seed for reproducible randomization.
+            seed: Optional seed for reproducible randomization; a non-negative
+                integer, or None for fresh entropy.
             **kwargs: Tolerated for MuJoCo-signature parity: ``randomize_positions``
                 and ``position_noise`` are accepted keywords, and a truthy
                 ``randomize_positions`` returns an error (Newton does not yet
@@ -156,14 +164,21 @@ class DomainRandomizationMixin:
                     }
                 ],
             }
-        for label, rng_range in (
-            ("mass_range", mass_range),
-            ("friction_range", friction_range),
-            ("color_range", color_range),
+        for label, rng_range, allow_zero in (
+            # A zero MASS multiplier is not a lighter body, it is a massless one
+            # that ignores gravity; zero friction and zero colour are both real
+            # physical settings.
+            ("mass_range", mass_range, False),
+            ("friction_range", friction_range, True),
+            ("color_range", color_range, True),
         ):
-            err = _validate_range(label, rng_range)
-            if err is not None:
-                return {"status": "error", "content": [{"text": err}]}
+            if msg := randomization_range_error(rng_range, label, allow_zero=allow_zero):
+                return {"status": "error", "content": [{"text": msg}]}
+        # The seed is stored now and only reaches ``default_rng`` inside
+        # ``_rebuild``, so an unusable one would otherwise raise after this call
+        # already reported the randomization applied.
+        if msg := randomization_seed_error(seed, "randomize"):
+            return {"status": "error", "content": [{"text": msg}]}
 
         with self._lock:
             self._dr = {
@@ -287,7 +302,8 @@ class DomainRandomizationMixin:
                 velocities in ``get_robot_state``.
             camera_jitter_px: Max integer pixel shift applied to rendered
                 frames (uniform in ``[-px, px]`` per axis).
-            seed: Optional seed for a reproducible noise stream.
+            seed: Optional seed for a reproducible noise stream; a non-negative
+                integer, or None for fresh entropy.
             **kwargs: Declared only to match the ``**kwargs``-typed
                 ``SimEngine.set_obs_noise`` signature; nothing is forwarded, so
                 any keyword arriving here is rejected with an error naming the
@@ -305,20 +321,13 @@ class DomainRandomizationMixin:
             ("joint_vel_std", joint_vel_std),
             ("camera_jitter_px", camera_jitter_px),
         ):
-            try:
-                fvalue = float(value)
-            except (TypeError, ValueError):
-                return {
-                    "status": "error",
-                    "content": [{"text": f"set_obs_noise: {label} must be a number, got {value!r}"}],
-                }
-            if not np.isfinite(fvalue) or fvalue < 0:
-                return {
-                    "status": "error",
-                    "content": [
-                        {"text": f"set_obs_noise: {label} must be a finite non-negative number, got {value!r}"}
-                    ],
-                }
+            if msg := finite_non_negative_error(value, label, "set_obs_noise"):
+                return {"status": "error", "content": [{"text": msg}]}
+        # See the note in ``randomize``: the seed only reaches ``default_rng``
+        # below, and on the noise path an unusable one would raise on the first
+        # observation drawn rather than at this call.
+        if msg := randomization_seed_error(seed, "set_obs_noise"):
+            return {"status": "error", "content": [{"text": msg}]}
 
         with self._lock:
             self._obs_noise = {
@@ -406,27 +415,3 @@ class DomainRandomizationMixin:
         dy = int(rng.integers(-max_shift, max_shift + 1))
         dx = int(rng.integers(-max_shift, max_shift + 1))
         return np.roll(frame, shift=(dy, dx), axis=(0, 1))
-
-
-def _validate_range(label: str, rng_range: Any) -> str | None:
-    """Validate a ``(lo, hi)`` randomization range.
-
-    Args:
-        label: Parameter name for the error message.
-        rng_range: The candidate ``(lo, hi)`` pair.
-
-    Returns:
-        ``None`` when valid, otherwise an error message string.
-    """
-    try:
-        lo, hi = rng_range
-        lo, hi = float(lo), float(hi)
-    except (TypeError, ValueError):
-        return f"{label} must be a (lo, hi) pair of numbers, got {rng_range!r}"
-    if not (np.isfinite(lo) and np.isfinite(hi)):
-        return f"{label} bounds must be finite, got {rng_range!r}"
-    if lo > hi:
-        return f"{label} lower bound {lo} exceeds upper bound {hi}"
-    if lo < 0:
-        return f"{label} bounds must be non-negative, got {rng_range!r}"
-    return None

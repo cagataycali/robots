@@ -5,6 +5,69 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: get_camera_params refuses an image size it cannot produce intrinsics for
+
+`render`, `render_depth` and `get_frame` all validate `width`/`height` through
+the same guard - positive whole numbers within the offscreen framebuffer cap.
+`get_camera_params`, which builds the pinhole `K` describing the very frame
+those three render, validated nothing and coerced with `int(...)`. Every
+dimension its siblings reject was accepted:
+
+```python
+cam = sim.get_camera_params("look", height=-48)   # returned CameraParams
+cam.K[1][1]                                       # -41.57  (fy negative: Y axis flipped)
+# unprojecting the cube-top pixel with it recovers (-1.080, 0.000, 1.709) m
+# instead of (0.000, 0.000, 0.100) m - a 1.94 m error, no error raised
+
+sim.get_camera_params("look", height=0)           # fy = 0.0 -> K singular (rank 2)
+sim.get_camera_params("look", width=2.7)          # silently truncated to 2 px
+sim.get_camera_params("look", width="640")        # string accepted by int()
+sim.get_camera_params("look", width=5000, height=5000)
+sim.render("look", width=5000, height=5000)       # status=error: exceeds the 4096 cap
+```
+
+`get_camera_params` now applies the same guard as its three siblings and raises
+`ValueError` carrying the identical message text, so the params always describe
+a frame the renderer can actually draw. The shared guard also names `bool`
+explicitly (`isinstance(True, int)` is true, so `width=True` previously reached
+MuJoCo and came back as "an integer is required").
+
+### Fixed: a cuRobo goal embedded in the instruction survives neighbouring braces
+
+`CuroboPolicy.get_actions` reads the goal from the well-known `target_pose` /
+`target_joints` kwargs and falls back to parsing a JSON object out of the
+natural-language instruction for LLM-driven workflows. The fallback took the
+span from the FIRST `{` to the LAST `}` in the string, so any brace elsewhere in
+the instruction swallowed the payload into an unparseable span:
+
+```python
+policy.get_actions_sync(
+    {"observation.state": [0.0] * 6},
+    'pick up the {block} and go to {"target_pose": [0.4, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0]}',
+)
+# ValueError: CuroboPolicy.get_actions requires at least one of
+#   target_pose=[x,y,z,qw,qx,qy,qz] or target_joints={joint:value} ...
+```
+
+The goal was right there in the input; the span `{block} and go to {"target_pose":
+...}` simply is not JSON, so the parse returned no goal and the caller reported a
+missing one. The same happened with a brace after the payload (`... {"target_pose":
+[...]} then release the {clamp}`).
+
+Each candidate `{` is now decoded with `json.JSONDecoder.raw_decode`, which ends
+the object at its own closing brace, and the first object carrying a top-level
+goal field wins. A payload that merely nests a goal
+(`{"goal": {"target_pose": [...]}}`) is still not a goal - only top-level fields
+count, unchanged.
+
+Two side effects of the old regex are gone with it. `re.search(r"\{.*\}", ...,
+re.DOTALL)` restarted a full-length scan at every `{` when the braces never
+balanced, so a long LLM-authored instruction stalled the 50Hz caller
+(quadratic; 3.1 s for 100k unclosed braces, and `py/polynomial-redos` in code
+scanning). And an instruction that mentions a goal field whose JSON does not
+decode is now logged at WARNING instead of being indistinguishable from an
+instruction that never carried one.
+
 ### Fixed: resuming a dataset recording at a different frame rate is refused
 
 `start_recording(overwrite=False)` on an existing dataset resumes it, and
@@ -41,6 +104,43 @@ Use overwrite=True for a fresh dataset, or restore the original scene. Differenc
 Resuming at the dataset's own rate still appends as before. The comparison is
 shared by the MuJoCo, Newton and Isaac backends (`fps` is a required
 keyword-only argument of the schema check, so no backend can resume without it).
+### Fixed: domain randomization refuses ranges, noise amplitudes and seeds it cannot apply
+
+`randomize` writes its numeric arguments straight into the live MuJoCo model
+(`body_mass`, `body_inertia`, `geom_friction`, `geom_rgba`) and into
+`data.qpos`, and `set_obs_noise` stores a seed that is only drawn from later.
+Neither validated those values, so a range with no usable sampling interval
+either raised past the tool envelope or, worse, succeeded and left a world that
+models nothing:
+
+```python
+sim.randomize(randomize_physics=True, mass_range=(-1.0, -1.0))
+# -> success: "Physics: 3 geoms friction-scaled, 2 bodies mass-scaled"
+# body_mass is now -1 kg, so the crate FALLS UPWARD: 0.30 m -> 1.25 m in 220 steps
+
+sim.randomize(randomize_physics=True, mass_range=(0.0, 0.0))
+# -> success; the massless body then hovers, immune to gravity
+
+sim.randomize(randomize_physics=True, friction_range=(-2.0, -1.0))
+# -> success, with a negative Coulomb friction coefficient
+
+sim.randomize(mass_range=0.5)          # TypeError past the tool envelope
+sim.randomize(color_range=(0.1,))      # IndexError
+sim.randomize(randomize_positions=True, position_noise=float("nan"))  # OverflowError
+sim.set_obs_noise(joint_pos_std=0.01, seed=2.5)  # TypeError from default_rng
+```
+
+The Newton backend already refused the three shared ranges, through a private
+copy of the rule. That rule is now the shared
+`strands_robots.simulation.base.randomization_range_error`, joined by
+`finite_non_negative_error` (the sensor-noise standard deviations and
+`position_noise`) and `randomization_seed_error`, and both backends call all
+three from both `randomize` and `set_obs_noise` - so their accepted domains
+cannot diverge again. `mass_range` is additionally required to be strictly
+positive: a zero multiplier leaves a massless body that ignores gravity rather
+than a lighter one. Usable values are unaffected, including a zero lower bound
+for `friction_range` (a frictionless surface) and `color_range` (a black
+channel).
 
 ### Fixed: a clip is encoded at the requested frame rate, or refused
 
