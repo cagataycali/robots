@@ -94,6 +94,62 @@ def _save_render_png(output_path: str, png_bytes: bytes) -> str:
     return str(safe)
 
 
+def _cameras_recording_option_error(
+    method: str,
+    fps: Any,
+    width: Any,
+    height: Any,
+    max_frames_per_camera: Any,
+) -> dict[str, Any] | None:
+    """Reject a plain-MP4 recording option the recorder cannot honor.
+
+    Pre-flight guard shared by both plain-MP4 entry points
+    (:meth:`RenderingMixin.start_cameras_recording` and
+    :meth:`RenderingMixin.start_cameras_recording_synchronous`). Every one of
+    these knobs is a frame count or a pixel count, so the accepted domain is the
+    shared one the ``run_policy(video=...)`` dict already enforces
+    (:func:`~strands_robots.simulation.policy_runner.positive_whole_number_error`)
+    - a single source of truth, so the two recording surfaces cannot disagree on
+    what a usable ``fps`` is.
+
+    Without this guard each unusable value produced a ``status="success"``
+    recording that wrote no MP4 at all: ``fps=0`` killed the capture thread on
+    its first ``1 / fps``, ``fps=-1`` / ``nan`` / ``inf`` were refused by the
+    ffmpeg writer at flush time, ``fps="30"`` raised a ``TypeError`` on the
+    capture thread, ``max_frames_per_camera=0`` made ``len(buffer) >= cap`` true
+    for every frame, and a non-positive ``width``/``height`` failed every render
+    call - all reported as success by both ``start`` and ``stop``.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        fps: Capture/encode frame rate.
+        width: Per-frame width, or ``None`` for the camera/renderer default.
+        height: Per-frame height, or ``None`` for the camera/renderer default.
+        max_frames_per_camera: In-memory per-camera frame cap.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming the first
+        offending parameter, or ``None`` when every option is usable.
+    """
+    from strands_robots.simulation.policy_runner import positive_whole_number_error
+
+    # ``width``/``height`` are ``int | None``: ``None`` means "use the camera's
+    # configured resolution, else the renderer default", so it is skipped rather
+    # than rejected. ``fps`` and the frame cap have no such opt-out.
+    checks: tuple[tuple[str, Any], ...] = (
+        ("fps", fps),
+        ("max_frames_per_camera", max_frames_per_camera),
+        ("width", width),
+        ("height", height),
+    )
+    for param, value in checks:
+        if value is None and param in ("width", "height"):
+            continue
+        if text := positive_whole_number_error(value, param, method):
+            return {"status": "error", "content": [{"text": text}]}
+    return None
+
+
 class RenderingMixin:
     """Rendering + observation helpers mixed into ``Simulation``.
 
@@ -1742,11 +1798,17 @@ class RenderingMixin:
             output_dir: where to write ``{tag}__{cam}.mp4``. Validated against
                 ``..`` traversal / backslash / shell metacharacters / symlink;
                 set ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it to a sandbox.
-            fps: capture rate.
-            width/height: per-frame size.
+            fps: capture rate. Must be a positive whole number - the capture
+                loop's period is ``1 / fps``, so an unusable value is rejected
+                up front rather than killing the capture thread behind a
+                ``status="success"`` return.
+            width/height: per-frame size. ``None`` uses the camera's configured
+                resolution (else the renderer default); an explicit value must
+                be a positive whole number.
             name: filename tag (auto if None). Validated as a single path
                 component - separators / traversal / metacharacters rejected.
-            max_frames_per_camera: safety cap on in-memory buffers.
+            max_frames_per_camera: safety cap on in-memory buffers. Must be a
+                positive whole number; ``0``/negative would drop every frame.
         """
         import os as _os
         import tempfile as _tempfile
@@ -1756,6 +1818,14 @@ class RenderingMixin:
 
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+
+        # Reject a frame/pixel count the recorder cannot honor before any
+        # filesystem or capture-thread work: every one of these produced an
+        # empty recording that still reported success.
+        if error := _cameras_recording_option_error(
+            "start_cameras_recording", fps, width, height, max_frames_per_camera
+        ):
+            return error
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]
@@ -2146,13 +2216,18 @@ class RenderingMixin:
                 traversal / backslash / shell metacharacters / symlink; set
                 ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it to a sandbox.
             fps: encoded MP4 frame rate (and target capture rate when
-                ``on_frame`` fires more often than ``fps``).
+                ``on_frame`` fires more often than ``fps``). Must be a positive
+                whole number - the ffmpeg writer refuses anything else, so an
+                unusable value is rejected up front instead of surfacing as an
+                empty recording that reported success.
             width, height: per-frame size; defaults to the renderer's
-                native resolution.
+                native resolution. An explicit value must be a positive whole
+                number.
             name: filename tag (auto-generated UUID prefix when ``None``).
                 Validated as a single path component - separators / traversal
                 / metacharacters rejected.
-            max_frames_per_camera: safety cap on in-memory buffers.
+            max_frames_per_camera: safety cap on in-memory buffers. Must be a
+                positive whole number (``0``/negative would drop every frame).
                 Frames beyond the cap are silently dropped (status
                 visible via :meth:`get_cameras_recording_status`).
 
@@ -2174,6 +2249,14 @@ class RenderingMixin:
 
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+
+        # Reject a frame/pixel count the recorder cannot honor before any
+        # filesystem or capture-thread work: every one of these produced an
+        # empty recording that still reported success.
+        if error := _cameras_recording_option_error(
+            "start_cameras_recording_synchronous", fps, width, height, max_frames_per_camera
+        ):
+            return error
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]

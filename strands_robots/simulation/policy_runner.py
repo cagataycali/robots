@@ -176,6 +176,39 @@ def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
     return None
 
 
+def positive_whole_number_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable positive whole number.
+
+    Shared domain for every recording knob that counts frames or pixels -
+    ``fps``, ``width``, ``height`` and the in-memory frame cap. Only a positive
+    whole number can be honored: ``0`` makes the capture loop's ``1 / fps``
+    period undefined, a negative rate is rejected by the ffmpeg writer, and a
+    zero/negative frame cap drops every frame. Accepts any real scalar with an
+    integral value (so a NumPy ``np.int64`` height or a ``30.0`` computed from a
+    config float passes) and rejects ``bool`` explicitly - an ``int`` subclass
+    whose ``True`` would act as a silent 1.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter (or dict key) it came from, used in the message.
+        context: Message prefix identifying the surface that received it -
+            ``"video"`` for the :class:`VideoConfig` dict, the method name for a
+            keyword parameter.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    message = f"{context}: {param} must be a positive whole number, got {value!r}."
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return message
+    numeric = float(value)
+    # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it
+    # out of the integrality check below.
+    if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
+        return message
+    return None
+
+
 # Canonical :class:`VideoConfig` field -> the dict keys accepted for it, canonical
 # key first followed by the legacy/tool_spec aliases. Single source of truth for
 # both the schema check (``VideoConfig.validation_error``) and the value lookup
@@ -257,13 +290,13 @@ class VideoConfig:
 
     @staticmethod
     def _positive_int_error(value: Any, key: str) -> str | None:
-        """Error text when ``value`` is not a usable positive whole number.
+        """Error text when a ``video`` dict value is not a positive whole number.
 
-        ``fps`` / ``width`` / ``height`` are frame counts and pixel counts:
-        only a positive whole number can be honored. Accepts any real scalar
-        with an integral value (so a NumPy ``np.int64`` height or a ``30.0``
-        computed from a config float passes) and rejects ``bool`` explicitly -
-        an ``int`` subclass whose ``True`` would act as a silent 1.
+        Thin binding of the shared frame/pixel-count domain
+        (:func:`positive_whole_number_error`) to the ``video:`` message prefix,
+        so this dict schema and the plain-MP4 recorder's keyword parameters
+        cannot drift apart on what counts as a usable ``fps`` / ``width`` /
+        ``height``.
 
         Args:
             value: The caller-supplied value.
@@ -272,15 +305,7 @@ class VideoConfig:
         Returns:
             An error message, or ``None`` when the value is usable.
         """
-        message = f"video: {key} must be a positive whole number, got {value!r}."
-        if isinstance(value, bool) or not isinstance(value, numbers.Real):
-            return message
-        numeric = float(value)
-        # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it
-        # out of the integrality check below.
-        if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
-            return message
-        return None
+        return positive_whole_number_error(value, key, "video")
 
     @classmethod
     def validation_error(cls, d: Any) -> str | None:

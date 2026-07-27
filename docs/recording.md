@@ -263,6 +263,13 @@ then only a lower bound, reported in the `unreadable_files` diagnostics.
 | `save_episode` | `[lerobot]` | Close current rollout as one episode (call once per `run_policy` for N episodes) |
 | `start_cameras_recording` / `stop_cameras_recording` | `[sim-mujoco]` alone | Plain MP4, no parquet |
 
+`fps`, `width`, `height` and `max_frames_per_camera` on the plain-MP4 recorders
+must be positive whole numbers - the same domain `run_policy(video={...})`
+enforces. An unusable value (`fps=0`, a negative frame cap) is a structured
+error naming the parameter rather than a recording that reports success and
+writes no file. Omit `width`/`height` to use each camera's configured
+resolution.
+
 ## Video codec (H.264 default, AV1 opt-in)
 
 `start_recording` (and `DatasetRecorder.create`/`resume`) default to

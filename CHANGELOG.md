@@ -5,6 +5,35 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: the plain-MP4 camera recorder rejects frame and pixel counts it cannot honor
+
+`start_cameras_recording` and `start_cameras_recording_synchronous` never
+validated `fps`, `width`, `height` or `max_frames_per_camera`. Each unusable
+value produced a recording that wrote no MP4 at all while both `start` and
+`stop` reported success:
+
+```python
+sim.start_cameras_recording(cameras=["wrist"], fps=0)
+# -> success: "Recording 1 camera(s) @ 0 FPS -> /tmp/..."
+sim.stop_cameras_recording()
+# -> success: frames 0, and no file on disk
+```
+
+The failures were downstream of the success return, so nothing surfaced them:
+`fps=0` killed the capture thread on its first `1 / fps`, `fps=-1`/`nan`/`inf`
+were refused by the ffmpeg writer during the flush, `fps="30"` raised a
+`TypeError` on the capture thread, `max_frames_per_camera=0` made
+`len(buffer) >= cap` true for every frame, and a non-positive `width`/`height`
+failed every render call. All nine of those inputs measured 0 frames and no MP4
+under a `status="success"` pair.
+
+These are frame counts and pixel counts, and the accepted domain for them was
+already defined for the `run_policy(video={...})` path. Both recording surfaces
+now bind that one predicate, so an unusable option is a structured error naming
+the parameter, and the two surfaces cannot drift on what a usable `fps` is.
+`width`/`height` of `None` still mean "use the camera's configured resolution".
+
+
 ### Fixed: a gripper command is honored the same way whichever name the action key spells
 
 `send_action` accepts an action key as either the actuator name (`actuator8` on
