@@ -30,6 +30,7 @@
         "list_policies_running",
         "render",
         "render_depth",
+        "get_world_point",
         "get_contacts",
         "step",
         "set_gravity",
@@ -63,6 +64,7 @@
         "get_contact_forces",
         "forward_kinematics",
         "get_total_mass",
+        "get_ground_height",
         "export_xml",
         "render_all",
         "start_cameras_recording",
@@ -70,7 +72,15 @@
         "get_cameras_recording_status",
         "list_benchmarks",
         "register_benchmark_from_file",
-        "evaluate_benchmark"
+        "register_builtin_benchmarks",
+        "evaluate_benchmark",
+        "attach_bodies",
+        "detach_bodies",
+        "actuate_robot",
+        "zero_dynamics",
+        "move_to",
+        "set_gripper",
+        "rotate_wrist"
       ]
     },
     "scene_path": {
@@ -88,6 +98,14 @@
     },
     "ground_plane": {
       "type": "boolean"
+    },
+    "terrain": {
+      "type": "string",
+      "description": "create_world: heightfield terrain kind ('rough' = bumps, 'stairs' = step plateaus along +x, 'pyramid' = concentric step plateaus toward the centre, 'slope' = constant-grade incline); omit for a flat ground plane. MuJoCo backend only."
+    },
+    "difficulty": {
+      "type": "number",
+      "description": "create_world: terrain curriculum knob - scales the heightfield's peak elevation (1.0 = full height, <1 gentler, >1 harsher) to ramp terrain magnitude across resets without changing the terrain kind. Only meaningful together with 'terrain'; difficulty != 1.0 with no terrain is rejected. MuJoCo backend only."
     },
     "urdf_path": {
       "type": "string",
@@ -135,16 +153,19 @@
       "type": "array",
       "items": {
         "type": "number"
-      }
+      },
+      "description": "Object size for add_object, as FULL extents in meters per axis (not MuJoCo half-extents). Pass every component the shape consumes: box/ellipsoid [x,y,z], cylinder/capsule [diameter,unused,height], sphere [diameter], plane [x] or [x,y] half-widths; mesh ignores it. At most 3 components. A partial vector (e.g. [0.5] for a box) is rejected, not padded - omit size entirely for the 5 cm default."
     },
     "color": {
       "type": "array",
       "items": {
         "type": "number"
-      }
+      },
+      "description": "Colour in 0..1: [r, g, b] (opaque alpha added) or [r, g, b, a]. Any other component count, including an empty list, is rejected - omit color entirely for the default mid-grey."
     },
     "mass": {
-      "type": "number"
+      "type": "number",
+      "description": "Body mass in kg for add_object (default 0.1). Dynamic objects need a finite value > 0 and >= MuJoCo's mjMINVAL (1e-15); anything else is rejected, since a non-finite mass turns the whole world's state to nan on the next step. Ignored when is_static=true (MuJoCo derives the mass from the geom density)."
     },
     "is_static": {
       "type": "boolean"
@@ -154,7 +175,7 @@
     },
     "material": {
       "type": "object",
-      "description": "Optional visual material/texture for add_object (MuJoCo backend). Keys: reflectance|specular|shininess (float 0..1; specular=0,shininess=0 = matte), texture (absolute image path) OR builtin (checker|gradient|flat) with rgb1/rgb2 ([r,g,b]) + texdim (int, default 512), texrepeat ([u,v]). Omit for a flat color-only surface. Invalid texture path or unknown builtin fails loudly.",
+      "description": "Optional visual material/texture for add_object (MuJoCo backend). Keys: reflectance|specular|shininess (float 0..1; specular=0,shininess=0 = matte), texture (absolute image path) OR builtin (checker|gradient|flat) with rgb1/rgb2 ([r,g,b]) + texdim (int, default 512), texrepeat ([u,v]). Omit for a flat color-only surface. Invalid texture path, unknown builtin, empty {}, rgb1/rgb2/texdim without builtin, or any key outside the list above fails loudly (never silently ignored).",
       "properties": {
         "reflectance": { "type": "number" },
         "specular": { "type": "number" },
@@ -207,6 +228,16 @@
     "camera_name": {
       "type": "string"
     },
+    "pixels": {
+      "type": "array",
+      "items": {
+        "type": "array",
+        "items": {
+          "type": "number"
+        }
+      },
+      "description": "get_world_point: pixel coordinates [[u, v], ...] to ground to world xyz (u = column from the left, v = row from the top; integer-valued, within the rendered resolution). Pick pixels ON the visible surface of the target (avoid rims/edges/reflections/background) and sample several on the same surface - the returned 'point' is the median over the valid samples; pixels with no depth are dropped (see n_valid). Re-localize after any robot/camera/object motion."
+    },
     "n_steps": {
       "type": "integer"
     },
@@ -216,7 +247,7 @@
     },
     "fps": {
       "type": "integer",
-      "description": "Video frames per second (for run_policy record_video)"
+      "description": "Frames per second: video rate for run_policy record_video, dataset rate for start_recording. Must be a positive whole number."
     },
     "randomize_colors": {
       "type": "boolean"
@@ -271,7 +302,24 @@
     },
     "max_steps": {
       "type": "integer",
-      "description": "Max steps per eval episode"
+      "description": "Max steps per eval episode; for move_to / rotate_wrist: max control ticks before returning a not-reached error"
+    },
+    "tol": {
+      "type": "number",
+      "description": "move_to / rotate_wrist convergence tolerance: meters for move_to (EE position, default 0.01), radians for rotate_wrist (joint angle, default 0.02)"
+    },
+    "state": {
+      "type": "string",
+      "enum": ["open", "close"],
+      "description": "set_gripper set-point: 'open'/'close' drive the gripper actuator(s) to the ctrlrange end declared in the robot registry's gripper metadata when present, else the default convention: 'open' = HIGH end, 'close' = LOW end (SO-100/SO-101 jaw closes toward the low end)"
+    },
+    "steps": {
+      "type": "integer",
+      "description": "set_gripper: control ticks to hold the set-point (each tick advances a few physics substeps); default 12"
+    },
+    "target_yaw": {
+      "type": "number",
+      "description": "rotate_wrist: wrist-yaw joint set-point in radians (must lie within the joint's range)"
     },
     "success_fn": {
       "type": "string",
@@ -280,6 +328,14 @@
     "fast_mode": {
       "type": "boolean",
       "description": "Skip sleep between actions for faster data collection"
+    },
+    "x": {
+      "type": "number",
+      "description": "World x coordinate (for get_ground_height)"
+    },
+    "y": {
+      "type": "number",
+      "description": "World y coordinate (for get_ground_height)"
     },
     "body_name": {
       "type": "string",
@@ -371,6 +427,11 @@
       "description": "Provider-specific config dict forwarded to strands_robots.policies.create_policy. Contents depend on policy_provider. For 'groot': host, port, api_token, observation_mapping, action_mapping. For 'lerobot_local': pretrained_name_or_path, device, trust_remote_code, actions_per_step, use_processor, processor_overrides, observation_mapping, action_mapping. For 'mock': {} is fine.",
       "additionalProperties": true
     },
+    "stop_when": {
+      "type": "object",
+      "description": "run_policy: optional semantic early-return clause -- the rollout ends as soon as the condition holds in the sim, instead of only when the step budget runs out. Same predicate DSL as a benchmark spec's success: clause: a single bool predicate call like {'predicate': 'grasped', 'body': 'cube', 'gripper_prefix': 'so100'} or {'predicate': 'body_above_z', 'body': 'cube', 'z': 0.2}, or a group {'all': [<call>, ...]} / {'any': [<call>, ...]}. Predicates resolve through the closed registry (never eval/exec); an unknown name or a float-valued reward term is rejected up front with the valid list. Checked after every applied action (also on the async-RTC path, so the stop lands within one control step). Composes with an active recording: frames are captured up to the stop. The result json reports stopped_reason ('predicate'|'budget'|'cancelled'; 'error' on failures) and steps_used so you can decide whether to retry.",
+      "additionalProperties": true
+    },
     "cameras": {
       "type": "array",
       "items": {
@@ -400,6 +461,43 @@
     "spec_path": {
       "type": "string",
       "description": "Path to a declarative benchmark spec file (.json, .yaml, .yml). Used by register_benchmark_from_file."
+    },
+    "parent": {
+      "type": "string",
+      "description": "Parent body name for attach_bodies/detach_bodies (robot bodies are namespaced '<robot>/<body>'; call list_bodies to discover names)"
+    },
+    "child": {
+      "type": "string",
+      "description": "Child body name to attach/detach (mode='kinematic' requires it to be a dynamic body with a freejoint)"
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["weld", "kinematic"],
+      "description": "attach_bodies mode: 'weld' adds an equality constraint holding the current relative pose; 'kinematic' teleport-follows the parent every physics step. Neither is a physical grasp."
+    },
+    "torquescale": {
+      "type": "number",
+      "description": "attach_bodies weld-only: torque-to-force ratio of the constraint (finite, > 0; default 1.0)"
+    },
+    "kp": {
+      "type": ["number", "object"],
+      "description": "actuate_robot position gain: a number applies to every hinge/slide joint; a {joint_name: kp} object actuates only the listed joints. Values must be finite and > 0."
+    },
+    "damping": {
+      "type": "number",
+      "description": "actuate_robot per-joint damping floor (finite, >= 0; default 2.0)"
+    },
+    "armature": {
+      "type": "number",
+      "description": "actuate_robot per-joint armature floor (finite, >= 0; default 0.01)"
+    },
+    "gravity_compensation": {
+      "type": "boolean",
+      "description": "actuate_robot: apply gravcomp=1 to the robot's bodies (default true)"
+    },
+    "disable_self_collision": {
+      "type": "boolean",
+      "description": "actuate_robot: zero contype/conaffinity on ALL the robot's geoms so planner-ignored self-contacts cannot block motion (default false)"
     }
   },
   "required": [

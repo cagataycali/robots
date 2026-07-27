@@ -698,7 +698,7 @@ class Robot(TeleopMixin, AgentTool):
             for name, config in cameras.items():
                 cam_type = config.get("type", "opencv")
                 if cam_type == "opencv":
-                    camera_configs[name] = OpenCVCameraConfig(
+                    _cam_kwargs = dict(
                         index_or_path=config["index_or_path"],
                         fps=config.get("fps", 30),
                         width=config.get("width", 640),
@@ -706,6 +706,12 @@ class Robot(TeleopMixin, AgentTool):
                         rotation=config.get("rotation", 0),
                         color_mode=config.get("color_mode", "rgb"),
                     )
+                    # Forward fourcc (e.g. "MJPG") when provided so high-res
+                    # cameras can hit 30fps -- many UVC cams only offer 30fps
+                    # under MJPG; the YUYV default caps at ~5fps @1080p.
+                    if config.get("fourcc") is not None:
+                        _cam_kwargs["fourcc"] = config["fourcc"]
+                    camera_configs[name] = OpenCVCameraConfig(**_cam_kwargs)
                 else:
                     raise ValueError(f"Unsupported camera type: {cam_type}")
 
@@ -1318,10 +1324,12 @@ class Robot(TeleopMixin, AgentTool):
 
     @property
     def tool_name(self) -> str:
+        """The Strands agent-tool name this robot registers itself under."""
         return self.tool_name_str
 
     @property
     def tool_type(self) -> str:
+        """The Strands tool category for this device (always ``"robot"``)."""
         return "robot"
 
     @property

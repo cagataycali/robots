@@ -198,7 +198,7 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
             # the robot never needs to Receive its own copy. Do NOT widen
             # ``AllowReceiveScoped`` back to ``${ThingName}/*`` to "fix" this
             # asymmetry -- that re-opens the fleet-eavesdrop surface the narrow
-            # Receive list closes. See issue #253 / PR #228 R5.
+            # Receive list closes. See issue #253.
             "Sid": "AllowOwnSubscriptions",
             "Effect": "Allow",
             "Action": "iot:Subscribe",
@@ -224,7 +224,7 @@ _ROBOT_POLICY_DOC: dict[str, Any] = {
                 "arn:aws:iot:*:*:topic/strands/${iot:Connection.Thing.ThingName}/response/*",
                 "arn:aws:iot:*:*:topic/strands/broadcast",
                 "arn:aws:iot:*:*:topic/strands/safety/estop",
-                "arn:aws:iot:*:*:topic/strands/+/presence",
+                "arn:aws:iot:*:*:topic/strands/*/presence",
             ],
         },
         {
@@ -294,9 +294,8 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             # reads, and operational audit (``mesh_audit.jsonl`` logs
             # every command dispatch). A per-robot operator scope would
             # require a per-robot policy document, which explodes the
-            # policy count linearly with fleet size. Pinned as
-            # intentional by test_iot_policy_scope.py::TestOperatorPolicy
-            # ::test_publish_to_fleet_wildcard_is_deliberate.
+            # policy count linearly with fleet size. This fleet-wildcard
+            # scope is deliberate, not an oversight.
             "Sid": "OperatorPublishToFleet",
             "Effect": "Allow",
             "Action": ["iot:Publish", "iot:RetainPublish"],
@@ -330,13 +329,13 @@ _OPERATOR_POLICY_DOC: dict[str, Any] = {
             "Effect": "Allow",
             "Action": ["iot:Subscribe", "iot:Receive"],
             "Resource": [
-                "arn:aws:iot:*:*:topic/strands/+/presence",
+                "arn:aws:iot:*:*:topic/strands/*/presence",
                 "arn:aws:iot:*:*:topicfilter/strands/+/presence",
-                "arn:aws:iot:*:*:topic/strands/+/state",
+                "arn:aws:iot:*:*:topic/strands/*/state",
                 "arn:aws:iot:*:*:topicfilter/strands/+/state",
-                "arn:aws:iot:*:*:topic/strands/+/health",
+                "arn:aws:iot:*:*:topic/strands/*/health",
                 "arn:aws:iot:*:*:topicfilter/strands/+/health",
-                "arn:aws:iot:*:*:topic/strands/+/safety/event",
+                "arn:aws:iot:*:*:topic/strands/*/safety/event",
                 "arn:aws:iot:*:*:topicfilter/strands/+/safety/event",
                 "arn:aws:iot:*:*:topic/strands/safety/estop",
                 "arn:aws:iot:*:*:topicfilter/strands/safety/estop",

@@ -100,6 +100,11 @@ def _convert_joint_vector(
     because the SO-arm gripper uses ``MotorNormMode.RANGE_0_100`` (0..100), not
     degrees - see ``lerobot/robots/so_follower/so_follower.py``.
 
+    The arm-degrees direction assumes the checkpoint was recorded with the SO
+    driver's ``use_degrees=True`` (its default, but opt-out). With
+    ``use_degrees=False`` the arm is ``MotorNormMode.RANGE_M100_100`` (-100..100),
+    so this degree conversion must not be applied to such a checkpoint.
+
     LeRobot's ``MotorNormMode.DEGREES`` is **mid-point-centered**: the value a
     checkpoint trains on is the angular displacement from each motor's
     calibration mid-point, not the absolute joint angle (ground truth:
@@ -339,6 +344,7 @@ def register_pack_state_step() -> type | None:
         joint_mids: list[float] = field(default_factory=list)
 
         def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+            """Compose the declared scalar joint keys into ``observation.state`` (passthrough when already packed)."""
             if "observation.state" in observation:
                 return observation  # already packed -> passthrough
 
@@ -368,9 +374,39 @@ def register_pack_state_step() -> type | None:
                     missing.append(k)
 
             if present == 0:
-                # No declared state key present at all; leave obs alone so a
-                # clearer downstream error (or a state-less policy) can handle
-                # it, rather than emitting an all-zero state vector.
+                # None of the DECLARED state_keys are present. The canonical
+                # trigger is a SIM embodiment (e.g. so101: state_keys ['1'..'6'])
+                # driven from REAL hardware, whose observation carries
+                # '<motor>.pos' scalar keys instead (lerobot SOFollower). Rather
+                # than dead-end with "requires observation.state", fall back to
+                # the hardware '.pos' keys so ``embodiment="so101"`` works on the
+                # physical arm too - not only in sim.
+                #
+                # Hardware '.pos' values are ALREADY in the model's training
+                # units (so_follower MotorNormMode: arm DEGREES, gripper
+                # RANGE_0_100), so we pack them RAW and DO NOT apply the
+                # sim-radian -> model-degree conversion below (that would
+                # double-convert). Observation insertion order is lerobot motor
+                # order (shoulder_pan..gripper), which matches the positional
+                # sim state_keys, so a straight collection is index-aligned.
+                pos_keys = [
+                    k
+                    for k in observation
+                    if k.endswith(".pos")
+                    and isinstance(observation[k], (int, float, np.floating, np.ndarray))
+                    and (not isinstance(observation[k], np.ndarray) or observation[k].ndim == 0)
+                ]
+                if len(pos_keys) >= len(self.state_keys) and self.state_keys:
+                    n = len(self.state_keys)
+                    hw_vals = [float(observation[k]) for k in pos_keys[:n]]
+                    target = self.expected_dim or len(hw_vals)
+                    hw_vals = reconcile_dim(hw_vals, target, self.dim_policy, label="observation.state")
+                    out = {k: v for k, v in observation.items() if k not in pos_keys[:n]}
+                    out["observation.state"] = torch.as_tensor(hw_vals, dtype=torch.float32)
+                    return out
+                # No declared state key AND no usable '.pos' fallback; leave obs
+                # alone so a clearer downstream error (or a state-less policy)
+                # can handle it, rather than emitting an all-zero state vector.
                 return observation
 
             if missing:
@@ -405,6 +441,7 @@ def register_pack_state_step() -> type | None:
             return out
 
         def get_config(self) -> dict[str, Any]:
+            """Return the JSON-serializable config (``state_keys``, ``expected_dim``, ``dim_policy``) for checkpoint round-trip."""
             return {
                 "state_keys": list(self.state_keys),
                 "expected_dim": self.expected_dim,
@@ -412,6 +449,7 @@ def register_pack_state_step() -> type | None:
             }
 
         def transform_features(self, features):  # type: ignore[no-untyped-def]
+            """Return ``features`` unchanged: packing reshapes only the runtime obs, not the model's declared feature set."""
             # State vector composition doesn't change the model's declared
             # feature set (the normalizer already knows observation.state);
             # we only reshape the runtime obs. Pass features through.
@@ -446,13 +484,21 @@ class EmbodimentMap:
     dim_policy: str = "strict"
     # Unit conventions for state/action vectors. The MuJoCo sim expresses
     # revolute joints in RADIANS, but LeRobot SO-arm checkpoints (so100/so101,
-    # MolmoAct2 etc.) are trained on the driver's MotorNormMode: arm joints in
-    # DEGREES and the gripper in RANGE_0_100. "native" = no conversion (the
-    # default; real-hardware *_real maps already speak the driver units).
-    # "degrees" = arm columns are degrees + the gripper column is 0..100; the
-    # policy converts deg<->rad and 0..100<->the gripper joint range when packing
-    # state (model<-sim) and emitting actions (model->sim). See so_follower.py
-    # (MotorNormMode.DEGREES for the arm, RANGE_0_100 for the gripper).
+    # MolmoAct2 etc.) trained on data recorded with the driver's DEGREES mode
+    # speak the driver's MotorNormMode: arm joints in DEGREES and the gripper in
+    # RANGE_0_100. "native" = no conversion (the default; real-hardware *_real
+    # maps already speak the driver units). "degrees" = arm columns are degrees
+    # + the gripper column is 0..100; the policy converts deg<->rad and
+    # 0..100<->the gripper joint range when packing state (model<-sim) and
+    # emitting actions (model->sim). See so_follower.py.
+    #
+    # CAVEAT: the arm-in-DEGREES convention holds only for checkpoints recorded
+    # with the SO driver's use_degrees=True. That is the lerobot so_follower /
+    # so_leader DEFAULT (kept "for backward compatibility with previous
+    # policies/dataset"), but it is opt-out: with use_degrees=False the arm uses
+    # MotorNormMode.RANGE_M100_100 (-100..100), NOT degrees (so_follower.py:50
+    # -> RANGE_M100_100). state_units/action_units="degrees" would mis-convert a
+    # RANGE_M100_100-recorded checkpoint - leave those on "native".
     state_units: str = "native"
     action_units: str = "native"
     # Index of the gripper column in state_keys/action_keys (RANGE_0_100, not a

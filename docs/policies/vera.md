@@ -210,5 +210,16 @@ pip install 'strands-robots[vera-sim]'    # + MimicGen sim deps for the example 
 > pip install "mimicgen @ git+https://github.com/NVlabs/mimicgen.git"
 > ```
 
+> **Note on robomimic.** For the same reason the `vera-sim` extra does **not**
+> pin `robomimic`: its highest PyPI release is `0.3.0`, while VERA's examples
+> target v0.5.0, which exists only as an ARISE-Initiative GitHub tag. Pinning
+> `robomimic==0.5.0` would be both unresolvable (it wedges `uv lock`) and a
+> dependency-confusion vector. robomimic is not imported by strands-robots;
+> VERA pulls it in itself. If you need v0.5.0, install it from source:
+>
+> ```bash
+> pip install "robomimic @ git+https://github.com/ARISE-Initiative/robomimic.git@v0.5.0"
+> ```
+
 For the **docker** path the host needs only `websockets` + `msgpack` (the client
 transport) — no `vera`, no torch.

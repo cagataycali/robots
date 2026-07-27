@@ -106,6 +106,20 @@ def test_is_safe_to_reexec_false_for_dash_c(monkeypatch):
     assert _dyld._is_safe_to_reexec() is False
 
 
+def test_is_safe_to_reexec_false_for_stdin_dash(monkeypatch):
+    """``python -`` / ``cmd | python`` / ``python - <<EOF`` set argv[0] to '-'.
+
+    Re-exec'ing would replay an already-consumed stdin, so the fresh
+    interpreter reads EOF and exits 0 having run nothing. That silent no-op is
+    exactly the failure this guard prevents, so a stdin program is never safe
+    to re-run.
+    """
+    _clear_reexec_blockers(monkeypatch)
+    monkeypatch.setattr(_dyld.sys, "argv", ["-"])
+
+    assert _dyld._is_safe_to_reexec() is False
+
+
 def _arm_macos_ffmpeg(monkeypatch, tmp_path):
     """Set up the happy path: macOS + torchcodec + ffmpeg dir, no opt-out/guard."""
     monkeypatch.setattr(_dyld.sys, "platform", "darwin")
@@ -178,3 +192,19 @@ def test_ensure_noop_when_no_ffmpeg_dir(monkeypatch):
 
     assert _dyld.ensure_ffmpeg_on_dyld_path() is False
     assert _dyld._DYLD_VAR not in _dyld.os.environ
+
+
+def test_ensure_does_not_reexec_stdin_program(monkeypatch, tmp_path):
+    """Regression: a ``python -`` (stdin) invocation must export the child env
+    but never re-exec, which would silently discard the already-read program.
+    """
+    _arm_macos_ffmpeg(monkeypatch, tmp_path)
+    _clear_reexec_blockers(monkeypatch)
+    monkeypatch.setattr(_dyld.sys, "argv", ["-"])
+    monkeypatch.setattr(_dyld.os, "execv", lambda *a: pytest.fail("must not re-exec a stdin program"))
+
+    result = _dyld.ensure_ffmpeg_on_dyld_path()
+
+    # Child processes still inherit the ffmpeg dir; current process is untouched.
+    assert result is False
+    assert str(tmp_path) in _dyld.os.environ[_dyld._DYLD_VAR]

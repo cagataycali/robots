@@ -33,14 +33,16 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
-# Every LeRobot surface in the supported ``>=0.5.0,<0.6.0`` range validates the
-# codec against the same codec-name allowlist - ``video_utils.VALID_VIDEO_CODECS
-# = {"h264", "hevc", "libsvtav1", "auto"} | HW_ENCODERS`` - and *rejects* the
-# ffmpeg library names ("libx264"/"libx265"). This holds for the flat ``vcodec``
-# kwarg (0.5.0/0.5.1) just as much as for the ``RGBEncoderConfig`` /
-# ``VideoEncoderConfig`` surfaces a later minor may expose. So there is exactly
-# one correct normalization direction: ffmpeg name -> codec name, applied to
-# whichever surface is present. Callers may pass either spelling.
+# Every LeRobot codec surface validates the requested codec against the same
+# codec-name allowlist - ``configs.video.VALID_VIDEO_CODECS = {"h264", "hevc",
+# "libsvtav1", "libaom-av1", "auto"} | HW_VIDEO_CODECS`` - and *rejects* the
+# ffmpeg library names ("libx264"/"libx265"). This holds for the current
+# ``rgb_encoder=RGBEncoderConfig(vcodec=...)`` surface (lerobot >=0.6.0,<0.7.0,
+# the supported range) exactly as it did for the flat ``vcodec`` kwarg and the
+# interim ``camera_encoder=VideoEncoderConfig(...)`` surface the tolerant
+# routing below still handles. So there is exactly one correct normalization
+# direction: ffmpeg name -> codec name, applied to whichever surface is present.
+# Callers may pass either spelling.
 _ENCODER_CODEC_NAMES = {"libx264": "h264", "libx265": "hevc"}
 
 
@@ -55,16 +57,16 @@ def _codec_create_kwargs(sig_params: Any, vcodec: str, *, context: str = "create
       * 0.5.0 / 0.5.1: a flat ``create/resume(..., vcodec=...)`` kwarg.
       * an interim build briefly exposed
         ``camera_encoder=VideoEncoderConfig(vcodec=...)``.
-      * a later minor may move the codec into
+      * lerobot >= 0.6 (the supported range) moved the codec into
         ``rgb_encoder=RGBEncoderConfig(vcodec=...)``.
 
     Every one of these surfaces validates against LeRobot's codec-name allowlist
-    (``{"h264", "hevc", "libsvtav1", "auto"} | HW_ENCODERS``) and rejects the
-    ffmpeg library names ("libx264"/"libx265"). So the codec is normalized to its
-    codec-name spelling once and routed onto whichever surface is present. The
-    caller may pass either spelling ("h264" or "libx264"). An unknown codec
-    raises loudly (LeRobot's own ValueError) rather than silently falling back
-    to the default.
+    (``{"h264", "hevc", "libsvtav1", "libaom-av1", "auto"} | HW_VIDEO_CODECS``)
+    and rejects the ffmpeg library names ("libx264"/"libx265"). So the codec is
+    normalized to its codec-name spelling once and routed onto whichever surface
+    is present. The caller may pass either spelling ("h264" or "libx264"). An
+    unknown codec raises loudly (LeRobot's own ValueError) rather than silently
+    falling back to the default.
 
     Args:
         sig_params: ``inspect.Signature.parameters`` of ``create``/``resume``.
@@ -115,6 +117,130 @@ _BUCKET_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*(/[A-Za-z0-9][A-Za-z0-9._-]
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
+def sync_dataset_to_bucket(
+    root: str | Path,
+    bucket: str,
+    run_id: str | None = None,
+    *,
+    create: bool = True,
+    private: bool = True,
+    delete: bool = False,
+) -> dict[str, Any]:
+    """Sync an on-disk LeRobotDataset into an HF Storage Bucket (Phase 1/2).
+
+    Lifecycle-independent: needs only a finalized dataset directory on disk
+    (``meta/`` present) and the ``hf`` CLI - no live
+    :class:`DatasetRecorder`, no sim world. Covers syncing a dataset
+    recorded earlier in the process, one recorded on hardware via
+    ``lerobot-record``, or a daily re-sync of a directory that grew. Both
+    :meth:`DatasetRecorder.sync_to_bucket` and the idle-path bucket sync in
+    ``stop_recording`` delegate here so input validation and CLI
+    orchestration exist exactly once.
+
+    Mutable, Xet-deduplicated dump target for COLLECTION - avoids git-LFS
+    history bloat of push_to_hub during recording. Daily re-sync uploads
+    only changed chunks (content-defined chunking). Requires the ``hf`` CLI
+    with the ``buckets``/``sync`` subcommands (``huggingface_hub>=1.0``)
+    and ``hf auth login``.
+
+    ``bucket`` and ``run_id`` are validated against an allowlist before any
+    subprocess or URI interpolation: ``bucket`` must be ``"name"`` or
+    ``"org/name"`` and ``run_id`` a single path segment, both restricted to
+    ``[A-Za-z0-9._-]`` (no path traversal or shell metacharacters). This
+    path is agent-reachable via ``stop_recording(bucket=, run_id=)``. A
+    rejected value returns ``{"status": "error", ...}`` without running ``hf``.
+
+    The shard layout is already Xet/bucket-friendly at lerobot's defaults
+    (100 MB data parquet / 200 MB video MP4 shards), and ``meta/`` MUST
+    ship or downstream loses normalization stats.
+
+    Args:
+        root: Local dataset directory, ``str`` or ``Path`` (must contain
+            ``meta/``).
+        bucket: Bucket target, ``"name"`` or ``"org/name"``.
+        run_id: Subpath inside the bucket; defaults to the dataset directory
+            name (``Path(root).name``).
+        create: Create the bucket first (pre-existing bucket is not an error).
+        private: Create the bucket as private (only used with ``create=True``).
+        delete: Forward ``--delete`` to ``hf sync`` (mirror semantics -
+            remove remote files absent locally).
+
+    Returns:
+        ``{"status": "success", "bucket_uri": ...}`` or
+        ``{"status": "error", "message": ...}``. Never raises on ``hf``
+        failure; errors are surfaced in the result dict.
+    """
+    import subprocess
+
+    hf = _hf_executable()
+    if hf is None:
+        return {
+            "status": "error",
+            "message": '`hf` CLI not found. pip install -U "huggingface_hub>=1.0" and run `hf auth login`.',
+        }
+
+    # `hf buckets` / `hf sync` need huggingface_hub>=1.0; on 0.x the CLI
+    # exists but rejects those subcommands with argparse noise. Gate on the
+    # installed package version so users get an upgrade instruction instead.
+    version_error = _huggingface_hub_version_error()
+    if version_error is not None:
+        return {"status": "error", "message": version_error}
+
+    if not _BUCKET_RE.match(bucket):
+        return {
+            "status": "error",
+            "message": f"invalid bucket {bucket!r}: must match "
+            "'name' or 'org/name' using [A-Za-z0-9._-] (no path traversal "
+            "or shell metacharacters).",
+        }
+
+    local_root = str(root)
+    # meta/ must ship or downstream loses normalization stats.
+    if not (Path(local_root) / "meta").exists():
+        return {
+            "status": "error",
+            "message": f"No meta/ under {local_root}; the dataset was never finalized. "
+            "Call finalize() (stop_recording does this) before syncing to a bucket "
+            "(stats/info required for streaming/training).",
+        }
+
+    run_id = run_id or Path(local_root).name
+    if not _RUN_ID_RE.match(run_id):
+        return {
+            "status": "error",
+            "message": f"invalid run_id {run_id!r}: must be a single path "
+            "segment using [A-Za-z0-9._-] (no '/', path traversal, or shell "
+            "metacharacters).",
+        }
+    dest = f"hf://buckets/{bucket}/{run_id}"
+
+    if create:
+        cp = subprocess.run(
+            [hf, "buckets", "create", bucket] + (["--private"] if private else []),
+            capture_output=True,
+            text=True,
+        )
+        blob = (cp.stderr + cp.stdout).lower()
+        if cp.returncode != 0 and "exist" not in blob:
+            return {
+                "status": "error",
+                "message": f"bucket create failed: {cp.stderr.strip()}",
+            }
+
+    cmd = [hf, "sync", local_root, dest]
+    if delete:
+        cmd.append("--delete")
+    logger.info("Syncing %s -> %s", local_root, dest)
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        return {
+            "status": "error",
+            "message": proc.stderr.strip() or proc.stdout.strip(),
+        }
+
+    return {"status": "success", "bucket_uri": dest}
+
+
 def _hf_executable() -> str | None:
     """Resolve the ``hf`` CLI, preferring the one in the running interpreter's
     environment before falling back to PATH.
@@ -135,6 +261,42 @@ def _hf_executable() -> str | None:
         if candidate.exists():
             return str(candidate)
     return shutil.which("hf")
+
+
+def _huggingface_hub_version_error() -> str | None:
+    """Return an actionable error message if ``huggingface_hub`` is too old for bucket sync.
+
+    The ``hf buckets`` / ``hf sync`` subcommands ship in huggingface_hub>=1.0.
+    On older releases (e.g. the 0.36.x stable line) the ``hf`` binary exists,
+    so :func:`_hf_executable` succeeds, but the subcommands fail with argparse
+    usage noise ("invalid choice: 'buckets'") that gives no hint the fix is an
+    upgrade. Version-checking the installed package up front turns that noise
+    into a clear upgrade instruction without spawning a subprocess.
+
+    Returns ``None`` (no error) when:
+
+    - the installed version is >= 1.0, or
+    - ``huggingface_hub`` is not importable in this interpreter (the ``hf``
+      binary may come from a different environment on PATH whose version we
+      cannot see; the normal subprocess error path still applies), or
+    - the version string is unparseable (fail open rather than block a
+      possibly-capable CLI on a cosmetic version format).
+    """
+    try:
+        import huggingface_hub
+    except ImportError:
+        return None
+
+    version = getattr(huggingface_hub, "__version__", "")
+    match = re.match(r"(\d+)\.(\d+)", version)
+    if match is None:
+        return None
+    if (int(match.group(1)), int(match.group(2))) >= (1, 0):
+        return None
+    return (
+        f"bucket sync requires huggingface_hub>=1.0 (`hf buckets`/`hf sync`); "
+        f"installed: {version}. pip install -U 'huggingface_hub>=1.0'."
+    )
 
 
 # Lazy check for LeRobot availability.
@@ -199,6 +361,108 @@ def _get_lerobot_dataset_class():
         raise ImportError(
             f"lerobot not available ({exc}). Install with: pip install lerobot\nRequired for LeRobotDataset recording."
         ) from exc
+
+
+def _lerobot_home() -> Path:
+    """Return LeRobot's on-disk dataset home (``$HF_LEROBOT_HOME``).
+
+    Uses lerobot's own ``HF_LEROBOT_HOME`` constant when importable so the
+    resolved path matches exactly where ``LeRobotDataset`` reads/writes
+    (honouring the ``HF_LEROBOT_HOME`` environment override). Falls back to the
+    documented default ``~/.cache/huggingface/lerobot`` when lerobot is absent.
+    """
+    try:
+        from lerobot.utils.constants import HF_LEROBOT_HOME
+
+        return Path(HF_LEROBOT_HOME)
+    except (ImportError, ValueError, RuntimeError):
+        return Path.home() / ".cache" / "huggingface" / "lerobot"
+
+
+def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
+    """Resolve the on-disk directory a dataset will live in.
+
+    Mirrors ``LeRobotDataset`` root resolution so callers can inspect the
+    target before ``create``/``resume``:
+
+    * explicit ``root`` -> used verbatim;
+    * a ``repo_id`` that is itself a path (absolute, ``./`` prefixed, or with no
+      ``owner/name`` slash) -> treated as a local directory;
+    * otherwise ``$HF_LEROBOT_HOME/{repo_id}``.
+
+    Args:
+        repo_id: HuggingFace dataset id (``owner/name``) or a local path.
+        root: Explicit local dataset directory, if any.
+
+    Returns:
+        The resolved dataset directory as a :class:`~pathlib.Path`.
+    """
+    if root:
+        return Path(root)
+    if "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
+        return Path(repo_id)
+    return _lerobot_home() / repo_id
+
+
+def _prepare_create_target(dataset_dir: Path, *, overwrite: bool) -> None:
+    """Make ``dataset_dir`` safe for a fresh ``LeRobotDataset.create()``.
+
+    ``LeRobotDataset.create()`` calls ``mkdir(exist_ok=False)`` and raises a
+    bare ``FileExistsError`` whenever its target directory already exists - even
+    when empty. This resolves the situation up front with an actionable error:
+
+    * ``overwrite=True``: remove any existing target, then create() fresh.
+    * existing dataset (contains a ``meta/`` dir): raise ``FileExistsError``
+      naming ``overwrite=True`` (fresh) and :meth:`DatasetRecorder.resume`
+      (append) - ``create`` never silently appends or clobbers a real dataset.
+    * existing EMPTY dir (e.g. ``tempfile.mkdtemp()``): remove it so create()
+      does not trip over its own pre-existing-directory guard.
+    * existing NON-empty, non-dataset dir: raise ``ValueError`` instead of
+      clobbering unrelated files.
+
+    Args:
+        dataset_dir: Resolved on-disk dataset root.
+        overwrite: When True, replace any existing target.
+
+    Raises:
+        FileExistsError: Target is an existing LeRobotDataset and
+            ``overwrite`` is False.
+        ValueError: Target exists, is not a LeRobotDataset, is not empty, and
+            ``overwrite`` is False.
+    """
+    import shutil
+
+    if not dataset_dir.exists():
+        return
+    if overwrite:
+        if dataset_dir.is_dir():
+            shutil.rmtree(dataset_dir)
+        else:
+            dataset_dir.unlink()
+        logger.info("Removed existing dataset target for overwrite: %s", dataset_dir)
+        return
+    if not dataset_dir.is_dir():
+        raise ValueError(
+            f"Recording target {dataset_dir} exists and is not a directory. "
+            "Pass a directory path as root=, or overwrite=True to replace it."
+        )
+    if (dataset_dir / "meta").exists():
+        raise FileExistsError(
+            f"A LeRobotDataset already exists at {dataset_dir}. Pass overwrite=True "
+            "to replace it with a fresh dataset, or use DatasetRecorder.resume() "
+            "to append new episodes to it."
+        )
+    if not any(dataset_dir.iterdir()):
+        # Empty dir (e.g. from tempfile.mkdtemp()): clear it so create() does
+        # not trip over LeRobot's exist_ok=False guard.
+        shutil.rmtree(dataset_dir)
+        logger.info("Cleared empty recording target for fresh dataset: %s", dataset_dir)
+        return
+    raise ValueError(
+        f"Recording target {dataset_dir} already exists, is not a LeRobotDataset "
+        "(no meta/ directory), and is not empty. Refusing to overwrite unrelated "
+        "files. Pass overwrite=True to replace it, or choose a new/empty root=."
+    )
 
 
 class DatasetRecorder:
@@ -290,10 +554,11 @@ class DatasetRecorder:
         vcodec: str = "h264",
         streaming_encoding: bool = True,
         image_writer_threads: int = 4,
-        video_backend: str = "auto",
+        video_backend: str | None = None,
         video_width: int = 640,
         video_height: int = 480,
         camera_key_map: dict[str, str] | None = None,
+        overwrite: bool = False,
     ) -> "DatasetRecorder":
         """Create a new DatasetRecorder with auto-detected features.
 
@@ -329,13 +594,28 @@ class DatasetRecorder:
                 wheels commonly cannot decode it and silently yield 0 frames.
             streaming_encoding: Stream-encode video during capture
             image_writer_threads: Threads for writing image frames
-            video_backend: Video backend for encoding ("auto" for HW encoder auto-detect)
+            video_backend: LeRobot video *decode* backend for read-back
+                ("torchcodec" or "pyav"). Left as None by default so LeRobot
+                picks its platform default; only forwarded when explicitly set.
+                Encoder selection is controlled by ``vcodec`` (not this param).
             camera_key_map: Optional remap of observed camera stream names to the
                 declared schema names (e.g. {"front_camera": "image",
                 "wrist_camera": "wrist_image"}). Bare names or fully-qualified
                 "observation.images.*" keys are accepted on either side. Use it
                 when a policy declares image_keys that differ from the names the
                 sim/hardware streams emit, otherwise those frames are dropped.
+            overwrite: When the resolved dataset directory already exists,
+                ``LeRobotDataset.create`` raises a bare ``FileExistsError`` (its
+                ``mkdir`` uses ``exist_ok=False``). With ``overwrite=True`` the
+                existing directory is removed first so a fresh dataset is
+                created. With ``overwrite=False`` (default) an existing dataset
+                (a directory containing ``meta/``) raises a clear
+                ``FileExistsError`` naming ``overwrite=True`` (fresh) and
+                :meth:`resume` (append) instead of the cryptic LeRobot error; an
+                existing EMPTY directory (e.g. from ``tempfile.mkdtemp()``) is
+                cleared so ``create`` does not dead-end on its own existence
+                guard; a non-empty NON-dataset directory raises ``ValueError``
+                rather than clobbering unrelated files.
         """
         # Lazy import - this is where we actually need lerobot
         LeRobotDatasetCls = _get_lerobot_dataset_class()
@@ -381,8 +661,16 @@ class DatasetRecorder:
         # streaming_encoding / video_backend only in newer LeRobot versions
         if "streaming_encoding" in create_params:
             create_kwargs["streaming_encoding"] = streaming_encoding
-        if "video_backend" in create_params:
+        if "video_backend" in create_params and video_backend is not None:
             create_kwargs["video_backend"] = video_backend
+
+        # Resolve create-vs-crash for an existing target BEFORE calling
+        # LeRobotDataset.create(), which mkdir()s with exist_ok=False and would
+        # otherwise dead-end on a bare FileExistsError. This also keeps the
+        # resume() docstring and its no-resume RuntimeError message honest: both
+        # point callers at an ``overwrite=`` parameter that now exists here.
+        _prepare_create_target(resolve_dataset_dir(repo_id, root), overwrite=overwrite)
+
         dataset = LeRobotDatasetCls.create(**create_kwargs)
 
         recorder = cls(dataset=dataset, task=task, camera_key_map=camera_key_map)
@@ -405,7 +693,7 @@ class DatasetRecorder:
         vcodec: str = "h264",
         streaming_encoding: bool = True,
         image_writer_threads: int = 4,
-        video_backend: str = "auto",
+        video_backend: str | None = None,
         camera_key_map: dict[str, str] | None = None,
     ) -> "DatasetRecorder":
         """Resume recording into an EXISTING LeRobotDataset (append episodes).
@@ -433,7 +721,9 @@ class DatasetRecorder:
                 config). See create() for the H.264-vs-AV1 trade-off.
             streaming_encoding: Stream-encode video during capture.
             image_writer_threads: Threads for writing image frames.
-            video_backend: Video backend for encoding.
+            video_backend: LeRobot video *decode* backend for read-back
+                ("torchcodec" or "pyav"); None uses LeRobot's platform default.
+                Encoder selection is controlled by ``vcodec`` (not this param).
             camera_key_map: Optional remap of observed camera stream names to
                 the declared schema names (see create()).
 
@@ -462,7 +752,7 @@ class DatasetRecorder:
             resume_kwargs["streaming_encoding"] = streaming_encoding
         if "image_writer_threads" in resume_sig:
             resume_kwargs["image_writer_threads"] = image_writer_threads
-        if "video_backend" in resume_sig:
+        if "video_backend" in resume_sig and video_backend is not None:
             resume_kwargs["video_backend"] = video_backend
 
         dataset = LeRobotDatasetCls.resume(**resume_kwargs)
@@ -924,94 +1214,34 @@ class DatasetRecorder:
     ) -> dict[str, Any]:
         """Sync the on-disk LeRobotDataset into an HF Storage Bucket (Phase 1/2).
 
-        Mutable, Xet-deduplicated dump target for COLLECTION - avoids git-LFS
-        history bloat of push_to_hub during recording. Daily re-sync uploads
-        only changed chunks (content-defined chunking). Requires the ``hf`` CLI
-        (huggingface_hub>=1.x) and ``hf auth login``.
-
-        ``bucket`` and ``run_id`` are validated against an allowlist before any
-        subprocess or URI interpolation: ``bucket`` must be ``"name"`` or
-        ``"org/name"`` and ``run_id`` a single path segment, both restricted to
-        ``[A-Za-z0-9._-]`` (no path traversal or shell metacharacters). This
-        path is agent-reachable via ``stop_recording(bucket=, run_id=)``. A
-        rejected value returns ``{"status": "error", ...}`` without running ``hf``.
-
-        The shard layout is already Xet/bucket-friendly at the 100 MB default,
-        and ``meta/`` MUST ship or downstream loses normalization stats.
+        Thin delegate to :func:`sync_dataset_to_bucket` (the lifecycle-
+        independent module-level helper, which holds the input validation and
+        ``hf`` CLI orchestration), passing this recorder's dataset root and
+        defaulting ``run_id`` to the dataset name (the last segment of
+        ``repo_id``). On success the result is augmented with this recorder's
+        ``episodes`` and ``frames`` counts.
         """
-        import subprocess
-
-        hf = _hf_executable()
-        if hf is None:
-            return {
-                "status": "error",
-                "message": "`hf` CLI not found. pip install -U huggingface_hub (>=1.x) and run `hf auth login`.",
-            }
-
-        if not _BUCKET_RE.match(bucket):
-            return {
-                "status": "error",
-                "message": f"invalid bucket {bucket!r}: must match "
-                "'name' or 'org/name' using [A-Za-z0-9._-] (no path traversal "
-                "or shell metacharacters).",
-            }
-
-        local_root = str(self.dataset.root)
-        # meta/ must ship or downstream loses normalization stats.
-        if not (Path(local_root) / "meta").exists():
-            return {
-                "status": "error",
-                "message": f"No meta/ under {local_root}; call finalize() before "
-                "sync_to_bucket (stats/info required for streaming/training).",
-            }
-
-        run_id = run_id or self.dataset.repo_id.split("/")[-1]
-        if not _RUN_ID_RE.match(run_id):
-            return {
-                "status": "error",
-                "message": f"invalid run_id {run_id!r}: must be a single path "
-                "segment using [A-Za-z0-9._-] (no '/', path traversal, or shell "
-                "metacharacters).",
-            }
-        dest = f"hf://buckets/{bucket}/{run_id}"
-
-        if create:
-            cp = subprocess.run(
-                [hf, "buckets", "create", bucket] + (["--private"] if private else []),
-                capture_output=True,
-                text=True,
-            )
-            blob = (cp.stderr + cp.stdout).lower()
-            if cp.returncode != 0 and "exist" not in blob:
-                return {
-                    "status": "error",
-                    "message": f"bucket create failed: {cp.stderr.strip()}",
-                }
-
-        cmd = [hf, "sync", local_root, dest]
-        if delete:
-            cmd.append("--delete")
-        logger.info("Syncing %s -> %s", local_root, dest)
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        if proc.returncode != 0:
-            return {
-                "status": "error",
-                "message": proc.stderr.strip() or proc.stdout.strip(),
-            }
-
-        return {
-            "status": "success",
-            "bucket_uri": dest,
-            "episodes": self.episode_count,
-            "frames": self.frame_count,
-        }
+        result = sync_dataset_to_bucket(
+            str(self.dataset.root),
+            bucket,
+            run_id=run_id or self.dataset.repo_id.split("/")[-1],
+            create=create,
+            private=private,
+            delete=delete,
+        )
+        if result.get("status") == "success":
+            result["episodes"] = self.episode_count
+            result["frames"] = self.frame_count
+        return result
 
     @property
     def repo_id(self) -> str:
+        """The Hugging Face ``repo_id`` of the dataset being recorded."""
         return self.dataset.repo_id
 
     @property
     def root(self) -> str:
+        """Filesystem path to the dataset's on-disk root directory, as a string."""
         return str(self.dataset.root)
 
     def __repr__(self) -> str:
@@ -1105,11 +1335,23 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
             Returned alongside the parquet truth so callers can cross-check the
             two metadata sources for agreement - a healthy dataset has
             ``info_total_episodes == total_episodes``.
+          - ``unreadable_files``: ``"<path relative to root>: <error>"`` for
+            every ``meta/episodes`` parquet that could not be read (empty list
+            for a healthy dataset). A partially-corrupt dataset - one truncated
+            file out of twenty, the usual outcome of an interrupted sync or hub
+            download - still yields the episode truth of the readable files, so
+            callers can localise the damage instead of seeing zero episodes.
+            The episode counts above cover ONLY the readable files, so any
+            non-empty ``unreadable_files`` means the totals are a lower bound
+            and the dataset must not be certified as complete.
 
     Raises:
         ImportError: If ``pyarrow`` is not installed.
         FileNotFoundError: If no ``meta/episodes`` parquet exists under ``root``
             (no episode was ever flushed - the dataset is empty/unfinalized).
+        ValueError: If every ``meta/episodes`` parquet is unreadable, so there
+            is no episode ground truth at all. The message lists each file and
+            its read error.
     """
     try:
         import pyarrow.parquet as pq
@@ -1126,8 +1368,21 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
 
     pairs: list[tuple[int, int]] = []
     seen: set[int] = set()
+    unreadable_files: list[str] = []
+    readable_files = 0
     for pf in parquet_files:
-        table = pq.read_table(pf)
+        # A corrupt / truncated / foreign parquet raises ArrowInvalid (a
+        # ValueError subclass); an unreadable one raises OSError. Damage is
+        # usually confined to a few files (interrupted rsync, partial hub
+        # download), so record which file failed and keep reading the rest -
+        # aborting the whole read here would report zero episodes for a dataset
+        # that is mostly intact and hide which file is actually broken.
+        try:
+            table = pq.read_table(pf)
+        except (ValueError, OSError) as e:
+            unreadable_files.append(f"{pf.relative_to(root_path)}: {e}")
+            continue
+        readable_files += 1
         cols = table.column_names
         if "episode_index" not in cols:
             continue
@@ -1141,6 +1396,12 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
             seen.add(ep_int)
             length = int(lengths[i]) if lengths is not None and lengths[i] is not None else 0
             pairs.append((ep_int, length))
+
+    if unreadable_files and readable_files == 0:
+        # Nothing readable at all: there is no ground truth to return, so this
+        # is a hard read failure rather than a partial one.
+        detail = "; ".join(unreadable_files)
+        raise ValueError(f"No readable meta/episodes parquet under {root_path}: {detail}")
 
     pairs.sort(key=lambda p: p[0])
     episode_indices = [p[0] for p in pairs]
@@ -1168,4 +1429,5 @@ def read_dataset_episode_indices(root: str | Path) -> dict[str, Any]:
         "total_frames": sum(frames_per_episode) if has_lengths else 0,
         "frames_per_episode": frames_per_episode if has_lengths else [],
         "info_total_episodes": info_total_episodes,
+        "unreadable_files": unreadable_files,
     }

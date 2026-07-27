@@ -209,13 +209,16 @@ class VeraPolicy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"vera"``)."""
         return "vera"
 
     @property
     def requires_images(self) -> bool:
+        """VERA conditions on camera frames - always needs images."""
         return True
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        """Record the robot's ordered joint/state keys used to build the state vector."""
         self._robot_state_keys = list(robot_state_keys)
 
     def set_ik_target(

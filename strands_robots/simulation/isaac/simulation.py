@@ -29,12 +29,16 @@ import os
 import queue
 import threading
 import time
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 
 import numpy as np
 
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.config import IsaacConfig
+from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
+
+if TYPE_CHECKING:
+    from strands_robots.rendering import CameraParams
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,31 @@ logger = logging.getLogger(__name__)
 # that threshold so every frame is crisp on its own; captured frames
 # are downscaled to the caller's requested size before return.
 _MIN_RENDER_PX = 640
+
+
+def _quat_wxyz_to_rotmat(quat: np.ndarray) -> np.ndarray:
+    """Convert a ``(w, x, y, z)`` quaternion to a ``(3, 3)`` rotation matrix.
+
+    Isaac's ``Camera.get_world_pose()`` returns the orientation as a
+    ``(w, x, y, z)`` quaternion (USD convention). No external dep needed --
+    the standard quaternion-to-matrix formula.
+    """
+    w, x, y, z = (float(quat[0]), float(quat[1]), float(quat[2]), float(quat[3]))
+    n = w * w + x * x + y * y + z * z
+    if n < 1e-12:
+        return np.eye(3, dtype=np.float64)
+    s = 2.0 / n
+    wx, wy, wz = s * w * x, s * w * y, s * w * z
+    xx, xy, xz = s * x * x, s * x * y, s * x * z
+    yy, yz, zz = s * y * y, s * y * z, s * z * z
+    return np.array(
+        [
+            [1.0 - (yy + zz), xy - wz, xz + wy],
+            [xy + wz, 1.0 - (xx + zz), yz - wx],
+            [xz - wy, yz + wx, 1.0 - (xx + yy)],
+        ],
+        dtype=np.float64,
+    )
 
 
 def _env_int(name: str, default: int) -> int:
@@ -353,11 +382,16 @@ class _RobotState:
         joint_names: list[str],
         articulation: Any = None,
         actual_prim_path: str | None = None,
+        data_config: str | None = None,
     ):
         self.name = name
         self.prim_path = prim_path
         self.joint_names = joint_names
         self.articulation = articulation
+        # Registry data-config the robot was added under (e.g. ``so100``).
+        # Recorded as the LeRobotDataset ``robot_type`` so datasets collected
+        # on Isaac carry the same embodiment metadata as MuJoCo/Newton ones.
+        self.data_config = data_config
         # The prim path the URDF importer / USD reference actually
         # placed the robot at, which can differ from ``prim_path`` when
         # the importer ignores the requested destination (Isaac Sim 4.5
@@ -407,11 +441,15 @@ class _ObjectState:
         self.handle = handle
 
 
-class IsaacSimulation(SimEngine):
+class IsaacSimulation(IsaacRecordingMixin, SimEngine):
     """GPU-native simulation backend built on NVIDIA Isaac Sim.
 
     Implements the ``SimEngine`` ABC. Provides photorealistic rendering,
     RTX sensors, USD scene management, and fleet replication via Cloner.
+    LeRobotDataset recording (``start_recording`` / ``save_episode`` /
+    ``stop_recording`` / ``stream_dataset``) comes from
+    :class:`~strands_robots.simulation.isaac.recording.IsaacRecordingMixin`,
+    matching the MuJoCo and Newton backends.
 
     Parameters
     ----------
@@ -507,6 +545,14 @@ class IsaacSimulation(SimEngine):
         # Synchronous rollout-video recorder state (set by
         # start_cameras_recording, cleared by stop_cameras_recording).
         self._cams_rec_state: dict[str, Any] | None = None
+
+        # LeRobotDataset recording state - the Isaac side of the
+        # DatasetRecordingMixin state seam. MuJoCo/Newton keep this dict on
+        # their SimWorld (``_backend_state``); Isaac's ``self._world`` is the
+        # Isaac Sim World handle, so the engine owns the dict directly and
+        # IsaacRecordingMixin._recording_state() returns it. Reset by
+        # destroy() alongside the rest of the world state.
+        self._recording_state_dict: dict[str, Any] = {}
 
         # Thread safety
         self._lock = threading.RLock()
@@ -634,6 +680,8 @@ class IsaacSimulation(SimEngine):
         timestep: float | None = None,
         gravity: list[float] | None = None,
         ground_plane: bool = True,
+        terrain: str | None = None,
+        difficulty: float = 1.0,
     ) -> dict[str, Any]:
         """Create a new simulation world in Isaac Sim.
 
@@ -648,12 +696,129 @@ class IsaacSimulation(SimEngine):
             Override gravity vector from config. [gx, gy, gz].
         ground_plane : bool
             Whether to add a ground plane. Default True.
+        terrain : str, optional
+            Heightfield terrain kind (e.g. ``"rough"``/``"stairs"``/
+            ``"pyramid"``/``"slope"``). The Isaac backend has no heightfield
+            ground yet, so a non-None value is rejected with an actionable
+            error rather than raising ``TypeError`` or being silently ignored
+            (honouring the
+            :class:`~strands_robots.simulation.base.SimEngine` ``create_world``
+            contract). Use ``create_simulation(backend="mujoco")`` for terrain.
+        difficulty : float
+            Terrain curriculum elevation scale (only meaningful together with
+            ``terrain``). Accepted for signature parity with the base contract.
+            Since the Isaac backend has no heightfield terrain, ``difficulty``
+            can never take effect, so a non-default (``!= 1.0``) value is
+            rejected with an actionable error (the base ``create_world``
+            contract: reject rather than silently ignore it) rather than
+            silently having no effect.
 
         Returns
         -------
         dict
             Status dict with world info.
         """
+        if terrain is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"terrain={terrain!r} is not supported on the Isaac backend yet "
+                            "(heightfield terrain, e.g. 'rough'/'stairs'/'pyramid'/'slope', is "
+                            "currently MuJoCo-only); use create_simulation(backend='mujoco') for "
+                            "terrain, or omit terrain for a flat ground plane."
+                        )
+                    }
+                ],
+            }
+        # Base create_world contract: reject a non-default difficulty with no
+        # terrain rather than silently ignoring it. On Isaac difficulty is
+        # doubly inert - there is no heightfield terrain for it to scale (a
+        # non-None terrain is already rejected above) - so any != 1.0 value is
+        # meaningless here; surface that instead of a status=success no-op.
+        if float(difficulty) != 1.0:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"difficulty={difficulty!r} has no effect on the Isaac backend "
+                            "(it scales a heightfield terrain's elevation, and this backend "
+                            "has no heightfield terrain); use create_simulation(backend='mujoco') "
+                            "for a terrain curriculum, or omit difficulty for a flat ground plane."
+                        )
+                    }
+                ],
+            }
+        # A world must not be built around a dt the integrator cannot honor
+        # (negative, zero, nan): physics_dt drives every stage step, so an
+        # unusable value corrupts the world rather than one call.
+        effective_timestep = self._config.physics_dt if timestep is None else timestep
+        timestep_param = "physics_dt" if timestep is None else "timestep"
+        if err := self._validate_timestep(effective_timestep, "create_world", timestep_param):
+            return err
+        # Isaac's ``PhysicsContext.set_gravity`` takes a single signed scalar
+        # (the gravity along -Z); the backend cannot apply an off-axis vector.
+        # A non-Z-aligned override was previously silently reduced to its
+        # z-component -- so ``gravity=[0, -9.81, 0]`` yielded ZERO gravity --
+        # while the result echoed the full input vector as if applied. Validate
+        # up front and reject anything the backend cannot honour, rather than
+        # applying a gravity the caller never asked for.
+        if gravity is not None:
+            if isinstance(gravity, (list, tuple)):
+                if len(gravity) != 3:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"create_world: gravity vector must have 3 components [gx, gy, gz], "
+                                    f"got {len(gravity)}."
+                                )
+                            }
+                        ],
+                    }
+                try:
+                    gvec = [float(g) for g in gravity]
+                except (TypeError, ValueError):
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"create_world: gravity components must be numbers, got {gravity!r}."}],
+                    }
+                if not all(np.isfinite(gvec)):
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"create_world: gravity components must be finite, got {gravity!r}."}],
+                    }
+                if gvec[0] != 0.0 or gvec[1] != 0.0:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"create_world: the Isaac backend only supports Z-aligned gravity "
+                                    f"(its PhysicsContext.set_gravity takes a signed scalar); a non-Z-aligned "
+                                    f"vector like {gravity!r} cannot be honoured. Pass a scalar or a "
+                                    f"[0, 0, gz] vector, or use create_simulation(backend='mujoco') for "
+                                    f"arbitrary-direction gravity."
+                                )
+                            }
+                        ],
+                    }
+            elif isinstance(gravity, (int, float)):
+                if not np.isfinite(gravity):
+                    return {
+                        "status": "error",
+                        "content": [{"text": f"create_world: gravity must be finite, got {gravity!r}."}],
+                    }
+            else:
+                return {
+                    "status": "error",
+                    "content": [
+                        {"text": f"create_world: gravity must be a scalar or [gx, gy, gz] vector, got {gravity!r}."}
+                    ],
+                }
         with self._lock:
             if self._world_created:
                 return {
@@ -842,6 +1007,18 @@ class IsaacSimulation(SimEngine):
             # Drop any in-flight recorder state (buffers reference RTX
             # frames that are meaningless after the stage tears down).
             self._cams_rec_state = None
+            # Same for the LeRobotDataset recording session: a live recorder
+            # holds an OPEN LeRobot episode buffer whose camera frames came
+            # from this stage. Mirror the MuJoCo/Newton behaviour (their
+            # state dict dies with the SimWorld) by resetting the seam dict;
+            # warn when a session was still open so the data loss is visible.
+            if self._recording_state_dict.get("recording", False):
+                logger.warning(
+                    "destroy() called while a dataset recording was active; the unsaved "
+                    "episode buffer is discarded. Call stop_recording() before destroy() "
+                    "to flush and finalize the dataset."
+                )
+            self._recording_state_dict = {}
 
             # Reset state
             self._world_created = False
@@ -1008,6 +1185,7 @@ class IsaacSimulation(SimEngine):
         data_config: str | None = None,
         position: list[float] | None = None,
         orientation: list[float] | None = None,
+        keyframe: str | int | None = None,
     ) -> dict[str, Any]:
         """Add a robot to the simulation.
 
@@ -1018,7 +1196,13 @@ class IsaacSimulation(SimEngine):
         urdf_path : str, optional
             Path to URDF file.
         mjcf_path : str, optional
-            Path to MJCF file.
+            Path to an MJCF file. The Isaac backend has no MJCF importer for
+            robots (it loads USD natively and converts URDF via the Omniverse
+            URDF importer), so a non-None value is rejected with an actionable
+            error rather than being silently ignored -- previously a name that
+            also matched the procedural registry would silently spawn the
+            procedural stub instead. Convert the MJCF to URDF/USD, or use
+            create_simulation(backend="mujoco") to load MJCF directly.
         usd_path : str, optional
             Path to USD file (native Isaac format).
         data_config : str, optional
@@ -1026,13 +1210,78 @@ class IsaacSimulation(SimEngine):
         position : list[float], optional
             Base position [x, y, z].
         orientation : list[float], optional
-            Base orientation as quaternion [w, x, y, z].
+            Base orientation as quaternion [w, x, y, z]. The Isaac ``add_robot``
+            spawn path does not yet apply a base orientation (the USD/URDF
+            loaders position the articulation but ignore rotation), so a
+            non-identity quaternion is rejected with an actionable error rather
+            than being silently dropped. Omit it (or pass identity
+            ``[1, 0, 0, 0]``) for the default upright spawn, or use
+            create_simulation(backend="mujoco") to spawn at an arbitrary
+            orientation.
+        keyframe : str | int, optional
+            Canonical-pose keyframe (e.g. panda ``"home"``). The Isaac
+            backend does not parse the MuJoCo ``<keyframe>`` block this
+            refers to, so a non-None value is rejected with an actionable
+            error rather than raising ``TypeError`` or being silently
+            ignored (honouring the
+            :class:`~strands_robots.simulation.base.SimEngine` ``add_robot``
+            contract). Use ``create_simulation(backend="mujoco")`` to spawn
+            at a keyframe, or omit ``keyframe`` for the default zero-pose
+            spawn.
 
         Returns
         -------
         dict
             Status dict with robot info.
         """
+        if keyframe is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_robot: keyframe={keyframe!r} is not supported on "
+                            "the Isaac backend (spawning at a MuJoCo <keyframe> pose "
+                            "is currently MuJoCo-only); use "
+                            "create_simulation(backend='mujoco') to spawn at a "
+                            "keyframe, or omit keyframe for the default zero-pose "
+                            "spawn."
+                        )
+                    }
+                ],
+            }
+        if mjcf_path is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_robot: mjcf_path={mjcf_path!r} is not supported on the Isaac "
+                            "backend (it has no MJCF robot importer; it loads USD natively and "
+                            "converts URDF). Convert the MJCF to URDF/USD and pass urdf_path/"
+                            "usd_path, or use create_simulation(backend='mujoco') to load MJCF."
+                        )
+                    }
+                ],
+            }
+        # The default None means identity; only a non-identity quaternion is
+        # rejected (parity with the keyframe/terrain guards -- reject an
+        # unsupported request rather than silently dropping the rotation).
+        if orientation is not None and list(orientation) != [1.0, 0.0, 0.0, 0.0]:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_robot: orientation={orientation!r} is not applied on the Isaac "
+                            "backend spawn path (the USD/URDF loaders position the articulation but "
+                            "ignore base rotation). Omit orientation (or pass identity "
+                            "[1, 0, 0, 0]) for the default upright spawn, or use "
+                            "create_simulation(backend='mujoco') to spawn at an orientation."
+                        )
+                    }
+                ],
+            }
         with self._lock:
             if not self._world_created:
                 return {
@@ -1081,6 +1330,7 @@ class IsaacSimulation(SimEngine):
                     name=name,
                     prim_path=prim_path,
                     joint_names=joint_names,
+                    data_config=data_config,
                 )
                 self._robots[name] = robot_state
 
@@ -1132,6 +1382,7 @@ class IsaacSimulation(SimEngine):
                     joint_names=joint_names,
                     articulation=articulation,
                     actual_prim_path=getattr(articulation, "_strands_actual_prim_path", None),
+                    data_config=data_config,
                 )
                 self._robots[name] = robot_state
 
@@ -1195,6 +1446,7 @@ class IsaacSimulation(SimEngine):
                     joint_names=joint_names,
                     articulation=articulation,
                     actual_prim_path=getattr(articulation, "_strands_actual_prim_path", None),
+                    data_config=data_config,
                 )
                 self._robots[name] = robot_state
 
@@ -1247,6 +1499,8 @@ class IsaacSimulation(SimEngine):
         color: list[float] | None = None,
         mass: float = 0.1,
         is_static: bool = False,
+        mesh_path: str | None = None,
+        material: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Add an object (shape primitive) to the scene.
@@ -1304,6 +1558,17 @@ class IsaacSimulation(SimEngine):
             Sphere, Cylinder, Capsule}`` and stays pinned in space. If
             ``False`` (default), uses the ``Dynamic*`` counterpart and
             participates in physics with ``mass``.
+        mesh_path : str, optional
+            Path to a custom mesh asset. Loading custom meshes is not
+            supported by the Isaac backend yet; a non-``None`` value is
+            rejected with an actionable error rather than being silently
+            ignored (honouring the
+            :class:`~strands_robots.simulation.base.SimEngine` ``add_object``
+            contract). Use ``create_simulation(backend='mujoco')`` for meshes.
+        material : dict, optional
+            Visual material/texture spec. NOT supported by the Isaac backend
+            yet; a non-``None`` value is rejected loudly rather than silently
+            dropped (use the MuJoCo backend for matte/textured surfaces).
 
         Returns
         -------
@@ -1314,6 +1579,34 @@ class IsaacSimulation(SimEngine):
             ``mass``, and ``is_static`` so an agent can confirm what
             actually landed on the stage without re-querying.
         """
+        if material is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "add_object: material= is not supported on the "
+                            "Isaac backend yet (matte/textured surfaces); use "
+                            "create_simulation(backend='mujoco') for materials, "
+                            "or omit material for a flat color."
+                        )
+                    }
+                ],
+            }
+        if mesh_path is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            "add_object: mesh_path=/custom mesh objects are not "
+                            "supported on the Isaac backend yet; use "
+                            "create_simulation(backend='mujoco') for meshes, or a "
+                            "primitive shape (box/sphere/capsule/cylinder)."
+                        )
+                    }
+                ],
+            }
         with self._lock:
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}
@@ -1614,7 +1907,7 @@ class IsaacSimulation(SimEngine):
             # cylinder / capsule pattern below; previously this branch
             # was all-or-nothing, so e.g. ``size=[0.10]`` silently fell
             # back to ``[0.05, 0.05, 0.05]`` instead of the documented
-            # ``[0.10, 0.05, 0.05]`` -- caught in PR #60 review.
+            # ``[0.10, 0.05, 0.05]``.
             size_list = list(size) if size else []
             sx = float(size_list[0]) if len(size_list) >= 1 else 0.05
             sy = float(size_list[1]) if len(size_list) >= 2 else 0.05
@@ -1988,6 +2281,17 @@ class IsaacSimulation(SimEngine):
             # headless render mode (no RTX frames). Best-effort per camera: a
             # camera whose RTX product hasn't warmed up is omitted rather than
             # failing the whole observation.
+            #
+            # Recording override (parity with MuJoCo/Newton): a non-image
+            # policy (requires_images=False, e.g. the default mock) makes
+            # PolicyRunner pass skip_images=True, but while a dataset
+            # recording is active the recorded frames MUST carry the camera
+            # images the schema declared - so images are forced on for the
+            # duration of the session.
+            if skip_images:
+                rec_state = self._recording_state()
+                if rec_state is not None and rec_state.get("recording", False):
+                    skip_images = False
             if not skip_images and self._config.render_mode != "headless":
                 # Multi-camera refresh: a single ``world.step(render=True)`` in
                 # the substep loop reliably refreshes only the PRIMARY render
@@ -2078,17 +2382,29 @@ class IsaacSimulation(SimEngine):
             # being silently dropped (parity with the MuJoCo backend).
             unresolved: list[str] = []
             action_array: np.ndarray
+            # ``joint_indices`` restricts an ``ArticulationAction`` to a subset
+            # of the articulation's DOFs; ``None`` addresses every joint. For a
+            # dict action we command ONLY the named joints and leave the rest at
+            # their current PD targets (parity with the MuJoCo/Newton backends).
+            # A full zero-filled ``joint_positions`` vector would instead drive
+            # every unnamed joint to 0.0 -- e.g. ``send_action({"gripper": 0.04})``
+            # would slam the whole arm to its home pose.
+            joint_indices: np.ndarray | None
             if isinstance(action, dict):
                 joint_set = set(robot.joint_names)
                 unresolved = [k for k in action if k not in joint_set]
-                action_array = np.zeros(len(robot.joint_names), dtype=np.float32)
-                for i, jname in enumerate(robot.joint_names):
-                    if jname in action:
-                        action_array[i] = float(action[jname])
+                named = [i for i, jname in enumerate(robot.joint_names) if jname in action]
+                action_array = np.array(
+                    [float(action[robot.joint_names[i]]) for i in named],
+                    dtype=np.float32,
+                )
+                joint_indices = np.array(named, dtype=np.int32)
             elif isinstance(action, np.ndarray):
                 action_array = action.astype(np.float32).flatten()
+                joint_indices = None
             else:
                 action_array = np.array(action, dtype=np.float32)
+                joint_indices = None
 
             # Apply to articulation. Isaac Sim 6.0's articulation
             # (``isaacsim.core.prims.SingleArticulation``) drives PD position
@@ -2097,13 +2413,15 @@ class IsaacSimulation(SimEngine):
             # on the 6.0 class (the #101 ``omni.isaac.* -> isaacsim.*`` migration
             # renamed imports but missed this articulation method). See
             # ``set_joint_positions`` below for the teleport (non-PD) counterpart.
-            if robot.articulation is not None:
+            if robot.articulation is not None and action_array.size > 0:
                 try:
                     from isaacsim.core.utils.types import (  # type: ignore[import-not-found]
                         ArticulationAction,
                     )
 
-                    robot.articulation.apply_action(ArticulationAction(joint_positions=action_array))
+                    robot.articulation.apply_action(
+                        ArticulationAction(joint_positions=action_array, joint_indices=joint_indices)
+                    )
                 except (RuntimeError, ValueError, AttributeError, ImportError) as e:
                     # apply_action raises RuntimeError on a torn-down
                     # articulation, ValueError on shape mismatch, AttributeError
@@ -2203,9 +2521,8 @@ class IsaacSimulation(SimEngine):
         -------
         dict
             Standard Strands tool-result envelope carrying ONLY ``status`` and
-            ``content`` (the tool-result contract forbids extra top-level keys;
-            see tests/test_tool_result_contract.py). On success ``content``
-            holds a ``text`` block, a ``{"image": {"format": "png", ...}}``
+            ``content`` (the tool-result contract forbids extra top-level
+            keys). On success ``content`` holds a ``text`` block, a ``{"image": {"format": "png", ...}}``
             block with raw PNG bytes (matching the MuJoCo backend so the shared
             ``PolicyRunner._extract_frame_ndarray`` can pull frames for video
             recording, #127), and a ``{"json": {...}}`` block with pixel stats
@@ -2232,9 +2549,9 @@ class IsaacSimulation(SimEngine):
             content.append(block)
         # Structured telemetry (resolution, prim_path, rtx flag, pixel stats)
         # lives INSIDE a content json block, never as extra top-level keys -
-        # the Strands tool-result contract permits only {status, content}
-        # (see tests/test_tool_result_contract.py). Consumers that need the
-        # raw rgb/depth ndarrays use get_observation() or the internal
+        # the Strands tool-result contract permits only {status, content}.
+        # Consumers that need the raw rgb/depth ndarrays use get_observation()
+        # or the internal
         # _render_frame() helper; the PNG image block above feeds the shared
         # PolicyRunner video pipeline (#127).
         json_block: dict[str, Any] = dict(meta.get("json", {}))
@@ -2380,6 +2697,139 @@ class IsaacSimulation(SimEngine):
                     "json": render_info,
                 },
             )
+
+    def get_frame(
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """Render a camera to raw ``(rgb, depth)`` ndarrays (metric depth).
+
+        Public counterpart of the internal :meth:`_render_frame` (issue
+        #1537): returns the raw RTX ``(H, W, 3) uint8`` RGB frame and the
+        ``(H, W) float32`` metric depth buffer for in-process consumers such
+        as :class:`strands_robots.rendering.HybridCompositor`, without the
+        agent-tool PNG envelope and without reaching into private state.
+
+        Unlike :meth:`_render_frame` -- whose blank-frame fallbacks exist for
+        the envelope path -- this method **raises** on every degraded path
+        (headless mode, unknown camera, Phase-1 camera without an RTX
+        handle), so a compositing consumer can never silently receive black
+        pixels with zero depth.
+
+        Isaac's depth annotator reports pixels with no geometry as ``0`` or
+        non-finite; consumers should treat both extremes as background.
+
+        Concurrency: takes ``self._lock`` (via ``_render_frame``); rendering
+        must be driven from the thread that owns the ``SimulationApp`` (use
+        :meth:`run_on_main` from worker threads).
+
+        Args:
+            camera_name: a camera previously added via ``add_camera``.
+            width: must be ``None`` or the camera's native render width --
+                Isaac RTX cameras render at the resolution fixed at
+                ``add_camera`` time; a mismatch raises rather than silently
+                dropping the requested size.
+            height: same contract as ``width``.
+
+        Returns:
+            ``(rgb, depth)`` -- ``(H, W, 3) uint8`` and ``(H, W) float32``.
+
+        Raises:
+            RuntimeError: no world, headless render mode, camera without an
+                RTX handle, or an RTX render failure.
+            KeyError: unknown camera name.
+            ValueError: ``width``/``height`` differ from the camera's native
+                render resolution.
+        """
+        with self._lock:
+            if not self._world_created:
+                raise RuntimeError("No world created. Call create_world first.")
+            if self._config.render_mode == "headless":
+                raise RuntimeError(
+                    "get_frame is unavailable in headless render mode (no RTX frames are produced); "
+                    "use render_mode='rtx_realtime' or consume the envelope render() fallback."
+                )
+            if camera_name not in self._cameras:
+                raise KeyError(f"Camera '{camera_name}' not found. Available: {sorted(self._cameras)}")
+            cam = self._cameras[camera_name]
+            if cam.handle is None:
+                raise RuntimeError(f"Camera '{camera_name}' has no live RTX handle; re-add it via add_camera().")
+            for arg_name, arg, native in (("width", width, cam.width), ("height", height, cam.height)):
+                if arg is not None and int(arg) != int(native):
+                    raise ValueError(
+                        f"Isaac cameras render at the resolution fixed at add_camera time; "
+                        f"requested {arg_name}={arg} but camera '{camera_name}' renders at "
+                        f"{cam.width}x{cam.height}. Re-add the camera with the desired size."
+                    )
+            rgb, depth, meta = self._render_frame(camera_name)
+        if rgb is None:
+            raise RuntimeError(str(meta.get("error", f"Failed to render camera '{camera_name}'")))
+        depth_arr = None if depth is None else np.asarray(depth, dtype=np.float32)
+        return np.asarray(rgb, dtype=np.uint8), depth_arr
+
+    def get_camera_params(
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+    ) -> CameraParams:
+        """Return pinhole :class:`~strands_robots.rendering.CameraParams`.
+
+        Intrinsics come from the RTX camera handle
+        (``Camera.get_intrinsics_matrix()``), the pose from
+        ``Camera.get_world_pose()``. ``get_world_pose`` returns the camera
+        *prim's* world orientation, whose local axes are offset from the
+        OpenGL optical frame ``CameraParams`` promises (+X right, +Y up, -Z
+        forward): the USD camera prim basis maps prim +X -> GL -Z, prim +Y ->
+        GL -X, prim +Z -> GL +Y. This backend-inherent fixed correction
+        (``R_gl = R_prim @ PRIM_TO_GL``) is applied here -- consistent across
+        poses -- so a composited background is upright and aligned with the
+        RTX foreground (previously example-side, issue #1537).
+
+        Args:
+            camera_name: a camera previously added via ``add_camera``.
+            width: must be ``None`` or the camera's native render width (the
+                handle's intrinsics are only valid at native resolution).
+            height: same contract as ``width``.
+
+        Raises:
+            RuntimeError: no world, or the camera has no live RTX handle.
+            KeyError: unknown camera name.
+            ValueError: ``width``/``height`` differ from the native render
+                resolution.
+        """
+        from strands_robots.rendering import CameraParams
+
+        with self._lock:
+            if not self._world_created:
+                raise RuntimeError("No world created. Call create_world first.")
+            if camera_name not in self._cameras:
+                raise KeyError(f"Camera '{camera_name}' not found. Available: {sorted(self._cameras)}")
+            cam = self._cameras[camera_name]
+            if cam.handle is None:
+                raise RuntimeError(
+                    f"Camera '{camera_name}' has no live RTX handle -- intrinsics/pose cannot be "
+                    "read off a registration-only camera. Re-add it via add_camera()."
+                )
+            for arg_name, arg, native in (("width", width, cam.width), ("height", height, cam.height)):
+                if arg is not None and int(arg) != int(native):
+                    raise ValueError(
+                        f"Isaac camera intrinsics are only valid at the native render resolution; "
+                        f"requested {arg_name}={arg} but camera '{camera_name}' renders at "
+                        f"{cam.width}x{cam.height}. Re-add the camera with the desired size."
+                    )
+            K = np.asarray(cam.handle.get_intrinsics_matrix(), dtype=np.float64).reshape(3, 3)
+            position, quat_wxyz = cam.handle.get_world_pose()
+            w_px, h_px = int(cam.width), int(cam.height)
+
+        position = np.asarray(position, dtype=np.float64).reshape(3)
+        quat_wxyz = np.asarray(quat_wxyz, dtype=np.float64).reshape(4)
+        # Fixed camera-local correction, USD camera prim basis -> OpenGL
+        # optical frame (see docstring). R_gl = R_prim @ PRIM_TO_GL.
+        prim_to_gl = np.array([[0.0, 0.0, -1.0], [-1.0, 0.0, 0.0], [0.0, 1.0, 0.0]], dtype=np.float64)
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = _quat_wxyz_to_rotmat(quat_wxyz) @ prim_to_gl
+        T[:3, 3] = position
+        # Isaac exposes no scene-level clip planes on the handle; carry the
+        # conventional near plane and a far plane "at infinity" for the
+        # compositor's depth convention.
+        return CameraParams(K=K, T_world_cam=T, width=w_px, height=h_px, znear=0.01, zfar=1_000_000.0)
 
     def _warmup_camera(self, name: str, n_steps: int) -> bool:
         """Step the world (with rendering) until camera ``name`` yields a frame.
@@ -2861,13 +3311,7 @@ class IsaacSimulation(SimEngine):
             state["running"] = False
             self._cams_rec_state = None
 
-        try:
-            import imageio.v2 as imageio
-        except ImportError:
-            return {
-                "status": "error",
-                "content": [{"text": "imageio not installed. pip install imageio imageio-ffmpeg"}],
-            }
+        from strands_robots.rendering.video import encode_clip
 
         elapsed = _time.time() - state["started_at"]
         lines = [
@@ -2882,13 +3326,16 @@ class IsaacSimulation(SimEngine):
             frames_written = 0
             size_kb = 0.0
             if frames_buffer:
-                writer = imageio.get_writer(path, fps=state["fps"], quality=8, macro_block_size=1)
+                # Shared encoder (strands_robots.rendering.video, issue #1537);
+                # same imageio/libx264 invocation as the previous inline writer.
                 try:
-                    for arr in frames_buffer:
-                        writer.append_data(arr)
-                        frames_written += 1
-                finally:
-                    writer.close()
+                    encode_clip(frames_buffer, path, fps=state["fps"])
+                except ImportError:
+                    return {
+                        "status": "error",
+                        "content": [{"text": "imageio not installed. pip install imageio imageio-ffmpeg"}],
+                    }
+                frames_written = len(frames_buffer)
                 if _os.path.exists(path):
                     size_kb = _os.path.getsize(path) / 1024
             lines.append(
@@ -4032,6 +4479,59 @@ class IsaacSimulation(SimEngine):
             UsdGeom.Xformable(fill.GetPrim()).AddRotateXYZOp().Set(Gf.Vec3f(-60.0, 0.0, 180.0))
         except (ImportError, AttributeError, RuntimeError):
             logger.debug("Could not add scene lighting", exc_info=True)
+
+    def describe(self) -> dict[str, Any]:
+        """Return the Isaac engine's live discovery surface.
+
+        Extends the base :meth:`SimEngine.describe` contract with the backend
+        identity, the registered RTX camera names, world state, and the
+        LeRobotDataset recording family
+        (:class:`~strands_robots.simulation.isaac.recording.IsaacRecordingMixin`)
+        so an agent enumerating ``describe()["methods"]`` discovers the
+        record-and-stream workflow (``start_recording`` -> ``run_policy`` ->
+        ``save_episode`` -> ``stop_recording`` -> ``stream_dataset``) exactly
+        as it does on the MuJoCo and Newton backends.
+        """
+        desc = super().describe()
+        desc["backend"] = "isaac"
+        desc["cameras"] = sorted(self._cameras)
+        desc["world_created"] = self._world_created
+        desc["methods"].update(
+            {
+                "add_camera": (
+                    "(name='default', position=None, target=None, width=None, "
+                    "height=None, fov=60.0) -> dict  # register an RTX camera "
+                    "(rendered frames ride get_observation and recordings)"
+                ),
+                "remove_camera": "(name: str) -> dict  # remove a registered RTX camera",
+                "start_recording": (
+                    "(repo_id='local/sim_recording', task='', fps=30, root=None, "
+                    "push_to_hub=False, vcodec='h264', overwrite=False, cameras=None) -> dict  "
+                    "# record joint state + action + RTX cameras to a LeRobotDataset "
+                    "(needs render_mode='rtx_realtime' for camera columns)"
+                ),
+                "save_episode": (
+                    "() -> dict  # flush the current rollout as one episode; prefer "
+                    "run_policy(n_episodes=N) which flushes a boundary per episode"
+                ),
+                "stop_recording": "(push_to_hub=False, bucket=None, run_id=None) -> dict",
+                "get_recording_status": "() -> dict",
+                "stream_dataset": (
+                    "(repo_id: str, **kwargs) -> StreamingDatasetReader  # lazily read a "
+                    "recorded LeRobotDataset back (root=, episodes=, delta_timestamps=, ...)"
+                ),
+                "verify_dataset_episodes": (
+                    "(expected: int) -> dict  # after stop_recording, read the parquet and "
+                    "confirm the dataset holds exactly `expected` episodes; status=error on mismatch"
+                ),
+                "start_cameras_recording": (
+                    "(cameras=None, output_dir=None, fps=30, name=None, max_frames_per_camera=3000) -> dict  "
+                    "# raw per-camera MP4 capture (no lerobot dependency)"
+                ),
+                "stop_cameras_recording": "() -> dict  # finalize the raw MP4 capture",
+            }
+        )
+        return desc
 
     def cleanup(self) -> None:
         """Release all resources.

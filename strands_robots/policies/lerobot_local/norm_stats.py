@@ -264,6 +264,7 @@ def load_norm_stats(
     pretrained_name_or_path: str,
     *,
     filename: str = "norm_stats.json",
+    revision: str | None = None,
 ) -> dict[str, Any] | None:
     """Load a ``norm_stats.json`` payload from a local dir or the HF Hub.
 
@@ -274,6 +275,8 @@ def load_norm_stats(
     Args:
         pretrained_name_or_path: HF repo id or local checkpoint directory.
         filename: Default norm-stats filename to look for.
+        revision: Optional Hub branch/tag/SHA to pin the download to, so the
+            norm-stats file matches revision-pinned policy weights.
 
     Returns:
         Parsed JSON payload dict, or ``None`` when unavailable.
@@ -306,14 +309,14 @@ def load_norm_stats(
         from huggingface_hub import hf_hub_download
 
         try:
-            cfg_path = hf_hub_download(pretrained_name_or_path, "config.json")
+            cfg_path = hf_hub_download(pretrained_name_or_path, "config.json", revision=revision)
             cfg = _read_json(Path(cfg_path))
             if cfg and cfg.get("norm_stats_filename"):
                 resolved_filename = str(cfg["norm_stats_filename"])
         except Exception as exc:  # noqa: BLE001 - config.json is optional
             logger.debug("norm_stats: no config.json on hub: %s", exc)
 
-        downloaded = hf_hub_download(pretrained_name_or_path, resolved_filename)
+        downloaded = hf_hub_download(pretrained_name_or_path, resolved_filename, revision=revision)
         return _read_json(Path(downloaded))
     except Exception as exc:  # noqa: BLE001 - network/repo errors are non-fatal
         logger.debug("norm_stats: could not fetch %s from hub: %s", resolved_filename, exc)
@@ -400,11 +403,13 @@ def _make_step_classes() -> tuple[type, type] | None:
             self._state_key = state_key
 
         def observation(self, observation: dict[str, Any]) -> dict[str, Any]:
+            """Normalize ``observation.state`` in place via the feature normalizer (passthrough when the key is absent)."""
             if self._state_key in observation and observation[self._state_key] is not None:
                 observation[self._state_key] = self._normalizer.normalize(observation[self._state_key])
             return observation
 
         def transform_features(self, features: Any) -> Any:
+            """Return ``features`` unchanged: normalization does not alter the feature schema."""
             return features
 
     class NormStatsPostprocessorStep(ActionProcessorStep):  # type: ignore[misc,valid-type]
@@ -414,11 +419,13 @@ def _make_step_classes() -> tuple[type, type] | None:
             self._normalizer = normalizer
 
         def action(self, action: Any) -> Any:
+            """Unnormalize the policy ``action`` back into robot units (passthrough when ``None``)."""
             if action is None:
                 return action
             return self._normalizer.unnormalize(action)
 
         def transform_features(self, features: Any) -> Any:
+            """Return ``features`` unchanged: unnormalization does not alter the feature schema."""
             return features
 
     return NormStatsPreprocessorStep, NormStatsPostprocessorStep

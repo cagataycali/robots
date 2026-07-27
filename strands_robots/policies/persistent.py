@@ -49,6 +49,67 @@ from strands_robots.utils import process_rss_mb
 __all__ = ["PersistentPolicy", "preload", "list_cached", "evict"]
 
 
+class _LockHandoff:
+    """Cancellation-safe handoff of a :class:`threading.Lock` to a coroutine.
+
+    ``threading.Lock.acquire`` blocks uninterruptibly, so a coroutine that
+    acquires it via ``loop.run_in_executor`` cannot cancel the acquire once the
+    executor thread has entered it: cancelling the future raises
+    ``CancelledError`` in the awaiting task while the executor thread goes on to
+    take the lock, and nothing is left to release it. On a handle shared across
+    every ``run_policy``/``eval_policy`` call that permanently freezes all
+    subsequent inference.
+
+    This object closes that window by making the acquire hand the lock over
+    under a tiny guard mutex:
+
+    * :meth:`acquire` (executor thread) takes the lock, then publishes it to the
+      waiting coroutine - unless the coroutine already abandoned the acquire, in
+      which case it releases the lock immediately.
+    * :meth:`abandon` (loop thread, in the cancellation handler) marks the
+      acquire abandoned and releases the lock if it was already published.
+
+    Because both sides take ``_guard`` around the flag-and-release, exactly one
+    of them releases the lock no matter how the cancellation interleaves with
+    the acquire, and correctness never depends on a done-callback running on a
+    loop that may already be closed.
+
+    Each call site uses its own instance; the wrapped lock is shared.
+    """
+
+    __slots__ = ("_lock", "_guard", "_abandoned", "_held")
+
+    def __init__(self, lock: threading.Lock) -> None:
+        self._lock = lock
+        self._guard = threading.Lock()
+        self._abandoned = False
+        self._held = False
+
+    def acquire(self) -> None:
+        """Block until the shared lock is held, or drop it if already abandoned."""
+        self._lock.acquire()
+        with self._guard:
+            if self._abandoned:
+                self._lock.release()
+                return
+            self._held = True
+
+    def abandon(self) -> None:
+        """Give up on the acquire; release the lock now or when it is taken."""
+        with self._guard:
+            self._abandoned = True
+            if self._held:
+                self._held = False
+                self._lock.release()
+
+    def release(self) -> None:
+        """Release the shared lock if this handoff currently holds it."""
+        with self._guard:
+            if self._held:
+                self._held = False
+                self._lock.release()
+
+
 class PersistentPolicy(Policy):
     """A persistent, reusable handle around an underlying policy.
 
@@ -83,11 +144,18 @@ class PersistentPolicy(Policy):
     ) -> None:
         self._provider_arg = provider
         self._config = dict(config)
-        # Serialise inference across threads (sync path) and coroutines (async
-        # path). The wrapped model holds per-episode state, so concurrent
-        # get_actions on one shared handle must not interleave.
+        # Serialise inference across BOTH the sync and async entry points with a
+        # single ``threading.Lock``. The wrapped model holds per-episode state,
+        # so concurrent get_actions on one shared handle must not interleave.
+        # A ``threading.Lock`` (not ``asyncio.Lock``) is the correct primitive:
+        # every runtime call path resolves the coroutine via ``asyncio.run`` on
+        # a FRESH event loop per call (see ``strands_robots._async_utils``), and
+        # an ``asyncio.Lock``'s waiter future is bound to the loop that created
+        # it -- a second thread awaiting the lock on its own loop would await a
+        # waiter whose wake-up is scheduled on the first thread's (now-dead)
+        # loop and hang forever. A ``threading.Lock`` is loop-agnostic and
+        # serialises correctly across threads and loops alike.
         self._call_lock = threading.Lock()
-        self._async_lock = asyncio.Lock()
         if policy_object is not None:
             self._inner: Policy = policy_object
         else:
@@ -105,40 +173,75 @@ class PersistentPolicy(Policy):
     async def get_actions(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, Any]]:
-        async with self._async_lock:
+        """Delegate to the wrapped policy under the shared thread lock (see :meth:`Policy.get_actions`).
+
+        Acquires the same ``threading.Lock`` the sync path uses, so the sync and
+        async entry points mutually exclude on the wrapped model's per-episode
+        state. The blocking acquire runs in the loop's default executor so a
+        shared running loop is never frozen while another caller holds the lock
+        (each runtime call still runs on its own per-call ``asyncio.run`` loop).
+
+        Cancellation-safe: if this coroutine is cancelled (e.g. by
+        ``asyncio.wait_for``) while the acquire is still pending, the lock is
+        released as soon as the executor thread obtains it, so a cancelled call
+        never poisons the shared handle. See :class:`_LockHandoff`.
+        """
+        loop = asyncio.get_running_loop()
+        handoff = _LockHandoff(self._call_lock)
+        try:
+            await loop.run_in_executor(None, handoff.acquire)
+        except BaseException:
+            # The executor thread cannot be interrupted mid-acquire (a cancelled
+            # wait_for / task is the realistic trigger), so tell the handoff to
+            # drop the lock the moment it takes it. Without this the lock is
+            # leaked and every later call on this shared handle hangs.
+            handoff.abandon()
+            raise
+        try:
             return await self._inner.get_actions(observation_dict, instruction, **kwargs)
+        finally:
+            handoff.release()
 
     def get_actions_sync(
         self, observation_dict: dict[str, Any], instruction: str, **kwargs: Any
     ) -> list[dict[str, Any]]:
+        """Delegate to the wrapped policy under the per-call lock (see :meth:`Policy.get_actions_sync`)."""
         with self._call_lock:
             return self._inner.get_actions_sync(observation_dict, instruction, **kwargs)
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        """Forward the robot state keys to the wrapped policy."""
         self._inner.set_robot_state_keys(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
+        """Reset the wrapped policy's per-episode state (weights stay resident)."""
         self._inner.reset(seed)
 
     def set_control_frequency(self, hz: float) -> None:
+        """Forward the executing loop's control rate to the wrapped policy."""
         self._inner.set_control_frequency(hz)
 
     def set_rtc_observed_delay(self, steps: int | None) -> None:
+        """Forward the observed inference delay (RTC steps) to the wrapped policy."""
         self._inner.set_rtc_observed_delay(steps)
 
     @property
     def requires_images(self) -> bool:
+        """Whether the wrapped policy needs camera frames in its observation."""
         return self._inner.requires_images
 
     @property
     def execution_horizon(self) -> int:
+        """Actions consumed from one ``get_actions`` chunk, from the wrapped policy."""
         return self._inner.execution_horizon
 
     def is_chunk_emitting(self) -> bool:
+        """Whether the wrapped policy returns multi-action chunks per ``get_actions``."""
         return self._inner.is_chunk_emitting()
 
     @property
     def provider_name(self) -> str:
+        """Provider name of the wrapped policy (identifies the resident model)."""
         return self._inner.provider_name
 
     def __getattr__(self, name: str) -> Any:

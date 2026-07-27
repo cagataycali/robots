@@ -356,6 +356,56 @@ def test_deep_import_is_cached() -> None:
     assert "lerobot.policies" in M._DEEP_IMPORTED
 
 
+def test_deep_import_skips_private_and_test_submodules(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Deep import walks public submodules only: ``_private`` names and a
+    ``tests`` package are skipped before any import is attempted, so discovery
+    never drags a package's own test suite into the process."""
+    import types
+
+    root = types.ModuleType("lerobot.fakepkg")
+    root.__path__ = []  # non-empty attribute marks this module as a package
+    real_import = importlib.import_module
+    imported: list[str] = []
+
+    def fake_import(name: str, *a: Any, **k: Any) -> Any:
+        imported.append(name)
+        if name == "lerobot.fakepkg":
+            return root
+        return real_import(name, *a, **k)
+
+    monkeypatch.setattr(importlib, "import_module", fake_import)
+    monkeypatch.setattr(
+        M.pkgutil,
+        "iter_modules",
+        lambda path: [(None, "_private", False), (None, "tests", True), (None, "core", True)],
+    )
+    M._DEEP_IMPORTED.discard("lerobot.fakepkg")
+    try:
+        M._deep_import("lerobot.fakepkg")
+    finally:
+        M._DEEP_IMPORTED.discard("lerobot.fakepkg")
+        M._DEEP_IMPORTED.discard("lerobot.fakepkg.core")
+
+    # Only the public ``core`` submodule is recursed into; the private and test
+    # submodules are filtered out and never handed to importlib.
+    assert "lerobot.fakepkg.core" in imported
+    assert "lerobot.fakepkg._private" not in imported
+    assert "lerobot.fakepkg.tests" not in imported
+
+
+def test_registry_choices_empty_when_class_lacks_known_choices(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Registry discovery reads lerobot's own ``ChoiceRegistry.get_known_choices``.
+    If a config class ever loses that method (lerobot API drift), discovery must
+    degrade to an empty mapping rather than raising AttributeError."""
+
+    class _NoChoices:
+        pass
+
+    monkeypatch.setattr(M, "_deep_import", lambda pkg, _seen=None: None)
+    monkeypatch.setattr(M, "_import_from_lerobot", lambda path: _NoChoices)
+    assert M._get_registry_choices("robots") == {}
+
+
 # ----------------------------------------------------------------------------
 # import resolution -- resolver-internal error classification
 # ----------------------------------------------------------------------------
@@ -718,7 +768,7 @@ def test_blocked_module_prefix_check_respects_explicit_lerobot_prefix(
     ('lerobot.scripts...') module paths, so a caller cannot bypass it by
     spelling out the 'lerobot.' prefix themselves."""
     monkeypatch.setattr(M, "_import_from_lerobot", lambda path: lambda **kw: None)
-    result = _fn(module="lerobot.common.datasets.push.foo", method="")
+    result = _fn(module="lerobot.scripts.lerobot_train.train", method="")
     assert result["status"] == "error"
     assert "Blocked" in _texts(result)
 
@@ -743,6 +793,32 @@ def test_blocked_method_name_is_refused(monkeypatch: pytest.MonkeyPatch) -> None
     assert "Blocked" in text
     assert "push_to_hub" in text
     assert called["n"] == 0, "blocked method must not be invoked"
+
+
+def test_blocked_method_reached_through_module_path_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The method blocklist must screen the module path, not just the ``method``
+    argument. ``_import_from_lerobot`` walks attribute chains, so an agent can
+    resolve a side-effecting callable directly by putting its name in ``module``
+    with an empty ``method`` (e.g. ``module="...LeRobotDataset.push_to_hub"``).
+    That callable must still be refused before invocation, otherwise the guard
+    is trivially bypassable."""
+    called = {"n": 0}
+
+    def resolver(path: str) -> Any:
+        # The dotted module path resolved straight to the callable itself.
+        def push_to_hub(**kwargs: Any) -> None:
+            called["n"] += 1  # must never run
+
+        return push_to_hub
+
+    monkeypatch.setattr(M, "_import_from_lerobot", resolver)
+    result = _fn(module="datasets.lerobot_dataset.LeRobotDataset.push_to_hub", method="")
+    assert result["status"] == "error"
+    text = _texts(result)
+    _assert_ascii(text)
+    assert "Blocked" in text
+    assert "push_to_hub" in text
+    assert called["n"] == 0, "blocked callable reached via module path must not be invoked"
 
 
 def test_safe_method_on_unblocked_module_is_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -887,3 +963,30 @@ def test_collect_images_stops_at_depth_limit() -> None:
     frame = np.zeros((64, 64, 3), dtype=np.uint8)
     M._collect_images(frame, blocks, _depth=3)
     assert blocks == []
+
+
+# ----------------------------------------------------------------------------
+# blocklist / advertisement drift guards
+# ----------------------------------------------------------------------------
+def test_blocklist_has_no_stale_common_datasets_push() -> None:
+    """The blocklist must not carry lerobot.common.datasets.push: that module
+    was removed upstream (HEAD lerobot.common = control_utils/train_utils/
+    wandb_utils only). Hub-push coverage lives in _BLOCKED_METHODS instead."""
+    assert "lerobot.common.datasets.push" not in M._BLOCKED_MODULE_PREFIXES
+    assert "push_to_hub" in M._BLOCKED_METHODS
+
+
+def test_scripts_prefix_still_blocked() -> None:
+    """lerobot.scripts stays blocked (subprocess-spawning training scripts)."""
+    assert "lerobot.scripts" in M._BLOCKED_MODULE_PREFIXES
+
+
+def test_discovery_does_not_advertise_blocked_train_entry_point() -> None:
+    """The discovery entry_points must not advertise scripts.lerobot_train.train:
+    it is refused by the lerobot.scripts blocklist, so listing it as a call
+    target is self-contradictory."""
+    result = M._discover_modules()
+    entry_points = result.get("entry_points", {})
+    assert "scripts.lerobot_train.train" not in entry_points
+    # A genuinely callable, non-blocked target is still advertised.
+    assert "policies.factory.get_policy_class" in entry_points

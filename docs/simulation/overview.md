@@ -78,22 +78,23 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `render(camera_name="default", width=None, height=None)` | PNG in `content[...]["image"]["source"]["bytes"]`; no `frame` key |
 | `render_depth(camera_name="default", width=None, height=None)` | Viewable grayscale depth PNG `image` block (near=bright, far=dark) + metric `depth_min`/`depth_max` (meters) in the `json` block |
 | `render_all(cameras=None, width=None, height=None)` | One `image` block per camera (multi-view snapshot) |
+| `get_world_point(camera_name="default", pixels=[[u, v], ...])` | Ground picked pixels to metric world coordinates via the depth buffer; `point` is the median over the valid samples, `points` aligns with the input pixels |
 | `open_viewer` / `close_viewer` | Interactive MuJoCo passive viewer |
 
 !!! note "Get a numpy frame"
     `sim.get_observation(robot_name)[camera_name]` → `np.uint8 (H, W, 3)`
 
 !!! tip "Discover the render surface"
-    `render`, `render_depth`, and `render_all` are all listed in
-    `sim.describe()["methods"]`, so an agent can enumerate the full rendering
-    surface in one call instead of guessing method names.
+    `render`, `render_depth`, `render_all`, and `get_world_point` are all
+    listed in `sim.describe()["methods"]`, so an agent can enumerate the full
+    rendering surface in one call instead of guessing method names.
 
 ## Physics
 
 | Action | Key params |
 |--------|-----------|
 | `step` | `n_steps=1` (max 100 000/call) |
-| `set_gravity` | `gravity=[x,y,z]` |
+| `set_gravity` | `gravity=[x,y,z]` or a scalar z-component |
 | `set_timestep` | `timestep` |
 | `get_contacts` / `get_contact_forces` | - |
 | `apply_force` | `body_name`, `force`, `torque`, `point` |
@@ -102,8 +103,17 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `inverse_dynamics` | - (compensation torques to hold the current `qpos`/`qvel`) |
 | `forward_kinematics` | `body_name` (optional) |
 | `save_state` / `load_state` | snapshot/restore full physics |
+| `set_joint_positions` | `positions` (dict or ordered list), `robot_name` (optional) - write `qpos` directly + run FK (teleport / set an initial pose, bypassing actuators) |
+| `set_joint_velocities` | `velocities` (dict or ordered list), `robot_name` (optional) - write `qvel` directly (set an initial dynamic state) |
 | `get_energy` | - |
 | `get_sensor_data` | `sensor_name` (optional) |
+
+!!! tip "Discover the sim-state surface"
+    `get_state` plus the checkpoint (`save_state` / `load_state`) and
+    direct pose-setting (`set_joint_positions` / `set_joint_velocities`)
+    methods are all listed in `sim.describe()["methods"]`, so an agent can
+    learn how to snapshot/restore the world and set a deterministic initial
+    condition from one `describe()` call - no method-name guessing.
 
 ## Actions
 
@@ -129,7 +139,9 @@ A vector lets a policy's raw action chunk drive the arm directly without first z
 
 When a policy is run via `run_policy` / `eval_policy` / `run_multi_policy`, the simulation configures the policy's output keys with the robot's *action keys* via `set_robot_state_keys(robot_action_keys(robot_name))`. `robot_action_keys` returns the actuator short-names that `send_action` resolves - which are not always the robot's joints. Robots with passive / mimic finger joints (no driving actuator) or a tendon-driven gripper (an actuator with no matching joint name) have an actuator set distinct from their joint set, so keying a policy by `robot_joint_names` would emit keys that resolve to nothing and leave those DOFs unmoved. The default `robot_action_keys` mirrors `robot_joint_names` for backends whose actuators match their joints.
 
-The step horizon is given either as `duration` (seconds) or as `n_steps` (`duration = n_steps / control_frequency`; `n_steps` wins when both are set, and the legacy `max_steps` is an alias for `n_steps`). A non-positive `n_steps` or `control_frequency` is rejected up front with a structured `status="error"` dict naming the bad parameter - `start_policy` validates synchronously before the background rollout starts, so a malformed horizon never returns a false "started" success. `eval_policy` likewise rejects a non-positive `n_episodes`, `max_steps`, or `control_frequency` at the entry point (before `create_policy`), so a typo cannot produce a "successful" evaluation over zero or negative episodes.
+The step horizon is given either as `duration` (seconds) or as `n_steps` (`duration = n_steps / control_frequency`; `n_steps` wins when both are set, and the legacy `max_steps` is an alias for `n_steps`). A non-positive `n_steps` or `control_frequency` is rejected up front with a structured `status="error"` dict naming the bad parameter - `start_policy` validates synchronously before the background rollout starts, so a malformed horizon never returns a false "started" success. `eval_policy` likewise rejects a non-positive `n_episodes`, `max_steps`, or `control_frequency` at the entry point (before `create_policy`), so a typo cannot produce a "successful" evaluation over zero or negative episodes. The same entry-point check covers the two provider keyword bags: `policy_config` (splatted into `create_policy`) and `policy_kwargs` (splatted into `policy.get_actions`) must be dicts, so a `policy_config="host=127.0.0.1"` string returns a structured error naming the parameter instead of a bare `TypeError` from the splat - and, on the `start_policy` path, instead of a false "started" for a rollout that never produced an action.
+
+`action_horizon` (how many actions are consumed from each policy chunk before it is re-queried) is validated the same way at every entry point, so a horizon the rollout cannot run - `0`, a negative value, a float, `nan` - is a structured error rather than a value silently clamped to 1. `run_multi_policy` additionally accepts per-robot mappings (`instructions={robot: text}`, `action_horizon={robot: horizon}`): a key must name a robot driven by that call (i.e. a key of `policies`), because an unmatched key cannot be applied to anything - a robot omitted from a mapping keeps its documented default.
 
 Pass `seed=` to `run_policy` / `start_policy` for a reproducible single rollout: it reseeds Python / NumPy / torch / cuDNN and forwards `policy.reset(seed=...)`, so a stochastic policy (VLA action-chunk sampling, diffusion noise) produces the same trajectory on re-run of the same scene. Without a seed the rollout draws from the process-global RNG and can differ run to run. `eval_policy` already seeds per episode via the same mechanism.
 
@@ -170,10 +182,29 @@ A healthy masked rollout shows `rtc_prefetch_hits` near the chunk count and `rtc
 
 **Async-RTC in `eval_policy` (opt-in).** The success-rate eval path (`eval_policy` / `evaluate(success_fn=...)`) accepts the same `async_rtc` and `rtc_inference_timeout_s`, but defaults to `async_rtc=False`. The synchronous eval pauses the world during inference, so the success-rate is bit-stable and reproducible (the policy always sees the seam observation). Setting `async_rtc=True` evaluates a chunk-emitting policy under the realistic control latency it faces in deployment: the prefetch feeds the policy a slightly staler (mid-chunk) observation at the seam, so the measured success-rate can shift - that is the point, it measures robustness to inference latency. Either way the eval `{"json": {...}}` payload now carries the same six `rtc_*` fields (inference timing is reported even on the synchronous path). `async_rtc=True` is rejected on the benchmark/spec path (`evaluate_benchmark` / `evaluate(spec=...)`), which stays synchronous for bit-stable reproducibility; use `run_policy(async_rtc=...)` for benchmark-style wall-clock latency masking.
 
-`run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`, `stopped_early`, `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames`, `sim_time_s` (when the backend reports it) and the six `rtc_*` async-RTC telemetry fields above - so an agent can read the outcome programmatically (did it move? how many steps? was inference masked?) without regex-parsing the prose.
+`run_policy` returns a `{"json": {...}}` content block alongside the human-readable `text`, mirroring `eval_policy`. The json block carries the rollout facts as typed fields - `robot_name`, `policy`, `instruction`, `n_steps`, `elapsed_s`, `stopped_early`, `action_errors`, `video_path` (`None` when no MP4 was written), `video_frames`, `sim_time_s` (when the backend reports it) and the six `rtc_*` async-RTC telemetry fields above - so an agent can read the outcome programmatically (did it move? how many steps? was inference masked?) without regex-parsing the prose. The `status` reflects whether the robot *moved*, not merely whether every key resolved: a run where **no** step resolved any key (the robot never moved) returns `status="error"`, while a run where some keys resolve every step - e.g. a policy trained on a superset embodiment that emits one extra key the robot lacks - is operational and returns `status="success"` with a non-fatal `N/M action steps had unresolved keys` note and a `partial_action_failure_rate`.
 
-`eval_policy` accepts the same `video={...}` recording config as `run_policy` (`path` enables it, plus `fps` / `camera` / `width` / `height`), but writes **one MP4 per episode** with `_ep{i}` inserted into the filename (`eval.mp4` -> `eval_ep0.mp4`, `eval_ep1.mp4`, ...), so a multi-episode evaluation can be *watched* to see why episodes fail rather than only read as an aggregate `success_rate`. The written files are listed in the result json `video_paths`; the output path is validated and the camera probed up-front, so a bad camera fails the eval immediately instead of after N episodes of empty MP4s. `evaluate_benchmark` accepts the same `video={...}` config and records one MP4 per episode too, so a benchmark evaluation can be watched to see why episodes fail. Frames are captured synchronously on the eval thread (render is read-only over `mjData`), so recording does not perturb the bit-stable benchmark rollout.
+`eval_policy` accepts the same `video={...}` recording config as `run_policy` (`path` enables it, plus `fps` / `camera` / `width` / `height` - an unknown key or a non-positive size is a caller error, never silently ignored), but writes **one MP4 per episode** with `_ep{i}` inserted into the filename (`eval.mp4` -> `eval_ep0.mp4`, `eval_ep1.mp4`, ...), so a multi-episode evaluation can be *watched* to see why episodes fail rather than only read as an aggregate `success_rate`. The written files are listed in the result json `video_paths`; the output path is validated and the camera probed up-front, so a bad camera fails the eval immediately instead of after N episodes of empty MP4s. `evaluate_benchmark` accepts the same `video={...}` config and records one MP4 per episode too, so a benchmark evaluation can be watched to see why episodes fail. Frames are captured synchronously on the eval thread (render is read-only over `mjData`), so recording does not perturb the bit-stable benchmark rollout.
 | `replay_episode` | `repo_id`, `robot_name=None`, `episode=0` |
+
+!!! tip "Discover the benchmark scoring surface"
+    `evaluate_benchmark`, `list_benchmarks`, `register_benchmark_from_file`,
+    and `register_builtin_benchmarks` are listed in `sim.describe()["methods"]`, so an agent that can run a
+    policy from one `describe()` call can also discover how to score it
+    against a success/failure/dense_reward benchmark - and author a new
+    benchmark spec at runtime - without guessing the method names.
+
+**Built-in benchmarks.** `sim.register_builtin_benchmarks()` (or the module
+function `strands_robots.simulation.register_builtin_benchmarks()`) registers
+the benchmarks shipped with the library so they appear in `list_benchmarks()`
+and run via `evaluate_benchmark(...)` without hand-authoring a spec. It ships
+`go2_walk_forward` - a canonical velocity-tracking locomotion task for the
+Unitree Go2: succeed by walking the base past `x = 2 m` (`base_beyond_x`), fail
+on a topple (`base_tipped`) or a height collapse (`base_below_z`), and shape on
+a dense `base_velocity_tracking` (exp-kernel twist tracking) + `base_height` +
+`base_orientation` reward. Registration is opt-in (mirrors the on-demand LIBERO
+suite), so importing the library mutates no registry. `builtin_benchmark_specs()`
+returns the spec dicts to copy/fork as a starting point for your own task.
 
 ## Recording
 
@@ -200,7 +231,14 @@ Destructive - writes into model arrays. Recompile scene to undo.
 |--------|-------|
 | `list_urdfs` | Loaded URDFs/MJCFs in current world |
 | `register_urdf(name, path)` | Register additional asset |
-| `get_features(robot_name=None)` | Observation/action feature schema for recording |
+| `get_features(robot_name=None)` | Joint / actuator / camera / robot names of the scene (scoped to one robot with `robot_name`) - the source of truth for the action keys a policy must emit, and the feature schema used for recording |
+
+!!! tip "Discover the expected action keys"
+    `get_features` is listed in `sim.describe()["methods"]`, so an agent can
+    find it from one `describe()` call. When a policy's emitted action keys
+    resolve to no actuator, `run_policy` fails fast with an error that names
+    `get_features(robot_name=...)` as the way to inspect the keys the robot
+    actually expects - the recommended method and the discovery surface agree.
 
 ## See also
 

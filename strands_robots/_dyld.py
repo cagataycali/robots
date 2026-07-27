@@ -94,9 +94,13 @@ def _is_safe_to_reexec() -> bool:
     # Test runners - re-exec would detach from the collector.
     if "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ:
         return False
-    # ``python -c '...'`` sets argv[0] to '-c'; nothing safe to re-run.
+    # ``python -c '...'`` sets argv[0] to '-c' and ``python -`` / ``cmd |
+    # python`` / ``python - <<EOF`` set it to '-' (program read from stdin).
+    # Re-exec'ing either replays a stdin that has already been consumed, so the
+    # fresh interpreter reads EOF and exits 0 having run nothing - a silent
+    # no-op. Neither is safe to re-run; export the env var for children instead.
     argv0 = sys.argv[0] if sys.argv else ""
-    if argv0 in ("", "-c"):
+    if argv0 in ("", "-c", "-"):
         return False
     return True
 

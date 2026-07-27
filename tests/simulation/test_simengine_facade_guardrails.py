@@ -327,6 +327,62 @@ def test_verify_dataset_episodes_missing_parquet_reports_json_diagnostics(monkey
     assert diagnostics["root"] == "/tmp/does-not-exist-dataset-root"
 
 
+def test_verify_dataset_episodes_corrupt_parquet_is_structured_error(tmp_path):
+    """A corrupt episode parquet is reported, not raised past the facade.
+
+    ``pyarrow`` raises ``ArrowInvalid`` (a ``ValueError`` subclass) on a
+    truncated / foreign parquet. The facade caught only ``FileNotFoundError``
+    and ``ImportError``, so this escaped as a traceback out of an agent-callable
+    method that documents a status dict.
+    """
+    ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    (ep_dir / "file-000.parquet").write_bytes(b"truncated, not a parquet file")
+
+    class RootedSim(FakeSim):
+        def _active_dataset_root(self) -> str:
+            return str(tmp_path)
+
+    result = RootedSim().verify_dataset_episodes(2)
+
+    assert result["status"] == "error"
+    assert "verify_dataset_episodes" in result["content"][0]["text"]
+    diagnostics = result["content"][1]["json"]
+    assert diagnostics["expected"] == 2
+    assert diagnostics["actual"] == 0
+    assert diagnostics["sources_agree"] is False
+
+
+def test_verify_dataset_episodes_rejects_matching_count_with_unreadable_shard(tmp_path):
+    """Unreadable shards make the episode count a lower bound, so never certify.
+
+    With one shard readable (2 episodes) and one corrupt, an ``expected=2``
+    check must NOT pass: the corrupt shard may hold further episodes, so the
+    dataset cannot be certified complete. The broken file is named and reported
+    in the ``unreadable_files`` diagnostics.
+    """
+    pa_mod = pytest.importorskip("pyarrow")
+    pq_mod = pytest.importorskip("pyarrow.parquet")
+
+    ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    pq_mod.write_table(pa_mod.table({"episode_index": [0, 1], "length": [4, 4]}), ep_dir / "file-000.parquet")
+    (ep_dir / "file-001.parquet").write_bytes(b"truncated, not a parquet file")
+
+    class RootedSim(FakeSim):
+        def _active_dataset_root(self) -> str:
+            return str(tmp_path)
+
+    result = RootedSim().verify_dataset_episodes(2)
+
+    assert result["status"] == "error"
+    assert "UNREADABLE" in result["content"][0]["text"]
+    diagnostics = result["content"][1]["json"]
+    assert diagnostics["actual"] == 2
+    assert len(diagnostics["unreadable_files"]) == 1
+    assert "file-001.parquet" in diagnostics["unreadable_files"][0]
+
+
 def test_verify_dataset_episodes_import_error_is_structured_error(monkeypatch):
     """A missing optional dep behind the reader degrades to a structured error."""
     import strands_robots.dataset_recorder as dr
@@ -358,3 +414,92 @@ def test_get_contacts_not_implemented_on_base_facade():
     """Contact queries require a concrete physics backend to override the hook."""
     with pytest.raises(NotImplementedError, match="get_contacts"):
         FakeSim().get_contacts()
+
+
+def test_get_frame_not_implemented_on_base_facade():
+    """The raw-frame path (``get_frame``) is a backend hook: a subclass that
+    provides ``render`` but no raw ``(rgb, depth)`` path must fail loud.
+
+    ``get_frame`` is the numeric-array counterpart of ``render`` used by the
+    in-process consumers (hybrid compositor, dataset recorders, video writers).
+    Its contract states backends must never substitute silently wrong pixels --
+    failures raise. This pins that a backend which never overrides it inherits a
+    clear ``NotImplementedError`` naming the method, not a silent ``None`` or a
+    zero frame that would corrupt a recording downstream.
+    """
+    with pytest.raises(NotImplementedError, match="get_frame"):
+        FakeSim().get_frame()
+
+
+def test_get_camera_params_not_implemented_on_base_facade():
+    """Pinhole intrinsics/extrinsics (``get_camera_params``) are a backend hook.
+
+    A backend that has not implemented the camera-params path must raise a clear
+    ``NotImplementedError`` naming the method rather than returning bogus
+    intrinsics, so consumers (calibration, projection, synthetic-data export)
+    never silently trust a wrong camera model.
+    """
+    with pytest.raises(NotImplementedError, match="get_camera_params"):
+        FakeSim().get_camera_params()
+
+
+# Actionable "robot not found" on the policy-execution sites (#1306 follow-up)
+#
+# run_policy / eval_policy / evaluate_benchmark used to emit a bare
+# "Robot 'X' not found." (or ".. Loaded: [...]") on a mistyped robot_name,
+# unlike the ~9 lookup sites #1306 routed through the backend helper. These pin
+# that all three now surface the close-match + available-list + discovery action
+# via the backend-agnostic SimEngine._unknown_robot_msg helper (list_robots-backed,
+# so every backend inherits it). They fail on the pre-fix bare strings.
+
+
+def test_unknown_robot_msg_offers_close_match_and_discovery_action():
+    """The base helper names the robot, suggests a close match, lists the world,
+    and points at the discovery action - not a dead-end string."""
+    msg = FakeSim(robots=("so100", "so101"))._unknown_robot_msg("so10")
+    assert "Robot 'so10' not found." in msg
+    assert "Did you mean:" in msg and "so100" in msg
+    assert "Available robots:" in msg
+    assert "list_robots" in msg
+
+
+def test_unknown_robot_msg_empty_world_points_at_add_robot():
+    """With no robots, the helper omits the close-match and points at add_robot."""
+    msg = FakeSim(robots=())._unknown_robot_msg("ghost")
+    assert "Robot 'ghost' not found." in msg
+    assert "add_robot" in msg
+    assert "Did you mean" not in msg
+
+
+def test_run_policy_unknown_robot_is_actionable():
+    """run_policy's not-found error carries the close-match + discovery action."""
+    result = FakeSim(robots=("so100",)).run_policy(robot_name="so10", policy_object=MockPolicy())
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "Robot 'so10' not found." in text
+    assert "Did you mean:" in text and "so100" in text
+    assert "list_robots" in text
+
+
+def test_eval_policy_unknown_robot_is_actionable():
+    """eval_policy's not-found error carries the close-match + discovery action."""
+    result = FakeSim(robots=("so100",)).eval_policy(robot_name="so10", policy_object=MockPolicy())
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "Robot 'so10' not found." in text
+    assert "Did you mean:" in text and "so100" in text
+    assert "list_robots" in text
+
+
+def test_evaluate_benchmark_unknown_robot_is_actionable(monkeypatch):
+    """evaluate_benchmark's not-found error carries the close-match + discovery
+    action (replacing the older bare 'Loaded: [...]' tail)."""
+    import strands_robots.simulation.benchmark as bench
+
+    monkeypatch.setattr(bench, "get_benchmark", lambda name: object())
+    result = FakeSim(robots=("so100", "so101")).evaluate_benchmark("any_bench", robot_name="so10")
+    assert result["status"] == "error"
+    text = result["content"][0]["text"]
+    assert "Robot 'so10' not found." in text
+    assert "Did you mean:" in text and "so100" in text
+    assert "list_robots" in text

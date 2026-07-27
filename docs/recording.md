@@ -65,6 +65,20 @@ When `root` already contains a LeRobotDataset (a `meta/` directory),
 LeRobotDataset, and is **not empty** is left untouched and reported as an error
 rather than clobbered - pass `overwrite=True` or choose a new/empty `root`.
 
+A resume inherits the existing dataset's schema, so `fps` must match the rate it
+was created at - a resume cannot change it. Requesting a different rate is
+refused, naming the on-disk value, rather than appending frames timestamped on
+the dataset's timebase instead of the one they were captured at:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", root=root, fps=60)  # dataset is 30 fps
+# -> error: "dataset fps differs: on-disk=30 vs requested=60
+#            (a resumed dataset keeps its on-disk rate; pass fps=30 to append at it)"
+```
+
+Pass `fps=30` to append at the dataset's rate, or `overwrite=True` to record a
+fresh dataset at 60.
+
 When you drive recording through the `run_policy` tool (which owns the
 `start_recording` -> rollout -> `stop_recording` cycle), forward the same
 subset with `dataset_cameras=`:
@@ -106,7 +120,10 @@ run_policy(
 ```
 
 `video["path"]` is required to enable recording; a falsy/absent path disables
-it. For `n_episodes > 1` an `_ep{i}` suffix is inserted before the extension
+it. Only the keys above are accepted: any other key (`filename`, `resolution`,
+...) is rejected with an error listing the accepted set, so a mistyped option
+cannot silently produce a rollout with no video or a video at the wrong
+resolution. For `n_episodes > 1` an `_ep{i}` suffix is inserted before the extension
 (`/tmp/rollout_ep0.mp4`, `_ep1`, ...) so episodes do not overwrite one another -
 matching the facade's own multi-episode naming. The returned `{"json": {...}}`
 block carries `video_paths`, the list of MP4s that actually landed on disk
@@ -236,6 +253,22 @@ never written. It resolves each camera's MP4 from `meta/info.json`'s
 `strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1, check_videos=True)`,
 which returns the same report dict.
 
+`verify-dataset` always produces a report - it never crashes on the corruption
+it exists to flag. A corrupt or foreign `meta/episodes` parquet, a non-v3
+`video_path` template, or a truncated / unreadable MP4 is reported as a problem
+string in the report (and a non-zero exit code), not surfaced as a raw
+traceback.
+
+Corruption confined to SOME episode parquet shards (the usual outcome of an
+interrupted rsync or hub download) is localised rather than fatal: each
+unreadable shard is named as a problem, the readable shards still supply
+`total_episodes` / `frames_per_episode`, and the info.json, video, and
+dead-column checks still run against them. Only a `meta/episodes` tree with no
+readable shard at all reports zero episodes. The same holds for
+`verify_dataset_episodes`, which additionally refuses to certify a dataset with
+unreadable shards even when the readable count matches `expected` - the count is
+then only a lower bound, reported in the `unreadable_files` diagnostics.
+
 ## Recording paths
 
 | Method | Extra needed | Output |
@@ -243,6 +276,13 @@ which returns the same report dict.
 | `start_recording` / `stop_recording` | `[lerobot]` | LeRobot v3 (parquet + MP4) |
 | `save_episode` | `[lerobot]` | Close current rollout as one episode (call once per `run_policy` for N episodes) |
 | `start_cameras_recording` / `stop_cameras_recording` | `[sim-mujoco]` alone | Plain MP4, no parquet |
+
+`fps`, `width`, `height` and `max_frames_per_camera` on the plain-MP4 recorders
+must be positive whole numbers - the same domain `run_policy(video={...})`
+enforces. An unusable value (`fps=0`, a negative frame cap) is a structured
+error naming the parameter rather than a recording that reports success and
+writes no file. Omit `width`/`height` to use each camera's configured
+resolution.
 
 ## Video codec (H.264 default, AV1 opt-in)
 
@@ -308,6 +348,32 @@ recorder.save_episode()
 recorder.finalize()
 ```
 
+### Re-recording into an existing `repo_id`
+
+`DatasetRecorder.create()` builds a **fresh** dataset. If the resolved dataset
+directory already exists, LeRobot's `create()` would raise a bare
+`FileExistsError` (its `mkdir` uses `exist_ok=False`). `create()` resolves this
+up front, matching the `start_recording` facade:
+
+- `overwrite=True` wipes the existing directory and creates a fresh dataset.
+- `overwrite=False` (default) on an existing dataset (a dir containing `meta/`)
+  raises a clear `FileExistsError` naming `overwrite=True` (fresh) and
+  `resume()` (append) - not a cryptic LeRobot error, and never a silent clobber.
+- An existing **empty** directory (e.g. from `tempfile.mkdtemp()`) is cleared so
+  `create()` does not dead-end on its own existence guard.
+- A non-empty **non-dataset** directory raises `ValueError` rather than deleting
+  unrelated files.
+
+```python
+# Re-run a capture script into the same repo_id, replacing the old dataset:
+recorder = DatasetRecorder.create(
+    repo_id="user/my_dataset", fps=30, joint_names=[...], overwrite=True,
+)
+```
+
+Use `resume()` (not `create(overwrite=True)`) when you want to **append**
+episodes to the existing dataset instead of replacing it.
+
 ## Instance methods
 
 | Method | What |
@@ -328,6 +394,45 @@ from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
 ds = LeRobotDataset(repo_id="user/my_dataset", root="/tmp/my_dataset")
 print(len(ds), ds[0].keys())
+```
+
+## Replay an episode
+
+`sim.replay_episode(repo_id, robot_name=..., episode=0, root=None, speed=1.0)`
+plays a recorded episode back through the sim: each recorded frame is one
+control step, applied via `send_action` and integrated for a full control period
+derived from the dataset fps, so a position-servo robot reproduces the recorded
+trajectory. `speed` scales only the wall-clock playback rate.
+
+Each recorded action index is bound to an action key. By default those are
+`robot_action_keys(robot_name)` — the robot's **actuator** keys, which is the
+ordering the recorder writes the `action` column in. Pass `action_key_map` only
+when the dataset's action ordering differs:
+
+```python
+sim.replay_episode(
+    "user/my_dataset",
+    robot_name="so101",
+    root="/tmp/my_dataset",
+    action_key_map=["1", "2", "3", "4", "5", "6"],  # one key per action index
+)
+```
+
+`action_key_map` must be a non-empty list/tuple of unique strings whose length
+equals the recorded action vector's width. A bare string (consumed one key per
+character), a non-string entry, a duplicate key, or a width mismatch is rejected
+with an actionable error before the dataset is fetched — never truncated to fit.
+
+A `"success"` status means **every** frame reached the actuators. If a recorded
+action cannot be applied — e.g. the mapped keys resolve to no actuator on this
+robot — the replay aborts at that frame and returns `status="error"` with the
+frame index, how many frames were applied, and the unresolved keys:
+
+```python
+result = sim.replay_episode("user/my_dataset", robot_name="so101", action_key_map=["wrong"] * 6)
+result["status"]                                  # "error"
+result["content"][1]["json"]["unresolved_keys"]   # ['wrong', ...]
+result["content"][1]["json"]["frames_applied"]    # 0
 ```
 
 ## Stream back (no full download)
@@ -365,13 +470,20 @@ Useful kwargs (forwarded to `StreamingLeRobotDataset`, version-tolerant):
 `episodes=[...]` (subset without download), `buffer_size`, `max_num_shards`,
 `return_uint8=True` (default; halves frame bandwidth), and
 `drop_videos=True` (proprio-only — skips video decode entirely, so it works on
-edge devices without a torchcodec wheel).
+edge devices without a torchcodec wheel; requires `delta_timestamps` with at
+least one non-video key, otherwise `open()` raises `ValueError` rather than
+silently streaming video anyway).
+
+One kwarg is **not** tolerant-forwarded because its absence changes semantics:
+`repo_type="bucket"` requires `lerobot>=0.6.1` — on older versions `open()`
+raises `RuntimeError` instead of silently streaming from the versioned dataset
+namespace (a different storage system).
 
 For **training**, the upstream trainer uses the same engine:
 
 ```bash
-python -m lerobot.scripts.train policy=act \
-  dataset.repo_id=user/my_dataset dataset.streaming=true num_workers=4
+python -m lerobot.scripts.lerobot_train --policy.type=act \
+  --dataset.repo_id=user/my_dataset --dataset.streaming=true --num_workers=4
 ```
 
 > **macOS:** video streaming needs Homebrew ffmpeg on the dyld path. `import

@@ -120,14 +120,24 @@ class TestRouterValidatesVectorDims:
         assert result["status"] == "error"
         assert "'orientation'" in result["content"][0]["text"]
 
-    def test_color_wrong_length_rejected(self, sim):
-        # color is rgba (4)
+    def test_color_unhonorable_length_rejected(self, sim):
+        # color is rgb (3) or rgba (4); two components cannot be applied to the
+        # geom's rgba row without inventing the rest.
         result = sim._dispatch_action(
             "add_object",
-            {"name": "box1", "shape": "box", "color": [1, 0, 0]},
+            {"name": "box1", "shape": "box", "color": [1, 0]},
         )
         assert result["status"] == "error"
         assert "'color'" in result["content"][0]["text"]
+
+    def test_color_rgb_triple_forwarded(self, sim):
+        # The router used to require exactly 4 components, rejecting an RGB
+        # triple that add_object honors (alpha defaults to opaque).
+        result = sim._dispatch_action(
+            "add_object",
+            {"name": "box_rgb", "shape": "box", "color": [1, 0, 0]},
+        )
+        assert result["status"] == "success", result
 
     def test_non_numeric_vector_component_rejected(self, sim):
         result = sim._dispatch_action("set_gravity", {"gravity": [0, 0, "low"]})
@@ -177,16 +187,18 @@ class TestRouterNameRobotNameAlias:
 
 
 class TestRouterKwargsPassthrough:
-    """Methods with **kwargs in signature accept unknown params without error."""
+    """Methods declaring **kwargs receive the residual keys and own the check.
 
-    def test_router_skips_unknown_check_for_var_keyword_methods(self, sim):
-        # The router's unknown-parameter guard is skipped only for methods that
-        # genuinely declare **kwargs; extra keys are dropped (not rejected).
-        # Verified directly against the validator, because no dispatchable
-        # action currently relies on this branch: add_object used to, but its
-        # signature is identical across backends and now rejects unknown params
-        # instead of silently dropping them (see
-        # test_add_object_rejects_unknown_kwargs.py).
+    The router's unknown-parameter guard is skipped for those methods, so it
+    must hand the residual keys over rather than drop them: dropping would leave
+    the input neither validated nor used, which is how ``randomize`` /
+    ``set_obs_noise`` came to report a misspelled parameter as a successful
+    no-op (see test_domain_randomization_rejects_unknown_params.py). A
+    forwarding sink passes the keys to its callee; a discarding sink rejects
+    them. Verified directly against the validator with a signature-only stub.
+    """
+
+    def test_router_forwards_residual_keys_to_var_keyword_methods(self, sim):
         import inspect
 
         def fake(self, name, **kwargs):  # noqa: ANN001, ANN002, ANN202
@@ -195,8 +207,18 @@ class TestRouterKwargsPassthrough:
         sig = inspect.signature(fake)
         kwargs, err = sim._validate_and_build_kwargs("fake", "fake", sig, {"name": "x", "future_flag": True})
         assert err is None
-        # only declared params are forwarded; the extra key is dropped silently
-        assert kwargs == {"name": "x"}
+        assert kwargs == {"name": "x", "future_flag": True}
+
+    def test_router_still_rejects_unknown_keys_without_var_keyword(self, sim):
+        import inspect
+
+        def fake(self, name):  # noqa: ANN001, ANN202
+            """Signature-only stub; never called, its body is irrelevant."""
+
+        sig = inspect.signature(fake)
+        kwargs, err = sim._validate_and_build_kwargs("fake", "fake", sig, {"name": "x", "future_flag": True})
+        assert kwargs is None
+        assert err is not None and "future_flag" in err["content"][0]["text"]
 
 
 class TestToolSpecMethodParity:
@@ -246,6 +268,19 @@ class TestToolSpecMethodParity:
             result = sim._dispatch_action(action, bad_kwargs)
             # Router must reject; must NOT silently succeed with default values.
             assert result["status"] == "error", f"{action} silently accepted {bad_kwargs}"
+
+    def test_recompile_world_dead_helper_is_gone(self, sim):
+        """`_recompile_world` was an orphaned "nuke and pave" rebuild helper: no
+        caller invoked it (the scene-load path rebuilds through
+        ``scene_ops._recompile_preserving_state``), and it was never reachable
+        through the action dispatcher either -- ``_dispatch_action`` rejects any
+        leading-underscore action and no ``_ACTION_ALIASES`` entry maps to it.
+        Pin its removal so an unreachable, uncoverable branch cannot creep back."""
+        assert not hasattr(type(sim), "_recompile_world")
+        for action in ("recompile_world", "_recompile_world"):
+            result = sim._dispatch_action(action, {})
+            assert result["status"] == "error"
+            assert "Unknown action" in result["content"][0]["text"]
 
 
 class TestUnifiedNoWorldMessage:

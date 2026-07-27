@@ -92,7 +92,7 @@ def _resolve_robot_descriptions_module(name: str, info: dict) -> str | None:
         try:
             importlib.import_module(f"robot_descriptions.{candidate}")
             logger.warning(
-                "Resolved '%s' via naming heuristic → '%s'. "
+                "Resolved '%s' via naming heuristic -> '%s'. "
                 "Consider adding 'robot_descriptions_module' to the registry.",
                 name,
                 candidate,
@@ -178,18 +178,36 @@ _COPY_CLEAN_SKIP = frozenset({"README.md", "LICENSE", "CHANGELOG.md"})
 _COPY_CLEAN_SUFFIX = (".png", ".jpg", ".jpeg")
 
 
-def _copy_and_clean(src: Path, dst: Path) -> None:
+def _copy_and_clean(src: Path, dst: Path, *, reject_symlinks: bool = False) -> None:
     """Copy *src* tree to *dst*, skipping non-essential files at copy time.
 
     Previous implementation deleted matching files from *dst* after copytree,
     which meant a user's own ``README.md`` in the destination could be wiped.
     This version filters on read so only files from *src* are dropped.
+
+    Args:
+        src: Source tree to copy.
+        dst: Destination directory.
+        reject_symlinks: When ``True``, any symlinked entry inside *src* is
+            skipped at copy time.  Enable this when *src* is an untrusted or
+            externally sourced tree (e.g. a freshly cloned repository) whose
+            symlinks may point outside the tree.  The default ``symlinks=False``
+            behaviour of ``shutil.copytree`` *follows* nested symlinks, so a
+            malicious clone with ``robot_dir/cfg -> /etc`` would copy host files
+            into the asset cache without this guard.  Note this covers entries
+            *inside* *src* only: ``shutil.copytree`` follows a symlinked *src*
+            root before the ignore callback runs, so callers must validate the
+            root separately (see :func:`safe_join` with ``resolve_symlinks``).
     """
 
-    def _ignore(_dir: str, names: list[str]) -> list[str]:
-        return [
+    def _ignore(dir_path: str, names: list[str]) -> list[str]:
+        skip = [
             n for n in names if n in _COPY_CLEAN_SKIP or n.lower().endswith(_COPY_CLEAN_SUFFIX) or n.startswith(".git")
         ]
+        if reject_symlinks:
+            parent = Path(dir_path)
+            skip.extend(n for n in names if (parent / n).is_symlink() and n not in skip)
+        return skip
 
     shutil.copytree(str(src), str(dst), dirs_exist_ok=True, ignore=_ignore)
 
@@ -287,12 +305,14 @@ def _download_via_git(robots: dict[str, dict], dest_dir: Path) -> dict[str, str]
 
         for name, info in robots.items():
             asset_dir = info["asset"]["dir"]
-            src = safe_join(Path(clone_dir), asset_dir)
-            if not src.exists():
-                results[name] = f"failed: {asset_dir} not in menagerie"
-                continue
             try:
-                _copy_and_clean(src, safe_join(dest_dir, asset_dir))
+                # clone_dir holds a freshly cloned (untrusted) menagerie tree; resolve
+                # symlinks so an asset dir symlinked outside the clone cannot be copied out.
+                src = safe_join(Path(clone_dir), asset_dir, resolve_symlinks=True)
+                if not src.exists():
+                    results[name] = f"failed: {asset_dir} not in menagerie"
+                    continue
+                _copy_and_clean(src, safe_join(dest_dir, asset_dir), reject_symlinks=True)
                 results[name] = "downloaded"
             except Exception as exc:
                 results[name] = f"failed: {exc}"
@@ -319,13 +339,22 @@ def _download_from_github(name: str, info: dict, dest_dir: Path) -> str:
             reason = "timeout" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)[:100]
             return f"failed: git clone {reason}"
 
-        src = Path(clone_dir) / subdir if subdir else Path(clone_dir)
+        try:
+            # clone_dir holds a freshly cloned (untrusted) tree and *subdir* comes
+            # from the registry entry, so both escape routes must be closed before
+            # the copy: a lexical '../' component, and a subdir that is itself a
+            # symlink out of the clone.  The nested-symlink filter in
+            # _copy_and_clean cannot cover the latter - copytree follows a
+            # symlinked *root* before the ignore callback runs.
+            src = safe_join(Path(clone_dir), subdir, resolve_symlinks=True) if subdir else Path(clone_dir)
+        except ValueError as exc:
+            return f"failed: {exc}"
         if not src.exists():
             return f"failed: subdir '{subdir}' not found in {repo}"
 
         dst = safe_join(dest_dir, asset_dir)
         try:
-            _copy_and_clean(src, dst)
+            _copy_and_clean(src, dst, reject_symlinks=True)
             return "downloaded"
         except Exception as exc:
             return f"failed: {exc}"

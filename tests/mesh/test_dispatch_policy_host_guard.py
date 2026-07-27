@@ -34,16 +34,28 @@ class _RecordingRobot:
         return {"status": "idle"}
 
     def _execute_task_sync(
-        self, instruction: str, provider: str, port: Any, host: str, duration: float, **kw: Any
+        self,
+        instruction: str,
+        policy_port: Any = None,
+        policy_host: str = "localhost",
+        policy_provider: str = "groot",
+        duration: float = 30.0,
+        **kw: Any,
     ) -> dict[str, Any]:
         self.executed = True
-        return {"executed": instruction, "host": host}
+        return {"executed": instruction, "host": policy_host}
 
     def start_task(
-        self, instruction: str, provider: str, port: Any, host: str, duration: float, **kw: Any
+        self,
+        instruction: str,
+        policy_port: Any = None,
+        policy_host: str = "localhost",
+        policy_provider: str = "groot",
+        duration: float = 30.0,
+        **kw: Any,
     ) -> dict[str, Any]:
         self.started = True
-        return {"started": instruction, "host": host}
+        return {"started": instruction, "host": policy_host}
 
 
 def test_dispatch_rejects_off_allowlist_policy_host_execute() -> None:

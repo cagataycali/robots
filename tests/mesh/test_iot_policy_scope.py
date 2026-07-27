@@ -56,7 +56,10 @@ class TestRobotPolicy:
         assert "${iot:Connection.Thing.ThingName}/response/*" in joined
         assert "/strands/broadcast" in joined
         assert "/strands/safety/estop" in joined
-        assert "/strands/+/presence" in joined
+        # Receive is a topic/ (data-plane) grant: AWS treats MQTT '+' literally
+        # there, so presence delivery only matches with the IAM '*' wildcard.
+        assert "/strands/*/presence" in joined
+        assert "/strands/+/presence" not in joined
 
     def test_own_health_subscribable_but_not_receivable(self):
         """Issue #253: Subscribe permits own ${ThingName}/* (incl. health)

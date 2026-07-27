@@ -139,6 +139,7 @@ class VeraWebsocketClient:
         return self._mnp.unpackb(resp)
 
     def close(self) -> None:
+        """Close the underlying websocket if open (best-effort and idempotent)."""
         if self._ws is not None:
             try:
                 self._ws.close()

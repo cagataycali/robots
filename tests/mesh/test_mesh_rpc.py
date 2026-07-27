@@ -54,13 +54,25 @@ class _FakeRobot:
         return {"ok": True}
 
     def _execute_task_sync(
-        self, instruction: str, provider: str, port, host: str, duration: float, **kw: Any
+        self,
+        instruction: str,
+        policy_port: Any = None,
+        policy_host: str = "localhost",
+        policy_provider: str = "groot",
+        duration: float = 30.0,
+        **kw: Any,
     ) -> dict[str, Any]:
-        self.calls.append(("execute", {"instruction": instruction, "provider": provider, "duration": duration}))
+        self.calls.append(("execute", {"instruction": instruction, "provider": policy_provider, "duration": duration}))
         return {"executed": instruction}
 
     def start_task(
-        self, instruction: str, provider: str, port, host: str, duration: float, **kw: Any
+        self,
+        instruction: str,
+        policy_port: Any = None,
+        policy_host: str = "localhost",
+        policy_provider: str = "groot",
+        duration: float = 30.0,
+        **kw: Any,
     ) -> dict[str, Any]:
         self.calls.append(("start", {"instruction": instruction}))
         return {"started": instruction}

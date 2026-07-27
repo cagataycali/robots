@@ -302,6 +302,7 @@ class Cosmos3Policy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"cosmos3"``)."""
         return "cosmos3"
 
     @property

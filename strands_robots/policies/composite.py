@@ -121,6 +121,7 @@ class CompositePolicy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Provider name for identification (always ``"composite"``)."""
         return "composite"
 
     @property

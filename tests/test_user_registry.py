@@ -189,35 +189,38 @@ class TestRegisterRobotValidation:
 
 
 class TestRegisterRobotAliasCollision:
-    """register_robot warns (does not fail) when an alias shadows an existing name.
+    """register_robot fails closed when an alias would collide at read time.
 
-    Collisions are surfaced at registration time as warnings so the user sees the
-    problem immediately rather than at silent resolution-order time. Registration
-    still succeeds.
+    The loader RAISES on an alias that shadows a canonical name or another
+    robot's alias on every subsequent read, so register_robot must reject such
+    an alias at write time rather than persist it. Otherwise a "successful"
+    registration bricks every get_robot/resolve_name call process-wide until
+    user_robots.json is hand-edited.
     """
 
-    def test_alias_shadowing_package_canonical_name_warns(self, tmp_path, caplog):
+    def test_alias_shadowing_package_canonical_name_raises(self, tmp_path):
         robot_dir = _make_robot(tmp_path / "assets", name="botA", xml_name="a.xml")
-        with caplog.at_level(logging.WARNING, logger="strands_robots.registry.user_registry"):
+        with pytest.raises(ValueError, match="so100"):
             register_robot(name="botA", model_xml="a.xml", asset_dir=str(robot_dir), aliases=["so100"])
-        assert any("shadows an existing robot canonical name" in m for m in caplog.messages)
-        # Registration still succeeds despite the warning.
-        assert get_user_robots().get("bota") is not None
+        # Nothing persisted, and the registry still loads.
+        assert get_user_robots().get("bota") is None
+        assert get_robot("so100") is not None
 
-    def test_alias_already_used_by_another_user_robot_warns(self, tmp_path, caplog):
+    def test_alias_already_used_by_another_user_robot_raises(self, tmp_path):
         first_dir = _make_robot(tmp_path / "assets", name="botB", xml_name="b.xml")
         second_dir = _make_robot(tmp_path / "assets", name="botC", xml_name="c.xml")
         register_robot(name="botB", model_xml="b.xml", asset_dir=str(first_dir), aliases=["grabber"])
-        with caplog.at_level(logging.WARNING, logger="strands_robots.registry.user_registry"):
+        with pytest.raises(ValueError, match="grabber"):
             register_robot(name="botC", model_xml="c.xml", asset_dir=str(second_dir), aliases=["grabber"])
-        assert any("is already used by another robot" in m for m in caplog.messages)
-        assert get_user_robots().get("botc") is not None
+        # The second robot is not persisted; the first is still resolvable.
+        assert get_user_robots().get("botc") is None
+        assert get_robot("grabber") is not None
 
-    def test_unique_alias_emits_no_collision_warning(self, tmp_path, caplog):
+    def test_unique_alias_registers_successfully(self, tmp_path):
         robot_dir = _make_robot(tmp_path / "assets", name="botD", xml_name="d.xml")
-        with caplog.at_level(logging.WARNING, logger="strands_robots.registry.user_registry"):
-            register_robot(name="botD", model_xml="d.xml", asset_dir=str(robot_dir), aliases=["unique_grip_xyz"])
-        assert not any("shadows" in m or "already used" in m for m in caplog.messages)
+        register_robot(name="botD", model_xml="d.xml", asset_dir=str(robot_dir), aliases=["unique_grip_xyz"])
+        assert get_user_robots().get("botd") is not None
+        assert get_robot("unique_grip_xyz") is not None
 
 
 class TestRegisterRobotAssetDirResolution:

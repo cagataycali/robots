@@ -30,7 +30,35 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from strands_robots.simulation.base import unknown_kwargs_error
+
 logger = logging.getLogger(__name__)
+
+# Parameter names ``randomize`` / ``set_obs_noise`` accept. Both declare
+# ``**kwargs`` to match the ``**kwargs``-typed SimEngine base signature, and
+# ``randomize`` reads ``randomize_positions`` out of it for the MuJoCo-parity
+# error below - but nothing else there is used, so any other keyword is a caller
+# mistake and is rejected instead of dropped. ``randomize_positions`` and
+# ``position_noise`` stay accepted (not unknown) so code written against the
+# MuJoCo signature keeps producing Newton's explicit unsupported-axis error
+# rather than a confusing "unknown parameter".
+_RANDOMIZE_PARAMS: tuple[str, ...] = (
+    "randomize_colors",
+    "randomize_lighting",
+    "randomize_physics",
+    "randomize_positions",
+    "position_noise",
+    "mass_range",
+    "friction_range",
+    "color_range",
+    "seed",
+)
+_OBS_NOISE_PARAMS: tuple[str, ...] = (
+    "joint_pos_std",
+    "joint_vel_std",
+    "camera_jitter_px",
+    "seed",
+)
 
 
 class DomainRandomizationMixin:
@@ -98,15 +126,21 @@ class DomainRandomizationMixin:
             friction_range: ``(lo, hi)`` multiplicative scale on shape friction.
             color_range: ``(lo, hi)`` for uniform RGB sampling.
             seed: Optional seed for reproducible randomization.
-            **kwargs: Tolerated for MuJoCo-signature parity. Passing a truthy
-                ``randomize_positions`` returns an error: Newton does not yet
-                support object-position randomization.
+            **kwargs: Tolerated for MuJoCo-signature parity: ``randomize_positions``
+                and ``position_noise`` are accepted keywords, and a truthy
+                ``randomize_positions`` returns an error (Newton does not yet
+                support object-position randomization). Nothing else is
+                forwarded, so any other keyword is rejected with an error naming
+                the valid parameters instead of being silently dropped.
 
         Returns:
             Status dict. On success the ``json`` block carries the applied
-            multipliers; an error dict is returned when no world exists, a
-            range is invalid, or an unsupported axis is requested.
+            multipliers; an error dict is returned when a keyword is unknown, no
+            world exists, a range is invalid, or an unsupported axis is
+            requested.
         """
+        if kwargs_error := unknown_kwargs_error("randomize", kwargs, _RANDOMIZE_PARAMS):
+            return kwargs_error
         if self._world is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world (or load_scene) first."}]}
         if kwargs.get("randomize_positions"):
@@ -254,13 +288,18 @@ class DomainRandomizationMixin:
             camera_jitter_px: Max integer pixel shift applied to rendered
                 frames (uniform in ``[-px, px]`` per axis).
             seed: Optional seed for a reproducible noise stream.
-            **kwargs: Accepted for ``SimEngine.set_obs_noise`` signature
-                compatibility; ignored by the Newton backend.
+            **kwargs: Declared only to match the ``**kwargs``-typed
+                ``SimEngine.set_obs_noise`` signature; nothing is forwarded, so
+                any keyword arriving here is rejected with an error naming the
+                valid parameters rather than reporting an all-zero (no-op) noise
+                configuration as success.
 
         Returns:
-            Status dict echoing the configured noise, or an error dict when any
-            value is negative or non-finite.
+            Status dict echoing the configured noise, or an error dict when a
+            keyword is unknown or a value is negative or non-finite.
         """
+        if kwargs_error := unknown_kwargs_error("set_obs_noise", kwargs, _OBS_NOISE_PARAMS):
+            return kwargs_error
         for label, value in (
             ("joint_pos_std", joint_pos_std),
             ("joint_vel_std", joint_vel_std),

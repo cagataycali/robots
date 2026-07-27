@@ -258,6 +258,28 @@ TrainSpec(
 Only `pi0` / `pi05` / `pi0_fast` expose `use_relative_actions`; the flag is
 rejected (not silently ignored) for any other policy type.
 
+#### Quantile normalization (molmoact2, pi05)
+
+Some policies normalize `STATE`/`ACTION` with `NormalizationMode.QUANTILES`
+(currently `molmoact2` and `pi05`) rather than mean/std or min/max. Quantile
+normalization reads the dataset stats' quantile keys (`q01`..`q99`); a dataset
+recorded *before* quantile stats existed carries only mean/std/min/max, so
+lerobot either raises or silently mis-normalizes deep inside its stats plumbing
+at train time. `validate()` catches this at spec time: when the resolved policy
+normalizes with quantiles and a local `meta/stats.json` lacks the quantile keys,
+it returns an actionable problem naming lerobot's remedy:
+
+```bash
+python -m lerobot.scripts.augment_dataset_quantile_stats \
+    --repo-id=<your-dataset-repo-id> --root=/data/my_v3_dataset
+```
+
+Datasets recorded by `Robot.start_recording()` / `DatasetRecorder` on current
+lerobot already include quantile stats (lerobot's `compute_episode_stats`
+computes them by default), so they train `molmoact2` / `pi05` with no manual
+stats surgery. The check is conservative: a Hub dataset with no local cache is
+left unflagged (its quantiles are verified by lerobot when the shards load).
+
 #### Streaming a large Hub dataset (no full download)
 
 Real datasets (BitRobot / HIW-500, ~50-500 GB) do not fit on a single edge node.

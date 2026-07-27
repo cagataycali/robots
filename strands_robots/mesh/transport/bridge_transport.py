@@ -210,6 +210,13 @@ def _should_bridge(
     if not suffix:
         return False
 
+    # Camera S3-reference metadata (``camera/<cam>/ref``) is a small pointer to
+    # an offloaded frame, not the frame itself. It must reach cloud subscribers
+    # so they learn the S3 key, so it bridges regardless of the suffix filter
+    # (raw ``camera/<cam>`` frame topics still stay LAN-only).
+    if suffix.startswith("camera/") and suffix.endswith("/ref"):
+        return True
+
     # Exact match -- fast path.
     if suffix in allowed_suffixes:
         return True
@@ -607,18 +614,30 @@ class BridgeTransport:
     # Inspection
 
     def is_alive(self) -> bool:
+        """``True`` if *either* underlying transport is still connected.
+
+        The bridge stays usable while one side survives, so callers can keep
+        publishing to whichever leg is up.
+        """
         return self._zenoh.is_alive() or self._iot.is_alive()
 
     @property
     def zenoh(self) -> ZenohTransport:
+        """The wrapped local-mesh Zenoh transport (always published to)."""
         return self._zenoh
 
     @property
     def iot(self) -> IotMqttTransport:
+        """The wrapped AWS IoT MQTT transport (published to only for
+        bridged topics).
+        """
         return self._iot
 
     @property
     def bridge_suffixes(self) -> frozenset[str]:
+        """Topic suffixes whose messages are mirrored onto the IoT leg; all
+        other topics stay Zenoh-local.
+        """
         return self._bridge_suffixes
 
     @property
@@ -642,6 +661,18 @@ class BridgeTransport:
         drop, OSError from socket-level write) are absorbed; everything
         else propagates.
         """
+        # AWS IoT reserved topics ($aws/..., e.g. named-shadow updates) are
+        # cloud-plane only. They are meaningless on the Zenoh LAN (and would
+        # leak internal shadow state onto it), and they are not subject to the
+        # LAN/WAN bridge filter -- route them to the IoT leg exclusively.
+        if key.startswith("$aws/"):
+            if self._iot.is_alive():
+                try:
+                    self._iot.put(key, data)
+                except (RuntimeError, ConnectionError, OSError) as exc:
+                    logger.debug("[bridge] iot.put error on %s: %s", key, exc)
+            return
+
         # Always Zenoh (LAN is cheap; preserves existing behaviour).
         if self._zenoh.is_alive():
             try:
@@ -693,10 +724,9 @@ class BridgeTransport:
                 except (AttributeError, UnicodeDecodeError, json.JSONDecodeError):
                     # narrow per AGENTS.md > Review
                     # Learnings (#86) > "Exception Clauses Must Be Narrow".
-                    # Same tuple as the four wire handlers in core.py
+                    # Same tuple as the four wire handlers in ``strands_robots.mesh.core``
                     # (_on_cmd, _on_response, _on_safety_estop,
-                    # _on_safety_resume). Pinned by
-                    # ``test_wire_handler_narrow_except.py``.
+                    # _on_safety_resume).
                     payload = None
 
                 # Use the actual delivered topic (sample.key_expr), not the

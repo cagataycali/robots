@@ -256,7 +256,7 @@ def load_libero_suite(
     bddl_dir: str | Path | None = None,
     scene_dir: str | Path | None = None,
     max_steps: int | None = None,
-    init_jitter: float = 0.02,
+    init_jitter: float = 0.0,
     key_prefix: str = "libero",
     load_init_states: bool = True,
 ) -> dict[str, LiberoAdapter]:
@@ -273,7 +273,12 @@ def load_libero_suite(
             <task>.xml`` if the file exists; otherwise scene is left as
             ``None`` and the adapter assumes the scene is already loaded.
         max_steps: Forwarded to every :class:`LiberoAdapter`.
-        init_jitter: Forwarded to every :class:`LiberoAdapter`.
+        init_jitter: Per-episode xy jitter (metres) forwarded to every
+            :class:`LiberoAdapter`. Defaults to ``0.0`` to match
+            :class:`LiberoAdapter`'s own default - non-zero jitter perturbs
+            the canonical init states and puts checkpoints such as
+            ``nvidia/GR00T-N1.7-LIBERO`` out of distribution, so callers must
+            opt in explicitly.
         key_prefix: Registry key format is ``<key_prefix>-<suite>-<task>``.
             Pass ``key_prefix=""`` for ``<suite>-<task>``.
         load_init_states: When ``True`` (default), lazily import

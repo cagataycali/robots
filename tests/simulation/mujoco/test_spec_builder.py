@@ -84,10 +84,14 @@ class TestNormalizeSize:
         # An ellipsoid's three full diameters become per-axis radii (each /2).
         assert _normalize_size("ellipsoid", [0.1, 0.2, 0.3]) == [0.05, 0.1, 0.15]
 
-    def test_ellipsoid_falls_back_to_default_radii_when_size_too_short(self):
-        # A malformed (<3 component) size must not raise; it falls back to the
-        # documented 0.05 default extents (-> 0.025 per-axis radius).
-        assert _normalize_size("ellipsoid", []) == [0.025, 0.025, 0.025]
+    def test_ellipsoid_size_too_short_raises_instead_of_defaulting(self):
+        # Corrected contract: a <3 component ellipsoid size cannot express the
+        # request, and completing it from a hardcoded default compiled a
+        # differently-sized geom while add_object reported success (echoing the
+        # size the caller asked for). It is now rejected, so the caller learns
+        # which components the shape consumes.
+        with pytest.raises(ValueError, match=r"needs 3 'size' component"):
+            _normalize_size("ellipsoid", [])
 
     def test_unknown_shape_raises(self):
         with pytest.raises(ValueError, match="Cannot normalize size"):
@@ -364,6 +368,27 @@ class TestMutation:
     def test_remove_missing_body_returns_false(self):
         spec = SpecBuilder.build(SimWorld())
         assert SpecBuilder.remove_body(spec, "ghost") is False
+
+    def test_remove_body_added_since_the_last_compile(self):
+        """A body inserted after the last compile is still removable.
+
+        ``spec.body(name)`` resolves only names present at the last
+        ``compile()``/``recompile()``, so a just-added body is invisible to it
+        and reachable only through the ``spec.bodies`` enumeration. Without the
+        fallback scan, rolling back a half-added body removed nothing and the
+        orphan made every later recompile fail on the duplicate name.
+        """
+        spec = SpecBuilder.build(SimWorld())
+        model = spec.compile()
+        data = mujoco.MjData(model)
+
+        spec.worldbody.add_body(name="latecomer")
+        assert spec.body("latecomer") is None, "precondition: invisible to the typed accessor"
+
+        assert SpecBuilder.remove_body(spec, "latecomer") is True
+        assert [b.name for b in spec.bodies] == ["world"]
+        # The spec still compiles, and the name is free for a real object.
+        spec.recompile(model, data)
 
     def test_add_camera_then_recompile(self):
         w = SimWorld()
@@ -978,3 +1003,33 @@ class TestSpecAccessorDriftResilience:
         assert gripper.added_cameras[0]["name"] == "wrist"
         # The camera went to the scanned parent, not the worldbody fallback.
         assert spec.worldbody.added_cameras == []
+
+
+class TestPublicApiSurface:
+    """``__all__`` declares the public API; private helpers must stay out of it.
+
+    The underscore-prefixed module helpers (``_geom_type`` et al.) are internal
+    implementation detail consumed by sibling modules via explicit-name imports,
+    not through ``from spec_builder import *``. Listing them in ``__all__`` both
+    contradicts their private naming and pollutes the documented public surface.
+    """
+
+    def test_all_declares_only_public_names(self):
+        from strands_robots.simulation.mujoco import spec_builder
+
+        assert spec_builder.__all__ == ["SpecBuilder"]
+        assert all(not name.startswith("_") for name in spec_builder.__all__)
+
+    def test_private_helpers_remain_importable_by_name(self):
+        # Removing them from __all__ must not remove them as module attributes;
+        # scene_ops and simulation import them by explicit name.
+        from strands_robots.simulation.mujoco import spec_builder
+
+        for name in (
+            "_is_z0_ground_plane",
+            "_geom_type",
+            "_normalize_size",
+            "_validate_size",
+            "_target_quat",
+        ):
+            assert callable(getattr(spec_builder, name)), name

@@ -6,6 +6,11 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+if TYPE_CHECKING:
+    import numpy as np
+
+    from strands_robots.rendering import CameraParams
+
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _can_render,
@@ -89,6 +94,62 @@ def _save_render_png(output_path: str, png_bytes: bytes) -> str:
     return str(safe)
 
 
+def _cameras_recording_option_error(
+    method: str,
+    fps: Any,
+    width: Any,
+    height: Any,
+    max_frames_per_camera: Any,
+) -> dict[str, Any] | None:
+    """Reject a plain-MP4 recording option the recorder cannot honor.
+
+    Pre-flight guard shared by both plain-MP4 entry points
+    (:meth:`RenderingMixin.start_cameras_recording` and
+    :meth:`RenderingMixin.start_cameras_recording_synchronous`). Every one of
+    these knobs is a frame count or a pixel count, so the accepted domain is the
+    shared one the ``run_policy(video=...)`` dict already enforces
+    (:func:`~strands_robots.simulation.policy_runner.positive_whole_number_error`)
+    - a single source of truth, so the two recording surfaces cannot disagree on
+    what a usable ``fps`` is.
+
+    Without this guard each unusable value produced a ``status="success"``
+    recording that wrote no MP4 at all: ``fps=0`` killed the capture thread on
+    its first ``1 / fps``, ``fps=-1`` / ``nan`` / ``inf`` were refused by the
+    ffmpeg writer at flush time, ``fps="30"`` raised a ``TypeError`` on the
+    capture thread, ``max_frames_per_camera=0`` made ``len(buffer) >= cap`` true
+    for every frame, and a non-positive ``width``/``height`` failed every render
+    call - all reported as success by both ``start`` and ``stop``.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        fps: Capture/encode frame rate.
+        width: Per-frame width, or ``None`` for the camera/renderer default.
+        height: Per-frame height, or ``None`` for the camera/renderer default.
+        max_frames_per_camera: In-memory per-camera frame cap.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming the first
+        offending parameter, or ``None`` when every option is usable.
+    """
+    from strands_robots.simulation.policy_runner import positive_whole_number_error
+
+    # ``width``/``height`` are ``int | None``: ``None`` means "use the camera's
+    # configured resolution, else the renderer default", so it is skipped rather
+    # than rejected. ``fps`` and the frame cap have no such opt-out.
+    checks: tuple[tuple[str, Any], ...] = (
+        ("fps", fps),
+        ("max_frames_per_camera", max_frames_per_camera),
+        ("width", width),
+        ("height", height),
+    )
+    for param, value in checks:
+        if value is None and param in ("width", "height"):
+            continue
+        if text := positive_whole_number_error(value, param, method):
+            return {"status": "error", "content": [{"text": text}]}
+    return None
+
+
 class RenderingMixin:
     """Rendering + observation helpers mixed into ``Simulation``.
 
@@ -121,6 +182,12 @@ class RenderingMixin:
         # Provided by RandomizationMixin (set_obs_noise); render() applies
         # camera jitter through it. Stub so mypy accepts the cross-mixin call.
         def _maybe_jitter_frame(self, frame: Any) -> Any: ...
+
+        # Provided by ManipulationMixin (attach_bodies mode="kinematic");
+        # _apply_sim_action re-pins carried bodies after each substep. Stub so
+        # mypy accepts the cross-mixin call.
+        def _apply_kinematic_attachments(self) -> None:
+            """Provided by ``ManipulationMixin``; declared here for type-checkers."""
 
     def _validate_render_dims(self, width: int, height: int) -> dict[str, Any] | None:
         """reject non-positive render dims; convert MuJoCo's framebuffer
@@ -324,15 +391,23 @@ class RenderingMixin:
             if jnt_id < 0 and pfx:
                 jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0:
-                obs[jnt_name] = float(data.qpos[model.jnt_qposadr[jnt_id]])
                 # A FREE joint (6-DoF floating base) has no single hinge/slide
-                # position; its qpos is [xyz(3) + quat(4)] and qvel is
-                # [linvel(3) + angvel(3)]. Record its id so we can surface the
-                # base orientation + angular velocity below, and skip the
-                # scalar ``.vel`` for it (it isn't a 1-DoF joint).
+                # position: its qpos is [xyz(3) + quat(4)] and qvel is
+                # [linvel(3) + angvel(3)]. Emitting obs[<free-joint>] =
+                # qpos[jnt_qposadr] reports the base x-coordinate as a joint
+                # angle and silently drops the y/z position + the full
+                # orientation and twist - a degenerate, misleading scalar (and a
+                # duplicate of base_pos.x that pollutes a recorded
+                # observation.state). Record its id so the full base pose +
+                # twist is surfaced below as the structured base_pos /
+                # base_quat / base_lin_vel / base_ang_vel keys, and skip the
+                # scalar (and its ``.vel``) entirely - matching get_robot_state,
+                # which likewise excludes the free joint from the per-joint
+                # scalar state.
                 if model.jnt_type[jnt_id] == mj.mjtJoint.mjJNT_FREE:
                     free_jnt_id = jnt_id
                     continue
+                obs[jnt_name] = float(data.qpos[model.jnt_qposadr[jnt_id]])
                 # Per-joint velocity (hinge/slide): dof index addresses qvel.
                 # Additive key (``<name>.vel``) - existing position-only
                 # consumers (dataset recording, arm policies) are unaffected;
@@ -479,6 +554,10 @@ class RenderingMixin:
         if not controller_handled_stepping:
             for _ in range(max(1, n_substeps)):
                 mj.mj_step(model, data)
+                # Kinematic attachments (attach_bodies mode="kinematic")
+                # follow their parent every physics step, including the
+                # policy-driven path. Fast no-op when none are registered.
+                self._apply_kinematic_attachments()
 
         assert self._world is not None
         self._world.sim_time = data.time
@@ -548,9 +627,7 @@ class RenderingMixin:
         for key, value in action_dict.items():
             act_id = _lookup(mj.mjtObj.mjOBJ_ACTUATOR, key)
             if act_id >= 0:
-                fval = float(value)
-                self._warn_ctrl_clamp(model, act_id, pfx, key, fval, mj)
-                data.ctrl[act_id] = fval
+                self._write_ctrl(model, data, act_id, pfx, key, value, mj)
                 continue
 
             # Fallback: key is a joint name. Find the actuator that drives
@@ -578,13 +655,51 @@ class RenderingMixin:
                 unresolved.append(key)
                 continue
 
-            # Scale a logical command into the actuator's ctrlrange when the
-            # transmission is a tendon (gripper ctrlrange is e.g. [0, 255]
-            # tendon units, not a finger-joint position). Direct JOINT
-            # actuators keep the raw value (positions/torques in joint units).
-            data.ctrl[ai] = self._scale_ctrl_for_actuator(model, ai, float(value), mj)
+            self._write_ctrl(model, data, ai, pfx, key, value, mj)
 
         return unresolved
+
+    def _write_ctrl(
+        self,
+        model: Any,
+        data: Any,
+        act_id: int,
+        pfx: str,
+        key: str,
+        value: Any,
+        mj: Any,
+    ) -> None:
+        """Write one action value to ``data.ctrl[act_id]``, unit-mapping tendon drives.
+
+        The single ctrl-write path for BOTH spellings an action key may take -
+        the actuator name (``actuator8``) and the joint name
+        (``finger_joint1``). Both resolve to the same actuator, so both must
+        write the same ctrl value: a tendon gripper addressed by its actuator
+        name previously wrote the logical command verbatim, so the same
+        ``1.0`` that fully OPENED the gripper through the joint-name key left
+        it CLOSED (``1.0`` of a ``[0, 255]`` tendon ctrlrange) through the
+        actuator name - which is the spelling :meth:`robot_action_keys`
+        advertises and that a policy action vector binds to positionally.
+
+        Applies :meth:`_scale_ctrl_for_actuator` (a no-op for non-tendon
+        transmissions, so direct joint/position/torque actuators still write
+        the raw value) and then warns once on a silent MuJoCo clamp. Tendon
+        drives skip the clamp warning: the scaling has already mapped the
+        command into the ctrlrange on purpose, so a warning would be spurious.
+
+        Args:
+            model: Live ``mujoco.MjModel``.
+            data: Live ``mujoco.MjData`` (caller holds ``self._lock``).
+            act_id: Resolved actuator id to write.
+            pfx: Robot namespace prefix, for de-duplicated warnings.
+            key: Action key as the caller spelled it, for warnings.
+            value: Commanded value in the caller's logical units.
+            mj: The ``mujoco`` module.
+        """
+        ctrl_value = self._scale_ctrl_for_actuator(model, act_id, float(value), mj)
+        if int(model.actuator_trntype[act_id]) != int(mj.mjtTrn.mjTRN_TENDON):
+            self._warn_ctrl_clamp(model, act_id, pfx, key, ctrl_value, mj)
+        data.ctrl[act_id] = ctrl_value
 
     def _warn_unresolved_action_key(self, pfx: str, key: str, reason: str) -> None:
         """Warn once per (prefix, key) that an action key could not be applied.
@@ -833,7 +948,7 @@ class RenderingMixin:
                     "content": [
                         {
                             "text": (
-                                " Rendering unavailable (no OpenGL context). "
+                                "Rendering unavailable (no OpenGL context). "
                                 "Install EGL or OSMesa for offscreen rendering: "
                                 "apt-get install libosmesa6-dev"
                             )
@@ -858,12 +973,21 @@ class RenderingMixin:
                     }
                 label = camera_name
 
-            if cam_id >= 0:
-                renderer.update_scene(self._world._data, camera=cam_id, scene_option=self._get_viz_option())
-            else:
-                renderer.update_scene(self._world._data, scene_option=self._get_viz_option())
-
-            img = renderer.render().copy()
+            # Reading mjData (update_scene copies xpos/xquat/xmat/geom poses,
+            # and render() dereferences data.contact) races a concurrent
+            # mj_step from a policy worker or the step() loop, producing torn
+            # frames in recorded MP4s (upstream MuJoCo #191) and risking a
+            # native crash. The recorder daemon calls render() on its own
+            # thread, so this path is NOT covered by the blanket dispatch lock;
+            # serialize the mjData read + frame copy under self._lock. The
+            # .copy() inside the lock hands back an independent buffer so the
+            # PNG encoding below runs unlocked.
+            with self._lock:
+                if cam_id >= 0:
+                    renderer.update_scene(self._world._data, camera=cam_id, scene_option=self._get_viz_option())
+                else:
+                    renderer.update_scene(self._world._data, scene_option=self._get_viz_option())
+                img = renderer.render().copy()
             # Additive camera jitter (set_obs_noise); no-op when disabled.
             img = self._maybe_jitter_frame(img)
 
@@ -976,7 +1100,7 @@ class RenderingMixin:
                     "content": [
                         {
                             "text": (
-                                " Depth rendering unavailable (no OpenGL context). "
+                                "Depth rendering unavailable (no OpenGL context). "
                                 "Install EGL or OSMesa for offscreen rendering."
                             )
                         }
@@ -1102,6 +1226,330 @@ class RenderingMixin:
             }
         except Exception as e:
             return {"status": "error", "content": [{"text": f"Depth render failed: {e}"}]}
+
+    def get_frame(
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+    ) -> "tuple[np.ndarray, np.ndarray]":
+        """Render a camera to raw ``(rgb, depth)`` ndarrays (metric depth).
+
+        Programmatic counterpart of :meth:`render` / :meth:`render_depth`
+        (which wrap pixels in the agent-tool PNG envelope): returns the raw
+        ``(H, W, 3) uint8`` RGB frame and the ``(H, W) float32`` metric depth
+        buffer in meters, pixel-aligned, for in-process consumers such as
+        :class:`strands_robots.rendering.HybridCompositor`.
+
+        Depth semantics match :meth:`render_depth`: MuJoCo >= 3.2 returns
+        metric meters directly; NaN/inf are sanitized to the far clip
+        (``model.vis.map.zfar * model.stat.extent``) and values are clipped to
+        ``[0, zfar]`` -- so "sky" pixels are pinned to the far plane.
+
+        Holds ``self._lock`` for the render (scene read). The GL renderer is
+        cached per-thread (``_renderer_tls``), so this may be called from any
+        thread, but each calling thread pays its own GL-context cost -- prefer
+        a consistent render thread.
+
+        Args:
+            camera_name: named camera, or the free-camera tokens
+                (``None`` / ``""`` / ``"default"`` / ``"free"``).
+            width: image width; ``None`` uses the camera's configured
+                resolution (falling back to the engine default).
+            height: image height; ``None`` uses the camera's configured
+                resolution.
+
+        Returns:
+            ``(rgb, depth)`` -- ``(H, W, 3) uint8`` and ``(H, W) float32``.
+
+        Raises:
+            RuntimeError: no world created, or no GL context available.
+            KeyError: unknown camera name.
+            ValueError: invalid render dimensions.
+        """
+        if self._world is None or self._world._model is None or self._world._data is None:
+            raise RuntimeError(_NO_WORLD_MSG)
+
+        mj = _ensure_mujoco()
+        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
+        h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
+        if err := self._validate_render_dims(w, h):
+            raise ValueError(err["content"][0]["text"])
+
+        import numpy as _np
+
+        with self._lock:
+            renderer = self._get_renderer(w, h)
+            if renderer is None:
+                raise RuntimeError(
+                    "Rendering unavailable (no OpenGL context). "
+                    "Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
+                )
+            if camera_name in (None, "", "default", "free"):
+                cam_id = -1
+            else:
+                cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                if cam_id < 0:
+                    raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
+
+            scene_option = self._get_viz_option()
+            if cam_id >= 0:
+                renderer.update_scene(self._world._data, camera=cam_id, scene_option=scene_option)
+            else:
+                renderer.update_scene(self._world._data, scene_option=scene_option)
+            rgb = renderer.render().copy()
+
+            renderer.enable_depth_rendering()
+            try:
+                depth = renderer.render().copy()
+            finally:
+                renderer.disable_depth_rendering()
+
+            # Same sanitization as render_depth(): MuJoCo >= 3.2 depth is
+            # already metric meters; only scrub NaN/inf and clamp to [0, zfar].
+            extent = float(self._world._model.stat.extent)
+            zfar = float(self._world._model.vis.map.zfar) * extent
+
+        depth_m = _np.asarray(depth, dtype=_np.float32)
+        depth_m = _np.nan_to_num(depth_m, nan=zfar, posinf=zfar, neginf=0.0)
+        depth_m = _np.clip(depth_m, 0.0, zfar)
+        return _np.asarray(rgb, dtype=_np.uint8), depth_m
+
+    def get_camera_params(
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+    ) -> "CameraParams":
+        """Return pinhole :class:`~strands_robots.rendering.CameraParams`.
+
+        Named cameras: the world-from-camera pose comes from
+        ``data.cam_xpos`` / ``data.cam_xmat``. MuJoCo's camera basis already
+        matches the OpenGL optical convention (+X right, +Y up, -Z forward),
+        so the pose maps across without correction. Intrinsics ``K``: a
+        camera declared with an explicit physical sensor (MJCF
+        ``sensorsize`` / ``focal`` / ``principal`` / ``resolution``) gets its
+        ``K`` from ``model.cam_intrinsic`` / ``cam_sensorsize`` /
+        ``cam_resolution`` - non-square pixels (``fx != fy``) and an
+        off-center principal point are honored, matching what MuJoCo actually
+        rasterizes (see :meth:`_explicit_intrinsics_K` for the calibrated
+        sign conventions). All other cameras fall back to the vertical FOV
+        (``model.cam_fovy``, square pixels, principal point at the image
+        center). Clip planes are
+        ``model.vis.map.{znear,zfar} * model.stat.extent``.
+
+        Free camera (``None`` / ``""`` / ``"default"`` / ``"free"``): the same
+        view :meth:`get_frame` and :meth:`render` produce for ``cam_id = -1``,
+        so the two APIs stay symmetric and the hybrid compositor can composite
+        the default view. The pose is reconstructed from
+        ``mjv_defaultFreeCamera`` -- MuJoCo's own free-camera defaults, i.e.
+        ``model.vis.global_.{azimuth,elevation}`` about ``model.stat.center``
+        at ``1.5 * model.stat.extent`` -- and ``K`` from
+        ``model.vis.global_.fovy``. That view is a deterministic function of
+        the compiled model, so the params describe exactly what the renderer
+        draws.
+
+        Holds ``self._lock``. For a named camera it also forward-steps
+        kinematics (``mj_forward``, a write to ``mj_data``) so freshly placed
+        cameras have a valid pose even before the first ``step()``; the free
+        camera is derived from the model alone and needs no such write.
+
+        Args:
+            camera_name: a named camera, or a free-camera token (``None`` /
+                ``""`` / ``"default"`` / ``"free"``).
+            width: image width to compute ``K`` for; ``None`` uses the
+                camera's configured resolution (the engine default for the
+                free camera).
+            height: image height to compute ``K`` for.
+
+        Raises:
+            RuntimeError: no world created.
+            ValueError: the free camera is orthographic (``<visual><global
+                orthographic="true"/>``), which no pinhole ``K`` can represent.
+            KeyError: unknown camera name.
+        """
+        if self._world is None or self._world._model is None or self._world._data is None:
+            raise RuntimeError(_NO_WORLD_MSG)
+
+        mj = _ensure_mujoco()
+        import numpy as _np
+
+        from strands_robots.rendering import CameraParams
+
+        model = self._world._model
+        # The free camera is not a model camera: it has no name to resolve and
+        # no SimCamera entry, so its resolution and default size differ.
+        free_camera = camera_name in (None, "", "default", "free")
+        cam_cfg = None if free_camera else self._world.cameras.get(camera_name)
+
+        w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else int(width)
+        h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else int(height)
+
+        with self._lock:
+            extent = float(model.stat.extent)
+            znear = extent * float(model.vis.map.znear)
+            zfar = extent * float(model.vis.map.zfar)
+            if free_camera:
+                R, t, fovy_deg = self._free_camera_pose(mj, _np, model)
+                K_explicit = None
+            else:
+                R, t, fovy_deg = self._named_camera_pose(mj, model, self._world._data, camera_name)
+                cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                K_explicit = self._explicit_intrinsics_K(_np, model, cam_id, w, h)
+
+        if K_explicit is not None:
+            K = K_explicit
+        else:
+            fy = 0.5 * h / _np.tan(_np.deg2rad(fovy_deg) / 2.0)
+            fx = fy  # MuJoCo uses square pixels; intrinsics from vertical FOV are symmetric.
+            K = _np.array([[fx, 0.0, 0.5 * w], [0.0, fy, 0.5 * h], [0.0, 0.0, 1.0]], dtype=_np.float64)
+        T_world_cam = _np.eye(4, dtype=_np.float64)
+        T_world_cam[:3, :3] = R
+        T_world_cam[:3, 3] = t
+        return CameraParams(K=K, T_world_cam=T_world_cam, width=w, height=h, znear=znear, zfar=zfar)
+
+    @staticmethod
+    def _explicit_intrinsics_K(np: Any, model: Any, cam_id: int, w: int, h: int) -> "np.ndarray | None":
+        """``K`` for a camera declared with explicit MJCF intrinsics, else ``None``.
+
+        MJCF cameras may declare a physical sensor (``sensorsize`` +
+        ``focal``/``focalpixel`` + ``principal``/``principalpixel`` +
+        ``resolution``). MuJoCo then rasterizes with that intrinsic model -
+        ``fovy`` is ignored, pixels may be non-square (``fx != fy``), and the
+        principal point moves off the image center - so deriving ``K`` from
+        ``fovy`` silently misplaces every unprojected point (~25 cm on the
+        review's repro camera). This helper builds ``K`` the way MuJoCo
+        actually draws.
+
+        Sign conventions were calibrated empirically against MuJoCo 3.8.1 by
+        least-squares fitting blob centroids of spheres at known camera-frame
+        positions over three sensor configurations (offset principal point,
+        non-square sensor, asymmetric focal): a positive MJCF ``principal``
+        offset shifts the principal point toward NEGATIVE ``u`` and ``v``::
+
+            fx = focal_x / (sensor_w / res_w)     fy = focal_y / (sensor_h / res_h)
+            cx = res_w/2 - principal_x / pixel_w  cy = res_h/2 - principal_y / pixel_h
+
+        (fitted (fx, fy, cx, cy) = (300, 300, 85, 80) for sensorsize
+        0.0064x0.0048, focal 0.006, principal (0.0015, 0.0008) at 320x240 -
+        exact to two decimals, and the residuals of the other two
+        configurations pin both signs.) The sensor fixes the view frustum;
+        rendering into a ``(w, h)`` viewport maps that same frustum onto the
+        full viewport, so ``K`` scales linearly per axis (verified: the blob
+        centroid at 640x480 lands at exactly 2x its 320x240 coordinates).
+
+        Args:
+            np: the imported numpy module (kept off this module's top level).
+            model: compiled ``MjModel``.
+            cam_id: camera id in ``model``.
+            w: requested image width in pixels.
+            h: requested image height in pixels.
+
+        Returns:
+            ``(3, 3)`` float64 ``K`` at ``(w, h)``, or ``None`` when the
+            camera declares no physical sensor (``cam_sensorsize`` zero -
+            the ``fovy`` path applies).
+        """
+        sensor_w = float(model.cam_sensorsize[cam_id][0])
+        sensor_h = float(model.cam_sensorsize[cam_id][1])
+        if sensor_w <= 0.0 or sensor_h <= 0.0:
+            return None
+        res_w = float(model.cam_resolution[cam_id][0])
+        res_h = float(model.cam_resolution[cam_id][1])
+        if res_w <= 0.0 or res_h <= 0.0:
+            # sensorsize without resolution does not compile in MuJoCo; be
+            # defensive anyway rather than dividing by zero.
+            return None
+        focal_x, focal_y, pp_x, pp_y = (float(v) for v in model.cam_intrinsic[cam_id])
+        pixel_w = sensor_w / res_w
+        pixel_h = sensor_h / res_h
+        fx = focal_x / pixel_w
+        fy = focal_y / pixel_h
+        cx = res_w / 2.0 - pp_x / pixel_w
+        cy = res_h / 2.0 - pp_y / pixel_h
+        sx = float(w) / res_w
+        sy = float(h) / res_h
+        return np.array(
+            [[fx * sx, 0.0, cx * sx], [0.0, fy * sy, cy * sy], [0.0, 0.0, 1.0]],
+            dtype=np.float64,
+        )
+
+    def _named_camera_pose(
+        self, mj: Any, model: Any, data: Any, camera_name: str | None
+    ) -> "tuple[np.ndarray, np.ndarray, float]":
+        """Return ``(R, t, fovy_deg)`` for the model camera ``camera_name``.
+
+        Caller must hold ``self._lock``: this forward-steps kinematics
+        (``mj_forward``, a WRITE to ``mj_data``) so that a camera placed since
+        the last ``step()`` still reports a valid ``cam_xpos``/``cam_xmat``.
+
+        Args:
+            mj: the imported ``mujoco`` module.
+            model: the compiled ``MjModel``.
+            data: the ``MjData`` whose kinematics are forward-stepped and read.
+            camera_name: name of a camera in the compiled model.
+
+        Returns:
+            ``(R, t, fovy_deg)`` -- 3x3 world-from-camera rotation, camera
+            position in world coordinates, and the vertical FOV in degrees.
+
+        Raises:
+            KeyError: no camera of that name exists in the model.
+        """
+        cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+        if cam_id < 0:
+            raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
+        mj.mj_forward(model, data)
+        R = data.cam_xmat[cam_id].reshape(3, 3).copy()
+        t = data.cam_xpos[cam_id].copy()
+        return R, t, float(model.cam_fovy[cam_id])
+
+    @staticmethod
+    def _free_camera_pose(mj: Any, np_mod: Any, model: Any) -> "tuple[np.ndarray, np.ndarray, float]":
+        """Return ``(R, t, fovy_deg)`` for the free camera of ``model``.
+
+        ``mujoco.Renderer.update_scene(data)`` (no camera argument, i.e. the
+        view :meth:`render` and :meth:`get_frame` draw) builds its camera with
+        ``mjv_defaultFreeCamera``, so this reads the same defaults back:
+        ``azimuth``/``elevation`` (degrees) orbiting ``lookat`` at
+        ``distance``, with the vertical FOV from ``model.vis.global_.fovy``.
+
+        The azimuth/elevation -> basis conversion mirrors MuJoCo's internal
+        ``mjv_updateCamera``: ``forward`` is the unit vector at those spherical
+        angles, ``up`` is the same vector rotated a quarter turn in the
+        elevation plane, and the eye sits ``distance`` back along ``-forward``.
+        The returned rotation is the world-from-camera basis in the OpenGL
+        optical convention (columns ``[right, up, -forward]``), matching the
+        named-camera path's ``cam_xmat``.
+
+        Args:
+            mj: the imported ``mujoco`` module.
+            np_mod: the imported ``numpy`` module.
+            model: the compiled ``MjModel``.
+
+        Returns:
+            ``(R, t, fovy_deg)`` -- 3x3 world-from-camera rotation, camera
+            position in world coordinates, and the vertical FOV in degrees.
+
+        Raises:
+            ValueError: the free camera is orthographic, which has no pinhole
+                intrinsics (a silently wrong perspective ``K`` is worse than a
+                loud refusal).
+        """
+        cam = mj.MjvCamera()
+        cam.type = mj.mjtCamera.mjCAMERA_FREE
+        mj.mjv_defaultFreeCamera(model, cam)
+        if bool(cam.orthographic):
+            raise ValueError(
+                'The free camera is orthographic (<visual><global orthographic="true"/>); '
+                "a pinhole CameraParams cannot represent an orthographic projection. "
+                "Add a perspective camera with add_camera() and pass its name."
+            )
+        az = float(np_mod.deg2rad(cam.azimuth))
+        el = float(np_mod.deg2rad(cam.elevation))
+        cos_el, sin_el = np_mod.cos(el), np_mod.sin(el)
+        forward = np_mod.array([cos_el * np_mod.cos(az), cos_el * np_mod.sin(az), sin_el], dtype=np_mod.float64)
+        up = np_mod.array([-sin_el * np_mod.cos(az), -sin_el * np_mod.sin(az), cos_el], dtype=np_mod.float64)
+        t = np_mod.asarray(cam.lookat, dtype=np_mod.float64).copy() - float(cam.distance) * forward
+        z_axis = -forward
+        x_axis = np_mod.cross(up, z_axis)
+        R = np_mod.column_stack([x_axis, up, z_axis])
+        return R, t, float(model.vis.global_.fovy)
 
     def _list_camera_names(self) -> list[str]:
         """helper to list all camera names (model-defined + SimCamera aliases)
@@ -1350,11 +1798,17 @@ class RenderingMixin:
             output_dir: where to write ``{tag}__{cam}.mp4``. Validated against
                 ``..`` traversal / backslash / shell metacharacters / symlink;
                 set ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it to a sandbox.
-            fps: capture rate.
-            width/height: per-frame size.
+            fps: capture rate. Must be a positive whole number - the capture
+                loop's period is ``1 / fps``, so an unusable value is rejected
+                up front rather than killing the capture thread behind a
+                ``status="success"`` return.
+            width/height: per-frame size. ``None`` uses the camera's configured
+                resolution (else the renderer default); an explicit value must
+                be a positive whole number.
             name: filename tag (auto if None). Validated as a single path
                 component - separators / traversal / metacharacters rejected.
-            max_frames_per_camera: safety cap on in-memory buffers.
+            max_frames_per_camera: safety cap on in-memory buffers. Must be a
+                positive whole number; ``0``/negative would drop every frame.
         """
         import os as _os
         import tempfile as _tempfile
@@ -1364,6 +1818,14 @@ class RenderingMixin:
 
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+
+        # Reject a frame/pixel count the recorder cannot honor before any
+        # filesystem or capture-thread work: every one of these produced an
+        # empty recording that still reported success.
+        if error := _cameras_recording_option_error(
+            "start_cameras_recording", fps, width, height, max_frames_per_camera
+        ):
+            return error
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]
@@ -1442,21 +1904,14 @@ class RenderingMixin:
             # render calls per camera return the GL clear-colour
             # gradient before the context settles.
             #
-            # History: rounds 11/12/13 added thread-side warmup; round
-            # 14 reverted because the load-scene-without-mj_forward
-            # bug was bigger. #168 fixed mj_forward in load_scene,
-            # which made warmup unnecessary IN THE SLOW PATH. Round
-            # 17's prewarm-fresh-ep0 fast-path skips load_scene,
-            # leaving no per-recorder-thread render before capture.
-            # #168 tried main-thread warmup (thread-isolation
-            # made it ineffective). #168 re-applied the
-            # 2-pass thread-side warmup. #168 verification showed
-            # 2 passes was insufficient: image channel stayed cold for
-            # ~15 frames while wrist cleared at frame 3 - per-camera
-            # warmup latency varies across cameras (likely GPU
-            # command-buffer flush ordering).
-            #
-            # #168 (this code): replace fixed-pass warmup with an
+            # A fixed number of warmup passes is not enough: the image
+            # channel can stay cold for ~15 frames while the wrist
+            # camera clears by frame 3, because per-camera warmup
+            # latency varies across cameras (likely GPU command-buffer
+            # flush ordering). A main-thread warmup does not help
+            # either - the GL context is thread-bound, so priming the
+            # main thread leaves this daemon thread cold. So replace
+            # the fixed-pass warmup with an
             # adaptive warmup loop. Render each camera until it
             # produces output with column-stddev above the cold-
             # gradient threshold. The cold gradient artifact is uniform
@@ -1617,13 +2072,7 @@ class RenderingMixin:
         import os as _os
         import time as _time
 
-        try:
-            import imageio.v2 as imageio
-        except ImportError:
-            return {
-                "status": "error",
-                "content": [{"text": "imageio not installed. pip install imageio imageio-ffmpeg"}],
-            }
+        from strands_robots.rendering.video import encode_clip
 
         elapsed = _time.time() - state["started_at"]
         lines = [
@@ -1636,30 +2085,71 @@ class RenderingMixin:
             path = state["paths"][cam]
             errors = state["errors"][cam]
             frames_written = 0
+            frames_skipped = 0
             size_kb = 0.0
+            flush_error = None
             if frames_buffer:
-                writer = imageio.get_writer(path, fps=state["fps"], quality=8, macro_block_size=1)
+                # Shared encoder (strands_robots.rendering.video, issue #1537);
+                # same imageio/libx264 invocation as the previous inline writer.
+                #
+                # An MP4 stream requires a constant frame size, but the
+                # capture loop records whatever the live model renders -
+                # and a benchmark's per-episode scene reload can re-install
+                # a camera at different dimensions mid-recording (e.g. the
+                # LIBERO wrist camera). Encode the dominant-size run and
+                # count the rest as skipped instead of letting imageio's
+                # "All images in a movie should have same size" ValueError
+                # abort the whole flush (this method's contract is
+                # never-raise, best-effort).
+                shape_counts: dict[tuple[int, ...], int] = {}
+                for arr in frames_buffer:
+                    shape_counts[arr.shape] = shape_counts.get(arr.shape, 0) + 1
+                target_shape = max(shape_counts, key=lambda s: shape_counts[s])
+                to_encode = [arr for arr in frames_buffer if arr.shape == target_shape]
+                frames_skipped = len(frames_buffer) - len(to_encode)
                 try:
-                    for arr in frames_buffer:
-                        writer.append_data(arr)
-                        frames_written += 1
-                finally:
-                    writer.close()
+                    encode_clip(to_encode, path, fps=state["fps"])
+                    frames_written = len(to_encode)
+                except ImportError:
+                    return {
+                        "status": "error",
+                        "content": [{"text": "imageio not installed. pip install imageio imageio-ffmpeg"}],
+                    }
+                except Exception as e:  # noqa: BLE001 - best-effort flush must never raise
+                    flush_error = f"{type(e).__name__}: {e}"
+                    logger.warning("camera recorder flush failed for %r -> %s: %s", cam, path, flush_error)
+                if frames_skipped:
+                    logger.warning(
+                        "camera recorder flush for %r skipped %d/%d frames whose size didn't match "
+                        "the dominant %s (camera re-installed at different dimensions mid-recording?)",
+                        cam,
+                        frames_skipped,
+                        len(frames_buffer),
+                        target_shape,
+                    )
                 if _os.path.exists(path):
                     size_kb = _os.path.getsize(path) / 1024
-            lines.append(
+            line = (
                 f"   {cam:20s} {frames_written:>5d} frames  {size_kb:>7.1f} KB  "
                 f"({errors} errors)  -> {_os.path.basename(path)}"
             )
-            artifacts.append(
-                {
-                    "camera": cam,
-                    "path": path,
-                    "frames": frames_written,
-                    "errors": errors,
-                    "size_kb": size_kb,
-                }
-            )
+            if frames_skipped:
+                line += f"  [{frames_skipped} skipped: size mismatch]"
+            if flush_error:
+                line += f"  [flush failed: {flush_error}]"
+            lines.append(line)
+            artifact = {
+                "camera": cam,
+                "path": path,
+                "frames": frames_written,
+                "errors": errors,
+                "size_kb": size_kb,
+            }
+            if frames_skipped:
+                artifact["frames_skipped_size_mismatch"] = frames_skipped
+            if flush_error:
+                artifact["flush_error"] = flush_error
+            artifacts.append(artifact)
 
         return {
             "status": "success",
@@ -1726,13 +2216,18 @@ class RenderingMixin:
                 traversal / backslash / shell metacharacters / symlink; set
                 ``STRANDS_ROBOTS_VIDEO_ROOT`` to confine it to a sandbox.
             fps: encoded MP4 frame rate (and target capture rate when
-                ``on_frame`` fires more often than ``fps``).
+                ``on_frame`` fires more often than ``fps``). Must be a positive
+                whole number - the ffmpeg writer refuses anything else, so an
+                unusable value is rejected up front instead of surfacing as an
+                empty recording that reported success.
             width, height: per-frame size; defaults to the renderer's
-                native resolution.
+                native resolution. An explicit value must be a positive whole
+                number.
             name: filename tag (auto-generated UUID prefix when ``None``).
                 Validated as a single path component - separators / traversal
                 / metacharacters rejected.
-            max_frames_per_camera: safety cap on in-memory buffers.
+            max_frames_per_camera: safety cap on in-memory buffers. Must be a
+                positive whole number (``0``/negative would drop every frame).
                 Frames beyond the cap are silently dropped (status
                 visible via :meth:`get_cameras_recording_status`).
 
@@ -1754,6 +2249,14 @@ class RenderingMixin:
 
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+
+        # Reject a frame/pixel count the recorder cannot honor before any
+        # filesystem or capture-thread work: every one of these produced an
+        # empty recording that still reported success.
+        if error := _cameras_recording_option_error(
+            "start_cameras_recording_synchronous", fps, width, height, max_frames_per_camera
+        ):
+            return error
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]

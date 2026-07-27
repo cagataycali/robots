@@ -1144,6 +1144,24 @@ class TestReset:
         policy.reset()
         policy._policy.reset.assert_called_once()
 
+    def test_reset_propagates_to_processor_bridge(self):
+        """reset() resets the processor bridge so a finished episode's
+        preprocessor / normalizer state cannot leak into the next one.
+
+        The docstring for reset() guarantees cross-episode isolation, but every
+        other reset test nulls ``_processor_bridge``, leaving that propagation
+        unpinned. A live bridge must have its ``reset()`` called exactly once.
+        """
+        policy = _make_policy()
+        policy._loaded = True
+        policy._policy = MagicMock()
+        bridge = MagicMock()
+        policy._processor_bridge = bridge
+        policy.reset()
+        bridge.reset.assert_called_once_with()
+        # Inner policy is still reset in the same pass.
+        policy._policy.reset.assert_called_once()
+
     def test_reset_safe_when_not_loaded(self):
         policy = _make_policy()
         assert policy._policy is None
@@ -1402,6 +1420,52 @@ class TestRTCInit:
             policy._init_rtc()
             mock_logger.warning.assert_called_once()
         assert policy._rtc_enabled is False
+
+    @pytest.mark.parametrize("rtc_requested", [None, True, False])
+    def test_rtc_never_enabled_without_rtc_config(self, rtc_requested):
+        """RTC must never enable when the policy config has no rtc_config.
+
+        This is the invariant that lets ``_init_rtc`` read RTC parameters off
+        ``rtc_config`` unconditionally once enabled: reaching the parameter
+        block guarantees ``rtc_config is not None``. A ``predict_action_chunk``
+        method alone (present on every lerobot policy base class) must not be
+        enough to turn RTC on for any ``rtc_enabled`` request value.
+        """
+        policy = _make_policy()
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk = MagicMock()
+        # config exists but exposes no rtc_config attribute.
+        mock_policy.config = MagicMock(spec=[])
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = rtc_requested
+        policy._init_rtc()
+        assert policy._rtc_enabled is False
+        # Parameters stay unresolved (the config-None fallback is gone).
+        assert policy._rtc_execution_horizon is None
+        assert policy._rtc_max_guidance_weight is None
+
+    def test_rtc_params_default_when_config_omits_them(self):
+        """Enabled RTC with an rtc_config lacking the tuning attrs uses 10 / 10.0.
+
+        The rtc_config-is-None fallback was removed because ``getattr`` already
+        supplies these defaults when the config object omits the fields.
+        """
+        policy = _make_policy()
+        mock_policy = MagicMock()
+        mock_policy.predict_action_chunk = MagicMock()
+        # rtc_config present and enabled, but WITHOUT execution_horizon /
+        # max_guidance_weight attributes.
+        rtc_cfg = MagicMock(spec=["enabled"])
+        rtc_cfg.enabled = True
+        mock_policy.config.rtc_config = rtc_cfg
+        policy._policy = mock_policy
+        policy._loaded = True
+        policy._rtc_requested = None  # auto-detect
+        policy._init_rtc()
+        assert policy._rtc_enabled is True
+        assert policy._rtc_execution_horizon == 10
+        assert policy._rtc_max_guidance_weight == 10.0
 
 
 class TestRTCConfigSchemaContract:
@@ -1970,6 +2034,7 @@ class TestLoadModelPostprocessorWarning:
         policy.actions_per_step = 1
         policy.cache_model = False
         policy.revision = None
+        policy._molmoact2_norm_tag = None
         return policy
 
     def test_warns_without_postprocessor(self, caplog):
@@ -2125,6 +2190,42 @@ class TestToLerobotObservationCameraKeyMap:
         img = np.ones((480, 640, 3), dtype=np.uint8)
         out = policy._to_lerobot_observation({"front": img})
         assert out["observation.images.top"] is img
+
+    def test_strict_keys_without_map_raises_on_unmatched_camera(self):
+        """strict_keys=True fails loud when a camera name cannot bind by name.
+
+        The VLA-preprocessor remap path must mirror the batch path
+        (``_resolve_camera_targets``): with no ``camera_key_map`` and a camera
+        whose name matches no declared image feature, positional fallback would
+        silently feed the frame to the wrong model input. Under strict_keys the
+        remap must raise instead, and the message must name both the unmatched
+        robot key and the available model slot so the fix is actionable.
+        """
+        policy = self._policy(["top"], strict=True)
+        img = np.ones((480, 640, 3), dtype=np.uint8)
+        with pytest.raises(ValueError) as excinfo:
+            policy._to_lerobot_observation({"front": img})
+        msg = str(excinfo.value)
+        assert "strict_keys=True: cannot resolve camera keys" in msg
+        assert "front" in msg  # names the unmatched robot camera
+        assert "observation.images.top" in msg  # names the available model slot
+
+    def test_map_that_misses_one_camera_still_raises_under_strict(self):
+        """A partial camera_key_map does not silence strict for the uncovered cam.
+
+        One camera is bound by the map; a second, unmapped camera whose name
+        matches no declared feature would fall back positionally. Under
+        strict_keys that residual mismatch must still raise rather than route
+        the extra frame into the remaining free slot by position.
+        """
+        policy = self._policy(
+            ["top", "wrist"],
+            strict=True,
+            camera_key_map={"front": "observation.images.top"},
+        )
+        img = np.ones((480, 640, 3), dtype=np.uint8)
+        with pytest.raises(ValueError, match="strict_keys=True: cannot resolve camera keys"):
+            policy._to_lerobot_observation({"front": img, "side": img})
 
     def test_camera_key_map_prevents_positional_misrouting(self):
         """With two cameras the map binds each to its intended slot, not by order.

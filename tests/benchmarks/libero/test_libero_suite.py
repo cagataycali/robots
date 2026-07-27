@@ -140,6 +140,88 @@ class TestLoadLiberoSuite:
         assert registered == {}
 
 
+# Upstream-predicate registration + jitter default (issue: LIBERO dead e2e)
+
+
+class TestUpstreamPredicateVocabulary:
+    """Regression: real upstream LIBERO goals must register, not silently skip.
+
+    Every ``libero_object`` task ships a goal of the form
+    ``(:goal (And (In <obj> <container>)))`` (verified against the installed
+    ``libero`` 0.1.1 corpus). The parser normalises the predicate head to
+    lowercase, so the containment predicate must be registered under ``in``.
+    Before the fix the vocabulary only carried ``inside``; ``(In ...)`` raised
+    ``BDDLParseError`` and ``load_libero_suite`` returned ``{}`` (zero tasks).
+    """
+
+    def _libero_object_goal(self, obj: str, container: str) -> str:
+        # Mirrors the pinned upstream BDDL goal casing/structure exactly.
+        return (
+            f"(define (problem LIBERO_Floor_Manipulation)\n"
+            f"  (:language pick the {obj} and place it in the {container})\n"
+            f"  (:objects {obj} - object {container} - object)\n"
+            f"  (:goal (And (In {obj} {container}))))\n"
+        )
+
+    def test_libero_object_style_goal_registers(self, tmp_path):
+        suite_dir = tmp_path / "libero_object"
+        tasks = {
+            "pick_up_the_alphabet_soup_and_place_it_in_the_basket": (
+                "alphabet_soup_1",
+                "basket_1_contain_region",
+            ),
+            "pick_up_the_cream_cheese_and_place_it_in_the_basket": (
+                "cream_cheese_1",
+                "basket_1_contain_region",
+            ),
+        }
+        for stem, (obj, container) in tasks.items():
+            _write(suite_dir / f"{stem}.bddl", self._libero_object_goal(obj, container))
+
+        registered = load_libero_suite("libero_object", bddl_dir=suite_dir)
+
+        # Full task set registers (pre-fix this was {} - zero tasks).
+        assert len(registered) == len(tasks)
+        assert set(registered) == {f"libero-object-{stem}" for stem in tasks}
+        for name in registered:
+            assert get_benchmark(name) is not None
+
+    def test_in_goal_compiles_to_containment_predicate(self, tmp_path):
+        suite_dir = tmp_path / "libero_object"
+        _write(
+            suite_dir / "t.bddl",
+            self._libero_object_goal("milk_1", "basket_1_contain_region"),
+        )
+        registered = load_libero_suite("libero_object", bddl_dir=suite_dir)
+        adapter = registered["libero-object-t"]
+        # The compiled goal is a callable success predicate, not a no-op.
+        assert callable(adapter._success_fn)
+
+
+class TestSuiteJitterDefault:
+    """Regression: suite default jitter must match the adapter's own default.
+
+    A non-zero suite default silently perturbed every task's canonical init
+    state, putting checkpoints such as ``nvidia/GR00T-N1.7-LIBERO`` out of
+    distribution even for callers who never asked for jitter.
+    """
+
+    def test_suite_default_matches_adapter_default(self):
+        import inspect
+
+        from strands_robots.benchmarks.libero.adapter import LiberoAdapter
+
+        suite_default = inspect.signature(load_libero_suite).parameters["init_jitter"].default
+        adapter_default = inspect.signature(LiberoAdapter.__init__).parameters["init_jitter"].default
+        assert suite_default == adapter_default == 0.0
+
+    def test_registered_adapters_have_zero_jitter_by_default(self, tmp_path):
+        suite_dir = tmp_path / "libero_spatial"
+        _write(suite_dir / "t.bddl", "(define (problem t) (:goal (grasped cube)))")
+        registered = load_libero_suite("libero_spatial", bddl_dir=suite_dir)
+        assert registered["libero-spatial-t"]._init_jitter == 0.0
+
+
 # Package-root resolution (_resolve_libero_root)
 
 

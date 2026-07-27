@@ -37,11 +37,13 @@ class MsgSerializer:
 
     @staticmethod
     def to_bytes(data: dict) -> bytes:
+        """Pack a request dict to msgpack bytes, encoding numpy arrays and ModalityConfig values via the custom hook."""
         msgpack = _load_msgpack()
         return msgpack.packb(data, default=MsgSerializer._encode)
 
     @staticmethod
     def from_bytes(data: bytes) -> dict:
+        """Unpack msgpack bytes back into a dict, decoding numpy arrays and ModalityConfig values."""
         msgpack = _load_msgpack()
         return msgpack.unpackb(data, object_hook=MsgSerializer._decode)
 

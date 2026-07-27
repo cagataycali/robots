@@ -58,6 +58,12 @@ class ReachyMiniDriver(DeviceDriver):
 
     @property
     def identity(self) -> DeviceIdentity:
+        """Static Device Connect identity for the Reachy Mini head.
+
+        Returns a :class:`~device_connect_edge.types.DeviceIdentity` reporting
+        ``device_type="reachy_mini"``, the ``Pollen Robotics`` manufacturer, and
+        the configured host in the model string.
+        """
         return DeviceIdentity(
             device_type="reachy_mini",
             manufacturer="Pollen Robotics",
@@ -67,6 +73,11 @@ class ReachyMiniDriver(DeviceDriver):
 
     @property
     def status(self) -> DeviceStatus:
+        """Availability of the Reachy Mini; always reports ``"idle"``.
+
+        The head has no long-running task state, so it advertises itself as
+        available for commands at all times.
+        """
         return DeviceStatus(availability="idle")
 
     async def connect(self) -> None:
@@ -203,6 +214,23 @@ class ReachyMiniDriver(DeviceDriver):
         await self._send_cmd({"torque": True, "ids": ids})
         return {"status": "success", "enabled": motor_ids or "all"}
 
+    async def _disable_motors_impl(self, motor_ids: str = "") -> dict[str, Any]:
+        """Disable motors / torque off (un-gated core; callers enforce authz).
+
+        The emergency-stop handler invokes this directly so the ``@rpc()``
+        rpc-scope gate -- which sees a ``None`` caller in event-handler context
+        and would fail-closed under ``DEVICE_CONNECT_RPC_ALLOW`` -- cannot
+        silently deny the torque-off and leave motors live. ``_send_cmd``
+        raises when the hardware link is down, so a failed torque-off surfaces
+        to the caller rather than reporting a false ack.
+
+        Args:
+            motor_ids: Comma-separated motor IDs (empty = all).
+        """
+        ids = [s.strip() for s in motor_ids.split(",") if s.strip()] or None
+        await self._send_cmd({"torque": False, "ids": ids})
+        return {"status": "success", "disabled": motor_ids or "all"}
+
     @rpc()
     async def disableMotors(self, motor_ids: str = "") -> dict[str, Any]:
         """Disable motors (torque off).
@@ -213,9 +241,7 @@ class ReachyMiniDriver(DeviceDriver):
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc"):
             return authz_error(caller, "disableMotors")
-        ids = [s.strip() for s in motor_ids.split(",") if s.strip()] or None
-        await self._send_cmd({"torque": False, "ids": ids})
-        return {"status": "success", "disabled": motor_ids or "all"}
+        return await self._disable_motors_impl(motor_ids)
 
     # ── Move RPCs (REST) ──────────────────────────────────────
 
@@ -334,12 +360,18 @@ class ReachyMiniDriver(DeviceDriver):
         )
         return {"status": "success", "result": result}
 
-    @rpc()
-    async def stopMotion(self) -> dict[str, Any]:
-        """Stop all current motion."""
-        caller = get_rpc_source_device()
-        if not is_authorized_caller(caller, scope="rpc"):
-            return authz_error(caller, "stopMotion")
+    async def _stop_motion_impl(self) -> dict[str, Any]:
+        """Stop all current motion (un-gated core; callers enforce authz).
+
+        The emergency-stop handler invokes this directly so the ``@rpc()``
+        rpc-scope gate (``None`` caller in event context) cannot fail-closed
+        and drop the stop.
+
+        Surfaces daemon transport failure: :func:`reachy_transport.api`
+        returns ``{"error": ...}`` on any HTTP/connection failure WITHOUT
+        raising, so a stop issued against a down daemon would otherwise report
+        ``status="success"``. Raise instead so the caller sees a real failure.
+        """
         result = await asyncio.to_thread(
             api,
             self._host,
@@ -347,7 +379,17 @@ class ReachyMiniDriver(DeviceDriver):
             "/api/move/stop",
             "POST",
         )
+        if isinstance(result, dict) and "error" in result:
+            raise RuntimeError(f"stopMotion transport failure: {result['error']}")
         return {"status": "success", "result": result}
+
+    @rpc()
+    async def stopMotion(self) -> dict[str, Any]:
+        """Stop all current motion."""
+        caller = get_rpc_source_device()
+        if not is_authorized_caller(caller, scope="rpc"):
+            return authz_error(caller, "stopMotion")
+        return await self._stop_motion_impl()
 
     @rpc()
     async def getDaemonStatus(self) -> dict[str, Any]:
@@ -383,5 +425,37 @@ class ReachyMiniDriver(DeviceDriver):
             logger.warning("Ignoring emergencyStop from unauthorized source %s", device_id)
             return
         logger.warning("Emergency stop received from %s - disabling motors", device_id)
-        await self.stopMotion()
-        await self.disableMotors()
+        # Call the UN-GATED impls directly. The ``@rpc()``-decorated
+        # ``stopMotion`` / ``disableMotors`` re-check ``get_rpc_source_device()``,
+        # which is ``None`` in an event-handler context; with
+        # ``DEVICE_CONNECT_RPC_ALLOW`` set that gate fail-closes and the returned
+        # ``authz_error`` dicts were discarded, so the motors stayed live. This
+        # handler is already authorized above on ``scope="estop"``, so bypassing
+        # the rpc-scope gate here is correct.
+        #
+        # Attempt BOTH stop actions even if one fails (a safety handler must not
+        # skip torque-off because stopMotion's REST call errored) and surface
+        # any failure loudly instead of masking it behind a false ack. Torque
+        # off runs first so the definitive motor kill lands even if the REST
+        # stop hangs or errors.
+        failures: list[str] = []
+        try:
+            await self._disable_motors_impl()
+        # Recovery path: catch broadly. Hardware links raise transport-specific
+        # exceptions outside (RuntimeError, OSError) -- e.g. the Lite variant's
+        # WebSocketLink raises websockets.exceptions.ConnectionClosed
+        # (WebSocketException -> Exception) and the Zenoh variant raises its own
+        # publish errors. A safety handler must attempt BOTH stops regardless of
+        # the failing link type, so record and continue rather than crash out.
+        except Exception as exc:  # noqa: BLE001 - attempt-both e-stop recovery
+            failures.append(f"disableMotors: {exc}")
+        try:
+            await self._stop_motion_impl()
+        except Exception as exc:  # noqa: BLE001 - attempt-both e-stop recovery
+            failures.append(f"stopMotion: {exc}")
+        if failures:
+            logger.critical(
+                "Emergency stop from %s did NOT fully complete: %s",
+                device_id,
+                "; ".join(failures),
+            )

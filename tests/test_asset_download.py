@@ -239,6 +239,31 @@ def test_git_download_reports_clone_failure(tmp_path: Path) -> None:
     assert results["panda"].startswith("failed: git clone timeout")
 
 
+def test_git_download_rejects_symlinked_asset_dir_escaping_clone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cloned repo whose asset dir is a symlink pointing outside the clone must
+    not have its target copied into the cache (path-traversal via symlink)."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "model.xml").write_text("secret")
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    info = _entry("panda")
+
+    def _fake_clone(repo_url: str, clone_dir: str, **kw: object) -> None:
+        Path(clone_dir).mkdir(parents=True, exist_ok=True)
+        # Malicious/compromised clone: the robot dir is a symlink escaping the clone.
+        (Path(clone_dir) / "panda").symlink_to(outside)
+
+    with patch(f"{_MOD}._shallow_clone", side_effect=_fake_clone):
+        results = dl._download_via_git({"panda": info}, dest)
+
+    assert results["panda"].startswith("failed:")
+    assert "via symlink" in results["panda"]
+    assert not (dest / "panda").exists()  # nothing copied out of the clone
+
+
 def test_git_download_reports_missing_dir(tmp_path: Path) -> None:
     info = _entry("ghost")
     with patch(f"{_MOD}._shallow_clone"):  # clone leaves an empty tree
@@ -269,6 +294,55 @@ def test_github_download_copies_subdir(tmp_path: Path) -> None:
 
     assert result == "downloaded"
     assert (dest / "myrobot" / "model.xml").exists()
+
+
+def test_github_download_rejects_symlinked_subdir_escaping_clone(tmp_path: Path) -> None:
+    """A cloned repo whose registry-declared ``subdir`` is itself a symlink
+    pointing outside the clone must not have its target copied into the cache.
+
+    The nested-symlink filter cannot catch this: ``shutil.copytree`` follows a
+    symlinked *root* before the ignore callback sees anything, and the target's
+    entries are real files, so nothing gets filtered.
+    """
+    outside = tmp_path / "outside_secrets"
+    outside.mkdir()
+    (outside / "passwd").write_text("root:x:0:0")
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    info = _entry("myrobot", source={"type": "github", "repo": "owner/repo", "subdir": "sim-model"})
+
+    def _fake_clone(repo_url: str, clone_dir: str, **kw: object) -> None:
+        Path(clone_dir).mkdir(parents=True, exist_ok=True)
+        # Malicious/compromised repo: the declared subdir escapes the clone.
+        (Path(clone_dir) / "sim-model").symlink_to(outside)
+
+    with patch(f"{_MOD}._shallow_clone", side_effect=_fake_clone):
+        result = dl._download_from_github("myrobot", info, dest)
+
+    assert result.startswith("failed:")
+    assert "via symlink" in result
+    assert not (dest / "myrobot").exists()  # nothing copied out of the clone
+
+
+def test_github_download_rejects_traversing_subdir(tmp_path: Path) -> None:
+    """A registry-declared ``subdir`` with a lexical ``../`` escape is rejected
+    before any copy, rather than reading a sibling of the clone directory."""
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    info = _entry("myrobot", source={"type": "github", "repo": "owner/repo", "subdir": "../outside"})
+
+    def _fake_clone(repo_url: str, clone_dir: str, **kw: object) -> None:
+        Path(clone_dir).mkdir(parents=True, exist_ok=True)
+        # Sibling of the clone dir, reachable only via the '..' component.
+        sibling = Path(clone_dir).parent / "outside"
+        sibling.mkdir(exist_ok=True)
+        (sibling / "model.xml").write_text("<mujoco/>")
+
+    with patch(f"{_MOD}._shallow_clone", side_effect=_fake_clone):
+        result = dl._download_from_github("myrobot", info, dest)
+
+    assert result.startswith("failed:")
+    assert not (dest / "myrobot").exists()
 
 
 def test_github_download_reports_missing_subdir(tmp_path: Path) -> None:
@@ -578,3 +652,37 @@ def test_download_robots_resolves_named_robot(monkeypatch: pytest.MonkeyPatch, t
     git.assert_called_once()
     assert result["downloaded"] == 1
     assert result["downloaded_names"] == ["so100"]
+
+
+def test_git_download_rejects_nested_symlink_inside_asset_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cloned repo where the asset dir is a real directory but contains a
+    nested symlink pointing outside the clone must not copy the symlink target
+    into the cache.  This is the variant where the top-level safe_join check
+    passes (the dir itself is real) but the copytree would follow nested links.
+    """
+    outside = tmp_path / "outside_secrets"
+    outside.mkdir()
+    (outside / "passwd").write_text("root:x:0:0")
+    dest = tmp_path / "cache"
+    dest.mkdir()
+    info = _entry("panda")
+
+    def _fake_clone(repo_url: str, clone_dir: str, **kw: object) -> None:
+        Path(clone_dir).mkdir(parents=True, exist_ok=True)
+        robot_dir = Path(clone_dir) / "panda"
+        robot_dir.mkdir()
+        # Legitimate file inside the robot dir.
+        (robot_dir / "model.xml").write_text("<mujoco/>")
+        # Malicious nested symlink escaping the clone.
+        (robot_dir / "cfg").symlink_to(outside)
+
+    with patch(f"{_MOD}._shallow_clone", side_effect=_fake_clone):
+        results = dl._download_via_git({"panda": info}, dest)
+
+    # The download should succeed (the dir itself is valid) but the symlink
+    # must NOT be followed: the target's content must not appear in the cache.
+    assert results["panda"] == "downloaded"
+    assert (dest / "panda" / "model.xml").exists()
+    # The nested symlink target must not have been copied.
+    assert not (dest / "panda" / "cfg").exists()
+    assert not (dest / "panda" / "cfg" / "passwd").exists()

@@ -15,11 +15,13 @@ from __future__ import annotations
 import base64
 import inspect
 import io
+import logging
 import os
 import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -35,6 +37,7 @@ from strands_robots.simulation.policy_runner import (
     PolicyRunner,
     VideoConfig,
     _extract_frame_ndarray,
+    _RolloutVideoWriter,
 )
 from tests.simulation.mujoco._gl_probe import requires_gl
 
@@ -52,6 +55,10 @@ class FakeSim(SimEngine):
         self._step_count = 0
         self._sim_time = 0.0
         self._robots = {"fake_robot": self._joint_names}
+        # Real SimEngine backends expose a ``_world`` (with ``_backend_state``);
+        # default to None here so the recorder-finalize path is a no-op unless a
+        # test attaches one via ``_attach_recorder``.
+        self._world: Any = None
 
     # Implement abstract methods (bare minimum)
     def create_world(self, timestep=None, gravity=None, ground_plane=True):
@@ -247,6 +254,78 @@ def test_evaluate_without_cooperative_stop_is_not_flagged():
     assert payload["stopped_early"] is False
     assert payload["episodes_completed"] == 3
     assert payload["n_episodes"] == 3
+
+
+@requires_gl
+def test_evaluate_cooperative_stop_finalizes_in_progress_episode_video(tmp_path, monkeypatch):
+    """A cooperative stop must finalize the in-progress episode's video writer.
+
+    ``evaluate`` opens a fresh per-episode :class:`_RolloutVideoWriter` and
+    closes it when the episode finishes. When an ``on_frame`` hook raises
+    :class:`CooperativeStop` mid-episode, the loop unwinds before that normal
+    close runs, so the ``except CooperativeStop`` handler is responsible for
+    finalizing the writer of the interrupted episode. If it does not, the
+    imageio/ffmpeg writer (and its child process) leaks. This pins that every
+    opened writer is closed exactly once even on the early-stop path.
+    """
+    pytest.importorskip("mujoco")
+    pytest.importorskip("imageio_ffmpeg")
+
+    opened: list[str] = []
+    closed: list[str] = []
+    orig_open = _RolloutVideoWriter.open.__func__
+    orig_close = _RolloutVideoWriter.close
+
+    def spy_open(cls, sim, video, control_frequency):
+        writer, err = orig_open(cls, sim, video, control_frequency)
+        if writer is not None:
+            opened.append(writer.path)
+        return writer, err
+
+    def spy_close(self):
+        closed.append(self.path)
+        return orig_close(self)
+
+    monkeypatch.setattr(_RolloutVideoWriter, "open", classmethod(spy_open))
+    monkeypatch.setattr(_RolloutVideoWriter, "close", spy_close)
+
+    sim = Simulation()
+    sim.create_world()
+    sim.add_robot("arm", data_config="so101", position=[0.0, 0.0, 0.0])
+    sim.add_camera("cam", position=[0.0, 0.0, 0.8], target=[0.0, 0.2, 0.05])
+
+    # global_step is monotonic across episodes. With max_steps=4 each episode
+    # spans 4 steps: ep0 -> global 0..3 (completes and closes its writer),
+    # ep1 -> global 4,5 then step 6 raises. So the stop fires while ep1's
+    # writer is open, exercising the handler's writer-cleanup branch.
+    def hook(step, obs, action):
+        if step >= 6:
+            raise CooperativeStop("user stopped eval")
+
+    result = sim.eval_policy(
+        robot_name="arm",
+        policy_provider="mock",
+        n_episodes=4,
+        max_steps=4,
+        control_frequency=20.0,
+        success_fn=lambda obs: False,
+        on_frame=hook,
+        video={"path": str(tmp_path / "eval.mp4"), "fps": 20, "camera": "cam"},
+    )
+    sim.destroy()
+
+    assert result["status"] == "success"
+    payload = next(c["json"] for c in result["content"] if isinstance(c, dict) and "json" in c)
+    assert payload["stopped_early"] is True
+    # Exactly one episode fully completed before the mid-episode stop.
+    assert payload["episodes_completed"] == 1
+
+    # Two writers were opened (ep0 completed, ep1 interrupted). Both must be
+    # closed - the interrupted one via the CooperativeStop handler.
+    assert len(opened) == 2
+    assert set(opened) == set(closed), "in-progress episode video writer was not finalized on cooperative stop"
+    # The interrupted episode's partial MP4 was still written to disk.
+    assert (tmp_path / "eval_ep1.mp4").exists()
 
 
 def test_evaluate_calls_reset_per_episode():
@@ -805,3 +884,74 @@ class TestChunkNotTruncatedBelowActionsPerStep:
             f"{policy.get_actions_calls}x (expected 1 - the whole 30-step chunk "
             "should be consumed before re-querying)"
         )
+
+
+#
+# evaluate(): per-episode recorder finalize is fault-tolerant (issue #708)
+#
+# `_finalize_recorder_episode` rolls the attached LeRobot dataset_recorder over
+# to a fresh episode at the end of each eval rollout so the dataset records
+# per-episode boundaries instead of collapsing every rollout into one
+# mega-episode. A recorder failure at that boundary (a non-success status dict,
+# or an exception from `save_episode`) must NOT abort the eval: the rollouts
+# already happened, and losing the episode-split is strictly better than losing
+# the whole eval summary. These pin that fault-tolerance contract through the
+# public `evaluate()` API.
+
+
+class _FailingRecorder:
+    """Dataset-recorder stub whose per-episode `save_episode` fails.
+
+    `mode="non_success"` returns an error status dict; `mode="raise"` throws.
+    Reports a non-empty `episode_frame_count` so the finalize path actually
+    calls `save_episode` (an empty buffer is skipped by design).
+    """
+
+    def __init__(self, mode: str):
+        self.mode = mode
+        self.save_calls = 0
+
+    @property
+    def episode_frame_count(self) -> int:
+        return 5  # non-empty -> finalize will call save_episode
+
+    def save_episode(self) -> dict[str, Any]:
+        self.save_calls += 1
+        if self.mode == "raise":
+            raise RuntimeError("simulated recorder disk failure")
+        return {"status": "error", "content": [{"text": "disk full"}], "message": "disk full"}
+
+
+def _attach_recorder(sim: FakeSim, recorder: Any) -> None:
+    """Attach a dataset recorder to a FakeSim via the backend_state contract."""
+    sim._world = SimpleNamespace(_backend_state={"dataset_recorder": recorder})
+
+
+@pytest.mark.parametrize("mode", ["non_success", "raise"])
+def test_evaluate_survives_per_episode_recorder_save_failure(mode, caplog):
+    """A failing per-episode recorder finalize must not abort the eval.
+
+    Whether `save_episode` returns a non-success status or raises, `evaluate`
+    still completes every requested episode and returns a success summary; the
+    failure is logged, not propagated.
+    """
+    sim = FakeSim()
+    recorder = _FailingRecorder(mode)
+    _attach_recorder(sim, recorder)
+
+    policy = MockPolicy()
+    policy.set_robot_state_keys(sim.robot_joint_names("fake_robot"))
+
+    with caplog.at_level(logging.WARNING, logger="strands_robots.simulation.policy_runner"):
+        result = PolicyRunner(sim).evaluate("fake_robot", policy, n_episodes=2, max_steps=3)
+
+    # Eval survives and reports a normal summary despite the recorder failing.
+    assert result["status"] == "success"
+    payload = next(c["json"] for c in result["content"] if isinstance(c, dict) and "json" in c)
+    assert payload["episodes_completed"] == 2
+    assert payload["stopped_early"] is False
+
+    # The finalize was attempted once per episode (not silently skipped).
+    assert recorder.save_calls == 2
+    # The failure surfaced as a warning rather than an exception.
+    assert any("save_episode" in rec.message for rec in caplog.records)

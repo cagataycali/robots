@@ -13,6 +13,7 @@ background process tracked in an on-disk session store, and ``status``/``stop``/
 ``list`` manage it.
 """
 
+import dataclasses
 import json
 import logging
 import os
@@ -35,9 +36,57 @@ SESSION_DIR = Path.cwd() / ".strands_robots/.sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
 
 # Policy families that train an action expert on top of a frozen VLM. Only these
-# accept ``--policy.train_expert_only``; emitting it elsewhere is a hard error in
-# lerobot, so callers that pass it on an unsupported policy should be told why.
-_EXPERT_ONLY_POLICIES = {"pi0", "pi05", "pi0_fast", "smolvla"}
+# accept ``--policy.train_expert_only``; emitting it on any other policy is a hard
+# error in lerobot, so callers that pass it on an unsupported policy are told why.
+# The supported set is sourced LIVE from lerobot (the policy configs that declare a
+# ``train_expert_only`` field) so it tracks lerobot instead of drifting against a
+# hardcoded copy; the static snapshot below is the FALLBACK when lerobot is not
+# importable. pi0_fast is intentionally absent - its config has no such field.
+_EXPERT_ONLY_POLICIES_FALLBACK = frozenset({"pi0", "pi05", "smolvla"})
+
+
+def _expert_only_policy_types() -> frozenset[str]:
+    """LeRobot policy types whose config declares ``train_expert_only``.
+
+    Read live from lerobot's ``PreTrainedConfig`` registry so this tracks
+    lerobot (a policy that gains or loses expert-only support is picked up with
+    no change here) instead of drifting against a hardcoded copy. Falls back to
+    the documented static snapshot when lerobot is not importable.
+    """
+    try:
+        import lerobot.policies  # noqa: F401  (register_subclass side effect)
+        from lerobot.configs.policies import PreTrainedConfig
+
+        return frozenset(
+            name
+            for name, cfg_cls in PreTrainedConfig.get_known_choices().items()
+            if any(f.name == "train_expert_only" for f in dataclasses.fields(cfg_cls))
+        )
+    except Exception:  # noqa: BLE001 - offline / lerobot missing -> static fallback
+        return _EXPERT_ONLY_POLICIES_FALLBACK
+
+
+def _policy_config_field_names(policy_type: str) -> frozenset[str] | None:
+    """Field names declared by lerobot's config class for ``policy_type``.
+
+    Read live from lerobot's ``PreTrainedConfig`` registry so per-policy config
+    fields (e.g. ``dtype``, ``gradient_checkpointing``) are gated against the
+    ACTUAL policy config instead of a hardcoded guess. Returns ``None`` when
+    lerobot is not importable or ``policy_type`` is unknown, signaling callers to
+    pass the corresponding flag through unguarded rather than guess.
+    """
+    try:
+        import lerobot.policies  # noqa: F401  (register_subclass side effect)
+        from lerobot.configs.policies import PreTrainedConfig
+
+        cfg_cls = PreTrainedConfig.get_known_choices().get(policy_type)
+        if cfg_cls is None:
+            return None
+        return frozenset(f.name for f in dataclasses.fields(cfg_cls))
+    except Exception:  # noqa: BLE001 - offline / lerobot missing -> skip field gating
+        return None
+
+
 # Security: flags that must not be overridden via extra_flags passthrough.
 # These control file output paths, remote telemetry, and code-loading paths
 # that an LLM agent (or prompt injection) could abuse. Gated by a HIL
@@ -203,20 +252,57 @@ class SessionManager:
             logger.error(f"Error saving sessions: {e}")
 
     def add_session(self, name: str, info: dict[str, Any]) -> None:
+        """Persist a training session record under ``name``.
+
+        Loads the current on-disk sessions, upserts ``name`` -> ``info``
+        (an existing entry with the same name is overwritten), and writes the
+        map back to disk.
+
+        Args:
+            name: session key (e.g. the run/job name) to store the record under.
+            info: session metadata to persist (typically ``pid``, ``log_file``,
+                ``dataset``, and start timestamp).
+        """
         sessions = self._load_sessions()
         sessions[name] = info
         self._save_sessions(sessions)
 
     def remove_session(self, name: str) -> None:
+        """Delete the session stored under ``name`` if one exists.
+
+        A no-op when ``name`` is not tracked, so callers need not check first.
+
+        Args:
+            name: session key to remove.
+        """
         sessions = self._load_sessions()
         if name in sessions:
             del sessions[name]
             self._save_sessions(sessions)
 
     def get_session(self, name: str) -> dict[str, Any] | None:
+        """Return the stored metadata for a single session.
+
+        Args:
+            name: session key to look up.
+
+        Returns:
+            The session's info dict, or ``None`` if no session is tracked under
+            ``name``. Dead processes are pruned on load, so a returned record is
+            one whose PID either is still running or belonged to a finished run.
+        """
         return self._load_sessions().get(name)
 
     def list_sessions(self) -> dict[str, Any]:
+        """Return every currently-tracked session keyed by name.
+
+        Returns:
+            A ``name -> info`` map. Sessions whose PID is no longer a running
+            process are not dropped -- they are retained so ``status`` can still
+            report the final log tail -- but the load step is what derives the
+            live/finished distinction, so this never reports a stale PID as
+            running.
+        """
         return self._load_sessions()
 
 
@@ -260,7 +346,7 @@ def build_train_command(
     batch_size: int = 8,
     save_freq: int = 5000,
     device: str = "cuda",
-    dtype: str = "bfloat16",
+    dtype: str | None = None,
     gradient_checkpointing: bool = False,
     lora: bool = False,
     lora_r: int | None = None,
@@ -290,9 +376,10 @@ def build_train_command(
         raise ValueError(
             "lora and train_expert_only are mutually exclusive (both freeze the VLM). Pick one fine-tuning strategy."
         )
-    if train_expert_only and policy_type not in _EXPERT_ONLY_POLICIES:
+    expert_only_policies = _expert_only_policy_types()
+    if train_expert_only and policy_type not in expert_only_policies:
         raise ValueError(
-            f"train_expert_only is only valid for {sorted(_EXPERT_ONLY_POLICIES)} policies, not '{policy_type}'."
+            f"train_expert_only is only valid for {sorted(expert_only_policies)} policies, not '{policy_type}'."
         )
     if num_gpus < 1:
         raise ValueError(f"num_gpus must be >= 1, got {num_gpus}")
@@ -343,9 +430,30 @@ def build_train_command(
         cmd.append(f"--batch_size={batch_size}")
     if save_freq is not None:
         cmd.append(f"--save_freq={save_freq}")
+    # dtype and gradient_checkpointing are PER-POLICY config fields in lerobot:
+    # only some policy configs declare them (e.g. the pi0 family / xvla / eo1 for
+    # dtype; the pi0 family / diffusion / molmoact2 for gradient_checkpointing).
+    # Emitting --policy.dtype for a policy whose config lacks it (like the default
+    # ACT) makes draccus abort with "unrecognized arguments" before training even
+    # starts. Gate each flag on the resolved config's fields, sourced live so it
+    # tracks lerobot; when lerobot is not importable the field set is unknown and
+    # the flag passes through unguarded.
+    policy_fields = _policy_config_field_names(policy_type)
     if dtype:
+        if policy_fields is not None and "dtype" not in policy_fields:
+            raise ValueError(
+                f"policy_type '{policy_type}' has no 'dtype' config field in lerobot; "
+                "drop dtype= (only policies whose config declares it, e.g. the pi0 "
+                "family, accept --policy.dtype)."
+            )
         cmd.append(f"--policy.dtype={dtype}")
     if gradient_checkpointing:
+        if policy_fields is not None and "gradient_checkpointing" not in policy_fields:
+            raise ValueError(
+                f"policy_type '{policy_type}' has no 'gradient_checkpointing' config "
+                "field in lerobot; drop gradient_checkpointing= (only policies whose "
+                "config declares it accept --policy.gradient_checkpointing)."
+            )
         cmd.append("--policy.gradient_checkpointing=true")
     if train_expert_only:
         cmd.append("--policy.train_expert_only=true")
@@ -391,7 +499,7 @@ def lerobot_train(
     batch_size: int = 8,
     save_freq: int = 5000,
     device: str = "cuda",
-    dtype: str = "bfloat16",
+    dtype: str | None = None,
     gradient_checkpointing: bool = False,
     lora: bool = False,
     lora_r: int | None = None,
@@ -418,8 +526,9 @@ def lerobot_train(
     Memory-fit levers:
         ``lora`` and ``train_expert_only`` both freeze the VLM and are mutually
         exclusive; setting both fails fast. ``lora`` emits ``--peft.method_type=LORA``
-        plus the supplied ``--peft.*`` overrides. ``train_expert_only`` only
-        applies to pi0/pi05/pi0_fast/smolvla.
+        plus the supplied ``--peft.*`` overrides. ``train_expert_only`` applies
+        only to policies whose lerobot config exposes it (currently pi0/pi05/
+        smolvla; sourced live so it tracks lerobot).
 
     Overfit guard:
         ``val_episodes=N`` reserves the LAST N episodes for evaluation by training
@@ -451,13 +560,17 @@ def lerobot_train(
         batch_size: Training batch size.
         save_freq: Checkpoint save frequency in steps.
         device: Torch device (cuda, cuda:0, cpu, mps).
-        dtype: Policy dtype (bfloat16, float32).
+        dtype: Policy dtype (bfloat16, float32) for policies whose lerobot
+            config declares a dtype field (e.g. the pi0 family, xvla). Default
+            None lets lerobot pick; ACT and most policies have no dtype field,
+            and passing dtype= for them raises before launch.
         gradient_checkpointing: Trade compute for memory on supported policies.
         lora: Enable LoRA/PEFT fine-tuning (full-VLM fit on one GPU).
         lora_r: LoRA rank.
         lora_alpha: LoRA alpha (scaling = lora_alpha / r).
         lora_target_modules: PEFT target module spec (e.g. "all-linear").
-        train_expert_only: Freeze the VLM, train only the action expert (pi-family).
+        train_expert_only: Freeze the VLM, train only the action expert
+            (policies exposing train_expert_only: pi0/pi05/smolvla).
         val_episodes: Reserve the LAST N episodes as a held-out validation split.
         num_gpus: Number of GPUs; >1 launches via accelerate --multi_gpu.
         push_to_hub: Push the trained checkpoint to the HF Hub at the end.

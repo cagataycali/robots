@@ -335,6 +335,43 @@ class TestFullMassMatrixSignatureDrift:
         M = _full_mass_matrix(shim, model, data)
         assert np.allclose(M, reference)
 
+    def test_helper_falls_back_to_1d_only_legacy_signature(self, sim):
+        # Oldest binding: mj_fullM(model, dst, qM) accepts ONLY a raw 1-D sparse
+        # buffer and rejects the [m, 1] column form the first legacy attempt
+        # passes. The helper must fall through that inner TypeError to the flat
+        # 1-D call and still reconstruct the correct matrix. This pins the
+        # innermost fallback (the widest-compatibility call) the other drift
+        # tests never reach, because their shim accepts both buffer shapes.
+        model, data = sim._world._model, sim._world._data
+        mj.mj_forward(model, data)
+        reference = _full_mass_matrix(mj, model, data)
+
+        class _OneDLegacyShim:
+            """mujoco proxy whose mj_fullM accepts only (model, dst, qM_1d)."""
+
+            def __getattr__(self, attr):
+                return getattr(mj, attr)
+
+            @staticmethod
+            def mj_fullM(m, a, b):
+                # Reject the modern (model, data, dst) order.
+                import mujoco as _mj
+
+                if isinstance(a, _mj.MjData):
+                    raise TypeError("legacy binding: expected (model, dst, qM)")
+                # Reject the [m, 1] column buffer the first legacy attempt uses:
+                # only the raw 1-D sparse form is accepted here.
+                arr = np.asarray(b)
+                if arr.ndim != 1:
+                    raise TypeError("oldest binding: expected a 1-D sparse buffer")
+                assert isinstance(a, np.ndarray) and a.flags["WRITEABLE"]
+                assert arr.shape[0] == data.qM.shape[0]
+                a[...] = reference
+
+        shim = _OneDLegacyShim()
+        M = _full_mass_matrix(shim, model, data)
+        assert np.allclose(M, reference)
+
     def test_helper_returns_empty_for_zero_dof(self):
         # A model with no DoFs must return a well-typed (0, 0) array, never
         # crash in numpy on the empty buffer.
@@ -371,6 +408,77 @@ class TestStateCheckpointing:
     def test_load_nonexistent_checkpoint(self, sim):
         result = sim.load_state(name="doesnt_exist")
         assert result["status"] == "error"
+
+    def test_save_load_round_trips_ctrl(self, sim):
+        # ctrl (servo targets) MUST survive a checkpoint round-trip. Previously
+        # save_state used mjSTATE_FULLPHYSICS, which excludes ctrl/qfrc_applied,
+        # so the first step after load_state drove toward the pre-restore
+        # targets. Regression for that silent drop.
+        sim._world._data.ctrl[0] = 0.8
+        mj.mj_forward(sim._world._model, sim._world._data)
+
+        result = sim.save_state(name="ctrl_ckpt")
+        assert result["status"] == "success"
+
+        # Clobber ctrl after the checkpoint.
+        sim._world._data.ctrl[0] = -0.5
+        mj.mj_forward(sim._world._model, sim._world._data)
+        assert sim._world._data.ctrl[0] == pytest.approx(-0.5)
+
+        result = sim.load_state(name="ctrl_ckpt")
+        assert result["status"] == "success"
+        assert sim._world._data.ctrl[0] == pytest.approx(0.8)
+
+    def test_load_state_after_recompile_returns_structured_error(self, sim):
+        # A scene recompile that resizes the state vector (add_object inserts a
+        # free joint -> nq/nv grow) must invalidate an earlier checkpoint. The
+        # stale vector must NOT be applied: previously mj_setState raised a raw
+        # ValueError or silently misaligned qpos. Expect a structured error dict.
+        result = sim.save_state(name="pre_add")
+        assert result["status"] == "success"
+
+        add = sim.add_object(name="dropped_cube", shape="box", size=[0.05, 0.05, 0.05])
+        assert add["status"] == "success"
+
+        result = sim.load_state(name="pre_add")
+        assert result["status"] == "error"
+        assert "stale" in result["content"][0]["text"].lower()
+
+        # The checkpoint saved AFTER the mutation applies cleanly.
+        result = sim.save_state(name="post_add")
+        assert result["status"] == "success"
+        result = sim.load_state(name="post_add")
+        assert result["status"] == "success"
+
+    def test_load_state_after_same_shape_recompile_returns_error(self, sim):
+        # A same-shape recompile (remove one free-jointed object, add another)
+        # leaves nq/nv/na/nu unchanged but the joint addresses now map to
+        # different bodies. The recompile-generation stamp must catch this and
+        # return a structured error - applying the stale vector would silently
+        # teleport the new object into the old objects saved pose/velocity.
+        add1 = sim.add_object(name="obj_a", shape="sphere", size=[0.03])
+        assert add1["status"] == "success"
+
+        result = sim.save_state(name="with_a")
+        assert result["status"] == "success"
+
+        # Remove obj_a, add obj_b - same shape (one free joint each), so
+        # nq/nv/na/nu are identical after both mutations.
+        rm = sim.remove_object(name="obj_a")
+        assert rm["status"] == "success"
+        add2 = sim.add_object(name="obj_b", shape="sphere", size=[0.03])
+        assert add2["status"] == "success"
+
+        # The fingerprint must detect the stale checkpoint.
+        result = sim.load_state(name="with_a")
+        assert result["status"] == "error"
+        assert "stale" in result["content"][0]["text"].lower()
+
+        # A fresh checkpoint saved after the mutation applies cleanly.
+        result = sim.save_state(name="with_b")
+        assert result["status"] == "success"
+        result = sim.load_state(name="with_b")
+        assert result["status"] == "success"
 
 
 class TestInverseDynamics:
@@ -584,6 +692,36 @@ class TestRuntimeModification:
         assert model.body_mass[body_id] == pytest.approx(2.0)
         assert model.body_inertia[body_id] == pytest.approx([0.0, 0.0, 0.0])
 
+    def test_set_body_mass_rejects_nonfinite(self, sim):
+        """A non-finite mass is rejected instead of silently corrupting the model.
+
+        ``float('nan') <= 0`` and ``float('inf') <= 0`` are both ``False``, so a
+        bare ``mass <= 0`` guard lets NaN/+Inf slip through: the body's mass and
+        (mass-tracking) inertia would be set to NaN/Inf and the next ``mj_step``
+        would produce a non-finite ``qacc`` -- a silent physics corruption
+        reported as ``status="success"``. The guard must also reject non-finite
+        values, matching the finiteness contract already enforced by
+        ``set_timestep`` / ``set_gravity``.
+        """
+        model = sim._world._model
+        body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "box1")
+        good_mass = float(model.body_mass[body_id])
+        good_inertia = model.body_inertia[body_id].copy()
+        assert good_mass > 0 and (good_inertia > 0).all()
+
+        for bad in (float("nan"), float("inf"), -float("inf")):
+            result = sim.set_body_properties(body_name="box1", mass=bad)
+            assert result["status"] == "error", f"mass={bad!r} was not rejected"
+            assert "finite" in result["content"][0]["text"]
+            # Neither mass nor inertia was mutated by the rejected call.
+            assert model.body_mass[body_id] == pytest.approx(good_mass)
+            assert model.body_inertia[body_id] == pytest.approx(good_inertia)
+            # And the world remains integrable (no NaN leaked into the model).
+            mj.mj_forward(model, sim._world._data)
+            import numpy as np
+
+            assert np.all(np.isfinite(sim._world._data.qacc))
+
     def test_set_geom_color(self, sim):
         result = sim.set_geom_properties(geom_name="box_geom", color=[0, 1, 0, 1])
         assert result["status"] == "success"
@@ -601,8 +739,7 @@ class TestRuntimeModification:
     def test_set_geom_size_resizes_geom(self, sim):
         """set_geom_properties(size=...) writes the new half-extents into the
         live model so the next step / render sees the resized geom (no
-        recompile). Only the leading ``min(len(size), 3)`` entries are set,
-        matching MuJoCo's per-type geom_size layout."""
+        recompile). A box defines three half-extents, so all three are set."""
         geom_id = mj.mj_name2id(sim._world._model, mj.mjtObj.mjOBJ_GEOM, "box_geom")
         result = sim.set_geom_properties(geom_name="box_geom", size=[0.25, 0.3, 0.35])
         assert result["status"] == "success"
@@ -612,16 +749,23 @@ class TestRuntimeModification:
         assert new_size[1] == pytest.approx(0.3)
         assert new_size[2] == pytest.approx(0.35)
 
-    def test_set_geom_size_shorter_than_three_leaves_tail_untouched(self, sim):
-        """A partial size list updates only the entries provided and leaves the
-        remaining half-extents at their compiled value."""
+    def test_set_geom_size_shorter_than_the_type_defines_is_rejected(self, sim):
+        """A size vector shorter than the geom's type defines is refused.
+
+        This previously wrote the components provided and left the rest at their
+        compiled value, so ``size=[0.2]`` on a box resized x only and reported
+        success for a box the caller never described (0.2 x old_y x old_z). There
+        is no meaningful value to invent for the omitted components, so the whole
+        write is refused and the compiled half-extents stay intact.
+        """
         geom_id = mj.mj_name2id(sim._world._model, mj.mjtObj.mjOBJ_GEOM, "box_geom")
-        original_tail = float(sim._world._model.geom_size[geom_id][2])
+        original = sim._world._model.geom_size[geom_id].copy()
         result = sim.set_geom_properties(geom_name="box_geom", size=[0.2])
-        assert result["status"] == "success"
-        new_size = sim._world._model.geom_size[geom_id]
-        assert new_size[0] == pytest.approx(0.2)
-        assert float(new_size[2]) == pytest.approx(original_tail)
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "exactly 3 component(s)" in text
+        assert "box" in text
+        assert sim._world._model.geom_size[geom_id] == pytest.approx(original)
 
     def test_set_geom_size_grow_recomputes_rbound_and_aabb(self, sim):
         """Growing a size-defined primitive refreshes its collision bounds.
@@ -1075,3 +1219,61 @@ class TestRaycastReflectsCurrentPose:
 
         after = _extract_json_block(sim.multi_raycast(origin=[0, 0, 2], directions=dirs), 1)["rays"]
         assert after[0]["distance"] == pytest.approx(2.0, abs=1e-3)  # now hits ground
+
+
+class TestContactForcesReflectsCurrentPose:
+    """get_contact_forces must reflect the CURRENT qpos, exactly like get_contacts.
+
+    ``mj_contactForce`` reads ``data.contact[]``/``data.ncon`` (collision output)
+    and ``data.efc_force`` (constraint solve) -- all recomputed only by
+    ``mj_forward``/``mj_step``. A manual ``qpos`` write (planning/IK loop), a
+    pose set right after ``reset``/``add_robot``, or a policy thread
+    mid-``mj_step`` leaves them stale, so without a forward the method reports
+    phantom contacts with fabricated forces while returning ``status=success``.
+    ``get_contacts`` already forwards; the two contact queries must agree.
+    """
+
+    @staticmethod
+    def _box_in_forces(result):
+        for block in result["content"]:
+            if "json" in block:
+                return any("box_geom" in (c["geom1"], c["geom2"]) for c in block["json"].get("contacts", []))
+        return False
+
+    @staticmethod
+    def _lift_box(sim):
+        model, data = sim._world._model, sim._world._data
+        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "box_free")
+        adr = int(model.jnt_qposadr[jid])
+        data.qpos[adr : adr + 3] = [0.0, 0.0, 3.0]  # lift the box 3m into the air
+        data.qpos[adr + 3 : adr + 7] = [1.0, 0.0, 0.0, 0.0]
+        # deliberately NO mj_forward / mj_step here
+
+    def test_get_contact_forces_reflects_pose_change_without_forward(self, sim):
+        # Settle the box on the ground -> a real box_geom<->ground contact.
+        for _ in range(500):
+            mj.mj_step(sim._world._model, sim._world._data)
+        base = sim.get_contact_forces()
+        assert base["status"] == "success"
+        assert self._box_in_forces(base)
+
+        self._lift_box(sim)
+
+        # Query FIRST (before any other call forwards). The box is 3m up with no
+        # possible contact, so a correct query no longer reports box_geom.
+        # Pre-fix reads the stale contact list + fabricated force for the box.
+        after = sim.get_contact_forces()
+        assert after["status"] == "success"
+        assert not self._box_in_forces(after)
+
+    def test_contact_queries_agree_after_pose_change(self, sim):
+        for _ in range(500):
+            mj.mj_step(sim._world._model, sim._world._data)
+        self._lift_box(sim)
+        # get_contact_forces must be queried FIRST; get_contacts forwards and
+        # would otherwise clear the staleness for the second call. After the
+        # box is lifted, neither query may still report the airborne box.
+        forces_has_box = self._box_in_forces(sim.get_contact_forces())
+        contacts_text = sim.get_contacts()["content"][0]["text"]
+        assert forces_has_box is False
+        assert "box_geom" not in contacts_text

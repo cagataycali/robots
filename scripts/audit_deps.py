@@ -9,10 +9,13 @@ Guards against three classes of packaging defect:
    never published a release there). Such names are listed in ``DENYLIST`` and
    must never appear as a PyPI-sourced dependency in ``pyproject.toml``.
 
-2. Nonexistent / typosquat names -- a PyPI-sourced dependency whose name does
-   not resolve on PyPI at all. Catching these early stops a typo from becoming
-   a future confusion target. This check hits the network and is only run when
-   ``--check-pypi`` is passed.
+2. Nonexistent / typosquat names and phantom ``==`` version pins -- a
+   PyPI-sourced dependency whose name does not resolve on PyPI at all, or whose
+   exact pinned version (``name==X.Y.Z``) is absent from the project's release
+   history. A phantom version pin is unresolvable forever (it wedges ``uv
+   lock``) and is itself a dependency-confusion vector: whoever first publishes
+   that version to PyPI gets installed. Both checks hit the network and are only
+   run when ``--check-pypi`` is passed.
 
 3. Direct references -- a PEP 508 ``name @ <url>`` requirement (git/URL/file).
    Such a dependency lets the wheel build locally and pass ``twine check``, but
@@ -32,12 +35,16 @@ script can gate CI directly.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import tomllib
 import urllib.error
 import urllib.request
+from collections.abc import Callable
 from pathlib import Path
+
+from packaging.requirements import InvalidRequirement, Requirement
 
 # Distribution names that must never be pinned as a PyPI dependency because the
 # PyPI name is not controlled by the upstream project it appears to reference.
@@ -129,6 +136,73 @@ def check_pypi_existence(deps: dict[str, str]) -> list[str]:
     return findings
 
 
+def _pypi_versions(canonical_name: str, retries: int = 3) -> set[str] | None:
+    """Return the set of release versions on PyPI, or None if inconclusive.
+
+    A definitive 404 yields an empty set (the name does not resolve). Transient
+    network / server errors are retried and, if still failing, return None so the
+    audit never fails the build on flakiness.
+    """
+    url = f"https://pypi.org/pypi/{canonical_name}/json"
+    for _ in range(retries):
+        try:
+            with urllib.request.urlopen(url, timeout=15) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+                return set(payload.get("releases", {}).keys())
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return set()  # name does not resolve; no releases
+            # 5xx / rate limit: retry, then inconclusive.
+        except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+            pass  # network hiccup / bad payload: retry, then inconclusive
+    return None
+
+
+def _exact_pin(requirement: str) -> tuple[str, str] | None:
+    """Return (canonical_name, version) for a lone ``name==X`` pin, else None.
+
+    Only a single ``==`` specifier is treated as an exact pin; ranges, extras
+    and environment markers are handled by ``packaging`` and do not defeat it.
+    """
+    try:
+        req = Requirement(requirement)
+    except InvalidRequirement:
+        return None
+    specs = list(req.specifier)
+    if len(specs) == 1 and specs[0].operator == "==":
+        return _canonical(req.name), specs[0].version
+    return None
+
+
+def check_pinned_versions_exist(
+    deps: dict[str, str],
+    version_fetcher: Callable[[str], set[str] | None] = _pypi_versions,
+) -> list[str]:
+    """Return failure messages for ``name==X`` pins whose version is not on PyPI.
+
+    Only definitive absences fail: if ``version_fetcher`` returns a non-empty set
+    that excludes the pinned version, the pin is a phantom (unresolvable +
+    confusion vector). An empty set (name 404s) is left to
+    ``check_pypi_existence``; ``None`` (inconclusive) is ignored so flakiness
+    never reddens the build.
+    """
+    findings = []
+    for req in sorted(deps.values()):
+        pin = _exact_pin(req)
+        if pin is None:
+            continue
+        name, version = pin
+        available = version_fetcher(name)
+        if available and version not in available:
+            findings.append(
+                f"PHANTOM VERSION '{req}': version {version} is not published on "
+                f"PyPI (name resolves but the pin is unresolvable and a "
+                f"dependency-confusion vector -- whoever publishes {name} {version} "
+                f"gets installed). Pin an existing release or install from source."
+            )
+    return findings
+
+
 def collect_all_requirements(pyproject_path: Path) -> list[str]:
     """Return every declared requirement string (core deps + all extras)."""
     data = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
@@ -169,6 +243,7 @@ def audit(pyproject_path: Path, check_pypi: bool = False) -> list[str]:
     findings.extend(check_direct_references(pyproject_path))
     if check_pypi:
         findings.extend(check_pypi_existence(deps))
+        findings.extend(check_pinned_versions_exist(deps))
     return findings
 
 

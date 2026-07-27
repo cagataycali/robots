@@ -2,8 +2,8 @@
 """Streaming read-back for LeRobotDataset - read frames directly from the Hub.
 
 Primary use: in-process eval / replay / notebooks / agent loops (NOT a
-precondition for streamed *training* - ``python -m lerobot.scripts.train
-dataset.streaming=true`` already uses StreamingLeRobotDataset via
+precondition for streamed *training* - ``python -m lerobot.scripts.lerobot_train
+--dataset.streaming=true`` already uses StreamingLeRobotDataset via
 ``lerobot.datasets.factory.make_dataset``).
 
 Design mirrors :mod:`strands_robots.dataset_recorder`:
@@ -72,8 +72,19 @@ def _get_streaming_cls() -> Any:
             "Install with: pip install 'strands-robots[lerobot]' "
             "(needs torchcodec for video keys; on aarch64/Jetson that means "
             "torch>=2.11 + torchcodec>=0.11). "
-            "For proprio-only streaming without torchcodec, use drop_videos=True."
+            "For proprio-only streaming without torchcodec, use drop_videos=True "
+            "with a delta_timestamps covering the non-video keys you need."
         ) from exc
+
+
+def _lerobot_version() -> str:
+    """Best-effort installed lerobot version string for error messages."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        return version("lerobot")
+    except (ImportError, PackageNotFoundError):
+        return "unknown"
 
 
 class StreamingDatasetReader:
@@ -112,19 +123,79 @@ class StreamingDatasetReader:
         return_uint8: bool = True,  # halves frame bandwidth; policies normalize
         validate_deltas: bool = True,  # parity with the materialized dataset path
         drop_videos: bool = False,  # proprio-only streaming (no torchcodec)
+        repo_type: str = "dataset",  # "dataset" or "bucket"; non-default REQUIRES a lerobot that accepts it
     ) -> StreamingDatasetReader:
+        """Open a version-tolerant streaming reader.
+
+        Raises:
+            RuntimeError: ``repo_type`` is not ``"dataset"`` but the installed
+                ``StreamingLeRobotDataset`` does not accept a ``repo_type``
+                parameter. No released lerobot does (the versioned-dataset vs
+                bucket storage split is not upstream); the parameter is retained
+                only for a lerobot build that adds it. Silently dropping the
+                kwarg would stream from the versioned *dataset* namespace instead
+                of the requested bucket - a different storage system, not a
+                cosmetic difference - so this is never tolerant-dropped.
+            ValueError: ``drop_videos=True`` but no non-video keys remain in
+                ``delta_timestamps`` (or none were passed). Without a proprio
+                ``delta_timestamps``, StreamingLeRobotDataset streams every
+                feature - including camera keys via torchcodec decode - so the
+                call would silently do the opposite of what was asked.
+            ImportError: ``StreamingLeRobotDataset`` is not importable.
+        """
         StreamingCls = _get_streaming_cls()
         init_sig = inspect.signature(StreamingCls).parameters
         # If the constructor accepts **kwargs, every candidate is forwardable.
         accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in init_sig.values())
 
+        # repo_type selects WHICH storage system is read (versioned dataset
+        # namespace vs bucket). No released lerobot accepts it; unlike the
+        # cosmetic kwargs below, silently dropping a non-default value would open
+        # the wrong storage system without error - fail fast instead.
+        if repo_type != "dataset" and not (accepts_var_kw or "repo_type" in init_sig):
+            raise RuntimeError(
+                f"repo_type={repo_type!r} is not supported by any released lerobot "
+                f"(installed: {_lerobot_version()}): StreamingLeRobotDataset does not "
+                "accept a repo_type parameter (the versioned-dataset vs bucket storage "
+                "split is not upstream), and silently falling back to the 'dataset' "
+                "namespace would stream from a different storage system. Pass "
+                "repo_type='dataset' (the default) or use a lerobot build whose "
+                "StreamingLeRobotDataset accepts repo_type."
+            )
+
         # Proprio-only: strip video keys from delta_timestamps so video decode
         # (torchcodec) is never invoked - lets constrained edge devices stream
         # state/action without a torchcodec wheel.
-        if drop_videos and delta_timestamps:
-            delta_timestamps = {
-                k: v for k, v in delta_timestamps.items() if not k.startswith("observation.images.")
-            } or None
+        if drop_videos:
+            if delta_timestamps:
+                delta_timestamps = {
+                    k: v for k, v in delta_timestamps.items() if not k.startswith("observation.images.")
+                } or None
+            if delta_timestamps is None:
+                # Without delta_timestamps, StreamingLeRobotDataset streams
+                # EVERY feature - camera keys included, invoking torchcodec -
+                # so drop_videos=True would be a silent no-op doing the
+                # opposite of what was asked. Refuse rather than no-op.
+                raise ValueError(
+                    "drop_videos=True requires delta_timestamps with at least "
+                    "one non-video key: without it, every feature (including "
+                    "camera keys, via torchcodec decode) is streamed and "
+                    "drop_videos has no effect. Pass e.g. "
+                    "delta_timestamps={'observation.state': [0.0], 'action': [0.0]}."
+                )
+
+        # return_uint8 absence does not change semantics (policies normalize
+        # either way) but a lerobot that lacks it streams frames as float32 -
+        # ~4x the bandwidth of uint8. That is a real cost, not a no-op, so warn
+        # rather than drop it silently (unlike the truly cosmetic kwargs below).
+        if return_uint8 and not (accepts_var_kw or "return_uint8" in init_sig):
+            logger.warning(
+                "return_uint8=True dropped: installed StreamingLeRobotDataset "
+                "(lerobot %s) does not accept return_uint8, so frames stream as "
+                "float32 (~4x the bandwidth of uint8). Policies still normalize "
+                "correctly; upgrade lerobot for uint8 streaming.",
+                _lerobot_version(),
+            )
 
         kwargs: dict[str, Any] = {"repo_id": repo_id}
         candidate = dict(
@@ -140,8 +211,14 @@ class StreamingDatasetReader:
             seed=seed,
             shuffle=shuffle,
             return_uint8=return_uint8,
+            repo_type=repo_type,
         )
         for k, v in candidate.items():
+            # Tolerant forwarding covers only kwargs whose absence does not
+            # change semantics (a lerobot without the parameter behaves the
+            # same for its default). repo_type is guarded above: a non-default
+            # value on a lerobot that lacks the parameter raises instead of
+            # being dropped here; the "dataset" default is safe to skip.
             if not (accepts_var_kw or k in init_sig):
                 continue
             if k in ("streaming", "shuffle", "return_uint8") or v is not None:
@@ -190,14 +267,17 @@ class StreamingDatasetReader:
 
     @property
     def num_frames(self) -> Any:
+        """Total number of frames across all episodes in the streamed dataset."""
         return self.dataset.num_frames
 
     @property
     def num_episodes(self) -> Any:
+        """Total number of episodes in the streamed dataset."""
         return self.dataset.num_episodes
 
     @property
     def fps(self) -> Any:
+        """Capture frame rate (frames per second) of the streamed dataset."""
         return self.dataset.fps
 
     @property
@@ -207,3 +287,36 @@ class StreamingDatasetReader:
 
     def __iter__(self) -> Any:
         return iter(self.dataset)
+
+
+def stream_dataset(repo_id: str, **kwargs: Any) -> StreamingDatasetReader:
+    """Open a streaming reader for a LeRobotDataset without a simulator.
+
+    Thin module-level alias for :meth:`StreamingDatasetReader.open`, exported
+    at the package root (``strands_robots.stream_dataset``). Use this from
+    training/eval scripts that only need to READ a dataset - it never touches
+    MuJoCo, a GL context, or a thread pool, unlike constructing a ``Robot()``
+    simulation. ``Simulation.stream_dataset`` is sugar delegating here so the
+    "the same Robot() that records reads it back" flow still works.
+
+    Args:
+        repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or a
+            local repo_id paired with ``root=``.
+        **kwargs: Forwarded to :meth:`StreamingDatasetReader.open` - e.g.
+            ``root``, ``delta_timestamps``, ``episodes``, ``shuffle``,
+            ``buffer_size``, ``max_num_shards``, ``drop_videos``
+            (proprio-only, torchcodec-free), ``repo_type``.
+
+    Returns:
+        A :class:`StreamingDatasetReader`.
+
+    Example:
+        import strands_robots
+
+        reader = strands_robots.stream_dataset(
+            "lerobot/svla_so100_pickplace", shuffle=False
+        )
+        for frame in reader:
+            ...
+    """
+    return StreamingDatasetReader.open(repo_id, **kwargs)

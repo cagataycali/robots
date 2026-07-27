@@ -4,9 +4,10 @@ The :class:`DatasetRecordingMixin` holds the parts of the recording workflow
 that have no engine-specific physics dependency: querying recording state,
 flushing an episode boundary, stopping/finalizing a session, streaming a
 dataset back, and reporting status. Every method operates purely through the
-shared ``self._world._backend_state`` dict and the backend-agnostic
-:class:`~strands_robots.dataset_recorder.DatasetRecorder`, so both the MuJoCo
-and Newton backends mix it in unchanged.
+state mapping returned by :meth:`DatasetRecordingMixin._recording_state` (by
+default the shared ``self._world._backend_state`` dict) and the
+backend-agnostic :class:`~strands_robots.dataset_recorder.DatasetRecorder`, so
+the MuJoCo, Newton, and Isaac backends all mix it in unchanged.
 
 Each backend supplies the engine-specific half separately:
 
@@ -15,9 +16,13 @@ Each backend supplies the engine-specific half separately:
 * ``_make_run_policy_hook`` - captures per-step observations/cameras and feeds
   them to the active recorder.
 
-**Coupling**: the mixin reaches into ``self._world._backend_state`` for the
-recording flag, trajectory buffer, and ``dataset_recorder`` handle. The
-``TYPE_CHECKING`` stub documents that contract for mypy; it is not an
+**Coupling**: every method operates on the mutable state mapping returned by
+:meth:`DatasetRecordingMixin._recording_state`. The default accessor reaches
+into ``self._world._backend_state`` (the ``SimWorld`` contract the MuJoCo and
+Newton backends share); backends whose world object is not a ``SimWorld``
+(Isaac Sim's ``self._world`` is the Isaac ``World`` handle) override the
+accessor to supply their own dict instead of forking the mixin. The
+``TYPE_CHECKING`` stub documents the default contract for mypy; it is not an
 enforceable protocol.
 """
 
@@ -27,6 +32,90 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
+
+
+def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | None:
+    """Reject a LeRobotDataset recording option no dataset can be written at.
+
+    Pre-flight guard shared by every backend's ``start_recording`` (MuJoCo,
+    Newton, Isaac), so the three surfaces cannot disagree on what a usable
+    ``fps`` is. ``fps`` is a frame count per second, so the accepted domain is
+    the shared one the plain-MP4 recorders and the ``run_policy(video=...)``
+    dict already enforce
+    (:func:`~strands_robots.simulation.policy_runner.positive_whole_number_error`):
+    a positive whole number.
+
+    Without this guard an unusable ``fps`` was reported as ``status="success"``
+    and then cost the caller the episode: LeRobot only rejects ``fps <= 0``, so
+    a fractional ``2.7`` or a ``nan`` created the dataset, killed the video
+    encoder thread on the first frame and aborted the rollout ("on_frame hook
+    failed 5 times in a row"), after which ``stop_recording`` could not save the
+    pending frames; ``fps=True`` silently recorded a 1 fps dataset (an ``int``
+    subclass acting as a 1); and ``fps="30"`` dead-ended in a raw
+    ``TypeError: '<=' not supported between instances of 'str' and 'int'``
+    instead of naming the parameter.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        fps: Caller-supplied dataset frame rate.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming ``fps``, or
+        ``None`` when the value is usable.
+    """
+    # Imported lazily: ``policy_runner`` pulls in the rollout machinery, and
+    # this module sits below it in the import graph (backends import the mixin
+    # while constructing their engine class).
+    from strands_robots.simulation.policy_runner import positive_whole_number_error
+
+    if text := positive_whole_number_error(fps, "fps", method):
+        return {"status": "error", "content": [{"text": text}]}
+    return None
+
+
+def _resumed_dataset_fps(recorder: Any) -> int | None:
+    """Read the on-disk frame rate of a resumed dataset, or None if unavailable.
+
+    ``LeRobotDataset`` exposes ``fps`` directly and via ``meta.fps``; both are
+    probed so a layout that only carries the metadata object still compares.
+
+    Only a positive WHOLE rate is reported. A dataset whose on-disk rate is
+    fractional cannot be appended to at any rate ``start_recording`` accepts
+    (it requires a positive whole number), so there is no value to advise the
+    caller to pass and the comparison is skipped rather than dead-ending a
+    resume - matching the best-effort posture of the rest of the schema check.
+
+    Args:
+        recorder: The resumed ``DatasetRecorder``.
+
+    Returns:
+        The dataset frame rate as an int, or ``None`` when the dataset does not
+        report a usable whole rate (an unexpected LeRobot layout must not block
+        a valid resume).
+    """
+    dataset = getattr(recorder, "dataset", None)
+    for value in (getattr(dataset, "fps", None), getattr(getattr(dataset, "meta", None), "fps", None)):
+        if isinstance(value, bool) or not isinstance(value, int | float):
+            continue
+        if value > 0 and float(value).is_integer():
+            return int(value)
+    return None
+
+
+def _resume_schema_error(diffs: list[str]) -> str:
+    """Format the resume-refusal message from the collected schema differences.
+
+    Args:
+        diffs: One human-readable line per divergence found.
+
+    Returns:
+        The full error message, listing every difference.
+    """
+    return (
+        "Cannot resume recording: the current scene does not match the existing dataset schema. "
+        "Use overwrite=True for a fresh dataset, or restore the original scene. Differences:\n  - "
+        + "\n  - ".join(diffs)
+    )
 
 
 class DatasetRecordingMixin:
@@ -46,6 +135,29 @@ class DatasetRecordingMixin:
         _world: "SimWorld | None"
         default_width: int
         default_height: int
+
+    def _recording_state(self) -> dict[str, Any] | None:
+        """Mutable recording-state mapping, or ``None`` when no world exists.
+
+        This is the single seam every engine-independent lifecycle method goes
+        through to reach the recording flag, trajectory mirror,
+        ``dataset_recorder`` handle, ``recording_cameras`` scope and
+        ``last_dataset_root``. The default implementation reads
+        ``self._world._backend_state`` - the ``SimWorld`` contract shared by
+        the MuJoCo and Newton backends, which need no override. Backends whose
+        ``self._world`` is not a ``SimWorld`` (the Isaac backend holds the
+        Isaac Sim ``World`` handle there) override this accessor to return
+        their own dict, keeping one shared mixin instead of a fork.
+
+        Returns:
+            The live state dict, or ``None`` when there is no world (recording
+            is then reported as inactive and lifecycle calls degrade to their
+            documented no-world responses).
+        """
+        world = self._world
+        if world is None:
+            return None
+        return world._backend_state
 
     @staticmethod
     def _prepare_dataset_target(dataset_dir: Path, overwrite: bool) -> bool:
@@ -112,7 +224,8 @@ class DatasetRecordingMixin:
         ``run_policy`` loop flushes an episode boundary after each rollout
         only while a recording is open.
         """
-        return self._world is not None and bool(self._world._backend_state.get("recording", False))
+        state = self._recording_state()
+        return state is not None and bool(state.get("recording", False))
 
     def _active_recorder(self) -> Any:
         """Live dataset recorder, or ``None`` when no session is open.
@@ -120,9 +233,10 @@ class DatasetRecordingMixin:
         Overrides :meth:`SimEngine._active_recorder` so the base ``run_policy``
         episode-contract fields can read the recorder's in-memory episode count.
         """
-        if self._world is None:
+        state = self._recording_state()
+        if state is None:
             return None
-        return self._world._backend_state.get("dataset_recorder")
+        return state.get("dataset_recorder")
 
     def _active_dataset_root(self) -> str | None:
         """On-disk root of the active or most-recently-recorded dataset.
@@ -139,9 +253,10 @@ class DatasetRecordingMixin:
                 return str(recorder.root)
             except (AttributeError, TypeError):
                 pass
-        if self._world is None:
+        state = self._recording_state()
+        if state is None:
             return None
-        last = self._world._backend_state.get("last_dataset_root")
+        last = state.get("last_dataset_root")
         return str(last) if last else None
 
     def stop_recording(
@@ -154,8 +269,15 @@ class DatasetRecordingMixin:
     ) -> dict[str, Any]:
         """Stop recording and save episode to LeRobotDataset.
 
-        idempotent - calling when not recording succeeds with a
+        Idempotent - a bare call when not recording succeeds with a
         'Was not recording' message so callers can safely call it unconditionally.
+        When ``bucket=`` / ``run_id=`` / ``push_to_hub=True`` are passed while
+        NOT recording, they are never silently dropped (AGENTS.md: forward all
+        advertised kwargs): ``bucket=`` syncs the last-finalized dataset of this
+        sim (the ``last_dataset_root`` stashed at ``start_recording``) so the
+        "re-run stop_recording(bucket=...) as the daily sync" workflow works;
+        ``push_to_hub=True`` (or ``run_id=`` without ``bucket=``) returns a
+        structured ``status="error"`` because there is nothing to publish.
 
         Returns a structured ``status="error"`` when the recording captured no
         frames (the dataset would contain only ``meta/info.json``), rather than
@@ -168,17 +290,21 @@ class DatasetRecordingMixin:
             output_path: Unused legacy arg (kept for back-compat).
             push_to_hub: Publish to a versioned HF *dataset* repo (the finished
                 artifact). Overrides the ``push_to_hub`` set at start_recording.
+                Requires an open recording session; on the idle path this
+                returns ``status="error"`` instead of a silent no-op.
             bucket: If set (e.g. ``"my-org/robot-fave"``), sync the dataset into
                 a mutable HF Storage Bucket instead of/in addition to the dataset
                 repo - the Phase 1/2 collection target (Xet-deduped, overwrite in
-                place).
+                place). When no recording is open, syncs the last dataset this
+                sim finalized (errors if there is none).
             run_id: Optional subpath inside the bucket (defaults to dataset name).
         """
-        if self._world is None or not self._world._backend_state.get("recording", False):
-            return {"status": "success", "content": [{"text": "Was not recording."}]}
+        state = self._recording_state()
+        if state is None or not state.get("recording", False):
+            return self._stop_recording_idle(push_to_hub=push_to_hub, bucket=bucket, run_id=run_id)
 
-        self._world._backend_state["recording"] = False
-        recorder = self._world._backend_state.get("dataset_recorder", None)
+        state["recording"] = False
+        recorder = state.get("dataset_recorder", None)
 
         if recorder is None:
             return {"status": "error", "content": [{"text": "No dataset recorder active."}]}
@@ -207,8 +333,8 @@ class DatasetRecordingMixin:
         if pending > 0:
             save_result = recorder.save_episode()
             if isinstance(save_result, dict) and save_result.get("status") == "error":
-                self._world._backend_state["dataset_recorder"] = None
-                self._world._backend_state["trajectory"] = []
+                state["dataset_recorder"] = None
+                state["trajectory"] = []
                 return {
                     "status": "error",
                     "content": [
@@ -222,8 +348,8 @@ class DatasetRecordingMixin:
                     ],
                 }
         elif captured == 0:
-            self._world._backend_state["dataset_recorder"] = None
-            self._world._backend_state["trajectory"] = []
+            state["dataset_recorder"] = None
+            state["trajectory"] = []
             return {
                 "status": "error",
                 "content": [
@@ -291,15 +417,15 @@ class DatasetRecordingMixin:
             else:
                 extra += f"\nBucket sync FAILED: {sync_result.get('message')}"
         # Versioned dataset-repo publish (Phase 4 hand-off).
-        if push_to_hub or self._world._backend_state.get("push_to_hub", False):
+        if push_to_hub or state.get("push_to_hub", False):
             push_result = recorder.push_to_hub(tags=["strands-robots", "sim"])
             if push_result and push_result.get("status") == "success":
                 extra += "\nPushed to HuggingFace Hub"
             elif push_result:
                 extra += f"\npush_to_hub FAILED: {push_result.get('message')}"
 
-        self._world._backend_state["dataset_recorder"] = None
-        self._world._backend_state["trajectory"] = []
+        state["dataset_recorder"] = None
+        state["trajectory"] = []
 
         # #708 - if recorder.episode_count and parquet disagree, surface
         # it in the human-readable text too so an operator scanning the
@@ -333,6 +459,104 @@ class DatasetRecordingMixin:
                         "root": root,
                     }
                 },
+            ],
+        }
+
+    def _stop_recording_idle(
+        self,
+        *,
+        push_to_hub: bool,
+        bucket: str | None,
+        run_id: str | None,
+    ) -> dict[str, Any]:
+        """Handle ``stop_recording`` when no recording session is open.
+
+        A bare ``stop_recording()`` stays the idempotent success no-op so
+        callers (including ``run_policy``'s finally block) can invoke it
+        unconditionally. But when the caller passed upload kwargs, dropping
+        them behind a ``status="success"`` is a silent-drop bug (AGENTS.md:
+        "Forward all advertised kwargs" / "No silent defaults on error") - the
+        agent believes data was uploaded when nothing happened:
+
+        * ``bucket=``: sync the last dataset this sim finalized (the
+          ``last_dataset_root`` stashed at ``start_recording``). This is the
+          documented "call stop_recording(bucket=...) again as the daily
+          sync" workflow - the sync only needs the on-disk dataset, not a
+          live recorder. Errors when this sim never recorded anything.
+        * ``push_to_hub=True``: structured error - publishing a versioned
+          dataset repo requires the recorder of an open session.
+        * ``run_id=`` without ``bucket=``: structured error - it only applies
+          together with ``bucket=``.
+        """
+        if not push_to_hub and not bucket and not run_id:
+            return {"status": "success", "content": [{"text": "Was not recording."}]}
+
+        if push_to_hub or (run_id and not bucket):
+            detail = "push_to_hub=True" if push_to_hub else f"run_id={run_id!r} without bucket="
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"stop_recording: {detail} given but no recording session is "
+                            "open - nothing was published or synced. push_to_hub requires "
+                            "an open session (start_recording -> run_policy -> "
+                            "stop_recording(push_to_hub=True)); run_id= only applies "
+                            "together with bucket=."
+                        )
+                    }
+                ],
+            }
+
+        state = self._recording_state()
+        last_root = state.get("last_dataset_root") if state is not None else None
+        if not last_root:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"stop_recording: bucket={bucket!r} given but no recording "
+                            "session is open and this sim has no previously recorded "
+                            "dataset to sync - nothing was uploaded. Record first "
+                            "(start_recording -> run_policy -> stop_recording), or pass "
+                            "bucket= on the stop_recording call that closes the session."
+                        )
+                    }
+                ],
+            }
+
+        # Lazy import: keeps this engine-agnostic mixin free of the
+        # dataset_recorder import (numpy) at module load, matching the lazy
+        # DatasetRecorder import in each backend's start_recording.
+        from strands_robots.dataset_recorder import sync_dataset_to_bucket
+
+        # Every no-bucket combination returned above, so bucket is set here.
+        assert bucket is not None
+        sync_result = sync_dataset_to_bucket(str(last_root), bucket, run_id=run_id)
+        if sync_result.get("status") == "success":
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            "Was not recording; synced the last recorded dataset instead.\n"
+                            f"Local: {last_root}\n"
+                            f"Synced to bucket: {sync_result['bucket_uri']}"
+                        )
+                    }
+                ],
+            }
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        "stop_recording: was not recording, and syncing the last recorded "
+                        f"dataset ({last_root}) to bucket {bucket!r} FAILED: "
+                        f"{sync_result.get('message')}"
+                    )
+                }
             ],
         }
 
@@ -373,7 +597,8 @@ class DatasetRecordingMixin:
             episode index and frame count; a structured ``status="error"`` is
             returned when no recording is active or the underlying flush fails.
         """
-        if self._world is None or not self._world._backend_state.get("recording", False):
+        state = self._recording_state()
+        if state is None or not state.get("recording", False):
             return {
                 "status": "error",
                 "content": [
@@ -386,7 +611,7 @@ class DatasetRecordingMixin:
                 ],
             }
 
-        recorder = self._world._backend_state.get("dataset_recorder", None)
+        recorder = state.get("dataset_recorder", None)
         if recorder is None:
             return {"status": "error", "content": [{"text": "No dataset recorder active."}]}
 
@@ -409,9 +634,9 @@ class DatasetRecordingMixin:
             # The recorder marks itself closed on a failed flush (the LeRobot
             # episode buffer is in an undefined state); drop it so callers do
             # not keep appending into a poisoned recorder.
-            self._world._backend_state["recording"] = False
-            self._world._backend_state["dataset_recorder"] = None
-            self._world._backend_state["trajectory"] = []
+            state["recording"] = False
+            state["dataset_recorder"] = None
+            state["trajectory"] = []
             return {
                 "status": "error",
                 "content": [{"text": f"save_episode failed: {save_result.get('message')}"}],
@@ -419,7 +644,7 @@ class DatasetRecordingMixin:
 
         # Reset the in-memory trajectory mirror so get_recording_status reports
         # the NEXT episode from zero (matching the recorder's per-episode reset).
-        self._world._backend_state["trajectory"] = []
+        state["trajectory"] = []
 
         episode = save_result.get("episode")
         ep_frames = save_result.get("episode_frames")
@@ -442,10 +667,13 @@ class DatasetRecordingMixin:
 
         This is the in-process counterpart to ``start_recording`` /
         ``stop_recording``: where those WRITE a dataset, ``stream_dataset``
-        READS one back lazily for eval / replay / inspection (Phase 3 of the
-        physical-AI data loop). Training scripts can instead use
-        ``python -m lerobot.scripts.train dataset.streaming=true`` which uses
+        READS one back lazily for eval / replay / inspection. Training scripts
+        can instead use ``lerobot-train --dataset.streaming=true`` which uses
         the same underlying StreamingLeRobotDataset.
+
+        Sugar for the module-level :func:`strands_robots.stream_dataset` -
+        reading a dataset does not require a simulator, so scripts without a
+        GL stack should call that function directly.
 
         Args:
             repo_id: HF dataset id (e.g. ``"lerobot/svla_so100_pickplace"``) or
@@ -453,7 +681,11 @@ class DatasetRecordingMixin:
             **kwargs: Forwarded to
                 :meth:`StreamingDatasetReader.open` - e.g. ``root``,
                 ``delta_timestamps``, ``episodes``, ``shuffle``, ``buffer_size``,
-                ``max_num_shards``, ``drop_videos`` (proprio-only, torchcodec-free).
+                ``max_num_shards``, ``drop_videos`` (proprio-only,
+                torchcodec-free; requires ``delta_timestamps`` with at least one
+                non-video key, else ValueError), ``repo_type`` (``"dataset"`` or
+                ``"bucket"``; ``"bucket"`` requires lerobot>=0.6.1, else
+                RuntimeError).
 
         Returns:
             A :class:`~strands_robots.streaming_dataset.StreamingDatasetReader`.
@@ -468,22 +700,23 @@ class DatasetRecordingMixin:
             for frame in reader:
                 ...
         """
-        from strands_robots.streaming_dataset import StreamingDatasetReader
+        from strands_robots.streaming_dataset import stream_dataset
 
-        return StreamingDatasetReader.open(repo_id, **kwargs)
+        return stream_dataset(repo_id, **kwargs)
 
     def get_recording_status(self) -> dict[str, Any]:
         """Returns success in every lifecycle state (no world / not
         recording / recording) with a distinguishing message so callers can
         poll it unconditionally without try/except."""
-        if self._world is None:
+        state = self._recording_state()
+        if state is None:
             return {
                 "status": "success",
                 "content": [{"text": "No world. Call create_world to start recording."}],
             }
 
-        recording = self._world._backend_state.get("recording", False)
-        steps = len(self._world._backend_state.get("trajectory", []))
+        recording = state.get("recording", False)
+        steps = len(state.get("trajectory", []))
 
         if recording:
             text = f"[recording] {steps} steps captured"
@@ -502,6 +735,8 @@ class DatasetRecordingMixin:
         camera_keys: list[str],
         camera_dims: dict[str, tuple[int, int]],
         action_names: list[str] | None = None,
+        *,
+        fps: int,
     ) -> None:
         """Verify the live scene matches the resumed dataset's on-disk schema.
 
@@ -511,10 +746,19 @@ class DatasetRecordingMixin:
         mismatch would only surface as a cryptic per-feature shape error on the
         next ``add_frame``. Compare here and raise a clear schema diff instead.
 
-        Compares the expected ``observation.state`` joint names and each
-        ``observation.images.*`` camera (presence + height/width). Best-effort:
-        if the dataset does not expose ``features`` we skip silently rather than
-        block a valid resume on an unexpected LeRobot layout.
+        Compares the expected ``observation.state`` joint names, each
+        ``observation.images.*`` camera (presence + height/width), and the
+        dataset frame rate. Best-effort: if the dataset does not expose
+        ``features`` / ``fps`` we skip that comparison rather than block a valid
+        resume on an unexpected LeRobot layout.
+
+        ``fps`` is checked here because a resumed dataset keeps the rate it was
+        created at - ``LeRobotDataset.resume`` takes no ``fps`` - so a differing
+        request cannot be honored. Appending anyway timestamps the new frames at
+        the on-disk rate while they were captured at the requested one, which
+        writes a wrong timebase into the dataset: episodes recorded at different
+        cadences become indistinguishable, and a policy trained on them reads
+        the wrong dt (and so the wrong velocities) for every appended episode.
 
         Args:
             recorder: The resumed DatasetRecorder.
@@ -527,15 +771,30 @@ class DatasetRecordingMixin:
             action_names: Action-column names the current scene will emit
                 (actuator keys; namespaced for multi-robot scenes). When None
                 the action feature is not compared.
+            fps: Frame rate the caller asked to record at. Must equal the
+                resumed dataset's on-disk rate; keyword-only and required so no
+                backend can resume without comparing it.
 
         Raises:
             ValueError: If the live scene schema diverges from the on-disk one.
         """
+        diffs: list[str] = []
+
+        # Frame rate first: it is carried by the dataset metadata rather than
+        # the feature dict, so it is comparable even on a LeRobot layout whose
+        # ``features`` mapping is missing (the early return below).
+        disk_fps = _resumed_dataset_fps(recorder)
+        if disk_fps is not None and disk_fps != int(fps):
+            diffs.append(
+                f"dataset fps differs: on-disk={disk_fps} vs requested={int(fps)} "
+                f"(a resumed dataset keeps its on-disk rate; pass fps={disk_fps} to append at it)"
+            )
+
         features = getattr(getattr(recorder, "dataset", None), "features", None)
         if not isinstance(features, dict):
+            if diffs:
+                raise ValueError(_resume_schema_error(diffs))
             return
-
-        diffs: list[str] = []
 
         state = features.get("observation.state")
         if isinstance(state, dict):
@@ -571,8 +830,4 @@ class DatasetRecordingMixin:
             diffs.append(f"camera '{cam}' is in the on-disk schema but not in the current scene")
 
         if diffs:
-            raise ValueError(
-                "Cannot resume recording: the current scene does not match the existing dataset schema. "
-                "Use overwrite=True for a fresh dataset, or restore the original scene. Differences:\n  - "
-                + "\n  - ".join(diffs)
-            )
+            raise ValueError(_resume_schema_error(diffs))

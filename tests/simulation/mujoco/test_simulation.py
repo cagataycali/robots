@@ -776,6 +776,60 @@ class TestListBodies:
         assert "arm1/base" in described["bodies"]
         assert "list_bodies" in described["methods"]
 
+    def test_describe_advertises_get_features_the_action_key_source(self, sim_with_robot):
+        """describe() must advertise get_features -- the joint/actuator/camera-
+        name discovery method that is the source of truth for the action keys a
+        policy must emit. The advertisement is only useful if the method it names
+        is real and returns those names, so assert both: the signature is on the
+        discovery surface, and calling it yields a non-empty actuator listing."""
+        described = sim_with_robot.describe()
+        assert "get_features" in described["methods"]
+        assert "robot_name" in described["methods"]["get_features"]
+
+        feats = sim_with_robot.get_features(robot_name="arm1")
+        assert feats["status"] == "success", feats
+        payload = next(c["json"] for c in feats["content"] if isinstance(c, dict) and "json" in c)
+        assert payload["features"]["actuator_names"], "get_features must list actuator names"
+
+    def test_fail_fast_recommended_method_is_discoverable_via_describe(self, sim_with_robot):
+        """Closed loop: when a policy's action keys resolve to no actuator,
+        run_policy's fail-fast error tells the caller to inspect the expected
+        keys via get_features(robot_name=...). The method that error names must
+        be discoverable on the primary discovery surface (describe), so an agent
+        recovering from the error does not have to scrape a method name out of an
+        error string only to find describe() never listed it."""
+        from strands_robots.policies.base import Policy
+
+        class _WrongKeysPolicy(Policy):
+            @property
+            def provider_name(self) -> str:
+                return "wrong_keys_test"
+
+            @property
+            def requires_images(self) -> bool:
+                return False
+
+            def set_robot_state_keys(self, robot_state_keys):
+                pass
+
+            async def get_actions(self, observation_dict, instruction, **kwargs):
+                # A key no actuator can absorb -> 100% unresolved every step.
+                return [{"definitely_not_a_joint": 0.5}]
+
+        result = sim_with_robot.run_policy(
+            robot_name="arm1",
+            policy_object=_WrongKeysPolicy(),
+            n_steps=50,
+            control_frequency=20.0,
+            fast_mode=True,
+        )
+        assert result["status"] == "error", result
+        err_text = result["content"][0]["text"]
+        # The diagnostic recommends get_features by name...
+        assert "get_features" in err_text
+        # ...and that method is discoverable on describe()'s method surface.
+        assert "get_features" in sim_with_robot.describe()["methods"]
+
     def test_list_bodies_reports_gripper_mount_when_present(self, sim_with_gripper_robot):
         """A robot with a gripper-like body gets its wrist/EEF mount resolved
         automatically. This is the payoff of the discovery surface: the agent
@@ -1084,6 +1138,76 @@ class TestPolicyExecution:
     def test_start_policy_invalid_robot(self, sim_with_world):
         result = sim_with_world.start_policy("ghost")
         assert result["status"] == "error"
+
+    def test_describe_advertises_background_policy_lifecycle(self, sim_with_robot):
+        """describe() advertises the whole start/stop/list background-policy
+        lifecycle, not just start_policy.
+
+        The MuJoCo backend overrides start_policy to run in a background thread
+        (non-blocking), unlike the base engine's synchronous passthrough, and
+        provides stop_policy + list_policies_running to manage it. describe()
+        already advertised start_policy (inherited from the base surface), but
+        omitted its lifecycle siblings -- so an agent that discovered
+        start_policy here and launched a rollout could not learn how to stop it
+        or inspect what is running without guessing the names, a resource-leak
+        trap. Both are first-class actions in the tool spec + dispatcher and
+        belong on the discovery surface alongside start_policy.
+        """
+        methods = sim_with_robot.describe()["methods"]
+        for name in ("start_policy", "stop_policy", "list_policies_running"):
+            assert name in methods, f"describe() omits policy-lifecycle method {name!r}"
+        # Advertised signatures name the real parameters / return shape so a
+        # caller can invoke them without reading the source.
+        assert "robot_name" in methods["stop_policy"]
+        assert "-> dict" in methods["list_policies_running"]
+
+        # The advertisement is only useful if the methods it names are real and
+        # invocable: list before start reports none, stop is idempotent.
+        listed = sim_with_robot.list_policies_running()
+        assert listed["status"] == "success"
+        assert "No policies running" in listed["content"][0]["text"]
+        idempotent = sim_with_robot.stop_policy("arm1")
+        assert idempotent["status"] == "success"
+        assert "Was not running" in idempotent["content"][0]["text"]
+
+    def test_describe_advertises_multi_robot_rollout_family(self, sim_with_robot):
+        """describe() advertises run_multi_policy and the per-robot action/joint
+        introspection a multi-policy caller needs to wire each robot.
+
+        describe() advertises run_policy (drive ONE robot with a created policy)
+        and the background start/stop/list lifecycle, but omitted
+        run_multi_policy -- the facade that drives SEVERAL robots, each with its
+        own Policy, in one synchronized loop (the correct path for bimanual /
+        multi-agent data collection). It also omitted the two per-robot
+        introspection primitives a caller uses to build that {robot_name:
+        Policy} map: robot_action_keys (the actuator short-names a policy must
+        emit -- NOT always the joint names) and robot_joint_names (the ordered
+        observation.state vector). An agent enumerating the sim from describe()
+        alone could drive one robot but had to guess how to drive many, or key a
+        policy by joint name and watch tendon/mimic DOFs silently no-op.
+        """
+        methods = sim_with_robot.describe()["methods"]
+        for name in ("run_multi_policy", "robot_action_keys", "robot_joint_names"):
+            assert name in methods, f"describe() omits multi-robot method {name!r}"
+        # Advertised signatures name the real parameters / return shape so a
+        # caller can invoke them without reading the source.
+        assert "policies" in methods["run_multi_policy"]
+        assert "-> dict" in methods["run_multi_policy"]
+        assert "-> list[str]" in methods["robot_action_keys"]
+        assert "-> list[str]" in methods["robot_joint_names"]
+        # The advertisement names actuator-vs-joint distinction that makes
+        # robot_action_keys the correct key source over robot_joint_names.
+        assert "send_action" in methods["robot_action_keys"]
+
+        # The advertisement is only useful if the methods it names are real and
+        # return the exact per-robot lists a policy is keyed on.
+        joints = sim_with_robot.robot_joint_names("arm1")
+        keys = sim_with_robot.robot_action_keys("arm1")
+        assert isinstance(joints, list) and joints, "robot_joint_names('arm1') is empty"
+        assert isinstance(keys, list) and keys, "robot_action_keys('arm1') is empty"
+        # Unknown robots return an empty list rather than raising.
+        assert sim_with_robot.robot_joint_names("ghost") == []
+        assert sim_with_robot.robot_action_keys("ghost") == []
 
 
 # Action Dispatch

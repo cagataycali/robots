@@ -160,7 +160,10 @@ def register_robot(
         The registered robot definition dict.
 
     Raises:
-        ValueError: If name already exists and ``overwrite`` is False.
+        ValueError: If name already exists and ``overwrite`` is False, or if an
+            ``aliases`` entry collides with an existing canonical robot name or
+            another robot's alias (the same constraint the loader enforces at
+            read time, checked here so the registration cannot brick lookups).
         FileNotFoundError: If ``model_xml`` doesn't exist at the resolved path.
 
     Example::
@@ -204,34 +207,6 @@ def register_robot(
     # This matches how resolve_model_path works: search_dir / asset["dir"] / xml
     dir_name = resolved_dir.name
 
-    # Alias collision detection - warn (don't fail) when a user alias shadows a
-    # canonical name or another alias.  Doing this at registration surfaces the
-    # problem immediately instead of at silent resolution-order time.
-    if aliases and not overwrite:
-        try:
-            from .robots import get_robot as _pkg_get_robot
-            from .robots import list_robots as _pkg_list_robots
-
-            pkg_canonical = {r["name"] for r in _pkg_list_robots()}
-            pkg_aliases: set[str] = set()
-            for r in _pkg_list_robots():
-                pkg_aliases.update(r.get("aliases", []) or [])
-        except Exception:
-            pkg_canonical = set()
-            pkg_aliases = set()
-
-        user_existing = data.get("robots", {})
-        user_canonical = set(user_existing.keys())
-        user_aliases: set[str] = set()
-        for _r in user_existing.values():
-            user_aliases.update(_r.get("aliases", []) or [])
-
-        for alias in aliases:
-            if alias in pkg_canonical or alias in user_canonical:
-                logger.warning("Alias %r shadows an existing robot canonical name.", alias)
-            elif alias in pkg_aliases or alias in user_aliases:
-                logger.warning("Alias %r is already used by another robot.", alias)
-
     # Validate model_xml exists.  Previously we only checked when
     # ``resolved_dir`` existed - which silently accepted registrations for
     # dirs that didn't exist yet and surfaced a confusing error only at
@@ -273,12 +248,20 @@ def register_robot(
 
     # Save
     data.setdefault("robots", {})[name] = entry
+
+    # Fail-closed: refuse to persist an entry the loader would reject on the
+    # next read (an alias that collides with a canonical name or another
+    # robot's alias). Without this the registration "succeeds" but every
+    # subsequent get_robot/resolve_name raises ValueError process-wide until
+    # user_robots.json is hand-edited.
+    _assert_registry_still_loads(data)
+
     _save_user_registry(data)
 
     # Invalidate loader cache so next get_robot() picks up the merge
     _invalidate_cache()
 
-    logger.info("Registered robot '%s' → %s/%s", name, dir_name, model_xml)
+    logger.info("Registered robot '%s' -> %s/%s", name, dir_name, model_xml)
     return entry
 
 
@@ -329,6 +312,38 @@ def list_user_robots() -> list[dict[str, Any]]:
             }
         )
     return result
+
+
+def _assert_registry_still_loads(data: dict[str, Any]) -> None:
+    """Reject a registration the loader would refuse to read.
+
+    Runs the loader's own uniqueness validator on the prospective merged
+    registry (package ``robots.json`` overlaid with the pending user entries),
+    mirroring exactly what :func:`loader._merge_user_robots` +
+    :func:`loader._validate_robots` do on every read. An invalid registration
+    therefore fails loudly at write time instead of being persisted and then
+    breaking every subsequent ``get_robot``/``resolve_name`` call.
+
+    Args:
+        data: The prospective user-registry dict (already containing the new
+            entry) to validate against the merged registry.
+
+    Raises:
+        ValueError: If the merged registry would violate a uniqueness
+            constraint (e.g. an alias colliding with a canonical name or
+            another robot's alias).
+    """
+    from .loader import _REGISTRY_DIR, _validate_robots
+
+    pkg_path = _REGISTRY_DIR / "robots.json"
+    try:
+        pkg = json.loads(pkg_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        pkg = {}
+
+    merged = dict(pkg.get("robots", {}))
+    merged.update(data.get("robots", {}))
+    _validate_robots({"robots": merged})
 
 
 def _invalidate_cache() -> None:

@@ -91,6 +91,11 @@ sim.run_policy(robot_name="so100", instruction="pick up the cube",
                duration=10.0)
 ```
 
+`policy_config` must be a dict (it is forwarded to `create_policy` with `**`); the same holds for the
+per-call `policy_kwargs`. Any other shape - a `"port=5555"` string, a list of pairs, an unparsed JSON
+blob - is rejected by `run_policy` / `start_policy` / `eval_policy` / `evaluate_benchmark` with a
+structured error naming the parameter, before any policy is created.
+
 `LerobotLocalPolicy` requires `export STRANDS_TRUST_REMOTE_CODE=1` (raises `UntrustedRemoteCodeError` otherwise).
 
 ## See also

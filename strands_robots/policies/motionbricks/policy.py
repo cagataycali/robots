@@ -266,6 +266,7 @@ class MotionBricksPolicy(Policy):
     # ------------------------------------------------------------------
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"motionbricks"``)."""
         return "motionbricks"
 
     @property
@@ -275,6 +276,7 @@ class MotionBricksPolicy(Policy):
 
     @property
     def config(self) -> MotionBricksConfig | None:
+        """Resolved :class:`MotionBricksConfig`, or ``None`` when unconfigured."""
         return self._config
 
     @property

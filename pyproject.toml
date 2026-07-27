@@ -137,10 +137,14 @@ wbc = [
     # Required so create_policy("wbc") with no local checkpoint works out of the
     # box - WBCPolicy._maybe_download_checkpoint raises RuntimeError naming the
     # [wbc] extra when it is absent.
-    # Cap the MAJOR only (<2.0.0): a <1.0.0 cap conflicts with lerobot, which
-    # requires huggingface-hub>=1.0.0 - and [wbc] is pulled into [all] alongside
-    # lerobot, so the two must co-resolve.
-    "huggingface_hub>=0.20.0,<2.0.0",
+    # Floor at >=1.0 (cap the MAJOR only, <2.0.0): the docs' bucket-sync
+    # guidance (README streamed-training section + dataset_recorder.sync_to_bucket)
+    # instructs `pip install -U "huggingface_hub>=1.0"` because the `hf buckets`/
+    # `hf sync` CLI subcommands only exist on huggingface_hub>=1.0; a <1.0 floor
+    # lets a fresh resolve land on 0.36.x, whose `hf` entry point lacks those
+    # subcommands. >=1.0 also matches lerobot (huggingface-hub>=1.0.0) - and
+    # [wbc] is pulled into [all] alongside lerobot, so the two co-resolve.
+    "huggingface_hub>=1.0,<2.0.0",
 ]
 motionbricks = [
     # MotionBricks (NVlabs/GR00T-WholeBodyControl `motionbricks/`) generative
@@ -192,24 +196,17 @@ lerobot-async = [
     "lerobot[async]>=0.6.0,<0.7.0",
 ]
 # MolmoAct2 transformers-native VLA (e.g. allenai/MolmoAct2-SO100_101). The
-# MolmoAct2Policy class ships in lerobot >= 0.6 (it landed via lerobot PR #3604
-# after the 0.5.1 PyPI release), so `strands-robots[molmoact2]` now resolves it
-# straight from PyPI through the `strands-robots[lerobot]` (>=0.6) pin -- no
-# git-source step. This extra layers the auxiliary deps MolmoAct2's
-# modeling/processor code needs on top of lerobot core -- transformers
-# (Qwen2Tokenizer + the sharded safetensors loader), peft, scipy -- mirroring
-# lerobot's own [molmoact2] extra.
+# MolmoAct2Policy ships in lerobot >= 0.6 (landed via lerobot PR #3604). Rather
+# than hand-mirror lerobot's aux-dep pins here (transformers/peft/scipy) -- which
+# silently drifts whenever lerobot bumps them -- we defer entirely to lerobot's
+# own ``[molmoact2]`` extra. That extra pulls lerobot[transformers-dep],
+# lerobot[peft-dep], lerobot[scipy-dep] at exactly the versions the MolmoAct2
+# modeling/processor code was built against, so the two stay in lock-step by
+# construction. The base ``strands-robots[lerobot]`` pin (>=0.6.0,<0.7.0) already
+# fixes the lerobot floor; ``lerobot[molmoact2]`` just adds the aux deps.
 molmoact2 = [
     "strands-robots[lerobot]",
-    # Mirror lerobot's own [molmoact2] dep pins exactly. The transformers
-    # floor MUST match lerobot[transformers-dep] (>=5.4.0,<5.6.0): MolmoAct2's
-    # modeling/processor code uses transformers 5.4+ APIs, and a looser floor
-    # (e.g. >=4.46) lets a resolver pick an incompatible transformers that
-    # imports fine -- passing the importability guard in molmoact2.build_policy
-    # -- then dead-ends deep inside lerobot model construction.
-    "transformers>=5.4.0,<5.6.0",
-    "peft>=0.18.0,<1.0.0",
-    "scipy>=1.14.0,<2.0.0",
+    "lerobot[molmoact2]>=0.6.0,<0.7.0",
 ]
 sim = [
     "robot_descriptions>=1.11.0,<2.0.0",
@@ -267,6 +264,27 @@ sim-isaac = [
     "imageio>=2.28.0,<3.0.0",
     "imageio-ffmpeg>=0.4.0,<1.0.0",
 ]
+# 3D Gaussian Splatting hybrid rendering (strands_robots.rendering:
+# GsplatBackground + HybridCompositor). GPU/heavy - kept OUT of `[all]`
+# (sim-isaac precedent).
+#
+# IMPORTANT: `gsplat` ships to PyPI as a source distribution that JIT-compiles
+# its CUDA kernels with `nvcc` on FIRST USE (same supply-chain class as cuRobo
+# above). On a box with a CUDA *runtime* but no CUDA *toolkit* - e.g. the
+# Isaac Sim container - `pip install gsplat` succeeds and imports fine, yet the
+# first rasterization call fails ("No CUDA toolkit found"). Call
+# `strands_robots.rendering.gsplat_rasterizer_available()` to probe an install
+# before relying on it, or install a pre-built wheel from the gsplat wheel
+# index (ships compiled kernels, no nvcc needed):
+# https://docs.gsplat.studio/main/installation.html
+# `PanoramaBackground` is the zero-GPU-dep fallback; torch is pinned without a
+# CUDA constraint (the probe fails loud on CPU-only builds instead of dying
+# deep inside the first frame).
+sim-gs = [
+    "gsplat>=1.4.0,<2.0.0",
+    "plyfile>=1.0.0,<2.0.0",
+    "torch>=2.2.0,<3.0.0",
+]
 benchmark-libero = [
     "libero>=0.1.0,<1.0.0",
 ]
@@ -317,8 +335,14 @@ ros2 = [
 vera-sim = [
     "gymnasium==0.29.1",
     "gym-pusht==0.1.5",
-    "robomimic==0.5.0",
     "robosuite==1.4.1",
+    # robomimic v0.5.0 is NOT published to PyPI -- the highest PyPI release is
+    # 0.3.0, and v0.5.0 exists only as an ARISE-Initiative GitHub tag. Pinning
+    # `robomimic==0.5.0` here is therefore both unresolvable (uv lock fails) and
+    # a dependency-confusion risk (anyone publishing 0.5.0 to PyPI would be
+    # installed). robomimic is not imported anywhere in the source; VERA pulls
+    # it in itself. If you need robomimic v0.5.0, install it from source:
+    #     pip install "robomimic @ git+https://github.com/ARISE-Initiative/robomimic.git@v0.5.0"
     # MimicGen (NVlabs) is NOT published to PyPI -- the `mimicgen` name on PyPI
     # is an unaffiliated third-party package, so pinning it here is a
     # dependency-confusion risk and it is not imported anywhere in the source.
@@ -362,7 +386,7 @@ all = [
 dev = [
     "pytest>=6.0,<10.0.0",
     "pytest-cov>=4.0.0,<6.0.0",
-    "ruff>=0.4.0,<1.0.0",
+    "ruff>=0.15.12,<0.16.0",
     "mypy>=1.0.0,<2.0.0",
     "pytest-timeout>=2.0.0,<3.0.0",
 ]
@@ -390,7 +414,7 @@ dependencies = [
     "pytest>=6.0,<10.0.0",
     "pytest-cov>=4.0.0,<6.0.0",
     "pytest-timeout>=2.0.0,<3.0.0",
-    "ruff>=0.4.0,<1.0.0",
+    "ruff>=0.15.12,<0.16.0",
     "mypy>=1.0.0,<2.0.0",
     "Pillow>=8.0.0,<13.0.0",
     "requests>=2.28.0,<3.0.0",
@@ -417,6 +441,20 @@ dependencies = [
 # inference runs on GPU. The sole remaining override is the diffusers security
 # floor.
 [tool.uv]
+# The legacy VERA sim stack ([vera-sim]) pins gymnasium==0.29.1, which is
+# mutually exclusive with lerobot>=0.6.0 (requires gymnasium>=1.1.1). uv
+# resolves all extras jointly by default, so without a fork declaration this
+# single pin drags the WHOLE resolution below lerobot 0.6 (previously froze the
+# lock at lerobot 0.5.1, making vla_jepa/molmoact2/eo1/lerobot.rl unreachable).
+# Declaring the conflict makes uv fork the resolution: install [vera-sim] OR the
+# lerobot-0.6 extras, never both in one environment.
+conflicts = [
+    [{ extra = "vera-sim" }, { extra = "lerobot" }],
+    [{ extra = "vera-sim" }, { extra = "lerobot-async" }],
+    [{ extra = "vera-sim" }, { extra = "molmoact2" }],
+    [{ extra = "vera-sim" }, { extra = "all" }],
+    [{ extra = "vera-sim" }, { extra = "benchmark-libero" }],
+]
 override-dependencies = [
     # SECURITY: diffusers <0.36 is vulnerable to a GHSA trust_remote_code bypass
     # + a TOCTOU RCE (fixed in 0.38.0). diffusers is only exercised by the
@@ -490,7 +528,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "motionbricks", "motionbricks.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*"]
+module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "motionbricks", "motionbricks.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge

@@ -52,10 +52,70 @@ sim.add_robot(name="panda", data_config="panda", keyframe="home")  # or keyframe
 ```
 
 The pose is applied to the robot's joints by name and is restored by `reset()`,
-so a keyframe spawn is sticky across episodes. An unknown keyframe name/index
+so a keyframe spawn is sticky across episodes. It also survives later
+`add_robot` calls, so incrementally building a multi-robot scene keeps every
+already-spawned arm at its home pose rather than collapsing it to zero. An
+unknown keyframe name/index
 is an error that lists the model's available keyframes. `keyframe=None` (the
 default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
 `keyframe=` as not-yet-supported.)
+
+## Rough terrain
+
+By default `create_world()` lays down a flat ground plane. A locomotion
+policy is only interesting on ground it can trip on, so pass a `terrain=`
+kind to lay down a deterministic heightfield instead - a floating-base robot
+then settles onto and walks over it. Four kinds ship:
+
+- `terrain="rough"` - smoothed value-noise bumps (robustness to uneven ground).
+- `terrain="stairs"` - a flight of discrete step plateaus rising along +x
+  (foot placement + climbing).
+- `terrain="pyramid"` - concentric square step plateaus rising toward the centre
+  from every direction (an omnidirectional climb).
+- `terrain="slope"` - a constant-grade inclined ramp rising along +x
+  (a continuous uphill pitch).
+
+```python
+sim.create_world(terrain="rough")        # bumpy heightfield ground
+sim.add_robot("unitree_go2", keyframe="home")
+```
+
+The field spans the same +/-5 m footprint as the flat plane (the reachable
+workspace is unchanged), its surface ranges from 0 up to ~8 cm on a solid
+base slab (flush with `z=0` at its lowest point, so a robot never falls
+below the nominal floor), and it is regenerated identically on every
+`reset()` (deterministic given the terrain kind), so a benchmark that
+evaluates a policy on rough ground is reproducible. `terrain` only applies
+when `ground_plane=True` (the default, which is the master floor switch);
+an unknown kind is rejected with an error listing the supported kinds. It
+is the ground-generation primitive a terrain *curriculum* (progressive
+difficulty across resets) builds on. (MuJoCo backend; the Newton backend
+rejects `terrain=` as not-yet-supported.)
+
+That curriculum knob is `difficulty`, which scales the terrain's peak
+elevation (the metre height its normalized `[0, 1]` field maps to) without
+changing the terrain *kind*:
+
+```python
+sim.create_world(terrain="rough", difficulty=0.3)  # gentle bumps (early stage)
+# ... later, harder stages ...
+sim.create_world(terrain="rough", difficulty=1.0)  # full ~8 cm bumps (default)
+sim.create_world(terrain="rough", difficulty=2.0)  # exaggerated ~16 cm bumps
+```
+
+`difficulty=1.0` (the default) is the full-height terrain, byte-identical to
+omitting it; `<1` is gentler, `>1` harsher. It must be a finite value `> 0`,
+and it only applies with a `terrain` - setting `difficulty != 1.0` on a flat
+world (no `terrain`) is rejected with an error rather than silently having no
+effect. A locomotion curriculum ramps `difficulty` across resets to grow the
+terrain the policy must handle.
+
+A floating-base robot added to a terrain world (or reset in one) spawns
+SEATED on the local terrain surface: its base is raised by the heightfield
+height beneath its `(x, y)` so its feet rest on the ground, rather than at
+the flat-ground keyframe height (which would leave them buried below a raised
+heightfield). A flat ground plane and a fixed-base arm (no free joint) are
+unaffected.
 
 ## Procedural objects
 
@@ -71,6 +131,58 @@ for i in range(5):
         color=[random.random(), random.random(), random.random(), 1.0],
     )
 ```
+
+## Object size
+
+`size` is the **full extent in meters** along each local axis - not MuJoCo's
+native half-extent. It is halved when the geom is compiled, so
+`size=[0.05, 0.05, 0.05]` is a 5 cm cube.
+
+Pass every component the shape consumes; a partial vector is rejected rather
+than completed from a default, because a completed vector compiles a
+differently-sized object while `add_object` reports success:
+
+| Shape | Components consumed |
+|-------|---------------------|
+| `box` / `ellipsoid` | `[x, y, z]` - all three full edge lengths / diameters |
+| `cylinder` / `capsule` | `[diameter, unused, full height]` - three (index 1 is ignored) |
+| `sphere` | `[diameter]` - one is enough |
+| `plane` | `[x]` or `[x, y]` visual half-widths (`y` mirrors `x` when omitted) |
+| `mesh` | none - the asset's own units define the extent |
+
+At most 3 components are accepted; omit `size` entirely for the 5 cm default.
+
+```python
+sim.add_object("crate", shape="box", size=[0.5])
+# status=error: box needs 3 'size' component(s) [x, y, z] full edge lengths,
+#               got 1 (size=[0.5]). ...
+sim.add_object("crate", shape="box", size=[0.5, 0.5, 0.5])   # 50 cm crate
+```
+
+## Object mass
+
+`mass` (kg) applies to dynamic objects and must be a finite number greater than
+zero - the same domain `set_body_properties(mass=...)` enforces when it writes
+the same body. A mass outside it is rejected up front, naming the parameter,
+instead of surfacing as a recompile failure:
+
+```python
+sim.add_object("crate", shape="box", mass=0)
+# status=error: add_object: 'mass' must be a finite number > 0, got 0.0
+sim.add_object("crate", shape="box", mass=1e-16)
+# status=error: add_object: 'mass' must be >= MuJoCo's mjMINVAL (1e-15 kg) ...
+```
+
+This matters beyond the one object: a body's mass divides every force acting on
+it, and the solver keeps a single state vector, so an infinite mass turns the
+whole world's `qpos`/`qvel` to `nan` on the next step - every other body
+included. `is_static=True` needs no mass (MuJoCo derives it from the geom's
+density), so `mass` is ignored there.
+
+Whatever the reason for a rejection - mass, `size`, an unsupported `shape`, an
+unloadable mesh - the scene is rolled back to its previous compilable state and
+the object name stays reusable, so a corrected retry under the same name works
+and one bad add never bricks later scene edits.
 
 ## Mesh objects
 
@@ -125,7 +237,21 @@ sim.add_object("floor_tile", shape="box", size=[0.3, 0.3, 0.01], is_static=True,
 Specify **either** `texture` **or** `builtin`, not both. An invalid texture
 path, an unknown `builtin` name, or specifying both fails loudly with a
 `ValueError` (returned as a `status=error` dict through the agent tool) - there
-is no silent fallback to the flat-plastic default. For natural surfaces prefer
+is no silent fallback to the flat-plastic default.
+
+Only the keys in the table above are accepted. A key outside it (a typo such as
+`rgb_1`, or a field borrowed from another renderer such as `roughness`), an
+empty `material={}`, or `rgb1`/`rgb2`/`texdim` without `builtin` is rejected the
+same way - the alternative is an object that compiles with MuJoCo's glossy
+defaults while `add_object` reports success:
+
+```python
+sim.add_object("cube", material={"builtin": "checker", "rgb_1": [1, 0, 0]})
+# status=error: unknown material key(s): 'rgb_1' (did you mean 'rgb1'?).
+#               Accepted keys: builtin, reflectance, rgb1, rgb2, shininess, ...
+```
+
+For natural surfaces prefer
 an **image texture**; the `checker` builtin reads as a literal checkerboard.
 Materials are currently supported by the MuJoCo backend; the Newton backend
 rejects a non-`None` `material` rather than silently ignoring it.

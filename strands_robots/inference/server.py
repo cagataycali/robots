@@ -193,11 +193,15 @@ class PolicyServer:
         # frame limit must be lifted or the server 1009-closes every real image
         # observation. Compression is disabled too (base64 binary barely compresses
         # and deflate wastes CPU at control rate); the client already opts out.
-        self._server = serve(self._handle, self.host, self.port, max_size=None, compression=None)
-        # Read back the OS-assigned port when the caller passed 0.
-        self.port = self._server.socket.getsockname()[1]
+        server = serve(self._handle, self.host, self.port, max_size=None, compression=None)
+        # Read back the OS-assigned port BEFORE publishing ``_server``: a
+        # background caller polling ``_server is not None`` as the "bound"
+        # signal must then always observe the real port, never the
+        # constructor default (see serve() for the same ordering).
+        self.port = server.socket.getsockname()[1]
+        self._server = server
         self._thread = threading.Thread(
-            target=self._server.serve_forever,
+            target=server.serve_forever,
             name=f"policy-server-{self.port}",
             daemon=True,
         )
@@ -225,8 +229,11 @@ class PolicyServer:
         # See start(): lift the default 1 MiB frame limit (and disable compression)
         # so large multi-camera observations stream in, matching the client.
         with serve(self._handle, self.host, self.port, max_size=None, compression=None) as server:
-            self._server = server
+            # Publish the bound port BEFORE marking the server as bound so a
+            # concurrent poller of ``_server is not None`` never reads the
+            # constructor default 0 in the window between the two writes.
             self.port = server.socket.getsockname()[1]
+            self._server = server
             logger.info("PolicyServer serving on ws://%s:%d", self.host, self.port)
             try:
                 server.serve_forever()

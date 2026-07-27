@@ -130,8 +130,10 @@ def _env_pos_float(env_var: str, default: float) -> float:
     """Parse a positive float from *env_var*, falling back to *default*.
 
     Non-numeric / non-positive / NaN / inf values fall back to the default.
-    Local to security.py (the analogous helper in core.py is not importable
-    here without a cycle). Used for the teleop input safety bound (H-2).
+    Local to :mod:`~strands_robots.mesh.security`; the analogous helper
+    :func:`~strands_robots.mesh.core._parse_positive_float_env` is not
+    importable here without an import cycle. Used for the teleop input
+    safety bound (H-2).
     """
     raw = os.getenv(env_var)
     if raw is None:
@@ -491,7 +493,8 @@ def is_safe_model_path(path: str, *, hf_only: bool = False) -> bool:
         # and ``nvidia/repo/`` (trailing slash). HF would 404 on these,
         # but the validator's job is to enforce the wire contract at the
         # boundary -- not to rely on downstream rejection. Same posture
-        # as R1's reject of ``nvidia/etc/passwd``. (R3 review fix.)
+        # as the ``nvidia/etc/passwd`` reject: enforce the exact
+        # ``owner/repo`` shape here rather than defer to a 404.
         if any(seg in ("", ".") for seg in parts):
             return False
         if len(parts) != 2:

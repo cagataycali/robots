@@ -79,7 +79,6 @@ def test_build_single_gpu_command_emits_core_flags() -> None:
         batch_size=16,
         save_freq=1000,
         device="cuda",
-        dtype="bfloat16",
     )
     assert cmd[:3] == ["python", "-m", "lerobot.scripts.lerobot_train"]
     assert "--dataset.repo_id=local" in cmd
@@ -93,7 +92,8 @@ def test_build_single_gpu_command_emits_core_flags() -> None:
     assert "--steps=5000" in cmd
     assert "--batch_size=16" in cmd
     assert "--save_freq=1000" in cmd
-    assert "--policy.dtype=bfloat16" in cmd
+    # ACT's lerobot config has no dtype field, so no --policy.dtype is emitted.
+    assert not any(tok.startswith("--policy.dtype") for tok in cmd)
     # No accelerate prefix on a single-GPU run.
     assert "accelerate" not in cmd
 
@@ -160,6 +160,175 @@ def test_expert_only_rejected_for_non_expert_policy() -> None:
             policy_type="act",
             train_expert_only=True,
         )
+
+
+def test_expert_only_rejected_for_pi0_fast() -> None:
+    # pi0_fast's lerobot config exposes NO train_expert_only field, so the CLI
+    # flag is a hard draccus error. The supported set is sourced live from
+    # lerobot (not a hardcoded copy that once wrongly listed pi0_fast).
+    with pytest.raises(ValueError, match="train_expert_only is only valid"):
+        build_train_command(
+            dataset_root="/data/cubes",
+            policy_type="pi0_fast",
+            train_expert_only=True,
+        )
+
+
+def test_expert_only_policy_types_tracks_lerobot_registry() -> None:
+    # Drift guard: the live supported set must equal the lerobot policy configs
+    # that actually declare a train_expert_only field, so it tracks lerobot.
+    import dataclasses
+
+    # importorskip both registers the policy configs (side-effect import) and
+    # binds PreTrainedConfig unconditionally, so it is always initialized on the
+    # path that uses it below (CodeQL: no use-before-init).
+    pytest.importorskip("lerobot.policies")
+    PreTrainedConfig = pytest.importorskip("lerobot.configs.policies").PreTrainedConfig
+    expected = {
+        name
+        for name, cfg_cls in PreTrainedConfig.get_known_choices().items()
+        if any(f.name == "train_expert_only" for f in dataclasses.fields(cfg_cls))
+    }
+    assert set(train_mod._expert_only_policy_types()) == expected
+    # pi0_fast has no such field on current lerobot.
+    assert "pi0_fast" not in expected
+
+
+def test_expert_only_fallback_is_a_faithful_snapshot_of_lerobot() -> None:
+    """The static offline snapshot stays in sync with lerobot; drift trips this.
+
+    ``_EXPERT_ONLY_POLICIES_FALLBACK`` is only consulted when lerobot is not
+    importable, so a policy that gains or loses a ``train_expert_only`` field in
+    lerobot would silently diverge from the snapshot and hand offline callers a
+    stale set. Pinning equality here surfaces that drift the moment it happens.
+    """
+    import dataclasses
+
+    pytest.importorskip("lerobot.policies")
+    PreTrainedConfig = pytest.importorskip("lerobot.configs.policies").PreTrainedConfig
+    expected = {
+        name
+        for name, cfg_cls in PreTrainedConfig.get_known_choices().items()
+        if any(f.name == "train_expert_only" for f in dataclasses.fields(cfg_cls))
+    }
+    assert set(train_mod._EXPERT_ONLY_POLICIES_FALLBACK) == expected, (
+        "_EXPERT_ONLY_POLICIES_FALLBACK drifted from lerobot's expert-only policy "
+        "configs; update the fallback frozenset to match the current lerobot."
+    )
+
+
+def test_expert_only_policy_types_falls_back_when_lerobot_unimportable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail-soft: an unimportable lerobot yields the static snapshot, not a crash.
+
+    ``_expert_only_policy_types`` sources the supported set live from lerobot's
+    ``PreTrainedConfig`` registry. If lerobot moves or renames those modules (a
+    real risk when tracking lerobot from source), the tool must degrade to
+    :data:`_EXPERT_ONLY_POLICIES_FALLBACK` rather than raise - otherwise a stale
+    lerobot would break ``train_expert_only`` validation for every policy. The
+    ``None`` sentinel in ``sys.modules`` forces ``import lerobot.policies`` to
+    raise ``ImportError`` even though lerobot is installed here.
+    """
+    import sys
+
+    monkeypatch.setitem(sys.modules, "lerobot.policies", None)
+    assert train_mod._expert_only_policy_types() == train_mod._EXPERT_ONLY_POLICIES_FALLBACK
+
+
+# ---------------------------------------------------------------------------
+# Per-policy dtype / gradient_checkpointing field gating
+#
+# dtype and gradient_checkpointing are PER-POLICY config fields in lerobot: only
+# some policy configs declare them (the pi0 family, xvla, eo1 for dtype; the pi0
+# family, diffusion, molmoact2 for gradient_checkpointing). The default policy,
+# ACT, declares NEITHER, so emitting --policy.dtype / --policy.gradient_checkpointing
+# for it makes draccus abort with "unrecognized arguments" before training starts.
+# ---------------------------------------------------------------------------
+def test_act_default_omits_dtype_and_gradient_checkpointing() -> None:
+    """The default (ACT) invocation must not emit fields ACT's config lacks.
+
+    Regression: the tool used to default dtype="bfloat16" and emit --policy.dtype
+    unconditionally, so the DEFAULT lerobot_train(policy_type="act") built a
+    command draccus rejects with "unrecognized arguments: --dtype" before a step
+    ever ran. Defaults must produce a launchable command.
+    """
+    cmd = build_train_command(dataset_root="/data/cubes", policy_type="act")
+    assert not any(tok.startswith("--policy.dtype") for tok in cmd)
+    assert "--policy.gradient_checkpointing=true" not in cmd
+
+
+def test_dtype_emitted_for_policy_that_declares_it() -> None:
+    """A policy whose config declares dtype (pi05) still gets --policy.dtype."""
+    cmd = build_train_command(
+        dataset_root="/data/cubes",
+        policy_type="pi05",
+        dtype="bfloat16",
+    )
+    assert "--policy.dtype=bfloat16" in cmd
+
+
+def test_explicit_dtype_on_policy_without_field_raises_clear_error() -> None:
+    """Explicit dtype= on a policy lacking the field fails strands-side, clearly.
+
+    Better a targeted ValueError naming the policy than a draccus stack trace
+    from a doomed subprocess.
+    """
+    pytest.importorskip("lerobot.policies")
+    with pytest.raises(ValueError, match="has no 'dtype' config field"):
+        build_train_command(
+            dataset_root="/data/cubes",
+            policy_type="act",
+            dtype="bfloat16",
+        )
+
+
+def test_gradient_checkpointing_on_policy_without_field_raises_clear_error() -> None:
+    """gradient_checkpointing on a policy lacking the field fails strands-side."""
+    pytest.importorskip("lerobot.policies")
+    with pytest.raises(ValueError, match="has no 'gradient_checkpointing' config field"):
+        build_train_command(
+            dataset_root="/data/cubes",
+            policy_type="act",
+            gradient_checkpointing=True,
+        )
+
+
+def test_policy_config_field_names_tracks_lerobot_registry() -> None:
+    """The live field probe matches lerobot's actual config dataclass fields."""
+    import dataclasses
+
+    pytest.importorskip("lerobot.policies")
+    PreTrainedConfig = pytest.importorskip("lerobot.configs.policies").PreTrainedConfig
+    for name, cfg_cls in PreTrainedConfig.get_known_choices().items():
+        expected = frozenset(f.name for f in dataclasses.fields(cfg_cls))
+        assert train_mod._policy_config_field_names(name) == expected
+
+
+def test_policy_config_field_names_unknown_policy_is_none() -> None:
+    """An unknown policy type resolves to None (gating is skipped, not crashed)."""
+    pytest.importorskip("lerobot.policies")
+    assert train_mod._policy_config_field_names("definitely_not_a_policy") is None
+
+
+def test_field_gating_passes_through_when_lerobot_unimportable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When lerobot cannot be imported the field set is unknown, so flags pass
+    through unguarded rather than raising - the runtime start path preflights
+    lerobot separately, so this only affects offline command building."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "lerobot.policies", None)
+    assert train_mod._policy_config_field_names("act") is None
+    cmd = build_train_command(
+        dataset_root="/data/cubes",
+        policy_type="act",
+        dtype="bfloat16",
+        gradient_checkpointing=True,
+    )
+    assert "--policy.dtype=bfloat16" in cmd
+    assert "--policy.gradient_checkpointing=true" in cmd
 
 
 def test_val_episodes_reserves_last_n_episodes(tmp_path: Path) -> None:
@@ -337,11 +506,16 @@ def test_unknown_action_errors(tmp_path: Path) -> None:
 # build_train_command - optional flag pass-through
 # ---------------------------------------------------------------------------
 def test_build_command_emits_optional_tuning_flags() -> None:
-    """Optional steps/batch/save_freq/dtype/grad-ckpt/pretrained flags all appear."""
+    """Optional steps/batch/save_freq/dtype/grad-ckpt/pretrained flags all appear.
+
+    dtype and gradient_checkpointing are per-policy config fields, so this uses
+    pi05 - a policy whose lerobot config declares both - to exercise the emission
+    path. ACT, the tool default, has neither field (see the dedicated gate tests).
+    """
     cmd = build_train_command(
         dataset_root="/data/ds",
-        policy_type="act",
-        pretrained_path="lerobot/act_base",
+        policy_type="pi05",
+        pretrained_path="lerobot/pi05_base",
         output_dir="/out",
         steps=500,
         batch_size=16,
@@ -354,7 +528,7 @@ def test_build_command_emits_optional_tuning_flags() -> None:
     assert "--save_freq=100" in cmd
     assert "--policy.dtype=float32" in cmd
     assert "--policy.gradient_checkpointing=true" in cmd
-    assert "--policy.pretrained_path=lerobot/act_base" in cmd
+    assert "--policy.pretrained_path=lerobot/pi05_base" in cmd
     assert "--output_dir=/out" in cmd
 
 
@@ -386,6 +560,45 @@ def test_session_manager_retains_finished_session_with_dead_pid(tmp_path: Path) 
     # PID 1 is not one of ours; _load_sessions keeps it but it is not "running".
     sessions = mgr.list_sessions()
     assert "done" in sessions
+
+
+@pytest.mark.parametrize(
+    "exc_factory",
+    [
+        pytest.param(train_mod.psutil.NoSuchProcess, id="no-such-process"),
+        pytest.param(train_mod.psutil.AccessDenied, id="access-denied"),
+    ],
+)
+def test_session_with_pid_that_vanishes_mid_probe_is_dropped(monkeypatch: pytest.MonkeyPatch, exc_factory: Any) -> None:
+    """A session whose PID still exists at check time but whose process object
+    raises while being probed (a race where the process exits between
+    ``pid_exists`` and ``is_running``, or a process we may not inspect) is
+    dropped from the active set. The load must never raise and must never
+    report such a session as running.
+
+    This is the complement of the dead-PID case above: there ``pid_exists`` is
+    already False and the finished session is retained for its log tail, whereas
+    here the PID reads live but the probe fails, so the session cannot be
+    confirmed running and is excluded.
+    """
+    mgr = SessionManager()
+    mgr.add_session("racy", {"pid": 4242, "action": "train"})
+
+    monkeypatch.setattr(train_mod.psutil, "pid_exists", lambda pid: True)
+
+    class _VanishingProcess:
+        def __init__(self, pid: int) -> None:
+            self._pid = pid
+
+        def is_running(self) -> bool:
+            raise exc_factory(self._pid)
+
+    monkeypatch.setattr(train_mod.psutil, "Process", _VanishingProcess)
+
+    sessions = mgr.list_sessions()
+    assert "racy" not in sessions, (
+        "a session whose process cannot be confirmed running must be dropped, not reported as active"
+    )
 
 
 def test_session_manager_get_and_remove_round_trip(tmp_path: Path) -> None:

@@ -40,6 +40,9 @@ Available predicates (bool):
     grasped(body, gripper_prefix)
     base_tipped(tol=0.15, robot=None)
     base_below_z(z, robot=None)
+    base_beyond_x(x, robot=None)
+    base_beyond_y(y, robot=None)
+    base_yaw_beyond(yaw, robot=None)
 
 Available reward terms (float):
 
@@ -648,7 +651,7 @@ def _body_on(
 
 
 def _body_inside(body: str, container: str, xy_tol: float = 0.15, z_tol: float = 0.15) -> BoolPredicate:
-    """Approximate ``(inside A B)`` predicate - A contained within B's volume.
+    """Approximate ``(in A B)`` predicate - A contained within B's volume.
 
     True when A's position is within an axis-aligned box centered on B with
     half-extents (``xy_tol``, ``xy_tol``, ``z_tol``). LIBERO-typical use is
@@ -826,8 +829,30 @@ def _base_tipped(tol: float = 0.15, robot: str | None = None) -> BoolPredicate:
     return check
 
 
+def _ground_height(sim: SimEngine, x: float, y: float) -> float:
+    """Local terrain surface height (world z) beneath ``(x, y)``; ``0.0`` on flat ground.
+
+    A height/fall predicate must measure a base's clearance above the ground
+    *beneath it*, not an absolute world z: on a raised-terrain heightfield
+    (``create_world(terrain=...)``) a collapsed robot on a plateau still has an
+    absolute base z above a flat-ground threshold, so an absolute test silently
+    misses the fall. Reads the backend's ``_ground_height_at`` hook (``0.0`` for
+    flat ground / a backend with no heightfield); a sim lacking the hook
+    degrades to ``0.0`` so flat-ground behaviour is unchanged and the predicate
+    never raises.
+    """
+    fn = getattr(sim, "_ground_height_at", None)
+    if fn is None:
+        return 0.0
+    try:
+        return float(fn(x, y))
+    except Exception as e:  # noqa: BLE001 - predicates never raise
+        logger.debug("_ground_height_at(%.3f, %.3f) failed: %s", x, y, e)
+        return 0.0
+
+
 def _base_below_z(z: float, robot: str | None = None) -> BoolPredicate:
-    """True when a floating base's world height has dropped below ``z``.
+    """True when a floating base's height ABOVE THE LOCAL GROUND drops below ``z``.
 
     The height counterpart of :func:`_base_tipped`, and the second half of a
     complete floating-base fall termination: ``base_tipped`` fires when the base
@@ -842,17 +867,23 @@ def _base_below_z(z: float, robot: str | None = None) -> BoolPredicate:
             - {predicate: base_tipped, tol: 0.7}
             - {predicate: base_below_z, z: 0.3}
 
-    Reads ``get_observation``'s ``base_pos`` z (world frame) - the same
-    embodiment-agnostic floating-base surface the ``base_*`` reward terms and
-    ``base_tipped`` read - so it needs no base body name and works on a mobile
-    base whose free joint is unnamed, unlike ``body_below_z`` which resolves a
-    specific body by name (a name a mobile base's unnamed free joint does not
-    expose). It is the base-surface, name-free analogue of
-    ``body_below_z(<base body>, z)``.
+    Reads ``get_observation``'s ``base_pos`` - the same embodiment-agnostic
+    floating-base surface the ``base_*`` reward terms and ``base_tipped`` read -
+    so it needs no base body name and works on a mobile base whose free joint is
+    unnamed, unlike ``body_below_z`` which resolves a specific body by name (a
+    name a mobile base's unnamed free joint does not expose). It is the
+    base-surface, name-free analogue of ``body_below_z(<base body>, z)``.
 
-    ``z`` is the collapse height in metres; a fall termination sets it well
-    below the standing base height (a G1 pelvis stands ~0.74 m, so ``z=0.3``
-    catches a collapse). Requires a robot with a floating base; a fixed-base arm
+    The height is measured ABOVE THE LOCAL GROUND beneath the base, not as an
+    absolute world z: on a raised-terrain heightfield (``create_world(terrain=
+    ...)``, the terrain curriculum) a collapse onto a plateau leaves the base
+    above a flat-ground threshold, so an absolute test would silently miss the
+    fall. The local terrain height is subtracted (``0.0`` on a flat ground plane
+    / a backend with no heightfield, so flat-ground behaviour is unchanged).
+
+    ``z`` is the collapse clearance in metres (height of the base above the
+    ground beneath it); a fall termination sets it well below the standing base
+    height (a G1 pelvis stands ~0.74 m, so ``z=0.3`` catches a collapse). Requires a robot with a floating base; a fixed-base arm
     has no base position, so the predicate degrades to ``False`` (never
     collapsed -> never spuriously fails an episode) and the missing base is
     logged once. ``robot`` selects the robot in a multi-robot scene (default:
@@ -865,7 +896,185 @@ def _base_below_z(z: float, robot: str | None = None) -> BoolPredicate:
         pos = _base_position(sim, rname)
         if pos is None:
             return False
-        return pos[2] < zt
+        # Height ABOVE THE LOCAL GROUND, not absolute world z: on raised terrain
+        # (create_world(terrain=...)) a collapse leaves the base above a
+        # flat-ground threshold, so an absolute test misses the fall. On flat
+        # ground _ground_height is 0.0 and this reduces to the world height.
+        return (pos[2] - _ground_height(sim, pos[0], pos[1])) < zt
+
+    return check
+
+
+def _base_beyond_x(x: float, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base's world x-position has passed forward of ``x``.
+
+    The forward-progress SUCCESS counterpart of the base-fall termination
+    predicates (:func:`_base_tipped` / :func:`_base_below_z`): those FAIL a
+    velocity-tracking episode when the base topples or collapses, while
+    ``base_beyond_x`` SUCCEEDS it once the base has actually walked forward past
+    ``x`` metres. It is the missing success half of a walk-forward locomotion
+    task - the reward terms (``base_velocity_tracking`` + the base regularizers)
+    shape *how* to walk, the fall predicates end a *bad* rollout, and this
+    predicate scores the *goal* ("the base reached forward distance ``x``"). Put
+    it in a ``success`` clause next to the fall predicates in ``failure``::
+
+        success:
+          all:
+            - {predicate: base_beyond_x, x: 2.0}
+        failure:
+          any:
+            - {predicate: base_tipped, tol: 0.7}
+            - {predicate: base_below_z, z: 0.3}
+
+    Reads ``get_observation``'s ``base_pos`` x (world frame) - the same
+    embodiment-agnostic floating-base surface the ``base_*`` reward terms,
+    ``base_tipped``, and ``base_below_z`` read - so it needs no base body name
+    and works on a mobile base whose free joint is unnamed, unlike
+    ``inside_region`` which resolves a specific body by name (a name a mobile
+    base's unnamed free joint does not expose).
+
+    ``x`` is an ABSOLUTE world x-threshold in metres, not a displacement: the
+    canonical walk-forward scene spawns the base near the origin facing +x
+    (identity orientation -> world +x is forward), so ``base_beyond_x(x=D)``
+    reads "walked ~D metres forward". The author sets ``x`` relative to the
+    known spawn x, exactly as ``base_below_z`` sets its collapse height relative
+    to the known standing height; a base that starts already past ``x`` reads
+    True immediately. It is a pure x-position test - height and orientation do
+    not affect it (a base that walked forward but then toppled still reads True
+    on x, so pair it with the fall predicates in a ``failure`` clause to reject
+    that outcome).
+
+    Requires a robot with a floating base; a fixed-base arm has no base
+    position, so the predicate degrades to ``False`` (never made forward
+    progress -> never spuriously succeeds) and the missing base is logged once.
+    ``robot`` selects the robot in a multi-robot scene (default: the sole
+    robot).
+    """
+    xt = float(x)
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        pos = _base_position(sim, rname)
+        if pos is None:
+            return False
+        return pos[0] > xt
+
+    return check
+
+
+def _base_beyond_y(y: float, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base's world y-position has passed beyond ``y``.
+
+    The LATERAL-progress SUCCESS counterpart of :func:`_base_beyond_x`: where
+    ``base_beyond_x`` scores a walk-FORWARD goal off ``base_pos`` x,
+    ``base_beyond_y`` scores a strafe-LEFT goal off ``base_pos`` y (world +y is
+    the robot's left for the identity spawn orientation the locomotion scenes
+    use). It is the missing lateral half of the position-success family - the
+    reward terms (``base_velocity_tracking`` with a non-zero ``vy`` command +
+    the base regularizers) shape *how* to strafe, the fall predicates
+    (``base_tipped`` / ``base_below_z``) end a *bad* rollout, and this predicate
+    scores the *goal* ("the base reached lateral distance ``y``")::
+
+        success:
+          all:
+            - {predicate: base_beyond_y, y: 1.0}
+        failure:
+          any:
+            - {predicate: base_tipped, tol: 0.7}
+            - {predicate: base_below_z, z: 0.18}
+
+    Reads ``get_observation``'s ``base_pos`` y (world frame) - the same
+    embodiment-agnostic floating-base surface the ``base_*`` reward terms,
+    ``base_tipped``, ``base_below_z``, and ``base_beyond_x`` read - so it needs
+    no base body name and works on a mobile base whose free joint is unnamed.
+
+    ``y`` is an ABSOLUTE world y-threshold in metres, not a displacement
+    (mirroring ``base_beyond_x``): the canonical locomotion scenes spawn the
+    base near the origin, so ``base_beyond_y(y=D)`` reads "strafed ~D metres to
+    the left". The author sets ``y`` relative to the known spawn y. It is a pure
+    y-position test - height and orientation do not affect it (a base that
+    strafed but then toppled still reads True on y, so pair it with the fall
+    predicates in a ``failure`` clause to reject that outcome).
+
+    Requires a robot with a floating base; a fixed-base arm has no base
+    position, so the predicate degrades to ``False`` (never made lateral
+    progress -> never spuriously succeeds) and the missing base is logged once.
+    ``robot`` selects the robot in a multi-robot scene (default: the sole
+    robot).
+    """
+    yt = float(y)
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        pos = _base_position(sim, rname)
+        if pos is None:
+            return False
+        return pos[1] > yt
+
+    return check
+
+
+def _base_yaw_beyond(yaw: float, robot: str | None = None) -> BoolPredicate:
+    """True when a floating base has turned past a heading of ``yaw`` radians.
+
+    The YAW (turn-in-place) SUCCESS counterpart of :func:`_base_beyond_x`
+    (forward) and :func:`_base_beyond_y` (lateral): those score a *position*
+    goal off ``base_pos``, while ``base_yaw_beyond`` scores a *heading* goal off
+    ``base_quat``. It is the missing rotational third of the omnidirectional
+    velocity-tracking vocabulary - the reward term ``base_velocity_tracking``
+    already accepts a yaw-rate command ``wz``, but until now no predicate could
+    SCORE reaching a turn goal, so a turn-in-place benchmark could reward a
+    ``wz`` command yet had no terminal for "the base actually turned". It drops
+    straight into a ``success`` clause next to the fall predicates in
+    ``failure``::
+
+        success:
+          all:
+            - {predicate: base_yaw_beyond, yaw: 1.0}
+        failure:
+          any:
+            - {predicate: base_tipped, tol: 0.7}
+            - {predicate: base_below_z, z: 0.18}
+
+    The heading is the base's yaw about the world vertical, extracted from the
+    ``base_quat`` (``w, x, y, z``) surface the ``base_*`` reward terms,
+    ``base_tipped``, ``base_beyond_x`` and ``base_beyond_y`` read - so it needs
+    no base body name and works on a mobile base whose free joint is unnamed::
+
+        yaw = atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z))
+
+    ``yaw`` is an ABSOLUTE world heading in radians, single-signed and measured
+    from the spawn heading (the locomotion scenes spawn at the identity
+    orientation -> yaw 0), exactly as ``base_beyond_x`` reads an absolute world x
+    from a +x-facing spawn: positive is a LEFT (counter-clockwise) turn, so
+    ``base_yaw_beyond(yaw=1.0)`` reads "turned ~1 rad (~57 deg) to the left". A
+    turn-in-place task targets a sub-pi heading (a single turn of less than a
+    half-revolution); the yaw wraps at +-pi, so a goal at or beyond pi is not a
+    well-defined single-turn heading (measuring cumulative revolutions would
+    need integrated-angle tracking, out of scope here just as ``base_beyond_x``
+    does not track total path length). It is a pure heading test - roll and
+    pitch do NOT affect the yaw, so a base that merely tips (without turning
+    about the vertical) never satisfies a yaw goal; position and height do not
+    affect it either. Because the yaw of a fully toppled base is ill-defined,
+    pair it with ``base_tipped`` in a ``failure`` clause so a "turned then fell"
+    rollout is rejected on the tilt, not scored as a valid turn.
+
+    Requires a robot with a floating base; a fixed-base arm has no base
+    orientation, so the predicate degrades to ``False`` (never turned -> never
+    spuriously succeeds) and the missing base is logged once. ``robot`` selects
+    the robot in a multi-robot scene (default: the sole robot).
+    """
+    yt = float(yaw)
+    rname = robot
+
+    def check(sim: SimEngine) -> bool:
+        quat = _base_quaternion(sim, rname)
+        if quat is None:
+            return False
+        # base_quat layout is (w, x, y, z) on both backends.
+        w, x, y, z = quat
+        heading = math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+        return heading > yt
 
     return check
 
@@ -1030,8 +1239,9 @@ def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -
     """Negative squared base-height error - a locomotion-regularizer reward.
 
     Rewards a floating-base robot for keeping its base (torso/pelvis) near a
-    target WORLD height: ``-weight * (base_z - target) ** 2`` - 0 at the target
-    and growing more negative as the base deviates. Composed alongside
+    target height ABOVE THE LOCAL GROUND beneath it:
+    ``-weight * ((base_z - ground_z) - target) ** 2`` - 0 at the target and
+    growing more negative as the base deviates. Composed alongside
     ``base_velocity`` in a ``dense_reward`` list, it is the standard regularizer
     that stops a velocity-tracking policy from cheating the forward-velocity
     reward by crouching or diving (the legged_gym / IsaacLab ``base_height``
@@ -1039,12 +1249,22 @@ def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -
     dive forward to maximise it - so a viable velocity-tracking reward pairs the
     two.
 
+    The height is measured ABOVE THE LOCAL GROUND, not as an absolute world z:
+    on a raised-terrain heightfield (``create_world(terrain=...)``, the terrain
+    curriculum) a robot standing at its proper posture on a plateau has an
+    absolute base z above the target, so an absolute test spuriously penalises
+    it - worse, it makes the reward *reward crouching* to the flat-ground
+    absolute height while on the plateau, inverting the anti-crouch incentive
+    this term exists to provide. The local terrain height is subtracted (``0.0``
+    on a flat ground plane / a backend with no heightfield, so flat-ground
+    behaviour is byte-for-byte unchanged).
+
     Reads ``get_observation``'s ``base_pos`` (world frame). ``target`` is the
-    desired base height in metres (task-specific: a G1 pelvis ~0.74 m, a Go2
-    trunk ~0.34 m). Requires a robot with a floating base; a fixed-base arm has
-    no base position, so the term degrades to ``0.0`` and the missing base is
-    logged once. ``robot`` selects the robot in a multi-robot scene (default:
-    the sole robot).
+    desired base height in metres, measured above the ground beneath the base
+    (task-specific: a G1 pelvis ~0.74 m, a Go2 trunk ~0.34 m). Requires a robot
+    with a floating base; a fixed-base arm has no base position, so the term
+    degrades to ``0.0`` and the missing base is logged once. ``robot`` selects
+    the robot in a multi-robot scene (default: the sole robot).
     """
     w = float(weight)
     tgt = float(target)
@@ -1054,7 +1274,12 @@ def _base_height(target: float, weight: float = 1.0, robot: str | None = None) -
         pos = _base_position(sim, rname)
         if pos is None:
             return 0.0
-        d = pos[2] - tgt
+        # Height ABOVE THE LOCAL GROUND, not absolute world z: on raised terrain
+        # (create_world(terrain=...)) a robot standing at its target posture on
+        # a plateau has an absolute base z above the target, so an absolute test
+        # spuriously penalises it (and rewards a crouch on the plateau). On flat
+        # ground _ground_height is 0.0 and this reduces to the world height.
+        d = (pos[2] - _ground_height(sim, pos[0], pos[1])) - tgt
         return -w * d * d
 
     return term
@@ -1191,9 +1416,17 @@ class StatefulRewardTerm:
     """
 
     def __call__(self, sim: SimEngine) -> float:  # pragma: no cover - interface
+        """Score the current sim state, returning this step's reward contribution."""
         raise NotImplementedError
 
     def reset(self) -> None:  # pragma: no cover - interface
+        """Clear per-episode state at an episode boundary.
+
+        Called by :meth:`SimEnv.reset` and
+        :meth:`DeclarativeBenchmark.on_episode_start` before a new episode so
+        accumulated progress (phase counters, best-so-far distances, latched
+        successes) does not leak across episodes.
+        """
         raise NotImplementedError
 
 
@@ -1347,6 +1580,9 @@ PREDICATE_REGISTRY: dict[str, PredicateFactory] = {
     "grasped": _grasped,
     "base_tipped": _base_tipped,
     "base_below_z": _base_below_z,
+    "base_beyond_x": _base_beyond_x,
+    "base_beyond_y": _base_beyond_y,
+    "base_yaw_beyond": _base_yaw_beyond,
     # float-valued
     "distance_neg": _distance_neg,
     "joint_progress": _joint_progress,
@@ -1446,13 +1682,71 @@ def predicate_kind(name: str) -> str:
     return "unknown"
 
 
+def supports_body_lookup(sim: SimEngine) -> bool:
+    """Whether *sim*'s backend can resolve body names at all.
+
+    Body-referencing predicates resolve through ``get_body_state`` (MuJoCo
+    only at time of writing). On a backend without that method every
+    body-referencing predicate degrades to a constant ``False``, so callers
+    that arm such a predicate (e.g. ``run_policy(stop_when=...)``) should
+    check this up front and reject rather than silently never fire.
+
+    Args:
+        sim: The engine to probe.
+
+    Returns:
+        ``True`` when the backend implements ``get_body_state``.
+    """
+    return getattr(sim, "get_body_state", None) is not None
+
+
+def can_resolve_body(sim: SimEngine, body: str) -> bool:
+    """Whether *body* resolves in *sim* right now, via the predicate DSL's own lookup.
+
+    Uses the exact resolution path the body-referencing predicates use at
+    evaluation time (:func:`_body_position`), including the LIBERO
+    ``<name>_main`` fallback - so a ``True`` here means the predicate will
+    genuinely be evaluable against the live scene, and a ``False`` means it
+    would degrade to a constant ``False`` forever (a typo'd name, or a
+    backend without body lookups).
+
+    Args:
+        sim: The engine to probe.
+        body: The body name a predicate clause references.
+
+    Returns:
+        ``True`` when the lookup resolves to a position.
+    """
+    return _body_position(sim, body) is not None
+
+
+def can_resolve_joint(sim: SimEngine, joint: str) -> bool:
+    """Whether *joint* resolves in *sim* right now, via the predicate DSL's own lookup.
+
+    Mirrors :func:`can_resolve_body` for joint-referencing predicates
+    (``joint_above`` / ``joint_below``), using the same ``get_observation``
+    path the predicates use at evaluation time.
+
+    Args:
+        sim: The engine to probe.
+        joint: The joint name a predicate clause references.
+
+    Returns:
+        ``True`` when the lookup resolves to a value.
+    """
+    return _joint_position(sim, joint) is not None
+
+
 __all__ = [
     "PREDICATE_REGISTRY",
     "BoolPredicate",
     "PredicateFactory",
     "RewardTerm",
     "StatefulRewardTerm",
+    "can_resolve_body",
+    "can_resolve_joint",
     "make_predicate",
     "predicate_kind",
     "register_predicate",
+    "supports_body_lookup",
 ]

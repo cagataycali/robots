@@ -48,7 +48,7 @@ Design notes (the contract this tool pins):
   tests where the goal is just to exercise the policy.
 
 See ``strands-labs/robots#708`` for the full root-cause analysis and the
-e2e_agent_test.py fix history (HB#352 -> #716 -> this tool).
+end-to-end agent-test fix history (HB#352 -> #716 -> this tool).
 """
 
 from __future__ import annotations
@@ -62,12 +62,6 @@ from typing import Any
 from strands.tools.decorator import tool
 
 logger = logging.getLogger(__name__)
-
-
-def _ok(text: str, **extra: Any) -> dict[str, Any]:
-    out: dict[str, Any] = {"status": "success", "content": [{"text": text}]}
-    out.update(extra)
-    return out
 
 
 def _err(text: str) -> dict[str, Any]:
@@ -124,6 +118,7 @@ def run_policy(
     seed: int | None = None,
     policy_kwargs: dict[str, Any] | None = None,
     video: dict[str, Any] | None = None,
+    stop_when: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Roll out a policy for ``n_episodes`` x ``n_steps`` with per-episode parquet boundaries.
 
@@ -174,7 +169,9 @@ def run_policy(
             recording (smoke-test mode).
         dataset_repo_id: Forwarded to ``start_recording``.
         dataset_task: Task label forwarded to ``start_recording``.
-        dataset_fps: Dataset FPS forwarded to ``start_recording``.
+        dataset_fps: Dataset FPS forwarded to ``start_recording``. Must be a
+            positive whole number; an unusable rate is reported before the
+            rollout starts instead of aborting the episode mid-flight.
         dataset_cameras: Camera names to record into the dataset.
             When set, forwarded as ``start_recording(cameras=...)``
             (supported by both the MuJoCo and Newton backends) to
@@ -197,6 +194,19 @@ def run_policy(
             an ``_ep<i>`` suffix is inserted into the path stem so each
             episode writes its own MP4 instead of overwriting. The returned
             payload carries ``video_paths`` (the MP4s that landed on disk).
+        stop_when: Optional semantic early-return clause forwarded to every
+            per-episode :meth:`Simulation.run_policy` call: the episode ends
+            as soon as the condition holds in the sim, instead of only at the
+            ``n_steps`` budget - a per-episode success gate for collection
+            loops. Same predicate DSL as a benchmark spec's ``success``
+            clause: a single call ``{"predicate": "grasped", "body": "cube",
+            "gripper_prefix": "so100"}`` or an ``{"all": [...]}`` /
+            ``{"any": [...]}`` group. Validated against the closed predicate
+            registry up front (before any recording is started), so an
+            unknown predicate name is rejected with the valid list while
+            nothing has been set up yet. Each rollout's ``stopped_reason``
+            (``'predicate'`` | ``'budget'`` | ``'cancelled'`` | ``'error'``)
+            is reported per episode.
 
     Returns:
         Standard ``{status, content}`` payload. On success the payload
@@ -245,6 +255,44 @@ def run_policy(
             f"got {type(video).__name__!r}. Example: "
             "video={'path': '/tmp/rollout.mp4', 'fps': 30, 'camera': 'camera1'}."
         )
+
+    if video is not None:
+        # Check the video schema here, not on the first forwarded run_policy
+        # call: this tool may start a dataset recording (below) before the
+        # episode loop, so a mistyped key must be rejected while nothing has
+        # been set up yet. Imported lazily (like PolicyRunner in
+        # _finalize_episode) and only when recording options were actually
+        # supplied, so a rollout without video never touches the sim stack.
+        from strands_robots.simulation.policy_runner import VideoConfig
+
+        if video_error := VideoConfig.validation_error(video):
+            return _err(f"run_policy: {video_error}")
+
+    # Same reason, for the provider keyword bags: a non-mapping policy_config /
+    # policy_kwargs must be rejected before step 2 creates a dataset and starts
+    # recording, otherwise the tool leaves an empty dataset behind and reports
+    # every episode as raised. Imported here rather than at module scope to
+    # match the lazy-import convention the rest of this tool follows.
+    from strands_robots.policies import policy_mapping_error
+
+    for _param, _value in (("policy_config", policy_config), ("policy_kwargs", policy_kwargs)):
+        if mapping_error := policy_mapping_error(_value, _param):
+            return _err(f"run_policy: {mapping_error}")
+
+    # Same reason again for the early-return clause: compile it against the
+    # closed predicate registry BEFORE step 2 starts a recording, so an
+    # unknown predicate name / bad kwargs is rejected while nothing has been
+    # set up yet (instead of leaving an empty dataset behind and reporting
+    # every episode as errored). The compiled callable is discarded - the
+    # facade recompiles per call - because the dict form is what the
+    # per-episode run_policy forwarding below passes through.
+    if stop_when is not None:
+        from strands_robots.simulation.benchmark_spec import compile_stop_when
+
+        try:
+            compile_stop_when(stop_when)
+        except ValueError as e:
+            return _err(f"run_policy: {e}")
 
     # ---- 2. Optional: start recording -----------------------------------
     recording_started = False
@@ -300,6 +348,7 @@ def run_policy(
                     policy_kwargs=policy_kwargs,
                     seed=ep_seed,
                     video=ep_video,
+                    stop_when=stop_when,
                 )
             except Exception as e:  # noqa: BLE001 - per-episode resilience
                 logger.exception("Episode %d/%d raised: %s", ep + 1, n_episodes, e)
@@ -308,13 +357,22 @@ def run_policy(
                     "content": [{"text": f"Episode {ep + 1} raised: {e!r}"}],
                 }
 
-            episodes.append(
-                {
-                    "index": ep,
-                    "status": rollout.get("status", "error"),
-                    "text": (rollout.get("content") or [{}])[0].get("text", "")[:500],
-                }
+            ep_record = {
+                "index": ep,
+                "status": rollout.get("status", "error"),
+                "text": (rollout.get("content") or [{}])[0].get("text", "")[:500],
+            }
+            # Surface the rollout's termination attribution so a caller
+            # gating episodes on stop_when can see which episodes hit the
+            # predicate vs. ran out of budget without re-parsing text.
+            rollout_json = next(
+                (blk["json"] for blk in rollout.get("content") or [] if isinstance(blk, dict) and "json" in blk),
+                None,
             )
+            if isinstance(rollout_json, dict) and "stopped_reason" in rollout_json:
+                ep_record["stopped_reason"] = rollout_json["stopped_reason"]
+                ep_record["steps_used"] = rollout_json.get("steps_used")
+            episodes.append(ep_record)
 
             # Per-episode parquet boundary. PR #716 wired this helper inside
             # PolicyRunner.evaluate() / _evaluate_with_spec(), but bare

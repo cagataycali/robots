@@ -194,6 +194,12 @@ def _qos_and_retain_for(topic: str) -> tuple[int, bool]:
     if not topic.startswith("strands/"):
         return 0, False
 
+    # Camera S3-reference metadata is cloud-relevant and small: publish it at
+    # QoS 0 (no retain) rather than letting the ``camera`` DROP entry swallow
+    # it. The heavy JPEG frames themselves never reach ``put`` (they go to S3).
+    if _is_camera_ref(topic):
+        return 0, False
+
     rest = topic[len("strands/") :]
     if not rest:
         return 0, False
@@ -248,8 +254,27 @@ def _qos_and_retain_for(topic: str) -> tuple[int, bool]:
     return 0, False
 
 
+def _is_camera_ref(topic: str) -> bool:
+    """True for camera S3-reference metadata topics (``strands/<peer>/camera/<cam>/ref``).
+
+    Unlike raw JPEG frames (which hit MQTT's 128 KB cap and are dropped), a
+    ``/ref`` message carries only the presigned S3 key + frame shape -- a few
+    hundred bytes. It is exactly the pointer a cloud subscriber needs to fetch
+    the offloaded frame, so it MUST traverse MQTT even though its topic sits
+    under the otherwise-dropped ``camera/`` prefix.
+    """
+    return topic.startswith("strands/") and topic.endswith("/ref") and "/camera/" in topic
+
+
 def _should_drop(topic: str) -> bool:
-    """True if the topic's payload should never traverse MQTT (camera/input/hand)."""
+    """True if the topic's payload should never traverse MQTT (camera/input/hand).
+
+    Camera S3-reference messages (``.../camera/<cam>/ref``) are exempt: they
+    carry only the presigned key, not the frame, and must reach cloud
+    subscribers. See :func:`_is_camera_ref`.
+    """
+    if _is_camera_ref(topic):
+        return False
     parts = topic.split("/", 2)
     suffix = parts[2] if len(parts) == 3 else topic
     return suffix.startswith(_NEVER_BRIDGE_PREFIXES)
@@ -304,6 +329,17 @@ class IotMqttTransport:
             if self._client is not None and self._connected.is_set():
                 return True
 
+            # Reconnect after a broker drop: ``_connected`` is clear but a
+            # stale client object may linger (its IO thread + socket still
+            # open). Stop it before building a new one, otherwise every retry
+            # leaks a client and duplicates inbound delivery.
+            if self._client is not None:
+                try:
+                    self._client.stop()
+                except Exception as exc:
+                    logger.debug("stopping stale MQTT client before reconnect: %s", exc)
+                self._client = None
+
             try:
                 from awsiot import mqtt5_client_builder
             except ImportError:
@@ -337,18 +373,37 @@ class IotMqttTransport:
                     return False
 
             self._connected.clear()
-            self._client = mqtt5_client_builder.mtls_from_path(
-                endpoint=self._endpoint,
-                cert_filepath=str(cert_path),
-                pri_key_filepath=str(key_path),
-                ca_filepath=str(ca_path),
-                client_id=self._thing_name,  # MUST match Thing name
-                on_lifecycle_connection_success=self._on_connection_success,
-                on_lifecycle_connection_failure=self._on_connection_failure,
-                on_lifecycle_disconnection=self._on_disconnection,
-                on_publish_received=self._on_publish_received,
-            )
-            self._client.start()
+            # mtls_from_path (corrupt PEM -> AwsCrtError) and start() can raise
+            # synchronously. Contain them here and return False: the mesh must
+            # stay OFF rather than crash the host (and, in bridge mode, leave
+            # the already-acquired Zenoh session dangling).
+            try:
+                self._client = mqtt5_client_builder.mtls_from_path(
+                    endpoint=self._endpoint,
+                    cert_filepath=str(cert_path),
+                    pri_key_filepath=str(key_path),
+                    ca_filepath=str(ca_path),
+                    client_id=self._thing_name,  # MUST match Thing name
+                    on_lifecycle_connection_success=self._on_connection_success,
+                    on_lifecycle_connection_failure=self._on_connection_failure,
+                    on_lifecycle_disconnection=self._on_disconnection,
+                    on_publish_received=self._on_publish_received,
+                )
+                self._client.start()
+            except Exception as exc:
+                logger.error("IoT MQTT client construction failed: %s", exc)
+                if self._client is not None:
+                    try:
+                        self._client.stop()
+                    except Exception as stop_exc:
+                        # Best-effort teardown of a half-constructed client on the
+                        # construction-failure path. The connect() has already
+                        # failed and we return False regardless; a stop() error
+                        # here (e.g. client never reached a startable state) must
+                        # not mask the original failure. Log at debug and move on.
+                        logger.debug("IoT client stop during failure cleanup: %s", stop_exc)
+                    self._client = None
+                return False
             ok = self._connected.wait(self._connect_timeout)
             if not ok:
                 logger.error(
@@ -389,6 +444,9 @@ class IotMqttTransport:
 
     @property
     def thing_name(self) -> str:
+        """The AWS IoT thing name this transport authenticates as, or ``""``
+        if unset. Used as the MQTT client id and mTLS identity.
+        """
         return self._thing_name or ""
 
     # Pub/Sub

@@ -9,6 +9,7 @@ This tool integrates teleoperation and recording functionality from lerobot, all
 - Manage multiple teleoperation sessions
 """
 
+import importlib.util
 import json
 import logging
 import os
@@ -198,6 +199,7 @@ def build_lerobot_command(
     dataset_root: str | None = None,
     dataset_video: bool = True,
     dataset_push_to_hub: bool = False,
+    record_resume: bool = False,
     replay_episode: int = 0,
     display_data: bool = False,
     fps: int = 60,
@@ -225,6 +227,11 @@ def build_lerobot_command(
         robot_type: Follower robot type (e.g. ``"so101_follower"``).
         dataset_repo_id: HuggingFace dataset id; presence enables record mode for
             ``start`` and is required for ``replay``.
+        record_resume: For record mode, emit ``--resume true`` to append to an
+            existing dataset (preserving its repo_id) instead of creating a fresh
+            one. A fresh record always emits an explicit ``--dataset.root``
+            (resolved from ``dataset_repo_id``) so lerobot HEAD's repo_id
+            timestamp-stamping never relocates the on-disk dataset.
         replay_episode: Episode index to replay (``--dataset.episode``).
 
     Returns:
@@ -251,6 +258,8 @@ def build_lerobot_command(
     if action == "start":
         if dataset_repo_id:
             # Recording mode -> lerobot-record (pure data collection via teleop).
+            from strands_robots.dataset_recorder import resolve_dataset_dir
+
             cmd = ["python", "-m", "lerobot.scripts.lerobot_record"]
             cmd.extend(
                 _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
@@ -263,8 +272,17 @@ def build_lerobot_command(
             cmd.extend(["--dataset.fps", str(dataset_fps)])
             cmd.extend(["--dataset.episode_time_s", str(dataset_episode_time_s)])
             cmd.extend(["--dataset.reset_time_s", str(dataset_reset_time_s)])
-            if dataset_root:
-                cmd.extend(["--dataset.root", dataset_root])
+            # Always pin --dataset.root to a resolved on-disk path. On a fresh
+            # (non-resume) recording, lerobot-record calls
+            # ``cfg.dataset.stamp_repo_id()`` which rewrites repo_id to
+            # ``{repo_id}_YYYYMMDD_HHMMSS`` -- moving the on-disk dataset and Hub
+            # push target off the requested id. Stamping only rewrites repo_id;
+            # an explicit root pins where the data lands, so downstream steps
+            # (train, verify, path reporting) find it at the requested location.
+            cmd.extend(["--dataset.root", str(resolve_dataset_dir(dataset_repo_id, dataset_root))])
+            # Append to an existing dataset (skips stamping, preserves repo_id).
+            if record_resume:
+                cmd.extend(["--resume", "true"])
             cmd.extend(["--dataset.push_to_hub", "true" if dataset_push_to_hub else "false"])
             cmd.extend(["--dataset.video", "true" if dataset_video else "false"])
             if display_data:
@@ -298,6 +316,17 @@ def build_lerobot_command(
             raise ValueError("dataset_repo_id is required for dagger action (corrections are recorded)")
         if dagger_input_device not in ("keyboard", "pedal"):
             raise ValueError(f"dagger_input_device must be 'keyboard' or 'pedal', got '{dagger_input_device}'")
+
+        # lerobot.scripts.lerobot_rollout (the DAgger entry point) landed in
+        # lerobot 0.6.0; on an older install the subprocess would fail with an
+        # opaque "No module named" error. Preflight so the caller gets an
+        # actionable upgrade hint instead.
+        if importlib.util.find_spec("lerobot.scripts.lerobot_rollout") is None:
+            raise RuntimeError(
+                "dagger requires lerobot>=0.6.0: the installed lerobot has no "
+                "'lerobot.scripts.lerobot_rollout' (the DAgger rollout entry "
+                "point). Reinstall with: uv pip install 'strands-robots[lerobot]'."
+            )
 
         cmd = ["python", "-m", "lerobot.scripts.lerobot_rollout"]
         cmd.extend(
@@ -358,6 +387,7 @@ def lerobot_teleoperate(
     dataset_root: str | None = None,
     dataset_video: bool = True,
     dataset_push_to_hub: bool = False,
+    record_resume: bool = False,
     # Replay configuration
     replay_episode: int = 0,
     # Common options
@@ -525,9 +555,20 @@ def lerobot_teleoperate(
         dataset_fps: Recording frame rate
         dataset_episode_time_s: Episode duration in seconds
         dataset_reset_time_s: Reset time between episodes
-        dataset_root: Local dataset storage directory
+        dataset_root: Local dataset storage directory. When omitted for a
+            recording, an explicit root is still pinned (resolved from
+            ``dataset_repo_id`` under ``$HF_LEROBOT_HOME``) and returned as
+            ``dataset_root`` in the result. lerobot HEAD stamps a fresh record's
+            ``repo_id`` with a ``_YYYYMMDD_HHMMSS`` timestamp (affecting the Hub
+            push target and dataset metadata); pinning the root keeps the on-disk
+            data at the requested location regardless, so downstream train/verify
+            steps find it. Use ``record_resume=True`` to append instead.
         dataset_video: Enable video encoding
         dataset_push_to_hub: Upload dataset to HuggingFace Hub
+        record_resume: Append to an existing dataset at the resolved root
+            (lerobot-record ``--resume true``) instead of creating a fresh one.
+            Resume preserves the existing (already-stamped) repo_id rather than
+            re-stamping, so repeated sessions accumulate in one dataset.
 
         replay_episode: Episode number to replay
 
@@ -587,6 +628,7 @@ def lerobot_teleoperate(
                     dataset_root=dataset_root,
                     dataset_video=dataset_video,
                     dataset_push_to_hub=dataset_push_to_hub,
+                    record_resume=record_resume,
                     replay_episode=replay_episode,
                     display_data=display_data,
                     fps=fps,
@@ -599,6 +641,17 @@ def lerobot_teleoperate(
                 )
             except Exception as e:
                 return {"status": "error", "content": [{"text": f"Command build failed: {str(e)}"}]}
+
+            # Resolve the on-disk dataset location so downstream consumers (train,
+            # verify, path reporting) use the true path. lerobot HEAD stamps a
+            # fresh record's repo_id with a timestamp; the pinned --dataset.root
+            # (see build_lerobot_command) keeps the data at this resolved path
+            # regardless, so this is the authoritative on-disk location.
+            resolved_dataset_root: str | None = None
+            if dataset_repo_id:
+                from strands_robots.dataset_recorder import resolve_dataset_dir
+
+                resolved_dataset_root = str(resolve_dataset_dir(dataset_repo_id, dataset_root))
 
             if background:
                 # Start in background
@@ -651,6 +704,8 @@ def lerobot_teleoperate(
                     "robot_type": robot_type,
                     "teleop_type": teleop_type,
                     "dataset_repo_id": dataset_repo_id,
+                    "dataset_root": resolved_dataset_root,
+                    "resume": record_resume,
                 }
                 session_manager.add_session(session_name, session_info)
 
@@ -672,6 +727,9 @@ def lerobot_teleoperate(
                                 "command": " ".join(cmd),
                                 "log_file": str(log_file),
                                 "background": True,
+                                "dataset_repo_id": dataset_repo_id,
+                                "dataset_root": resolved_dataset_root,
+                                "resume": record_resume,
                             }
                         },
                     ],
@@ -696,6 +754,9 @@ def lerobot_teleoperate(
                                 "return_code": result.returncode,
                                 "stdout": result.stdout,
                                 "stderr": result.stderr,
+                                "dataset_repo_id": dataset_repo_id,
+                                "dataset_root": resolved_dataset_root,
+                                "resume": record_resume,
                             }
                         },
                     ],

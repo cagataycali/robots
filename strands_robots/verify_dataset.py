@@ -36,6 +36,11 @@ Usage:
     strands-robots verify-dataset /path/to/dataset --expected 20
     python -m strands_robots verify-dataset ~/.cache/huggingface/lerobot/user/ds
 
+A corrupt ``meta/episodes`` parquet is itself reported rather than raised: each
+unreadable file is named as a problem and the remaining checks still run against
+the readable files, so partial corruption (one truncated file out of twenty)
+localises the damage instead of collapsing the whole report to "0 episodes".
+
 Exit code is 0 when every check passes, 1 otherwise - so it drops straight into
 CI as a dataset-integrity gate.
 """
@@ -83,7 +88,9 @@ def verify_dataset(
           - ``root``: the resolved dataset root as a string.
           - ``total_episodes`` / ``total_frames`` / ``episode_indices`` /
             ``frames_per_episode``: parquet ground truth (zeros/empties when the
-            dataset is empty or unreadable).
+            dataset is empty or wholly unreadable; the truth of the READABLE
+            files when only some episode parquet files are corrupt, with each
+            broken file named in ``problems``).
           - ``expected``: the requested count (or ``None``).
           - ``info_total_episodes`` / ``info_total_frames``: values declared in
             ``meta/info.json`` (``None`` when the file is absent or lacks them).
@@ -119,15 +126,31 @@ def verify_dataset(
         problems.append(f"expected must be a non-negative int, got {expected!r}")
         return report
 
-    # Parquet ground truth.
+    # Parquet ground truth. A corrupt or foreign parquet under meta/episodes
+    # makes pyarrow raise ArrowInvalid (a ValueError subclass); an unreadable
+    # file raises OSError. The checker's contract is "always produce a report",
+    # so surface these as problems rather than letting them escape as a
+    # traceback - this is exactly the corruption verify_dataset exists to flag.
     try:
         info = read_dataset_episode_indices(root_path)
-    except FileNotFoundError as e:
-        problems.append(str(e))
+    except (FileNotFoundError, ImportError, ValueError, OSError) as e:
+        problems.append(f"could not read episode parquet: {e}")
         return report
-    except ImportError as e:
-        problems.append(str(e))
-        return report
+
+    # A dataset whose damage is confined to SOME episode parquet files (one
+    # truncated file out of twenty - an interrupted rsync or hub download)
+    # still yields the episode truth of the readable files. Report each broken
+    # file by name and keep going through the remaining checks: collapsing the
+    # whole report to zero episodes would hide both which file is broken and
+    # every other defect in the dataset.
+    # ``unreadable_files`` entries are documented as "<relative path>: <error>";
+    # the paths feed the video / stats checks so one broken shard is reported
+    # once rather than once per check that also cannot read it.
+    unreadable_paths: set[str] = set()
+    for unreadable in info["unreadable_files"]:
+        problems.append(f"could not read episode parquet {unreadable}")
+        unreadable_paths.add(unreadable.partition(": ")[0])
+    known_unreadable = frozenset(unreadable_paths)
 
     report["total_episodes"] = info["total_episodes"]
     report["total_frames"] = info["total_frames"]
@@ -188,7 +211,7 @@ def verify_dataset(
     # episode counts, missing pixels. This is the video-modality sibling of the
     # mega-episode class above.
     if check_videos:
-        checked, video_problems = _verify_video_files(root_path)
+        checked, video_problems = _verify_video_files(root_path, known_unreadable=known_unreadable)
         report["video_files_checked"] = checked
         problems.extend(video_problems)
 
@@ -201,7 +224,7 @@ def verify_dataset(
     # episode and frame counts stay correct. The per-episode feature stats
     # LeRobot v3 writes inline make this a cheap, decoder-independent check.
     if check_stats:
-        stats_checked, stats_problems = _verify_feature_stats(root_path)
+        stats_checked, stats_problems = _verify_feature_stats(root_path, known_unreadable=known_unreadable)
         report["stats_vectors_checked"] = stats_checked
         problems.extend(stats_problems)
 
@@ -231,14 +254,19 @@ def _video_frame_count(path: Path) -> int | None:
             if not container.streams.video:
                 return None
             n = container.streams.video[0].frames
-    except (OSError, ValueError, RuntimeError):
-        # Unreadable/corrupt header (incl. av.error.InvalidDataError, a
-        # ValueError subclass): treat as "cannot confirm" and skip the compare.
+    except Exception:
+        # Best-effort probe: a corrupt/truncated container can raise any of
+        # PyAV's ~29 av.error.* classes - most are bare Exception subclasses
+        # (only InvalidDataError happens to subclass ValueError), so a narrow
+        # (OSError, ValueError, RuntimeError) tuple lets the rest escape. Treat
+        # every read failure as "cannot confirm" (never "zero frames") and skip
+        # the compare so a genuine mismatch is never masked and an unreadable
+        # header never false-positives.
         return None
     return int(n) if isinstance(n, int) and n > 0 else None
 
 
-def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
+def _verify_video_files(root_path: Path, *, known_unreadable: frozenset[str] = frozenset()) -> tuple[int, list[str]]:
     """Resolve and integrity-check every per-episode video file in a dataset.
 
     For each video feature declared in ``meta/info.json`` (``dtype == "video"``)
@@ -254,6 +282,9 @@ def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
 
     Args:
         root_path: Dataset root directory (the dir that contains ``meta/``).
+        known_unreadable: Episode-parquet paths (relative to ``root_path``) the
+            caller has already reported as unreadable. They are skipped without
+            a second problem string, so one broken shard is reported once.
 
     Returns:
         A ``(checked, problems)`` tuple where ``checked`` is the number of
@@ -285,6 +316,19 @@ def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
             "template - cannot locate the per-episode MP4 files"
         ]
 
+    # Validate the template resolves with the LeRobot v3 keys we supply. A
+    # non-v3 template (e.g. a v2-style ``videos/{episode_chunk:03d}/...``)
+    # raises KeyError/IndexError from str.format; a malformed format spec raises
+    # ValueError. Surface it as a problem instead of letting it escape
+    # verify_dataset as a traceback - the checker must always produce a report.
+    try:
+        template.format(video_key="", chunk_index=0, file_index=0)
+    except (KeyError, IndexError, ValueError) as e:
+        return 0, [
+            f"meta/info.json 'video_path' template {template!r} is not a LeRobot v3 "
+            f"template (cannot resolve with video_key/chunk_index/file_index): {e!r}"
+        ]
+
     try:
         import pyarrow.parquet as pq
     except ImportError:  # pragma: no cover - pyarrow ships with the lerobot extra
@@ -301,8 +345,16 @@ def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
     # episode carried no ``length`` (the column is optional in some writers).
     unknown_len_files: set[tuple[str, int, int]] = set()
     keys_with_refs: set[str] = set()
+    problems: list[str] = []
     for pf in parquet_files:
-        table = pq.read_table(pf)
+        rel = str(pf.relative_to(root_path))
+        if rel in known_unreadable:
+            continue
+        try:
+            table = pq.read_table(pf)
+        except (ValueError, OSError) as e:
+            problems.append(f"could not read {rel}: {e}")
+            continue
         cols = set(table.column_names)
         data = table.to_pydict()
         episodes = data.get("episode_index", [])
@@ -328,7 +380,6 @@ def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
                 else:
                     expected_frames[key] = expected_frames.get(key, 0) + int(length)
 
-    problems: list[str] = []
     for vk in video_keys:
         if vk not in keys_with_refs:
             problems.append(
@@ -371,7 +422,7 @@ def _verify_video_files(root_path: Path) -> tuple[int, list[str]]:
     return len(referenced), problems
 
 
-def _verify_feature_stats(root_path: Path) -> tuple[int, list[str]]:
+def _verify_feature_stats(root_path: Path, *, known_unreadable: frozenset[str] = frozenset()) -> tuple[int, list[str]]:
     """Flag dead (identically-zero) control columns via per-episode stats.
 
     LeRobot v3 writes per-episode feature statistics inline in
@@ -394,6 +445,9 @@ def _verify_feature_stats(root_path: Path) -> tuple[int, list[str]]:
 
     Args:
         root_path: Dataset root directory (the dir that contains ``meta/``).
+        known_unreadable: Episode-parquet paths (relative to ``root_path``) the
+            caller has already reported as unreadable. They are skipped without
+            a second problem string, so one broken shard is reported once.
 
     Returns:
         A ``(checked, problems)`` tuple where ``checked`` is the number of
@@ -424,7 +478,14 @@ def _verify_feature_stats(root_path: Path) -> tuple[int, list[str]]:
     checked = 0
     problems: list[str] = []
     for pf in parquet_files:
-        table = pq.read_table(pf)
+        rel = str(pf.relative_to(root_path))
+        if rel in known_unreadable:
+            continue
+        try:
+            table = pq.read_table(pf)
+        except (ValueError, OSError) as e:
+            problems.append(f"could not read {rel} for stats: {e}")
+            continue
         cols = set(table.column_names)
         if "episode_index" not in cols:
             continue

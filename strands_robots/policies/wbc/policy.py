@@ -320,6 +320,7 @@ class WBCPolicy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"wbc"``)."""
         return "wbc"
 
     @property
@@ -329,6 +330,7 @@ class WBCPolicy(Policy):
 
     @property
     def config(self) -> WBCConfig:
+        """Resolved :class:`WBCConfig` this controller runs with."""
         return self._config
 
     @property

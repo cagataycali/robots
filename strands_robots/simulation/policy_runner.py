@@ -31,7 +31,10 @@ methods (e.g. MuJoCo acquires a lock inside ``send_action`` / ``step``).
 
 from __future__ import annotations
 
+import difflib
 import logging
+import math
+import numbers
 import os
 import random
 import time
@@ -89,12 +92,11 @@ def set_eval_seed(seed: int) -> None:
       are scoped to torch (not the broader environment) so the side
       effect surface is acceptable.
 
-    Public since #179: standalone integration tests
-    (``tests_integ/.../test_libero_10_scene5_mujoco_engine_success_rate``)
-    bypass :meth:`evaluate_benchmark` and need to call this directly to
-    get reproducible policy rollouts. The leading ``_`` was an oversight
-    from #168 round 38; the function is the supported way to seed an
-    eval and is part of the public API.
+    Public API - the single supported RNG-seeding entry point, exported
+    via ``__all__``. :meth:`evaluate_benchmark` calls it once before an
+    eval, but standalone callers that drive a policy rollout without
+    going through ``evaluate_benchmark`` can call it directly to get
+    reproducible rollouts.
 
     NumPy / torch are imported lazily so this helper works on minimal
     installs that don't have torch (e.g. ``policy_provider="mock"``
@@ -174,6 +176,54 @@ def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
     return None
 
 
+def positive_whole_number_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable positive whole number.
+
+    Shared domain for every recording knob that counts frames or pixels -
+    ``fps``, ``width``, ``height`` and the in-memory frame cap. Only a positive
+    whole number can be honored: ``0`` makes the capture loop's ``1 / fps``
+    period undefined, a negative rate is rejected by the ffmpeg writer, and a
+    zero/negative frame cap drops every frame. Accepts any real scalar with an
+    integral value (so a NumPy ``np.int64`` height or a ``30.0`` computed from a
+    config float passes) and rejects ``bool`` explicitly - an ``int`` subclass
+    whose ``True`` would act as a silent 1.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter (or dict key) it came from, used in the message.
+        context: Message prefix identifying the surface that received it -
+            ``"video"`` for the :class:`VideoConfig` dict, the method name for a
+            keyword parameter.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    message = f"{context}: {param} must be a positive whole number, got {value!r}."
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return message
+    numeric = float(value)
+    # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it
+    # out of the integrality check below.
+    if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
+        return message
+    return None
+
+
+# Canonical :class:`VideoConfig` field -> the dict keys accepted for it, canonical
+# key first followed by the legacy/tool_spec aliases. Single source of truth for
+# both the schema check (``VideoConfig.validation_error``) and the value lookup
+# (``VideoConfig.from_dict``), so the accepted set cannot drift between the two.
+_VIDEO_KEY_ALIASES: dict[str, tuple[str, ...]] = {
+    "path": ("path", "record_video", "output_path"),
+    "fps": ("fps", "video_fps"),
+    "camera": ("camera", "video_camera", "camera_name"),
+    "width": ("width", "video_width"),
+    "height": ("height", "video_height"),
+}
+
+_VIDEO_ACCEPTED_KEYS: tuple[str, ...] = tuple(sorted(key for aliases in _VIDEO_KEY_ALIASES.values() for key in aliases))
+
+
 @dataclass(frozen=True)
 class VideoConfig:
     """Configuration for optional MP4 recording during :meth:`PolicyRunner.run`.
@@ -206,20 +256,135 @@ class VideoConfig:
 
     @property
     def enabled(self) -> bool:
+        """Whether recording is on: ``True`` iff an output ``path`` was set.
+
+        The other fields (``fps``, ``camera``, ``width``, ``height``) are
+        ignored when this is ``False`` -- a falsy ``path`` opts the whole
+        rollout out of MP4 capture.
+        """
         return bool(self.path)
+
+    @staticmethod
+    def _pick(d: dict[str, Any], field: str, default: Any = None) -> Any:
+        """First present, non-``None`` value among ``field``'s accepted keys.
+
+        Looks the canonical key up first, then the legacy aliases, so
+        ``{"path": ..., "output_path": ...}`` resolves to the canonical one.
+        Membership - not truthiness - decides: a caller-supplied ``0`` is
+        returned as ``0`` (and rejected by :meth:`validation_error`) instead of
+        collapsing into ``default`` the way an ``or`` chain would.
+
+        Args:
+            d: The caller's video-config dict.
+            field: Canonical field name (a key of the alias map).
+            default: Returned when no accepted key carries a value.
+
+        Returns:
+            The caller's value, or ``default``.
+        """
+        for key in _VIDEO_KEY_ALIASES[field]:
+            value = d.get(key)
+            if value is not None:
+                return value
+        return default
+
+    @staticmethod
+    def _positive_int_error(value: Any, key: str) -> str | None:
+        """Error text when a ``video`` dict value is not a positive whole number.
+
+        Thin binding of the shared frame/pixel-count domain
+        (:func:`positive_whole_number_error`) to the ``video:`` message prefix,
+        so this dict schema and the plain-MP4 recorder's keyword parameters
+        cannot drift apart on what counts as a usable ``fps`` / ``width`` /
+        ``height``.
+
+        Args:
+            value: The caller-supplied value.
+            key: The dict key it came from, used in the message.
+
+        Returns:
+            An error message, or ``None`` when the value is usable.
+        """
+        return positive_whole_number_error(value, key, "video")
+
+    @classmethod
+    def validation_error(cls, d: Any) -> str | None:
+        """Error text when ``d`` is not a video config this class can honor.
+
+        Recording options arrive as a free-form dict (LLM tool call or direct
+        API), so a mistyped key has no signature to bounce off. Silently
+        ignoring one is the worst outcome: ``{"filename": "/tmp/a.mp4"}``
+        leaves ``path`` unset and the rollout reports ``status="success"``
+        with no MP4 anywhere, and ``{"path": p, "resolution": [320, 240]}``
+        records at the default 640x480 while the caller believes otherwise.
+        This rejects any key outside the accepted set (with a closest-match
+        hint) and any known key whose value cannot be honored.
+
+        Args:
+            d: The caller's ``video`` argument. ``None`` (recording off) and an
+                empty dict are valid.
+
+        Returns:
+            An error message describing the first problem found, or ``None``
+            when the config is usable.
+        """
+        if d is None:
+            return None
+        if not isinstance(d, dict):
+            return f"video must be a dict of recording options, got {type(d).__name__}."
+        accepted = ", ".join(_VIDEO_ACCEPTED_KEYS)
+        for key in d:
+            if key in _VIDEO_ACCEPTED_KEYS:
+                continue
+            # Match case-insensitively so "FPS"/"Path" suggest their canonical
+            # spelling; the cutoff is deliberately tight so an unrelated key
+            # ("filename", "resolution") gets the accepted list rather than a
+            # misleading nearest-neighbour.
+            close = difflib.get_close_matches(str(key).lower(), _VIDEO_ACCEPTED_KEYS, n=1, cutoff=0.7)
+            hint = f" Did you mean {close[0]!r}?" if close else ""
+            return f"video: unknown key {key!r}.{hint} Accepted keys: {accepted}."
+        for field in ("path", "camera"):
+            value = cls._pick(d, field)
+            if value is not None and not isinstance(value, str):
+                return f"video: {field} must be a string, got {value!r}."
+        for field in ("fps", "width", "height"):
+            value = cls._pick(d, field)
+            if value is None:
+                continue
+            if error := cls._positive_int_error(value, field):
+                return error
+        return None
 
     @classmethod
     def from_dict(cls, d: dict[str, Any] | None) -> VideoConfig | None:
-        """Build from a plain dict (tool_spec dispatcher path). ``None`` passthrough."""
+        """Build from a plain dict (tool_spec dispatcher path). ``None`` passthrough.
+
+        Accepts both canonical keys and the legacy/tool_spec aliases listed in
+        :meth:`validation_error`.
+
+        Args:
+            d: Video-config dict, or ``None``/empty for "no recording".
+
+        Returns:
+            The config, or ``None`` when ``d`` is empty.
+
+        Raises:
+            ValueError: When ``d`` carries a key or value that cannot be
+                honored (see :meth:`validation_error`). Public entry points
+                (``run_policy`` / ``eval_policy`` / ``evaluate_benchmark`` /
+                ``start_policy``) check first and return a structured tool
+                error, so this raise is the guard for direct construction.
+        """
         if not d:
             return None
-        # Accept both canonical keys and legacy/tool_spec aliases.
+        if error := cls.validation_error(d):
+            raise ValueError(error)
         return cls(
-            path=d.get("path") or d.get("record_video") or d.get("output_path"),
-            fps=int(d.get("fps") or d.get("video_fps") or 30),
-            camera=d.get("camera") or d.get("video_camera") or d.get("camera_name"),
-            width=int(d.get("width") or d.get("video_width") or 640),
-            height=int(d.get("height") or d.get("video_height") or 480),
+            path=cls._pick(d, "path"),
+            fps=int(cls._pick(d, "fps", 30)),
+            camera=cls._pick(d, "camera"),
+            width=int(cls._pick(d, "width", 640)),
+            height=int(cls._pick(d, "height", 480)),
         )
 
 
@@ -401,6 +566,55 @@ def _extract_result_json(result: object) -> dict[str, Any] | None:
             payload = block.get("json")
             if isinstance(payload, dict):
                 return payload
+    return None
+
+
+def _validate_action_key_map(action_key_map: Any) -> dict[str, Any] | None:
+    """Reject a ``replay`` ``action_key_map`` no backend could honor.
+
+    ``action_key_map`` binds recorded action-vector indices to the action keys
+    ``send_action`` resolves, so it must be an ordered collection of unique
+    strings. Three shapes are silently unusable and are rejected here:
+
+    * a bare ``str`` - ``list("gripper")`` yields one key per character;
+    * a non-string entry - it cannot name an actuator or joint;
+    * a duplicate key - two recorded indices would write the same actuator,
+      the later index silently overwriting the earlier one.
+
+    An empty collection is rejected too: it maps no recorded value at all.
+
+    Args:
+        action_key_map: The caller-supplied map (``None`` selects the default
+            ``robot_action_keys`` ordering and is always accepted).
+
+    Returns:
+        An agent-tool error dict describing the problem, or ``None`` when the
+        map is usable.
+    """
+    if action_key_map is None:
+        return None
+
+    def _error(text: str) -> dict[str, Any]:
+        return {"status": "error", "content": [{"text": f"replay: {text}"}]}
+
+    if isinstance(action_key_map, str | bytes):
+        return _error(
+            f"action_key_map must be a list of action keys, not a bare string (got {action_key_map!r}); "
+            "a string is consumed one character per action index."
+        )
+    if not isinstance(action_key_map, list | tuple):
+        return _error(f"action_key_map must be a list or tuple of action keys (got {type(action_key_map).__name__}).")
+    if not action_key_map:
+        return _error("action_key_map is empty; pass one action key per recorded action-vector index.")
+    bad = [key for key in action_key_map if not isinstance(key, str)]
+    if bad:
+        return _error(f"action_key_map entries must be action-key strings; got non-string entries {bad!r}.")
+    duplicates = sorted({key for key in action_key_map if action_key_map.count(key) > 1})
+    if duplicates:
+        return _error(
+            f"action_key_map has duplicate keys {duplicates}; each recorded action index needs its own key "
+            "(a repeated key silently overwrites the earlier index's value)."
+        )
     return None
 
 
@@ -600,9 +814,28 @@ class PolicyRunner:
         ``mj_step``), so the arm integrated ~10% of the way toward each target
         before the next action overwrote ``ctrl`` - rollouts looked like the
         policy was a no-op even when commanding valid targets.
+
+        Args:
+            control_frequency: Control-loop rate in Hz, used with the backend's
+                physics timestep to derive the substep count.
+            override: Explicit substeps per action, or ``None`` to derive.
+
+        Returns:
+            Physics steps to advance per applied action (always ``>= 1``).
+
+        Raises:
+            ValueError: If ``override`` is not a positive integer. It used to be
+                clamped with ``max(1, int(override))``, so ``0``/``-5`` silently
+                collapsed to a single physics step - reinstating the exact
+                under-integration this helper exists to prevent - and a float
+                was truncated. The public entry points reject such a value with
+                a structured error before reaching the runner; this raise is the
+                guarantee for callers driving ``PolicyRunner`` directly.
         """
         if override is not None:
-            return max(1, int(override))
+            if isinstance(override, bool) or not isinstance(override, int) or override < 1:
+                raise ValueError(f"control_substeps must be a positive integer, got {override!r}.")
+            return override
         dt = None
         try:
             dt = self.sim.physics_timestep()
@@ -672,6 +905,7 @@ class PolicyRunner:
         *,
         instruction: str = "",
         duration: float = 10.0,
+        n_steps: int | None = None,
         control_frequency: float = 50.0,
         action_horizon: int = 8,
         fast_mode: bool = False,
@@ -683,6 +917,7 @@ class PolicyRunner:
         seed: int | None = None,
         async_rtc: bool | None = None,
         rtc_inference_timeout_s: float | None = None,
+        stop_when: Callable[[SimEngine], bool] | None = None,
     ) -> dict[str, Any]:
         """Run ``policy`` on ``robot_name`` for ``duration`` seconds.
 
@@ -693,7 +928,11 @@ class PolicyRunner:
                 construction so tests can inject mocks trivially.
             instruction: Natural-language instruction forwarded to the policy.
             duration: Wall-clock seconds to run (interpreted as control steps
-                via ``control_frequency``).
+                via ``control_frequency``). Used only when ``n_steps`` is None.
+            n_steps: Explicit integer step-count horizon resolved by the caller
+                from ``n_steps`` / the legacy ``max_steps`` alias. When set (and
+                > 0) it is the exact number of control steps executed, bypassing
+                the lossy ``int(duration * control_frequency)`` recomputation.
             control_frequency: Target Hz for ``policy.get_actions`` calls.
             action_horizon: Max actions consumed per policy call before
                 requerying observation. Clamped up to the policy's own
@@ -779,13 +1018,38 @@ class PolicyRunner:
                 :meth:`run` returns), so the abort is bounded by ONE inference,
                 not the whole rollout. ``None`` (default) waits without a deadline
                 (historical behaviour). Ignored on the synchronous path.
+            stop_when: Optional semantic early-return condition - a callable
+                ``(sim) -> bool`` evaluated against the LIVE sim after every
+                applied action, on BOTH the synchronous and async-RTC paths.
+                The first ``True`` ends the rollout cleanly with
+                ``stopped_reason="predicate"``; the remaining actions of an
+                in-flight chunk are dropped, so the early-return latency bound
+                is ONE control step regardless of the policy's chunk length
+                (on the async-RTC path any in-flight prefetch is still joined
+                before :meth:`run` returns). Callers driving the runner
+                through :meth:`SimEngine.run_policy` pass a predicate-DSL dict
+                compiled via
+                :func:`~strands_robots.simulation.benchmark_spec.compile_stop_when`;
+                programmatic callers may pass any callable (mirroring
+                :meth:`evaluate`'s ``success_fn``). A raising ``stop_when`` is
+                fatal (``status="error"``): the caller asked for an
+                early-return semantics the runner can no longer honor, and
+                silently running to the step budget would misreport the
+                rollout. ``None`` (default) preserves the pure step-budget
+                horizon.
 
         Returns:
             ``{"status": "success"|"error", "content": [{"text": ...},
             {"json": {...}}]}``. The ``json`` block is agent-consumable and
             carries the rollout facts as typed fields - ``robot_name``,
-            ``policy``, ``instruction``, ``n_steps``, ``elapsed_s``,
-            ``stopped_early``, ``action_errors``, ``video_path`` (``None`` when
+            ``policy``, ``instruction``, ``n_steps``, ``steps_used`` (the
+            control steps actually executed, equal to ``n_steps``),
+            ``elapsed_s``, ``stopped_early``, ``stopped_reason``
+            (``"predicate"`` - the ``stop_when`` condition fired; ``"budget"``
+            - the step/duration horizon was exhausted; ``"cancelled"`` - a
+            cooperative stop, e.g. ``stop_policy``; on ``status="error"``
+            results the field is ``"error"``), ``action_errors``,
+            ``video_path`` (``None`` when
             no MP4 was written), ``video_frames`` and ``sim_time_s`` (when the
             backend reports sim time) - so callers can self-correct without
             regex-parsing the human-readable ``text``. The block also carries the
@@ -876,9 +1140,24 @@ class PolicyRunner:
         # lives in _RolloutVideoWriter so run() and evaluate() record identically.
         vwriter, _video_err = _RolloutVideoWriter.open(self.sim, video, control_frequency)
         if _video_err is not None:
+            # Every error result carries the stopped_reason="error" json block
+            # (the "recorded on ALL exit paths" contract); the writer's error
+            # dict is text-only because evaluate() shares it, so tag it here.
+            _video_err.setdefault("content", []).append(
+                {"json": {"stopped_reason": "error", "steps_used": 0, "n_steps": 0}}
+            )
             return _video_err
 
         stopped_early = False
+        # Why the rollout ended, reported in the result json so an agent
+        # deciding whether to retry can distinguish "the world reached the
+        # goal state" from "the step budget ran out" from "the user cancelled"
+        # (stopped_early alone conflates the last two). "budget" is the
+        # default (the loop ran its full horizon); the CooperativeStop handler
+        # re-tags it "cancelled", a fired stop_when re-tags it "predicate",
+        # and every error return reports "error".
+        stopped_reason = "budget"
+        stop_predicate_fired = False
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
         # Open-loop chunk replay consumes H actions from ONE observation. That
@@ -912,7 +1191,16 @@ class PolicyRunner:
         start_time = time.time()
         step_count = 0
         try:
-            total_steps = int(duration * control_frequency)
+            # Prefer an explicit integer step count when the caller resolved one
+            # from ``n_steps`` (or the legacy ``max_steps`` alias). Recomputing
+            # ``int(duration * control_frequency)`` from the float ``duration =
+            # n_steps / control_frequency`` truncates on any frequency that does
+            # not divide evenly (e.g. n_steps=1 @ 49 Hz -> 0 steps reported as
+            # success). Forwarding the count verbatim keeps the horizon exact.
+            if n_steps is not None and n_steps > 0:
+                total_steps = int(n_steps)
+            else:
+                total_steps = int(duration * control_frequency)
             action_sleep = 1.0 / control_frequency
 
             # Control-rate substepping: a position-servo robot needs the physics
@@ -923,18 +1211,10 @@ class PolicyRunner:
             # per action and barely moves - the policy looks like a no-op even
             # though it is sending valid targets. Derive substeps from the
             # backend's physics timestep; fall back to 1 when unknown.
-            if control_substeps is not None:
-                n_substeps = max(1, int(control_substeps))
-            else:
-                _dt = None
-                try:
-                    _dt = self.sim.physics_timestep()
-                except Exception:  # noqa: BLE001 - never fail the run on a probe
-                    _dt = None
-                if _dt and _dt > 0 and control_frequency > 0:
-                    n_substeps = max(1, round((1.0 / control_frequency) / _dt))
-                else:
-                    n_substeps = 1
+            # Single source of truth for the derivation AND for the
+            # positive-integer contract on an explicit override: an inline copy
+            # here drifted from the shared helper the eval paths use.
+            n_substeps = self._control_substeps(control_frequency, control_substeps)
             logger.info(
                 "PolicyRunner: control_frequency=%.1f Hz, physics substeps/action=%d",
                 control_frequency,
@@ -1061,6 +1341,36 @@ class PolicyRunner:
 
                 if not fast_mode:
                     time.sleep(action_sleep)
+
+            def _stop_when_fired() -> bool:
+                """Evaluate the caller's ``stop_when`` clause against the live sim.
+
+                Called after every applied action on BOTH the synchronous and
+                async-RTC paths, so the early-return latency bound is ONE
+                control step regardless of chunk length: the check fires
+                within the current chunk-slice and the remaining actions of
+                the chunk are dropped. Call sites guard on ``stop_when is not
+                None`` so the no-clause hot path pays no per-step call. A
+                raising clause is fatal - the caller asked for early-return
+                semantics the runner can no longer honor, and silently
+                running to the step budget would misreport the rollout - so
+                it surfaces as ``status="error"`` via the outer handler
+                rather than being warn-and-continued.
+                """
+                nonlocal stop_predicate_fired
+                assert stop_when is not None  # call sites hoist the None guard
+                try:
+                    fired = bool(stop_when(self.sim))
+                except Exception as e:
+                    raise RuntimeError(
+                        f"stop_when predicate raised at step {step_count}: {e!r}. The early-return "
+                        "condition cannot be evaluated, so the rollout is aborted rather than "
+                        "silently running to its step budget."
+                    ) from e
+                if fired:
+                    stop_predicate_fired = True
+                    logger.info("stop_when fired at step %d; ending rollout early", step_count)
+                return fired
 
             def _query_chunk(observation: dict[str, Any], observed_delay: int = 0) -> list[dict[str, Any]]:
                 # Resolve ONE action chunk from the policy. Never truncate below
@@ -1214,6 +1524,15 @@ class PolicyRunner:
                             step_obs = cur_obs
                         _apply(step_obs, cur_chunk[idx])
                         idx += 1
+                        # Semantic early return: checked after EVERY applied
+                        # action, so the stop lands within one control step of
+                        # the world reaching the condition - the rest of the
+                        # in-flight chunk (and any prefetched chunk) is
+                        # dropped; the executor shutdown below joins the
+                        # in-flight prefetch worker. The None guard is hoisted
+                        # so the no-clause hot path pays no per-step call.
+                        if stop_when is not None and _stop_when_fired():
+                            break
                 finally:
                     # Wait for any in-flight inference so no background thread
                     # touches the policy/sim after run() returns (the caller may
@@ -1238,22 +1557,45 @@ class PolicyRunner:
                         else:
                             step_obs = observation
                         _apply(step_obs, action_dict)
+                        # Semantic early return: checked after EVERY applied
+                        # action (same cadence as the benchmark eval loop), so
+                        # the remaining actions of the chunk are dropped as
+                        # soon as the condition holds. The None guard is
+                        # hoisted so the no-clause hot path pays no per-step
+                        # call.
+                        if stop_when is not None and _stop_when_fired():
+                            break
+                    if stop_predicate_fired:
+                        break
 
         except CooperativeStop:
             stopped_early = True
+            stopped_reason = "cancelled"
         except Exception as e:
             if vwriter is not None:
                 vwriter.close()
             logger.exception("PolicyRunner.run failed")
             return {
                 "status": "error",
-                "content": [{"text": f"Policy failed: {e}"}, {"json": _rtc_telemetry()}],
+                "content": [
+                    {"text": f"Policy failed: {e}"},
+                    {"json": {**_rtc_telemetry(), "stopped_reason": "error", "steps_used": step_count}},
+                ],
             }
 
-        # Either finished all steps or was cooperatively stopped
+        # Either finished all steps, hit the stop_when condition, or was
+        # cooperatively stopped.
+        if stop_predicate_fired:
+            stopped_early = True
+            stopped_reason = "predicate"
         elapsed = time.time() - start_time
         sim_time = self._maybe_sim_time()
-        prefix = "Policy stopped" if stopped_early else "Policy complete"
+        if not stopped_early:
+            prefix = "Policy complete"
+        elif stopped_reason == "predicate":
+            prefix = "Policy stopped early (stop_when condition met)"
+        else:
+            prefix = "Policy stopped"
         text = (
             f"{prefix} on '{robot_name}'\n{type(policy).__name__} | {instruction}\n{elapsed:.1f}s | {step_count} steps"
         )
@@ -1296,8 +1638,14 @@ class PolicyRunner:
             "policy": type(policy).__name__,
             "instruction": instruction,
             "n_steps": step_count,
+            # Alias of n_steps under the retry-loop name: the control steps
+            # actually executed before the rollout ended. Paired with
+            # stopped_reason it makes "the predicate fired after 37 of 200
+            # steps" queryable without arithmetic on the caller side.
+            "steps_used": step_count,
             "elapsed_s": round(elapsed, 3),
             "stopped_early": stopped_early,
+            "stopped_reason": stopped_reason,
             "action_errors": _action_errors,
             "video_path": None,
             "video_frames": 0,
@@ -1365,14 +1713,25 @@ class PolicyRunner:
             payload["action_resolution_rate"] = {}
             payload["partial_action_failure_rate"] = 0.0
 
-        # If every send_action call failed (all keys unresolved), the robot
-        # never moved -- report this as an error rather than a false success.
-        if _action_errors > 0 and _action_errors >= step_count and step_count > 0:
+        # If EVERY step was a TOTAL failure (the policy emitted keys but none
+        # resolved to an actuator), the robot never moved -- report this as an
+        # error rather than a false success. This mirrors the fail-fast probe
+        # and must key off ``_total_failure_steps``, NOT ``_action_errors``:
+        # ``_action_errors`` also counts PARTIAL steps (some keys resolve, the
+        # robot moves), so a policy that drives valid keys plus one extra
+        # unresolved key every step (e.g. a 7-DOF-trained policy on a 6-DOF arm)
+        # would otherwise be misreported as "the robot did not move". A partial
+        # rollout is operational -- surfaced via partial_action_failure_rate.
+        if _total_failure_steps >= step_count and step_count > 0:
             text += (
-                f"\n\nALL {_action_errors} action steps had unresolved keys "
+                f"\n\nALL {step_count} action steps had 100% unresolved keys "
                 f"-- the robot did not move. Check that the policy's output keys "
                 f"match the robot's actuator names."
             )
+            # An error result always reports stopped_reason="error": the
+            # rollout may have run its full budget, but the outcome is not a
+            # retryable "budget" completion.
+            payload["stopped_reason"] = "error"
             return {"status": "error", "content": [{"text": text}, {"json": payload}]}
         if _action_errors > 0:
             text += f"\n\n{_action_errors}/{step_count} action steps had unresolved keys."
@@ -1409,8 +1768,10 @@ class PolicyRunner:
             episode: Episode index in the dataset (non-negative).
             root: Optional local dataset root override.
             speed: Playback speed multiplier (1.0 = real time). Must be a
-                positive number; a non-positive or non-numeric value is
-                rejected with a structured error.
+                positive, finite number (any real scalar, including a NumPy
+                scalar such as ``np.float32(2.0)``); a non-positive,
+                non-finite or non-numeric value is rejected with a structured
+                error.
             action_key_map: Optional list of action keys, one per action
                 vector index. Required when dataset action ordering differs
                 from ``robot_action_keys(robot_name)``. If ``None``, positional
@@ -1418,24 +1779,67 @@ class PolicyRunner:
                 *actuator* keys, which is the ordering the LeRobotDataset
                 recorder writes the ``action`` column in (a robot's actuators
                 are not always its joints; see :meth:`SimEngine.robot_action_keys`).
+                Must be a non-empty list/tuple of unique strings; a bare
+                string, a non-string entry or a duplicate key is rejected with
+                a structured error. Its length must equal the recorded action
+                vector's width - a mismatch is rejected rather than
+                positionally truncated.
 
         Returns:
-            Standard status dict with per-frame stats.
+            Standard status dict with per-frame stats. Replay aborts with an
+            ``"error"`` status when a recorded frame cannot actually be applied
+            (unresolvable action keys, or a recorded vector whose width does not
+            match the action-key map), reporting how many frames were applied
+            before the abort. A successful status therefore means every frame
+            reached the actuators.
         """
         # ``speed`` is a playback-rate multiplier used as the divisor in
-        # ``frame_interval = 1 / (dataset_fps * speed)``. A value of 0 raised a
-        # bare ZeroDivisionError (breaking the documented "returns a status
-        # dict" contract) and a negative value silently played the episode
-        # forward at full speed while reporting success with a meaningless
-        # "Speed: -1.0x". Reject a non-positive or non-numeric speed up front,
-        # before the (potentially multi-minute) dataset download. ``bool`` is
-        # an ``int`` subclass, so ``True`` is rejected explicitly rather than
-        # acting as a silent 1.0x.
-        if isinstance(speed, bool) or not isinstance(speed, (int, float)) or speed <= 0:
+        # ``frame_interval = 1 / (dataset_fps * speed)`` and, once computed,
+        # flows into ``time.sleep(frame_interval - elapsed)`` on the real-time
+        # playback path. A value of 0 raised a bare ZeroDivisionError (breaking
+        # the documented "returns a status dict" contract) and a negative value
+        # silently played the episode forward at full speed while reporting
+        # success with a meaningless "Speed: -1.0x". Reject a non-positive or
+        # non-numeric speed up front, before the (potentially multi-minute)
+        # dataset download. Accept any real scalar (``numbers.Real``) so a
+        # NumPy-scalar speed such as ``np.float32(2.0)`` or ``np.int64(2)``
+        # (e.g. read from a config array) is not rejected:
+        # ``isinstance(x, (int, float))`` is ``False`` for every NumPy scalar
+        # except ``np.float64``. ``bool`` is still rejected explicitly (an
+        # ``int`` subclass, so ``True`` would act as a silent 1.0x), and
+        # non-finite values (``nan``/``inf``) are rejected via ``math.isfinite``
+        # before the ``<= 0`` comparison so a ``nan`` -- which is never
+        # ``<= 0`` -- cannot slip through into the ``1 / (fps * speed)``
+        # arithmetic and reach ``time.sleep(nan)``. Mirrors the ``numbers.Real``
+        # + finiteness contract applied to ``control_frequency`` and
+        # ``add_camera(fov=...)``.
+        if (
+            isinstance(speed, bool)
+            or not isinstance(speed, numbers.Real)
+            or not math.isfinite(float(speed))
+            or float(speed) <= 0
+        ):
             return {
                 "status": "error",
                 "content": [{"text": f"replay: speed must be a positive number (got {speed!r})."}],
             }
+        # Coerce to a plain Python float: a validated NumPy scalar still flows
+        # into ``time.sleep(frame_interval - ...)`` and the returned
+        # ``"speed": speed`` status field, where a ``numpy.float32`` raises a
+        # bare "object cannot be interpreted as an integer" TypeError in
+        # ``time.sleep`` and is not natively JSON-serialisable.
+        speed = float(speed)
+
+        # ``action_key_map`` binds recorded action-vector indices to action keys
+        # ``send_action`` must resolve. A malformed map cannot be honored by any
+        # backend, and pre-fix nothing checked its shape: a bare string was
+        # ``list()``-ed into one key PER CHARACTER, a duplicate key made two
+        # recorded indices write the same actuator (the later one silently
+        # winning), and neither showed up in the result. Reject the shape here,
+        # before the (potentially multi-minute) dataset download.
+        key_map_error = _validate_action_key_map(action_key_map)
+        if key_map_error is not None:
+            return key_map_error
 
         try:
             from strands_robots.dataset_recorder import load_lerobot_episode
@@ -1529,13 +1933,85 @@ class PolicyRunner:
                 if hasattr(action_vals, "tolist"):
                     action_vals = action_vals.tolist()
 
-                action_dict: dict[str, Any] = {}
-                for i, val in enumerate(action_vals):
-                    if i >= len(action_keys):
-                        break
-                    action_dict[action_keys[i]] = float(val)
+                # A recorded vector whose width differs from the action-key
+                # map cannot be replayed faithfully: the surplus values have no
+                # key (silently DROPPED pre-fix, e.g. a 2-key map swallowing a
+                # 6-DOF recording's last four joints) or the surplus keys never
+                # receive a value. Reject it with the recorded-vs-expected
+                # widths, mirroring how ``send_action`` rejects a raw action
+                # vector whose length does not match the actuator count instead
+                # of truncating it.
+                if len(action_vals) != len(action_keys):
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Replay aborted at frame {frame_idx}: recorded action vector has "
+                                    f"{len(action_vals)} values but {len(action_keys)} action keys are "
+                                    f"mapped ({action_keys}). Applied {frames_applied}/{episode_length} "
+                                    "frames. Pass an action_key_map with one key per recorded action "
+                                    f"value, or replay onto a robot whose actuators match the recording."
+                                )
+                            },
+                            {
+                                "json": {
+                                    "episode": episode,
+                                    "robot_name": resolved_robot,
+                                    "frame": frame_idx,
+                                    "recorded_action_width": len(action_vals),
+                                    "action_keys": action_keys,
+                                    "frames_applied": frames_applied,
+                                    "total_frames": episode_length,
+                                }
+                            },
+                        ],
+                    }
 
-                self.sim.send_action(action_dict, robot_name=resolved_robot, n_substeps=n_substeps)
+                action_dict: dict[str, Any] = {action_keys[i]: float(val) for i, val in enumerate(action_vals)}
+
+                # ``send_action`` reports unresolvable keys as an "error" status
+                # (with an ``unresolved_keys`` json block). Pre-fix that result
+                # was DISCARDED, so a typo'd action_key_map dropped every value
+                # at the actuator boundary while replay still reported
+                # ``status="success"`` and ``Frames: N/N`` - the recorded
+                # trajectory never reached the robot. Abort on the first
+                # unapplied frame instead of finishing a replay that is not
+                # happening.
+                send_result = self.sim.send_action(action_dict, robot_name=resolved_robot, n_substeps=n_substeps)
+                if isinstance(send_result, dict) and send_result.get("status") == "error":
+                    detail = next(
+                        (
+                            str(block["text"])
+                            for block in send_result.get("content", []) or []
+                            if isinstance(block, dict) and "text" in block
+                        ),
+                        "",
+                    )
+                    payload: dict[str, Any] = {
+                        "episode": episode,
+                        "robot_name": resolved_robot,
+                        "frame": frame_idx,
+                        "action_keys": action_keys,
+                        "frames_applied": frames_applied,
+                        "total_frames": episode_length,
+                    }
+                    send_json = _extract_result_json(send_result)
+                    if send_json is not None:
+                        payload.update(send_json)
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"Replay aborted at frame {frame_idx}: the recorded action could not be "
+                                    f"applied to '{resolved_robot}'. Applied {frames_applied}/{episode_length} "
+                                    f"frames. {detail}"
+                                )
+                            },
+                            {"json": payload},
+                        ],
+                    }
                 frames_applied += 1
 
             sleep_time = frame_interval - (time.time() - step_start)

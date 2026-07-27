@@ -111,7 +111,7 @@ class ObservationMapping:
         for robot_key, model_key in self.video.items():
             if model_key not in model_video:
                 raise ValueError(
-                    f"Observation mapping: robot '{robot_key}' → model video "
+                    f"Observation mapping: robot '{robot_key}' -> model video "
                     f"'{model_key}', but model only has: {sorted(model_video)}"
                 )
 
@@ -119,7 +119,7 @@ class ObservationMapping:
         for robot_key, model_key in self.state.items():
             if model_key not in model_state:
                 raise ValueError(
-                    f"Observation mapping: robot '{robot_key}' → model state "
+                    f"Observation mapping: robot '{robot_key}' -> model state "
                     f"'{model_key}', but model only has: {sorted(model_state)}"
                 )
 
@@ -219,7 +219,7 @@ def _auto_infer_action_mapping(
         )
     for mdl, our in zip(remaining_model, remaining_ours):
         actions[mdl] = our
-        logger.info("Auto-mapped action: model '%s' → robot '%s' (positional)", mdl, our)
+        logger.info("Auto-mapped action: model '%s' -> robot '%s' (positional)", mdl, our)
     return ActionMapping(actions=actions)
 
 
@@ -256,7 +256,7 @@ def _match_keys(ours: list[str], model: list[str], label: str, strict_keys: bool
         )
     for our, mdl in zip(remaining_ours, remaining_model):
         mapping[our] = mdl
-        logger.info("Auto-mapped %s: '%s' → '%s' (positional)", label, our, mdl)
+        logger.info("Auto-mapped %s: '%s' -> '%s' (positional)", label, our, mdl)
     return mapping
 
 
@@ -310,6 +310,36 @@ def _coerce_action_row(row: Any) -> float | list[float]:
     if hasattr(row, "tolist"):
         return row.tolist()
     return float(row) if np.ndim(row) == 0 else list(row)
+
+
+def _action_chunk_horizon(chunk: dict[str, np.ndarray]) -> int:
+    """Return the shared time-axis length of a normalized action chunk.
+
+    Both unpack paths reduce each action value to ``(horizon,)`` or
+    ``(horizon, action_dim)`` and then iterate ``range(horizon)``. Every value
+    must therefore carry a leading time axis. A 0-D / scalar value has no time
+    axis, so a server or model that emits one is malformed; surface it as an
+    actionable error instead of the opaque ``IndexError: tuple index out of
+    range`` that a ``.shape[0]`` read on a 0-D array would otherwise raise.
+
+    Args:
+        chunk: Normalized ``{bare_key: np.ndarray}`` action mapping (non-empty).
+
+    Returns:
+        The leading-axis length shared by the chunk's values.
+
+    Raises:
+        ValueError: If any value is 0-D (has no leading time axis).
+    """
+    scalar_keys = [k for k, v in chunk.items() if v.ndim == 0]
+    if scalar_keys:
+        shapes = {k: tuple(chunk[k].shape) for k in scalar_keys}
+        raise ValueError(
+            f"GR00T returned scalar (0-D) action value(s) for {scalar_keys} "
+            f"(shapes {shapes}); expected a leading time axis of shape (horizon,) "
+            "or (horizon, action_dim). The action chunk is malformed."
+        )
+    return next(iter(chunk.values())).shape[0]
 
 
 # Gr00tPolicy
@@ -619,6 +649,7 @@ class Gr00tPolicy(Policy):
 
     @property
     def provider_name(self) -> str:
+        """Registry key for this provider (``"groot"``)."""
         return "groot"
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
@@ -687,6 +718,14 @@ class Gr00tPolicy(Policy):
         logger.debug("Gr00tPolicy.reset: local-mode reseed applied (seed=%r)", seed)
 
     async def get_actions(self, observation_dict: dict[str, Any], instruction: str, **kwargs) -> list[dict[str, Any]]:
+        """Predict an action chunk for one observation.
+
+        Dispatches to local in-process inference when the policy was loaded in
+        ``"local"`` mode, otherwise forwards the observation to the GR00T
+        inference service. Returns a list of per-timestep action dicts keyed by
+        actuator name; ``instruction`` is the language goal and extra ``kwargs``
+        are ignored by this provider.
+        """
         if self._mode == "local":
             return self._local_get_actions(observation_dict, instruction)
         return self._service_get_actions(observation_dict, instruction)
@@ -799,7 +838,7 @@ class Gr00tPolicy(Policy):
             return []
 
         assert self._action_mapping is not None, "Action mapping not initialized"
-        horizon = next(iter(squeezed.values())).shape[0]
+        horizon = _action_chunk_horizon(squeezed)
         mapped_keys = set(self._action_mapping.actions.keys())
 
         actions: list[dict[str, Any]] = []
@@ -925,7 +964,7 @@ class Gr00tPolicy(Policy):
         if not normalized:
             return []
 
-        horizon = next(iter(normalized.values())).shape[0]
+        horizon = _action_chunk_horizon(normalized)
 
         # If we have action mappings, use them for consistent key translation
         if self._action_mapping and self._action_mapping.actions:

@@ -8,6 +8,7 @@ normalization, drop accounting), plus episode/finalize/push lifecycle.
 """
 
 import logging
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -1114,6 +1115,100 @@ def test_create_wraps_vcodec_in_camera_encoder_on_052(monkeypatch):
     assert constructed[0].vcodec == "libsvtav1"
 
 
+class _VideoBackendProbeCreate:
+    """create() declares video_backend with a distinctive sentinel default so a
+    test can tell whether the recorder forwarded a value or left it untouched."""
+
+    _UNSET = "__unset__"
+    last_create_kwargs: dict = {}
+
+    def __init__(self, repo_id, root=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+
+    @classmethod
+    def create(
+        cls,
+        repo_id,
+        fps=30,
+        root=None,
+        robot_type="unknown",
+        features=None,
+        use_videos=True,
+        image_writer_threads=4,
+        camera_encoder=None,
+        streaming_encoding=True,
+        video_backend="__unset__",
+    ):
+        cls.last_create_kwargs = {"video_backend": video_backend}
+        return cls(repo_id, root=root)
+
+
+class _VideoBackendProbeResume:
+    """resume() counterpart of _VideoBackendProbeCreate."""
+
+    _UNSET = "__unset__"
+    last_resume_kwargs: dict = {}
+
+    def __init__(self, repo_id, root=None, meta=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+        self.meta = meta or _ResumeMeta(total_episodes=0, total_frames=0)
+
+    @classmethod
+    def resume(
+        cls,
+        repo_id,
+        root=None,
+        camera_encoder=None,
+        image_writer_threads=4,
+        video_backend="__unset__",
+    ):
+        cls.last_resume_kwargs = {"video_backend": video_backend}
+        return cls(repo_id, root=root)
+
+
+def test_create_omits_video_backend_by_default(monkeypatch):
+    """Regression: video_backend defaults to None and must NOT be forwarded to
+    LeRobot.create() unless explicitly set.
+
+    ``video_backend`` is LeRobot's video *decode* backend; valid values are
+    "torchcodec"/"pyav" ("video_reader" is a deprecated alias). The old default
+    of "auto" was never a valid decode backend, so read-back through the created
+    dataset (e.g. dataset[0]) raised ``ValueError: Unsupported video backend:
+    auto``. With the fix, the default is None and the kwarg is left off so
+    LeRobot picks its own platform default. The fake's sentinel default proves
+    the recorder sent nothing (pre-fix it forwarded "auto" and this fails).
+    """
+    _install_video_encoder_config(monkeypatch)
+    _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeCreate)
+
+    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1")
+
+    assert _VideoBackendProbeCreate.last_create_kwargs["video_backend"] == "__unset__"
+
+
+def test_resume_omits_video_backend_by_default(monkeypatch):
+    """Regression: resume() must not forward video_backend when left at its
+    None default (see test_create_omits_video_backend_by_default)."""
+    _install_video_encoder_config(monkeypatch)
+    _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeResume)
+
+    DatasetRecorder.resume("user/data", vcodec="libsvtav1")
+
+    assert _VideoBackendProbeResume.last_resume_kwargs["video_backend"] == "__unset__"
+
+
+def test_create_forwards_video_backend_when_explicitly_set(monkeypatch):
+    """When a caller explicitly passes a valid decode backend, it IS forwarded."""
+    _install_video_encoder_config(monkeypatch)
+    _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeCreate)
+
+    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav")
+
+    assert _VideoBackendProbeCreate.last_create_kwargs["video_backend"] == "pyav"
+
+
 def test_create_warns_when_video_encoder_config_missing(monkeypatch, caplog):
     """If create() wants camera_encoder= but VideoEncoderConfig can't be
     imported, the recorder warns and proceeds with camera_encoder unset rather
@@ -1517,6 +1612,53 @@ def test_read_dataset_episode_indices_dedups_and_skips_columnless_parquet(tmp_pa
     assert result["frames_per_episode"] == [3, 5]  # first-seen length for ep 0
     assert result["total_frames"] == 8
     assert result["info_total_episodes"] is None  # no meta/info.json written
+    assert result["unreadable_files"] == []  # every shard was readable
+
+
+def test_read_dataset_episode_indices_keeps_readable_shards_when_one_is_corrupt(tmp_path):
+    """One corrupt shard must not erase the episode truth of the readable ones.
+
+    Partial damage is the common case (an interrupted rsync or hub download
+    truncates a file or two of many). The reader reports the broken shard by
+    relative path in ``unreadable_files`` and still returns the episodes it
+    could read, so a caller can localise the damage instead of seeing an empty
+    dataset.
+    """
+    pa = pytest.importorskip("pyarrow")
+    pq = pytest.importorskip("pyarrow.parquet")
+
+    from strands_robots.dataset_recorder import read_dataset_episode_indices
+
+    ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    pq.write_table(pa.table({"episode_index": [0, 1], "length": [10, 12]}), ep_dir / "file-000.parquet")
+    (ep_dir / "file-001.parquet").write_bytes(b"truncated, not a parquet file")
+
+    result = read_dataset_episode_indices(tmp_path)
+
+    assert result["episode_indices"] == [0, 1]
+    assert result["total_frames"] == 22
+    assert len(result["unreadable_files"]) == 1
+    assert result["unreadable_files"][0].startswith("meta/episodes/chunk-000/file-001.parquet: ")
+
+
+def test_read_dataset_episode_indices_raises_when_no_shard_is_readable(tmp_path):
+    """With no readable shard there is no ground truth, so the read fails loud.
+
+    Returning an empty episode list would be indistinguishable from a genuinely
+    empty dataset, so a wholly unreadable ``meta/episodes`` tree raises with
+    every file and its read error named.
+    """
+    pytest.importorskip("pyarrow")
+
+    from strands_robots.dataset_recorder import read_dataset_episode_indices
+
+    ep_dir = tmp_path / "meta" / "episodes" / "chunk-000"
+    ep_dir.mkdir(parents=True)
+    (ep_dir / "file-000.parquet").write_bytes(b"not a parquet file")
+
+    with pytest.raises(ValueError, match=r"No readable meta/episodes parquet"):
+        read_dataset_episode_indices(tmp_path)
 
 
 class _FakeSyncDataset:
@@ -1562,6 +1704,108 @@ def test_sync_to_bucket_missing_hf_cli_errors(tmp_path, monkeypatch):
 
     assert result["status"] == "error"
     assert "hf" in result["message"]
+
+
+def test_sync_to_bucket_old_huggingface_hub_errors(tmp_path, monkeypatch):
+    """huggingface_hub<1.0 -> clear upgrade instruction, never a subprocess call.
+
+    Regression test for the version gate: on 0.x the ``hf`` binary exists but
+    lacks the ``buckets``/``sync`` subcommands, so without the gate the user
+    gets argparse usage noise piped verbatim into the status dict.
+    """
+    import subprocess
+
+    import huggingface_hub
+
+    from strands_robots import dataset_recorder as dr
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(huggingface_hub, "__version__", "0.36.2")
+
+    def _boom(*_a, **_k):
+        raise AssertionError("subprocess must not run when huggingface_hub is too old")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+
+    result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
+
+    assert result["status"] == "error"
+    assert "huggingface_hub>=1.0" in result["message"]
+    assert "0.36.2" in result["message"]
+    assert "pip install -U 'huggingface_hub>=1.0'" in result["message"]
+
+
+def test_sync_to_bucket_new_huggingface_hub_passes_version_gate(tmp_path, monkeypatch):
+    """huggingface_hub>=1.0 passes the version gate and proceeds to sync."""
+    import subprocess
+
+    import huggingface_hub
+
+    from strands_robots import dataset_recorder as dr
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(huggingface_hub, "__version__", "1.0.0")
+
+    def _fake_run(cmd, *_a, **_k):
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
+
+    assert result["status"] == "success"
+
+
+def test_sync_to_bucket_unimportable_huggingface_hub_skips_version_gate(tmp_path, monkeypatch):
+    """No importable huggingface_hub package -> the gate fails open.
+
+    The ``hf`` binary can come from a different environment on PATH (e.g. a
+    pipx install) whose version this interpreter cannot see; blocking on a
+    missing *package* would break a working CLI. The normal subprocess error
+    path still surfaces genuine failures.
+    """
+    import subprocess
+    import sys
+
+    from strands_robots import dataset_recorder as dr
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    # A None entry in sys.modules makes `import huggingface_hub` raise ImportError.
+    monkeypatch.setitem(sys.modules, "huggingface_hub", None)
+
+    def _fake_run(cmd, *_a, **_k):
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
+
+    assert result["status"] == "success"
+
+
+def test_sync_to_bucket_unparseable_huggingface_hub_version_skips_gate(tmp_path, monkeypatch):
+    """An unparseable version string fails open rather than blocking the CLI."""
+    import subprocess
+
+    import huggingface_hub
+
+    from strands_robots import dataset_recorder as dr
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(huggingface_hub, "__version__", "unknown")
+
+    def _fake_run(cmd, *_a, **_k):
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
+
+    assert result["status"] == "success"
 
 
 @pytest.mark.parametrize(
@@ -1756,6 +2000,257 @@ def test_sync_to_bucket_delete_flag_forwards_to_sync(tmp_path, monkeypatch):
     assert "--delete" in calls[0]
 
 
+# ── sync_dataset_to_bucket (module-level, lifecycle-independent) ───────────
+#
+# Issue #1502: syncing an on-disk dataset must not require a live recording
+# session. These tests exercise the free function directly - no DatasetRecorder
+# is constructed - and pin that the method is a thin delegate.
+
+
+def test_sync_dataset_to_bucket_works_without_a_recorder(tmp_path, monkeypatch):
+    """The free function syncs a bare directory: no recorder, no lerobot.
+
+    run_id defaults to the directory name (there is no repo_id to derive from),
+    and the success dict carries the derived bucket URI.
+    """
+    import subprocess
+
+    from strands_robots import dataset_recorder as dr
+
+    root = tmp_path / "robot-fave"
+    (root / "meta").mkdir(parents=True)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, *_a, **_k):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = dr.sync_dataset_to_bucket(root, "my-org/robot-fave")
+
+    assert result["status"] == "success"
+    # run_id derived from Path(root).name, not from any repo_id.
+    assert result["bucket_uri"] == "hf://buckets/my-org/robot-fave/robot-fave"
+    # No recorder in scope: episodes/frames counters are a recorder concept.
+    assert "episodes" not in result
+    assert "frames" not in result
+    assert calls[0][:3] == ["hf", "buckets", "create"]
+    assert calls[1][:2] == ["hf", "sync"]
+    assert calls[1][2] == str(root)
+    assert calls[1][3] == "hf://buckets/my-org/robot-fave/robot-fave"
+
+
+def test_sync_dataset_to_bucket_standalone_needs_no_recorder(tmp_path, monkeypatch):
+    """The module-level ``sync_dataset_to_bucket`` syncs an on-disk dataset with
+    no live DatasetRecorder (lifecycle-independent daily-sync path used by
+    ``stop_recording(bucket=...)`` on an idle sim)."""
+    import subprocess
+
+    from strands_robots import dataset_recorder as dr
+
+    root = tmp_path / "robot-fave"
+    root.mkdir()
+    _write_meta(root)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+
+    calls: list[list[str]] = []
+
+    def _fake_run(cmd, *_a, **_k):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = dr.sync_dataset_to_bucket(str(root), "my-org/robot-fave")
+
+    assert result["status"] == "success"
+    # run_id defaults to the dataset directory name when no recorder exists.
+    assert result["bucket_uri"] == "hf://buckets/my-org/robot-fave/robot-fave"
+    assert calls[0][:3] == ["hf", "buckets", "create"]
+    assert calls[1][:2] == ["hf", "sync"] and calls[1][2] == str(root)
+
+
+def test_sync_dataset_to_bucket_standalone_requires_finalized_meta(tmp_path, monkeypatch):
+    """The standalone sync refuses a dataset root without ``meta/``."""
+    from strands_robots import dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+
+    result = dr.sync_dataset_to_bucket(str(tmp_path), "my-org/robot-fave")
+
+    assert result["status"] == "error"
+    assert "meta/" in result["message"]
+
+
+def test_sync_dataset_to_bucket_accepts_str_root(tmp_path, monkeypatch):
+    """``root`` may be a plain string (the docstring advertises str | Path)."""
+    import subprocess
+
+    from strands_robots import dataset_recorder as dr
+
+    root = tmp_path / "run-021"
+    (root / "meta").mkdir(parents=True)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda cmd, *_a, **_k: subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr=""),
+    )
+
+    result = dr.sync_dataset_to_bucket(str(root), "my-org/robot-fave", create=False)
+
+    assert result["status"] == "success"
+    assert result["bucket_uri"] == "hf://buckets/my-org/robot-fave/run-021"
+
+
+def test_sync_dataset_to_bucket_missing_hf_cli_errors(tmp_path, monkeypatch):
+    """No ``hf`` CLI -> actionable error, never a subprocess call."""
+    import subprocess
+
+    from strands_robots import dataset_recorder as dr
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: None)
+
+    def _boom(*_a, **_k):
+        raise AssertionError("subprocess must not run when hf CLI is absent")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+
+    result = dr.sync_dataset_to_bucket(tmp_path, "my-org/robot-fave")
+
+    assert result["status"] == "error"
+    assert "hf" in result["message"]
+
+
+@pytest.mark.parametrize(
+    "bad_bucket",
+    [
+        "my-org/robot; rm -rf /",  # shell metacharacters
+        "my-org/../etc",  # path traversal
+        "org/name/extra",  # more than one path segment
+        "-leading-dash",  # must start alphanumeric
+        "org/ name",  # embedded space
+    ],
+)
+def test_sync_dataset_to_bucket_rejects_unsafe_bucket(tmp_path, monkeypatch, bad_bucket):
+    """The lifted free function keeps the bucket allowlist (LLM-input safety).
+
+    The refactor must not weaken the injection-prevention contract that the
+    method carried: values failing ``_BUCKET_RE`` are rejected before any
+    subprocess or URI interpolation.
+    """
+    import subprocess
+
+    from strands_robots import dataset_recorder as dr
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+
+    def _boom(*_a, **_k):
+        raise AssertionError(f"subprocess must not run for unsafe bucket {bad_bucket!r}")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+
+    result = dr.sync_dataset_to_bucket(tmp_path, bad_bucket)
+
+    assert result["status"] == "error"
+    assert "invalid bucket" in result["message"]
+
+
+@pytest.mark.parametrize("bad_run_id", ["bad/id", "run;id", ".."])
+def test_sync_dataset_to_bucket_rejects_unsafe_run_id(tmp_path, monkeypatch, bad_run_id):
+    """The lifted free function keeps the run_id allowlist (LLM-input safety)."""
+    import subprocess
+
+    from strands_robots import dataset_recorder as dr
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+
+    def _boom(*_a, **_k):
+        raise AssertionError(f"subprocess must not run for unsafe run_id {bad_run_id!r}")
+
+    monkeypatch.setattr(subprocess, "run", _boom)
+
+    result = dr.sync_dataset_to_bucket(tmp_path, "my-org/robot-fave", run_id=bad_run_id)
+
+    assert result["status"] == "error"
+    assert "invalid run_id" in result["message"]
+
+
+def test_sync_dataset_to_bucket_requires_meta_dir(tmp_path, monkeypatch):
+    """A directory with no ``meta/`` (never finalized) is refused."""
+    from strands_robots import dataset_recorder as dr
+
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+    # No _write_meta: meta/ is absent.
+
+    result = dr.sync_dataset_to_bucket(tmp_path, "my-org/robot-fave")
+
+    assert result["status"] == "error"
+    assert "meta/" in result["message"]
+    assert "finalize()" in result["message"]
+
+
+def test_recorder_sync_to_bucket_delegates_to_module_helper(tmp_path, monkeypatch):
+    """The method is a thin delegate: dataset root forwarded, run_id derived
+    from repo_id, and episodes/frames counters added on success."""
+    from strands_robots import dataset_recorder as dr
+
+    seen: dict = {}
+
+    def _fake_sync(root, bucket, run_id=None, *, create=True, private=True, delete=False):
+        seen.update(root=root, bucket=bucket, run_id=run_id, create=create, private=private, delete=delete)
+        return {"status": "success", "bucket_uri": f"hf://buckets/{bucket}/{run_id}"}
+
+    monkeypatch.setattr(dr, "sync_dataset_to_bucket", _fake_sync)
+
+    result = _sync_recorder(tmp_path, repo_id="my-org/robot-fave").sync_to_bucket(
+        "my-org/robot-fave", create=False, private=False, delete=True
+    )
+
+    assert seen["root"] == str(tmp_path)
+    assert seen["bucket"] == "my-org/robot-fave"
+    # run_id defaults to the dataset repo_id's last segment, not the dir name.
+    assert seen["run_id"] == "robot-fave"
+    assert (seen["create"], seen["private"], seen["delete"]) == (False, False, True)
+    # The method augments the helper's success dict with recorder counters.
+    assert result["status"] == "success"
+    assert result["episodes"] == 2
+    assert result["frames"] == 40
+
+
+def test_recorder_sync_to_bucket_error_passthrough_has_no_counters(tmp_path, monkeypatch):
+    """On helper failure the method returns the error dict untouched."""
+    from strands_robots import dataset_recorder as dr
+
+    monkeypatch.setattr(
+        dr,
+        "sync_dataset_to_bucket",
+        lambda *_a, **_k: {"status": "error", "message": "boom"},
+    )
+
+    result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
+
+    assert result == {"status": "error", "message": "boom"}
+
+
+def test_sync_dataset_to_bucket_exported_top_level():
+    """``strands_robots.sync_dataset_to_bucket`` lazy-resolves to the helper."""
+    from strands_robots import __all__ as strands_robots_all
+    from strands_robots import dataset_recorder as dr
+    from strands_robots import sync_dataset_to_bucket
+
+    assert "sync_dataset_to_bucket" in strands_robots_all
+    # The from-import above goes through the package's lazy ``__getattr__``,
+    # so identity with the helper proves the lazy resolution works.
+    assert sync_dataset_to_bucket is dr.sync_dataset_to_bucket
+
+
 def test_hf_executable_prefers_interpreter_env_over_path(tmp_path, monkeypatch):
     """`_hf_executable` finds the ``hf`` next to the running interpreter before
     falling back to PATH, so sync works from a venv whose bin is not activated.
@@ -1787,3 +2282,166 @@ def test_hf_executable_falls_back_to_path(tmp_path, monkeypatch):
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/hf")
 
     assert dr._hf_executable() == "/usr/bin/hf"
+
+
+# create(overwrite=...) makes re-recording into an existing repo_id honest:
+# LeRobotDataset.create() mkdir()s with exist_ok=False and raises a bare
+# FileExistsError on an existing dir. create() now resolves that up front -
+# overwrite=True wipes and recreates; overwrite=False raises a clear error
+# naming overwrite= / resume() (never a cryptic FileExistsError, never a silent
+# clobber). resolve_dataset_dir() is the shared root resolver the sim facade
+# also uses.
+
+
+class _FakeDatasetOverwriteCreate:
+    """create() records that it ran; it does not touch the filesystem."""
+
+    created = 0
+
+    def __init__(self, repo_id, root=None) -> None:
+        self.repo_id = repo_id
+        self.root = root
+
+    @classmethod
+    def create(
+        cls, repo_id, fps=30, root=None, robot_type="unknown", features=None, use_videos=True, image_writer_threads=4
+    ):
+        cls.created += 1
+        return cls(repo_id, root=root)
+
+
+def test_resolve_dataset_dir_prefers_explicit_root():
+    from strands_robots.dataset_recorder import resolve_dataset_dir
+
+    assert resolve_dataset_dir("user/data", root="/tmp/somewhere") == Path("/tmp/somewhere")
+
+
+def test_resolve_dataset_dir_treats_bare_repo_id_as_local_path():
+    from strands_robots.dataset_recorder import resolve_dataset_dir
+
+    # No owner/name slash -> a local directory path, not $HF_LEROBOT_HOME/<id>.
+    assert resolve_dataset_dir("my_local_dataset") == Path("my_local_dataset")
+
+
+def test_create_raises_clear_error_on_existing_dataset_without_overwrite(tmp_path, monkeypatch):
+    """create() on an existing LeRobotDataset dir (has meta/) and no overwrite
+    raises a clear FileExistsError naming overwrite= and resume() - not a bare
+    LeRobot FileExistsError and not a silent append."""
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    root = tmp_path / "ds"
+    (root / "meta").mkdir(parents=True)
+
+    with pytest.raises(FileExistsError, match="overwrite=True.*resume|resume.*overwrite"):
+        DatasetRecorder.create("user/data", root=str(root), joint_names=["j1"])
+    # create() must NOT have run, and the existing dataset is left untouched.
+    assert _FakeDatasetOverwriteCreate.created == 0
+    assert (root / "meta").exists()
+
+
+def test_create_overwrite_removes_existing_dataset_then_creates_fresh(tmp_path, monkeypatch):
+    """overwrite=True wipes an existing dataset dir before create() runs."""
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    root = tmp_path / "ds"
+    (root / "meta").mkdir(parents=True)
+    (root / "meta" / "info.json").write_text("{}")
+
+    recorder = DatasetRecorder.create("user/data", root=str(root), joint_names=["j1"], overwrite=True)
+
+    # The stale dataset content was removed before create() ran fresh.
+    assert not (root / "meta" / "info.json").exists()
+    assert _FakeDatasetOverwriteCreate.created == 1
+    assert recorder.dataset.repo_id == "user/data"
+
+
+def test_create_clears_existing_empty_dir(tmp_path, monkeypatch):
+    """An existing EMPTY dir (e.g. tempfile.mkdtemp()) is cleared so create()
+    does not dead-end on LeRobot's exist_ok=False guard."""
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    root = tmp_path / "empty_ds"
+    root.mkdir()
+
+    recorder = DatasetRecorder.create("user/data", root=str(root), joint_names=["j1"])
+
+    assert _FakeDatasetOverwriteCreate.created == 1
+    assert recorder.dataset.repo_id == "user/data"
+
+
+def test_create_refuses_nonempty_non_dataset_dir(tmp_path, monkeypatch):
+    """A non-empty dir that is not a LeRobotDataset is never clobbered."""
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    root = tmp_path / "notes"
+    root.mkdir()
+    (root / "important.txt").write_text("do not delete")
+
+    with pytest.raises(ValueError, match="not a LeRobotDataset"):
+        DatasetRecorder.create("user/data", root=str(root), joint_names=["j1"])
+    assert _FakeDatasetOverwriteCreate.created == 0
+    assert (root / "important.txt").exists()
+
+
+# create() target resolution also handles a repo_id/root that points at an
+# existing plain FILE (not a directory) - e.g. an agent passing root= to a path
+# that already holds a file. overwrite=False must refuse with a clear "not a
+# directory" error rather than dead-ending inside LeRobotDataset.create();
+# overwrite=True removes the file so a fresh dataset can be created in its place.
+
+
+def test_create_refuses_file_target_without_overwrite(tmp_path, monkeypatch):
+    """A file at the resolved target (not a dir) raises a clear ValueError and
+    never runs create() or deletes the file."""
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    target = tmp_path / "not_a_dir"
+    target.write_text("i am a file")
+
+    with pytest.raises(ValueError, match="not a directory"):
+        DatasetRecorder.create("user/data", root=str(target), joint_names=["j1"])
+    assert _FakeDatasetOverwriteCreate.created == 0
+    assert target.is_file()
+    assert target.read_text() == "i am a file"
+
+
+def test_create_overwrite_replaces_file_target_then_creates_fresh(tmp_path, monkeypatch):
+    """overwrite=True on a file target unlinks it before create() runs fresh."""
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    target = tmp_path / "stale"
+    target.write_text("stale contents")
+
+    recorder = DatasetRecorder.create("user/data", root=str(target), joint_names=["j1"], overwrite=True)
+
+    assert not target.exists()
+    assert _FakeDatasetOverwriteCreate.created == 1
+    assert recorder.dataset.repo_id == "user/data"
+
+
+# resolve_dataset_dir() mirrors LeRobotDataset root resolution. When lerobot is
+# not importable it must fall back to the documented default dataset home
+# (~/.cache/huggingface/lerobot) instead of raising, so callers can still
+# inspect the target path in a lerobot-less environment.
+
+
+def test_resolve_dataset_dir_falls_back_to_default_home_when_lerobot_absent(monkeypatch):
+    import importlib
+
+    from strands_robots.dataset_recorder import resolve_dataset_dir
+
+    # Removing HF_LEROBOT_HOME from lerobot's constants module makes
+    # `from lerobot.utils.constants import HF_LEROBOT_HOME` raise ImportError,
+    # exercising the documented default-home fallback without disturbing any
+    # other lerobot import (the module object itself is left in place).
+    # When lerobot is installed, drop the constant so the import fails; when it
+    # is absent the fallback is already the natural path - both reach line 216.
+    try:
+        constants = importlib.import_module("lerobot.utils.constants")
+        monkeypatch.delattr(constants, "HF_LEROBOT_HOME", raising=False)
+    except ImportError:  # lerobot not installed; the fallback path is what we test
+        pass
+
+    resolved = resolve_dataset_dir("user/data")
+
+    assert resolved == Path.home() / ".cache" / "huggingface" / "lerobot" / "user" / "data"

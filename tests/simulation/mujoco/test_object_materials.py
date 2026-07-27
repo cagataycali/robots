@@ -9,6 +9,10 @@ These tests pin the new behaviour:
 * ``material=None`` is byte-for-byte the old behaviour (``matid == -1``).
 * Invalid material specs fail loudly (``ValueError``) -- no silent fallback to
   the flat-plastic default.
+* A material key the builder cannot honor (a typo, another renderer's field
+  name, an empty spec, or ``rgb1``/``rgb2``/``texdim`` without ``builtin``) is
+  rejected instead of dropped -- dropping one compiles the glossy default while
+  reporting success.
 
 They exercise the full path ``Simulation.add_object`` -> ``SimObject`` ->
 ``SpecBuilder._build_material`` -> compiled ``MjModel`` so the assertions are on
@@ -187,5 +191,75 @@ def test_simulation_add_object_bad_material_reports_error(tmp_path):
         retry = sim.add_object("ball", shape="sphere", material={"specular": 0.0})
         assert retry["status"] == "success", retry
         assert _matid(sim._world._model, "ball_geom") >= 0
+    finally:
+        sim.destroy()
+
+
+@pytest.mark.parametrize(
+    ("material", "expected"),
+    [
+        # A typo in a procedural colour key silently dropped the caller's
+        # colours and compiled the default grey checker.
+        ({"builtin": "checker", "rgb_1": [1.0, 0.0, 0.0]}, "did you mean 'rgb1'"),
+        # Another renderer's field name: no MuJoCo equivalent, so it did nothing.
+        ({"roughness": 0.2}, "'roughness'"),
+        ({"tex_repeat": [4, 4]}, "did you mean 'texrepeat'"),
+        # Real mjMaterial field that this schema does not plumb through.
+        ({"emission": 0.5}, "'emission'"),
+        ({"specular": 0.0, "shininess": 0.0, "bogus": 1}, "'bogus'"),
+        # rgb1/rgb2/texdim only colour a procedural texture.
+        ({"rgb1": [1.0, 0.0, 0.0], "rgb2": [0.0, 0.0, 1.0]}, "only colour/size a procedural"),
+        ({"texture": "/tmp/x.png", "texdim": 256}, "only colour/size a procedural"),
+        # An empty spec cannot express anything: it compiled MuJoCo's defaults.
+        ({}, "has no effect"),
+    ],
+)
+def test_unhonorable_material_keys_fail_loudly(material, expected):
+    """A material key the builder cannot honor must raise, not be dropped."""
+    obj = SimObject(name="x", shape="box", material=material)
+    with pytest.raises(ValueError, match=expected):
+        _compile(obj)
+
+
+def test_non_mapping_material_fails_loudly():
+    """A non-dict material must raise a ValueError, not an opaque AttributeError."""
+    obj = SimObject(name="x", shape="box", material=["specular", 0.0])
+    with pytest.raises(ValueError, match="expected a dict of material options, got list"):
+        _compile(obj)
+
+
+def test_simulation_add_object_rejects_unknown_material_key():
+    """The live path reports status=error and leaves no object registered.
+
+    Pre-fix this returned ``status=success`` with the unknown key dropped, so
+    the caller believed a red checkerboard had been applied while the compiled
+    geom carried the default grey checker.
+    """
+    import strands_robots as sr
+
+    sim = sr.Simulation()
+    try:
+        sim.create_world(ground_plane=True)
+        result = sim.add_object(
+            "cube",
+            shape="box",
+            material={"builtin": "checker", "rgb_1": [1.0, 0.0, 0.0], "rgb2": [0.0, 0.0, 1.0]},
+        )
+        assert result["status"] == "error", result
+        text = result["content"][0]["text"]
+        assert "rgb_1" in text and "rgb1" in text
+        # Accepted keys are listed so the caller can self-correct.
+        assert "texrepeat" in text
+        assert "cube" not in sim._world.objects
+        # The corrected spelling is accepted and reaches the compiled model.
+        retry = sim.add_object(
+            "cube",
+            shape="box",
+            material={"builtin": "checker", "rgb1": [1.0, 0.0, 0.0], "rgb2": [0.0, 0.0, 1.0]},
+        )
+        assert retry["status"] == "success", retry
+        matid = _matid(sim._world._model, "cube_geom")
+        assert matid >= 0
+        assert int(sim._world._model.mat_texid[matid][mujoco.mjtTextureRole.mjTEXROLE_RGB]) >= 0
     finally:
         sim.destroy()

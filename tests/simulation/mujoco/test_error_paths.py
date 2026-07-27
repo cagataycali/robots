@@ -129,12 +129,19 @@ def test_set_joint_velocities_none_dict_errors(ready_sim):
     assert "'velocities' is required" in r["content"][0]["text"]
 
 
-def test_set_joint_positions_unknown_joint_is_skipped_not_raised(ready_sim):
-    """Unknown joint names are logged and skipped - not fatal."""
+def test_set_joint_positions_unknown_joint_rejects_whole_write(ready_sim):
+    """An unknown joint name is a structured error, not a partial write.
+
+    This used to assert ``success`` on the grounds that "the valid joint still
+    applied" - which is exactly the defect: the caller asked for a two-joint
+    pose, got a one-joint pose, and was told the call succeeded. The write is
+    now all-or-nothing and reports the name it could not resolve.
+    """
     joints = ready_sim.robot_joint_names("arm")
     assert len(joints) > 0, "Fixture robot must have joints"
     r = ready_sim.set_joint_positions(positions={joints[0]: 0.1, "__nope__": 0.2})
-    assert r["status"] == "success"  # the valid joint still applied
+    assert r["status"] == "error"
+    assert "__nope__" in r["content"][0]["text"]
 
 
 def test_apply_force_torque_only(ready_sim):
@@ -277,6 +284,32 @@ def test_render_unknown_camera_falls_back(ready_sim):
     # MuJoCo falls back to a free camera when cam_id < 0 - should succeed
     # unless GL context is unavailable, in which case error is acceptable
     assert r["status"] in ("success", "error")
+
+
+@requires_gl
+def test_render_surfaces_unexpected_renderer_error_as_status_error(ready_sim, monkeypatch):
+    """An unexpected exception inside the render pipeline must be caught.
+
+    Camera validation and the no-GL-context guard already return structured
+    errors, but a fault raised deeper in the pipeline (a MuJoCo renderer that
+    throws on ``update_scene`` after the camera resolved, e.g. a lost GL context
+    mid-render) must NOT bubble a raw exception past the AgentTool boundary. It
+    has to come back as ``status=error`` carrying the fault text, so the LLM
+    sees a recoverable tool result instead of an unhandled traceback.
+    """
+
+    class _BoomRenderer:
+        def update_scene(self, data, camera=None, scene_option=None):
+            raise RuntimeError("GL context lost mid-render")
+
+    # The free camera ("default") skips name validation, so the fault lands in
+    # the render body itself - the path the catch-all guards.
+    monkeypatch.setattr(ready_sim, "_get_renderer", lambda w, h: _BoomRenderer())
+    r = ready_sim.render(camera_name="default", width=32, height=24)
+    assert r["status"] == "error"
+    text = r["content"][0]["text"]
+    assert "Render failed" in text
+    assert "GL context lost mid-render" in text
 
 
 # ─ Tool-spec dispatch: unknown action + error routing───────────

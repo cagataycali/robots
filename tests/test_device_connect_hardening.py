@@ -67,12 +67,22 @@ class _FakeRobot:
         self.started = None
         self.stopped = False
 
-    def start_task(self, instruction, policy_provider, policy_port, host, duration):
+    def start_task(
+        self,
+        instruction,
+        policy_port=None,
+        policy_host="localhost",
+        policy_provider="groot",
+        duration=30.0,
+        **kw,
+    ):
+        # Real HardwareRobot.start_task signature so a positional misorder in
+        # the caller surfaces as a wrong-field value instead of passing.
         self.started = dict(
             instruction=instruction,
             policy_provider=policy_provider,
             policy_port=policy_port,
-            host=host,
+            policy_host=policy_host,
             duration=duration,
         )
         return {"status": "success", "instruction": instruction}
@@ -551,6 +561,45 @@ def test_init_device_connect_uses_secure_default():
 
     _run(_go())
     assert captured["allow_insecure"] is False
+
+
+def test_init_device_connect_insecure_emits_prominent_warning(caplog):
+    """Opting into insecure transport must NEVER be silent.
+
+    The entrypoint logs a prominent WARNING whenever insecure (unencrypted,
+    unauthenticated) transport is active, so an insecure deployment is always
+    visible in the logs rather than a quiet default. This pins that invariant
+    against a regression that drops the warning.
+    """
+    import logging
+    from unittest.mock import patch
+
+    from strands_robots.device_connect import init_device_connect
+
+    captured = {}
+
+    class _FakeRuntime:
+        def __init__(self, **kw):
+            captured.update(kw)
+
+        def set_heartbeat_provider(self, *_a, **_k):
+            pass
+
+        async def run(self):
+            return None
+
+    async def _go():
+        with patch("strands_robots.device_connect.DeviceRuntime", _FakeRuntime):
+            await init_device_connect(_FakeRobot(), peer_id="p1", allow_insecure=True)
+
+    with caplog.at_level(logging.WARNING, logger="strands_robots.device_connect"):
+        _run(_go())
+
+    assert captured["allow_insecure"] is True
+    insecure_warnings = [
+        r for r in caplog.records if "INSECURE mode" in r.getMessage() and r.levelno == logging.WARNING
+    ]
+    assert insecure_warnings, "insecure transport must emit a prominent WARNING (never silent)"
 
 
 def test_no_forced_insecure_setdefault_in_source():

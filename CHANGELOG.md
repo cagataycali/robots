@@ -5,6 +5,1676 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: resuming a dataset recording at a different frame rate is refused
+
+`start_recording(overwrite=False)` on an existing dataset resumes it, and
+`LeRobotDataset.resume` takes no `fps` - the dataset keeps the rate it was
+created at. The requested rate was nevertheless accepted and reported back:
+
+```python
+sim.start_recording(repo_id="local/demo", fps=30, root=root, overwrite=True)
+sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=24, control_frequency=30.0)
+sim.stop_recording()
+
+sim.start_recording(repo_id="local/demo", fps=60, root=root)   # resume
+# -> success: "Recording to LeRobotDataset: local/demo ... @ 60fps"
+sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=24, control_frequency=60.0)
+sim.stop_recording()                                            # -> success
+```
+
+Both episodes were written at 30 fps. The second was captured at 60 Hz
+(0.383 s of rollout) but timestamped across 0.767 s, so two episodes recorded at
+different cadences became indistinguishable on disk and every appended episode
+carried a wrong `dt` for training.
+
+The frame rate is now compared against the resumed dataset like the rest of the
+schema (joint columns, action columns, camera resolutions) and a mismatch is
+refused with the value that would append:
+
+```
+Cannot resume recording: the current scene does not match the existing dataset schema.
+Use overwrite=True for a fresh dataset, or restore the original scene. Differences:
+  - dataset fps differs: on-disk=30 vs requested=60 (a resumed dataset keeps its
+    on-disk rate; pass fps=30 to append at it)
+```
+
+Resuming at the dataset's own rate still appends as before. The comparison is
+shared by the MuJoCo, Newton and Isaac backends (`fps` is a required
+keyword-only argument of the schema check, so no backend can resume without it).
+
+### Fixed: a dataset recording is refused at a frame rate it cannot be written at
+
+`start_recording` never validated `fps`. LeRobot itself only rejects `fps <= 0`,
+so every other unusable rate was accepted on all three backends and cost the
+caller the episode after `status="success"` had already been returned:
+
+```python
+sim.start_recording(repo_id="local/demo", fps=2.7, root=root)
+# -> success: "Recording to LeRobotDataset: local/demo ... @ 2.7fps"
+sim.run_policy(robot_name="arm", policy_provider="mock", n_steps=6)
+# -> error: "on_frame hook failed 5 times in a row; aborting episode"
+sim.stop_recording()
+# -> error: "failed to save the final episode (1 pending frames)"
+```
+
+A fractional or `nan` rate created the dataset and then killed the per-camera
+video encoder thread on the first frame, so the rollout aborted and the pending
+frames could never be saved. `fps=True` - an `int` subclass - silently recorded
+a 1 fps dataset, giving every frame a 1-second timestamp for anything later
+trained on it. `fps="30"`, `None` and a list dead-ended in a raw
+`TypeError: '<=' not supported between instances of 'str' and 'int'` that never
+named the parameter. Through the `run_policy` agent tool the same
+`dataset_fps=2.5` reported `1/1 episodes ok` alongside
+`parquet-truth: total_episodes=0, total_frames=0`.
+
+`fps` is a frame count, so the accepted domain is now the positive-whole-number
+one the plain-MP4 recorders and the `run_policy(video=...)` dict already share
+(`positive_whole_number_error`), checked by a single
+`dataset_recording_option_error` guard the MuJoCo, Newton and Isaac
+`start_recording` implementations all call before any recorder is created:
+
+```python
+sim.start_recording(repo_id="local/demo", fps=2.7, root=root)
+# -> error: "start_recording: fps must be a positive whole number, got 2.7."
+```
+
+The guard runs ahead of the `lerobot`-extra probe, so the same caller mistake
+reports identically regardless of which optional extras an install has. Usable
+rates are unchanged: `30`, `30.0` and a NumPy integer all still record, and a
+recorded episode reopens at the requested rate.
+
+### Fixed: caller-supplied vectors are read by membership, not truthiness
+
+`add_object`, `add_robot`, `add_camera`, `move_object` and `apply_force` decided
+whether a vector parameter had been supplied by testing the vector itself
+(`position or [0.0, 0.0, 0.0]`, `if position:`, `np.array(force or [0, 0, 0])`).
+Two failure modes followed from that.
+
+A NumPy vector - what pose arithmetic, an observation row or a computed wrench
+actually is - has no boolean value, so it raised a bare `ValueError` straight
+through the structured tool-result contract, on all nine affected parameters:
+
+```python
+sim.add_object(name="cube", position=base + np.array([0.1, 0.0, 0.0]))
+# -> ValueError: The truth value of an array with more than one element is ambiguous
+sim.apply_force(body_name="cube", force=np.array([8.0, 0.0, 0.0]))
+# -> same ValueError, past the {"status": ...} envelope
+```
+
+An empty vector is falsy, so it read as "omitted" and the default was applied
+under a `success` result: `add_camera(position=[])` placed the camera at the
+default `[1, 1, 1]`, and `move_object(position=[])` moved nothing while
+reporting `"'cube' moved to same"` (on a static object it reached MuJoCo's spec
+setter and raised a bare pybind `TypeError`).
+
+A vector parameter is now supplied when it is not `None`. A supplied vector is
+validated for length and finiteness and normalized to plain floats by the shared
+`_coerce_pose_vector`, so an accepted NumPy input does not outlive that boundary
+and leak `np.float64(0.05)` into status text or into the `list[float]` fields of
+`SimObject` / `SimRobot`. Omitting a vector still takes its documented default.
+`move_object` also reports the components it actually applied - an
+orientation-only move was reported as `"moved to same"` even though the rotation
+was written.
+
+### Fixed: the plain-MP4 camera recorder rejects frame and pixel counts it cannot honor
+
+`start_cameras_recording` and `start_cameras_recording_synchronous` never
+validated `fps`, `width`, `height` or `max_frames_per_camera`. Each unusable
+value produced a recording that wrote no MP4 at all while both `start` and
+`stop` reported success:
+
+```python
+sim.start_cameras_recording(cameras=["wrist"], fps=0)
+# -> success: "Recording 1 camera(s) @ 0 FPS -> /tmp/..."
+sim.stop_cameras_recording()
+# -> success: frames 0, and no file on disk
+```
+
+The failures were downstream of the success return, so nothing surfaced them:
+`fps=0` killed the capture thread on its first `1 / fps`, `fps=-1`/`nan`/`inf`
+were refused by the ffmpeg writer during the flush, `fps="30"` raised a
+`TypeError` on the capture thread, `max_frames_per_camera=0` made
+`len(buffer) >= cap` true for every frame, and a non-positive `width`/`height`
+failed every render call. All nine of those inputs measured 0 frames and no MP4
+under a `status="success"` pair.
+
+These are frame counts and pixel counts, and the accepted domain for them was
+already defined for the `run_policy(video={...})` path. Both recording surfaces
+now bind that one predicate, so an unusable option is a structured error naming
+the parameter, and the two surfaces cannot drift on what a usable `fps` is.
+`width`/`height` of `None` still mean "use the camera's configured resolution".
+
+### Fixed: `run_multi_policy` validates `action_horizon` and per-robot mapping keys instead of coercing them
+
+Every other rollout driver - `run_policy`, `start_policy`, `eval_policy`,
+`evaluate_benchmark` - routes `action_horizon` through one positive-integer
+guard. The synchronized multi-robot loop instead coerced it with
+`max(1, int(action_horizon))`, so a horizon it could not honor was reported as a
+completed rollout:
+
+```python
+sim.run_multi_policy(policies, n_steps=8, action_horizon=0)
+# before: status="success" - silently ran horizon 1 (a re-query every step)
+# after:  status="error"   - "action_horizon must be a positive integer, got 0."
+```
+
+`2.7` was truncated to 2, and `nan` / `None` / `"4"` reached `int()` and escaped
+as a bare `ValueError` / `TypeError` past the structured-dict contract.
+
+The two per-robot mappings had the matching hole. `instructions` and the
+`{robot_name: horizon}` form of `action_horizon` were read with
+`mapping.get(robot, default)`, which discards every key that names no robot in
+the call, so a typo'd or stale robot name ran the episode on the defaults - an
+empty instruction, the default horizon of 8 - and still reported success:
+
+```python
+sim.run_multi_policy({"alice": p1, "bob": p2}, action_horizon={"alicee": 32})
+# before: status="success" - both arms ran the default horizon 8
+# after:  status="error"   - names the unmatched key, suggests "alice",
+#                            lists the robots this call drives
+```
+
+A robot omitted from a mapping still keeps its documented default (the mapping
+is an override layer, so a partial map - and an empty one - remains valid), and
+a per-robot horizon error names the entry (`action_horizon['alice']`) rather
+than the whole mapping. An `instructions` value that is neither a string nor a
+mapping is now a structured error instead of a bare `AttributeError`.
+
+### Fixed: a gripper command is honored the same way whichever name the action key spells
+
+`send_action` accepts an action key as either the actuator name (`actuator8` on
+the Panda) or a joint name that actuator drives (`finger_joint1`). Both resolve
+to the same actuator, but only the joint-name branch mapped a logical `[0, 1]`
+open/close fraction onto a tendon gripper's wide ctrlrange. The actuator-name
+branch wrote the value verbatim, so the same command meant opposite things:
+
+```python
+sim.send_action({"finger_joint1": 1.0}, robot_name="panda")
+# -> ctrl 255.0, finger gap 0.0400 m (fully OPEN)
+sim.send_action({"actuator8": 1.0}, robot_name="panda")
+# -> ctrl   1.0, finger gap 0.0002 m (CLOSED - 0.4% of the [0, 255] range)
+```
+
+The actuator name is the spelling the engine advertises: `robot_action_keys()`
+returns actuator names, a policy receives them through
+`set_robot_state_keys()`, and a positional action vector (`send_action([...])`,
+`replay_episode`) binds to them in order. Every policy rollout and dataset
+replay therefore took the unscaled branch and could not open a tendon gripper,
+so a scripted top-down pick left the object on the ground instead of lifting
+it. Both branches now write through one shared path, so the two spellings
+cannot diverge again. Direct joint/position/torque actuators are unchanged (the
+unit mapping applies to tendon transmissions only), and a mapped tendon command
+no longer emits a spurious "MuJoCo will clamp it" warning through the
+actuator-name spelling.
+### Fixed: sim teardown releases MuJoCo whatever the mesh handle is
+
+`Simulation.cleanup()` detaches from the peer mesh before it tears down MuJoCo,
+and a failure in that first step aborted everything after it - the compiled
+model/data, the renderers and the ThreadPoolExecutor all stayed alive:
+
+```python
+sim = Simulation(mesh=True)   # annotated `bool`, so True was the type-clean value
+sim.create_world()
+sim.cleanup()
+# -> AttributeError: 'bool' object has no attribute 'stop'
+#    sim._world still holds the live MjModel/MjData; the executor is still up.
+```
+
+`mesh=` is a hook for an already-started mesh client (the object `init_mesh`
+returns), not a boolean opt-in switch - the engine only ever calls `.stop()` on
+it. The `bool` annotation inverted that: `mesh=True` type-checked and broke
+teardown, while passing an actual client was an `arg-type` error. A truthy value
+without a callable `stop` is now rejected at construction with a message naming
+both supported ways to attach a mesh (`Robot(name, mode="sim", mesh=True)`, or
+assigning `sim.mesh` after construction), and the parameter is typed for the
+client it takes.
+
+A real client whose `stop()` raises (transport already closed, peer-registry
+error) leaked the same resources. That stop is now best-effort - logged and
+stepped over - matching the per-robot `_detach_robot_from_mesh` loop directly
+above it in `cleanup` and `HardwareRobot.cleanup`, so `cleanup()` / `destroy()` /
+`__exit__` always reach the MuJoCo teardown. The handle is cleared afterwards, so
+a second `cleanup()` never stops a client twice.
+
+### Fixed: `add_object` rejects a mass it cannot honor, and a refused add never bricks the scene
+
+`add_object` validated `position`, `orientation`, `color` and `size` but wrote
+`mass` straight into the spec, even though `set_body_properties` - which writes
+the same `body_mass` field - has always required a finite value `> 0`:
+
+```python
+sim.add_object("neighbour", shape="box", position=[0, 0, 0.6], mass=1.0)
+sim.add_object("blackhole", shape="box", position=[0.4, 0, 0.6], mass=float("inf"))
+# -> success. One step later every qpos/qvel in the world is nan, including
+#    'neighbour', which stops falling and never moves again.
+```
+
+`mass=0`, negatives and `nan` took the other route: the recompile refused them
+and the result read `Failed to inject 'crate': spec recompile refused.` -
+MuJoCo's actual reason ("mass and inertia of moving bodies must be larger than
+mjMINVAL") only reached the log. A positive mass below `mjMINVAL` behaved the
+same way.
+
+Worse, a mass the spec write itself rejected (a non-numeric value) raised
+*after* the body had been inserted, and the injector rolled back only the mesh
+asset. The half-built body stayed in the spec, so every later scene mutation
+failed to recompile - a valid `add_object`, an `add_camera`, anything - and one
+bad call bricked the world for good. An unsupported `shape` leaked the same way
+(its type lookup also raises after the insert), leaving the name permanently
+taken so a corrected retry failed with `repeated name`.
+
+Now the mass domain is a shared `SimEngine._validate_mass` used by both
+`add_object` and `set_body_properties` (their accepted values cannot diverge),
+MuJoCo's `mjMINVAL` floor is named rather than left to the compiler, and
+`SpecBuilder.add_object` is atomic over its own mutation: a raise after the body
+is inserted (an unsupported shape, or a name that collides with a body already
+in the scene) rolls back only the body this call added and re-raises, so the
+error a caller receives is the actual reason and the object name stays reusable.
+The rollback deletes the surplus body by enumeration rather than by name: on a
+name collision MuJoCo raises `repeated name` but still inserts the duplicate,
+and resolving the name would have deleted the pre-existing healthy body and left
+the empty orphan holding its name - corrupting the very scene the guard protects.
+`SpecBuilder.remove_body` also scans `spec.bodies` when `spec.body(name)` cannot
+see a body added since the last compile - previously such a rollback silently
+removed nothing. `mass` remains ignored for `is_static=True` objects, where
+MuJoCo derives it from the geom density.
+
+### Fixed: `add_object` honors every `color` component or rejects the vector
+
+A MuJoCo geom stores its colour in a 4-component `rgba` row, so only an RGB
+triple (completed with the opaque alpha that row defaults to) or a full RGBA
+quadruple can be applied to it. `add_object` validated that `color` held finite
+numbers but never checked the count, so the parameter failed three different
+ways:
+
+```python
+sim.add_object("cube", shape="box", color=[])
+# -> success: compiled rgba [0.5, 0.5, 0.5, 1.0]  (the default grey, silently)
+sim.add_object("cube", shape="box", color=[1.0, 0.0, 0.0])
+# -> error: "Failed to inject 'cube': spec recompile refused."
+#    (MuJoCo's actionable "rgba should be a list/array of size 4" only logged)
+sim.add_object("cube", shape="box", color=np.array([1.0, 0.0, 0.0, 1.0]))
+# -> ValueError: The truth value of an array with more than one element is
+#    ambiguous  (raised past the tool-result contract)
+```
+
+The empty vector fell through a `color or <default>` coalescing that read it as
+"omitted", and that same truth test raised on any multi-element NumPy colour -
+for example a `geom_rgba` row read back from the model.
+
+`color` is now coerced through the contract the runtime mutator
+`set_geom_properties(color=...)` already enforced: 3 components are read as RGB
+and completed with an opaque alpha, 4 are read as RGBA verbatim, and any other
+count is rejected with a message naming the parameter, the accepted counts and
+the layout. Both entry points share one coercion helper, so their accepted
+domains cannot diverge. The agent-tool router's vector table now carries the
+component counts a parameter can honor rather than a single length, so it stops
+rejecting the RGB triple both methods accept.
+
+
+### Fixed: `set_geom_properties` honors every vector component or rejects the vector
+
+`color`, `friction` and `size` each target a MuJoCo buffer with a fixed component
+layout, but the mutator wrote whatever it was given component by component: it
+sliced `geom_size[gid, :min(len(size), 3)]`, zero-padded `friction`, and appended
+an alpha to `color[:3]`. A vector that did not match its target's layout was
+therefore applied as a mix of the caller's components and fabricated ones - under
+a `status="success"` result - or crashed with a bare NumPy error:
+
+```python
+sim.add_object("crate", shape="box", size=[0.2, 0.3, 0.4])   # half-extents 0.1/0.15/0.2
+sim.set_geom_properties(geom_name="crate", size=[0.5])
+# -> success: "size -> [0.5, 0.15, 0.2]"   (a slab; only x was applied)
+sim.set_geom_properties(geom_name="crate", size=[])
+# -> success: "size -> [0.5, 0.15, 0.2]"   (nothing written, a resize reported)
+sim.set_geom_properties(geom_name="crate", friction=[1.0])
+# -> success: "friction -> [1.0, 0.0, 0.0]"  (torsional 0.5 and rolling 0.001,
+#                                             never mentioned, zeroed)
+sim.set_geom_properties(geom_name="crate", color=[0.5])
+# -> ValueError: could not broadcast input array from shape (2,) into shape (4,)
+#    (raised past the tool envelope)
+sim.set_geom_properties(geom_name="crate", color=[])
+# -> success: "color -> [1.0, 1.0, 1.0, 1.0]"  (repainted opaque white)
+```
+
+Each vector's component count is now validated before any model write, alongside
+the existing finite/positive element checks, so the call is all-or-nothing:
+
+- `color` must be 3 (RGB, alpha set to 1.0) or 4 (RGBA).
+- `friction` must be the 3 MuJoCo coefficients (sliding, torsional, rolling);
+  MuJoCo has no per-component default to fall back on, so a shorter vector cannot
+  be honored.
+- `size` must carry exactly the components the geom's compiled type defines -
+  1 (sphere), 2 (capsule, cylinder) or 3 (box, ellipsoid, plane). A mesh, height
+  field or SDF geom takes its extent from asset data and defines no `geom_size`
+  component, so `size` is refused for it and the error names the alternatives.
+
+The errors name the parameter, the count the geom's own type requires and what
+the components mean, and `describe()` advertises the counts so a caller does not
+have to discover them by trial. Rejected calls leave `geom_size` / `geom_friction`
+/ `geom_rgba` and the derived collision bounds untouched.
+
+### Fixed: `add_object` honors every `size` component or rejects the vector
+
+The MuJoCo backend documents an exact per-shape `size` layout (full extents in
+meters). A vector shorter than the shape consumes was replaced *wholesale* by a
+hardcoded default, discarding the extents the caller did pass while reporting
+success - and echoing back the requested size, not the one that was built:
+
+```python
+sim.add_object("crate", shape="box", size=[0.5], position=[0, 0, 0.25])
+# -> success: "'crate' added: box at [0.0, 0.0, 0.25], size=[0.5], 0.1kg"
+#    compiled geom_size == [0.05, 0.05, 0.05] -> a 10 cm cube, not 50 cm.
+#    It then falls 20 cm and rests at z=0.05 instead of the expected z=0.25.
+
+sim.add_object("dish", shape="ellipsoid", size=[0.3, 0.3])   # -> success, 5 cm
+sim.add_object("post", shape="cylinder", size=[0.2])         # -> success, 10 cm tall
+sim.add_object("void", shape="box", size=[])                 # -> success, 5 cm
+sim.add_object("over", shape="box", size=[0.1, 0.1, 0.1, 0.1])
+# -> error: "Failed to inject 'over': spec recompile refused."  (never names size)
+```
+
+Three different fallback defaults were in play across two layers (the
+documented `[0.05, 0.05, 0.05]`, plus `(0.1, 0.1, 0.1)` for a short box and
+`0.025` / `1.0` inside the normalizer), so which wrong size you got depended on
+how short the vector was.
+
+`_validate_size` now checks the component count against the per-shape layout
+before any scene mutation, so both entry points that normalize a size
+(`add_object` and the `patch_scene_mjcf` `add_geom` op) reject a vector they
+cannot honor with a message naming the shape, the required components and the
+full-extent convention. The now-unreachable padding defaults are removed from
+`_normalize_size`, which raises for direct builder callers. The legitimately
+shorter documented layouts still work (`sphere=[diameter]`, `plane=[x]`), a
+4-component size is rejected up front instead of failing the recompile, and
+omitting `size` still yields the documented 5 cm box. The `size` parameter now
+carries the per-shape component count in the agent tool spec.
+
+### Fixed: `control_substeps` is honored or rejected, never silently clamped
+
+`control_substeps` sets how many physics steps are integrated per applied
+action. `PolicyRunner._control_substeps` resolved an explicit value with
+`max(1, int(override))`, so every value it could not honor was accepted and
+collapsed to a single physics step - reinstating exactly the under-integration
+that helper exists to prevent (a position-servo arm reaches ~10% of each target
+before the next action overwrites `ctrl`, so the rollout reports success while
+the policy looks like a no-op):
+
+```python
+sim.run_policy(robot_name="panda", n_steps=120, control_frequency=50.0,
+               control_substeps=0)
+# -> success: "120 steps | sim_t=0.240s"   (0.240 s of physics for 2.4 s of
+#                                           control - 1 substep, not 10)
+sim.run_policy(..., control_substeps=-5)     # -> success, same single step
+sim.run_policy(..., control_substeps=2.7)    # -> success, truncated to 2
+sim.run_policy(..., control_substeps=True)   # -> success, acts as 1
+sim.run_policy(..., control_substeps=float("nan"))
+# -> error: "Policy failed: cannot convert float NaN to integer"
+#           (bare ValueError from inside the runner; never names the parameter)
+```
+
+Every sibling knob on those signatures was already guarded (`action_horizon`
+>= 1, `n_episodes` / `max_steps` positive ints, `control_frequency` > 0).
+`control_substeps` now shares that contract: `SimEngine._validate_control_substeps`
+accepts `None` (auto-derive from the backend physics timestep) and otherwise
+requires a positive integer, rejecting `bool` explicitly as
+`_validate_positive_frequency` does, and is called from `run_policy`,
+`eval_policy` and `evaluate_benchmark` before any policy is built:
+
+```python
+sim.run_policy(..., control_substeps=0)
+# -> error: "run_policy: control_substeps must be a positive integer, got 0."
+```
+
+`PolicyRunner._control_substeps` now raises `ValueError` on such an override
+instead of clamping it, so callers driving the runner directly also fail loudly,
+and `PolicyRunner.run` resolves substeps through that shared helper rather than
+its own inline copy of the derivation.
+### Fixed: rollout entry points reject a `duration` they cannot run
+
+`duration` is the DEFAULT rollout horizon: with no `n_steps` / `max_steps` the
+rollout length is `int(duration * control_frequency)` control steps. The step
+count and the frequency were both validated; the duration was not, so a rollout
+that could never execute a single step reported success:
+
+```python
+sim.run_policy(robot_name="arm1", duration=-1.0)
+# -> success: "Policy complete on 'arm1' | 0.0s | 0 steps"   (nothing ran)
+
+sim.run_policy(robot_name="arm1", duration=0, video={"path": "/tmp/rollout.mp4"})
+# -> success: "Video requested but 0 frames captured"        (no MP4 written)
+
+sim.start_policy(robot_name="arm1", duration=-1.0)
+# -> success: "Policy started on 'arm1' (async)"             (nothing ran)
+
+sim.run_multi_policy(policies, duration=0.0)
+# -> success: "0 synchronized steps"
+
+sim.run_policy(robot_name="arm1", duration=float("nan"))
+# -> error: "Policy failed: cannot convert float NaN to integer"
+```
+
+The `start_policy` case is the damaging one: the caller is told the policy
+started and the robot is marked running, with no later signal that zero steps
+executed. The `video` case silently breaks the artifact contract - success with
+no file on disk. `nan`/`inf` never survived the arithmetic at all and surfaced
+as a `ValueError`/`OverflowError` message naming a library internal instead of
+the parameter to fix.
+
+`duration` is now validated at every public entry point that accepts it
+(`run_policy`, `start_policy`, `run_multi_policy`) before a policy is created or
+a background thread is submitted, by the new `SimEngine._validate_duration`.
+Its accepted domain mirrors `_validate_positive_frequency` - the other factor in
+the same `duration * control_frequency` product - so the two cannot diverge: any
+finite positive real scalar (NumPy scalars included), with `bool` and
+`nan`/`inf` rejected explicitly.
+
+The guard fires only when `duration` actually sets the horizon: passing an
+explicit `n_steps` recomputes `duration` from it, so `run_policy(n_steps=2,
+duration=0)` still runs its two steps rather than rejecting a value the rollout
+never reads.
+
+`run_multi_policy` resolved its horizon with an inline copy of the conversion
+whose guard only fired on the `n_steps` path; it now uses the shared
+`_resolve_horizon` + `_validate_positive_frequency` + `_validate_duration`, so a
+zero control frequency on the duration path is reported instead of reaching
+`1 / control_frequency`. Horizon errors also now name the method the caller
+actually called (`start_policy: n_steps must be > 0`, `run_multi_policy: ...`)
+rather than always `run_policy`.
+
+
+### Fixed: `create_world` rejects a timestep / gravity it cannot honor
+
+`set_timestep` and `set_gravity` have always validated their input and returned
+a structured error. `create_world`, which sets those same two values before any
+setter can be called, validated neither, so a world could be created on terms
+the setters would refuse:
+
+```python
+sim.create_world(timestep=-0.002)
+# -> success: "Timestep: -0.002s (-500Hz physics)"
+sim.step(250)
+# -> success: "+250 steps | t=-0.5000s"   (integrator running backwards;
+#                                          a dropped ball rises)
+sim.create_world(timestep=0)
+# -> success: "Timestep: 0.002s (500Hz physics)"   (value silently discarded)
+sim.create_world(timestep=float("nan"))
+# -> success: "Timestep: nans (nanHz physics)"
+sim.create_world(gravity=[0, -9.81])
+# -> TypeError: incompatible function arguments ... mujoco._specs.MjOption
+sim.create_world(gravity=["0", "0", "-9.81"])
+# -> success: "Gravity: ['0', '0', '-9.81']"   (echoes input, not what was applied)
+```
+
+A bad `dt` poisons the world rather than one call: every later `step`,
+`run_policy` and `eval_policy` still reports `status="success"` while physics
+integrates backwards or to `nan`. `timestep=0` was coalesced by a
+`timestep or self.default_timestep` fallback, so a caller that asked for `0`
+was silently given `0.002`.
+
+`timestep` and `gravity` are now validated at `create_world` on exactly the
+setters' terms - shared helpers (`SimEngine._validate_timestep`,
+`SimEngine._normalize_gravity`) are the single source of truth for both entry
+points, so their accepted domains cannot diverge:
+
+```
+create_world: timestep must be a finite positive number, got -0.002.
+create_world: 'gravity' must be a 3-element list [x,y,z], got 2
+```
+
+The effective timestep is validated, so an unusable engine default
+(`Simulation(default_timestep=-0.002)`) is reported under its own name instead
+of compiling into the world. Gravity is stored coerced, so the result reports
+the floats the model received. The MuJoCo, Newton and Isaac backends all apply
+the guard; `0` is now an error rather than a silent fallback to the default.
+
+
+### Fixed: rollout entry points reject a `policy_config` / `policy_kwargs` they cannot splat
+
+`policy_config` (provider kwargs for `create_policy`) and `policy_kwargs` (per-call
+kwargs for `Policy.get_actions`) are opaque dicts that reach their consumer through
+`**`, so a value of the wrong *shape* was only detected by CPython's call machinery,
+far from the call the caller made:
+
+```python
+sim.run_policy(robot_name="arm1", policy_provider="mock", policy_config="host=127.0.0.1")
+# -> TypeError: strands_robots.policies.factory.preflight_policy() argument
+#               after ** must be a mapping, not str
+
+sim.start_policy(robot_name="arm1", policy_provider="mock", policy_config=["host=127.0.0.1"])
+# -> success: "Policy started on 'arm1' (async)"      (nothing ever ran)
+
+sim.run_policy(robot_name="arm1", policy_provider="mock", policy_kwargs="pick up the cube")
+# -> error: "Policy failed: ...MockPolicy.get_actions() argument after **
+#            must be a mapping, not str"              (after the rollout began)
+```
+
+The `start_policy` case is the damaging one: the splat failed on the background
+thread, inside the future, so the caller was told a policy had started when no
+action was ever produced. The blocking paths raised a bare `TypeError` out of the
+library naming an internal helper rather than the parameter to fix, and the
+`policy_kwargs` variant only surfaced once the control loop was already running -
+after a `run_policy` tool call could have created a dataset and started recording.
+
+Both parameters are now validated at every public entry point (`run_policy`,
+`start_policy`, `eval_policy`, `evaluate_benchmark`, and the multi-episode
+`run_policy` tool) before a policy is created, a thread is submitted, or a
+recorder is opened. The check is the new public
+`strands_robots.policies.policy_mapping_error(value, param)` helper, which names
+the parameter, the type received and a correct example - the same shape as
+`VideoConfig.validation_error`. Mappings, empty dicts and `None` behave exactly
+as before.
+
+
+### Fixed: `add_object(material=...)` rejects keys it cannot honor
+
+Every key of the `material` spec is optional and was read with `dict.get()`, so
+any key the builder does not recognise was dropped while `add_object` still
+answered `status="success"`:
+
+```python
+sim.add_object("tile", material={"builtin": "checker", "rgb_1": [1, 0, 0], "rgb_2": [0, 0, 1]})
+# -> success: "'tile' added: box at [0.0, 0.0, 0.05], ..."   (default grey checker)
+sim.add_object("ball", material={"roughness": 0.2})
+# -> success                                                  (glossy default, no material effect)
+sim.add_object("cube", material={})
+# -> success                                                  (glossy default)
+```
+
+The point of `material=` is to narrow the sim-to-real visual gap, so a silently
+dropped key produces exactly the wrong thing: the synthetic-looking default
+surface, reported as applied. `rgb1`/`rgb2`/`texdim` without a `builtin` had the
+same shape - they only colour/size a procedural texture, so alone they compiled
+the plain default. A non-dict `material` raised a bare `AttributeError` out of
+the builder instead of a structured error.
+
+`material` specs are now validated against a single accepted-key set before any
+scene mutation, on both the direct `SpecBuilder` path and the live
+`Simulation.add_object` / agent-tool path. Unknown keys are named with a
+suggestion when they are near-misses:
+
+```
+add_object material for 'tile': unknown material key(s): 'rgb_1' (did you mean
+'rgb1'?), 'rgb_2' (did you mean 'rgb2'?). Accepted keys: builtin, reflectance,
+rgb1, rgb2, shininess, specular, texdim, texrepeat, texture.
+```
+
+Honored specs are unchanged, and a rejected add leaves no object registered and
+no orphan asset behind, so the same name re-adds cleanly.
+
+
+### Fixed: `replay_episode` reports the frames it could not apply
+
+`replay_episode` mapped each recorded action-vector index onto an action key and
+wrote it through `send_action`, then **discarded** `send_action`'s result -
+including the `status="error"` + `unresolved_keys` breakdown it returns precisely
+so callers can self-correct instead of silently losing commands. Every way of
+getting the mapping wrong therefore reported a full-fidelity replay that never
+reached the robot:
+
+```python
+sim.replay_episode("user/ds", robot_name="so101", action_key_map=["shoulder_pan", ...])
+# -> success: "Frames: 120/120"   (wrong namespace: nothing applied, arm motionless)
+sim.replay_episode("user/ds", robot_name="so101", action_key_map="gripper")
+# -> success: "Frames: 120/120"   (a bare string is consumed one key PER CHARACTER)
+sim.replay_episode("user/ds", robot_name="so101", action_key_map=["1", "2"])
+# -> success: "Frames: 120/120"   (a 6-DOF recording's last four joints dropped)
+```
+
+`run_policy` already inspects `send_action`'s status (it counts action errors and
+fail-fasts a rollout where nothing resolves); replay now does too. A frame that
+could not be applied aborts the replay with `status="error"`, the frame index,
+how many frames were applied and the backend's unresolved-key breakdown, so a
+`"success"` status means every recorded frame reached the actuators.
+
+A recorded vector whose width differs from the action-key map is also rejected
+instead of positionally truncated (matching `send_action`, which rejects a raw
+action vector whose length does not match the actuator count), and a malformed
+`action_key_map` - a bare string, a non-string entry, a duplicate key or an empty
+list - is rejected before the dataset is fetched.
+
+### Fixed: joint setters reject joint names they cannot write
+
+The dict form of `set_joint_positions` / `set_joint_velocities` resolved each
+joint name inside the write loop and skipped the ones MuJoCo did not know, then
+answered `status="success"`:
+
+```python
+sim.set_joint_positions({"joint1": 0.8, "joint_2": -0.6, "joint4": -2.0})
+# -> success: "Set 2/3 joint positions, FK updated (ignored: ['joint_2'])"
+```
+
+A caller branching on `status` was told the pose had been applied. With every
+key misspelled nothing was written at all; with one key misspelled the *other*
+half of the pose was written, leaving the arm in a configuration nobody asked
+for - and a partially-posed scene silently becomes the initial state of the next
+rollout or recorded episode.
+
+Both sibling contracts already reject what they cannot apply: the ordered-list
+form of the same two methods errors on a joint-count mismatch, and `send_action`
+errors on action keys it cannot resolve. The dict form now matches them. Every
+key is resolved before any `qpos` / `qvel` write, so the write is
+all-or-nothing, and an unresolvable key returns an error that names it, offers a
+close match, lists the model's joints and points at `robot_joint_names`:
+
+```
+set_joint_positions: 1 of 3 'positions' keys are not joints in this model, so
+nothing was written (the write is all-or-nothing). Joint 'joint_2' not found.
+Did you mean: panda/joint2, panda/joint7, panda/joint1? Available joints: [...].
+Use action='robot_joint_names' to see one robot's joints.
+```
+
+An empty mapping is rejected on the same grounds (it reported a successful
+"Set 0/0" no-op). Valid input is unchanged, including short joint names that
+resolve through a robot namespace.
+
+
+### Fixed: `randomize` / `set_obs_noise` reject parameters they cannot honor
+
+Both methods declare `**kwargs` to match the `**kwargs`-typed
+`SimEngine.randomize` / `SimEngine.set_obs_noise` base signatures, and neither
+forwards it anywhere - so every keyword the method did not declare was dropped
+and the call still answered `status="success"`:
+
+```python
+sim.randomize(randomize_position=True, position_noise=0.05)   # singular typo
+# -> success: "Domain Randomization applied: Colors ... Lighting ..."   (positions untouched)
+sim.set_obs_noise(joint_pos_stdev=0.05)                       # "stdev" typo
+# -> success: "Sensor noise: joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0"
+```
+
+A data-collection or eval loop asking for object-position randomization or
+sensor noise was therefore told the request had been applied while the world and
+the observations were never perturbed. The action dispatcher's own
+unknown-parameter guard (`Unknown parameter 'nsteps' for action 'step'. Valid:
+['n_steps']`) is skipped for `**kwargs` methods, so the direct Python API and the
+agent dispatch path both silently accepted the misspelling.
+
+Both methods now return an error naming the unusable keys and the valid set, on
+the MuJoCo and Newton backends. Newton still answers a truthy
+`randomize_positions` with its specific unsupported-axis error (that key, and its
+`position_noise` companion, stay accepted for MuJoCo-signature parity). The
+dispatcher now forwards residual keys to `**kwargs` methods instead of dropping
+them, so a genuine forwarding sink (`attach_teleop`, `stream_dataset`) also
+receives the options an agent passes.
+
+### Fixed: `safe_join` symlink traversal escape
+
+`safe_join` (used by the asset resolver and downloader to sanitise
+registry-sourced and user-supplied path components) verified containment only
+lexically via `os.path.normpath`, which cannot see through symlinks. A component
+such as `link/passwd`, where `<base>/link` targets a directory outside `<base>`
+(e.g. `/etc`), stayed lexically under the base yet resolved outside it, escaping
+the guard. Containment is now re-verified after full symlink resolution
+(`Path.resolve()` on both sides), so symlinked escapes are rejected while
+symlinks that resolve back inside the base remain allowed.
+
+Both clone-based asset download paths - the MuJoCo Menagerie fallback and a
+custom `asset.source` GitHub repo - now route through the hardened guard,
+closing three escapes a compromised repository could use to write host files
+into the asset cache:
+
+- the copied directory (the Menagerie robot directory, or the registry-declared
+  `subdir` of a GitHub source) is resolved with
+  `safe_join(..., resolve_symlinks=True)`, so a directory that is itself a
+  symlink out of the clone is rejected, as is a lexical `../` component in
+  `subdir`;
+- symlinks nested *inside* an otherwise legitimate asset directory are dropped
+  at copy time, since `shutil.copytree(symlinks=False)` would follow them.
+
+Both checks are required and neither subsumes the other: `copytree` follows a
+symlinked *root* before its `ignore` callback ever runs, so the entry filter
+cannot see a symlinked root, and the root check cannot see nested links.
+Rejections are reported as a `failed: ...` status for the affected robot, so a
+malicious entry cannot fail silently.
+
+### Fixed: rollout `video={...}` configs reject options they cannot honor
+
+Recording options reach `run_policy` / `start_policy` / `eval_policy` /
+`evaluate_benchmark` as a free-form dict, so a mistyped key had no signature to
+bounce off and was dropped silently. Three ways that misled the caller:
+
+```python
+sim.run_policy(robot_name="arm", video={"filename": "/tmp/a.mp4"})       # success, no MP4 anywhere
+sim.run_policy(robot_name="arm", video={"path": p, "resolution": [320, 240]})  # recorded 640x480
+sim.run_policy(robot_name="arm", video={"path": p, "fps": 0})            # recorded at 30 fps
+```
+
+The first is the worst: `path` stayed unset, so recording was off and the
+rollout still reported `status="success"` - the caller only found out by looking
+for a file that was never written. The `fps`/`width`/`height` cases came from an
+`or` chain (`int(d.get("fps") or 30)`) that treated a caller-supplied `0` as
+"not supplied".
+
+`VideoConfig` now owns one accepted-key set (canonical keys plus the documented
+`record_video` / `video_fps` / `camera_name` / `video_width` / `video_height`
+aliases) and validates against it. An unknown key is rejected with the accepted
+list and a closest-match hint (`{"pathh": ...}` -> "Did you mean 'path'?");
+`fps` / `width` / `height` must be positive whole numbers (`0`, `-1`, `29.97`
+and `True` are refused); `path` / `camera` must be strings. Alias resolution is
+now membership-based, so a supplied `0` reaches the validator instead of
+collapsing into the default.
+
+The check runs at the public entry points before a policy is created or a
+background thread is submitted, so `start_policy` reports the error instead of a
+false "started", and the `run_policy` agent tool rejects the config before it
+opens a dataset. Well-formed configs, the legacy aliases, and the documented
+"absent path means recording off" case are unchanged.
+
+### Fixed: MuJoCo `get_camera_params` answers for the free (`"default"`) camera
+
+`get_frame` renders the free camera (`None` / `""` / `"default"` / `"free"`) and
+`list_cameras()` advertises `"default"` first, but `get_camera_params` rejected
+those tokens with `ValueError("The free camera has no model-fixed
+pose/intrinsics")`. The two halves of the raw-frame API therefore disagreed on
+which cameras exist, and `HybridCompositor.render()` - whose own signature
+defaults to `camera_name="default"` - raised on the documented zero-config path:
+
+```python
+frame = HybridCompositor(sim, background=PanoramaBackground()).render()  # ValueError
+```
+
+The premise was wrong: MuJoCo's free view is a deterministic function of the
+compiled model. `get_camera_params` now reconstructs it from
+`mjv_defaultFreeCamera` - the same defaults `mujoco.Renderer.update_scene(data)`
+uses for `cam_id = -1` (`vis.global_.{azimuth,elevation}` orbiting `stat.center`
+at `1.5 * stat.extent`, vertical FOV from `vis.global_.fovy`) - so the reported
+pose/intrinsics describe exactly the frame `get_frame("default")` returns
+(verified pixel-for-pixel against an equivalent named camera). Named-camera
+behaviour is unchanged.
+
+An orthographic free camera (`<visual><global orthographic="true"/>`) is now
+refused with an actionable `ValueError` instead of being handed perspective
+intrinsics no parallel projection can satisfy.
+
+### Fixed: one corrupt episode parquet no longer crashes or blanks dataset verification
+
+`meta/episodes/**/*.parquet` is read shard by shard, and damage is usually
+confined to a file or two (an interrupted rsync or hub download truncates one
+shard of twenty). Two defects turned that partial damage into a total loss of
+diagnosis:
+
+- **`SimEngine.verify_dataset_episodes` raised instead of reporting.** It caught
+  only `FileNotFoundError` / `ImportError` from `read_dataset_episode_indices`,
+  so a truncated shard surfaced as `pyarrow.lib.ArrowInvalid` out of an
+  agent-callable facade documented to return a status dict. It now returns the
+  structured error dict for any unreadable/corrupt parquet, and refuses to
+  certify a dataset whose shards are partly unreadable even when the readable
+  episode count happens to equal `expected` (the count is a lower bound). The
+  `json` diagnostics block gained `unreadable_files`.
+- **`verify-dataset` collapsed the whole report.** The first unreadable shard
+  aborted the read, so a dataset with 19 intact shards reported
+  `total_episodes: 0` and skipped every remaining check (info.json drift,
+  per-episode video files, dead control columns). `read_dataset_episode_indices`
+  now skips the unreadable shards, returns the readable episode truth plus an
+  `unreadable_files` list (`"<path>: <error>"`), and raises only when NO shard is
+  readable. `verify_dataset` names each broken shard as a problem and runs the
+  remaining checks against the readable files.
+
+### Fixed: in-process LeRobot training - resume, LoRA, and warm-start correctness
+
+Three defects on the in-process `train(cfg)` path (the subprocess CLI path was
+already correct):
+
+- **`resume=True` could never start.** lerobot recovers `--config_path` from
+  `sys.argv`, which the in-process path never populates, so
+  `TrainPipelineConfig.validate()` rejected the run. The resume config is now
+  rebuilt from the checkpoint's own `train_config.json`
+  (`TrainPipelineConfig.from_pretrained`) with only the managed run-control
+  fields reapplied, so the checkpoint's serialized `optimizer`/`scheduler`/
+  `policy` carry over as they do on the CLI - previously the spec-built config
+  left `optimizer=None` and `make_optimizer_and_scheduler` raised before the
+  first step. A checkpoint config that exists but does not deserialize now
+  raises a `ValueError` naming the file and pointing at `resume=False`, instead
+  of leaking the parser's pathless decoding error.
+- **LoRA was inverted.** `policy_cfg.use_peft = True` means "load
+  `pretrained_path` as a PEFT adapter repo" in lerobot, so pre-setting it broke
+  both LoRA-from-base and LoRA-from-scratch. `cfg.peft` alone now drives
+  `wrap_with_peft`.
+- **`base_model` warm start silently mismatched.** Checkpoint weights were
+  loaded (`strict=False`) against an all-defaults policy config, so any base
+  trained with non-default hyperparameters lost them without warning. The
+  config is now read from the checkpoint via `PreTrainedConfig.from_pretrained`.
+
+### Fixed: AWS IoT mesh backend dead paths (peer discovery, camera ref, profile scoping, reconnect leak)
+
+Seven verified defects that left the pure-`iot` and `bridge` mesh backends
+partially or fully non-functional:
+
+- **Presence/monitoring discovery was silently dead.** `iot:Receive` grants in
+  the robot and operator IoT policies used the MQTT `+` wildcard inside `topic/`
+  ARNs (`topic/strands/+/presence`). AWS treats `+` literally in `topic/` ARNs -
+  wildcards there must be IAM `*` - so presence, state, health, and safety-event
+  delivery never matched. Switched every `topic/` (data-plane) Receive resource
+  to `*`; `topicfilter/` (Subscribe) grants keep `+` (correct there).
+- **Camera S3-offload reference never left the host.** The `camera/` MQTT drop
+  rule (for multi-hundred-KB frames) also swallowed the tiny
+  `camera/<cam>/ref` pointer that tells a cloud subscriber the S3 key, so frames
+  uploaded to S3 (real cost) with nothing on the receiving end. `/ref` metadata
+  now publishes over MQTT on both backends; raw frames still stay LAN-only.
+- **`$aws/...` shadow updates were a no-op on `bridge` and leaked onto the LAN.**
+  Named-shadow updates published to `$aws/things/.../shadow/...` were written to
+  Zenoh (leaking reserved keys onto the LAN) and never forwarded to IoT. Reserved
+  `$aws/` topics now route to the IoT leg exclusively.
+- **`bootstrap_account(profile=...)` only applied the profile to the STS check.**
+  Every resource-creating client (iot/iam/lambda/dynamodb/logs) fell back to the
+  default credential chain, defeating the adjacent `account_id_expected` guard.
+  A single profile session now backs every client; `teardown_account` gained the
+  same `profile` parameter.
+- **MQTT reconnect leaked the old client.** After a broker drop a second
+  `connect()` built a new mqtt5 client without stopping the stale one (duplicate
+  inbound delivery + leaked sockets/threads per retry). The stale client is now
+  stopped before rebuild.
+- **`connect()` could raise instead of returning False.** A corrupt PEM
+  (`AwsCrtError` from `mtls_from_path`) propagated into `Mesh.start`, stranding
+  BridgeTransport's already-acquired Zenoh session. Client construction is now
+  contained; `connect()` returns False and the mesh stays off.
+- **`dry_run` preview mismatched reality; teardown orphaned the provisioning
+  hook.** The preview listed wrong table/log-group/rule/role names plus a phantom
+  Thing Type and Policy; `teardown_account` left the `strands-mesh-provisioning-hook`
+  Lambda and its role (holding a live IoT invoke grant) behind. The preview is now
+  built from the same name constants the create path uses, and teardown removes
+  both managed Lambdas and all four managed roles.
+
+### Added: LIBERO MuJoCo example drivers (`examples/libero/run_mujoco.py`, `run_mujoco_agent.py`)
+
+The default-backend LIBERO drivers promised by the epic-#1269 migration are
+now in-tree: `run_mujoco.py` (scripted `sim.evaluate_benchmark(...)` eval with
+GR00T container auto-orchestration, whole-run MP4 recording, and the two
+grep-stable result lines `libero_backend_matrix.py` parses) and
+`run_mujoco_agent.py` (the natural-language Strands `Agent` sibling). The
+backend matrix's `mujoco` row flips from `unavailable (file missing)` to a
+real result. The drivers use the new public `LiberoAdapter.ensure_scene()`
+for the pre-recording scene warm-up instead of the private
+`_generate_scene_from_bddl()`, and import smoke tests
+(`tests/test_examples_libero_drivers.py`) pin the library surface they call
+so example/library drift fails CI. Verified end-to-end on GPU:
+`--policy groot` scores 4/5 on `libero-10-LIVING_ROOM_SCENE5` (see the
+driver docstring); `--policy mock` runs green on a GPU-less host.
+
+### Fixed: `send_action` accepts single-element sequence values (GR00T-LIBERO eval regression)
+
+The #1179 up-front scalar validation in `_coerce_action` rejected ANY
+sequence-typed dict value - including the length-1 lists the
+`Policy.get_actions -> list[dict]` contract emits for 1-DOF keys. GR00T's
+service unpack produces exactly that shape for the LIBERO delta-EEF layout
+(`{"x": [0.05], "y": [-0.08], ...}`), so since #1179 every `send_action` in a
+GR00T LIBERO eval returned a structured error, no action ever reached the
+adapter's OSC controller, and the benchmark silently no-opped to
+`success_rate=0` on a green exit-0 run. A single-element sequence/array value
+carries exactly one unambiguous scalar and is now unwrapped before
+validation/apply; multi-element values (the actual #1179 crash class) are
+still rejected atomically, and a sized-but-unindexable value (a set) gets a
+structured error rather than a crash. Applies to both the MuJoCo and Newton
+backends via the shared base. Pinned by
+`tests/simulation/mujoco/test_send_action_vector.py::TestSendActionSingleElementUnwrap`.
+
+### Fixed: camera-recording MP4 flush honors its never-raise contract on mixed frame sizes
+
+A benchmark's per-episode scene reload can re-install a camera at different
+dimensions mid-recording (the LIBERO wrist camera does), leaving the
+daemon-thread recorder's buffer with mixed frame shapes. Pre-fix, imageio's
+`append_data` raised `ValueError: All images in a movie should have same
+size` out of `stop_cameras_recording` - aborting the caller's teardown path
+despite the flush's best-effort, never-raise contract. The flush now encodes
+the dominant-size run, reports skipped frames per camera
+(`frames_skipped_size_mismatch`) and any writer failure (`flush_error`) in
+the structured result instead of raising.
+
+### Fixed: `gr00t_inference` checkpoint-download idempotency probe keys on the requested subfolder
+
+With `hf_subfolder` set, the "already downloaded" probe checked whether the
+shared `local_dir` was non-empty - so a cache holding a DIFFERENT
+sub-checkpoint (e.g. `libero_spatial/` when `libero_10` was requested)
+short-circuited the download, the container started against a missing
+checkpoint path, and the model never loaded. The probe now targets
+`local_dir/<hf_subfolder>` when a subfolder filters the download.
+
+### Added: public `LiberoAdapter.ensure_scene()`
+
+Driver scripts need the LIBERO scene - and the cameras it supplies (`image` /
+`wrist_image`) - available *before* `evaluate_benchmark` runs, so
+`start_cameras_recording` can resolve the camera names. Pre-fix they had to
+call the private `_generate_scene_from_bddl()`. `ensure_scene()` is the
+public equivalent: idempotent, stores + returns the resolved `scene_path`,
+and (unlike the lazy warn-and-fall-back path inside `on_episode_start`)
+propagates generation failures to the caller - an explicit pre-warm request
+that cannot be satisfied fails loudly.
+
+### Quality: reject PR-review/verification provenance in source comments
+
+The review-archaeology guard (`tests/test_source_strings_no_review_archaeology.py`)
+already rejected `review thread <file>.py:<line>` back-pointers and review-round
+narration (`review round N`, `R7-5`). It now also rejects a PR/issue number
+immediately followed by `review` or `verification` (`#166 review finding`,
+`#168 verification showed ...`, `caught in PR #60 review`) and the compact
+`R<round> review` tag (`R3 review fix`) -- narration of which PR review or
+verification pass produced a change, which rots and misdirects the reader and
+belongs in git history, not the source. Fifteen such comments across
+`benchmarks/libero/adapter.py`, `mesh/security.py`, `simulation/isaac/simulation.py`,
+and three `simulation/mujoco/` modules were reworded to state why the code is
+shaped the way it is; the `review`/`verification` token must follow the number,
+so prose like `review 5 frames` is not matched. Comment-only change; no runtime
+behaviour is affected.
+
+### Docs: streaming-data-loop notebook states the minimum `strands-robots` version for the bucket path
+
+The streaming-data-loop notebook (`examples/notebooks/05_streaming_data_loop.ipynb`,
+the in-repo counterpart of the storage-buckets blog draft) told readers to
+`pip install "strands-robots[sim-mujoco,lerobot]"` -- but the bucket APIs it
+demonstrates (`stop_recording(bucket=...)`, `sync_to_bucket`,
+`stream_dataset(..., repo_type="bucket")`) exist only at git HEAD: on the
+latest PyPI release (0.4.1) `StreamingDatasetReader.open()` has no `repo_type`
+parameter, so the notebook's headline snippet raises `TypeError`, and 0.4.1
+pins `lerobot<0.6.0`, below the 0.6.1 floor bucket streaming needs. The
+notebook's Requirements cell and the notebooks index now state the minimum
+`strands-robots >= 0.4.2` and give the
+`pip install "strands-robots[sim-mujoco,lerobot] @ git+https://github.com/strands-labs/robots"`
+install line to use until the v0.4.2 tag is published to PyPI. A new test
+(`tests/test_notebook_min_version_docs.py`) pins the min-version statement and
+forbids the version-less install guidance from creeping back. Cutting the
+v0.4.2 tag itself is tracked in issue #1500.
+
+### Docs: document the six remaining undocumented dispatchable sim actions
+
+`get_state`, `list_objects`, `remove_object`, `reset`, `set_timestep`, and
+`step` were dispatchable through the MuJoCo simulation agent tool (they are in
+the `tool_spec` action enum and `describe()` advertises them) yet their handler
+methods on `MuJoCoSimEngine` had NO docstring -- so an agent enumerating the
+tool spec had no summary of what the action does or when it errors, the exact
+discovery-surface dead-end the docstring convention exists to prevent. Each now
+carries a summary + Args/Returns naming the `{status, content}` result and its
+`status="error"` conditions (e.g. `reset` documents that it flushes buffered
+recording frames as a separate episode and errors while a policy is running;
+`step` documents that `0` is an accepted no-op). A new contract test
+(`test_dispatchable_actions_have_documented_handlers`) pins the invariant on the
+live engine so no future dispatchable action can ship without a docstring.
+
+### Fixed: training `expert_only` supported-policy set sourced live from lerobot
+
+`LerobotTrainer` gated `method="expert_only"` (freeze the VLM, train only the
+action expert) against a HARD-CODED tuple `{pi0, pi05, pi0_fast, smolvla}`, and
+the `lerobot_train` tool's `build_train_command` used a separate hard-copied
+set. That is the stale-allowlist drift class (sibling of the `lerobot_async`
+and reward-model registry fixes): lerobot's `PI0FASTConfig` exposes NO
+`train_expert_only` field, so an `expert_only` pi0_fast run passed `validate`,
+then `build_config`'s `hasattr` guard silently SKIPPED the flag and
+full-finetuned the whole backbone (a far more expensive, different run) while
+reporting success; conversely a policy lerobot later GAINS the field would be
+wrongly rejected. The supported set is now sourced live -- a policy supports
+`expert_only` iff its lerobot config declares a `train_expert_only` field
+(`dataclasses.fields`) -- with a static fallback used only when lerobot is not
+importable, and drift-guard tests keep the fallback a faithful snapshot. The
+docstrings no longer claim a fixed `pi0/pi05/pi0_fast/smolvla` list.
+
+### Changed: `lerobot_async` sources its server-supported policy set live from lerobot
+
+`LerobotAsyncPolicy` validates `policy_type` client-side against the set of
+policies a lerobot `PolicyServer` can serve. That set was a hand-copied tuple
+kept in sync with `lerobot.async_inference.constants.SUPPORTED_POLICIES` by
+hand -- a silent drift landmine: when lerobot adds an async-servable policy the
+client wrongly rejected it (only the frozen copy was accepted), and if lerobot
+dropped one the client accepted it only to fail after the gRPC handshake. It is
+now sourced live from that lerobot constant, with a static fallback used only
+when lerobot or its async extra is not importable, and a drift-guard test keeps
+the fallback a faithful snapshot.
+
+### Fixed: `add_robot` rejects a non-finite / malformed base pose instead of baking it into the scene
+
+`add_robot` writes the caller-supplied `position` (3) / `orientation`
+(4-element wxyz quaternion) straight into the injected robot's frame pos/quat,
+but did not validate that pose -- so it shared the numeric-vector failure
+classes already guarded on `add_object`, `move_object`, and `add_camera`:
+
+* A `nan` / `inf` `position` / `orientation` was written verbatim into the base
+  transform and propagated across the whole physics state by `mj_forward` while
+  `add_robot` still reported `status="success"` -- a silent corruption
+  (`data.xpos` went non-finite).
+* A wrong-length vector produced a generic "Failed to inject robot" with no hint
+  that the length was the problem.
+* A non-numeric element raised a bare MuJoCo `add_frame(): incompatible function
+  arguments` `TypeError` that escaped the structured `{"status": "error"}`
+  tool-result contract.
+
+`add_robot` now validates `position` (finite, numeric, length 3) and
+`orientation` (finite, numeric, length 4) up front via the same
+`_validate_pose_vector` helper the sibling scene methods use, returning an
+actionable structured error and leaving the simulation state finite / the robot
+unregistered. NumPy scalar components are accepted.
+
+### Fixed: sim action router accepts NumPy scalar components in vector parameters
+
+The MuJoCo agent-tool dispatch router (`sim(action=..., **kwargs)` ->
+`_validate_and_build_kwargs`) length- and dtype-checks every vector parameter
+(`position`, `force`, `torque`, `gravity`, `direction`, `point`, `orientation`,
+`color`) before the value reaches NumPy / MuJoCo. The per-component guard used
+`isinstance(component, (int, float))`, which is `False` for every NumPy scalar
+except `np.float64` (only it subclasses Python `float`). Vector params routinely
+originate from an observation or `mj_data` -- a NumPy array whose elements are
+`np.float32` / `np.int64` -- so a natural
+`sim(action="add_object", position=[obs[0], obs[1], obs[2]])` on a float32
+observation was rejected with `Parameter 'position'[0] must be numeric, got
+float32.` even though every component is a finite real number.
+
+The guard now uses `numbers.Real`, so NumPy scalar components pass while Python
+`bool`, `np.bool_` (neither is a `numbers.Real` once `bool` is excluded), and
+non-numeric junk stay rejected with the same structured error. This mirrors the
+`numbers.Real` coercion contract already applied to `get_ground_height`,
+`set_gravity`, and `add_camera(fov=...)`.
+
+### Fixed: `run_policy` / `eval_policy` / `evaluate_benchmark` accept a NumPy scalar `control_frequency`
+
+The shared `control_frequency` guard used `isinstance(control_frequency, (int, float))`, which is `False` for every NumPy scalar except `np.float64` (the only one that subclasses Python `float`). A `control_frequency` computed from a config array or an observation (`fps = 1.0 / dt` where `dt` is a `np.float32`) -- i.e. `np.float32(50.0)` or `np.int64(50)` -- was therefore rejected with the misleading `"control_frequency must be > 0"` error even though it is a valid positive rate. The guard now uses `numbers.Real`, accepting any real scalar (including NumPy types) while still rejecting `bool` / `np.bool_` (an `int` subclass that would act as a silent 1 Hz) and non-positive frequencies -- matching the `numbers.Real` coercion contract already applied to `add_camera(fov=...)` and `get_ground_height`. The same change also closes a latent hole: a non-finite Python `float` (`nan` / `inf`) used to slip past the `<= 0` check (`nan` is never `<= 0`) and feed `nan`/`inf` into the `1 / control_frequency` and `n_steps / control_frequency` arithmetic, surfacing as a bare `"cannot convert float NaN to integer"` deep inside the runner; non-finite values are now rejected up front via `math.isfinite`. Once validated, `control_frequency` is coerced to a plain Python `float` at each entry point, because a NumPy scalar flows into `action_sleep = 1.0 / control_frequency` and `time.sleep(action_sleep)` on the default real-time (non-`fast_mode`) rollout path, where `time.sleep` rejects a `numpy.float32` with a bare `"'numpy.float32' object cannot be interpreted as an integer"` TypeError -- so accepting the scalar at the guard is not enough on its own. This contract is shared by `run_policy`, `eval_policy`, `start_policy` and `evaluate_benchmark` through `_validate_positive_frequency`.
+
+### Added: `DatasetRecorder.create(overwrite=...)` for honest re-recording into an existing `repo_id`
+
+`DatasetRecorder.create()` calls `LeRobotDataset.create()`, which `mkdir`s its
+target with `exist_ok=False` and raises a bare `FileExistsError` when the
+dataset directory already exists. `create()` exposed no `overwrite` parameter,
+so re-running a capture script into the same `repo_id` dead-ended with a cryptic
+crash and no in-API way to force a fresh dataset -- while `resume()`'s docstring
+and its no-resume `RuntimeError` both pointed callers at an `overwrite=True` that
+only existed on the `Simulation.start_recording` facade.
+
+`create()` now takes `overwrite: bool = False` and resolves an existing target up
+front, matching the facade: `overwrite=True` wipes and recreates a fresh dataset;
+`overwrite=False` on an existing dataset (a dir containing `meta/`) raises a clear
+`FileExistsError` naming `overwrite=True` and `resume()`; an existing empty
+directory (e.g. `tempfile.mkdtemp()`) is cleared so `create()` does not trip over
+its own existence guard; and a non-empty non-dataset directory raises `ValueError`
+rather than clobbering unrelated files. The dataset-directory resolution is now a
+shared `resolve_dataset_dir()` helper used by both `create()` and the sim facade
+(honouring `$HF_LEROBOT_HOME`), so the two surfaces can no longer diverge.
+
+### Fixed: notebooks and the lerobot e2e test fixture no longer hard-default `MUJOCO_GL` to the macOS-only `cgl`
+
+The four `.py` examples became platform-aware in #973, but the notebooks under
+`examples/notebooks/` (`01`, `02`, `03`, `05`) and the module fixture of
+`tests/training/test_lerobot_e2e.py` still planted `MUJOCO_GL=cgl`
+unconditionally in their first cell / setup. `cgl` is the macOS-only offscreen
+GL backend, so on headless Linux (CI, cloud GPUs, Jetson) the first offscreen
+render died with `RuntimeError: invalid value for environment variable
+MUJOCO_GL: cgl`. Since `setdefault(..., "cgl")` writes `cgl` precisely when
+nothing is exported, the `examples/notebooks/README.md` claim that the notebooks
+"fall back to the environment's default" on headless Linux was also false.
+
+All five sites now use the same platform-aware default as the `.py` examples --
+`os.environ.setdefault("MUJOCO_GL", "cgl" if sys.platform == "darwin" else "egl")`
+-- so `cgl` is selected only on macOS and a user-exported `MUJOCO_GL` still
+wins, and the README now describes the actual behaviour. A new
+`tests/test_examples_mujoco_gl.py` guard scans the notebooks plus every tracked
+`examples/` / `tests/` `.py` file and fails on any unguarded `MUJOCO_GL=cgl`
+default, so this regression cannot creep back in.
+
+### Added: `lerobot_async` honors a `rename_map` for remote observation-key remapping
+
+`LerobotAsyncPolicy` (the gRPC client to a LeRobot `PolicyServer`) built its
+`RemotePolicyConfig` without a `rename_map`, so a caller-supplied `rename_map=`
+landed in the ignored-kwargs bag and was silently dropped (warned, then
+discarded). That left the async provider unable to drive a checkpoint whose
+expected camera/state feature keys differ from the ones the robot exposes -- the
+exact remapping the in-process [`lerobot_local`] provider already supports via
+`obs_rename`. A stock checkpoint trained with, say, `observation.images.laptop`
+was therefore unreachable from a robot whose camera is named `front`.
+
+`create_policy("lerobot_async", ..., rename_map={robot_obs_key: model_feature_key})`
+now forwards the map verbatim to the server's `RemotePolicyConfig.rename_map`,
+which the server applies as a `RenameObservationsProcessorStep` (renaming each
+matching observation key before the policy sees it). The default stays `{}` (no
+remap), and a non-dict `rename_map` is rejected client-side with a clear error.
+
+### Docs: correct the remaining pre-0.6 lerobot install guidance (`architecture.md` / `troubleshooting.md` / `molmoact2.md`)
+
+The `lerobot>=0.6.0` floor bump (`lerobot[feetech,dataset]>=0.6.0,<0.7.0`) and the
+follow-up VLA dependency-guidance pass corrected most docs, but a few user-facing
+spots still carried the dead pre-0.6 narrative. The `architecture.md` dependency
+matrix advertised the obsolete `lerobot>=0.5.0,<0.6.0` cap; the `troubleshooting.md`
+version-skew row told users to `pip install "lerobot>=0.5.0,<0.6"` (a manual pin that
+*conflicts* with the declared `>=0.6.0` floor) and to install `MolmoAct2Policy` "from
+source" (it ships in lerobot >= 0.6 on PyPI, so `strands-robots[molmoact2]` resolves it),
+and its Jetson/pyav row linked to a broken `#molmoact2-on-jetson-lerobot-from-source`
+anchor. Corrected all of these (plus the `molmoact2.md` "lerobot from source" install
+line) to match the current PyPI floor, and extended `tests/test_lerobot_dependency_docs.py`
+to pin them -- including a heading-slug resolution check so the Jetson anchor stays live.
+
+### Added: `get_ground_height(x, y)` -- query the local terrain surface height
+
+`create_world(terrain=...)` raises the local ground up to
+`TERRAIN_ELEVATION * difficulty` above `z=0`, and the terrain-relative
+locomotion predicates (`base_below_z` / `base_height`) plus the spawn/reset
+base-seating already sample that local surface internally. But there was no
+*public* way for a caller to ask where the terrain surface actually is, so a
+scene builder placing an object / camera / goal at a flat-ground `z` on a raised
+plateau spawned it BURIED in the heightfield -- a dynamic object then sinks
+through the terrain instead of resting on it (e.g. a 5 cm cube added at
+`z=0.03` on a `difficulty=2.0` pyramid whose local surface is at `z=0.16`
+penetrates 13 cm and settles below the ground).
+
+`get_ground_height(x, y)` exposes that surface as a facade query (and an
+agent-dispatch action): it returns the local terrain height in a
+`{"json": {"x", "y", "height"}}` block, `0.0` on a flat ground plane and for
+any backend without a heightfield. A caller can now place things on terrain
+correctly, e.g.
+`add_object("cube", position=[x, y, get_ground_height(x, y)["content"][1]["json"]["height"] + size_z / 2])`.
+The `add_object` docstring's flat-support rest-height guidance now points at it
+for terrain worlds. Non-finite coordinates are rejected.
+
+### Fixed: a floating-base robot spawns SEATED on the terrain surface instead of buried below it
+
+`create_world(terrain=...)` lays a heightfield so a locomotion robot can be
+spawned and evaluated on non-flat ground -- the feature's stated purpose. But a
+robot's model spawns its free base at the flat-ground keyframe height (e.g. the
+Unitree Go2 base at `z=0.445`, feet ~`z=0.02`), so on a raised heightfield the
+feet started BELOW the terrain surface: the robot spawned partially buried in
+the ground, with penetration that grew with the curriculum `difficulty` (a
+pyramid at `difficulty=4.0` buried the feet ~0.3 m). This is exactly the
+initial state a terrain curriculum resets into every episode.
+
+`add_robot` and `reset()` now seat every floating-base robot on the local
+terrain -- offsetting its base `z` by the heightfield height beneath its
+`(x, y)` -- so its feet rest on the surface at the start of every episode.
+A flat ground plane is a no-op (the local height is `0.0`, so non-terrain
+worlds are byte-for-byte unchanged) and a fixed-base arm (no free joint) is
+skipped. Both a NAMED floating base (a humanoid's `floating_base_joint`) and
+an UNNAMED `<freejoint>` (a mobile base) are handled.
+
+
+### Fixed: `add_robot(keyframe=...)` no longer collapses an earlier keyframe-spawned robot to the zero pose
+
+Adding a robot runs `mj_resetData` (which zeroes the entire model) before it
+poses the freshly-added robot, then re-applied only that robot's keyframe home
+pose. When an earlier robot had already been spawned from a `<keyframe>`, this
+reset silently dropped it back to the all-zero configuration -- only the most
+recently added robot kept its home pose, until an unrelated `reset()` happened
+to restore everyone. Incrementally building a multi-arm scene one `add_robot`
+call at a time (e.g. a leader/follower pair) is the common path, so this left
+all-but-the-last arm in an out-of-distribution pose for policy rollout/eval.
+
+`add_robot` now re-applies every robot's captured home pose after the reset (a
+no-op for robots spawned without a keyframe), so each arm stays at its
+canonical home pose across subsequent additions. The home pose remains scoped
+to its own robot -- it is never applied to another robot's identically-named
+joints across the namespace boundary.
+
+
+### Fixed: Newton / Isaac `create_world(difficulty=...)` rejects a non-default difficulty with no terrain instead of silently ignoring it
+
+The base `SimEngine.create_world` contract (and the MuJoCo backend) reject a
+`difficulty != 1.0` supplied with no `terrain` with an actionable error --
+`difficulty` only scales a heightfield terrain's peak elevation, so setting it
+without a terrain has no effect, and the contract surfaces that rather than
+silently having none. The Newton and Isaac backends accepted `difficulty` for
+signature parity but only rejected a non-None `terrain`; a non-default
+`difficulty` with no terrain was silently ignored and `create_world` returned
+`status: success` -- a caller ramping a terrain curriculum on the GPU (Newton)
+or Isaac backend got no terrain and no error. Both backends now reject it with
+an actionable message pointing at `create_simulation(backend="mujoco")` (the
+only backend with heightfield terrain) or omitting `difficulty`. A non-None
+`terrain` is still rejected first (the primary error on these backends), and
+the default `difficulty=1.0` is unchanged (a flat-ground no-op). Completes the
+`create_world(terrain=/difficulty=)` contract parity across all three backends.
+
+### Fixed: `base_height` reward measures the base's clearance above the LOCAL terrain, not an absolute world z
+
+`base_height` is the legged_gym / IsaacLab base-height regularizer paired with
+`base_velocity` in a locomotion `dense_reward`: it rewards a floating base for
+holding its torso/pelvis near a target height and penalises crouching/diving so
+a velocity-tracking policy cannot cheat the forward-velocity reward by folding
+down. It scored the error against the base's ABSOLUTE world `z`, which is
+correct only on a flat ground plane. On a raised-terrain heightfield
+(`create_world(terrain=...)`, the terrain curriculum) an absolute test is wrong
+on two counts: a robot standing at its proper posture on a raised plateau has an
+absolute base `z` above the target, so it is spuriously penalised
+(`-(terrain height)^2` even at perfect posture); and the absolute zero-reward
+pose on the plateau is a deep CROUCH (clearance = target minus the terrain
+height), so the term actively REWARDS crouching on terrain, inverting the very
+anti-crouch incentive it exists to provide. `base_height` now measures the
+base's clearance ABOVE THE LOCAL GROUND beneath it (`base z` minus the terrain
+surface height at the base's `(x, y)`) via the `_ground_height_at` backend hook,
+mirroring the `base_below_z` fix. On a flat ground plane / a backend without a
+heightfield the local ground height is `0.0`, so flat-ground behaviour is
+byte-for-byte unchanged. With `base_below_z`, this makes the floating-base
+reward/predicate DSL correct on the terrain curriculum end to end.
+
+### Fixed: `base_below_z` measures the base's clearance above the LOCAL terrain, not an absolute world z
+
+`base_below_z` is the height-collapse half of a floating-base fall termination
+(the counterpart of `base_tipped`): it ends a locomotion episode when the
+robot's torso/pelvis has dropped to the ground. It compared the base's world
+`z` against an absolute threshold, which is correct only on a flat ground
+plane. Once a locomotion task runs on a raised-terrain heightfield
+(`create_world(terrain=...)`, the terrain curriculum), an absolute test
+silently MISSES a collapse: a robot that has fallen onto a raised plateau (e.g.
+a 0.16 m pyramid step) still has an absolute base `z` (~0.26 m) above the
+flat-ground collapse threshold (0.18 m for the Go2), so the failure predicate
+never fires and the episode never terminates on the fall. `base_below_z` now
+measures the base's height ABOVE THE LOCAL GROUND beneath it (`base z` minus
+the terrain surface height at the base's `(x, y)`) via a new backend hook
+`_ground_height_at`. The MuJoCo backend bilinearly samples the
+`create_world(terrain=...)` heightfield; the base default (and any backend
+without a heightfield) returns `0.0`, so flat-ground behaviour is byte-for-byte
+unchanged. This is groundwork for a terrain-difficulty locomotion benchmark: a
+fall predicate that works on raised terrain is a prerequisite for running the
+`*_walk_forward` benchmarks on the terrain curriculum.
+
+### Fixed: Isaac `add_robot` honours the base `keyframe` contract instead of raising a bare `TypeError`
+
+`SimEngine.add_robot` declares a `keyframe` parameter (spawn the robot in a
+canonical `<keyframe>` pose such as panda `"home"` / aloha `"neutral_pose"`
+instead of the default all-zero configuration), and its docstring is explicit
+that an unknown/unsupported keyframe is a hard error that never silently falls
+back to zeros. The MuJoCo and Newton backends implement it; the Isaac override,
+however, kept a narrower signature that omitted `keyframe` entirely, so
+`add_robot(name, keyframe="home")` on the Isaac backend raised a bare
+`TypeError: add_robot() got an unexpected keyword argument 'keyframe'` on a
+documented base parameter, and the agent tool router could not pass `keyframe`
+uniformly across backends. The Isaac `add_robot` now accepts `keyframe` for
+signature parity with the base contract and rejects a non-`None` value with an
+actionable error (pointing to `create_simulation(backend="mujoco")`, since the
+Isaac backend does not parse the MuJoCo `<keyframe>` block) before the stage
+boots, mirroring the existing Isaac `create_world(terrain=...)` and
+`add_object(material=...)` rejections. `keyframe=None` (the default) is
+unchanged.
+
+### Fixed: Isaac `add_object` honours the base `mesh_path` / `material` contract instead of silently swallowing them
+
+`SimEngine.add_object` declares `mesh_path` and `material`, and its docstring is
+explicit that a backend which does not support `material` "should reject a
+non-`None` `material` loudly rather than silently ignore it". The MuJoCo backend
+attaches a real material; the Newton backend rejects a non-`None` `material` with
+an actionable error and loads `mesh_path` for `shape="mesh"`. The Isaac override,
+however, kept a narrower signature with a trailing `**kwargs` (used for the
+`scale` alias) that **silently swallowed** `material=` and `mesh_path=`: a caller
+scoping a matte/textured surface or a custom mesh on Isaac got `status: "success"`
+with the request quietly dropped (or, on a host without Isaac Sim, an unrelated
+"No world created" error) -- never the documented rejection, and the agent tool
+router could not pass these params uniformly across backends. The Isaac
+`add_object` now accepts `mesh_path` / `material` for signature parity with the
+base contract and rejects a non-`None` value of either with an actionable error
+(pointing to `create_simulation(backend="mujoco")`) before the stage boots,
+mirroring the Newton reject and the existing Isaac `create_world(terrain=...)`
+rejection. The `scale` alias path is unchanged.
+
+### Fixed: `create_world(difficulty=...)` is discoverable in the sim tool_spec + the terrain-kind hint stays in sync
+
+`create_world` grew a `difficulty` curriculum knob (it scales a terrain
+heightfield's peak elevation so a locomotion curriculum can ramp terrain
+magnitude across resets) alongside `terrain`, but only `terrain` was advertised
+in the agent-facing `tool_spec.json`. The dispatch router validates against the
+method signature, so a caller that already knew the name could pass `difficulty`
+-- but an LLM forms tool calls from the tool_spec schema it is handed, and with
+`difficulty` absent it had no way to discover the knob, leaving the curriculum
+scaling unreachable through the `sim` tool. `difficulty` is now declared in the
+tool_spec beside `terrain` / `ground_plane`. Relatedly, the "difficulty has no
+effect without a terrain" guidance error now derives its terrain-kind list from
+`SUPPORTED_TERRAINS` instead of a hardcoded `'rough'/'stairs'/'pyramid'` literal,
+so it lists every supported kind (the literal had gone stale and omitted the
+newer `'slope'`) and cannot drift out of sync again.
+
+### Added: yaw locomotion vocabulary - `base_yaw_beyond` predicate + `go2_turn_left` benchmark
+
+The floating-base locomotion DSL could command a yaw-rate (`base_velocity_tracking`
+already accepts `wz`) but had no way to SCORE reaching a turn: the progress
+predicates `base_beyond_x` / `base_beyond_y` read only `base_pos`, so a
+turn-in-place task could reward a `wz` command yet had no terminal for "the base
+actually turned", and `base_tipped` fires on any tilt (roll/pitch), not a
+deliberate turn about the vertical. This adds `base_yaw_beyond(yaw, robot=None)`
+-- TRUE once the base's world yaw heading (extracted from `base_quat`) passes
+`yaw` radians (positive = left/counter-clockwise from the identity spawn) --
+reading the same embodiment-agnostic floating-base surface the other `base_*`
+terms read (no base body name; works on a mobile base whose free joint is
+unnamed) and degrading to `False` on a fixed-base arm. It ships `go2_turn_left`,
+the first built-in to command a pure yaw (`vx=0`, `vy=0`, `wz=0.5`) body twist
+and score it with `base_yaw_beyond`, completing the omnidirectional
+velocity-tracking vocabulary: the three shipped Go2 tasks now exercise all three
+command axes (`vx`/`vy`/`wz`) and all three progress predicates
+(`base_beyond_x`/`base_beyond_y`/`base_yaw_beyond`). A pure roll/pitch tilt never
+satisfies a yaw goal (distinguishing it from `base_tipped`); pairing it with
+`base_tipped` in `failure` vetoes a "turned then fell" rollout, whose yaw would
+be ill-defined.
+
+### Added: `create_world(terrain=..., difficulty=...)` - terrain elevation curriculum knob
+
+The three terrain heightfields (`rough`/`stairs`/`pyramid`) shipped as
+"ground-generation primitives a terrain *curriculum* (progressive difficulty
+across resets) is built on", but the curriculum knob itself did not exist: a
+caller could switch the terrain *kind* but not its *magnitude*, so a locomotion
+curriculum could only step between three fixed heights (~8 cm) and could not
+start a policy on gentle ground and grow it. `create_world` gains a `difficulty`
+scalar that multiplies the heightfield's peak elevation: `difficulty=1.0` (the
+default) is the full-height terrain, byte-identical to omitting it; `<1` is
+gentler (a robot settles onto shallower bumps/steps), `>1` harsher. It is
+kind-agnostic (the generator's normalized `[0, 1]` field is unchanged - only the
+metre scale it maps to changes, via the new `terrain.terrain_elevation`
+single-source-of-truth helper) so it composes with every terrain kind, and a
+benchmark/trainer ramps it across resets to grow the terrain the policy must
+handle. `difficulty` must be a finite value `> 0` (a non-positive/NaN value is
+rejected actionably) and only applies with a `terrain`: setting
+`difficulty != 1.0` on a flat world (no `terrain`) is rejected with an error
+rather than silently having no effect. It exists on the Newton backend for
+signature parity but is inert there (Newton rejects `terrain` outright).
+
+### Added: `instruction` field on the declarative benchmark spec DSL
+
+`DeclarativeBenchmark` (the YAML/JSON benchmark spec loader) could not express a
+natural-language task command: `instruction` was not an allowed top-level spec
+key, and the class did not override `BenchmarkProtocol.instruction`, so every
+spec-authored benchmark reported `instruction == ""`. Only a hand-written Python
+subclass (e.g. the LIBERO adapter, which reads the BDDL `:language` clause) could
+carry one. The `PolicyRunner` eval loop falls back to `spec.instruction` when the
+caller passes no `instruction=` to `evaluate_benchmark`, so a spec-driven
+benchmark fed a language-conditioned policy (the shipped GR00T `WBCPolicy`,
+OpenVLA, ...) an empty task description -- the #187 off-task failure mode -- and
+`evaluate_benchmark` emitted a spurious empty-instruction warning on every run.
+The spec DSL now accepts an optional `instruction: string` (validated as a string,
+default `""` for backward compatibility) that `DeclarativeBenchmark` surfaces
+through its `instruction` property. The shipped velocity-tracking locomotion
+benchmarks now declare their command as the instruction -- `go2_walk_forward` /
+`g1_walk_forward` / `t1_walk_forward` "Walk forward at 1 m/s.", `go2_strafe_left`
+"Strafe left at 0.5 m/s.", `go2_turn_left` "Turn left in place at 0.5 rad/s." --
+so a language-conditioned locomotion policy receives the command instead of an
+empty string, and the spurious warning no longer fires on a loco eval.
+
+### Added: `create_world(terrain="rough")` - rough-ground heightfield for locomotion
+
+The floating-base locomotion benchmarks (`go2_walk_forward` / `g1_walk_forward`
+/ `t1_walk_forward` and the omnidirectional Go2 tasks) all spawned their robot
+on a flat ground plane, so they measured command tracking but never robustness
+to terrain - the whole reason legged locomotion is hard. `create_world` gains a
+`terrain` argument: `terrain="rough"` lays down a deterministic rough-ground
+heightfield (a smoothed value-noise `<hfield>`) instead of the flat plane, so a
+floating-base robot settles onto and walks over bumps. The new
+`strands_robots.simulation.terrain` module generates the field (backend- and
+MuJoCo-independent, pure stdlib) deterministically given `(kind, resolution,
+seed)`, so the same terrain regenerates on every `reset()` and a rough-ground
+benchmark eval is reproducible. The field shares the flat plane's +/-5 m
+footprint (unchanged reachable workspace), ranges from 0 up to ~8 cm on a solid
+base slab (flush with `z=0` at its lowest point - no hole under the robot), and
+reuses the `"ground"` geom name so `attach_robot`'s floor-strip and any name
+lookup stay terrain-agnostic (an attached robot's own z=0 plane is stripped
+over terrain, as over the flat plane). `terrain` only applies when
+`ground_plane=True` (the master floor switch); an unknown kind is rejected with
+an actionable error listing the supported kinds. It is the ground-generation
+primitive a terrain curriculum builds on. MuJoCo backend; the Newton backend
+rejects a non-`None` `terrain` with an actionable error (heightfields are
+MuJoCo-only) rather than silently spawning on a flat plane.
+
+### Added: `create_world(terrain="pyramid")` - concentric stepped pyramid for omnidirectional locomotion
+
+`create_world(terrain=...)` gains a third heightfield kind alongside `"rough"`
+and `"stairs"`: `terrain="pyramid"` lays down concentric square step plateaus
+that rise toward the centre from every direction, so the robot spawns on the
+highest central plateau and descends steps walking outward on ANY heading.
+Where `terrain="stairs"` rises only along +x (its +y is flat), the pyramid's
+height depends only on the distance from the centre - an *omnidirectional*
+climb the +x-only staircase cannot express, matching the omnidirectional
+strafe/turn velocity-tracking commands (`go2_strafe_left` / `go2_turn_left`).
+Like the other kinds the field is generated by the pure-stdlib,
+backend-independent `strands_robots.simulation.terrain` module, is deterministic
+(a stepped field is seed-independent), shares the flat plane's +/-5 m footprint,
+and rises from 0 on the flush outer ring up to the same ~8 cm at the central
+plateau on a solid base slab (no hole under the robot). A box near the centre
+rests measurably higher than one out at the ring, and - the defining property vs
+the staircase - boxes on the +x and +y rings rest at the same height (the climb
+is radially isotropic). New terrain kinds are added by appending to
+`SUPPORTED_TERRAINS` and a generator branch - no `create_world` signature change.
+MuJoCo backend; the Newton backend rejects any non-`None` `terrain` with an
+actionable error.
+
+### Added: `create_world(terrain="slope")` - inclined-ramp heightfield for locomotion
+
+`create_world(terrain=...)` gains a fourth heightfield kind alongside `"rough"`,
+`"stairs"`, and `"pyramid"`: `terrain="slope"` lays down a constant-grade
+inclined ramp (rising linearly along +x) instead of value-noise bumps or
+discrete steps. A uniform uphill pitch is a continuous, strictly-monotonic
+surface - distinct from `"rough"` (non-monotonic noise), `"stairs"` (a discrete
+step function), and `"pyramid"` (concentric steps) - so it tests sustained-incline
+gait the other kinds never do. Like the other kinds the field is generated by
+the pure-stdlib, backend-independent `strands_robots.simulation.terrain` module,
+is deterministic (a ramp is seed-independent), shares the flat plane's +/-5 m
+footprint, and rises from 0 up to the same ~8 cm on a solid base slab (flush with
+`z=0` at its lowest point - no hole under the robot). A box dropped further up the
+ramp rests measurably higher than one lower down. New terrain kinds are added by
+appending to
+`SUPPORTED_TERRAINS` and a generator branch - no `create_world` signature change.
+MuJoCo backend; the Newton backend rejects any non-`None` `terrain` with an
+actionable error.
+
+### Added: `create_world(terrain="stairs")` - stepped-ground heightfield for locomotion
+
+`create_world(terrain=...)` gains a second heightfield kind alongside `"rough"`:
+`terrain="stairs"` lays down a flight of discrete flat step plateaus (rising
+along +x) instead of smooth value-noise bumps. Stairs test the foot-placement
+and climbing a smoothly-undulating field never does, so they are the canonical
+next terrain in a locomotion curriculum. Like `"rough"` the field is generated
+by the pure-stdlib, backend-independent `strands_robots.simulation.terrain`
+module, is deterministic (a stepped field is seed-independent), shares the flat
+plane's +/-5 m footprint, and rises from 0 up to the same ~8 cm on a solid base
+slab (flush with `z=0` at its lowest step - no hole under the robot). A box
+dropped on a higher step rests measurably higher than one on a lower step. New
+terrain kinds are added by appending to `SUPPORTED_TERRAINS` and a generator
+branch - no `create_world` signature change. MuJoCo backend; the Newton backend
+rejects any non-`None` `terrain` with an actionable error.
+
+### Fixed: `get_observation` no longer emits a floating base's free joint as a degenerate scalar
+
+A robot whose root is a 6-DoF free joint (a humanoid's named
+`floating_base_joint`, or a mobile base's `<freejoint>`) surfaces its full base
+pose + twist through `get_observation` as the structured `base_pos` /
+`base_quat` / `base_lin_vel` / `base_ang_vel` keys. But `get_observation` (both
+the MuJoCo and Newton backends) ALSO emitted the free joint itself as a scalar
+`"<joint_name>"` entry equal to `qpos[jnt_qposadr]` -- the base x-coordinate
+reported as a joint angle, silently dropping the y/z position and the entire
+orientation + velocity. That degenerate scalar duplicates `base_pos.x`, and
+because the LeRobotDataset recorder derives its `observation.state` schema from
+the joint list, it became a junk `floating_base_joint` column in every recorded
+floating-base dataset (a misleading input dimension for any policy trained on
+it). `get_robot_state` was already fixed to exclude the free joint from its
+scalar per-joint state; this brings `get_observation` and the dataset recorder
+to the same contract on both backends. The free joint is now excluded from the
+scalar joint schema everywhere; its 6-DoF state remains available through the
+structured `base_*` keys / `base` entry. Fixed-base arms are unaffected. A
+regression test asserts `get_observation` and a reopened recorded dataset carry
+no `floating_base_joint` scalar (fails before, passes after) on both backends,
+with a no-regression guard that the structured base state is still present.
+
+### Added: `describe()` advertises the teleoperation surface (`attach_teleop` / `teleoperate` / `stop_teleoperate` / `get_teleoperate_status` / `list_teleops` / `detach_teleop`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. The MuJoCo
+backend advertises how to build a scene and drive it with a policy (`run_policy`
+/ `start_policy`), but gave no way to discover the OTHER actuation source:
+driving a sim robot from an attached teleoperator (a real leader arm, gamepad,
+or keyboard) -- the leader->follower / human-demonstration workflow that feeds
+data collection. The six `TeleopMixin` facades (shared with the hardware
+`Robot`) -- `attach_teleop` -> `teleoperate` -> `stop_teleoperate`, plus
+`detach_teleop` / `list_teleops` / `get_teleoperate_status` -- are public
+methods on the sim, yet a caller enumerating the sim's contract from
+`describe()` alone had to guess their names. They are now advertised in the
+MuJoCo backend's `describe()["methods"]` as the human-driven sibling of the
+policy-rollout family, each with a signature that names its distinguishing
+parameters (`attach_teleop(..., map_fn=...)`, `teleoperate(..., publish=...,
+block=..., duration=...)`). Additive only -- no change to any runtime behavior;
+this purely completes the discovery surface, following the same pattern as the
+recording, physics-introspection, physics-tuning, sim-state, background-policy,
+and robot-registry families. A regression test asserts the six are advertised
+with `map_fn=` / `publish=` / `duration=` / `name=` named (fails before, passes
+after), and the existing `test_describe_methods_resolve_to_real_attributes`
+guard confirms each newly advertised name is a live callable on the engine.
+
+
+### Added: `describe()` advertises the robot-registry + `remove_robot` surface (`list_urdfs` / `register_urdf` / `remove_robot`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. The MuJoCo
+backend's `describe()` calls `add_robot` "the first scene-construction step" and
+advertises the object/camera remove halves (`remove_object` / `remove_camera`),
+but the robot inverse `remove_robot` -- and the registry methods that feed
+`add_robot(name=...)` (`list_urdfs` to enumerate the registered robot
+descriptions, `register_urdf` to register a custom URDF under a `data_config`
+name) -- were undiscoverable from `describe()` alone, even though all three are
+first-class MuJoCo `tool_spec.json` + action-dispatcher actions. A caller who
+built a scene with `add_robot` could not learn how to remove a robot, or how to
+register a custom URDF so `add_robot` can spawn it by name, without guessing
+these names. They are now advertised in the MuJoCo backend's
+`describe()["methods"]`, completing the add/remove symmetry that
+`remove_object` / `remove_camera` already establish, each with a signature that
+names its distinguishing parameters. Additive only -- no change to the
+`tool_spec.json` enum, the action dispatcher, or any runtime behavior; this
+purely completes the robot-registry discovery surface. (Newton exposes the same
+trio and has the same gap; deferred to keep this diff MuJoCo-scoped like the
+sibling `describe()` families.) A regression test asserts the trio is advertised
+with `data_config=` / `urdf_path=` / `name=` named (fails before, passes after),
+and the existing `test_describe_methods_resolve_to_real_attributes` guard
+confirms each newly advertised name is a live callable on the engine.
+
+
+### Added: `describe()` advertises the interactive-viewer family (`open_viewer` / `close_viewer`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. The MuJoCo
+backend advertises how to build a scene, drive it with a policy, and
+read/checkpoint the result, but gave no way to discover how to open a live
+window on the running model for human inspection (watch a rollout, debug a
+pose, hand-verify a scene) -- even though `open_viewer` and `close_viewer` are
+first-class `tool_spec.json` + action-dispatcher actions. A caller enumerating
+the sim's contract from `describe()` alone had to guess their names. Both are
+now advertised in the MuJoCo backend's `describe()["methods"]` as the
+human-inspection sibling of the render family, with `open_viewer`'s signature
+documenting the headless caveat (it launches an interactive OpenGL window via
+`mujoco.viewer.launch_passive`, so it needs a local display and errors on a
+headless host, where `render()` / `render_all()` capture frames instead). The
+two MuJoCo viewer methods also gained the docstrings they lacked. Additive only
+-- no change to the `tool_spec.json` enum, the action dispatcher, or any runtime
+behavior; this purely completes the discovery surface. A regression test asserts
+the pair is advertised with the display caveat named (fails before, passes
+after), and the existing `test_describe_methods_resolve_to_real_attributes`
+guard confirms each newly advertised name is a live callable on the engine.
+
+
+### Added: `describe()` advertises the plain-MP4 camera-recording family (`start_cameras_recording` / `stop_cameras_recording` / `get_cameras_recording_status`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. The MuJoCo
+backend already advertised the LeRobotDataset recording family
+(`start_recording` / `save_episode` / `stop_recording`), which needs the
+`[lerobot]` extra and writes a parquet+MP4 dataset. But the dependency-free
+recorder trio -- `start_cameras_recording` (background capture of one raw MP4
+per camera, no lerobot), `stop_cameras_recording` (flush buffers, report
+per-camera frame counts + paths), and `get_cameras_recording_status` (inspect an
+in-progress recording) -- was undiscoverable from `describe()` alone, even though
+all three are first-class MuJoCo `tool_spec.json` + action-dispatcher actions. An
+agent lacking the `[lerobot]` extra, or wanting a raw MP4 rather than a dataset,
+had to guess these names. They are now advertised in the MuJoCo backend's
+`describe()["methods"]` as the raw-MP4 sibling of the dataset trio, each with a
+signature that names its distinguishing parameters. Additive only -- no change to
+the `tool_spec.json` enum, the action dispatcher, or any runtime behavior; this
+purely completes the recording discovery surface. A regression test asserts the
+trio is advertised with `cameras=` / `max_frames_per_camera=` named (fails
+before, passes after), and the existing `test_describe_methods_resolve_to_real_attributes`
+guard confirms each newly advertised name is a live callable on the engine.
+
+
+### Added: `describe()` advertises the world-lifecycle + MJCF-editing family (`create_world` / `destroy` / `patch_scene_mjcf` / `replace_scene_mjcf` / `export_xml`)
+
+`SimEngine.describe()["methods"]` teaches an agent how to build a scene
+(`add_robot` / `add_object` / `add_camera` / `load_scene`), run a policy, and
+read or checkpoint the result, but previously gave no way to discover the world
+lifecycle itself or the MJCF-editing operations -- so a caller enumerating how
+to create, edit, and tear down a scene from `describe()` alone had to guess
+these names. Five first-class MuJoCo `tool_spec.json` + action-dispatcher
+actions are now advertised in the backend's `describe()["methods"]`, each with a
+signature that names its distinguishing parameters: `create_world` (the
+fresh-world entry point that precedes `add_robot`), `destroy` (release all
+resources at session end, which the tool-spec guidance already asks callers to
+run), and the MJCF-editing family `patch_scene_mjcf` / `replace_scene_mjcf`
+(surgical vs wholesale live-MJCF editing) and `export_xml` (serialize the scene
+back to canonical MJCF). The URDF/model registry trio (`register_urdf` /
+`list_urdfs` / `remove_robot`) is advertised separately with the robot-registry
+family. `list_urdfs` -- which had no docstring -- also gains one so the method
+is self-describing. Additive only: no change to the `tool_spec.json` enum, the
+action dispatcher, or any runtime behavior; this purely completes the discovery
+surface with the world-lifecycle and MJCF-authoring operations alongside the
+existing build / act / read / record families. A regression test asserts the
+five are advertised with `ground_plane=` / `ops` / `xml` / `output_path` named
+(fails before, passes after), and the existing
+`test_describe_methods_resolve_to_real_attributes` guard confirms each newly
+advertised name is a live callable on the engine.
+
+
+### Added: `register_builtin_benchmarks()` ships a canonical velocity-tracking locomotion benchmark (`go2_walk_forward`)
+
+The floating-base predicate/reward DSL (`base_velocity_tracking` / `base_height`
+/ `base_orientation` reward terms and the `base_beyond_x` / `base_tipped` /
+`base_below_z` predicates) was complete but wired into no runnable benchmark:
+`list_benchmarks()` was empty until a caller hand-authored a spec. A new
+`register_builtin_benchmarks()` (module function + `SimEngine` facade + `describe()`
+/ tool-action) compiles and registers the benchmarks shipped with the library so
+they are discoverable via `list_benchmarks()` and runnable via `evaluate_benchmark()`
+out of the box. The first shipped benchmark, `go2_walk_forward`, composes the DSL
+primitives into a canonical legged velocity-tracking task for the Unitree Go2
+(succeed past `x = 2 m`, fail on topple or height-collapse, dense exp-kernel twist
+tracking + posture regularizers). Registration is opt-in (mirrors the on-demand
+LIBERO suite registration), so importing `strands_robots` mutates no registry;
+`builtin_benchmark_specs()` returns the spec dicts to copy/fork.
+
+### Added: `g1_walk_forward` humanoid locomotion benchmark in `register_builtin_benchmarks()`
+
+`register_builtin_benchmarks()` now also ships `g1_walk_forward`, the humanoid
+(bipedal) counterpart of `go2_walk_forward` for the Unitree G1, so a humanoid has a
+runnable, discoverable velocity-tracking eval out of the box and the same
+floating-base predicate/reward DSL is shown to transfer unchanged from a quadruped
+to a biped. Only the thresholds and the regularizer stack differ, both grounded in
+the G1's real model: the G1 stands at base height ~0.79 m (vs the Go2's ~0.32 m), so
+`base_height` targets 0.78 m and the height-collapse failure fires below 0.4 m (well
+clear of the standing spawn, yet high enough to catch a folded humanoid that the
+Go2's 0.18 m threshold would miss). The dense stack adds the `base_lin_vel_z`
+(anti-bounce) and `base_ang_vel_xy` (anti-wobble) regularizers on top of the Go2
+stack, because bipedal walking is far more sensitive to base vertical bounce and
+roll/pitch wobble than a statically-stable quadruped.
+
+### Added: `describe()` advertises the benchmark scoring family (`evaluate_benchmark` / `list_benchmarks` / `register_benchmark_from_file`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. It advertised the
+rollout family (`run_policy` / `start_policy` / `eval_policy` / `replay_episode`)
+but omitted the DSL-driven benchmark scoring family - the three concrete
+backend-agnostic facades `evaluate_benchmark` (score a registered
+success/failure/dense_reward benchmark over a rollout), `list_benchmarks`
+(enumerate the registered benchmark names it accepts), and
+`register_benchmark_from_file` (author a benchmark spec as YAML/JSON at runtime).
+So an agent enumerating `describe()` could run a policy but could not discover how
+to score it against a benchmark, dead-ending the predicate/reward DSL those
+methods drive behind names it had to already know. They are now listed in the base
+`describe()` (which the MuJoCo backend inherits) and in the Newton backend's own
+`describe()` methods dict, with signatures that name their distinguishing
+parameters. Regression tests assert the family is advertised on both the base
+engine and Newton (each fails before, passes after), and the existing
+resolve-to-real-attributes guard confirms each advertised name is a live callable
+on the MuJoCo engine.
+
+### Added: `describe()` advertises the physics-tuning / domain-perturbation surface (`set_gravity` / `set_timestep` / `set_body_properties` / `set_geom_properties` / `apply_force`)
+
+`SimEngine.describe()["methods"]` is the single-call discovery surface an agent
+reads to learn a sim's contract without guessing method names. It advertised the
+physics-introspection READ family (`get_body_state` / `get_contacts` /
+`get_sensor_data` / ... - how to *verify* a rollout) but omitted the write
+complement: the physics-tuning / domain-perturbation methods that *vary* the
+engine. `set_gravity` and `set_timestep` retune the engine (randomize gravity,
+simulate reduced/zero-g, change the integration step), `set_body_properties` and
+`set_geom_properties` perturb per-body mass or per-geom color/friction/size for
+domain randomization + sim2real, and `apply_force` applies an external wrench for
+push-recovery / disturbance-rejection perturbation testing. All five are
+first-class actions in the MuJoCo tool spec and action dispatcher - the engine's
+own guidance even points a caller at "set_gravity, set_timestep, etc." - yet an
+agent setting up a domain-randomization scene from `describe()` alone had to guess
+them. They are now listed in the MuJoCo backend's `describe()` methods dict as the
+write siblings of the coarse-grained `randomize()` facade and the physics-read
+surface, with signatures naming their distinguishing parameters. A regression test
+asserts the family is advertised (fails before, passes after) and the existing
+resolve-to-real-attributes guard confirms each advertised name is a live callable
+on the engine.
+
 ### Fixed: mypy import-untyped failures from pyarrow dropping its py.typed marker
 
 `pyarrow` 25.0.0 stopped shipping the `py.typed` marker it previously carried,
@@ -33,6 +1703,10 @@ neither matched its registry key. The registry name now unconditionally
 overrides the spec-internal `name`, so an instance's `.name` always matches the
 key it is registered and looked up under. Specs that omit `name`, and the direct
 `DeclarativeBenchmark.from_dict` path, are unaffected.
+
+### Added: `base_beyond_x` forward-progress predicate for the benchmark/reward DSL
+
+The predicate DSL grew a `base_beyond_x(x, robot)` BOOL predicate on the floating-base `get_observation` surface (the same `base_pos` the `base_height` reward term and `base_below_z` read): True once the base's world x has passed forward of `x`. It is the forward-progress SUCCESS counterpart of the `base_tipped` / `base_below_z` fall-termination predicates - a velocity-tracking locomotion task could already express the reward (`base_velocity_tracking` + the `base_*` regularizers) and the failure (topple / collapse), but not the goal: `base_below_z` reads the base's height (`base_pos` z) and nothing read its forward position (`base_pos` x), and `inside_region` / `body_above_z` need a base body name a mobile base's unnamed free joint does not expose. A walk-forward benchmark could therefore only score "did not fall" (which a standing-still policy passes). `base_beyond_x` reads the same embodiment-agnostic surface (no base body name, works on an unnamed free joint), so a `success: {all: [{predicate: base_beyond_x, x: 2.0}]}` clause next to `failure: {any: [base_tipped, base_below_z]}` now expresses a complete walk-forward velocity-tracking task.
 
 ### Added: `base_tipped` locomotion fall-over predicate for the benchmark/reward DSL
 
@@ -1237,6 +2911,238 @@ name-resolution degradation.
 ### Added: `base_velocity_tracking` exponential-kernel velocity-tracking reward for the benchmark/reward DSL
 
 - The reward DSL had `base_velocity`, a floating base's heading-relative twist tracked as an UNBOUNDED negative-L2 error (`-weight * ||twist - command||`). For an RL locomotion reward that error term is dominated by the large initial tracking error and can swamp the bounded regularizer terms (`base_height` / `base_orientation` / `base_lin_vel_z` / `base_ang_vel_xy`), which is why legged_gym / IsaacLab express the primary velocity-tracking reward as a POSITIVE, BOUNDED exponential kernel instead. `base_velocity_tracking(vx, vy, wz, lin_weight=1.0, ang_weight=0.5, tracking_sigma=0.25, robot=None)` is that canonical term: `lin_weight * exp(-lin_err / tracking_sigma) + ang_weight * exp(-ang_err / tracking_sigma)` -- the sum of legged_gym's `tracking_lin_vel` (planar) and `tracking_ang_vel` (yaw-rate) kernels with their standard defaults. It reads the same body-frame twist `base_velocity` does (heading-relative), is bounded to `[0, lin_weight + ang_weight]` and peaks at perfect tracking, and weights planar-velocity and yaw-rate tracking separately (which the single combined `base_velocity` norm cannot). It degrades to `0.0` (and warns once) on a fixed-base arm. Composed with the base regularizer terms it is a faithful, well-scaled velocity-tracking reward for a locomotion spec.
+
+### Fixed: PolicyServer published its bound socket before its port, racing background pollers
+
+- `PolicyServer.serve()` (and the background-thread `start()`) set `self._server` to the bound server *before* reading the OS-assigned port into `self.port`. A caller that treats `_server is not None` as the "server is bound, port is readable" signal (the documented contract for reading back a `port=0` OS-assigned port) could observe the constructor default `0` in the window between the two writes -- an intermittent race under load. Both entry points now publish the port *before* publishing `_server`, so any thread that sees a non-None `_server` always reads the real bound port.
+
+### Fixed: `get_contact_forces` reported stale contacts + fabricated forces after a pose change
+
+`Simulation.get_contact_forces()` iterated `data.contact[]` / `data.ncon` and
+called `mj_contactForce` (which reads `data.efc_force`) without first running
+`mj_forward`. Those are all *derived* state that MuJoCo only recomputes on
+`mj_forward` / `mj_step`, so after a manual `qpos` write (a planning/IK loop),
+a pose set immediately after `reset` / `add_robot`, or a concurrent policy
+thread's `mj_step`, the query silently reported the *previous* configuration's
+contacts -- complete with fabricated normal/friction forces -- while still
+returning `status=success` (e.g. a 2.5 N ground contact on a cube already
+lifted 1 m into the air). Its sibling `get_contacts` already forwards for
+exactly this reason ("stale contacts from the previous step / uninitialised
+memory can appear as phantom penetrations"), so the two contact-query APIs
+disagreed. `get_contact_forces` now runs `mj_forward` under the sim lock before
+reading (matching `get_contacts`), so the reported contacts and forces reflect
+the current `qpos`/`qvel` and the two APIs agree. A regression test settles a
+cube on the ground, lifts it via a direct `qpos` write (no forward), and asserts
+the airborne cube no longer appears in `get_contact_forces` (fails before,
+passes after).
+
+### Fixed: `add_robot` reports an actionable error for an unknown/unresolvable model instead of a dead-end
+
+The MuJoCo `add_robot` had two exits with unequal error quality. When a
+caller passed a `data_config` that resolved to no model, the error routed
+through the `_unknown_model_msg` helper -- naming the robot, offering
+difflib close-match suggestions, and pointing at `list_urdfs`. But when a
+caller named a robot positionally (`add_robot("panda_typo")`, the deprecated
+name-as-registry-key short form) or gave an instance label without a model
+source (`add_robot(name="myarm")`), the same unresolvable-model case fell
+through to a dead-end `"Either urdf_path or data_config is required."` that
+never named the robot, offered no suggestion, and did not point at
+discovery -- inconsistent with both the `data_config` exit and the
+top-level `Robot()` factory (which already raises a clean `Unknown robot`).
+An agent (or human) driving the API blind with a mistyped name hit a wall.
+
+`add_robot` now surfaces the actionable `_unknown_model_msg` for any
+caller-supplied `name`/`data_config` that resolves to no model -- naming the
+robot, suggesting close matches, and pointing at `list_urdfs` plus the
+`data_config=`/`urdf_path=` options -- so the error is actionable whether the
+name was a mistyped registry key or an instance label missing its model.
+The bare `"Either urdf_path or data_config is required."` message is
+preserved for the genuine no-name case (`add_robot()` with nothing to
+resolve). The deprecated positional name-as-registry-key fallback still
+resolves a VALID name unchanged. A regression test asserts the positional
+typo and the instance-label cases name the robot + point at `list_urdfs` +
+the model-source options (fails before, passes after), that the no-name case
+keeps the generic message, and that a valid positional name still resolves.
+
+### Fixed: `move_object` / `remove_object` / `remove_camera` give an actionable "not found" error (names the entity, offers a close match, points at discovery)
+
+When called with an unknown entity name, the MuJoCo facade's
+`move_object(name=...)`, `remove_object(name=...)`, and `remove_camera(name=...)`
+returned a dead-end `"Object 'X' not found."` / `"Camera 'X' not found."` -- no
+list of what *is* in the scene and no close-match, forcing an agent driving the
+API blind into a discovery round-trip on every typo. The camera *render* /
+*record* paths already listed `Available: [...]`, and `add_robot` already
+offered a difflib close-match for an unknown model, so these three remove/move
+paths were the inconsistent dead ends. They now return an actionable message
+that keeps the `"<Kind> 'X' not found."` prefix (preserving the consistent error
+shape) and appends a difflib close-match (`Did you mean: cube?`), the available
+names, and the discovery action (`list_objects` / `list_cameras_info`). An
+empty scene points the caller at `add_object` instead of listing nothing.
+Message-only; no change to the success paths or physical behavior. A regression
+test asserts each path names a close match + the discovery action (fails before,
+passes after) with a no-regression guard on the valid move/remove paths.
+
+### Fixed: unknown `robot_name` gives an actionable "not found" error across the sim facade (close match + available robots + `list_robots`)
+
+Every facade method that looks a robot up by name -- `get_robot_state`,
+`set_joint_positions`, `set_joint_velocities`, `remove_robot`, `run_multi_policy`,
+`stop_policy`, `get_features`, `list_bodies` and friends -- returned a dead-end
+`"Robot 'X' not found."` when the name was mistyped: no list of the robots that
+*are* in the world and no close-match, forcing an agent driving the API blind
+into a discovery round-trip on every typo. This was the last remaining bare
+`"... not found."` class after the model (`add_robot`) and object/camera
+(`move_object` / `remove_object` / `remove_camera`) paths were made actionable.
+The ~9 sites now share a single `_unknown_robot_msg` helper that keeps the
+`"Robot 'X' not found."` prefix (preserving the consistent error shape) and
+appends a difflib close-match (`Did you mean: arm1?`), the available robot names,
+and the discovery action (`list_robots`). An empty world points the caller at
+`add_robot` instead of a dead end. Message-only; no change to the success paths
+or physical behavior. A regression test drives both the `simulation.py`
+(`get_robot_state`, `remove_robot`) and `physics.py` (`set_joint_positions`)
+paths and asserts the close-match + available list + discovery action (fails
+before, passes after) with a no-regression guard on a valid robot query.
+
+
+### Added: lateral locomotion vocabulary - `base_beyond_y` predicate + `go2_strafe_left` benchmark
+
+The shipped built-in locomotion benchmarks (`go2_walk_forward`,
+`g1_walk_forward`, `t1_walk_forward`) all command a pure FORWARD twist (`vx`)
+and score it with `base_beyond_x` -- the floating-base success family had a
+forward-progress predicate but no LATERAL one, so a strafe task could reward a
+`vy` command (`base_velocity_tracking` already accepts one) yet had no way to
+SCORE reaching a sideways goal, and no shipped benchmark ever exercised the
+`vy` term of the tracking reward. This adds `base_beyond_y(y, robot=None)` --
+the lateral-progress mirror of `base_beyond_x`, reading `base_pos` y off the
+same embodiment-agnostic `get_observation` surface (no base body name, works on
+an unnamed mobile-base free joint), degrading to `False` + warn-once on a
+fixed-base arm -- and ships `go2_strafe_left`, the first built-in to command a
+pure lateral (`vx=0`, `vy=0.5`) body twist and score it with `base_beyond_y`,
+reusing the Go2 fall/height thresholds. The reward/predicate DSL now expresses
+omnidirectional velocity-tracking, not forward-only. Verified end-to-end on a
+real Unitree Go2 in MuJoCo (`evaluate_benchmark`): the base observation
+surfaces, the standing spawn neither trips the fall predicates nor satisfies
+the lateral goal, and the dense reward composes finite. Regression tests set
+known base poses and assert the y-threshold, the y-vs-x axis distinction
+(forward progress must not score a strafe goal), height/orientation
+independence, live tracking, fixed-base degradation, and a full
+`DeclarativeBenchmark` that succeeds only once the base strafes past the line
+(fails before, passes after).
+
+
+### Fixed: Isaac backend `create_world(terrain=...)` honours the base contract instead of raising `TypeError`
+
+`create_world` grew `terrain` / `difficulty` parameters (the heightfield
+terrain-curriculum knob), and the base `SimEngine.create_world` abstractmethod
+documents that a backend without heightfield support must reject a non-None
+`terrain` with an actionable error rather than silently ignoring it. The MuJoCo
+backend implements terrain and the Newton backend rejects it with exactly such
+an error, but the Isaac backend's `create_world` override kept the older,
+narrower signature (no `terrain` / `difficulty`), so `create_world(terrain=...)`
+on an Isaac sim raised a bare `TypeError: unexpected keyword argument 'terrain'`
+instead of the contract's structured error -- and the drift slipped past mypy
+because the extra base parameters carry defaults. The Isaac override now accepts
+`terrain` / `difficulty` for signature parity and rejects a non-None `terrain`
+with an actionable "heightfield terrain is currently MuJoCo-only; use
+`create_simulation(backend='mujoco')`" error *before* booting Isaac Sim (so the
+rejection holds on any host, with or without an Omniverse install); `difficulty`
+is accepted but inert, mirroring the Newton backend.
+
+
+### Fixed: `get_ground_height(x, y)` accepts NumPy scalar coordinates
+
+`get_ground_height` validated its coordinates with `isinstance(val, (int, float))`, which is
+`False` for `np.float32` / `np.int64` / `np.int32` (only `np.float64` subclasses Python
+`float`). Terrain coordinates naturally come from `mj_data` / an observation (a NumPy array),
+so the natural call `get_ground_height(*obs["base_pos"][:2])` on a float32 observation was
+rejected with a misleading "must be a finite number" error even though the value is a finite
+real number. The check now uses `numbers.Real`, accepting any real scalar (including NumPy
+scalar types) while still rejecting `bool` / `np.bool_` / non-finite values. The parameter
+type is `SupportsFloat` so a NumPy-scalar call type-checks as well as runs.
+
+### Fixed: `add_camera(fov=...)` accepts NumPy scalar angles
+
+`add_camera` rejected a NumPy scalar field-of-view (`np.float32(58.0)`, `np.int64(58)`) with a misleading "'fov' must be a finite number in degrees" error, even though the value is a finite real number, because the guard used `isinstance(fov, (int, float))` (`False` for every NumPy scalar except `np.float64`). A fov computed from a config array or `np.degrees(...)` was therefore refused. The check now uses `numbers.Real`, accepting any real scalar (including NumPy types) while still rejecting `bool` / `np.bool_`, non-finite values, and angles outside the open interval `(0, 180)` -- matching the `get_ground_height` coordinate contract.
+
+
+### Fixed: `set_body_properties(mass=...)` rejects a non-finite mass
+
+`set_body_properties` documents `mass` as a positive physics invariant, but its
+guard used only `if mass <= 0`. `float('nan') <= 0` and `float('inf') <= 0` are
+both `False`, so a NaN or `+Inf` mass slipped through: the body's `body_mass`
+was set to NaN/Inf and its `body_inertia` (which is scaled by `mass / old_mass`
+to stay consistent) became NaN/Inf as well, so the next `mj_step` produced a
+non-finite `qacc` -- a silent physics corruption reported as
+`status="success"`. (`-Inf` was already caught because `-Inf <= 0` is `True`.)
+
+The guard now rejects any non-finite value (`not math.isfinite(mass) or mass
+<= 0`) before mutating the model, matching the finiteness contract already
+enforced by `set_timestep` and `set_gravity`. Finite positive masses (including
+NumPy scalars, which `float()` still coerces) are unaffected.
+
+### Fixed: `add_object` / `add_camera` reject a non-finite / malformed numeric vector instead of baking it into the MJCF
+
+Both are scene-construction methods that write caller-supplied numeric vectors
+into the compiled MuJoCo model, but neither validated those vectors' contents,
+so two failure classes slipped through:
+
+* `add_object` wrote a `nan` / `inf` `position` or `orientation` verbatim into
+  the object's freejoint `qpos`; `mj_forward` then propagated the non-finite
+  value across the whole physics state while `add_object` still reported
+  `status="success"` -- a silent corruption. A `nan` `size` aborted the
+  recompile with a cryptic "spec recompile refused", and a non-numeric `color`
+  / `size` (e.g. `["r", "g", "b", "a"]`) raised a bare `TypeError` from inside
+  MuJoCo's `add_geom` / the `size <= 0` comparison -- escaping the structured
+  `{"status": "error"}` tool-result contract.
+* `add_camera` baked a `nan` / `inf` `position` / `target` into the camera's
+  `xyaxes` (`fwd /= flen` divides by NaN), silently registering a degenerate
+  camera that renders garbage while reporting `status="success"`; a non-numeric
+  element raised a bare `TypeError` from the degenerate-orientation
+  `abs(pos[i] - tgt[i])` comparison.
+
+Both methods now validate every caller-supplied numeric vector up front
+(finite, numeric, and -- for `position` / `orientation` / `target` -- the
+expected length) and return an actionable structured error, leaving the
+simulation state finite and the entity unregistered. NumPy scalar components
+are accepted, matching the finiteness contract already enforced by
+`move_object`, `set_geom_properties`, `set_gravity` and `add_camera`'s `fov`.
+
+### Fixed: physics/introspection lookups return an actionable "not found" for an unknown body/site/geom/sensor
+
+`get_body_state`, `get_jacobian`, `set_body_properties`, `set_geom_properties`,
+`apply_force`, and `get_sensor_data` resolve a caller-supplied body/site/geom/
+sensor name and, on a miss, returned a dead-end `"<Kind> 'X' not found."` with
+no list of what *is* in the model and no close-match -- the last holdouts of the
+actionable-error class the camera / object / robot facade paths already cover
+(`_unknown_camera_msg` / `_unknown_object_msg` / `_unknown_robot_msg`). An agent
+(or human) driving these blind hit a dead end on every typo and had to guess or
+run a separate discovery round-trip.
+
+These lookups now route through a shared `_unknown_mj_entity_msg(kind, name)`
+that preserves the `"<Kind> 'X' not found."` prefix (so the consistent
+error-shape contract is unchanged), appends a difflib close-match over the
+model's *named* entities, lists the available names (capped), and -- for bodies
+-- points at the real `list_bodies` discovery action. The informative
+`get_sensor_data` "Model has no sensors." branch is preserved.
+
+### Fixed: `build_command` reward-model path emits `--reward_model.pretrained_path` for a warm-started run
+
+`LerobotTrainer.build_command` is the argv-parity helper documenting the
+draccus CLI the typed `build_config` maps to (and the contract
+`test_native_parity` guards). `build_config` warm-starts a reward-model run
+from `TrainSpec.base_model` by setting `reward_model.pretrained_path`, but
+`build_command` emitted `--policy.pretrained_path` only in the policy branch
+and never the `--reward_model.pretrained_path` equivalent. So the documented
+"equivalent CLI" for a warm-started reward-model (SARM) run trained from
+scratch (`pretrained_path` defaults to `None`) instead of loading
+`base_model` -- diverging from the in-process `train(cfg)` path. `build_command`
+now emits `--reward_model.pretrained_path=<base_model>` when `base_model` is
+set, mirroring the policy path. (`push_to_hub` is intentionally not emitted:
+`RewardModelConfig.push_to_hub` already defaults to `False`, so `build_config`
+setting it `False` is a no-op the CLI need not restate.)
+
+### Docs: point the streamed-training instructions at the current `lerobot.scripts.lerobot_train` module
+
+`strands_robots/streaming_dataset.py`'s module docstring and the `docs/recording.md` streamed-training example instructed `python -m lerobot.scripts.train ...` -- but lerobot renamed that module to `lerobot.scripts.lerobot_train` (the old path is removed, so the command now raises `ModuleNotFoundError`). The rest of the codebase already uses the current name (`strands_robots.training.lerobot`, `strands_robots.tools.lerobot_train`, `docs/training/overview.md`); these two user-facing spots lagged. Corrected both to `python -m lerobot.scripts.lerobot_train` and updated the `recording.md` example to the draccus `--dotted.flags` form (`--policy.type=act --dataset.repo_id=... --dataset.streaming=true --num_workers=4`), matching how the trainer is invoked everywhere else.
 
 ## [0.4.1] - 2026-07-01
 

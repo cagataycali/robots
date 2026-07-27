@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 SAFETY_TABLE_NAME = "strands-mesh-safety-events"
 ESTOP_LAMBDA_NAME = "strands-mesh-estop-fanout"
 ESTOP_LAMBDA_ROLE = "strands-mesh-lambda-role"
+IOT_ACTION_ROLE = "strands-mesh-iot-action-role"
 #: Finding #16 (E-Stop Lambda cost amplification): cap concurrent estop
 #: fan-out Lambdas. With in-Lambda dedup this bounds worst-case cost
 #: regardless of estop publish rate.
@@ -59,7 +60,7 @@ ESTOP_LAMBDA_RESERVED_CONCURRENCY = 2
 #: Finding #16: dedup window (seconds). Two estop envelopes with the same
 #: (peer_id, t) within this window invoke the fan-out only once.
 ESTOP_DEDUP_TTL_S = 30
-_LAMBDA_VERSION = 2  # Bump whenever _ESTOP_LAMBDA_SOURCE changes
+_LAMBDA_VERSION = 3  # Bump whenever _ESTOP_LAMBDA_SOURCE changes
 RULE_SAFETY_TO_DYNAMODB = "strands_safety_to_dynamodb"
 RULE_ESTOP_FANOUT = "strands_estop_fanout"
 PROVISIONING_TEMPLATE = "strands-mesh-fleet-provisioning"
@@ -157,9 +158,20 @@ _ESTOP_LAMBDA_SOURCE = textwrap.dedent(
                         qos=1,
                         payload=json.dumps({
                             "sender_id": "strands-mesh-estop-fanout",
-                            "turn_id": "estop-fanout",
+                            # turn_id MUST be unique per fan-out: robots dedup on
+                            # (sender_id, turn_id) in _exec_cmd, so a constant
+                            # "estop-fanout" made every e-stop after the first be
+                            # dropped fleet-wide as a replay. aws_request_id is
+                            # unique per Lambda invocation (== per logical
+                            # e-stop) but shared across the robots fanned out in
+                            # one invocation, so each robot still dedups its own
+                            # duplicate deliveries.
+                            "turn_id": context.aws_request_id,
                             "command": {"action": "stop"},
-                            "timestamp": context.aws_request_id,
+                            # timestamp is a numeric epoch seconds field; feeding
+                            # it the aws_request_id UUID broke any consumer that
+                            # treated it as a number.
+                            "timestamp": time.time(),
                         }).encode(),
                     )
                     published += 1
@@ -484,7 +496,7 @@ def _ensure_estop_lambda(lam: Any, role_arn: str, account: BootstrappedAccount, 
     return resp["FunctionArn"]
 
 
-def _ensure_safety_to_dynamodb_rule(iot: Any, table_arn: str, account: BootstrappedAccount) -> str:
+def _ensure_safety_to_dynamodb_rule(iot: Any, iam: Any, table_arn: str, account: BootstrappedAccount) -> str:
     """IoT Rule that mirrors safety events into DynamoDB.
 
     The SQL pulls peer_id, type, severity, payload, t out of the JSON and
@@ -504,7 +516,7 @@ def _ensure_safety_to_dynamodb_rule(iot: Any, table_arn: str, account: Bootstrap
         # rule of this name doesn't exist yet - confusing but documented.
         pass
 
-    role_arn = _ensure_iot_action_role(account)
+    role_arn = _ensure_iot_action_role(iam, account)
     # Use newuuid() for the range key so two events with identical t in the
     # same robot still write distinct rows. peer_id remains the partition key.
     sql = "SELECT peer_id, type, severity, payload, t, newuuid() AS ts, topic() AS topic FROM 'strands/+/safety/event'"
@@ -573,11 +585,15 @@ def _grant_iot_invoke_lambda(lam: Any, lambda_arn: str, account: BootstrappedAcc
         pass  # already granted
 
 
-def _ensure_iot_action_role(account: BootstrappedAccount) -> str:
-    """The role IoT Rules assume to write to DynamoDB."""
-    boto3 = _require_boto3()
-    iam = boto3.client("iam")
-    role_name = "strands-mesh-iot-action-role"
+def _ensure_iot_action_role(iam: Any, account: BootstrappedAccount) -> str:
+    """The role IoT Rules assume to write to DynamoDB.
+
+    Takes the IAM client from the caller so it inherits the bootstrap
+    session's profile/credentials (see :func:`bootstrap_account`); building a
+    fresh default-chain client here would create the role in the wrong
+    account when a non-default ``profile`` was requested.
+    """
+    role_name = IOT_ACTION_ROLE
     try:
         return iam.get_role(RoleName=role_name)["Role"]["Arn"]
     except iam.exceptions.NoSuchEntityException:
@@ -795,7 +811,9 @@ def _grant_iot_invoke_provisioning_hook(lam: Any, hook_arn: str, account: Bootst
         account.skipped.append("lambda-permission:provisioning-hook-invoke")
 
 
-def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount, *, hook_lambda_arn: str = "") -> str:
+def _ensure_provisioning_template(
+    iot: Any, iam: Any, account: BootstrappedAccount, *, hook_lambda_arn: str = ""
+) -> str:
     """Fleet Provisioning template - claim cert → real cert + attach robot policy.
 
     F-19 / B-13: a ``PreProvisioningHook`` is wired so a leaked claim cert
@@ -813,7 +831,7 @@ def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount, *, hoo
     except iot.exceptions.ResourceNotFoundException:
         pass
 
-    role_arn = _ensure_provisioning_role(account)
+    role_arn = _ensure_provisioning_role(iam, account)
     body = {
         "Parameters": {
             "ThingName": {"Type": "String"},
@@ -877,10 +895,12 @@ def _ensure_provisioning_template(iot: Any, account: BootstrappedAccount, *, hoo
     return f"arn:aws:iot:{account.region}:{account.account_id}:provisioningtemplate/{name}"
 
 
-def _ensure_provisioning_role(account: BootstrappedAccount) -> str:
-    """The role AWS IoT Fleet Provisioning assumes during registration."""
-    boto3 = _require_boto3()
-    iam = boto3.client("iam")
+def _ensure_provisioning_role(iam: Any, account: BootstrappedAccount) -> str:
+    """The role AWS IoT Fleet Provisioning assumes during registration.
+
+    Takes the IAM client from the caller so it inherits the bootstrap
+    session's profile/credentials (see :func:`bootstrap_account`).
+    """
     name = PROVISIONING_ROLE
     try:
         return iam.get_role(RoleName=name)["Role"]["Arn"]
@@ -963,6 +983,10 @@ def bootstrap_account(
         )
 
     boto3 = _require_boto3()
+    # A single session carries the requested profile to EVERY client below.
+    # ``boto3`` (the module) is the implicit default session; only wrap it in
+    # an explicit Session when a profile is requested so the no-profile path
+    # keeps using the default credential chain unchanged.
     session = boto3.Session(profile_name=profile) if profile else boto3
     sts = session.client("sts", region_name=region)
     account_id = sts.get_caller_identity()["Account"]
@@ -977,30 +1001,34 @@ def bootstrap_account(
     if dry_run:
         import sys
 
+        # Built from the same name constants the create-path uses, so the
+        # preview always matches what is actually provisioned (no phantom
+        # Thing Type / Policy, correct table / log-group / rule / role names).
         print(
             f"[dry_run] Would create strands-mesh fleet resources in "
             f"account {account_id}, region {sts.meta.region_name}:\n"
-            f"  - IoT Thing Type: strands-mesh-robot\n"
-            f"  - IoT Policy: strands-mesh-robot-policy\n"
-            f"  - IAM Role: strands-mesh-estop-lambda-role\n"
-            f"  - Lambda: strands-mesh-estop\n"
-            f"  - DynamoDB Table: strands-mesh-fleet\n"
-            f"  - CloudWatch Log Group: /strands/mesh\n"
-            f"  - IoT Topic Rule: strands_mesh_audit\n"
-            f"  - IAM Role: strands-mesh-provisioning-hook-role\n"
-            f"  - Lambda: strands-mesh-provisioning-hook (Fleet Provisioning gate)\n"
-            f"  - IoT Fleet Provisioning Template: strands-mesh-fleet-provisioning\n"
+            f"  - CloudWatch Log Group: {LOG_GROUP_NAME}\n"
+            f"  - DynamoDB Table: {SAFETY_TABLE_NAME}\n"
+            f"  - IAM Role: {ESTOP_LAMBDA_ROLE}\n"
+            f"  - Lambda: {ESTOP_LAMBDA_NAME}\n"
+            f"  - IAM Role: {IOT_ACTION_ROLE}\n"
+            f"  - IoT Topic Rule: {RULE_SAFETY_TO_DYNAMODB}\n"
+            f"  - IoT Topic Rule: {RULE_ESTOP_FANOUT}\n"
+            f"  - IAM Role: {PROVISIONING_HOOK_ROLE}\n"
+            f"  - Lambda: {PROVISIONING_HOOK_LAMBDA_NAME} (Fleet Provisioning gate)\n"
+            f"  - IAM Role: {PROVISIONING_ROLE}\n"
+            f"  - IoT Fleet Provisioning Template: {PROVISIONING_TEMPLATE}\n"
             f"\nPass dry_run=False, confirm=True to create.",
             file=sys.stderr,
         )
         return BootstrappedAccount(region=sts.meta.region_name, account_id=account_id)
     region = sts.meta.region_name
 
-    iot = boto3.client("iot", region_name=region)
-    iam = boto3.client("iam")
-    lam = boto3.client("lambda", region_name=region)
-    ddb = boto3.client("dynamodb", region_name=region)
-    logs = boto3.client("logs", region_name=region)
+    iot = session.client("iot", region_name=region)
+    iam = session.client("iam")
+    lam = session.client("lambda", region_name=region)
+    ddb = session.client("dynamodb", region_name=region)
+    logs = session.client("logs", region_name=region)
 
     out = BootstrappedAccount(region=region, account_id=account_id)
 
@@ -1015,7 +1043,7 @@ def bootstrap_account(
     out.estop_lambda_arn = _ensure_estop_lambda(lam, role_arn, out, force_update=force_update)
 
     # IoT Rules
-    out.rule_safety_arn = _ensure_safety_to_dynamodb_rule(iot, out.safety_table_arn, out)
+    out.rule_safety_arn = _ensure_safety_to_dynamodb_rule(iot, iam, out.safety_table_arn, out)
     out.rule_estop_arn = _ensure_estop_rule(iot, out.estop_lambda_arn, out)
     _grant_iot_invoke_lambda(lam, out.estop_lambda_arn, out)
 
@@ -1028,7 +1056,7 @@ def bootstrap_account(
     out.provisioning_hook_lambda_arn = hook_arn
 
     # Fleet Provisioning template (wires the hook above)
-    out.provisioning_template_arn = _ensure_provisioning_template(iot, out, hook_lambda_arn=hook_arn)
+    out.provisioning_template_arn = _ensure_provisioning_template(iot, iam, out, hook_lambda_arn=hook_arn)
     _grant_iot_invoke_provisioning_hook(lam, hook_arn, out)
 
     logger.info(
@@ -1041,18 +1069,30 @@ def bootstrap_account(
     return out
 
 
-def teardown_account(*, region: str | None = None) -> None:
+def teardown_account(*, region: str | None = None, profile: str | None = None) -> None:
     """Best-effort reverse of :func:`bootstrap_account`. Safe to skip - every
     deletion catches NotFound silently. Tags-managed resources are removed
-    in dependency order: Rules → Lambda → Roles → DynamoDB → Logs →
+    in dependency order: Rules -> Lambdas -> Roles -> DynamoDB -> Logs ->
     Provisioning template.
+
+    Args:
+        region: AWS region (defaults to session default).
+        profile: AWS profile name. Threaded to every client so teardown acts
+            on the SAME account bootstrap provisioned under that profile - not
+            the default credential chain's account.
+
+    Deletes EVERY resource :func:`bootstrap_account` creates, including the
+    Fleet Provisioning PreProvisioningHook Lambda and its role. Leaving the
+    hook behind would strand a Lambda holding a live ``lambda:InvokeFunction``
+    grant to AWS IoT.
     """
     boto3 = _require_boto3()
-    iot = boto3.client("iot", region_name=region)
-    iam = boto3.client("iam")
-    lam = boto3.client("lambda", region_name=region)
-    ddb = boto3.client("dynamodb", region_name=region)
-    logs = boto3.client("logs", region_name=region)
+    session = boto3.Session(profile_name=profile) if profile else boto3
+    iot = session.client("iot", region_name=region)
+    iam = session.client("iam")
+    lam = session.client("lambda", region_name=region)
+    ddb = session.client("dynamodb", region_name=region)
+    logs = session.client("logs", region_name=region)
 
     for rule in (RULE_SAFETY_TO_DYNAMODB, RULE_ESTOP_FANOUT):
         try:
@@ -1061,13 +1101,20 @@ def teardown_account(*, region: str | None = None) -> None:
         except Exception as exc:
             logger.debug("[teardown] rule %s: %s", rule, exc)
 
-    try:
-        lam.delete_function(FunctionName=ESTOP_LAMBDA_NAME)
-        logger.info("[teardown] lambda %s removed", ESTOP_LAMBDA_NAME)
-    except Exception as exc:
-        logger.debug("[teardown] lambda: %s", exc)
+    # Both managed Lambdas: the E-stop fan-out AND the Fleet Provisioning hook.
+    for fn in (ESTOP_LAMBDA_NAME, PROVISIONING_HOOK_LAMBDA_NAME):
+        try:
+            lam.delete_function(FunctionName=fn)
+            logger.info("[teardown] lambda %s removed", fn)
+        except Exception as exc:
+            logger.debug("[teardown] lambda %s: %s", fn, exc)
 
-    for role in (ESTOP_LAMBDA_ROLE, "strands-mesh-iot-action-role", PROVISIONING_ROLE):
+    for role in (
+        ESTOP_LAMBDA_ROLE,
+        IOT_ACTION_ROLE,
+        PROVISIONING_ROLE,
+        PROVISIONING_HOOK_ROLE,
+    ):
         try:
             for pol in iam.list_role_policies(RoleName=role).get("PolicyNames", []):
                 iam.delete_role_policy(RoleName=role, PolicyName=pol)

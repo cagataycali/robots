@@ -56,7 +56,13 @@ class SubHandle(Protocol):
     code is transport-agnostic.
     """
 
-    def undeclare(self) -> None: ...
+    def undeclare(self) -> None:
+        """Tear down the subscription, releasing its transport resources.
+
+        Called by Mesh teardown; idempotent-safe implementations are
+        preferred. Zenoh maps this to ``Subscriber.undeclare()``; MQTT
+        backends send the broker ``unsubscribe`` packet.
+        """
 
 
 @runtime_checkable

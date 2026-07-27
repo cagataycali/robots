@@ -5,9 +5,33 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from strands_robots.simulation.base import unknown_kwargs_error
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
 
 logger = logging.getLogger(__name__)
+
+# Parameter names ``randomize`` / ``set_obs_noise`` actually honor. Both declare
+# ``**kwargs`` to match the ``**kwargs``-typed SimEngine base signature, but
+# neither forwards it anywhere - so anything landing there is a caller mistake
+# and is rejected instead of dropped (test_domain_randomization_rejects_unknown_params
+# pins these tuples to the live signatures).
+_RANDOMIZE_PARAMS: tuple[str, ...] = (
+    "randomize_colors",
+    "randomize_lighting",
+    "randomize_physics",
+    "randomize_positions",
+    "position_noise",
+    "color_range",
+    "friction_range",
+    "mass_range",
+    "seed",
+)
+_OBS_NOISE_PARAMS: tuple[str, ...] = (
+    "joint_pos_std",
+    "joint_vel_std",
+    "camera_jitter_px",
+    "seed",
+)
 
 
 class RandomizationMixin:
@@ -80,7 +104,20 @@ class RandomizationMixin:
             friction_range:       (lo, hi) multiplicative scale on friction[0].
             mass_range:           (lo, hi) multiplicative scale on body_mass.
             seed:                 Optional np.random seed for reproducibility.
+            **kwargs:             Declared only to match the ``**kwargs``-typed
+                                  ``SimEngine.randomize`` signature; nothing is
+                                  forwarded, so any keyword arriving here is
+                                  rejected with an error naming the valid
+                                  parameters. A misspelled axis (e.g.
+                                  ``randomize_position``) must not report
+                                  success while leaving that axis untouched.
+
+        Returns:
+            Status dict listing the axes applied, or an error dict when a
+            keyword is unknown, no world exists, or a policy is running.
         """
+        if err := unknown_kwargs_error("randomize", kwargs, _RANDOMIZE_PARAMS):
+            return err
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         # domain randomization mutates model arrays; a running policy racing with it is UB
@@ -211,13 +248,18 @@ class RandomizationMixin:
             camera_jitter_px: Max integer pixel shift applied to rendered
                 frames (uniform in ``[-px, px]`` per axis).
             seed: Optional seed for a reproducible noise stream.
-            **kwargs: Accepted for ``SimEngine.set_obs_noise`` signature
-                compatibility; ignored by the MuJoCo backend.
+            **kwargs: Declared only to match the ``**kwargs``-typed
+                ``SimEngine.set_obs_noise`` signature; nothing is forwarded, so
+                any keyword arriving here is rejected with an error naming the
+                valid parameters rather than reporting an all-zero (no-op) noise
+                configuration as success.
 
         Returns:
-            Status dict echoing the configured noise, or an error dict when any
-            value is negative or non-finite.
+            Status dict echoing the configured noise, or an error dict when a
+            keyword is unknown or a value is negative or non-finite.
         """
+        if err := unknown_kwargs_error("set_obs_noise", kwargs, _OBS_NOISE_PARAMS):
+            return err
         for label, value in (
             ("joint_pos_std", joint_pos_std),
             ("joint_vel_std", joint_vel_std),

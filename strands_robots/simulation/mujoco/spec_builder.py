@@ -19,16 +19,92 @@ transformation goes through MuJoCo's own AST.
 
 from __future__ import annotations
 
+import difflib
 import logging
 import os
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Final
 
 import numpy as np
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco
+from strands_robots.simulation.terrain import (
+    TERRAIN_BASE,
+    TERRAIN_RADIUS,
+    TERRAIN_RESOLUTION,
+    TERRAIN_SEED,
+    generate_heightfield,
+    terrain_elevation,
+)
 
 logger = logging.getLogger(__name__)
+
+# Accepted keys of the ``add_object(material=...)`` spec. Single source of truth
+# shared by :func:`material_spec_error` and :meth:`SpecBuilder._build_material`.
+MATERIAL_KEYS: Final[frozenset[str]] = frozenset(
+    {
+        "reflectance",
+        "specular",
+        "shininess",
+        "texrepeat",
+        "texture",
+        "builtin",
+        "rgb1",
+        "rgb2",
+        "texdim",
+    }
+)
+
+# Keys that only mean something for a procedural (``builtin``) texture.
+_BUILTIN_ONLY_KEYS: Final[tuple[str, ...]] = ("rgb1", "rgb2", "texdim")
+
+
+def material_spec_error(obj_name: str, material: Any) -> str | None:
+    """Validate an ``add_object(material=...)`` spec's shape.
+
+    Every key of the material spec is optional, so a key the builder does not
+    recognise (a typo such as ``"rgb_1"``, or a field borrowed from another
+    renderer such as ``"roughness"``) would otherwise be dropped and the
+    surface would compile with MuJoCo's glossy defaults while the call still
+    reported success. Reject those keys instead.
+
+    Args:
+        obj_name: Object name, used to make the message actionable.
+        material: The caller-supplied material spec.
+
+    Returns:
+        An error message, or ``None`` when the spec's shape is honorable.
+        Value-level checks (texture file exists, ``builtin`` name known,
+        ``texture``/``builtin`` mutually exclusive) live in
+        :meth:`SpecBuilder._build_material`.
+    """
+    accepted = ", ".join(sorted(MATERIAL_KEYS))
+    prefix = f"add_object material for {obj_name!r}: "
+    if not isinstance(material, Mapping):
+        return f"{prefix}expected a dict of material options, got {type(material).__name__}. Accepted keys: {accepted}."
+    if not material:
+        return (
+            f"{prefix}material={{}} has no effect - omit material= to keep the "
+            f"flat 'color' rgba, or set at least one of: {accepted}."
+        )
+    unknown = [key for key in material if key not in MATERIAL_KEYS]
+    if unknown:
+        described = []
+        for key in sorted(unknown, key=str):
+            close = difflib.get_close_matches(str(key).lower(), sorted(MATERIAL_KEYS), n=1, cutoff=0.7)
+            described.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
+        return f"{prefix}unknown material key(s): {', '.join(described)}. Accepted keys: {accepted}."
+    if material.get("builtin") is None:
+        orphans = [key for key in _BUILTIN_ONLY_KEYS if material.get(key) is not None]
+        if orphans:
+            return (
+                f"{prefix}{', '.join(orphans)} only colour/size a procedural "
+                "texture and are ignored without it - set builtin='checker'|'gradient'|'flat', "
+                "or drop them (an image 'texture' is coloured by the file itself, tinted by "
+                "the geom 'color' rgba)."
+            )
+    return None
 
 
 # MuJoCo geom-type enum mapping. Populated lazily on first call so module
@@ -62,16 +138,62 @@ def _geom_type(shape: str) -> int:
         raise ValueError(f"Unsupported shape {shape!r}. Supported: {supported}.") from e
 
 
+# Per-shape ``size`` contract: how many leading components the shape actually
+# consumes, plus the layout to quote back at a caller who supplied the wrong
+# count. A shape that consumes component i needs a vector of at least i + 1
+# components -- a shorter one cannot express the request at all, so it is
+# rejected instead of being padded from a backend default (which would compile
+# a differently-sized object while reporting success). ``plane`` needs only its
+# x half-width (y mirrors x when omitted); ``mesh`` takes its extent from the
+# asset and consumes nothing.
+_SIZE_LAYOUT: dict[str, tuple[int, str]] = {
+    "box": (3, "[x, y, z] full edge lengths"),
+    "ellipsoid": (3, "[x, y, z] full diameters"),
+    "sphere": (1, "[diameter]"),
+    "cylinder": (3, "[diameter, unused, full height]"),
+    "capsule": (3, "[diameter, unused, full height]"),
+    "plane": (1, "[x] or [x, y] visual half-widths"),
+    "mesh": (0, "unused - the asset's own units define the extent"),
+}
+
+# ``SimObject.size`` is a 3-vector, and every shape above consumes at most its
+# first three components, so a longer vector carries values no shape can honor.
+_MAX_SIZE_COMPONENTS = 3
+
+
 def _validate_size(shape: str, size: list[float]) -> str | None:
-    """Return an error message if ``size`` has a non-positive meaningful extent.
+    """Return an error message if ``size`` cannot be honored for ``shape``.
 
     ``size`` follows the full-extent convention used by
     :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.add_object`
-    (meters along each axis, halved internally to MuJoCo's half-extents). Only
-    the components a given shape actually consumes are checked, so a cylinder
-    may legitimately pass ``size[1] == 0`` (it is ignored). ``mesh`` ignores
-    ``size`` entirely. Returns ``None`` when the size is acceptable.
+    (meters along each axis, halved internally to MuJoCo's half-extents). Two
+    classes are rejected:
+
+    * A **component count** the shape cannot consume -- fewer components than
+      :data:`_SIZE_LAYOUT` requires (a box needs all three), or more than three
+      (nothing consumes a fourth). A short vector used to be replaced wholesale
+      by a hardcoded default, so ``size=[0.5]`` on a box compiled a 10 cm cube
+      while the call reported success and echoed the requested ``[0.5]``.
+    * A **non-positive** value in a component the shape consumes. Only consumed
+      components are checked, so a cylinder may legitimately pass
+      ``size[1] == 0`` (it is ignored).
+
+    Returns ``None`` when the size is acceptable.
     """
+    required, layout = _SIZE_LAYOUT.get(shape, (0, ""))
+    if len(size) > _MAX_SIZE_COMPONENTS:
+        return (
+            f"add_object: 'size' takes at most {_MAX_SIZE_COMPONENTS} components, got "
+            f"{len(size)} (size={list(size)}). 'size' is the full extent in meters "
+            "along each axis (not MuJoCo's half-extent)."
+        )
+    if len(size) < required:
+        return (
+            f"add_object: {shape} needs {required} 'size' component(s) {layout}, got "
+            f"{len(size)} (size={list(size)}). 'size' is the full extent in meters "
+            "along each axis (not MuJoCo's half-extent); pass every component the "
+            "shape consumes rather than a partial vector."
+        )
     if shape == "mesh":
         return None
     if shape in ("box", "ellipsoid"):
@@ -86,8 +208,6 @@ def _validate_size(shape: str, size: list[float]) -> str | None:
         # Unknown shapes are rejected by _geom_type; nothing to validate here.
         return None
     for idx, axis in used:
-        if idx >= len(size):
-            continue
         if size[idx] <= 0:
             return (
                 f"add_object: {shape} {axis} extent must be > 0, got "
@@ -110,31 +230,31 @@ def _normalize_size(shape: str, size: list[float]) -> list[float]:
     * ``plane``:     ``[hx, hy, grid_spacing]`` (hx/hy are half-sizes)
     * ``mesh``:      ``[]``            (mesh asset dictates extent; size ignored)
 
-    ``SimObject.size`` is always 3 floats. Box/ellipsoid use all 3 as full
-    extents, sphere uses ``size[0]`` as diameter (MuJoCo halves it to radius),
-    cylinder/capsule use ``size[0]`` as diameter and ``size[2]`` as full height
-    (both halved). Plane is the one exception: ``size[0]``/``size[1]`` are
-    passed through unchanged as MuJoCo's visual half-widths (a plane is
-    infinite for collision, so only its rendered grid extent matters).
+    Box/ellipsoid use all 3 components as full extents, sphere uses ``size[0]``
+    as diameter (MuJoCo halves it to radius), cylinder/capsule use ``size[0]``
+    as diameter and ``size[2]`` as full height (both halved). Plane is the one
+    exception: ``size[0]``/``size[1]`` are passed through unchanged as MuJoCo's
+    visual half-widths (a plane is infinite for collision, so only its rendered
+    grid extent matters) and ``size[1]`` mirrors ``size[0]`` when omitted.
+
+    Raises:
+        ValueError: When :func:`_validate_size` rejects ``size`` -- too few
+            components for the shape to consume, more than three, or a
+            non-positive consumed extent. Every component this function reads
+            is guaranteed present by that check, so a partial vector is never
+            silently completed from a default.
     """
     if (msg := _validate_size(shape, size)) is not None:
         raise ValueError(msg)
-    if shape == "box":
-        sx, sy, sz = size if len(size) >= 3 else (0.1, 0.1, 0.1)
-        return [sx / 2, sy / 2, sz / 2]
+    if shape in ("box", "ellipsoid"):
+        return [size[0] / 2, size[1] / 2, size[2] / 2]
     if shape == "sphere":
         # Legacy builder used size[0]/2 as radius - preserve that.
-        radius = size[0] / 2 if size else 0.025
-        return [radius, 0.0, 0.0]
+        return [size[0] / 2, 0.0, 0.0]
     if shape in ("cylinder", "capsule"):
-        radius = size[0] / 2 if size else 0.025
-        half_h = size[2] / 2 if len(size) > 2 else 0.05
-        return [radius, half_h, 0.0]
-    if shape == "ellipsoid":
-        sx, sy, sz = size if len(size) >= 3 else (0.05, 0.05, 0.05)
-        return [sx / 2, sy / 2, sz / 2]
+        return [size[0] / 2, size[2] / 2, 0.0]
     if shape == "plane":
-        sx = size[0] if size else 1.0
+        sx = size[0]
         sy = size[1] if len(size) > 1 else sx
         return [sx, sy, 0.01]
     if shape == "mesh":
@@ -311,16 +431,44 @@ class SpecBuilder:
         )
         main_light.type = mujoco.mjtLightType.mjLIGHT_DIRECTIONAL
 
-        # Ground plane.
+        # Ground. A rough-terrain heightfield (``create_world(terrain=...)``)
+        # replaces the flat plane so a locomotion policy walks over bumps; both
+        # share the checker material and the "ground" geom name so downstream
+        # ground-plane detection (attach_robot floor-strip) and any name lookup
+        # are terrain-agnostic. The hfield surface spans z in
+        # [0, terrain_elevation(difficulty)] on a solid base slab -> flush with z=0 at its
+        # lowest point (no hole under the robot), same +/-5 m footprint as the
+        # flat plane so the reachable workspace is unchanged.
         if world.ground_plane:
-            spec.worldbody.add_geom(
-                name="ground",
-                type=mujoco.mjtGeom.mjGEOM_PLANE,
-                size=[5.0, 5.0, 0.01],
-                material="grid_mat",
-                conaffinity=1,
-                condim=3,
-            )
+            if world.terrain:
+                heights = generate_heightfield(world.terrain, resolution=TERRAIN_RESOLUTION, seed=TERRAIN_SEED)
+                # difficulty scales the hfield PEAK elevation (kind-agnostic): the
+                # normalized [0, 1] heights are the same, only the metre scale changes.
+                elevation = terrain_elevation(world.terrain_difficulty)
+                spec.add_hfield(
+                    name="terrain_hfield",
+                    size=[TERRAIN_RADIUS, TERRAIN_RADIUS, elevation, TERRAIN_BASE],
+                    nrow=TERRAIN_RESOLUTION,
+                    ncol=TERRAIN_RESOLUTION,
+                    userdata=heights,
+                )
+                spec.worldbody.add_geom(
+                    name="ground",
+                    type=mujoco.mjtGeom.mjGEOM_HFIELD,
+                    hfieldname="terrain_hfield",
+                    material="grid_mat",
+                    conaffinity=1,
+                    condim=3,
+                )
+            else:
+                spec.worldbody.add_geom(
+                    name="ground",
+                    type=mujoco.mjtGeom.mjGEOM_PLANE,
+                    size=[5.0, 5.0, 0.01],
+                    material="grid_mat",
+                    conaffinity=1,
+                    condim=3,
+                )
 
         # Cameras. Skip cameras that were discovered inside a robot's URDF -
         # they'll come back automatically via ``spec.attach(robot_spec)``.
@@ -378,38 +526,56 @@ class SpecBuilder:
         # leaves an orphan body behind.
         material_name = SpecBuilder._build_material(spec, obj) if obj.material is not None else None
 
-        body = spec.worldbody.add_body(
-            name=obj.name,
-            pos=list(obj.position),
-            quat=list(obj.orientation),
-        )
+        # ``add_body(name=...)`` raises ``repeated name`` on a collision with an
+        # existing scene body BUT still inserts the duplicate, and the steps
+        # after it (the geom type lookup, ``add_geom``) can raise as well. Any
+        # raise in this block must undo only what THIS call inserted, then
+        # re-raise so the caller reports the real reason. Deleting by name
+        # (``spec.body(name)`` / :meth:`remove_body`) is unsafe on the collision
+        # path: that accessor resolves the ORIGINAL body present at the last
+        # compile, so it would delete the pre-existing healthy body and leave
+        # the empty orphan holding its name - a silent scene corruption. Instead
+        # record how many bodies already carry this name and, on failure, delete
+        # only the surplus this call produced (the orphan is appended, so it is
+        # the tail of that run). This can never touch a body it did not create.
+        pre_count = sum(1 for b in spec.bodies if b.name == obj.name)
+        try:
+            body = spec.worldbody.add_body(
+                name=obj.name,
+                pos=list(obj.position),
+                quat=list(obj.orientation),
+            )
 
-        if not obj.is_static:
-            body.add_freejoint(name=f"{obj.name}_joint")
-            body.mass = float(obj.mass)
-            body.inertia = [0.001, 0.001, 0.001]
-            body.ipos = [0.0, 0.0, 0.0]
-            body.explicitinertial = True
+            if not obj.is_static:
+                body.add_freejoint(name=f"{obj.name}_joint")
+                body.mass = float(obj.mass)
+                body.inertia = [0.001, 0.001, 0.001]
+                body.ipos = [0.0, 0.0, 0.0]
+                body.explicitinertial = True
 
-        geom_kwargs: dict[str, Any] = {
-            "name": f"{obj.name}_geom",
-            "type": _geom_type(obj.shape),
-            "rgba": list(obj.color),
-            "condim": 3,
-        }
-        if obj.shape == "mesh":
-            geom_kwargs["meshname"] = f"mesh_{obj.name}"
-        else:
-            geom_kwargs["size"] = _normalize_size(obj.shape, list(obj.size))
+            geom_kwargs: dict[str, Any] = {
+                "name": f"{obj.name}_geom",
+                "type": _geom_type(obj.shape),
+                "rgba": list(obj.color),
+                "condim": 3,
+            }
+            if obj.shape == "mesh":
+                geom_kwargs["meshname"] = f"mesh_{obj.name}"
+            else:
+                geom_kwargs["size"] = _normalize_size(obj.shape, list(obj.size))
 
-        # Legacy code only set explicit friction on boxes; preserve parity.
-        if obj.shape == "box":
-            geom_kwargs["friction"] = [1.0, 0.5, 0.001]
+            # Legacy code only set explicit friction on boxes; preserve parity.
+            if obj.shape == "box":
+                geom_kwargs["friction"] = [1.0, 0.5, 0.001]
 
-        if material_name is not None:
-            geom_kwargs["material"] = material_name
+            if material_name is not None:
+                geom_kwargs["material"] = material_name
 
-        body.add_geom(**geom_kwargs)
+            body.add_geom(**geom_kwargs)
+        except (ValueError, RuntimeError):
+            for surplus in [b for b in spec.bodies if b.name == obj.name][pre_count:]:
+                spec.delete(surplus)
+            raise
 
     # material build
     @staticmethod
@@ -432,14 +598,18 @@ class SpecBuilder:
               texture, coloured by ``rgb1`` / ``rgb2`` (each ``[r, g, b]``)
               and sized ``texdim`` (default 512) per side.
 
-        Fails loudly (``ValueError``) on a missing texture file, an unknown
-        ``builtin`` name, or both ``texture`` and ``builtin`` set -- there is
-        no silent fallback to the flat-plastic default. The geom keeps its
-        ``rgba`` (which tints an image/solid material), so callers can still
-        colour a procedural/solid surface via ``color=``.
+        Fails loudly (``ValueError``) on a key outside :data:`MATERIAL_KEYS`,
+        an empty spec, ``rgb1``/``rgb2``/``texdim`` without ``builtin``, a
+        missing texture file, an unknown ``builtin`` name, or both ``texture``
+        and ``builtin`` set -- there is no silent fallback to the flat-plastic
+        default. The geom keeps its ``rgba`` (which tints an image/solid
+        material), so callers can still colour a procedural/solid surface via
+        ``color=``.
         """
+        if (shape_err := material_spec_error(obj.name, obj.material)) is not None:
+            raise ValueError(shape_err)
         mujoco = _ensure_mujoco()
-        mat_spec = obj.material or {}
+        mat_spec: Mapping[str, Any] = obj.material or {}
         mat_name = f"{obj.name}_mat"
         tex_name = f"{obj.name}_tex"
 
@@ -582,15 +752,31 @@ class SpecBuilder:
         Returns ``True`` if the body existed and was removed, ``False``
         otherwise (to match the legacy scene_ops API).
 
+        ``spec.body(name)`` only resolves bodies that existed at the last
+        ``compile()``/``recompile()``, so a body added since then - including
+        one this class inserted moments ago, before the validating recompile -
+        is invisible to it and enumerated only by ``spec.bodies``. Both lookups
+        are therefore tried: without the enumeration fallback a rollback of a
+        just-added body silently removed nothing, leaving an orphan that made
+        every later recompile fail on the duplicate name. This mirrors
+        :func:`~strands_robots.simulation.mujoco.scene_ops._find_body` and the
+        parent-body lookup in :meth:`add_camera`.
+
         Note: this removes ONLY the body; any actuators/sensors referencing
         its joints must be cleaned up separately via :meth:`remove_refs_by_prefix`.
         That's only needed for robots - for plain object bodies there are
         no actuators/sensors tied to them.
         """
+        body = None
         try:
             body = spec.body(name)
         except (KeyError, ValueError):
-            return False
+            body = None
+        if body is None:
+            for candidate in getattr(spec, "bodies", ()):
+                if candidate.name == name:
+                    body = candidate
+                    break
         if body is None:
             return False
         spec.delete(body)
@@ -672,7 +858,7 @@ class SpecBuilder:
         # ``create_world(ground_plane=...)``) is the single source of truth;
         # robots contribute only their own bodies/joints/actuators. See #320.
         #
-        # Three guards from the #360 review (#363):
+        # Three guards keep this strip safe:
         #   1. Conditional strip -- only remove the robot's floor when the world
         #      actually owns a ground plane to replace it. Under
         #      ``create_world(ground_plane=False)`` the world has no ground, so
@@ -683,7 +869,9 @@ class SpecBuilder:
         #      angled/elevated plane, e.g. a ramp or wall, which must survive).
         #   3. Debug log -- record which geoms were stripped so a disappearing
         #      (or surviving) robot floor is diagnosable.
-        world_has_ground = any(g.type == mujoco.mjtGeom.mjGEOM_PLANE for g in scene_spec.geoms)
+        world_has_ground = any(
+            g.type in (mujoco.mjtGeom.mjGEOM_PLANE, mujoco.mjtGeom.mjGEOM_HFIELD) for g in scene_spec.geoms
+        )
         stripped: list[str] = []
         if world_has_ground:
             for plane in [
@@ -758,9 +946,4 @@ def _is_z0_ground_plane(geom: Any) -> bool:
 
 __all__ = [
     "SpecBuilder",
-    "_is_z0_ground_plane",
-    "_geom_type",
-    "_normalize_size",
-    "_validate_size",
-    "_target_quat",
 ]

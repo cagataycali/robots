@@ -202,3 +202,147 @@ def test_no_torch_or_torchvision_uv_override() -> None:
         "torch/torchvision uv overrides must stay removed (they compensated for "
         f"lerobot 0.5.1 and conflict with lerobot 0.6's torch 2.11): {offenders}"
     )
+
+
+# ---------------------------------------------------------------------------
+# ruff minor-cap invariant.
+#
+# ruff is a <1.0 tool, so per the dependency-bound convention it must be capped
+# at the minor (`>=X.Y,<X.(Y+1)`), the same way lerobot is (`>=0.5.0,<0.6.0`).
+# It regressed to a `<1.0.0` (major) cap, which admitted ruff 0.16.0. That
+# release made python-code-block formatting inside Markdown a stable default,
+# so `ruff format --check strands_robots tests tests_integ` began reformatting
+# pre-existing docs and turned CI red with no source change. Capping the minor
+# makes the CI lint toolchain deterministic: a formatter minor bump is adopted
+# deliberately (by raising the cap), never silently.
+
+
+def _ruff_requirements() -> list[Requirement]:
+    """Every declared ``ruff`` requirement across the pyproject lint surfaces.
+
+    Covers the ``dev`` extra and the ``[tool.hatch.envs.default]`` deps -- the
+    two places the lint/format toolchain is pinned. Both feed CI, so both must
+    stay minor-capped and in lockstep.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    specs: list[str] = list(data["project"]["optional-dependencies"]["dev"])
+    specs += list(data["tool"]["hatch"]["envs"]["default"]["dependencies"])
+    reqs = [Requirement(s) for s in specs if Requirement(s).name == "ruff"]
+    assert reqs, "no `ruff` requirement found in pyproject"
+    return reqs
+
+
+def test_ruff_is_minor_capped() -> None:
+    """ruff must be minor-capped so a formatter minor bump cannot silently break CI.
+
+    ruff 0.16.0 turned Markdown code-block formatting into a default, which
+    reformatted pre-existing docs under ``ruff format --check`` and reddened CI
+    with no code change. A ``<1.0.0`` (major) cap let that minor slip in; the
+    convention for a ``<1.0`` dep is to cap the minor.
+    """
+    for req in _ruff_requirements():
+        assert Version("0.16.0") not in req.specifier, (
+            f"ruff must be minor-capped below 0.16.0 (its Markdown-format default "
+            f"reddened CI with no source change); got {req.specifier}"
+        )
+        assert Version("0.15.12") in req.specifier, (
+            f"ruff bound must still admit the validated 0.15.x line; got {req.specifier}"
+        )
+
+
+def test_ruff_bound_is_consistent_across_pyproject() -> None:
+    """The ruff bound must be identical in every declaration so they never drift."""
+    specs = {str(req.specifier) for req in _ruff_requirements()}
+    assert len(specs) == 1, f"ruff bound must be identical across pyproject, got {specs}"
+
+
+# ---------------------------------------------------------------------------
+# Phantom `==` version-pin guard + the vera-sim / lerobot-0.6 fork invariant.
+#
+# `robomimic==0.5.0` was pinned in the [vera-sim] extra, but robomimic's highest
+# PyPI release is 0.3.0 -- v0.5.0 exists only as an ARISE-Initiative GitHub tag.
+# The pin was thus unresolvable forever (it wedged `uv lock`, freezing uv.lock at
+# a months-old lerobot 0.5.1 resolution and hiding vla_jepa/molmoact2/lerobot.rl)
+# AND a dependency-confusion vector (whoever publishes robomimic 0.5.0 to PyPI
+# gets installed). A phantom `==` version differs from a nonexistent NAME, so the
+# name-existence audit missed it; check_pinned_versions_exist closes that gap.
+#
+# Separately, [vera-sim] pins gymnasium==0.29.1, mutually exclusive with
+# lerobot>=0.6.0 (gymnasium>=1.1.1). uv resolves all extras jointly, so absent a
+# fork declaration that pin drags the WHOLE resolution below lerobot 0.6. The
+# [tool.uv].conflicts entries fork vera-sim away from the lerobot-0.6 extras.
+
+
+def test_pinned_version_check_flags_phantom_version():
+    """A `name==X` pin whose version is absent from PyPI must be flagged."""
+    findings = audit_deps.check_pinned_versions_exist(
+        {"robomimic": "robomimic==0.5.0"},
+        version_fetcher=lambda _name: {"0.1.0", "0.2.0", "0.3.0"},
+    )
+    assert any("PHANTOM VERSION" in f and "0.5.0" in f for f in findings), findings
+
+
+def test_pinned_version_check_passes_for_existing_version():
+    """An exact pin to a real release must not be flagged."""
+    findings = audit_deps.check_pinned_versions_exist(
+        {"robosuite": "robosuite==1.4.1"},
+        version_fetcher=lambda _name: {"1.4.0", "1.4.1"},
+    )
+    assert findings == [], findings
+
+
+def test_pinned_version_check_ignores_ranges_and_inconclusive():
+    """Range specifiers and inconclusive (None) fetches must never fire."""
+    # A range pin is not an exact `==`, so it is not a phantom-version candidate.
+    assert (
+        audit_deps.check_pinned_versions_exist(
+            {"lerobot": "lerobot[feetech,dataset]>=0.6.0,<0.7.0"},
+            version_fetcher=lambda _name: {"0.6.0"},
+        )
+        == []
+    )
+    # A None fetch (network flakiness) must be treated as inconclusive, not a
+    # failure, so the audit never reddens the build on a transient error.
+    assert (
+        audit_deps.check_pinned_versions_exist(
+            {"robomimic": "robomimic==0.5.0"},
+            version_fetcher=lambda _name: None,
+        )
+        == []
+    )
+
+
+def test_vera_sim_has_no_phantom_robomimic_pin():
+    """The live [vera-sim] extra must not pin robomimic (a phantom `==` version).
+
+    robomimic must be a source install (documented in the extra), never a PyPI
+    pin, so the unresolvable/confusion-prone `robomimic==0.5.0` cannot return.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    vera_sim = data["project"]["optional-dependencies"]["vera-sim"]
+    offenders = [spec for spec in vera_sim if Requirement(spec).name == "robomimic"]
+    assert offenders == [], f"robomimic must not be a PyPI pin in [vera-sim]: {offenders}"
+
+
+def test_vera_sim_is_forked_away_from_lerobot06_extras():
+    """[tool.uv].conflicts must fork [vera-sim] from the lerobot-0.6 extras.
+
+    [vera-sim]'s gymnasium==0.29.1 is mutually exclusive with lerobot>=0.6.0
+    (gymnasium>=1.1.1). Without a conflict declaration uv resolves all extras
+    jointly and that single pin drags the whole lock below lerobot 0.6 (the
+    regression that froze uv.lock at lerobot 0.5.1). Each lerobot-0.6 extra must
+    be declared as conflicting with vera-sim so uv forks the resolution instead.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    conflicts = data.get("tool", {}).get("uv", {}).get("conflicts", [])
+    forked = set()
+    for pair in conflicts:
+        extras = {member.get("extra") for member in pair}
+        if "vera-sim" in extras:
+            forked |= extras - {"vera-sim"}
+    for extra in ("lerobot", "lerobot-async", "molmoact2", "all"):
+        assert extra in forked, (
+            f"[tool.uv].conflicts must fork vera-sim from the '{extra}' extra so "
+            f"its gymnasium 0.29 pin cannot drag the lock below lerobot 0.6; "
+            f"forked pairs found: {sorted(forked)}"
+        )

@@ -189,7 +189,7 @@ def test_missing_single_file_weights_stays_passthrough(monkeypatch, tmp_path):
     """
     import strands_robots.policies.lerobot_local.processor as proc
 
-    monkeypatch.setattr(proc, "_load_checkpoint_state_dict", lambda _path: None)
+    monkeypatch.setattr(proc, "_load_checkpoint_state_dict", lambda _path, revision=None: None)
 
     pre, post = ProcessorBridge._load_in_model_normalization_fallback(
         str(tmp_path), policy_config=_act_config(), device="cpu"

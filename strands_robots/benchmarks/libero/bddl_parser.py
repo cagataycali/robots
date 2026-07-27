@@ -31,7 +31,7 @@ Scope of this parser (matches what LIBERO actually uses):
 * Top-level form: ``(define (problem <name>) ...)``
 * Section markers: ``:domain``, ``:objects``, ``:init``, ``:goal``, ``:language``
 * Boolean combinators: ``and``, ``or``, ``not``
-* Predicate vocabulary: ``on``, ``near``, ``inside``, ``open``, ``closed``,
+* Predicate vocabulary: ``on``, ``near``, ``in``, ``open``, ``closed``,
   ``grasped``, ``upright``
 
 Everything else is either dropped silently (typed-object annotations like
@@ -73,16 +73,22 @@ class Pred:
 
 @dataclass(frozen=True)
 class And:
+    """Conjunction: holds only when every clause in ``clauses`` holds."""
+
     clauses: tuple[Node, ...]
 
 
 @dataclass(frozen=True)
 class Or:
+    """Disjunction: holds when at least one clause in ``clauses`` holds."""
+
     clauses: tuple[Node, ...]
 
 
 @dataclass(frozen=True)
 class Not:
+    """Negation: holds when the single ``clause`` does not hold."""
+
     clause: Node
 
 
@@ -216,9 +222,9 @@ def _near_kwargs(args: list[str]) -> dict[str, Any]:
     return {"body_a": args[0], "body_b": args[1], "threshold": 0.1}
 
 
-def _inside_kwargs(args: list[str]) -> dict[str, Any]:
+def _in_kwargs(args: list[str]) -> dict[str, Any]:
     if len(args) != 2:
-        raise BDDLParseError(f"(inside ...) expects 2 args, got {len(args)}: {args}")
+        raise BDDLParseError(f"(in ...) expects 2 args, got {len(args)}: {args}")
     return {"body": args[0], "container": args[1]}
 
 
@@ -256,7 +262,7 @@ def _upright_kwargs(args: list[str]) -> dict[str, Any]:
 PREDICATE_VOCABULARY: dict[str, tuple[str, Callable[[list[str]], dict[str, Any]]]] = {
     "on": ("body_on", _on_kwargs),
     "near": ("distance_less_than", _near_kwargs),
-    "inside": ("body_inside", _inside_kwargs),
+    "in": ("body_inside", _in_kwargs),
     "open": ("joint_above", _open_kwargs),
     "closed": ("joint_below", _closed_kwargs),
     "grasped": ("grasped", _grasped_kwargs),

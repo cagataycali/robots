@@ -27,7 +27,10 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.simulation.recording import DatasetRecordingMixin
+from strands_robots.simulation.recording import (
+    DatasetRecordingMixin,
+    dataset_recording_option_error,
+)
 
 if TYPE_CHECKING:
     from strands_robots.simulation.models import SimWorld
@@ -83,7 +86,10 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         Args:
             repo_id: HuggingFace dataset id (``owner/name``) or a local path.
             task: Default task description recorded with every frame.
-            fps: Recording frame rate.
+            fps: Recording frame rate. Must be a positive whole number;
+                a rate no dataset can be written at is rejected up front. When
+                an existing dataset is RESUMED (``overwrite=False``) it must
+                equal that dataset's on-disk rate, which a resume cannot change.
             root: Explicit on-disk dataset directory (overrides the repo_id
                 cache-path resolution).
             push_to_hub: Publish to the Hub at ``stop_recording``.
@@ -110,6 +116,15 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+
+        # Reject an fps no dataset can be written at before creating or
+        # resuming the recorder: an unusable rate was reported as success and
+        # then cost the caller the whole episode (see
+        # dataset_recording_option_error). Checked ahead of the lerobot-extra
+        # probe so the same caller mistake reports the same way regardless of
+        # which optional extras this install has.
+        if error := dataset_recording_option_error("start_recording", fps):
+            return error
 
         _DatasetRecorder: Any = None
         _has_lerobot = False
@@ -238,7 +253,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             if resume_existing:
                 logger.info("Resuming existing dataset for append: %s", dataset_dir)
                 resumed = _DatasetRecorder.resume(repo_id=repo_id, root=root, task=task, vcodec=vcodec)
-                self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims)
+                self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, fps=fps)
                 world._backend_state["dataset_recorder"] = resumed
             else:
                 world._backend_state["dataset_recorder"] = _DatasetRecorder.create(
@@ -293,11 +308,19 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         joint_names: list[str] = []
         robot_type = "unknown"
         multi_robot = len(world.robots) > 1
+        free_base = getattr(self, "_robot_free_base_joint", {})
         for rname, robot in world.robots.items():
+            # Exclude the floating base's free joint from the scalar joint
+            # schema: its 6-DoF state is recorded as the structured base_*
+            # columns below and get_observation no longer emits it as a scalar,
+            # so a floating_base_joint scalar column would be dead/degenerate.
+            # Mirrors get_observation / get_robot_state.
+            free_short = free_base.get(rname)
+            scalar_jn = [jn for jn in robot.joint_names if jn != free_short]
             if multi_robot:
-                joint_names.extend(f"{rname}__{jn}" for jn in robot.joint_names)
+                joint_names.extend(f"{rname}__{jn}" for jn in scalar_jn)
             else:
-                joint_names.extend(robot.joint_names)
+                joint_names.extend(scalar_jn)
             robot_type = robot.data_config or rname
 
         camera_keys: list[str] = []

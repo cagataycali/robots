@@ -31,7 +31,7 @@ import os
 import sys
 import threading
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
@@ -53,6 +53,8 @@ from strands_robots.utils import require_optional
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+
+    from strands_robots.rendering import CameraParams
 
 logger = logging.getLogger(__name__)
 
@@ -201,8 +203,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         self._joint_dof_index: dict[tuple[str, str], int] = {}
         # Short name of each robot's floating-base free joint (a humanoid's
         # named ``floating_base_joint``), when it has one. Used to surface the
-        # 6-DoF base pose/twist instead of reporting the base x-coordinate as a
-        # scalar joint value (parity with the MuJoCo backend).
+        # 6-DoF base pose/twist as the structured base_* keys and to EXCLUDE the
+        # free joint from the scalar joint state (its qpos is [xyz+quat], not a
+        # single angle) - matching get_robot_state and the MuJoCo backend.
         self._robot_free_base_joint: dict[str, str] = {}
         # Ordered full body labels per robot (rebuilt with the model).
         self._robot_body_map: dict[str, list[str]] = {}
@@ -228,6 +231,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         timestep: float | None = None,
         gravity: list[float] | None = None,
         ground_plane: bool = True,
+        terrain: str | None = None,
+        difficulty: float = 1.0,
     ) -> dict[str, Any]:
         """Create an empty Newton world.
 
@@ -236,14 +241,73 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ``default_timestep``).
             gravity: Gravity vector ``[x, y, z]`` (default ``[0, 0, -9.81]``).
             ground_plane: Whether to add a ground plane.
+            terrain: Heightfield terrain kind (e.g. ``"rough"``/``"stairs"``/``"pyramid"``/``"slope"``,
+                MuJoCo backend only). The Newton backend has no heightfield
+                ground yet, so a non-None value is rejected with an actionable
+                error.
+            difficulty: Terrain curriculum elevation scale (MuJoCo backend
+                only, alongside ``terrain``); accepted for signature parity with
+                the base contract. Since Newton has no heightfield terrain,
+                ``difficulty`` can never take effect, so a non-default
+                (``!= 1.0``) value is rejected with an actionable error (the base
+                ``create_world`` contract: reject rather than silently ignore it)
+                rather than silently having no effect.
 
         Returns:
             Status dict with a human-readable confirmation.
         """
+        if terrain is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"terrain={terrain!r} is not supported on the Newton backend "
+                            "(heightfield terrain, e.g. 'rough'/'stairs'/'pyramid'/'slope', is MuJoCo-only); use "
+                            "create_simulation(backend='mujoco') for terrain, or omit terrain "
+                            "for a flat ground plane."
+                        )
+                    }
+                ],
+            }
+        # Base create_world contract: reject a non-default difficulty with no
+        # terrain rather than silently ignoring it. On Newton difficulty is
+        # doubly inert - there is no heightfield terrain for it to scale (a
+        # non-None terrain is already rejected above) - so any != 1.0 value is
+        # meaningless here; surface that instead of a status=success no-op.
+        if float(difficulty) != 1.0:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"difficulty={difficulty!r} has no effect on the Newton backend "
+                            "(it scales a heightfield terrain's elevation, and this backend "
+                            "has no heightfield terrain); use create_simulation(backend='mujoco') "
+                            "for a terrain curriculum, or omit difficulty for a flat ground plane."
+                        )
+                    }
+                ],
+            }
+        # Same contract as set_timestep / set_gravity (and the MuJoCo backend):
+        # never build a world around a dt or gravity vector the setters would
+        # refuse. The effective timestep is validated so an unusable engine
+        # default surfaces under its own name rather than driving the solver.
+        effective_timestep = self.default_timestep if timestep is None else timestep
+        timestep_param = "default_timestep" if timestep is None else "timestep"
+        if err := self._validate_timestep(effective_timestep, "create_world", timestep_param):
+            return err
+        if gravity is None:
+            components = [0.0, 0.0, -9.81]
+        else:
+            normalized, gravity_error = self._normalize_gravity(gravity, "create_world")
+            if normalized is None:
+                return cast("dict[str, Any]", gravity_error)
+            components = normalized
         with self._lock:
             self._world = SimWorld(
-                timestep=timestep or self.default_timestep,
-                gravity=gravity or [0.0, 0.0, -9.81],
+                timestep=float(effective_timestep),
+                gravity=components,
                 ground_plane=ground_plane,
             )
             self._rebuild()
@@ -675,8 +739,18 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             joint_q = self._state_0.joint_q.numpy()
             joint_qd = self._state_0.joint_qd.numpy()
             robot_joints = self._world.robots[robot_name].joint_names
+            free_short = self._robot_free_base_joint.get(robot_name)
             obs: dict[str, Any] = {}
             for jname in robot_joints:
+                # A 6-DoF free joint (floating base) is not a scalar joint: its
+                # coordinate 0 is the base x-position, so obs[jname] =
+                # joint_q[idx] would report base-x as a joint angle (dropping the
+                # rest of the pose + twist) - a degenerate scalar and a duplicate
+                # of base_pos.x. Its full state is surfaced below as the
+                # structured base_pos/base_quat/base_lin_vel/base_ang_vel keys,
+                # matching get_robot_state and the MuJoCo backend.
+                if jname == free_short:
+                    continue
                 idx = self._joint_coord_index.get((robot_name, jname))
                 if idx is not None and idx < len(joint_q):
                     obs[jname] = float(joint_q[idx])
@@ -1029,28 +1103,16 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
 
         is_default = camera_name in (None, "", "default", "free")
-        if is_default:
-            label = "default"
-            eye = (0.6, 0.6, 0.5)
-            target = (0.0, 0.0, 0.15)
-            fov_deg = 50.0
-            w = width or self.default_width
-            h = height or self.default_height
-        else:
-            cam = self._world.cameras.get(camera_name)
-            if cam is None:
-                return {
-                    "status": "error",
-                    "content": [{"text": f"Camera '{camera_name}' not found. Available: {self.list_cameras()}"}],
-                }
-            label = camera_name
-            try:
-                eye, target = self._resolve_camera_pose(cam)
-            except ValueError as exc:
-                return {"status": "error", "content": [{"text": f"Render failed: {exc}"}]}
-            fov_deg = cam.fov
-            w = width or cam.width
-            h = height or cam.height
+        label = "default" if is_default else camera_name
+        try:
+            eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height)
+        except KeyError:
+            return {
+                "status": "error",
+                "content": [{"text": f"Camera '{camera_name}' not found. Available: {self.list_cameras()}"}],
+            }
+        except ValueError as exc:
+            return {"status": "error", "content": [{"text": f"Render failed: {exc}"}]}
 
         try:
             img = self._render_rgb(w, h, eye=eye, target=target, fov_deg=fov_deg)
@@ -1164,6 +1226,120 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         frame = rgba[0, 0] if rgba.ndim == 5 else rgba[0]
         frame = np.ascontiguousarray(frame[..., :3])
         return self._maybe_jitter_frame(frame)
+
+    def get_frame(
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+    ) -> tuple[np.ndarray, np.ndarray | None]:
+        """Render a camera to raw ``(rgb, depth)`` ndarrays.
+
+        Newton's ray-traced tiled camera has **no depth output path**, so the
+        depth element is always ``None`` -- per the raw-frame API contract
+        (issue #1537) this is explicit rather than a zero-filled buffer, and
+        depth-dependent consumers (``HybridCompositor``) raise a clear error
+        instead of silently compositing wrong pixels.
+
+        Args:
+            camera_name: ``"default"`` (or ``None``/``""``/``"free"``) for
+                the built-in three-quarter view, or a camera registered via
+                ``add_camera``.
+            width: image width; ``None`` uses the camera's configured
+                resolution (or the engine default for the built-in view).
+            height: image height; same fallback as ``width``.
+
+        Returns:
+            ``(rgb, None)`` -- ``rgb`` is ``(H, W, 3) uint8``.
+
+        Raises:
+            RuntimeError: no world created.
+            KeyError: unknown camera name.
+            ValueError: the camera's mount body is no longer in the model.
+        """
+        if self._world is None or self._model is None:
+            raise RuntimeError("No world. Call create_world first.")
+        eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height)
+        rgb = self._render_rgb(w, h, eye=eye, target=target, fov_deg=fov_deg)
+        return np.asarray(rgb, dtype=np.uint8), None
+
+    def get_camera_params(
+        self, camera_name: str = "default", width: int | None = None, height: int | None = None
+    ) -> CameraParams:
+        """Return pinhole :class:`~strands_robots.rendering.CameraParams`.
+
+        ``K`` is derived from the camera's vertical FOV with square pixels
+        and a centered principal point (the same pinhole model
+        ``_render_rgb`` traces rays with); ``T_world_cam`` is the OpenGL
+        optical frame (+X right, +Y up, -Z forward) of the camera's live
+        look-at pose (body-mounted cameras resolve against the current body
+        transform). Newton exposes no scene clip planes; the params carry a
+        conventional ``znear=0.01`` and a far plane "at infinity"
+        (``zfar=1e6``) for the background-compositing depth convention.
+
+        Args:
+            camera_name: a camera registered via ``add_camera``. The built-in
+                free view (``"default"``/``None``/``""``/``"free"``) is
+                accepted and reports the fixed default vantage.
+            width: image width to compute ``K`` for; ``None`` uses the
+                camera's configured resolution.
+            height: image height to compute ``K`` for.
+
+        Raises:
+            RuntimeError: no world created.
+            KeyError: unknown camera name.
+            ValueError: the camera's mount body is no longer in the model.
+        """
+        from strands_robots.rendering import CameraParams as _CameraParams
+
+        if self._world is None or self._model is None:
+            raise RuntimeError("No world. Call create_world first.")
+        eye, target, fov_deg, w, h = self._resolve_camera_view(camera_name, width, height)
+
+        fy = 0.5 * h / math.tan(math.radians(fov_deg) / 2.0)
+        K = np.array([[fy, 0.0, 0.5 * w], [0.0, fy, 0.5 * h], [0.0, 0.0, 1.0]], dtype=np.float64)
+
+        # Look-at basis in the OpenGL optical convention: -Z forward.
+        fwd = np.asarray(target, dtype=np.float64) - np.asarray(eye, dtype=np.float64)
+        norm = float(np.linalg.norm(fwd))
+        if norm < 1e-12:
+            raise ValueError(f"camera '{camera_name}': eye and target coincide; look-at pose is undefined")
+        fwd /= norm
+        world_up = np.array([0.0, 0.0, 1.0])
+        if abs(float(fwd @ world_up)) > 1.0 - 1e-6:
+            world_up = np.array([0.0, 1.0, 0.0])  # straight up/down view: fall back
+        right = np.cross(fwd, world_up)
+        right /= np.linalg.norm(right)
+        up = np.cross(right, fwd)
+        T = np.eye(4, dtype=np.float64)
+        T[:3, :3] = np.stack([right, up, -fwd], axis=1)
+        T[:3, 3] = np.asarray(eye, dtype=np.float64)
+        return _CameraParams(K=K, T_world_cam=T, width=w, height=h, znear=0.01, zfar=1_000_000.0)
+
+    def _resolve_camera_view(
+        self, camera_name: str | None, width: int | None, height: int | None
+    ) -> tuple[tuple[float, ...], tuple[float, ...], float, int, int]:
+        """Resolve ``(eye, target, fov_deg, width, height)`` for a camera name.
+
+        Shared by :meth:`render`, :meth:`get_frame` and
+        :meth:`get_camera_params` so all three agree on the built-in default
+        view and per-camera config fallbacks.
+
+        Raises:
+            KeyError: unknown camera name.
+            ValueError: the camera's mount body is no longer in the model.
+        """
+        if camera_name in (None, "", "default", "free"):
+            return (
+                (0.6, 0.6, 0.5),
+                (0.0, 0.0, 0.15),
+                50.0,
+                int(width or self.default_width),
+                int(height or self.default_height),
+            )
+        assert camera_name is not None  # the free-camera tokens were handled above
+        cam = self._world.cameras.get(camera_name) if self._world is not None else None
+        if cam is None:
+            raise KeyError(f"Camera '{camera_name}' not found. Available: {self.list_cameras()}")
+        eye, target = self._resolve_camera_pose(cam)
+        return eye, target, float(cam.fov), int(width or cam.width), int(height or cam.height)
 
     # Interactive viewer
 
@@ -1677,9 +1853,27 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 ),
                 "remove_object": "(name: str) -> dict  (remove a previously added object)",
                 "get_robot_state": "(robot_name: str | None = None) -> dict (per-joint position + velocity)",
+                "get_state": (
+                    "() -> dict (whole-world snapshot: sim time, step count, timestep, gravity, "
+                    "robot / object / camera / body / joint / actuator counts)"
+                ),
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
                 "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
                 "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, ...) -> dict",
+                "evaluate_benchmark": (
+                    "(benchmark_name: str, robot_name=None, policy_provider='mock', "
+                    "n_episodes=1, seed=None, video=None, ...) -> dict  (score a registered "
+                    "success/failure/dense_reward benchmark over a rollout; max_steps comes "
+                    "from the benchmark, not a parameter)"
+                ),
+                "list_benchmarks": (
+                    "() -> dict  (enumerate registered benchmarks -- names, supported robots, "
+                    "default robot, max_steps -- the source of the benchmark_name evaluate_benchmark expects)"
+                ),
+                "register_benchmark_from_file": (
+                    "(benchmark_name: str, spec_path: str) -> dict  (author a declarative "
+                    "success/failure/dense_reward benchmark spec as YAML/JSON at runtime and register it)"
+                ),
                 "list_robots_info": "() -> dict (pretty robot listing)",
                 "list_bodies": "(robot_name: str | None = None) -> dict (body labels + gripper_body)",
                 "list_objects": "() -> dict",
@@ -1711,6 +1905,16 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 "set_obs_noise": (
                     "(joint_pos_std=0.0, joint_vel_std=0.0, camera_jitter_px=0.0, seed=None) -> dict "
                     "(additive Gaussian sensor noise on observations + rendered frames)"
+                ),
+                "create_world": (
+                    "(timestep=None, gravity=None, ground_plane=True, terrain=None, "
+                    "difficulty=1.0) -> dict  (create a fresh simulation world - the "
+                    "world-lifecycle entry point that precedes add_robot / add_object; "
+                    "gravity is [gx, gy, gz], ground_plane lays a floor)"
+                ),
+                "destroy": (
+                    "() -> dict  (tear down the world and release all resources, joining "
+                    "any running background policy first; the inverse of create_world)"
                 ),
                 "reset": "() -> dict (restore baseline joint configuration)",
                 "step": "(n_steps: int = 1) -> dict",

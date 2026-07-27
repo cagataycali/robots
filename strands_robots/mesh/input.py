@@ -132,10 +132,19 @@ class InputPublisher:
 
     @property
     def topic(self) -> str:
+        """Mesh key this publisher writes to:
+        ``strands/{own_peer_id}/input/{device_name}``. A remote
+        :class:`InputReceiver` subscribes to this exact key to mirror the
+        actions locally.
+        """
         return f"strands/{self.mesh.peer_id}/input/{self.device_name}"
 
     @property
     def stats(self) -> dict[str, Any]:
+        """Live publishing counters: the target device/method, whether the
+        loop is ``running``, cumulative ``frames`` published and ``errors``
+        hit, and the achieved vs. requested rate (``hz_actual`` / ``hz_target``).
+        """
         elapsed = time.time() - self._start_time if self._start_time else 0
         return {
             "device": self.device_name,
@@ -287,10 +296,21 @@ class InputReceiver:
 
     @property
     def topic(self) -> str:
+        """Mesh key this receiver subscribes to:
+        ``strands/{source_peer_id}/input/{device_name}`` - the stream the
+        remote peer's :class:`InputPublisher` writes to.
+        """
         return f"strands/{self.source_peer_id}/input/{self.device_name}"
 
     @property
     def stats(self) -> dict[str, Any]:
+        """Live receive counters: the ``source`` peer and device, whether the
+        subscription is ``running``, ``frames_received``, ``errors``, and the
+        loss/back-pressure breakdown - out-of-order ``drops``, ``rejected``
+        frames (E-stop lockout, replay-freshness, or ACL checks), and
+        ``rate_dropped`` frames (shed to hold the apply-rate cap) -
+        plus the achieved ``hz_actual``.
+        """
         elapsed = time.time() - self._start_time if self._start_time else 0
         return {
             "source": self.source_peer_id,

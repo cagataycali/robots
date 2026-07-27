@@ -26,7 +26,7 @@ PREPROCESSOR_CONFIG = "policy_preprocessor.json"
 POSTPROCESSOR_CONFIG = "policy_postprocessor.json"
 
 
-def _load_checkpoint_state_dict(pretrained_name_or_path: str) -> dict[str, Any] | None:
+def _load_checkpoint_state_dict(pretrained_name_or_path: str, revision: str | None = None) -> dict[str, Any] | None:
     """Load a checkpoint's single-file ``model.safetensors`` state dict.
 
     Resolves a local directory first, then the HF Hub (cached). Returns ``None``
@@ -65,7 +65,7 @@ def _load_checkpoint_state_dict(pretrained_name_or_path: str) -> dict[str, Any] 
         from huggingface_hub import hf_hub_download
         from huggingface_hub.errors import HfHubHTTPError
 
-        path = hf_hub_download(pretrained_name_or_path, "model.safetensors")
+        path = hf_hub_download(pretrained_name_or_path, "model.safetensors", revision=revision)
         return load_file(path)
     except ImportError:
         return None
@@ -206,6 +206,7 @@ class ProcessorBridge:
         policy_type: str | None = None,
         norm_tag: str | None = None,
         policy_config: Any | None = None,
+        revision: str | None = None,
     ) -> "ProcessorBridge":
         """Load processor pipelines from a pretrained model.
 
@@ -226,6 +227,14 @@ class ProcessorBridge:
             policy_config: The loaded policy's ``PreTrainedConfig``. Enables the
                 in-model-normalization fallback (see Notes) for OLD-FORMAT
                 checkpoints; when None that fallback is skipped.
+            revision: Optional Hub branch/tag/commit SHA. Pins the processor
+                config JSONs, the ``norm_stats.json`` fallback, and the
+                single-file ``model.safetensors`` download to the SAME revision
+                as the policy weights. Without it a revision-pinned load would
+                silently run default-branch preprocessor/postprocessor pipelines
+                and normalization buffers against pinned weights. Degrades to an
+                unpinned load with a warning on an older lerobot pipeline loader
+                that predates the kwarg.
 
         Returns:
             ProcessorBridge instance with loaded pipelines.
@@ -272,6 +281,7 @@ class ProcessorBridge:
             overrides or {},
             device,
             kind="preprocessor",
+            revision=revision,
         )
         postprocessor = cls._load_pipeline(
             DataProcessorPipeline,
@@ -280,6 +290,7 @@ class ProcessorBridge:
             overrides or {},
             device,
             kind="postprocessor",
+            revision=revision,
         )
 
         # Fallback: a checkpoint may ship NEITHER standard pipeline config but a
@@ -288,7 +299,9 @@ class ProcessorBridge:
         # un-normalized -- the single biggest cause of off-policy arm motion on
         # such checkpoints. Build quantile/min-max/mean-std normalizers instead.
         if preprocessor is None and postprocessor is None:
-            preprocessor, postprocessor = cls._load_norm_stats_fallback(pretrained_name_or_path, norm_tag=norm_tag)
+            preprocessor, postprocessor = cls._load_norm_stats_fallback(
+                pretrained_name_or_path, norm_tag=norm_tag, revision=revision
+            )
 
         # Third fallback: an OLD-FORMAT checkpoint ships no processor configs and
         # no norm_stats.json, but carries in-model normalization buffers that
@@ -297,7 +310,7 @@ class ProcessorBridge:
         # instead of flailing on raw MEAN_STD actions. Needs the policy config.
         if preprocessor is None and postprocessor is None and policy_config is not None:
             preprocessor, postprocessor = cls._load_in_model_normalization_fallback(
-                pretrained_name_or_path, policy_config, device
+                pretrained_name_or_path, policy_config, device, revision=revision
             )
 
         return cls(
@@ -314,6 +327,7 @@ class ProcessorBridge:
         overrides: dict[str, Any],
         device: str | None,
         kind: str,
+        revision: str | None = None,
     ) -> Any | None:
         """Load one processor pipeline, reconciling a device-pinned step.
 
@@ -341,12 +355,42 @@ class ProcessorBridge:
             The loaded pipeline, or ``None`` when the checkpoint genuinely ships
             no such config.
         """
-        try:
-            pipeline = pipeline_cls.from_pretrained(
+
+        def _from_pretrained(step_overrides: dict[str, Any]) -> Any:
+            # Pin the pipeline config + normalization buffers to the same
+            # ``revision`` as the policy weights. Pass revision only when set,
+            # and degrade gracefully on an older lerobot pipeline loader whose
+            # from_pretrained predates the kwarg (mirrors the policy-side
+            # from_pretrained_kwargs guard): retry unpinned with a warning
+            # rather than crashing the load.
+            if revision:
+                try:
+                    return pipeline_cls.from_pretrained(
+                        pretrained_name_or_path,
+                        config_filename=config_filename,
+                        overrides=step_overrides,
+                        revision=revision,
+                    )
+                except TypeError as type_exc:
+                    if "revision" not in str(type_exc):
+                        raise
+                    logger.warning(
+                        "%s: installed lerobot DataProcessorPipeline.from_pretrained does not "
+                        "accept revision=; loading %s from the default branch instead of "
+                        "revision '%s'. Upgrade lerobot to pin the processor pipeline. Error: %s",
+                        kind,
+                        config_filename,
+                        revision,
+                        type_exc,
+                    )
+            return pipeline_cls.from_pretrained(
                 pretrained_name_or_path,
                 config_filename=config_filename,
-                overrides=overrides,
+                overrides=step_overrides,
             )
+
+        try:
+            pipeline = _from_pretrained(overrides)
             logger.info("Loaded %s from %s: %d steps", kind, pretrained_name_or_path, len(pipeline))
             return pipeline
         except _missing_config_errors() as exc:
@@ -365,11 +409,7 @@ class ProcessorBridge:
             ):
                 retry_overrides = {**overrides, "device_processor": {"device": device}}
                 try:
-                    pipeline = pipeline_cls.from_pretrained(
-                        pretrained_name_or_path,
-                        config_filename=config_filename,
-                        overrides=retry_overrides,
-                    )
+                    pipeline = _from_pretrained(retry_overrides)
                     logger.warning(
                         "%s ships a device-pinned 'device_processor' step that is "
                         "unavailable on this host; reconciled it onto '%s' so "
@@ -389,6 +429,7 @@ class ProcessorBridge:
     def _load_norm_stats_fallback(
         pretrained_name_or_path: str,
         norm_tag: str | None = None,
+        revision: str | None = None,
     ) -> tuple[Any | None, Any | None]:
         """Build pre/post pipelines from a ``norm_stats.json`` when present.
 
@@ -405,7 +446,7 @@ class ProcessorBridge:
         """
         from . import norm_stats as _norm_stats
 
-        payload = _norm_stats.load_norm_stats(pretrained_name_or_path)
+        payload = _norm_stats.load_norm_stats(pretrained_name_or_path, revision=revision)
         if not _norm_stats.is_norm_stats_payload(payload):
             return None, None
         assert payload is not None  # narrowed by is_norm_stats_payload
@@ -420,6 +461,7 @@ class ProcessorBridge:
         pretrained_name_or_path: str,
         policy_config: Any,
         device: str | None = None,
+        revision: str | None = None,
     ) -> tuple[Any | None, Any | None]:
         """Rebuild pre/post pipelines from OLD-FORMAT in-model normalization buffers.
 
@@ -475,7 +517,7 @@ class ProcessorBridge:
             logger.debug("In-model normalization recovery unavailable: %s", exc)
             return None, None
 
-        state_dict = _load_checkpoint_state_dict(pretrained_name_or_path)
+        state_dict = _load_checkpoint_state_dict(pretrained_name_or_path, revision=revision)
         if not state_dict:
             return None, None
         stats = extract_normalization_stats(state_dict)
@@ -676,7 +718,7 @@ class ProcessorBridge:
             return []
 
         inert: list[str] = []
-        for pipeline in (self._preprocessor, self._postprocessor):
+        for is_post_pipeline, pipeline in ((False, self._preprocessor), (True, self._postprocessor)):
             if pipeline is None:
                 continue
             for step in getattr(pipeline, "steps", []):
@@ -687,7 +729,6 @@ class ProcessorBridge:
                 norm_map = getattr(step, "norm_map", None) or {}
                 stat_keys = set((getattr(step, "stats", None) or {}).keys())
                 stat_keys |= set(getattr(step, "_tensor_stats", {}).keys())
-                is_unnormalizer = class_name == "UnnormalizerProcessorStep"
                 for key, feature in features.items():
                     ftype = getattr(feature, "type", None)
                     if ftype is None:
@@ -695,13 +736,18 @@ class ProcessorBridge:
                     mode = norm_map.get(ftype)
                     if mode is None or mode == NormalizationMode.IDENTITY:
                         continue
-                    # A NormalizerProcessorStep applies only observation features
-                    # (it skips ACTION); an UnnormalizerProcessorStep applies only
-                    # the ACTION. Mirror that so a feature the step never touches
-                    # is not falsely flagged.
-                    if is_unnormalizer and ftype != FeatureType.ACTION:
+                    # NormalizerProcessorStep and UnnormalizerProcessorStep each
+                    # process BOTH observation and action when present (lerobot
+                    # HEAD: normalize_processor.py). At inference, though, the
+                    # preprocessor transition carries only the observation
+                    # (action is None) and the postprocessor only the action, so
+                    # only the feature type matching the pipeline's transition is
+                    # actually exercised; the other type is never touched and so
+                    # cannot be silently inert here. Key off pipeline position,
+                    # not the step class, to reflect the real transition shape.
+                    if is_post_pipeline and ftype != FeatureType.ACTION:
                         continue
-                    if not is_unnormalizer and ftype == FeatureType.ACTION:
+                    if not is_post_pipeline and ftype == FeatureType.ACTION:
                         continue
                     lookup = ACTION if ftype == FeatureType.ACTION else key
                     if lookup not in stat_keys:

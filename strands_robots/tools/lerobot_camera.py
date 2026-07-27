@@ -987,7 +987,7 @@ def _create_camera(
         return OpenCVCamera(config)
 
     elif camera_type.lower() == "realsense" and REALSENSE_AVAILABLE:
-        config = RealSenseCameraConfig(serial_number=str(camera_id), fps=fps, width=width, height=height)
+        config = RealSenseCameraConfig(serial_number_or_name=str(camera_id), fps=fps, width=width, height=height)
         return RealSenseCamera(config)
 
     else:

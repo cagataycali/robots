@@ -7,6 +7,7 @@ All external dependencies (Zenoh, LeRobot, device_connect_edge, strands) are moc
 """
 
 import asyncio
+import inspect
 import json
 import os
 import sys
@@ -249,14 +250,18 @@ class TestRobotDeviceDriver(unittest.TestCase):
         robot = _make_mock_robot()
         driver = RobotDeviceDriver(robot)
         result = asyncio.run(driver.execute("pick up cube", "groot", 30.0, 0))
-        robot.start_task.assert_called_once_with("pick up cube", "groot", None, "localhost", 30.0)
+        robot.start_task.assert_called_once_with(
+            "pick up cube", policy_port=None, policy_host="localhost", policy_provider="groot", duration=30.0
+        )
         self.assertEqual(result["status"], "success")
 
     def test_execute_rpc_with_port(self):
         robot = _make_mock_robot()
         driver = RobotDeviceDriver(robot)
         asyncio.run(driver.execute("wave", "groot", 10.0, 50051))
-        robot.start_task.assert_called_once_with("wave", "groot", 50051, "localhost", 10.0)
+        robot.start_task.assert_called_once_with(
+            "wave", policy_port=50051, policy_host="localhost", policy_provider="groot", duration=10.0
+        )
 
     def test_stop_rpc(self):
         robot = _make_mock_robot()
@@ -1103,6 +1108,77 @@ class TestReachyTransport(unittest.TestCase):
         # IP should pass through unchanged
         result = resolve_host("192.168.1.1")
         self.assertEqual(result, "192.168.1.1")
+
+
+class TestRobotDriverStartTaskArgBinding(unittest.TestCase):
+    """Regression: RobotDeviceDriver.execute must bind start_task by keyword.
+
+    HardwareRobot.start_task is
+    ``(instruction, policy_port, policy_host, policy_provider, duration)``.
+    A positional call in the driver silently misroutes the arguments (provider
+    string into policy_port, port into policy_host, "localhost" into
+    policy_provider). This stub mirrors the real signature so a misorder shows
+    up as a wrong-field value instead of passing.
+    """
+
+    class _SignatureStubRobot:
+        tool_name_str = "so100"
+
+        def __init__(self) -> None:
+            self.captured: dict | None = None
+            self._task_state = FakeTaskState(status=FakeTaskStatus("idle"))
+
+        def start_task(
+            self,
+            instruction,
+            policy_port=None,
+            policy_host="localhost",
+            policy_provider="groot",
+            duration=30.0,
+            **kw,
+        ):
+            self.captured = {
+                "instruction": instruction,
+                "policy_port": policy_port,
+                "policy_host": policy_host,
+                "policy_provider": policy_provider,
+                "duration": duration,
+            }
+            return {"status": "success", "content": [{"text": "Task started"}]}
+
+    def test_execute_binds_start_task_kwargs_to_correct_fields(self):
+        robot = self._SignatureStubRobot()
+        driver = RobotDeviceDriver(robot)
+        result = asyncio.run(driver.execute("pick up cube", "mock", 12.0, 50051))
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(
+            robot.captured,
+            {
+                "instruction": "pick up cube",
+                "policy_port": 50051,
+                "policy_host": "localhost",
+                "policy_provider": "mock",
+                "duration": 12.0,
+            },
+        )
+
+    def test_execute_zero_port_becomes_none(self):
+        robot = self._SignatureStubRobot()
+        driver = RobotDeviceDriver(robot)
+        asyncio.run(driver.execute("wave", "mock", 5.0, 0))
+        assert robot.captured is not None
+        self.assertIsNone(robot.captured["policy_port"])
+        self.assertEqual(robot.captured["policy_provider"], "mock")
+
+    def test_stub_signature_matches_real_hardware_robot(self):
+        # Anti-drift: pin the stub against the production signature so a future
+        # rename/reorder of HardwareRobot.start_task is caught here rather than
+        # silently re-introducing the positional misorder.
+        from strands_robots.hardware_robot import Robot as HardwareRobot
+
+        real = list(inspect.signature(HardwareRobot.start_task).parameters)
+        stub = list(inspect.signature(self._SignatureStubRobot.start_task).parameters)
+        self.assertEqual(stub[: len(real)], real)
 
 
 if __name__ == "__main__":

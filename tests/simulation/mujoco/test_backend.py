@@ -413,6 +413,94 @@ class TestMujocoNoiseFilter:
             os.close(r_fd)
             os.close(w_fd)
 
+    def test_unreadable_capture_file_on_teardown_is_swallowed(self, monkeypatch):
+        """An OSError reading the capture tempfile at teardown yields no output.
+
+        The fd-2 capture path runs, but if the backing tempfile is closed or
+        truncated by the time the finally block replays it, ``seek``/``read``
+        raise ``OSError``. The filter must treat that as "no captured output"
+        and complete normally rather than let an I/O error propagate out of and
+        mask the protected body.
+        """
+        monkeypatch.delenv("STRANDS_ROBOTS_VERBOSE_MUJOCO", raising=False)
+        real_tempfile = backend_mod.tempfile.TemporaryFile
+
+        class _ReadFailsTempFile:
+            """Real fileno (dup2 works) but seek/read raise OSError at teardown."""
+
+            def __init__(self):
+                self._real = real_tempfile(mode="w+b")
+
+            def fileno(self):
+                return self._real.fileno()
+
+            def seek(self, *a, **k):
+                raise OSError("capture file unreadable")
+
+            def read(self, *a, **k):
+                raise OSError("capture file unreadable")
+
+            def close(self):
+                self._real.close()
+
+        monkeypatch.setattr(backend_mod.tempfile, "TemporaryFile", lambda *a, **k: _ReadFailsTempFile())
+
+        r_fd, w_fd = os.pipe()
+        saved_stderr = sys.stderr
+        sys.stderr = os.fdopen(w_fd, "w")
+        ran = False
+        try:
+            with backend_mod.filter_mujoco_attach_noise():
+                sys.stderr.write("FATAL: real error\n")
+                sys.stderr.flush()
+                ran = True
+        finally:
+            sys.stderr.close()
+            sys.stderr = saved_stderr
+            os.close(r_fd)
+        assert ran  # body executed and the block exited without raising
+
+    def test_saved_fd_double_close_on_teardown_is_swallowed(self, monkeypatch):
+        """An OSError closing the saved fd at teardown is swallowed.
+
+        Cleanup of the duped stderr fd is best-effort: during interpreter or
+        pipeline teardown the fd may already be closed, so ``os.close`` raises
+        ``OSError``. That double-close must not propagate out of the block.
+        """
+        monkeypatch.delenv("STRANDS_ROBOTS_VERBOSE_MUJOCO", raising=False)
+        recorded: dict[str, int] = {}
+        real_dup = backend_mod.os.dup
+        real_close = backend_mod.os.close
+
+        def spy_dup(fd):
+            new = real_dup(fd)
+            recorded["saved_fd"] = new
+            return new
+
+        def failing_close(fd):
+            if fd == recorded.get("saved_fd"):
+                real_close(fd)  # actually free it, then simulate a double close
+                raise OSError("saved fd already closed")
+            return real_close(fd)
+
+        monkeypatch.setattr(backend_mod.os, "dup", spy_dup)
+        monkeypatch.setattr(backend_mod.os, "close", failing_close)
+
+        r_fd, w_fd = os.pipe()
+        saved_stderr = sys.stderr
+        sys.stderr = os.fdopen(w_fd, "w")
+        ran = False
+        try:
+            with backend_mod.filter_mujoco_attach_noise():
+                sys.stderr.write("FATAL: real error\n")
+                sys.stderr.flush()
+                ran = True
+        finally:
+            sys.stderr.close()
+            sys.stderr = saved_stderr
+            os.close(r_fd)
+        assert ran  # body executed and the block exited without raising
+
 
 class TestCaptureStderrFd:
     """Contract for ``capture_stderr_fd`` - the fd-2 stderr capture helper.
@@ -489,3 +577,80 @@ class TestCaptureStderrFd:
             os.close(r_fd)
             os.close(w_fd)
         assert box[0] == "captured despite flush failure\n"
+
+    def test_unreadable_capture_file_on_teardown_yields_empty_box(self, monkeypatch):
+        """An OSError reading the capture tempfile at teardown leaves box empty.
+
+        The fd-2 capture runs, but if the backing tempfile is unreadable by
+        teardown (closed/truncated), ``seek``/``read`` raise ``OSError``. The
+        helper must degrade to an empty box and still restore fd 2 rather than
+        propagate the I/O error out of the block.
+        """
+        real_tempfile = backend_mod.tempfile.TemporaryFile
+
+        class _ReadFailsTempFile:
+            def __init__(self):
+                self._real = real_tempfile(mode="w+b")
+
+            def fileno(self):
+                return self._real.fileno()
+
+            def seek(self, *a, **k):
+                raise OSError("capture file unreadable")
+
+            def read(self, *a, **k):
+                raise OSError("capture file unreadable")
+
+            def close(self):
+                self._real.close()
+
+        monkeypatch.setattr(backend_mod.tempfile, "TemporaryFile", lambda *a, **k: _ReadFailsTempFile())
+
+        r_fd, w_fd = os.pipe()
+        saved_stderr = sys.stderr
+        sys.stderr = os.fdopen(w_fd, "w")
+        try:
+            with backend_mod.capture_stderr_fd() as box:
+                os.write(sys.stderr.fileno(), b"lost to unreadable capture\n")
+        finally:
+            sys.stderr.close()
+            sys.stderr = saved_stderr
+            os.close(r_fd)
+        assert box == [""]
+
+    def test_saved_fd_double_close_on_teardown_is_swallowed(self, monkeypatch):
+        """An OSError closing the saved fd at teardown is swallowed.
+
+        Cleanup of the duped fd is best-effort; a double close during teardown
+        raises ``OSError`` which the helper must absorb while still exposing the
+        captured text.
+        """
+        recorded: dict[str, int] = {}
+        real_dup = backend_mod.os.dup
+        real_close = backend_mod.os.close
+
+        def spy_dup(fd):
+            new = real_dup(fd)
+            recorded["saved_fd"] = new
+            return new
+
+        def failing_close(fd):
+            if fd == recorded.get("saved_fd"):
+                real_close(fd)
+                raise OSError("saved fd already closed")
+            return real_close(fd)
+
+        monkeypatch.setattr(backend_mod.os, "dup", spy_dup)
+        monkeypatch.setattr(backend_mod.os, "close", failing_close)
+
+        r_fd, w_fd = os.pipe()
+        saved_stderr = sys.stderr
+        sys.stderr = os.fdopen(w_fd, "w")
+        try:
+            with backend_mod.capture_stderr_fd() as box:
+                os.write(sys.stderr.fileno(), b"captured despite double close\n")
+        finally:
+            sys.stderr.close()
+            sys.stderr = saved_stderr
+            os.close(r_fd)
+        assert box[0] == "captured despite double close\n"

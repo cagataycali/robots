@@ -641,6 +641,27 @@ class TestVideoPassthrough:
         assert "video must be a dict" in result["content"][0]["text"]
         assert sim.run_policy_calls == []
 
+    def test_rejects_unknown_video_key_before_recording_starts(self, tmp_path: Path) -> None:
+        """A mistyped option must be caught before any dataset is opened.
+
+        The tool starts a recording before the episode loop, so deferring the
+        check to the first forwarded ``run_policy`` call would leave a dataset
+        on disk and N failed episodes behind a caller mistake that costs
+        nothing to detect up front.
+        """
+        sim = _FakeSim()
+        result = run_policy(
+            sim,
+            n_episodes=1,
+            n_steps=4,
+            dataset_root=str(tmp_path / "ds"),
+            video={"filename": str(tmp_path / "rollout.mp4")},
+        )
+        assert result["status"] == "error"
+        assert "unknown key 'filename'" in result["content"][0]["text"]
+        assert sim.run_policy_calls == []
+        assert sim.start_recording_calls == []
+
     def test_video_paths_reports_only_existing_files(self, tmp_path: Path) -> None:
         sim = _FakeSim()
         # _FakeSim never actually writes an MP4, so video_paths must be empty
@@ -661,3 +682,112 @@ class TestVideoPassthrough:
         # Dict without a usable path is forwarded (facade treats it as "off").
         assert sim.run_policy_calls[0]["video"] == {"fps": 30}
         assert result["content"][1]["json"]["video_paths"] == []
+
+
+# --------------------------------------------------------------------------
+# Success-payload content contract
+# --------------------------------------------------------------------------
+
+
+class TestSuccessPayloadContentShape:
+    """Pin the two-part ``content`` contract of a successful rollout.
+
+    A successful ``run_policy`` result carries EXACTLY two content parts: a
+    human-readable ``{"text": summary}`` followed by a machine-readable
+    ``{"json": payload}`` whose keys downstream verifiers parse (episode /
+    frame counts, warnings, dataset root). Locking this shape guards against
+    a regression to a single ``{"text": ...}`` payload, which would strand the
+    parquet-truth fields the fabrication guard depends on.
+    """
+
+    def test_success_content_is_text_then_json(self) -> None:
+        sim = _FakeSim()
+        result = run_policy(sim, n_episodes=2, n_steps=5, dataset_root=None)
+
+        assert result["status"] == "success"
+        content = result["content"]
+        assert len(content) == 2, "success payload must be [text, json], not a single text part"
+
+        assert set(content[0]) == {"text"}
+        assert isinstance(content[0]["text"], str) and content[0]["text"].strip()
+
+        assert set(content[1]) == {"json"}
+        payload = content[1]["json"]
+        assert isinstance(payload, dict)
+        # The parquet-truth / accounting keys a verifier reads off the payload.
+        for key in (
+            "n_episodes_requested",
+            "n_episodes_actual",
+            "n_frames_actual",
+            "n_episodes_ok",
+            "dataset_root",
+            "warnings",
+            "episodes",
+        ):
+            assert key in payload, f"success payload missing contract key {key!r}"
+
+
+class TestStopWhenPassThrough:
+    """The ``stop_when`` early-return clause (#1644) on the tool wrapper.
+
+    The wrapper forwards the dict verbatim to every per-episode
+    ``Simulation.run_policy`` call (no silent kwarg drop) and validates it
+    against the closed predicate registry BEFORE any recording is started, so
+    an unknown predicate never leaves an empty dataset behind.
+    """
+
+    def test_stop_when_forwarded_to_every_episode(self) -> None:
+        sim = _FakeSim()
+        clause = {"predicate": "body_above_z", "body": "cube", "z": 0.2}
+        result = run_policy(sim, n_episodes=3, n_steps=5, dataset_root=None, stop_when=clause)
+
+        assert result["status"] == "success"
+        assert len(sim.run_policy_calls) == 3
+        for call in sim.run_policy_calls:
+            assert call["stop_when"] == clause
+
+    def test_default_none_forwards_none(self) -> None:
+        sim = _FakeSim()
+        run_policy(sim, n_episodes=1, n_steps=5, dataset_root=None)
+        assert sim.run_policy_calls[0]["stop_when"] is None
+
+    def test_unknown_predicate_rejected_before_recording_starts(self, tmp_path: Path) -> None:
+        sim = _FakeSim()
+        result = run_policy(
+            sim,
+            n_episodes=1,
+            n_steps=5,
+            dataset_root=str(tmp_path / "ds"),
+            stop_when={"predicate": "levitated", "body": "cube"},
+        )
+
+        assert result["status"] == "error"
+        assert "Unknown predicate" in result["content"][0]["text"]
+        # Fail-early contract: nothing was set up, nothing ran.
+        assert sim.start_recording_calls == []
+        assert sim.run_policy_calls == []
+
+    def test_episode_records_surface_stopped_reason(self) -> None:
+        class _ReasonSim(_FakeSim):
+            def run_policy(self, **kwargs: Any) -> dict[str, Any]:
+                self.run_policy_calls.append(kwargs)
+                return {
+                    "status": "success",
+                    "content": [
+                        {"text": "rollout"},
+                        {"json": {"stopped_reason": "predicate", "steps_used": 7}},
+                    ],
+                }
+
+        sim = _ReasonSim()
+        result = run_policy(
+            sim,
+            n_episodes=1,
+            n_steps=50,
+            dataset_root=None,
+            stop_when={"predicate": "body_above_z", "body": "cube", "z": 0.2},
+        )
+        assert result["status"] == "success"
+        episodes = result["content"][1]["json"]["episodes"]
+        assert episodes[0]["stopped_reason"] == "predicate"
+        assert episodes[0]["steps_used"] == 7

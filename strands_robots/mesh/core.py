@@ -35,6 +35,7 @@ from strands_robots.mesh.session import (
     put,
     release_session,
     update_peer,
+    zenoh_error_types,
 )
 from strands_robots.mesh.session import (
     get_peers as _session_get_peers,
@@ -65,8 +66,7 @@ def _parse_positive_float_env(name: str, default: str, *, minimum: float = 0.0) 
 
     Catches the case where an operator sets ``STRANDS_MESH_RESUME_FRESHNESS_S=abc``
     or a negative value. The module would otherwise fail to import with an opaque
-    ``ValueError`` (found by running the module under bad env locally; see
-    ``test_resume_env_validation.py``).
+    ``ValueError`` (found by running the module under bad env locally).
     """
     raw = os.getenv(name, default)
     try:
@@ -498,7 +498,7 @@ class Mesh(SensorLoopsMixin):
             "    - Sharing a trusted lab network?  Set "
             "STRANDS_MESH_ACCEPT_PERMISSIVE_ACL=1 to accept this posture.\n"
             "    - Production?  Point STRANDS_MESH_ACL_FILE at a role-separated "
-            "ACL (see examples/mesh_acl_example.json5).\n"
+            "ACL (see examples/mesh/mesh_acl_example.json5).\n"
             "    - Don't need the mesh?  It is OFF by default now -- just drop "
             "mesh=True (or set STRANDS_MESH=false).",
             self.peer_id,
@@ -616,19 +616,17 @@ class Mesh(SensorLoopsMixin):
                 # task.
                 declared.append(session.declare_subscriber("strands/safety/estop", self._on_safety_estop))
                 declared.append(session.declare_subscriber("strands/safety/resume", self._on_safety_resume))
-            except (RuntimeError, OSError) as exc:
-                # narrow the lifecycle cleanup catch from bare ``Exception``
-                # to the tuple Zenoh's ``declare_subscriber`` actually raises
-                # (``ZError`` is a subclass of ``RuntimeError``; transport-layer
-                # failures surface as ``OSError``). This mirrors the wire-handler
-                # tuple established earlier for ``_on_cmd`` / ``_on_safety_estop``
-                # so programmer errors (``TypeError``, ``AttributeError``,
-                # ``MemoryError``) on the partial-failure cleanup path surface
-                # in tests rather than being silently swallowed.
+            except zenoh_error_types() as exc:
+                # ``zenoh_error_types()`` names the transport-side failures a
+                # ``declare_subscriber`` realistically raises -- including
+                # ``zenoh.ZError`` (an ``Exception`` subclass, NOT a
+                # ``RuntimeError``) -- while still letting programmer errors
+                # (``TypeError`` / ``AttributeError`` / ``MemoryError``) surface
+                # instead of being silently swallowed on this cleanup path.
                 for sub in declared:
                     try:
                         sub.undeclare()
-                    except (RuntimeError, OSError):
+                    except zenoh_error_types():
                         # Best-effort cleanup; an undeclare failure here
                         # cannot recover the parent failure that put us in
                         # this branch and surfacing it would mask the
@@ -714,8 +712,11 @@ class Mesh(SensorLoopsMixin):
         for sub in subs_to_drop:
             try:
                 sub.undeclare()
-            except Exception:
-                pass
+            except zenoh_error_types():
+                # Best-effort teardown; a Zenoh undeclare failure here cannot
+                # recover state (we are already stopping) and a programmer
+                # error must still surface rather than be swallowed.
+                logger.debug("[mesh] %s: subscriber undeclare failed during stop()", self.peer_id)
 
         # Undeclare any safety publishers we lazily declared so the
         # underlying Zenoh entity is released cleanly when the
@@ -729,7 +730,7 @@ class Mesh(SensorLoopsMixin):
         for pub in pubs_to_drop:
             try:
                 pub.undeclare()
-            except (RuntimeError, OSError):
+            except zenoh_error_types():
                 logger.debug(
                     "[mesh] %s: safety publisher undeclare failed during stop()",
                     self.peer_id,
@@ -749,10 +750,19 @@ class Mesh(SensorLoopsMixin):
 
     @property
     def alive(self) -> bool:
+        """``True`` while this peer is joined to the mesh (between
+        :meth:`join` and :meth:`leave`); ``False`` once it has left.
+        """
         return self._running
 
     @property
     def peers(self) -> list[dict[str, Any]]:
+        """Presence dicts for every *other* peer currently on the mesh.
+
+        Excludes this peer itself. Discovery is asynchronous, so the list
+        grows as presence beacons arrive. Use :attr:`peers_by_id` for O(1)
+        lookup by ``peer_id`` or :meth:`get_peer` for a ``None``-safe fetch.
+        """
         return [p for p in _session_get_peers() if p.get("peer_id") != self.peer_id]
 
     @property
@@ -898,7 +908,6 @@ class Mesh(SensorLoopsMixin):
             # Clauses Must Be Narrow". Same tuple as the four other
             # wire-input handlers (_on_cmd, _on_response,
             # _on_safety_estop, _on_safety_resume).
-            # Pin: tests/mesh/test_wire_handler_narrow_except.py
             return
         if not isinstance(data, dict):
             return
@@ -1641,12 +1650,33 @@ class Mesh(SensorLoopsMixin):
                     duration=duration,
                     extra=extra,
                 )
+            # Bind by keyword: the hardware entry points are
+            # (instruction, policy_port, policy_host, policy_provider, duration).
+            # A positional call would misroute the provider into policy_port,
+            # the port into policy_host, and the allowlist-checked policy_host
+            # into policy_provider -- defeating the host guard above.
             if action == "execute" and hasattr(r, "_execute_task_sync"):
                 return dict(
-                    r._execute_task_sync(instruction, policy_provider, policy_port, policy_host, duration, **extra)
+                    r._execute_task_sync(
+                        instruction,
+                        policy_port=policy_port,
+                        policy_host=policy_host,
+                        policy_provider=policy_provider,
+                        duration=duration,
+                        **extra,
+                    )
                 )
             if action == "start" and hasattr(r, "start_task"):
-                return dict(r.start_task(instruction, policy_provider, policy_port, policy_host, duration, **extra))
+                return dict(
+                    r.start_task(
+                        instruction,
+                        policy_port=policy_port,
+                        policy_host=policy_host,
+                        policy_provider=policy_provider,
+                        duration=duration,
+                        **extra,
+                    )
+                )
         if action == "step" and hasattr(r, "step"):
             return dict(r.step(cmd.get("steps", 1)))
         if action == "reset" and hasattr(r, "reset"):
@@ -1853,7 +1883,7 @@ class Mesh(SensorLoopsMixin):
 
         Wire authentication (mTLS + ACL) admits this handler. **When the
         operator supplies an ``STRANDS_MESH_ACL_FILE`` with role
-        separation (template at ``examples/mesh_acl_example.json5``),
+        separation (template at ``examples/mesh/mesh_acl_example.json5``),
         only peers in the ``operator_peer`` subject can publish on
         ``safety/**``.** The default ACL shipped by ``default_acl()`` is
         permissive (CHANGELOG.md Section 8 -- "any CA-signed peer may
@@ -2669,8 +2699,14 @@ class Mesh(SensorLoopsMixin):
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
         try:
             self.publish("strands/broadcast", msg)
-            event.wait(timeout=timeout)
-            time.sleep(0.3)
+            # A broadcast has no single expected responder, so collect acks for
+            # the FULL window. ``event`` fires on the FIRST response
+            # (``event.set()`` in ``_on_response``); waiting on it returned
+            # ~0.3s after ack #1 and systematically under-reported the fleet --
+            # an operator could not distinguish "1 of 12 stopped" from "all
+            # stopped". Wait on the shutdown event instead so the window is
+            # honoured in full yet still interruptible when the mesh is closing.
+            self._stop_event.wait(timeout=timeout)
         finally:
             with self._rpc_lock:
                 resps = self._responses.pop(turn, [])
@@ -3047,15 +3083,24 @@ class Mesh(SensorLoopsMixin):
         # ``source_zid`` is absent (bridge / IoT). Bound as a
         # deterministic JSON blob (sort_keys, no whitespace) so issuer
         # and receiver compute the same digest byte-for-byte.
-        local_zid = self._local_session_zid()
+        # Decide the publish path BEFORE computing the proof. ``_safety_wire_zid``
+        # returns the wire ``source_zid`` only when the Zenoh-native path will
+        # actually carry it; on the fallback ``put()`` path (which strips
+        # ``source_zid`` from the body) it returns ``None``. Binding the MAC to
+        # ``_local_session_zid()`` while the envelope is later published on the
+        # fallback path made every receiver recompute the proof over a byte
+        # string that lacked ``source_zid`` -- so remote lockout resume never
+        # verified and the fleet stayed e-stopped. Binding to the exact wire
+        # form the receiver will see keeps issuer and receiver in agreement.
+        wire_zid = self._safety_wire_zid("strands/safety/resume")
         mac_fields: dict[str, Any] = {
             "peer_id": self.peer_id,
             "t": envelope_t,
             "lockout_elapsed_s": elapsed,
             "proof_nonce": proof_nonce,
         }
-        if local_zid is not None:
-            mac_fields["source_zid"] = local_zid
+        if wire_zid is not None:
+            mac_fields["source_zid"] = wire_zid
         mac_input = json.dumps(
             mac_fields,
             sort_keys=True,
@@ -3073,8 +3118,8 @@ class Mesh(SensorLoopsMixin):
             "proof_nonce": proof_nonce,
             "override_proof": override_proof,
         }
-        if local_zid is not None:
-            envelope["source_zid"] = local_zid
+        if wire_zid is not None:
+            envelope["source_zid"] = wire_zid
         self._publish_safety_envelope("strands/safety/resume", envelope)
         logger.warning("[safety] %s: resume after %.1fs lockout", self.peer_id, elapsed)
         # success is also generic on the wire; the local audit
@@ -3126,6 +3171,41 @@ class Mesh(SensorLoopsMixin):
             return None
         zid_str = str(zid)
         return zid_str or None
+
+    def _safety_wire_zid(self, key: str) -> str | None:
+        """Return the wire ``source_zid`` a safety envelope on *key* will carry.
+
+        Returns the local Zenoh session ZID only when the full native
+        publish path is ready (session open, publisher declarable, and the
+        ``zenoh.SourceInfo`` constructor present). Returns ``None`` when the
+        SourceInfo-less fallback ``put()`` path -- which strips ``source_zid``
+        from the body -- will be taken instead.
+
+        This is the single decision point an issuer must consult BEFORE
+        binding ``source_zid`` into an HMAC (the resume override proof) so the
+        proof is computed over the exact body form that reaches the wire. If
+        the proof is bound to :meth:`_local_session_zid` but the envelope is
+        then published on the fallback path, every receiver recomputes the MAC
+        over a byte string that lacks ``source_zid`` and the proof never
+        verifies -- leaving the fleet stuck in lockout.
+
+        A runtime ``publisher.put`` failure after this returns a zid still
+        degrades to the stripped fallback; for a resume that means the proof
+        will not verify and the peer stays locked out -- the fail-safe
+        direction. See :meth:`_publish_safety_envelope`.
+        """
+        local_zid = self._local_session_zid()
+        if local_zid is None:
+            return None
+        if self._safety_publisher_for(key) is None:
+            return None
+        try:
+            import zenoh
+        except ImportError:
+            return None
+        if not hasattr(zenoh, "SourceInfo"):
+            return None
+        return local_zid
 
     def _safety_publisher_for(self, key: str) -> Any | None:
         """Lazily declare and cache a Zenoh ``Publisher`` for *key*.
@@ -3229,7 +3309,22 @@ class Mesh(SensorLoopsMixin):
 
         In the fallback case the body-level HMAC binding still holds;
         only the additional cross-session-forge defence is omitted.
+
+        The body's ``source_zid`` presence is authoritative: a wire
+        ``SourceInfo`` is attached ONLY when the body advertises
+        ``source_zid``, so body and wire always agree at the receiver
+        (which hard-rejects a wire-present/body-absent mismatch). Issuers
+        that bind ``source_zid`` into an HMAC (the resume proof) pre-decide
+        via :meth:`_safety_wire_zid` so the body carries ``source_zid`` only
+        when the native path is ready to back it with a matching wire zid.
         """
+        if "source_zid" not in payload:
+            # No wire attribution requested (non-Zenoh transport, no open
+            # session, or an issuer that pre-decided the fallback path). Plain
+            # put keeps body and wire consistently zid-less so the receiver's
+            # transport-agnostic accept-without-zid contract holds.
+            put(key, payload)
+            return
         pub = self._safety_publisher_for(key)
         if pub is None:
             put(key, self._strip_wire_zid(payload))
