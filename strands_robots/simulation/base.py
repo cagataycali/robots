@@ -19,12 +19,13 @@ Usage::
 from __future__ import annotations
 
 import contextlib
+import difflib
 import logging
 import math
 import numbers
 import os
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, SupportsFloat, cast
 
 if TYPE_CHECKING:
@@ -285,8 +286,6 @@ class SimEngine(ABC):
         known = self.list_robots()
         msg = f"Robot '{requested}' not found."
         if known:
-            import difflib
-
             matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
             if matches:
                 msg += " Did you mean: " + ", ".join(matches) + "?"
@@ -924,7 +923,9 @@ class SimEngine(ABC):
         return duration, n_steps, None
 
     @staticmethod
-    def _validate_action_horizon(action_horizon: Any, method: str) -> dict[str, Any] | None:
+    def _validate_action_horizon(
+        action_horizon: Any, method: str, param: str = "action_horizon"
+    ) -> dict[str, Any] | None:
         """Reject a non-positive-integer ``action_horizon`` at the public API.
 
         ``action_horizon`` is how many actions are consumed from each policy
@@ -938,6 +939,10 @@ class SimEngine(ABC):
         Args:
             action_horizon: The caller-supplied value to validate.
             method: Public method name, used to prefix the error message.
+            param: Parameter label for the error message. Multi-robot drivers
+                accept a ``{robot_name: horizon}`` mapping and pass
+                ``"action_horizon['alice']"`` so the message names the entry the
+                caller got wrong rather than the whole mapping.
 
         Returns:
             An error dict naming the offending parameter, or ``None``.
@@ -945,9 +950,51 @@ class SimEngine(ABC):
         if not isinstance(action_horizon, int) or action_horizon < 1:
             return {
                 "status": "error",
-                "content": [{"text": f"{method}: action_horizon must be a positive integer, got {action_horizon!r}."}],
+                "content": [{"text": f"{method}: {param} must be a positive integer, got {action_horizon!r}."}],
             }
         return None
+
+    @staticmethod
+    def _validate_per_robot_mapping(
+        mapping: Mapping[Any, Any], driven: Iterable[str], param: str, method: str
+    ) -> dict[str, Any] | None:
+        """Reject a per-robot mapping key that names no robot in this call.
+
+        Multi-robot drivers accept ``{robot_name: value}`` overrides alongside
+        the ``policies`` mapping that names the robots being driven. Reading
+        those overrides with ``mapping.get(robot, default)`` silently discards
+        every key that does not match a driven robot, so a typo'd or stale robot
+        name left the rollout running the defaults while still reporting
+        ``status="success"`` - the caller's per-robot request was never applied
+        and nothing said so. Keys that ARE absent from the mapping keep their
+        documented default (the mapping is an override layer, so a partial map
+        is legitimate); it is the unmatched key that is a caller error.
+
+        Args:
+            mapping: The caller-supplied ``{robot_name: value}`` mapping.
+            driven: Robot names being driven in this call (the authoritative
+                key set - usually the ``policies`` mapping's keys).
+            param: Parameter name, used in the error message.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the unmatched keys, or ``None`` when every key
+            names a driven robot.
+        """
+        known = list(driven)
+        unknown = [key for key in mapping if key not in known]
+        if not unknown:
+            return None
+        text = f"{method}: {param} names {'robots' if len(unknown) > 1 else 'a robot'} not driven by this call: "
+        text += f"{unknown!r}."
+        matches: list[str] = []
+        for key in unknown:
+            if isinstance(key, str):
+                matches += [m for m in difflib.get_close_matches(key, known, n=2, cutoff=0.6) if m not in matches]
+        if matches:
+            text += " Did you mean: " + ", ".join(matches) + "?"
+        text += f" Robots driven by this call: {known} (the keys of 'policies')."
+        return {"status": "error", "content": [{"text": text}]}
 
     @staticmethod
     def _validate_positive_int(value: Any, name: str, method: str) -> dict[str, Any] | None:

@@ -532,3 +532,159 @@ class TestRunMultiPolicyHorizonGuards:
     def test_valid_horizon_still_runs(self, sim, policies):
         result = sim.run_multi_policy(policies, n_steps=2, control_frequency=50.0)
         assert result["status"] == "success", result
+
+
+class _CountingMockPolicy:
+    """MockPolicy wrapper that counts how often the policy is re-queried.
+
+    ``run_multi_policy`` buffers each ``get_actions`` chunk and only re-queries a
+    policy when its queue drains, so the call count is the observable proof that
+    the requested ``action_horizon`` was actually honored.
+    """
+
+    def __init__(self) -> None:
+        from strands_robots.policies import MockPolicy
+
+        self._inner = MockPolicy()
+        self.calls = 0
+
+    @property
+    def provider_name(self) -> str:
+        return self._inner.provider_name
+
+    @property
+    def requires_images(self) -> bool:
+        return self._inner.requires_images
+
+    def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
+        self._inner.set_robot_state_keys(robot_state_keys)
+
+    async def get_actions(self, observation_dict: dict, instruction: str, **kwargs: object) -> list[dict]:
+        self.calls += 1
+        return await self._inner.get_actions(observation_dict, instruction, **kwargs)
+
+
+@pytest.fixture
+def two_robot_sim():
+    s = create_simulation()
+    s.create_world()
+    s.add_robot("arm1", data_config="so100", position=[0.0, 0.0, 0.0])
+    s.add_robot("arm2", data_config="so100", position=[0.6, 0.0, 0.0])
+    yield s
+    s.cleanup()
+
+
+class TestRunMultiPolicyActionHorizonGuards:
+    """run_multi_policy validates action_horizon like every sibling driver.
+
+    ``run_policy`` / ``start_policy`` / ``eval_policy`` / ``evaluate_benchmark``
+    all route ``action_horizon`` through the shared positive-integer guard. The
+    multi-robot loop instead coerced it with ``max(1, int(...))``, so ``0`` / a
+    negative value silently became a 1-action horizon (the policy was re-queried
+    every step, not at the requested cadence), a float was truncated, and
+    ``nan`` / ``None`` / ``"x"`` reached ``int()`` and escaped as a bare
+    ``ValueError`` / ``TypeError`` past the structured-dict contract.
+    """
+
+    @pytest.fixture
+    def policies(self):
+        from strands_robots.policies import MockPolicy
+
+        return {"arm1": MockPolicy(), "arm2": MockPolicy()}
+
+    @pytest.mark.parametrize("bad", [0, -1, -8, 2.7, "4", None, float("nan")])
+    def test_rejects_horizon_it_cannot_honor(self, two_robot_sim, policies, bad):
+        text = _err_text(two_robot_sim.run_multi_policy(policies, n_steps=4, action_horizon=bad))
+        assert "run_multi_policy: action_horizon must be a positive integer" in text
+        text.encode("ascii")  # no non-ASCII leaks into the error path
+
+    @pytest.mark.parametrize("bad", [0, -3, 2.9, "x"])
+    def test_rejects_per_robot_horizon_it_cannot_honor(self, two_robot_sim, policies, bad):
+        text = _err_text(two_robot_sim.run_multi_policy(policies, n_steps=4, action_horizon={"arm1": bad}))
+        # The message names the offending ENTRY, not just the parameter.
+        assert "run_multi_policy: action_horizon['arm1'] must be a positive integer" in text
+
+    def test_honors_requested_requery_cadence(self, two_robot_sim):
+        # 8 steps at horizon 4 must re-query each policy twice; the same rollout
+        # at horizon 1 re-queries every step. Pre-fix action_horizon=0 was
+        # clamped to 1 and reported success, i.e. it ran THIS cadence while the
+        # caller had asked for something else entirely.
+        coarse = {"arm1": _CountingMockPolicy(), "arm2": _CountingMockPolicy()}
+        assert two_robot_sim.run_multi_policy(coarse, n_steps=8, action_horizon=4)["status"] == "success"
+        assert [p.calls for p in coarse.values()] == [2, 2]
+
+        fine = {"arm1": _CountingMockPolicy(), "arm2": _CountingMockPolicy()}
+        assert two_robot_sim.run_multi_policy(fine, n_steps=8, action_horizon=1)["status"] == "success"
+        assert [p.calls for p in fine.values()] == [8, 8]
+
+    def test_per_robot_mapping_leaves_omitted_robots_on_the_default(self, two_robot_sim):
+        # A partial mapping is an override layer: arm1 re-queries every 4 steps,
+        # arm2 keeps the default horizon of 8 and is queried once for 8 steps.
+        pols = {"arm1": _CountingMockPolicy(), "arm2": _CountingMockPolicy()}
+        result = two_robot_sim.run_multi_policy(pols, n_steps=8, action_horizon={"arm1": 4})
+        assert result["status"] == "success", result
+        assert pols["arm1"].calls == 2
+        assert pols["arm2"].calls == 1
+
+    def test_empty_mapping_runs_every_robot_on_the_default(self, two_robot_sim):
+        # {} expresses "no per-robot override", which the loop CAN honor - it is
+        # identical to omitting the argument, so it is not a caller error.
+        pols = {"arm1": _CountingMockPolicy(), "arm2": _CountingMockPolicy()}
+        result = two_robot_sim.run_multi_policy(pols, n_steps=8, action_horizon={})
+        assert result["status"] == "success", result
+        assert [p.calls for p in pols.values()] == [1, 1]
+
+
+class TestRunMultiPolicyPerRobotMappingKeys:
+    """A per-robot mapping key must name a robot this call drives.
+
+    ``instructions`` and ``action_horizon`` were both read with
+    ``mapping.get(robot, default)``, which discards every unmatched key. A typo'd
+    or stale robot name therefore ran the episode on the defaults - an empty
+    instruction, the default horizon - and still reported ``status="success"``,
+    so the caller's per-robot request vanished with no diagnostic.
+    """
+
+    @pytest.fixture
+    def policies(self):
+        from strands_robots.policies import MockPolicy
+
+        return {"arm1": MockPolicy(), "arm2": MockPolicy()}
+
+    def test_unknown_instruction_key_rejected(self, two_robot_sim, policies):
+        text = _err_text(two_robot_sim.run_multi_policy(policies, instructions={"arm11": "pick cube"}, n_steps=4))
+        assert "run_multi_policy: instructions names a robot not driven by this call" in text
+        assert "arm11" in text
+        assert "Did you mean: arm1" in text
+        assert "['arm1', 'arm2']" in text
+
+    def test_unknown_action_horizon_key_rejected(self, two_robot_sim, policies):
+        text = _err_text(two_robot_sim.run_multi_policy(policies, n_steps=4, action_horizon={"arm3": 4}))
+        assert "run_multi_policy: action_horizon names a robot not driven by this call" in text
+        assert "arm3" in text
+
+    def test_robot_in_scene_but_not_driven_is_rejected(self, two_robot_sim):
+        # arm2 exists in the world but is NOT driven by this call, so an
+        # instruction keyed to it can never be applied.
+        from strands_robots.policies import MockPolicy
+
+        text = _err_text(
+            two_robot_sim.run_multi_policy({"arm1": MockPolicy()}, instructions={"arm2": "hold"}, n_steps=4)
+        )
+        assert "instructions names a robot not driven by this call" in text
+        assert "['arm1']" in text
+
+    def test_non_mapping_instructions_rejected(self, two_robot_sim, policies):
+        # A list reached mapping.get() and escaped as a bare AttributeError.
+        text = _err_text(two_robot_sim.run_multi_policy(policies, instructions=["pick", "hold"], n_steps=4))
+        assert "run_multi_policy: 'instructions' must be a string" in text
+        assert "list" in text
+
+    def test_well_formed_per_robot_mappings_still_run(self, two_robot_sim, policies):
+        result = two_robot_sim.run_multi_policy(
+            policies,
+            instructions={"arm1": "pick cube", "arm2": "hold tray"},
+            n_steps=4,
+            action_horizon={"arm1": 2, "arm2": 4},
+        )
+        assert result["status"] == "success", result

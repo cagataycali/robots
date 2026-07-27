@@ -50,7 +50,7 @@ import os
 import re
 import threading
 import time
-from collections.abc import AsyncGenerator, Callable, Sequence
+from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -234,6 +234,11 @@ def _validate_pose_vector(method: str, param_name: str, vec: Any, expected_len: 
         return f"{method}: '{param_name}' must be a {expected_len}-element vector, got {length} ({vec!r})"
     return _validate_finite_vector(method, param_name, vec)
 
+
+# Actions consumed open-loop from each policy's chunk before it is re-queried,
+# when the caller gives no per-robot override. Single-sourced so the signature
+# default and the per-robot mapping fallback cannot drift apart.
+_DEFAULT_ACTION_HORIZON = 8
 
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
@@ -4009,7 +4014,7 @@ class MuJoCoSimEngine(
         instructions: dict[str, str] | str = "",
         duration: float = 10.0,
         control_frequency: float = 50.0,
-        action_horizon: int | dict[str, int] = 8,
+        action_horizon: int | dict[str, int] = _DEFAULT_ACTION_HORIZON,
         n_steps: int | None = None,
         max_steps: int | None = None,
     ) -> dict[str, Any]:
@@ -4036,9 +4041,12 @@ class MuJoCoSimEngine(
             policies: Mapping ``{robot_name: Policy}``. Each robot must exist in
                 the scene. Order defines the state/action column order.
             instructions: Either a single instruction string applied to all
-                robots, or a ``{robot_name: instruction}`` mapping. The frame's
-                recorded task is the first robot's instruction (LeRobot stores
-                one task per frame).
+                robots, or a ``{robot_name: instruction}`` mapping whose keys
+                must name robots driven by this call (i.e. keys of ``policies``);
+                a robot omitted from the mapping gets an empty instruction. A
+                key matching no driven robot is rejected rather than silently
+                dropped. The frame's recorded task is the first robot's
+                instruction (LeRobot stores one task per frame).
             duration: Episode length in seconds (steps = duration x freq).
                 Used only when no ``n_steps`` / ``max_steps`` is given. Must be
                 a finite positive number; a non-positive, non-finite, or
@@ -4061,7 +4069,11 @@ class MuJoCoSimEngine(
                 chunk with ``action_horizon=30`` runs inference ~once per 30
                 steps instead of every step. Physics still advances ONE step per
                 loop iteration, keeping all robots phase-aligned regardless of
-                their individual re-query cadence.
+                their individual re-query cadence. Every horizon must be a
+                positive integer - the same guard ``run_policy`` /
+                ``start_policy`` / ``eval_policy`` enforce - and mapping keys
+                must name robots driven by this call; a robot omitted from the
+                mapping uses the default horizon (8).
             n_steps: Alternate horizon in steps (overrides duration when set).
             max_steps: Legacy alias for ``n_steps``.
 
@@ -4094,11 +4106,28 @@ class MuJoCoSimEngine(
                 "content": [{"text": f"run_multi_policy: policy already running on {names}. Stop it first."}],
             }
 
-        # Normalize instructions to a per-robot mapping.
+        # Normalize instructions to a per-robot mapping. A mapping key that
+        # names no robot in this call is a caller error: read with .get(r, "")
+        # it was silently discarded, so a typo'd robot name ran the whole
+        # episode on an empty instruction and still reported success. A value
+        # that is neither a string nor a mapping reached .get() and surfaced as
+        # a bare AttributeError past the tool-envelope contract.
         if isinstance(instructions, str):
             instr_map = {r: instructions for r in policies}
-        else:
+        elif isinstance(instructions, Mapping):
+            if err := self._validate_per_robot_mapping(instructions, policies, "instructions", "run_multi_policy"):
+                return err
             instr_map = {r: instructions.get(r, "") for r in policies}
+        else:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": "run_multi_policy: 'instructions' must be a string applied to all robots or a "
+                        f"{{robot_name: instruction}} mapping, got {type(instructions).__name__}."
+                    }
+                ],
+            }
 
         # LeRobot stores ONE task string per frame. If the caller supplied
         # distinct per-robot instructions (e.g. {alice: 'pour', bob: 'catch'})
@@ -4134,12 +4163,25 @@ class MuJoCoSimEngine(
                 return err
 
         # Normalize action_horizon to a per-robot mapping. >=1 actions are
-        # consumed open-loop from each policy's chunk before re-querying.
-        if isinstance(action_horizon, dict):
-            horizon_map = {r: max(1, int(action_horizon.get(r, 8))) for r in policies}
+        # consumed open-loop from each policy's chunk before re-querying, so the
+        # value is validated through the same shared guard run_policy /
+        # start_policy / eval_policy / evaluate_benchmark use. This loop instead
+        # coerced with max(1, int(...)): 0 / -5 silently became a 1-action
+        # horizon (the caller's cadence was never run), 2.7 was truncated, and
+        # nan / None / "x" reached int() and surfaced as a bare ValueError /
+        # TypeError instead of the structured error dict the API contracts.
+        if isinstance(action_horizon, Mapping):
+            if err := self._validate_per_robot_mapping(action_horizon, policies, "action_horizon", "run_multi_policy"):
+                return err
+            for rname, value in action_horizon.items():
+                if err := self._validate_action_horizon(value, "run_multi_policy", f"action_horizon[{rname!r}]"):
+                    return err
+            # A robot omitted from the mapping keeps the signature default.
+            horizon_map = {r: int(action_horizon.get(r, _DEFAULT_ACTION_HORIZON)) for r in policies}
         else:
-            h = max(1, int(action_horizon))
-            horizon_map = {r: h for r in policies}
+            if err := self._validate_action_horizon(action_horizon, "run_multi_policy"):
+                return err
+            horizon_map = {r: int(action_horizon) for r in policies}
 
         # Bind robot_state_keys for each policy (per-robot action keys -- the
         # actuators send_action resolves, not the joints; see robot_action_keys).

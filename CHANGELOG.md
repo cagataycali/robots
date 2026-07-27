@@ -33,6 +33,41 @@ now bind that one predicate, so an unusable option is a structured error naming
 the parameter, and the two surfaces cannot drift on what a usable `fps` is.
 `width`/`height` of `None` still mean "use the camera's configured resolution".
 
+### Fixed: `run_multi_policy` validates `action_horizon` and per-robot mapping keys instead of coercing them
+
+Every other rollout driver - `run_policy`, `start_policy`, `eval_policy`,
+`evaluate_benchmark` - routes `action_horizon` through one positive-integer
+guard. The synchronized multi-robot loop instead coerced it with
+`max(1, int(action_horizon))`, so a horizon it could not honor was reported as a
+completed rollout:
+
+```python
+sim.run_multi_policy(policies, n_steps=8, action_horizon=0)
+# before: status="success" - silently ran horizon 1 (a re-query every step)
+# after:  status="error"   - "action_horizon must be a positive integer, got 0."
+```
+
+`2.7` was truncated to 2, and `nan` / `None` / `"4"` reached `int()` and escaped
+as a bare `ValueError` / `TypeError` past the structured-dict contract.
+
+The two per-robot mappings had the matching hole. `instructions` and the
+`{robot_name: horizon}` form of `action_horizon` were read with
+`mapping.get(robot, default)`, which discards every key that names no robot in
+the call, so a typo'd or stale robot name ran the episode on the defaults - an
+empty instruction, the default horizon of 8 - and still reported success:
+
+```python
+sim.run_multi_policy({"alice": p1, "bob": p2}, action_horizon={"alicee": 32})
+# before: status="success" - both arms ran the default horizon 8
+# after:  status="error"   - names the unmatched key, suggests "alice",
+#                            lists the robots this call drives
+```
+
+A robot omitted from a mapping still keeps its documented default (the mapping
+is an override layer, so a partial map - and an empty one - remains valid), and
+a per-robot horizon error names the entry (`action_horizon['alice']`) rather
+than the whole mapping. An `instructions` value that is neither a string nor a
+mapping is now a structured error instead of a bare `AttributeError`.
 
 ### Fixed: a gripper command is honored the same way whichever name the action key spells
 
