@@ -108,7 +108,7 @@ def _cameras_recording_option_error(
     :meth:`RenderingMixin.start_cameras_recording_synchronous`). Every one of
     these knobs is a frame count or a pixel count, so the accepted domain is the
     shared one the ``run_policy(video=...)`` dict already enforces
-    (:func:`~strands_robots.simulation.policy_runner.positive_whole_number_error`)
+    (:func:`~strands_robots.utils.positive_whole_number_error`)
     - a single source of truth, so the two recording surfaces cannot disagree on
     what a usable ``fps`` is.
 
@@ -131,7 +131,7 @@ def _cameras_recording_option_error(
         A structured ``{"status": "error", ...}`` dict naming the first
         offending parameter, or ``None`` when every option is usable.
     """
-    from strands_robots.simulation.policy_runner import positive_whole_number_error
+    from strands_robots.utils import positive_whole_number_error
 
     # ``width``/``height`` are ``int | None``: ``None`` means "use the camera's
     # configured resolution, else the renderer default", so it is skipped rather
