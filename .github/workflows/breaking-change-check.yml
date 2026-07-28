@@ -138,7 +138,8 @@ jobs:
               "> **Note:** This is an automated static analysis check. "
               "Some flagged changes may be intentional.",
               "> Please confirm each item is expected and, if so, add a migration "
-              "note to `CHANGELOG.md` or a deprecation notice before removal.",
+              "note as a `changelog.d/` fragment (see `changelog.d/README.md`) "
+              "or a deprecation notice before removal.",
           ]
 
           body = "\n".join(lines)
