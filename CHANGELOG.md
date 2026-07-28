@@ -5,30 +5,69 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
-### Fixed: the sim extra declares the IK solver its move_to primitive needs
+### Fixed: a live MJPEG stream refuses options it cannot honor
 
-`move_to` - the Cartesian transport primitive in the MuJoCo backend's
-agent-callable action enum - solves inverse kinematics through
-`MinkIKBridge`, i.e. through `mink` + `qpsolvers`. No extra declared either
-package, so on the advertised install the action was a dead end:
+`mjpeg_frames` is the one media entry point in `strands_robots.rendering` that
+validated nothing, while `encode_clip` beside it already refuses a frame rate it
+cannot encode at. Each of the stream's four options therefore had values that
+were accepted and then not honored:
 
 ```python
-Robot("panda", mode="sim").move_to(position=[0.4, 0.0, 0.4])
-# pip install "strands-robots[all]"
-# {"status": "error"}  move_to: IK bridge unavailable: ... No module named 'mink'
+# documented: "target frame rate; the generator sleeps to pace emission"
+list(mjpeg_frames(render, fps=0, max_frames=6))     # 6 chunks in 0.001 s
+list(mjpeg_frames(render, fps=float("inf"), ...))   # ditto: 1 / inf is 0.0 too
+list(mjpeg_frames(render, quality=500, ...))        # encoded at 100, not 500
+list(mjpeg_frames(render, max_frames=2.7))          # 3 chunks
+list(mjpeg_frames(render, size=(0, 0)))             # bare ValueError from Pillow
 ```
 
-The library documented the gap rather than closing it: the install hint read
-`uv pip install 'strands-robots[sim-mujoco]' mink` - an extra plus a package
-name no extra provides - and the dev environment installed `mink` by hand, which
-is why every IK test passed in CI while the action could not run for a user.
+`fps` of `0`, a negative, `nan` or `inf` all landed in a `frame_dt = 0.0`
+fallback that disabled pacing outright, so the generator emitted as fast as it
+could encode JPEGs - measured at ~16,000 chunks/s against a requested rate, the
+opposite of a rate limit. A non-numeric `fps` or `max_frames` leaked a bare
+`TypeError` from a comparison, `True` acted as a silent `1`, and Pillow quietly
+substituted any `quality` outside `[1, 95]`.
 
-`[sim-mujoco]` now declares `mink` and `qpsolvers`, so `[sim-mujoco]` and
-`[all]` can run `move_to`; the dev env drops its hand-installed copies and gets
-them through `features = ["all"]` like every other dependency; and the four IK
-install hints name only extras, matching the `cosmos3-sim` hint that was already
-self-sufficient. `mink` brings its own QP backend (`qpsolvers[daqp]`, the
-bridge's first preference), so no additional solver has to be chosen.
+`fps` now has to be a positive finite number (deliberately wider than
+`encode_clip`'s whole-number container rate - pacing a live view is just a sleep
+interval, so `12.5` is honorable), `quality` a whole number in `[1, 95]`,
+`max_frames` a positive whole number, and `size` a `(width, height)` pair drawn
+from the shared pixel-count domain.
+
+The refusals are raised by the `mjpeg_frames` call itself rather than from the
+generator body. A generator function runs nothing until the consumer's first
+`next()`, by which point an HTTP handler has already committed the
+`multipart/x-mixed-replace` response headers and can only truncate the stream;
+the emission loop moved into a private helper so an unusable configuration is
+reported before any of that.
+
+### Fixed: Robot() forwards the base position it was given
+
+The `Robot()` factory wraps `add_robot`, which validates a base pose up front:
+an omitted pose spawns at the origin, a NumPy pose is accepted, and a
+wrong-length / non-numeric / non-finite vector is refused with an actionable
+message. The factory read the parameter by truthiness
+(`position or [0.0, 0.0, 0.0]`), which made the wrapper both less capable and
+less safe than the method it wraps:
+
+```python
+Robot("so100", position=np.array([0.4, 0.2, 0.0]))
+# before: ValueError: truth value of an array with more than one element is ambiguous
+# after:  base at [0.4, 0.2, 0.0]   (add_robot accepted this value all along)
+
+Robot("so100", position=[])
+# before: success, base silently at [0.0, 0.0, 0.0]
+# after:  RuntimeError: add_robot: 'position' must be a 3-element vector, got 0 ([])
+```
+
+An empty vector is a caller mistake, not a request for the default, and reading
+it as "omitted" placed the robot somewhere the caller never asked for while
+reporting success - the guard that refuses it was unreachable through the
+factory. The position is now passed through verbatim, so `None` (the documented
+"spawn at the origin") stays the single source of truth for that default
+instead of a copy in the factory that can drift from the backend's.
+
+
 ### Fixed: the state and action sides agree on what a hardware observation is
 
 Detection of `'<motor>.pos'` hardware joint readings was implemented twice in the
