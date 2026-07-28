@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import difflib
 import functools
 import importlib
 import logging
@@ -24,7 +25,7 @@ import pkgutil
 import shutil
 import threading
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
@@ -96,6 +97,111 @@ _FORWARDABLE_KWARGS = (
     "max_relative_target",
     "disable_torque_on_disconnect",
 )
+
+
+# ---------------------------------------------------------------------------
+# Per-camera config construction.
+# ---------------------------------------------------------------------------
+#
+# ``Robot(..., cameras={"front": {...}})`` describes each camera with a
+# free-form dict whose keys are the fields of lerobot's camera config
+# dataclass. The accepted vocabulary is therefore derived from
+# ``dataclasses.fields()`` rather than hand-picked: a hand-picked list leaves
+# every field it forgets unreachable (no caller can set it at all) and silently
+# discards every key it does not recognise, so a typo like ``heigth=1080``
+# reports success having configured the default resolution.
+#
+# ``strands_robots`` supplies its own defaults for the three fields lerobot
+# leaves as ``None`` (meaning "whatever the device negotiates") so an
+# unconfigured camera has a predictable, documented stream. Every other field
+# keeps lerobot's own default.
+#
+# Invariant: every key here must be a field lerobot still declares. If one is
+# renamed upstream the stale key reaches ``OpenCVCameraConfig(**options)`` and
+# fails loudly for every camera rather than being silently dropped -- and the
+# test suite asserts the containment directly, so the drift is caught before a
+# release rather than at an operator's ``Robot()`` call.
+_OPENCV_CAMERA_DEFAULTS: dict[str, Any] = {"fps": 30, "width": 640, "height": 480}
+
+# ``type`` selects which camera backend to build. It is consumed by the
+# dispatch below, not forwarded to the config dataclass.
+_CAMERA_TYPE_KEY = "type"
+
+
+def _build_camera_config(camera_name: str, config: Any) -> Any:
+    """Build the lerobot camera config for one entry of a ``cameras`` dict.
+
+    Args:
+        camera_name: The key this camera was registered under. Named in every
+            error so a multi-camera rig reports which entry is at fault.
+        config: The per-camera options. Accepted keys are the declared fields
+            of lerobot's ``OpenCVCameraConfig`` plus ``type``, which selects
+            the camera backend (``opencv`` is the only one implemented).
+
+    Returns:
+        The constructed ``OpenCVCameraConfig``.
+
+    Raises:
+        ValueError: If ``config`` is not a mapping, names an unimplemented
+            camera ``type``, carries a key that is not a declared field, omits
+            a field that has no default, or holds a value lerobot's own config
+            validation refuses. An unknown key is refused rather than dropped
+            per AGENTS.md > Review Learnings (#86): a silently discarded option
+            reports success while the camera streams at the default.
+    """
+    from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
+
+    if not isinstance(config, Mapping):
+        raise ValueError(
+            f"Camera {camera_name!r} config must be a mapping of option name to value, "
+            f"got {type(config).__name__}: {config!r}."
+        )
+
+    cam_type = config.get(_CAMERA_TYPE_KEY, "opencv")
+    if cam_type != "opencv":
+        raise ValueError(f"Unsupported camera type: {cam_type}")
+
+    fields = {f.name: f for f in dataclasses.fields(OpenCVCameraConfig)}
+    accepted = sorted(set(fields) | {_CAMERA_TYPE_KEY})
+
+    unknown = sorted(set(config) - set(fields) - {_CAMERA_TYPE_KEY}, key=repr)
+    if unknown:
+        hints = []
+        for key in unknown:
+            close = difflib.get_close_matches(str(key), accepted, n=1, cutoff=0.7)
+            if close:
+                hints.append(f"{key!r} -> {close[0]!r}")
+        hint = f" Did you mean: {', '.join(hints)}?" if hints else ""
+        raise ValueError(
+            f"Unknown option(s) for camera {camera_name!r}: {unknown}.{hint} "
+            f"OpenCVCameraConfig accepts: {accepted} (where {_CAMERA_TYPE_KEY!r} selects "
+            f"the camera backend). (If this is a typo, fix it.)"
+        )
+
+    missing = sorted(
+        name
+        for name, field in fields.items()
+        if name not in config
+        and name not in _OPENCV_CAMERA_DEFAULTS
+        and field.default is dataclasses.MISSING
+        and field.default_factory is dataclasses.MISSING
+    )
+    if missing:
+        raise ValueError(
+            f"Camera {camera_name!r} is missing required option(s): {missing}. OpenCVCameraConfig accepts: {accepted}."
+        )
+
+    # strands defaults first so an explicitly configured value always wins.
+    options = {**_OPENCV_CAMERA_DEFAULTS, **{name: config[name] for name in fields if name in config}}
+    try:
+        return OpenCVCameraConfig(**options)
+    except (TypeError, ValueError) as exc:
+        # Names the camera, which lerobot's own message cannot: its
+        # ``__post_init__`` validation (e.g. a 3-character ``fourcc``) raises
+        # with no idea which entry of the ``cameras`` dict it came from.
+        raise ValueError(
+            f"Failed to construct OpenCVCameraConfig for camera {camera_name!r}: {exc}. Options: {options}"
+        ) from exc
 
 
 @functools.cache
@@ -703,36 +809,22 @@ class Robot(TeleopMixin, AgentTool):
         typos like ``prot=`` (instead of ``port=``) at config-build time
         rather than as a delayed connection failure with no kwarg in
         sight.
+
+        Each entry of ``cameras`` follows the same contract, resolved against
+        the fields of lerobot's ``OpenCVCameraConfig`` -- see
+        :func:`_build_camera_config`.
         """
         # ``lerobot`` is already a hard dep at this point (``_initialize_robot``
         # imports it eagerly). Importing the camera + config modules here is
         # cheap and the only reason it isn't at module top is that some
         # downstream packagers tree-shake unused submodules.
-        from lerobot.cameras.opencv.configuration_opencv import OpenCVCameraConfig
         from lerobot.robots.config import RobotConfig
 
         # Convert cameras to lerobot format.
         camera_configs: dict[str, Any] = {}
         if cameras:
             for name, config in cameras.items():
-                cam_type = config.get("type", "opencv")
-                if cam_type == "opencv":
-                    _cam_kwargs = dict(
-                        index_or_path=config["index_or_path"],
-                        fps=config.get("fps", 30),
-                        width=config.get("width", 640),
-                        height=config.get("height", 480),
-                        rotation=config.get("rotation", 0),
-                        color_mode=config.get("color_mode", "rgb"),
-                    )
-                    # Forward fourcc (e.g. "MJPG") when provided so high-res
-                    # cameras can hit 30fps -- many UVC cams only offer 30fps
-                    # under MJPG; the YUYV default caps at ~5fps @1080p.
-                    if config.get("fourcc") is not None:
-                        _cam_kwargs["fourcc"] = config["fourcc"]
-                    camera_configs[name] = OpenCVCameraConfig(**_cam_kwargs)
-                else:
-                    raise ValueError(f"Unsupported camera type: {cam_type}")
+                camera_configs[name] = _build_camera_config(name, config)
 
         # Trigger lerobot's lazy registration. Each robot driver registers
         # its config via @RobotConfig.register_subclass at module-import
