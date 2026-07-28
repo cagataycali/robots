@@ -511,10 +511,11 @@ class SpecBuilder:
     def add_object(spec: Any, obj: SimObject) -> None:
         """Add a ``SimObject`` to ``spec.worldbody`` in-place.
 
-        * Dynamic objects (``is_static=False``) get a freejoint + explicit
-          inertial block (diag 0.001, user-supplied mass) matching the
-          legacy builder.
-        * Static objects skip the freejoint and inertial.
+        * Dynamic objects (``is_static=False``) get a freejoint and declare
+          ``obj.mass`` on the GEOM, so MuJoCo's compiler integrates the
+          inertia tensor from the shape the caller actually asked for.
+        * Static objects skip the freejoint and the mass declaration; their
+          compiled mass comes from the geom's default density.
         * Meshes require a matching ``spec.add_mesh(...)`` to have been
           registered (usually by :meth:`build`); this method does NOT
           register mesh assets.
@@ -548,10 +549,6 @@ class SpecBuilder:
 
             if not obj.is_static:
                 body.add_freejoint(name=f"{obj.name}_joint")
-                body.mass = float(obj.mass)
-                body.inertia = [0.001, 0.001, 0.001]
-                body.ipos = [0.0, 0.0, 0.0]
-                body.explicitinertial = True
 
             geom_kwargs: dict[str, Any] = {
                 "name": f"{obj.name}_geom",
@@ -570,6 +567,33 @@ class SpecBuilder:
 
             if material_name is not None:
                 geom_kwargs["material"] = material_name
+
+            if not obj.is_static:
+                # Declare the mass on the GEOM rather than on the body. A geom
+                # mass makes MuJoCo's compiler integrate the inertia tensor
+                # over the shape the caller asked for; a body-level explicit
+                # inertial block requires an inertia tensor to be supplied with
+                # it, and there is no tensor to invent for an arbitrary shape.
+                # The constant diagonal this replaced was wrong by orders of
+                # magnitude in BOTH directions and the direction flipped with
+                # size: for a 1 cm 100 g cube 0.001 is 600x the true value, so
+                # the cube resisted rotation like a flywheel and refused to
+                # tumble or spin out of a gripper; for a 30 cm 1 kg crate it is
+                # 15x too SMALL, so the crate spun as if hollow. Translation
+                # was unaffected (``body_mass`` was right), which is exactly
+                # what kept it silent - the object fell correctly and only its
+                # rotation was wrong.
+                #
+                # Consequence worth knowing: the compiled inertia now scales
+                # with the shape, so MuJoCo's "mass and inertia of moving
+                # bodies must be larger than mjMINVAL" floor becomes
+                # shape-dependent - a mass that clears mjMINVAL itself can
+                # still integrate to an inertia below it on a small geom.
+                # ``_validate_mass`` deliberately stays a mass-only pre-check
+                # (a fixed numeric bound cannot express a shape-dependent
+                # floor); the residual case surfaces MuJoCo's own reason, which
+                # names both mass and inertia.
+                geom_kwargs["mass"] = float(obj.mass)
 
             body.add_geom(**geom_kwargs)
         except (ValueError, RuntimeError):

@@ -88,6 +88,14 @@ follower.stop_teleop("leader")
 
 `get_teleop_status()` on either side inspects current teleop state.
 
+`source_peer_id` and `device_name` are single segments of the mesh key
+expression `strands/{peer_id}/input/{device_name}`, so both must be plain
+identifiers (`[A-Za-z0-9_.-]+`, at most 128 chars). A Zenoh wildcard (`*`,
+`**`) or an embedded `/` is refused with a `ValidationError` rather than
+silently widening the stream: `source_peer_id="**"` would subscribe to
+`strands/**/input/leader` and apply joint commands from every publishing peer,
+not just the configured leader.
+
 ## Attach a mesh to a Simulation
 
 `Robot(name, mode="sim", mesh=True)` is the normal path: it resolves the

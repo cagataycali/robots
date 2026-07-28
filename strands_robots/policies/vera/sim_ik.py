@@ -39,7 +39,7 @@ def _install_hint() -> str:
     return (
         "The VERA eef-delta IK-to-MuJoCo bridge needs 'mink' + 'mujoco', which "
         "were not importable. Install the sim extra:\n"
-        "  uv pip install 'strands-robots[sim-mujoco]' mink\n"
+        "  uv pip install 'strands-robots[sim-mujoco]'\n"
         "This turns VERA's end-effector delta chunk (mimicgen/droid) into joint "
         "targets the MuJoCo arm can track. For joint_position embodiments "
         "(allegro) no IK is needed - the action maps directly to joints."
@@ -48,8 +48,8 @@ def _install_hint() -> str:
 
 _NO_BACKEND_MSG = (
     "No qpsolvers backend is installed; the VERA IK bridge needs one "
-    "(e.g. 'daqp' or 'quadprog'). Install: "
-    "uv pip install 'strands-robots[sim-mujoco]' 'qpsolvers[quadprog]'."
+    "(e.g. 'daqp' or 'quadprog'). Install the sim extra: "
+    "uv pip install 'strands-robots[sim-mujoco]'."
 )
 
 
