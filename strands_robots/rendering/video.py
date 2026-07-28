@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import io
 import logging
+import math
+import numbers
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -107,6 +109,101 @@ def encode_clip(
     return out
 
 
+# JPEG quality bounds. Pillow silently substitutes for anything outside them
+# (a quality above 100 encodes as 100, a quality below 1 encodes as 1), so an
+# out-of-range request produces a stream at a quality nobody asked for.
+_MIN_JPEG_QUALITY = 1
+_MAX_JPEG_QUALITY = 95
+
+
+def _stream_rate_error(fps: Any) -> str | None:
+    """Error text when ``fps`` is not a rate the stream can pace itself to.
+
+    The pacing loop sleeps ``1 / fps - elapsed`` between chunks, so only a
+    positive finite rate can be honored. ``0`` and any negative value both fell
+    into a ``frame_dt = 0.0`` fallback that disables pacing entirely; ``nan``
+    took the same branch (``nan > 0`` is ``False``); and ``inf`` reached it
+    through the front door, since ``1 / inf`` is also ``0.0``. In every case the
+    generator emitted as fast as it could encode - the opposite of a rate limit.
+
+    Deliberately wider than :func:`encode_clip`'s whole-number domain (see
+    :func:`~strands_robots.utils.positive_whole_number_error`): a container
+    header stores an integer frame rate, but pacing a live view is just a sleep
+    interval, so a fractional rate such as ``12.5`` is honorable here.
+
+    Args:
+        fps: The caller-supplied frame rate.
+
+    Returns:
+        An error message, or ``None`` when the rate is usable.
+    """
+    message = f"mjpeg_frames: fps must be a positive finite number, got {fps!r}."
+    if isinstance(fps, bool) or not isinstance(fps, numbers.Real):
+        return message
+    numeric = float(fps)
+    if not math.isfinite(numeric) or numeric <= 0:
+        return message
+    return None
+
+
+def _jpeg_quality_error(quality: Any) -> str | None:
+    """Error text when ``quality`` is outside the JPEG quality Pillow honors.
+
+    Only a whole number in ``[_MIN_JPEG_QUALITY, _MAX_JPEG_QUALITY]`` reaches the
+    encoder unchanged; Pillow clamps anything else, so ``quality=500`` encoded
+    identically to ``100`` and ``quality=0`` or ``-5`` identically to ``1``.
+    ``bool`` is rejected explicitly - an ``int`` subclass whose ``True`` would
+    act as a silent quality of 1.
+
+    Args:
+        quality: The caller-supplied JPEG quality.
+
+    Returns:
+        An error message, or ``None`` when the quality is usable.
+    """
+    message = (
+        f"mjpeg_frames: quality must be a whole number between {_MIN_JPEG_QUALITY} "
+        f"and {_MAX_JPEG_QUALITY}, got {quality!r}."
+    )
+    if isinstance(quality, bool) or not isinstance(quality, numbers.Real):
+        return message
+    numeric = float(quality)
+    if not math.isfinite(numeric) or numeric != int(numeric):
+        return message
+    if not _MIN_JPEG_QUALITY <= int(numeric) <= _MAX_JPEG_QUALITY:
+        return message
+    return None
+
+
+def _frame_size_error(size: Any) -> str | None:
+    """Error text when ``size`` is not a resizable ``(width, height)`` pair.
+
+    ``Image.resize`` raises straight out of the suspended generator for a
+    malformed pair (``(0, 0)`` and ``(-4, 10)`` as ``ValueError``, a 1-tuple or a
+    bare ``int`` as ``TypeError``), which surfaces mid-response rather than at
+    the call. Validate the pair up front and reuse the shared pixel-count domain
+    per component so ``size`` and the recorders' ``width``/``height`` cannot
+    diverge.
+
+    Args:
+        size: The caller-supplied ``(width, height)`` pair, or ``None``.
+
+    Returns:
+        An error message, or ``None`` when the pair is usable.
+    """
+    if size is None:
+        return None
+    message = f"mjpeg_frames: size must be a (width, height) pair of positive whole numbers, got {size!r}."
+    if isinstance(size, str | bytes | Mapping) or not (hasattr(size, "__len__") and hasattr(size, "__getitem__")):
+        return message
+    if len(size) != 2:
+        return message
+    for index, label in ((0, "size width"), (1, "size height")):
+        if text := positive_whole_number_error(size[index], label, "mjpeg_frames"):
+            return text
+    return None
+
+
 def mjpeg_frames(
     frame_fn: Callable[[], np.ndarray | None],
     fps: float = 12.0,
@@ -125,22 +222,82 @@ def mjpeg_frames(
         frame_fn: returns the current ``(H, W, 3)`` RGB frame, or ``None``
             when no frame is available yet (the generator then idles briefly
             instead of emitting a stale chunk).
-        fps: target frame rate; the generator sleeps to pace emission.
-        quality: JPEG quality (1-95).
-        size: optional ``(width, height)`` to resize frames to before
-            encoding (keeps the stream resolution stable while the source
-            camera changes).
-        max_frames: stop after this many emitted frames (``None`` = stream
-            forever until the consumer disconnects). Mostly for tests.
+        fps: target frame rate; the generator sleeps to pace emission. A
+            positive finite number of frames per second (see
+            :func:`_stream_rate_error`).
+        quality: JPEG quality, a whole number in ``[1, 95]``.
+        size: optional ``(width, height)`` of positive whole numbers to resize
+            frames to before encoding (keeps the stream resolution stable while
+            the source camera changes).
+        max_frames: stop after this many emitted frames, a positive whole number
+            (``None`` = stream forever until the consumer disconnects). Mostly
+            for tests.
         strict: when ``True``, exceptions raised by ``frame_fn`` propagate
             and terminate the stream. When ``False`` (default, the live-demo
             posture) a failed frame is logged at DEBUG and skipped so one bad
             render doesn't kill a long-lived stream.
+
+    Returns:
+        An iterator of ``multipart/x-mixed-replace`` byte chunks.
+
+    Raises:
+        ValueError: if ``fps``, ``quality``, ``size`` or ``max_frames`` names a
+            stream this generator cannot produce. Raised by this call, before
+            the first chunk exists, so a caller that has already written the
+            ``multipart`` response headers never has to abort mid-body.
+    """
+    # Validate here rather than in the generator body: a generator function
+    # runs nothing until the consumer's first ``next()``, by which point an
+    # HTTP handler has committed the response headers and can only truncate
+    # the stream. The body lives in ``_mjpeg_stream`` so these raise at the
+    # call site instead.
+    for text in (
+        _stream_rate_error(fps),
+        _jpeg_quality_error(quality),
+        _frame_size_error(size),
+        None if max_frames is None else positive_whole_number_error(max_frames, "max_frames", "mjpeg_frames"),
+    ):
+        if text:
+            raise ValueError(text)
+    return _mjpeg_stream(
+        frame_fn,
+        float(fps),
+        int(quality),
+        None if size is None else (int(size[0]), int(size[1])),
+        None if max_frames is None else int(max_frames),
+        strict,
+    )
+
+
+def _mjpeg_stream(
+    frame_fn: Callable[[], np.ndarray | None],
+    fps: float,
+    quality: int,
+    size: tuple[int, int] | None,
+    max_frames: int | None,
+    strict: bool,
+) -> Iterator[bytes]:
+    """Emit the MJPEG chunks for an already-validated stream configuration.
+
+    Separated from :func:`mjpeg_frames` only so that function can reject an
+    unusable configuration at call time; every argument here is normalised and
+    in range.
+
+    Args:
+        frame_fn: returns the current ``(H, W, 3)`` RGB frame, or ``None``.
+        fps: validated positive finite pacing rate.
+        quality: validated JPEG quality in ``[1, 95]``.
+        size: validated ``(width, height)`` pair, or ``None``.
+        max_frames: validated positive frame budget, or ``None`` for unbounded.
+        strict: whether a ``frame_fn`` failure terminates the stream.
+
+    Yields:
+        ``multipart/x-mixed-replace`` byte chunks, one per emitted frame.
     """
     from PIL import Image
 
     boundary = b"--frame\r\nContent-Type: image/jpeg\r\n\r\n"
-    frame_dt = 1.0 / float(fps) if fps > 0 else 0.0
+    frame_dt = 1.0 / fps
     emitted = 0
     try:
         while max_frames is None or emitted < max_frames:
@@ -164,7 +321,7 @@ def mjpeg_frames(
             else:
                 time.sleep(0.2)
             elapsed = time.time() - t0
-            if frame_dt and elapsed < frame_dt:
+            if elapsed < frame_dt:
                 time.sleep(frame_dt - elapsed)
     except GeneratorExit:  # client disconnected
         return
