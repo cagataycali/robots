@@ -54,6 +54,7 @@ import logging
 import math
 import os
 import re
+from collections.abc import Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -162,6 +163,29 @@ def _input_value_abs() -> float:
     :data:`MAX_INPUT_VALUE_ABS`). Re-reads env on every call so operators
     can tune the teleop safety envelope without a restart."""
     return _env_pos_float("STRANDS_MESH_INPUT_VALUE_ABS", DEFAULT_INPUT_VALUE_ABS)
+
+
+#: Default per-joint slew bound, in *frame units per second*: the fastest any
+#: single actuator may be commanded to travel by a teleop stream.
+#: :data:`MAX_INPUT_VALUE_ABS` bounds how far a command may reach and
+#: ``STRANDS_MESH_INPUT_MAX_HZ`` bounds how densely frames may arrive, but
+#: neither bounds the distance between consecutive commands for one joint, so a
+#: stream inside both caps can still command a full-scale reversal every frame
+#: (a 1.8-unit step at 50 Hz is 90 units/s). The default is the full
+#: :data:`MAX_INPUT_VALUE_ABS` envelope traversed once per second (2 * 4 * pi),
+#: roughly 4x the no-load speed of the Feetech STS3215 servos on an SO-100 class
+#: arm (~6.5 rad/s at 12 V): a physical leader arm cannot reach it, so only a
+#: synthetic stream trips it. Widen via ``STRANDS_MESH_INPUT_SLEW_ABS`` for
+#: degree-valued or normalized-percent actuators, whose units are larger.
+DEFAULT_INPUT_SLEW_ABS: float = 25.132741228718345  # 8 * pi units/second
+MAX_INPUT_SLEW_ABS: float = _env_pos_float("STRANDS_MESH_INPUT_SLEW_ABS", DEFAULT_INPUT_SLEW_ABS)
+
+
+def _input_slew_abs() -> float:
+    """Lazy resolver for ``STRANDS_MESH_INPUT_SLEW_ABS`` (see
+    :data:`MAX_INPUT_SLEW_ABS`). Re-reads env on every call so operators can
+    tune the teleop safety envelope without a restart."""
+    return _env_pos_float("STRANDS_MESH_INPUT_SLEW_ABS", DEFAULT_INPUT_SLEW_ABS)
 
 
 #: Charset for teleop input-frame keys (motor/joint names like
@@ -1182,6 +1206,148 @@ def validate_input_frame(action: Any) -> dict[str, float]:
     return out
 
 
+def input_frame_slew_violation(
+    action: dict[str, float],
+    previous: Mapping[str, tuple[float, float]],
+    now_mono: float,
+    min_interval_s: float,
+    max_slew: float | None = None,
+) -> str | None:
+    """Report why *action* commands a joint faster than the slew bound allows.
+
+    :func:`validate_input_frame` bounds each teleop frame *in isolation* - key
+    charset, finiteness, magnitude - and ``STRANDS_MESH_INPUT_MAX_HZ`` bounds how
+    densely frames may arrive. Neither bounds the distance between consecutive
+    commands for the same joint, so a stream inside both caps can still command a
+    full-scale reversal on every frame. That is the shape a replayed or synthetic
+    stream has, not one a physical leader arm can produce: the resulting
+    commanded speed exceeds the leader's own servo maximum.
+
+    The bound is a *speed*, not a per-frame step, so it is independent of the
+    publish rate and self-healing. Each joint is measured against its own last
+    applied command, so the allowance grows with the time since *that joint* last
+    moved: a stream refused because one joint jumped too far resumes on its own
+    as soon as the commanded pose is reachable at a safe speed, with no explicit
+    resync, and a joint that pauses while others move is not over-refused when it
+    starts moving again.
+
+    Args:
+        action: The sanitised frame about to be applied (post
+            :func:`validate_input_frame`).
+        previous: Per-joint baseline of the last command actually applied to the
+            robot: joint name to ``(value, applied_mono)``, as maintained by
+            :func:`merge_slew_baseline`. Per-joint entries are what make the
+            bound unbypassable by frame shape - a stream that interleaves
+            single-joint frames leaves every other joint's baseline intact
+            instead of erasing it. An empty mapping means there is no baseline
+            yet, so no speed can be computed.
+        now_mono: The monotonic instant *action* is about to be applied at, on
+            the same clock as the ``applied_mono`` stamps in *previous*.
+        min_interval_s: Floor, in seconds, on the interval charged to any one
+            joint's move: the minimum inter-apply interval the caller's rate cap
+            guarantees. Frames delivered closer together than that are shed by
+            the rate cap, and the intermediate commands of such a burst are
+            superseded before an actuator can act on them, so charging them an
+            unbounded speed would refuse a harmless batched delivery. Pass
+            ``0.0`` to charge the measured interval verbatim.
+        max_slew: Bound in frame units per second. Defaults to
+            :func:`_input_slew_abs` (``STRANDS_MESH_INPUT_SLEW_ABS``).
+
+    Returns:
+        ``None`` when every joint is within the bound, otherwise a reason naming
+        the worst-offending joint and its commanded speed. The worst offender is
+        chosen by speed, then displacement, then joint name, so the message is
+        deterministic regardless of key ordering even when several joints are
+        equally over the bound.
+    """
+    bound = _input_slew_abs() if max_slew is None else max_slew
+    if not previous:
+        return None
+
+    # (speed, displacement, interval, joint) for every joint over the bound.
+    violations: list[tuple[float, float, float, str]] = []
+    for key, value in action.items():
+        entry = previous.get(key)
+        if entry is None:
+            # A joint appearing for the first time has no prior command of its
+            # own to measure against; the magnitude bound still applies to it.
+            continue
+        prev_value, prev_mono = entry
+        delta = abs(float(value) - float(prev_value))
+        if delta == 0.0:
+            continue
+        dt_s = max(now_mono - float(prev_mono), min_interval_s)
+        speed = delta / dt_s if dt_s > 0 else math.inf
+        if speed > bound:
+            violations.append((speed, delta, dt_s, key))
+
+    if not violations:
+        return None
+    worst_speed, worst_delta, worst_dt, worst_key = max(violations, key=lambda v: (v[0], v[1], v[3]))
+    if worst_dt <= 0:
+        return (
+            f"input frame slew for {worst_key!r} out of range: moved {worst_delta:g} "
+            f"units with no elapsed time since the last applied frame "
+            f"(bound {bound:g} units/s)"
+        )
+    return (
+        f"input frame slew for {worst_key!r} out of range: {worst_speed:.1f} > {bound:g} units/s "
+        f"({worst_delta:g} units in {worst_dt:.4f}s)"
+    )
+
+
+def merge_slew_baseline(
+    previous: Mapping[str, tuple[float, float]],
+    applied: Mapping[str, float],
+    now_mono: float,
+    max_slew: float | None = None,
+    value_abs: float | None = None,
+) -> dict[str, tuple[float, float]]:
+    """Fold an applied teleop frame into the per-joint slew baseline.
+
+    The baseline :func:`input_frame_slew_violation` measures against is *merged*,
+    not replaced: a frame carrying a subset of the joints stamps only the joints
+    it commands and leaves every other joint's entry intact. Replacing it
+    wholesale would let a stream that interleaves single-joint frames erase the
+    baseline of the joint it is about to reverse, so every frame would arrive
+    with no reference and the bound would never fire.
+
+    Merging means the baseline is keyed by names the stream chooses, so it is
+    pruned to stay bounded. An entry is dropped once enough time has passed that
+    it can no longer refuse anything: the widest move any *permissible* command
+    could make from ``value`` is ``value_abs + abs(value)`` - the magnitude bound
+    caps how far a command may reach - and that displacement is within
+    ``max_slew`` once ``(value_abs + abs(value)) / max_slew`` seconds have
+    elapsed. Dropping such an entry changes no verdict, which is what makes the
+    prune safe rather than a weakening: entries only survive while they can still
+    refuse a frame, so the baseline holds at most one rate-capped window's worth
+    of joint names.
+
+    Args:
+        previous: The baseline before this apply (joint to ``(value,
+            applied_mono)``).
+        applied: The sanitised frame that was just applied to the robot.
+        now_mono: The monotonic instant *applied* was applied at.
+        max_slew: Bound in frame units per second. Defaults to
+            :func:`_input_slew_abs` (``STRANDS_MESH_INPUT_SLEW_ABS``).
+        value_abs: Magnitude envelope a command may reach. Defaults to
+            :func:`_input_value_abs` (``STRANDS_MESH_INPUT_VALUE_ABS``).
+
+    Returns:
+        The merged baseline: retained prior entries that can still refuse a
+        frame, with the applied frame's joints stamped at *now_mono*.
+    """
+    bound = _input_slew_abs() if max_slew is None else max_slew
+    envelope = _input_value_abs() if value_abs is None else value_abs
+    merged = {
+        key: entry
+        for key, entry in previous.items()
+        if now_mono - float(entry[1]) < (envelope + abs(float(entry[0]))) / bound
+    }
+    merged.update({key: (float(value), now_mono) for key, value in applied.items()})
+    return merged
+
+
 __all__ = [
     "ALLOWED_ACTIONS",
     "MAX_DURATION_S",
@@ -1189,6 +1355,7 @@ __all__ = [
     "MAX_MODEL_PATH_LEN",
     "MAX_INPUT_FRAME_KEYS",
     "MAX_INPUT_KEY_LEN",
+    "MAX_INPUT_SLEW_ABS",
     "MAX_INPUT_VALUE_ABS",
     "MAX_OVERRIDE_CODE_LEN",
     "MAX_PASSTHROUGH_LEN",
@@ -1205,6 +1372,8 @@ __all__ = [
     "is_safe_server_address",
     "validate_command",
     "validate_device_rpc",
+    "input_frame_slew_violation",
+    "merge_slew_baseline",
     "validate_input_frame",
     "MAX_DC_RPC_FUNC_LEN",
     "MAX_DC_RPC_PARAMS_BYTES",
