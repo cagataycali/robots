@@ -34,6 +34,7 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -113,6 +114,45 @@ HAND_HZ: float = 50.0
 
 #: Map info publishing frequency (Hz).
 MAP_INFO_HZ: float = 0.2
+
+
+def hz_from_env(name: str) -> tuple[float | None, str | None]:
+    """Read a loop rate (Hz) held in an environment variable.
+
+    Every mesh loop rate is operator-tunable through an environment variable,
+    and each reader has its own documented fallback for a value it cannot use:
+    a sensor loop keeps its built-in rate, the camera loop stays off, the
+    teleop apply ceiling reverts to its default. What they share is which
+    values are usable at all.
+    Every consumer turns the rate into a period with ``1.0 / hz``, and
+    ``float()`` accepts ``"inf"``, overflows ``"1e999"`` to ``inf`` and accepts
+    ``"nan"`` -- none of which survives that division. ``inf`` yields a zero
+    period, so a loop that meant to wait between ticks never waits; ``nan``
+    yields a period that compares ``False`` against every bound, so a cap
+    built from it never trips. Both read as "no rate limit" rather than as the
+    misconfiguration they are, which is why non-finite input is reported here
+    instead of being passed on.
+
+    Args:
+        name: Environment variable to read.
+
+    Returns:
+        ``(hz, None)`` when *name* holds a finite number, ``(None, None)`` when
+        it is unset or blank, and ``(None, reason)`` when it holds a value no
+        loop can honor. *reason* names the variable and the offending value so
+        a caller can log it alongside whichever fallback it documents; callers
+        decide the fallback, this decides only what is usable.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None, None
+    try:
+        hz = float(raw)
+    except (TypeError, ValueError):
+        return None, f"{name}={raw!r} is not a number"
+    if not math.isfinite(hz):
+        return None, f"{name}={raw!r} is not a finite rate"
+    return hz, None
 
 
 # Backend selection helpers - when STRANDS_MESH_BACKEND is "iot" or "bridge",

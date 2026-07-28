@@ -11,6 +11,7 @@ severity - is asserted on its outputs rather than implicitly.
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 import numpy as np
@@ -73,6 +74,21 @@ def test_resolve_hz_non_positive_disables(monkeypatch: pytest.MonkeyPatch) -> No
     assert _resolve_hz("STRANDS_MESH_TEST_HZ", 5.0) == 0.0
     monkeypatch.setenv("STRANDS_MESH_TEST_HZ", "-2")
     assert _resolve_hz("STRANDS_MESH_TEST_HZ", 5.0) == 0.0
+
+
+@pytest.mark.parametrize("value", ["inf", "-inf", "nan", "1e999"])
+def test_resolve_hz_non_finite_falls_back_to_default(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    """A non-finite override keeps the loop at its default rate.
+
+    ``float()`` accepts "inf"/"nan" and overflows "1e999" to inf, so these slip
+    past the unparsable-value guard. Each caller then computes
+    ``period = 1.0 / hz``: inf gives a zero period, so ``_stop_event.wait(0)``
+    returns immediately and the publish loop busy-spins; nan compares False
+    against ``hz > 0`` and silently switches the topic off. Neither is a rate an
+    operator can have meant, so the loop keeps the default it documents.
+    """
+    monkeypatch.setenv("STRANDS_MESH_TEST_HZ", value)
+    assert _resolve_hz("STRANDS_MESH_TEST_HZ", 9.0) == 9.0
 
 
 # _read_pose ----------------------------------------------------------------
@@ -407,6 +423,50 @@ def test_sensor_loop_swallows_tick_error_and_exits_cleanly(
     # Must not raise despite the reader blowing up on the only tick.
     getattr(host, loop_name)()
     assert host.published == []
+
+
+@pytest.mark.parametrize(("loop_name", "hz_env", "_reader"), _SENSOR_LOOPS)
+def test_sensor_loop_paces_itself_when_rate_env_is_non_finite(
+    monkeypatch: pytest.MonkeyPatch,
+    loop_name: str,
+    hz_env: str,
+    _reader: str,
+) -> None:
+    """A non-finite rate override must not turn the loop into a busy-spin.
+
+    ``STRANDS_MESH_*_HZ=inf`` resolves through ``float()`` to a rate whose
+    period is ``1.0 / inf == 0.0``, so ``_stop_event.wait(0.0)`` returns
+    immediately and the loop publishes to the mesh as fast as the CPU allows --
+    a flood, from one environment typo, on whichever topics the robot exposes.
+    Falling back to the documented default instead keeps the loop paced.
+
+    The bound is deliberately loose so the assertion does not depend on how
+    fast the host is: the highest default sensor rate is 50 Hz, which is a
+    handful of publishes in this window, while an unpaced loop reaches five to
+    six orders of magnitude more.
+    """
+    monkeypatch.setenv(hz_env, "inf")
+    host = _host(
+        _pose={"x": 0.0, "y": 0.0, "z": 0.0},
+        _imu={"roll": 0.0, "pitch": 0.0, "yaw": 0.0},
+        _odom={"x": 0.0, "y": 0.0},
+        _lidar_summary={"points": 1},
+        _hands={"left": {"joints": [0.0]}},
+        _map_info={"resolution": 0.05},
+    )
+    thread = threading.Thread(target=getattr(host, loop_name), daemon=True)
+    thread.start()
+    try:
+        time.sleep(0.15)
+    finally:
+        host._running = False
+        host._stop_event.set()
+        thread.join(timeout=5.0)
+    assert not thread.is_alive()
+    # A loop that published nothing would satisfy any upper bound, so pin both
+    # ends: the topic stayed live *and* it was paced.
+    assert host.published, f"{loop_name} published nothing; the bound below would be vacuous"
+    assert len(host.published) < 500, f"{loop_name} published {len(host.published)} times unpaced"
 
 
 @pytest.mark.parametrize(("loop_name", "hz_env", "reader"), _SENSOR_LOOPS)

@@ -52,6 +52,20 @@ class TestInputMaxHz:
         monkeypatch.setenv("STRANDS_MESH_INPUT_MAX_HZ", "-5")
         assert mesh_input._input_max_hz() == INPUT_MAX_HZ_DEFAULT
 
+    @pytest.mark.parametrize("value", ["inf", "-inf", "nan", "1e999"])
+    def test_non_finite_falls_back(self, monkeypatch, value):
+        """A non-finite ceiling would switch the cap off, so it falls back.
+
+        ``float()`` accepts "inf"/"nan" and overflows "1e999" to inf, so these
+        reach ``_on_input`` past the unparsable-value guard. There ``inf`` makes
+        ``min_interval = 1.0 / max_hz`` zero so no frame is ever early enough to
+        drop, and ``nan`` makes ``max_hz > 0`` false so the rate block is
+        skipped entirely -- both silently disable the servo-protection ceiling.
+        Only an explicit ``0`` means "disabled".
+        """
+        monkeypatch.setenv("STRANDS_MESH_INPUT_MAX_HZ", value)
+        assert mesh_input._input_max_hz() == INPUT_MAX_HZ_DEFAULT
+
 
 class TestInputAuditEvery:
     def test_unset_returns_default(self, monkeypatch):
@@ -212,6 +226,22 @@ class TestReceiverBehavior:
         recv._on_input(recv.topic, {"action": {"j0": 0.2}, "seq": 1, "t": time.time()})
         assert len(applied) == 2
         assert recv._rate_dropped == 0
+
+    @pytest.mark.parametrize("value", ["inf", "nan", "1e999"])
+    def test_non_finite_rate_cap_still_drops_burst(self, monkeypatch, value):
+        """A non-finite ceiling must not let a burst through to the servos.
+
+        This is the ceiling that exists so a peer streaming far above the
+        nominal publish rate cannot slam the servos into overcurrent, thermal
+        or gear damage. Resolving it to a non-finite value silently removed it:
+        every frame of the burst was applied and ``rate_dropped`` stayed 0.
+        """
+        monkeypatch.setenv("STRANDS_MESH_INPUT_MAX_HZ", value)
+        recv, applied = _make_receiver()
+        for seq in range(20):
+            recv._on_input(recv.topic, {"action": {"j0": 0.1 * seq}, "seq": seq, "t": time.time()})
+        assert len(applied) == 1
+        assert recv._rate_dropped == 19
 
     def test_estop_lockout_rejects_frame(self):
         import threading

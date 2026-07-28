@@ -12,7 +12,6 @@ import hashlib
 import hmac
 import json
 import logging
-import math
 import os
 import re
 import socket
@@ -31,6 +30,7 @@ from strands_robots.mesh.session import (
     STATE_HZ,
     current_session,
     get_session,
+    hz_from_env,
     prune_peers,
     put,
     release_session,
@@ -1082,21 +1082,22 @@ class Mesh(SensorLoopsMixin):
 
     # Cameras - outgoing (opt-in)
     def _resolve_camera_hz(self) -> float:
-        env = os.getenv("STRANDS_MESH_CAMERA_HZ")
-        if env is None or env.strip() == "":
+        """Resolve the camera publish rate from the environment.
+
+        Returns:
+            The ``STRANDS_MESH_CAMERA_HZ`` override when it names a rate
+            :meth:`_camera_loop` can pace itself with, and ``0.0`` -- camera
+            publishing off -- when it is unset, non-positive, or holds a value
+            no loop can honor. Frames are large, so an unusable override
+            disables the loop rather than falling back to a rate the operator
+            did not ask for.
+        """
+        hz, reason = hz_from_env("STRANDS_MESH_CAMERA_HZ")
+        if reason is not None:
+            logger.warning("%s; camera loop disabled", reason)
+            return 0.0
+        if hz is None:
             hz = CAMERA_HZ
-        else:
-            try:
-                hz = float(env)
-            except ValueError:
-                logger.warning("STRANDS_MESH_CAMERA_HZ=%r invalid; camera loop disabled", env)
-                return 0.0
-            if not math.isfinite(hz):
-                # float() accepts "inf"/"nan"/"1e999"; a non-finite rate would
-                # make _camera_loop compute period = 1.0/hz = 0.0 and busy-spin
-                # (or silently disable on nan). Treat it as invalid.
-                logger.warning("STRANDS_MESH_CAMERA_HZ=%r is not finite; camera loop disabled", env)
-                return 0.0
         return hz if hz > 0 else 0.0
 
     def _camera_loop(self, hz: float) -> None:

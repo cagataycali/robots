@@ -32,6 +32,7 @@ from strands_robots.mesh.security import (
     validate_input_frame,
     validate_mesh_identifier,
 )
+from strands_robots.mesh.session import hz_from_env
 
 _log_safety_event: Callable[..., None] | None
 try:  # audit is best-effort; never let an import issue break teleop apply
@@ -62,19 +63,19 @@ def _input_max_hz() -> float:
 
     Bad / missing input falls back to the default ceiling; an explicit
     non-positive value (0) disables the cap for trusted closed networks.
-    """
-    import os
+    A non-finite override falls back too: ``inf`` makes the caller's
+    ``1.0 / max_hz`` interval zero and ``nan`` makes ``max_hz > 0`` false, so
+    either one would silently switch the ceiling off -- the opposite of what an
+    operator raising a rate limit is asking for.
 
-    raw = os.getenv("STRANDS_MESH_INPUT_MAX_HZ")
-    if raw is None:
+    This resolver is evaluated per applied frame in a 50 Hz-plus loop, so an
+    unusable value is not logged here; it resolves to the default ceiling,
+    which keeps the servos protected.
+    """
+    hz, reason = hz_from_env("STRANDS_MESH_INPUT_MAX_HZ")
+    if hz is None or reason is not None or hz < 0:
         return INPUT_MAX_HZ_DEFAULT
-    try:
-        val = float(raw)
-    except (TypeError, ValueError):
-        return INPUT_MAX_HZ_DEFAULT
-    if val < 0:
-        return INPUT_MAX_HZ_DEFAULT
-    return val  # 0 => disabled
+    return hz  # 0 => disabled
 
 
 #: M-5: the teleop input path is high-rate (up to 50Hz),
