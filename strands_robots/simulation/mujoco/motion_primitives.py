@@ -56,6 +56,7 @@ import numpy as np
 
 from strands_robots.registry.robots import get_robot
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG
+from strands_robots.utils import coerce_pose_vector
 
 logger = logging.getLogger(__name__)
 
@@ -406,7 +407,12 @@ class MotionPrimitivesMixin:
             robot_name: Robot to move; defaults to the single robot in the
                 world (errors if ambiguous).
             position: World-frame target ``[x, y, z]`` in meters (required).
-            orientation: Optional target orientation quaternion ``[w, x, y, z]``.
+                Validated by the same rule the scene-construction calls use
+                (:func:`strands_robots.utils.coerce_pose_vector`): three finite
+                real components, a NumPy array accepted, a ``bool`` refused.
+            orientation: Optional target orientation quaternion ``[w, x, y, z]``,
+                validated the same way and normalized before it enters the solve
+                (a non-unit quaternion is fine; a ~zero-norm one is refused).
                 When omitted the solve is position-only - the right choice for
                 arms with fewer than 6 DOF (e.g. SO-100/SO-101), which cannot
                 realize an arbitrary full pose.
@@ -425,11 +431,18 @@ class MotionPrimitivesMixin:
         # ---- parameter validation (before touching the world) ----
         if position is None:
             return _err("move_to requires 'position' ([x, y, z] target in meters).")
-        if len(position) != 3 or not all(_is_finite_real(c) for c in position):
-            return _err("move_to: 'position' must be 3 finite numbers [x, y, z] in meters.")
+        # Same guard the scene-construction entry points use, so a pose
+        # `add_object`/`move_object` refuses is refused here too. `len()` on a
+        # value with no length (a scalar, an iterator) raises a bare TypeError,
+        # which would escape this method's documented never-raises contract.
+        position, pos_err = coerce_pose_vector("move_to", "position", position, 3)
+        if pos_err is not None:
+            return _err(pos_err)
+        assert position is not None  # non-None input yields a non-None result
+        orientation, quat_err = coerce_pose_vector("move_to", "orientation", orientation, 4)
+        if quat_err is not None:
+            return _err(quat_err)
         if orientation is not None:
-            if len(orientation) != 4 or not all(_is_finite_real(c) for c in orientation):
-                return _err("move_to: 'orientation' must be 4 finite numbers [w, x, y, z] (unit quaternion).")
             quat_norm = float(np.linalg.norm(np.asarray(orientation, dtype=np.float64)))
             if quat_norm < 1e-8:
                 return _err("move_to: 'orientation' quaternion has ~zero norm; pass a valid [w, x, y, z].")
@@ -439,7 +452,7 @@ class MotionPrimitivesMixin:
         if err is not None:
             return err
         max_steps = int(max_steps)
-        target = np.asarray([float(c) for c in position], dtype=np.float64)
+        target = np.asarray(position, dtype=np.float64)
 
         # ---- setup under the lock: guards, EE frame, IK solve ----
         with self._lock:
@@ -523,7 +536,7 @@ class MotionPrimitivesMixin:
             target_pose = np.eye(4, dtype=np.float64)
             target_pose[:3, 3] = target
             if orientation is not None:
-                quat = np.asarray([float(c) for c in orientation], dtype=np.float64)
+                quat = np.asarray(orientation, dtype=np.float64)
                 quat = quat / np.linalg.norm(quat)
                 rot = np.zeros(9, dtype=np.float64)
                 self._mj.mju_quat2Mat(rot, quat)

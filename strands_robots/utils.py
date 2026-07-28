@@ -335,3 +335,116 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
         return message
     return None
+
+
+def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
+    """Return an error message if any element of ``vec`` is not a finite number.
+
+    Guards the numeric vectors a scene-construction call bakes into the
+    compiled MJCF (``add_object`` color/size, ``add_camera`` position/target,
+    etc.) against the two classes the numeric-input campaign targets:
+
+    * A non-numeric or non-iterable element (e.g. ``["a", "b", "c"]`` or a
+      nested list) otherwise raises a bare ``TypeError``/``ValueError`` deep
+      inside MuJoCo's ``add_geom`` or a ``size <= 0`` comparison - escaping the
+      structured ``{"status": "error"}`` tool-result contract.
+    * A ``nan``/``inf`` component is baked verbatim into the geom/camera and
+      either poisons the physics state on the next ``mj_forward`` or aborts the
+      spec recompile with a cryptic "spec recompile refused", reporting a
+      success/garbage result instead of an actionable error.
+
+    A numpy real scalar per element is accepted (``np.float64`` and friends are
+    registered as ``numbers.Real``), matching the "accept NumPy scalar
+    components" behaviour of the other sim setters; a ``bool`` is refused
+    because ``float(True)`` would silently write ``1.0`` where a coordinate,
+    extent or colour channel belongs. Length is NOT checked here (size is shape-dependent, so
+    its count is checked against the shape afterwards); use
+    :func:`pose_vector_error` for a fixed length, or the rgba coercion in
+    :mod:`strands_robots.simulation.mujoco.physics` for a colour, whose count
+    the geom's rgba row defines. Returns ``None`` when every element is a finite
+    real number.
+    """
+    try:
+        iter(vec)
+    except TypeError:
+        return f"{method}: '{param_name}' must be a list/tuple of numbers, got {vec!r}"
+    for _elem in vec:
+        # ``numbers.Real`` accepts a numpy scalar (``np.float32`` / ``np.int64``
+        # are registered) and rejects a string, ``None`` or a nested list.
+        # ``bool`` is an ``int`` subclass, so it would otherwise pass as a
+        # silent ``1.0`` - a ``True`` coordinate placing a body 1 m out. The
+        # agent-tool router already refuses a bool component, so refusing it
+        # here keeps the direct API and the tool surface in step.
+        if isinstance(_elem, bool) or not isinstance(_elem, numbers.Real):
+            return f"{method}: '{param_name}' elements must be numbers, got {vec!r}"
+        if not math.isfinite(float(_elem)):
+            return f"{method}: '{param_name}' must contain finite numbers (no nan/inf), got {vec!r}"
+    return None
+
+
+def pose_vector_error(method: str, param_name: str, vec: Any, expected_len: int) -> str | None:
+    """Return an error message if ``vec`` is not ``expected_len`` finite numbers.
+
+    Fixed-length wrapper over :func:`finite_vector_error` for the pose
+    vectors written straight into ``data.qpos`` (``move_object`` /
+    ``add_object`` position+orientation, ``add_camera`` position+target). A
+    wrong-length vector otherwise raises a bare ``ValueError`` inside the numpy
+    assignment - escaping the structured ``{"status": "error"}`` tool-result
+    contract - and a ``nan``/``inf`` component is propagated through the whole
+    physics state by ``mj_forward``, reporting ``success`` while silently
+    poisoning the simulation. A numpy real scalar per element is accepted.
+
+    It lives here rather than beside one of its callers because those callers
+    sit in different layers: the scene-construction facade builds a pose before
+    the model is compiled, while the motion primitives take one against a live
+    model, and their accepted domain must not diverge - a pose either backend
+    entry point refuses must be refused by the other. Returns ``None`` when
+    ``vec`` is acceptable.
+    """
+    try:
+        length = len(vec)
+    except TypeError:
+        return f"{method}: '{param_name}' must be a list/tuple of {expected_len} numbers, got {vec!r}"
+    if length != expected_len:
+        return f"{method}: '{param_name}' must be a {expected_len}-element vector, got {length} ({vec!r})"
+    return finite_vector_error(method, param_name, vec)
+
+
+def coerce_pose_vector(
+    method: str, param_name: str, vec: Any, expected_len: int
+) -> tuple[list[float] | None, str | None]:
+    """Validate an optional pose vector and normalize it to plain floats.
+
+    Membership, not truthiness: a pose parameter is "supplied" when it is not
+    ``None``. Testing the vector itself (``if position:``, ``position or
+    <default>``) is wrong twice over. A NumPy array - the natural product of any
+    pose arithmetic, and what every docstring here advertises as accepted -
+    raises a bare ``ValueError: truth value of an array ... is ambiguous``
+    through the structured tool-result contract, and an empty vector reads as
+    "omitted", so the default is substituted (or the write skipped) while the
+    call reports success.
+
+    Normalizing to a ``list[float]`` keeps the accepted NumPy input from
+    outliving this boundary: the pose is stored on :class:`SimObject` /
+    :class:`SimRobot` (both annotated ``list[float]``), echoed in the status
+    text, and written into the spec, so a raw ``np.float64`` element would leak
+    ``np.float64(0.05)`` into agent-visible output.
+
+    Args:
+        method: Calling method name, used in error text.
+        param_name: Parameter name, used in error text.
+        vec: The caller's value, or ``None`` when the parameter was omitted.
+        expected_len: Component count the target buffer defines (3 for a
+            position, 4 for a wxyz quaternion).
+
+    Returns:
+        ``(None, None)`` when ``vec`` is ``None`` (omitted - the caller applies
+        its own default), ``(floats, None)`` for an acceptable vector, or
+        ``(None, error_message)`` for a wrong length, a non-numeric element or a
+        ``nan``/``inf`` component.
+    """
+    if vec is None:
+        return None, None
+    if (err := pose_vector_error(method, param_name, vec, expected_len)) is not None:
+        return None, err
+    return [float(v) for v in vec], None

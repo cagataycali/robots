@@ -1,8 +1,14 @@
 """Tests for strands_robots.utils - require_optional lazy import helper."""
 
+import numpy as np
 import pytest
 
-from strands_robots.utils import process_rss_mb, require_optional, require_optionals
+from strands_robots.utils import (
+    coerce_pose_vector,
+    process_rss_mb,
+    require_optional,
+    require_optionals,
+)
 
 
 class TestRequireOptional:
@@ -356,3 +362,28 @@ class TestProcessRssMb:
         monkeypatch.setitem(sys.modules, "resource", None)
 
         assert process_rss_mb() is None
+
+
+class TestPoseVectorDomain:
+    """Accepted domain of the shared pose-vector guard.
+
+    Promoted out of the MuJoCo facade so the scene-construction calls and the
+    motion primitives (which live in a module the facade imports) cannot hold
+    different opinions about the same ``[x, y, z]``.
+    """
+
+    def test_an_omitted_vector_is_not_an_error(self):
+        assert coerce_pose_vector("m", "position", None, 3) == (None, None)
+
+    def test_numpy_components_are_normalized_to_plain_floats(self):
+        values, error = coerce_pose_vector("m", "position", np.array([0.1, 0.2, 0.3]), 3)
+        assert error is None
+        assert all(type(v) is float for v in values)
+
+    @pytest.mark.parametrize(
+        "bad", [0.5, np.float64(1.0), [0.1, 0.2], [0.1, "b", 0.3], [0.1, float("nan"), 0.3], [True, 0.2, 0.3]]
+    )
+    def test_a_vector_that_cannot_be_honored_returns_a_message(self, bad):
+        values, error = coerce_pose_vector("m", "position", bad, 3)
+        assert values is None
+        assert error and error.startswith("m: 'position'")

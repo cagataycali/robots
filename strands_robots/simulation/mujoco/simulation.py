@@ -98,6 +98,11 @@ from strands_robots.simulation.mujoco.spec_builder import (
 from strands_robots.simulation.policy_runner import CooperativeStop
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.teleop_mixin import TeleopMixin
+from strands_robots.utils import (
+    coerce_pose_vector,
+    finite_vector_error,
+    pose_vector_error,
+)
 
 if TYPE_CHECKING:
     from strands_robots.policies import Policy
@@ -174,111 +179,10 @@ def _validated_mesh_handle(mesh: Any) -> Any:
     )
 
 
-def _validate_finite_vector(method: str, param_name: str, vec: Any) -> str | None:
-    """Return an error message if any element of ``vec`` is not a finite number.
-
-    Guards the numeric vectors a scene-construction call bakes into the
-    compiled MJCF (``add_object`` color/size, ``add_camera`` position/target,
-    etc.) against the two classes the numeric-input campaign targets:
-
-    * A non-numeric or non-iterable element (e.g. ``["a", "b", "c"]`` or a
-      nested list) otherwise raises a bare ``TypeError``/``ValueError`` deep
-      inside MuJoCo's ``add_geom`` or a ``size <= 0`` comparison - escaping the
-      structured ``{"status": "error"}`` tool-result contract.
-    * A ``nan``/``inf`` component is baked verbatim into the geom/camera and
-      either poisons the physics state on the next ``mj_forward`` or aborts the
-      spec recompile with a cryptic "spec recompile refused", reporting a
-      success/garbage result instead of an actionable error.
-
-    A numpy real scalar per element is accepted (``float(np.float64(...))``
-    succeeds), matching the "accept NumPy scalar components" behaviour of the
-    other sim setters. Length is NOT checked here (size is shape-dependent, so
-    its count is checked against the shape afterwards); use
-    :func:`_validate_pose_vector` for a fixed length, or the rgba coercion in
-    :mod:`strands_robots.simulation.mujoco.physics` for a colour, whose count
-    the geom's rgba row defines. Returns ``None`` when every element is a finite
-    real number.
-    """
-    try:
-        iter(vec)
-    except TypeError:
-        return f"{method}: '{param_name}' must be a list/tuple of numbers, got {vec!r}"
-    for _elem in vec:
-        try:
-            _f = float(_elem)
-        except (TypeError, ValueError):
-            return f"{method}: '{param_name}' elements must be numbers, got {vec!r}"
-        if not math.isfinite(_f):
-            return f"{method}: '{param_name}' must contain finite numbers (no nan/inf), got {vec!r}"
-    return None
-
-
-def _validate_pose_vector(method: str, param_name: str, vec: Any, expected_len: int) -> str | None:
-    """Return an error message if ``vec`` is not ``expected_len`` finite numbers.
-
-    Fixed-length wrapper over :func:`_validate_finite_vector` for the pose
-    vectors written straight into ``data.qpos`` (``move_object`` /
-    ``add_object`` position+orientation, ``add_camera`` position+target). A
-    wrong-length vector otherwise raises a bare ``ValueError`` inside the numpy
-    assignment - escaping the structured ``{"status": "error"}`` tool-result
-    contract - and a ``nan``/``inf`` component is propagated through the whole
-    physics state by ``mj_forward``, reporting ``success`` while silently
-    poisoning the simulation. A numpy real scalar per element is accepted.
-    Returns ``None`` when ``vec`` is acceptable.
-    """
-    try:
-        length = len(vec)
-    except TypeError:
-        return f"{method}: '{param_name}' must be a list/tuple of {expected_len} numbers, got {vec!r}"
-    if length != expected_len:
-        return f"{method}: '{param_name}' must be a {expected_len}-element vector, got {length} ({vec!r})"
-    return _validate_finite_vector(method, param_name, vec)
-
-
 # Actions consumed open-loop from each policy's chunk before it is re-queried,
 # when the caller gives no per-robot override. Single-sourced so the signature
 # default and the per-robot mapping fallback cannot drift apart.
 _DEFAULT_ACTION_HORIZON = 8
-
-
-def _coerce_pose_vector(
-    method: str, param_name: str, vec: Any, expected_len: int
-) -> tuple[list[float] | None, str | None]:
-    """Validate an optional pose vector and normalize it to plain floats.
-
-    Membership, not truthiness: a pose parameter is "supplied" when it is not
-    ``None``. Testing the vector itself (``if position:``, ``position or
-    <default>``) is wrong twice over. A NumPy array - the natural product of any
-    pose arithmetic, and what every docstring here advertises as accepted -
-    raises a bare ``ValueError: truth value of an array ... is ambiguous``
-    through the structured tool-result contract, and an empty vector reads as
-    "omitted", so the default is substituted (or the write skipped) while the
-    call reports success.
-
-    Normalizing to a ``list[float]`` keeps the accepted NumPy input from
-    outliving this boundary: the pose is stored on :class:`SimObject` /
-    :class:`SimRobot` (both annotated ``list[float]``), echoed in the status
-    text, and written into the spec, so a raw ``np.float64`` element would leak
-    ``np.float64(0.05)`` into agent-visible output.
-
-    Args:
-        method: Calling method name, used in error text.
-        param_name: Parameter name, used in error text.
-        vec: The caller's value, or ``None`` when the parameter was omitted.
-        expected_len: Component count the target buffer defines (3 for a
-            position, 4 for a wxyz quaternion).
-
-    Returns:
-        ``(None, None)`` when ``vec`` is ``None`` (omitted - the caller applies
-        its own default), ``(floats, None)`` for an acceptable vector, or
-        ``(None, error_message)`` for a wrong length, a non-numeric element or a
-        ``nan``/``inf`` component.
-    """
-    if vec is None:
-        return None, None
-    if (err := _validate_pose_vector(method, param_name, vec, expected_len)) is not None:
-        return None, err
-    return [float(v) for v in vec], None
 
 
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
@@ -1199,10 +1103,10 @@ class MuJoCoSimEngine(
         # element raises a bare MuJoCo `add_frame(): incompatible function
         # arguments` TypeError that escapes the structured-error contract. NumPy
         # scalar components are accepted.
-        position, e = _coerce_pose_vector("add_robot", "position", position, 3)
+        position, e = coerce_pose_vector("add_robot", "position", position, 3)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
-        orientation, e = _coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        orientation, e = coerce_pose_vector("add_robot", "orientation", orientation, 4)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
 
@@ -1294,7 +1198,7 @@ class MuJoCoSimEngine(
             urdf_path=resolved_path,
             # ``is None`` means "omitted" -> the documented default. ``or`` would
             # additionally read a NumPy pose as ambiguous (a bare ValueError) and
-            # an empty vector as omitted; _coerce_pose_vector already rejected
+            # an empty vector as omitted; coerce_pose_vector already rejected
             # the latter and normalized the former to plain floats.
             position=[0.0, 0.0, 0.0] if position is None else position,
             orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
@@ -2600,13 +2504,13 @@ class MuJoCoSimEngine(
         # non-numeric element (e.g. ["a", ...]) raises a bare TypeError inside
         # MuJoCo's add_geom or the size <= 0 comparison, escaping the
         # structured-error contract. NumPy scalar components are accepted.
-        position, e = _coerce_pose_vector("add_object", "position", position, 3)
+        position, e = coerce_pose_vector("add_object", "position", position, 3)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
-        orientation, e = _coerce_pose_vector("add_object", "orientation", orientation, 4)
+        orientation, e = coerce_pose_vector("add_object", "orientation", orientation, 4)
         if e is not None:
             return {"status": "error", "content": [{"text": e}]}
-        if size is not None and (e := _validate_finite_vector("add_object", "size", size)) is not None:
+        if size is not None and (e := finite_vector_error("add_object", "size", size)) is not None:
             return {"status": "error", "content": [{"text": e}]}
 
         # 'color' targets the geom's 4-component rgba row, so its component
@@ -2677,7 +2581,7 @@ class MuJoCoSimEngine(
             shape=shape,
             # ``is None`` means "omitted" -> the documented default. ``or`` would
             # additionally read a NumPy pose as ambiguous (a bare ValueError) and
-            # an empty vector as omitted; _coerce_pose_vector already rejected
+            # an empty vector as omitted; coerce_pose_vector already rejected
             # the latter and normalized the former to plain floats.
             position=[0.0, 0.0, 0.0] if position is None else position,
             orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
@@ -2820,10 +2724,10 @@ class MuJoCoSimEngine(
         # mj_forward silently poisons the whole physics state. Only validate a
         # component that is actually supplied (None leaves it unchanged; the
         # move logic below treats a falsy value as "no change").
-        position, perr = _coerce_pose_vector("move_object", "position", position, 3)
+        position, perr = coerce_pose_vector("move_object", "position", position, 3)
         if perr is not None:
             return {"status": "error", "content": [{"text": perr}]}
-        orientation, oerr = _coerce_pose_vector("move_object", "orientation", orientation, 4)
+        orientation, oerr = coerce_pose_vector("move_object", "orientation", orientation, 4)
         if oerr is not None:
             return {"status": "error", "content": [{"text": oerr}]}
 
@@ -2977,10 +2881,10 @@ class MuJoCoSimEngine(
         # ValueError on a NumPy pose (what the docstring above advertises as
         # accepted) and read an empty vector as "omitted", quietly placing the
         # camera at the default [1, 1, 1] under a success result.
-        position, _perr = _coerce_pose_vector("add_camera", "position", position, 3)
+        position, _perr = coerce_pose_vector("add_camera", "position", position, 3)
         if _perr is not None:
             return {"status": "error", "content": [{"text": _perr}]}
-        target, _terr = _coerce_pose_vector("add_camera", "target", target, 3)
+        target, _terr = coerce_pose_vector("add_camera", "target", target, 3)
         if _terr is not None:
             return {"status": "error", "content": [{"text": _terr}]}
         pos = [1.0, 1.0, 1.0] if position is None else position
@@ -2992,7 +2896,7 @@ class MuJoCoSimEngine(
             # TypeError there, and a nan/inf slips silently into the camera's
             # baked xyaxes (fwd /= flen divides by nan -> a degenerate camera
             # that renders garbage while reporting success). NumPy scalars ok.
-            if (e := _validate_pose_vector("add_camera", _lbl, _vec, 3)) is not None:
+            if (e := pose_vector_error("add_camera", _lbl, _vec, 3)) is not None:
                 return {"status": "error", "content": [{"text": e}]}
         # Degenerate orientation: position == target means no well-defined look direction.
         if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
