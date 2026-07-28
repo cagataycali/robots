@@ -1683,26 +1683,34 @@ class Robot(TeleopMixin, AgentTool):
                 KeyboardTeleop, Phone).
             device_name: Name for this input stream (e.g. "leader", "gamepad").
             method: Input method label ("arm", "gamepad", "keyboard", "phone").
-            hz: Publishing frequency in Hz.
+            hz: Publishing frequency in Hz. Must be a positive finite number;
+                the publish loop's period is ``1 / hz``.
 
         Returns:
             Status dict with topic and peer_id for the receiver to use, or an
-            error dict when the mesh is inactive or ``device_name`` is not a
-            valid mesh identifier.
+            error dict when the mesh is inactive, ``device_name`` is not a
+            valid mesh identifier, or ``hz`` is not a rate the publish loop
+            can honor.
         """
         if not self.mesh or not self.mesh.alive:
             return {"status": "error", "content": [{"text": "Mesh not active. Cannot publish input."}]}
 
         from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
 
-        # ``device_name`` becomes a segment of the published key expression and
-        # a key in ``_input_publishers``. Validate before stopping any existing
-        # publisher for that name so a rejected call cannot tear down a live
-        # stream, and report through the tool envelope rather than raising.
+        # Both arguments are validated up front, before the teardown of any
+        # publisher already registered under this device name: a rejected call
+        # must not stop a live stream. ``device_name`` becomes a segment of the
+        # published key expression and a key in ``_input_publishers``, and
+        # ``hz`` sets the publish loop's ``1 / hz`` period. Report through the
+        # tool envelope rather than raising.
         try:
             validate_mesh_identifier(device_name, "start_teleop_publish.device_name")
         except ValidationError as exc:
             return {"status": "error", "content": [{"text": str(exc)}]}
+
+        error = positive_finite_number_error(hz, "hz", "start_teleop_publish")
+        if error:
+            return {"status": "error", "content": [{"text": error}]}
 
         from strands_robots.mesh import InputPublisher
 
