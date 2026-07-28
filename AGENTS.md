@@ -80,10 +80,18 @@ hatch run format            # ruff check --fix, ruff format
 
 1. Create feature branch from `main`
 2. Make changes, run `hatch run format && hatch run lint && hatch run test`
-3. All tests must pass, lint must be clean
-4. Open PR from your fork, address all review comments
-5. Track follow-up items as issues on the [project board](https://github.com/orgs/strands-labs/projects/2)
-6. Squash merge into `main`
+3. Record the change as a news fragment: `changelog.d/<pr-number>-<slug>.md`
+   (see [`changelog.d/README.md`](changelog.d/README.md)). **Never append to
+   `## [Unreleased]` in `CHANGELOG.md` directly** - every branch inserts at the
+   same anchor, so two PRs open at once conflict on ordering alone, and because
+   stale approvals are dismissed on push each resolution costs a re-approval
+   round that reviews no changed behaviour. A fragment is its own file, so there
+   is nothing to conflict on. `CHANGELOG.md` is assembled from the accumulated
+   fragments when a tag is cut (`python scripts/assemble_changelog.py --apply`).
+4. All tests must pass, lint must be clean
+5. Open PR from your fork, address all review comments
+6. Track follow-up items as issues on the [project board](https://github.com/orgs/strands-labs/projects/2)
+7. Squash merge into `main`
 
 
 ## Registry conventions (strands_robots/registry/robots.json)
