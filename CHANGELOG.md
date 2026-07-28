@@ -28,6 +28,35 @@ Each op now declares the keys it reads, and anything else is refused with the op
 name, the unrecognised key, a close match where one exists, and the accepted
 list. The batch stays atomic, so a rejected key leaves the scene exactly as it
 was rather than half-patched.
+### Fixed: the state and action sides agree on what a hardware observation is
+
+Detection of `'<motor>.pos'` hardware joint readings was implemented twice in the
+local LeRobot policy. The action side (`get_actions`) ran a plain-`float` pass and
+only retried with numpy `if not _pos:`; the state side
+(`PackStateProcessorStep`) ran one combined pass. `isinstance(np.float64(1.0),
+float)` is True but `isinstance(np.float32(1.0), float)` is False, so an
+observation mixing the two matched *partially* on the first pass - non-empty, so
+the numpy retry never ran, and too short to cover the embodiment's actuators:
+
+```python
+# 3 x float + 3 x np.float32, e.g. a driver read merged with a filtered estimate
+obs = {"shoulder_pan.pos": 1.0, ..., "gripper.pos": np.float32(6.0)}
+# state side:  packs all 6 readings into observation.state RAW (already model units)
+# action side: sees no hardware keys -> emits the command under the SIM joint
+#              names ('1'..'6'), which SOFollower.send_action does not accept,
+#              with the model-degrees -> sim-radians conversion applied (1/57.3)
+```
+
+The model was conditioned on raw hardware degrees while its command was keyed and
+scaled for the sim, and nothing warned, because the state side had succeeded.
+Both sides now call one `hardware_pos_keys()` predicate. It also accepts python /
+numpy integers and 0-d tensors, and - a change on the state side - refuses
+booleans in every flavour an observation spells them (`bool`, `np.bool_`, and 0-d
+`bool` arrays / tensors), so a driver status flag (`is_homed.pos`) can no longer
+take a joint column and be commanded as an absolute `1.0`. A flag accepted there
+does not fail loudly: both sides slice the key list to their actuator count, so
+one extra key in front renames every reading to its neighbour and drops the
+last.
 
 ### Fixed: the mass matrix survives MuJoCo removing the legacy sparse inertia
 
