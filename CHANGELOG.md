@@ -41,6 +41,33 @@ generator body. A generator function runs nothing until the consumer's first
 the emission loop moved into a private helper so an unusable configuration is
 reported before any of that.
 
+### Fixed: Robot() forwards the base position it was given
+
+The `Robot()` factory wraps `add_robot`, which validates a base pose up front:
+an omitted pose spawns at the origin, a NumPy pose is accepted, and a
+wrong-length / non-numeric / non-finite vector is refused with an actionable
+message. The factory read the parameter by truthiness
+(`position or [0.0, 0.0, 0.0]`), which made the wrapper both less capable and
+less safe than the method it wraps:
+
+```python
+Robot("so100", position=np.array([0.4, 0.2, 0.0]))
+# before: ValueError: truth value of an array with more than one element is ambiguous
+# after:  base at [0.4, 0.2, 0.0]   (add_robot accepted this value all along)
+
+Robot("so100", position=[])
+# before: success, base silently at [0.0, 0.0, 0.0]
+# after:  RuntimeError: add_robot: 'position' must be a 3-element vector, got 0 ([])
+```
+
+An empty vector is a caller mistake, not a request for the default, and reading
+it as "omitted" placed the robot somewhere the caller never asked for while
+reporting success - the guard that refuses it was unreachable through the
+factory. The position is now passed through verbatim, so `None` (the documented
+"spawn at the origin") stays the single source of truth for that default
+instead of a copy in the factory that can drift from the backend's.
+
+
 ### Fixed: the state and action sides agree on what a hardware observation is
 
 Detection of `'<motor>.pos'` hardware joint readings was implemented twice in the
