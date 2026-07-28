@@ -216,6 +216,15 @@ sim-mujoco = [
     "mujoco>=3.2.0,<4.0.0",
     "imageio>=2.28.0,<3.0.0",
     "imageio-ffmpeg>=0.4.0,<1.0.0",
+    # Differential-IK solver stack. `move_to`, the Cartesian transport
+    # primitive in this backend's agent-callable action enum, solves IK on the
+    # same mujoco.MjModel via strands_robots.simulation.ik.MinkIKBridge, so the
+    # solver is part of what this extra ships rather than an add-on the caller
+    # has to name themselves. `mink` pulls a QP backend of its own
+    # (qpsolvers[daqp], the bridge's first preference); `qpsolvers` is declared
+    # here too because simulation/ik.py imports it directly.
+    "mink>=0.0.4",
+    "qpsolvers>=4.0.0",
 ]
 # Newton GPU-native backend (newton-physics/newton on NVIDIA Warp +
 # MuJoCo-Warp). GPU-batched parallel envs, headless ray-traced rendering, and
@@ -420,12 +429,6 @@ dependencies = [
     "requests>=2.28.0,<3.0.0",
     "msgpack>=1.0.0,<2.0.0",
     "pyzmq>=27.0.0,<28.0.0",
-    # mink (differential IK) for the Cosmos 3 sim-loop bridge regression test
-    # (tests/policies/cosmos3/test_sim_ik.py); the cosmos3-sim extra is not in
-    # `features=all`, so pull it into the dev env explicitly. mujoco comes from
-    # sim-mujoco (already in `all`).
-    "mink>=0.0.4",
-    "qpsolvers[quadprog]>=4.0.0",
 ]
 
 # ---------------------------------------------------------------------------

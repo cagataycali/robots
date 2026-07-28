@@ -294,6 +294,42 @@ def _extract_sample_source_zid(sample: Any) -> str | None:
         return None
 
 
+def _peers_that_did_not_stop(responses: list[dict[str, Any]]) -> set[str]:
+    """Identify responders that explicitly reported they did NOT stop.
+
+    An emergency stop is only as trustworthy as its accounting. A peer whose
+    registered robot exposes no ``stop_task`` answers ``{"ok": False, ...}``
+    (see ``Mesh._dispatch``), and a peer whose ``stop_task`` itself failed
+    answers ``{"status": "error", ...}``. Counting either as an acknowledgement
+    tells the operator the fleet halted while a robot is still executing.
+
+    Deliberately conservative: only responses that AFFIRMATIVELY report failure
+    are flagged. A response shape this function does not recognise is left out
+    rather than guessed at, because a false "did not stop" on the safety path
+    trains operators to ignore the warning. Peers that never answered at all are
+    not represented here either -- they are visible as the gap between
+    ``responses_received`` and the known peer count.
+
+    Args:
+        responses: Response envelopes collected by :meth:`Mesh.broadcast`.
+
+    Returns:
+        Responder ids that reported a failure to stop. An id is synthesised for
+        a response carrying no ``responder_id`` so the count stays accurate.
+    """
+    failed: set[str] = set()
+    for index, response in enumerate(responses):
+        if not isinstance(response, dict):
+            continue
+        result = response.get("result", response)
+        if not isinstance(result, dict):
+            continue
+        did_not_stop = result.get("ok") is False or result.get("status") == "error"
+        if did_not_stop:
+            failed.add(str(response.get("responder_id") or f"<unidentified-responder-{index}>"))
+    return failed
+
+
 class Mesh(SensorLoopsMixin):
     """Peer-to-peer mesh component embedded in a single Robot or Simulation.
 
@@ -1592,7 +1628,17 @@ class Mesh(SensorLoopsMixin):
         if action == "stop":
             if hasattr(r, "stop_task"):
                 return dict(r.stop_task())
-            return {"ok": True}
+            # No stop_task means NOTHING was stopped. Reporting ok=True here was
+            # an affirmative lie on the fleet safety path: an operator issuing
+            # emergency_stop counted this peer as having halted while its robot
+            # kept executing. Say so instead, so the caller (and
+            # emergency_stop's aggregation) can surface an unstoppable peer.
+            logger.error(
+                "[safety] %s: stop requested but the registered robot exposes no stop_task(); "
+                "NOTHING was stopped on this peer",
+                self.peer_id,
+            )
+            return {"ok": False, "error": "peer exposes no stop_task; nothing was stopped"}
         if action == "features":
             return dict(r.get_features()) if hasattr(r, "get_features") else {}
         if action == "state":
@@ -2836,11 +2882,28 @@ class Mesh(SensorLoopsMixin):
         Returns the list of responses received from peers within the broadcast
         timeout -- useful for telemetry (which peers acknowledged before the
         stop fanned out).
+
+        A response is only an acknowledgement that the peer STOPPED if it says
+        so. A peer whose registered robot exposes no ``stop_task`` answers
+        ``{"ok": False, ...}``; such peers are counted separately, logged at
+        CRITICAL, and reported in the safety envelope as ``peers_not_stopped``.
+        Counting them as acknowledgements would tell an operator the fleet had
+        halted while a robot was still moving.
         """
         self._estop_lockout.set()
         self._last_estop_ts = time.time()
         self._last_estop_mono = time.monotonic()
         responses = self.broadcast({"action": "stop"}, timeout=3.0)
+        not_stopped = _peers_that_did_not_stop(responses)
+        if not_stopped:
+            logger.critical(
+                "[safety] %s: EMERGENCY STOP - %d of %d responding peer(s) did NOT stop: %s. "
+                "Those robots may still be executing; use a hardware cutoff.",
+                self.peer_id,
+                len(not_stopped),
+                len(responses),
+                sorted(not_stopped),
+            )
         # Wire-level publisher attribution: bind the local TLS-bound zid
         # into both the body (so receivers can verify the body matches
         # ``sample.source_info.source_id.zid``) and the publish path (via
@@ -2853,6 +2916,7 @@ class Mesh(SensorLoopsMixin):
             "peer_id": self.peer_id,
             "t": self._last_estop_ts,
             "responses_received": len(responses),
+            "peers_not_stopped": sorted(not_stopped),
             "lockout_engaged": True,
         }
         if local_zid is not None:
@@ -2864,6 +2928,7 @@ class Mesh(SensorLoopsMixin):
             payload={
                 "sender_id": self.peer_id,
                 "responses_received": len(responses),
+                "peers_not_stopped": sorted(not_stopped),
                 "lockout_engaged": True,
             },
         )

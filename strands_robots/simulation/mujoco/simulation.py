@@ -2642,9 +2642,15 @@ class MuJoCoSimEngine(
                 return mass_err
             # MuJoCo additionally refuses to compile a moving body lighter than
             # mjMINVAL ("mass and inertia of moving bodies must be larger than
-            # mjMINVAL"), which is the last mass value that reached the generic
-            # recompile refusal. Name the floor instead, so every mass this
-            # method accepts is one the compiler accepts.
+            # mjMINVAL"). Name that floor here so the common case is rejected by
+            # parameter name rather than by a recompile. It is a necessary but
+            # not a sufficient condition: the same invariant also covers the
+            # INERTIA, which the compiler integrates from the geom's shape, so a
+            # mass above this floor can still integrate to an inertia below it
+            # on a very small geom. Reproducing that bound here would mean
+            # reimplementing MuJoCo's per-shape integration, so the residual
+            # case is reported with the compiler's own message instead (see
+            # scene_ops.inject_object_into_scene).
             minimum = float(_ensure_mujoco().mjMINVAL)
             if float(mass) < minimum:
                 return {

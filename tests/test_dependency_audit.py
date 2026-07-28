@@ -346,3 +346,127 @@ def test_vera_sim_is_forked_away_from_lerobot06_extras():
             f"its gymnasium 0.29 pin cannot drag the lock below lerobot 0.6; "
             f"forked pairs found: {sorted(forked)}"
         )
+
+
+# ---------------------------------------------------------------------------
+# The IK solver stack must be declared by the extra that ships `move_to`.
+#
+# `move_to` is a Cartesian transport primitive in the MuJoCo backend's
+# agent-callable action enum, and it solves inverse kinematics through
+# `strands_robots.simulation.ik.MinkIKBridge`, i.e. through `mink` +
+# `qpsolvers`. Neither was declared by any extra reachable from `[all]`, so on
+# a `pip install "strands-robots[all]"` the action returned
+# `IK bridge unavailable: ... No module named 'mink'` -- and the only reason CI
+# did not see it was that the dev environment installed `mink` by hand. These
+# guards pin the two halves of that: the extra declares the solver, and the dev
+# env does not compensate for an undeclared dependency (which is what let the
+# gap stay invisible while every IK test passed).
+_SELF_NAME = "strands-robots"
+_IK_SOLVER_PACKAGES = ("mink", "qpsolvers")
+
+
+def _extra_closure(extra: str) -> set[str]:
+    """Canonical names an extra pulls in, following ``strands-robots[...]`` self-references.
+
+    Args:
+        extra: Name of the extra in ``[project.optional-dependencies]``.
+
+    Returns:
+        The set of distribution names reachable from *extra*, lower-cased.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    extras = data["project"]["optional-dependencies"]
+    seen: set[str] = set()
+    names: set[str] = set()
+    pending = [extra]
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        assert current in extras, f"unknown extra {current!r}"
+        for spec in extras[current]:
+            req = Requirement(spec)
+            if req.name.lower() == _SELF_NAME:
+                pending.extend(req.extras)
+                continue
+            names.add(req.name.lower())
+    return names
+
+
+def test_sim_mujoco_extra_declares_the_ik_solver_stack() -> None:
+    """``[sim-mujoco]`` must declare the solver its ``move_to`` primitive needs.
+
+    The extra ships the MuJoCo backend, whose action enum includes ``move_to``;
+    that action is a dead end unless the same extra also brings the IK solver.
+    """
+    closure = _extra_closure("sim-mujoco")
+    missing = [pkg for pkg in _IK_SOLVER_PACKAGES if pkg not in closure]
+    assert not missing, (
+        f"[sim-mujoco] ships the move_to primitive but does not declare {missing}; "
+        f"move_to then returns 'IK bridge unavailable'. Declared: {sorted(closure)}"
+    )
+
+
+def test_all_extra_can_run_the_move_to_primitive() -> None:
+    """``[all]`` must be able to honor every action the backends it installs advertise."""
+    closure = _extra_closure("all")
+    missing = [pkg for pkg in _IK_SOLVER_PACKAGES if pkg not in closure]
+    assert not missing, (
+        f"pip install 'strands-robots[all]' advertises move_to but does not install {missing}, so the action cannot run"
+    )
+
+
+def test_dev_env_does_not_install_undeclared_ik_dependencies() -> None:
+    """The dev env must not hand-install the IK stack the extras are meant to declare.
+
+    A test environment that adds a dependency no extra provides makes the IK
+    paths green in CI while they are unreachable for users; the solver has to
+    arrive through ``features = ["all"]`` like every other dependency.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    env = data["tool"]["hatch"]["envs"]["default"]
+    assert env["features"] == ["all"], "the dev env must install the package via features"
+    offenders = [spec for spec in env.get("dependencies", []) if Requirement(spec).name.lower() in _IK_SOLVER_PACKAGES]
+    assert not offenders, (
+        f"the dev env pins {offenders} directly; declare them in the extra that "
+        f"needs them instead so a user install matches CI"
+    )
+
+
+def test_ik_install_hints_name_only_declared_extras() -> None:
+    """Every IK install hint must be a command of extras, not extras plus loose packages.
+
+    A hint reading ``uv pip install 'strands-robots[sim-mujoco]' mink`` documents
+    a dependency the extra does not declare. Each hint's install command must
+    consist solely of ``strands-robots[...]`` specs whose closure provides the
+    solver, so following it is sufficient.
+    """
+    from strands_robots.policies.cosmos3 import sim_ik as cosmos3_sim_ik
+    from strands_robots.policies.vera import sim_ik as vera_sim_ik
+    from strands_robots.simulation import ik as shared_ik
+
+    hints = {
+        "shared install": shared_ik._DEFAULT_INSTALL_HINT,
+        "shared no-backend": shared_ik._DEFAULT_NO_BACKEND_MSG,
+        "vera install": vera_sim_ik._install_hint(),
+        "vera no-backend": vera_sim_ik._NO_BACKEND_MSG,
+        "cosmos3 install": cosmos3_sim_ik._install_hint(),
+        "cosmos3 no-backend": cosmos3_sim_ik._NO_BACKEND_MSG,
+    }
+    for label, hint in hints.items():
+        commands = [line.split("uv pip install", 1)[1] for line in hint.splitlines() if "uv pip install" in line]
+        assert commands, f"{label} hint has no install command: {hint!r}"
+        for command in commands:
+            specs = [token.strip("'\".") for token in command.split() if token.strip("'\". ")]
+            assert specs, f"{label} hint has an empty install command"
+            for spec in specs:
+                req = Requirement(spec)
+                assert req.name.lower() == _SELF_NAME, (
+                    f"{label} hint tells the user to install {spec!r} alongside the "
+                    f"extra, i.e. a dependency no extra declares: {command.strip()!r}"
+                )
+                for name in req.extras:
+                    closure = _extra_closure(name)
+                    missing = [pkg for pkg in _IK_SOLVER_PACKAGES if pkg not in closure]
+                    assert not missing, f"{label} hint points at [{name}], which does not provide {missing}"
