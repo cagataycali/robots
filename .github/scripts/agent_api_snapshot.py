@@ -111,7 +111,7 @@ def render_markdown(breaking: list[str], info: list[str]) -> str:
     footer = (
         "> Automated static check of the AgentTool action contract. Removed or "
         + "renamed actions/parameters break agent code that calls them. If a change "
-        + "is intentional, add a `CHANGELOG.md` entry or a deprecation notice."
+        + "is intentional, add a `changelog.d/` fragment or a deprecation notice."
     )
     lines += ["", "---", footer]
     return "\n".join(lines)
