@@ -52,6 +52,11 @@ def _torch_scalar(value: float):
     return torch.tensor(value)
 
 
+def _torch_bool(value: bool = True):
+    torch = pytest.importorskip("torch")
+    return torch.tensor(value, dtype=torch.bool)
+
+
 def _sim_policy(action_keys: list[str] | None = None) -> LerobotLocalPolicy:
     """A policy carrying a SIM embodiment.
 
@@ -105,6 +110,28 @@ class TestNonJointValuesAreExcluded:
     @pytest.mark.parametrize("value", [True, False])
     def test_is_joint_scalar_rejects_both_bools(self, value):
         assert _is_joint_scalar(value) is False
+
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            lambda: np.bool_(True),
+            lambda: np.bool_(False),
+            lambda: np.array(True),
+            lambda: np.array(False, dtype=bool),
+            _torch_bool,
+        ],
+        ids=["np.bool_ True", "np.bool_ False", "ndarray0d bool", "ndarray0d dtype=bool", "torch bool"],
+    )
+    def test_is_joint_scalar_rejects_every_bool_flavour(self, factory):
+        """A python ``bool`` is only one of the ways an observation says "boolean".
+
+        None of these is caught by the check for another: ``np.bool_`` is not a
+        ``bool`` subclass and not an ``np.integer``, so it reaches the duck-typed
+        0-d branch (``ndim`` is 0, ``item`` exists); a 0-d bool ``ndarray`` and a
+        0-d ``torch.bool`` tensor arrive the same way. Each one accepted is an
+        extra key in front of the real joints.
+        """
+        assert _is_joint_scalar(factory()) is False
 
     def test_a_multi_element_array_is_not_a_scalar(self):
         keys = hardware_pos_keys({"cloud.pos": np.zeros(3), "shoulder_pan.pos": 1.0})
@@ -167,6 +194,54 @@ class TestTheActionSideAgreesWithTheStateSide:
         radian->degree conversion, ~57x under-scaled, silently.
         """
         assert _sim_policy()._hardware_action_keys(_obs(_MIXED_DTYPES)) == _POS_KEYS
+
+
+class TestABooleanFlagNeverTakesAJointColumn:
+    """A flag accepted as a joint reading shifts every joint by one column.
+
+    Both sides slice ``[:len(actuators)]`` off this list, so one extra key in
+    front does not fail loudly - it renames each reading to its neighbour and
+    drops the last one. On hardware these are ABSOLUTE targets, and the flag's
+    ``1.0`` lands in joint slot 0.
+    """
+
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            lambda: True,
+            lambda: np.bool_(True),
+            lambda: np.array(True),
+            _torch_bool,
+        ],
+        ids=["python bool", "np.bool_", "ndarray0d bool", "torch bool"],
+    )
+    def test_a_leading_flag_does_not_shift_the_joints(self, factory):
+        observation = {"is_homed.pos": factory()}
+        observation.update(_obs([float(i) for i in range(1, 7)]))
+
+        assert hardware_pos_keys(observation) == _POS_KEYS
+
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            lambda: True,
+            lambda: np.bool_(True),
+            lambda: np.array(True),
+            _torch_bool,
+        ],
+        ids=["python bool", "np.bool_", "ndarray0d bool", "torch bool"],
+    )
+    def test_both_sides_still_agree_when_a_flag_is_present(self, factory):
+        """The shared predicate has to hold the invariant under a flag too.
+
+        If only one side dropped the flag, the state vector and the actuator
+        names would disagree by one column - the divergence this predicate was
+        made single-source-of-truth to prevent.
+        """
+        observation = {"is_homed.pos": factory()}
+        observation.update(_obs([float(i) for i in range(1, 7)]))
+
+        assert _sim_policy()._hardware_action_keys(observation) == hardware_pos_keys(observation)
 
 
 class TestTheOverrideStaysOffWhenItShould:

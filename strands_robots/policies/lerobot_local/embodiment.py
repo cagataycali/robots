@@ -160,12 +160,47 @@ def _convert_joint_vector(
 # Hardware observation detection
 
 
+def _is_boolean_flag(value: object) -> bool:
+    """Whether ``value`` carries a boolean, in any of the flavours an observation uses.
+
+    A driver status flag is not a joint reading, and the exclusion has to cover
+    every spelling of "boolean" because none of them is caught by a check for
+    another one:
+
+    ==========================  ============================================
+    ``True``                    an ``int`` subclass, so a numeric check takes it
+    ``np.bool_(True)``          NOT a ``bool`` subclass, and NOT an
+                                ``np.integer`` - it reaches a duck-typed 0-d
+                                check instead (``ndim`` is 0, ``item`` exists)
+    ``np.array(True)``          an ``ndarray`` whose ``ndim`` is 0
+    ``torch.tensor(True)``      0-d with an ``item``, dtype ``torch.bool``
+    ==========================  ============================================
+
+    So the flag test is done once here, ahead of every accept branch, rather
+    than per branch: a branch added later cannot reopen the hole.
+
+    Dtype is matched by kind rather than identity so the check does not import
+    torch (this module stays light) and covers array libraries generally. An
+    unrecognised dtype spelling therefore reads as boolean if it says "bool",
+    which is the safe direction: a wrongly-rejected reading yields a SHORT key
+    list, and a short list refuses the hardware override (see
+    ``hardware_pos_keys`` callers) instead of binding a misaligned one.
+    """
+    if isinstance(value, (bool, np.bool_)):
+        return True
+    dtype = getattr(value, "dtype", None)
+    if dtype is None:
+        return False
+    # numpy dtypes expose ``.kind`` ('b' for boolean); torch's do not, but every
+    # dtype spelling that means boolean says so in its string form.
+    return getattr(dtype, "kind", None) == "b" or "bool" in str(dtype).lower()
+
+
 def _is_joint_scalar(value: object) -> bool:
     """Whether ``value`` is a single numeric joint reading.
 
-    Accepts python and numpy scalars plus 0-d arrays/tensors; rejects ``bool``
-    (a driver status flag is not a joint reading, and ``bool`` is an ``int``
-    subclass so the exclusion has to be explicit) and anything with more than
+    Accepts python and numpy scalars plus 0-d arrays/tensors; rejects booleans
+    in every flavour (see :func:`_is_boolean_flag`) and anything with more than
     one element.
 
     The dtype coverage is the point: ``isinstance(np.float64(1.0), float)`` is
@@ -174,7 +209,7 @@ def _is_joint_scalar(value: object) -> bool:
     differently for a float32 observation than for a float64 one - and
     differently again for an observation that mixes the two.
     """
-    if isinstance(value, bool):
+    if _is_boolean_flag(value):
         return False
     if isinstance(value, (int, float, np.floating, np.integer)):
         return True

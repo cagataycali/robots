@@ -28,8 +28,12 @@ The model was conditioned on raw hardware degrees while its command was keyed an
 scaled for the sim, and nothing warned, because the state side had succeeded.
 Both sides now call one `hardware_pos_keys()` predicate. It also accepts python /
 numpy integers and 0-d tensors, and - a change on the state side - refuses
-`bool`, so a driver status flag (`is_homed.pos`) can no longer take a joint
-column and be commanded as an absolute `1.0`.
+booleans in every flavour an observation spells them (`bool`, `np.bool_`, and 0-d
+`bool` arrays / tensors), so a driver status flag (`is_homed.pos`) can no longer
+take a joint column and be commanded as an absolute `1.0`. A flag accepted there
+does not fail loudly: both sides slice the key list to their actuator count, so
+one extra key in front renames every reading to its neighbour and drops the
+last.
 
 ### Fixed: a leader arm is refused by Robot() instead of built as a follower
 
