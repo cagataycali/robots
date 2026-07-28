@@ -5,30 +5,68 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
-### Fixed: a teleop receiver refuses a wildcard source instead of following every peer
+### Fixed: a live MJPEG stream refuses options it cannot honor
 
-`InputPublisher` / `InputReceiver` interpolate `device_name` and
-`source_peer_id` into the Zenoh key expression
-`strands/{peer_id}/input/{device_name}`, and Zenoh reads `*` / `**` as
-wildcards. Nothing validated either identifier where the stream is built, so
-source scoping - the only thing making teleop point-to-point - could be
-switched off by a single argument:
+`mjpeg_frames` is the one media entry point in `strands_robots.rendering` that
+validated nothing, while `encode_clip` beside it already refuses a frame rate it
+cannot encode at. Each of the stream's four options therefore had values that
+were accepted and then not honored:
 
 ```python
-rx = InputReceiver(mesh, robot, source_peer_id="**")   # returned a receiver
-rx.topic          # 'strands/**/input/leader'
-# every peer publishing an input frame now reaches robot.send_action()
+# documented: "target frame rate; the generator sleeps to pace emission"
+list(mjpeg_frames(render, fps=0, max_frames=6))     # 6 chunks in 0.001 s
+list(mjpeg_frames(render, fps=float("inf"), ...))   # ditto: 1 / inf is 0.0 too
+list(mjpeg_frames(render, quality=500, ...))        # encoded at 100, not 500
+list(mjpeg_frames(render, max_frames=2.7))          # 3 chunks
+list(mjpeg_frames(render, size=(0, 0)))             # bare ValueError from Pillow
 ```
 
-The wire `teleop_receive` command already rejected exactly those values, so the
-remote surface was stricter than the local API it delegates to
-(`HardwareRobot.start_teleop_receive` / `start_teleop_publish`, which accepted
-them too). The shared rule is now one validator,
-`strands_robots.mesh.security.validate_mesh_identifier`, called from
-`validate_command` and from both constructors; the two `HardwareRobot` entry
-points report through the tool envelope and validate before tearing down an
-existing stream, so a rejected call cannot stop a live one. Well-formed
-identifiers and their key expressions are unchanged.
+`fps` of `0`, a negative, `nan` or `inf` all landed in a `frame_dt = 0.0`
+fallback that disabled pacing outright, so the generator emitted as fast as it
+could encode JPEGs - measured at ~16,000 chunks/s against a requested rate, the
+opposite of a rate limit. A non-numeric `fps` or `max_frames` leaked a bare
+`TypeError` from a comparison, `True` acted as a silent `1`, and Pillow quietly
+substituted any `quality` outside `[1, 95]`.
+
+`fps` now has to be a positive finite number (deliberately wider than
+`encode_clip`'s whole-number container rate - pacing a live view is just a sleep
+interval, so `12.5` is honorable), `quality` a whole number in `[1, 95]`,
+`max_frames` a positive whole number, and `size` a `(width, height)` pair drawn
+from the shared pixel-count domain.
+
+The refusals are raised by the `mjpeg_frames` call itself rather than from the
+generator body. A generator function runs nothing until the consumer's first
+`next()`, by which point an HTTP handler has already committed the
+`multipart/x-mixed-replace` response headers and can only truncate the stream;
+the emission loop moved into a private helper so an unusable configuration is
+reported before any of that.
+
+### Fixed: Robot() forwards the base position it was given
+
+The `Robot()` factory wraps `add_robot`, which validates a base pose up front:
+an omitted pose spawns at the origin, a NumPy pose is accepted, and a
+wrong-length / non-numeric / non-finite vector is refused with an actionable
+message. The factory read the parameter by truthiness
+(`position or [0.0, 0.0, 0.0]`), which made the wrapper both less capable and
+less safe than the method it wraps:
+
+```python
+Robot("so100", position=np.array([0.4, 0.2, 0.0]))
+# before: ValueError: truth value of an array with more than one element is ambiguous
+# after:  base at [0.4, 0.2, 0.0]   (add_robot accepted this value all along)
+
+Robot("so100", position=[])
+# before: success, base silently at [0.0, 0.0, 0.0]
+# after:  RuntimeError: add_robot: 'position' must be a 3-element vector, got 0 ([])
+```
+
+An empty vector is a caller mistake, not a request for the default, and reading
+it as "omitted" placed the robot somewhere the caller never asked for while
+reporting success - the guard that refuses it was unreachable through the
+factory. The position is now passed through verbatim, so `None` (the documented
+"spawn at the origin") stays the single source of truth for that default
+instead of a copy in the factory that can drift from the backend's.
+
 
 ### Fixed: the state and action sides agree on what a hardware observation is
 
