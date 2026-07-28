@@ -36,7 +36,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 from strands_robots.teleop_mixin import TeleopMixin
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_finite_number_error, require_optional
 
 if TYPE_CHECKING:
     from lerobot.robots.config import RobotConfig
@@ -1664,13 +1664,21 @@ class Robot(TeleopMixin, AgentTool):
                 KeyboardTeleop, Phone).
             device_name: Name for this input stream (e.g. "leader", "gamepad").
             method: Input method label ("arm", "gamepad", "keyboard", "phone").
-            hz: Publishing frequency in Hz.
+            hz: Publishing frequency in Hz. Must be a positive finite number;
+                the publish loop's period is ``1 / hz``.
 
         Returns:
-            Status dict with topic and peer_id for the receiver to use.
+            Status dict with topic and peer_id for the receiver to use, or an
+            error dict when ``hz`` is not a rate the publish loop can honor.
         """
         if not self.mesh or not self.mesh.alive:
             return {"status": "error", "content": [{"text": "Mesh not active. Cannot publish input."}]}
+
+        # Validate before stopping any publisher already registered for this
+        # device: a rejected call must not tear down a live stream.
+        error = positive_finite_number_error(hz, "hz", "start_teleop_publish")
+        if error:
+            return {"status": "error", "content": [{"text": error}]}
 
         from strands_robots.mesh import InputPublisher
 

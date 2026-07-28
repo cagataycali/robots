@@ -26,6 +26,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.mesh.security import ValidationError, validate_input_frame
+from strands_robots.utils import positive_finite_number_error
 
 _log_safety_event: Callable[..., None] | None
 try:  # audit is best-effort; never let an import issue break teleop apply
@@ -113,6 +114,28 @@ class InputPublisher:
         method: str = "arm",
         hz: float = INPUT_HZ_DEFAULT,
     ) -> None:
+        """Bind a teleoperator to a mesh topic at a fixed publish rate.
+
+        Args:
+            mesh: Live mesh used as the single publish chokepoint.
+            teleoperator: Any object exposing ``get_action() -> dict``.
+            device_name: Input-stream name; becomes the last topic segment.
+            method: Input-method label ("arm", "gamepad", "keyboard", "phone").
+            hz: Publish rate. Must be a positive finite number - the loop
+                period is ``1 / hz``, so ``0`` raises inside the background
+                thread and a negative/``nan``/``inf`` rate leaves the loop
+                unthrottled, flooding every subscribed peer.
+
+        Raises:
+            ValueError: If ``hz`` is not a positive finite number. Refusing at
+                construction is what keeps the rate a contract:
+                :meth:`_publish_loop` runs on a background thread, where the
+                same mistake would surface as a dead publisher that still
+                reports ``running``.
+        """
+        error = positive_finite_number_error(hz, "hz", "InputPublisher")
+        if error:
+            raise ValueError(error)
         self.mesh = mesh
         self.teleoperator = teleoperator
         self.device_name = device_name
@@ -192,7 +215,8 @@ class InputPublisher:
         return self.stats
 
     def _publish_loop(self) -> None:
-        period = 1.0 / self.hz
+        # ``hz`` is validated in __init__, so the division is safe.
+        period = 1.0 / float(self.hz)
         while self._running and not self._stop_event.is_set():
             loop_start = time.perf_counter()
             try:

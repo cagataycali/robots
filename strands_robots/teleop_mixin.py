@@ -32,6 +32,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from strands_robots.utils import positive_finite_number_error
+
 logger = logging.getLogger(__name__)
 
 # Default local control loop frequency (Hz). Matches InputPublisher.
@@ -266,7 +268,8 @@ class TeleopMixin:
             robot_name: Target robot for ``send_action``. ``None`` -> the
                 host's default (single hardware robot, or first sim robot).
                 In a multi-robot sim, name the specific robot.
-            hz: Local control-loop frequency.
+            hz: Local control-loop frequency. Must be a positive finite
+                number - the loop period is ``1 / hz``.
             publish: Also publish each selected device to the mesh via the
                 host's ``start_teleop_publish`` so remote peers can follow.
                 Requires the host to expose ``start_teleop_publish`` and a
@@ -275,14 +278,30 @@ class TeleopMixin:
                 ``duration`` elapses or KeyboardInterrupt). When ``False``
                 (default) the loop runs in a managed background thread and the
                 call returns immediately with a handle/status.
-            duration: Stop automatically after N seconds. ``None`` = run until
+            duration: Stop automatically after N seconds. Must be a positive
+                finite number when given; ``None`` = run until
                 ``stop_teleoperate()`` (background) / Ctrl+C (block).
 
         Returns:
             Status dict. Background mode returns immediately; ``block=True``
-            returns after the loop ends with frame/error stats.
+            returns after the loop ends with frame/error stats. An ``hz`` or
+            ``duration`` the loop cannot honor is refused here rather than
+            reported as a started session.
         """
         self._ensure_teleop_state()
+
+        # Validate the loop knobs BEFORE anything is connected or published:
+        # both are consumed only inside the loop (``1 / hz`` for the period,
+        # ``start + duration`` for the deadline), so an unusable value used to
+        # be reported as a started session and only misbehave on the background
+        # thread - see the module docstring's rate/duration contract.
+        for value, param in ((hz, "hz"), (duration, "duration")):
+            if param == "duration" and value is None:
+                # Documented: run until stop_teleoperate() / Ctrl+C.
+                continue
+            error = positive_finite_number_error(value, param, "teleoperate")
+            if error:
+                return {"status": "error", "content": [{"text": error}]}
 
         if not self._teleops:
             return {
@@ -461,8 +480,11 @@ class TeleopMixin:
         hz: float,
         duration: float | None,
     ) -> None:
-        period = 1.0 / hz if hz > 0 else 0.0
-        deadline = (self._teleop_start_time + duration) if duration else None
+        # ``hz`` and ``duration`` are validated in :meth:`teleoperate` (the only
+        # caller), so the division is safe. ``duration`` is read by membership,
+        # not truthiness: a falsy-but-supplied value must not read as "absent".
+        period = 1.0 / float(hz)
+        deadline = (self._teleop_start_time + duration) if duration is not None else None
         warned_conflicts: set[str] = set()
 
         while self._teleop_running and not self._teleop_stop_event.is_set():

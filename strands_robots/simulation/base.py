@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 # signature as a *string* annotation; ``from __future__ import
 # annotations`` (already in effect) makes that a no-op at runtime.
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
+from strands_robots.utils import positive_finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -1184,8 +1185,11 @@ class SimEngine(ABC):
         as ``np.float32(50.0)`` or ``np.int64(50)`` passes; ``bool`` is rejected
         explicitly (an ``int`` subclass, ``True`` would slip through and act as a
         silent 1 Hz) and non-finite values (``nan``/``inf``) are rejected before
-        the ``<= 0`` comparison. Returns a structured error dict to surface, or
-        ``None`` when valid.
+        the ``<= 0`` comparison. That domain is
+        :func:`~strands_robots.utils.positive_finite_number_error`, shared with
+        every other rate/duration knob (including the teleop control loop, which
+        divides by its ``hz`` the same way) so they cannot diverge. Returns a
+        structured error dict to surface, or ``None`` when valid.
 
         Args:
             control_frequency: The caller-supplied value to validate.
@@ -1194,27 +1198,9 @@ class SimEngine(ABC):
         Returns:
             An error dict naming the offending parameter, or ``None``.
         """
-        # Accept any real scalar (``numbers.Real``) so a NumPy-scalar frequency
-        # (e.g. ``np.float32(50.0)`` / ``np.int64(50)`` computed from a config
-        # array or ``mj_data``) is not rejected: ``isinstance(x, (int, float))``
-        # is ``False`` for every NumPy scalar except ``np.float64``. ``bool`` is
-        # still rejected explicitly (an ``int`` subclass, ``True`` would act as a
-        # silent 1 Hz), and non-finite values (``nan``/``inf``) are rejected via
-        # ``math.isfinite`` before the ``<= 0`` comparison so a ``nan`` -- which
-        # is never ``<= 0`` -- cannot slip through into the ``1 / frequency`` and
-        # ``n_steps / frequency`` arithmetic. Mirrors the ``numbers.Real`` +
-        # finiteness contract already applied to ``add_camera(fov=...)`` and
-        # ``get_ground_height``.
-        if (
-            isinstance(control_frequency, bool)
-            or not isinstance(control_frequency, numbers.Real)
-            or not math.isfinite(float(control_frequency))
-            or float(control_frequency) <= 0
-        ):
-            return {
-                "status": "error",
-                "content": [{"text": f"{method}: control_frequency must be > 0, got {control_frequency!r}."}],
-            }
+        error = positive_finite_number_error(control_frequency, "control_frequency", method)
+        if error:
+            return {"status": "error", "content": [{"text": error}]}
         return None
 
     @staticmethod
@@ -1378,13 +1364,14 @@ class SimEngine(ABC):
         policy is created or a background thread is submitted - turns all of
         these into an actionable caller error.
 
-        The accepted domain mirrors :meth:`_validate_positive_frequency` (the
-        other knob in the same ``duration * control_frequency`` product), so
-        the two cannot diverge: any finite positive real scalar, including a
-        NumPy scalar such as ``np.float32(2.5)``; ``bool`` is rejected
-        explicitly (an ``int`` subclass, ``True`` would act as a silent 1
-        second) and ``nan``/``inf`` are rejected before the ``<= 0`` comparison
-        so a ``nan`` - which is never ``<= 0`` - cannot slip through.
+        The accepted domain is :func:`~strands_robots.utils.positive_finite_number_error`,
+        shared with :meth:`_validate_positive_frequency` (the other knob in the
+        same ``duration * control_frequency`` product) so the two cannot
+        diverge: any finite positive real scalar, including a NumPy scalar such
+        as ``np.float32(2.5)``; ``bool`` is rejected explicitly (an ``int``
+        subclass, ``True`` would act as a silent 1 second) and ``nan``/``inf``
+        are rejected before the ``<= 0`` comparison so a ``nan`` - which is
+        never ``<= 0`` - cannot slip through.
 
         Args:
             duration: The caller-supplied value to validate.
@@ -1394,16 +1381,9 @@ class SimEngine(ABC):
             An error dict naming the offending parameter, or ``None`` when the
             value is valid.
         """
-        if (
-            isinstance(duration, bool)
-            or not isinstance(duration, numbers.Real)
-            or not math.isfinite(float(duration))
-            or float(duration) <= 0
-        ):
-            return {
-                "status": "error",
-                "content": [{"text": f"{method}: duration must be > 0, got {duration!r}."}],
-            }
+        error = positive_finite_number_error(duration, "duration", method)
+        if error:
+            return {"status": "error", "content": [{"text": error}]}
         return None
 
     @staticmethod
