@@ -53,6 +53,13 @@ robot = Robot(
 )
 ```
 
+`control_frequency` (Hz) sets the control loop's per-action period,
+`1 / control_frequency` - the only throttle between two servo commands. It must be a
+positive finite number: `0`, a negative rate, `nan` or `inf` raises `ValueError` at
+construction, before the serial port is opened, rather than leaving the loop free-running
+against the arm. This is the same domain the simulation applies to `run_policy`'s
+`control_frequency`, so a rollout rehearsed in sim is honored identically on hardware.
+
 Forwardable kwargs: `port`, `robot_ip`, `kp`, `kd`, `default_positions`, `control_dt`,
 `is_simulation`, `gravity_compensation`, `controller`, `calibration_dir`, `mock`,
 `use_degrees`, `max_relative_target`, `disable_torque_on_disconnect`.

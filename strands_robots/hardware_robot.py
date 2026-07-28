@@ -36,7 +36,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 from strands_robots.teleop_mixin import TeleopMixin
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_finite_number_error, require_optional
 
 if TYPE_CHECKING:
     from lerobot.robots.config import RobotConfig
@@ -239,7 +239,12 @@ class Robot(TeleopMixin, AgentTool):
                 {"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}}
             action_horizon: Actions per inference step
             data_config: Data configuration (for GR00T compatibility)
-            control_frequency: Control loop frequency in Hz (default: 50Hz)
+            control_frequency: Control loop frequency in Hz (default: 50Hz).
+                Must be a positive finite number - it is the divisor of the
+                loop's per-action period (``1 / control_frequency``), the only
+                throttle between two servo commands. A ``0``, negative,
+                ``nan`` or ``inf`` rate raises ``ValueError`` here rather than
+                leaving the loop unthrottled against real hardware.
             ros2_bridge: When True, publish this robot's live observation
                 (``joint_states`` + one ``image_raw`` per camera) on a ROS 2
                 domain so external ROS 2 nodes can subscribe to the physical
@@ -283,6 +288,20 @@ class Robot(TeleopMixin, AgentTool):
         self.tool_name_str = tool_name
         self.action_horizon = action_horizon
         self.data_config = data_config
+        # ``action_sleep_time`` is ``1 / control_frequency`` and is the ONLY
+        # thing bounding how fast the task loop commands the physical servo
+        # bus: it is what ``_execute_task_async`` awaits between two
+        # ``send_action`` calls. A non-positive or non-finite rate turns that
+        # period into ``<= 0`` (``asyncio.sleep`` then returns immediately) or
+        # into ``nan`` (``asyncio.sleep`` raises mid-task, after the first
+        # action has already been applied), so the same rollout the simulation
+        # refuses outright would run here against real hardware. The identical
+        # domain is enforced on the rollout knobs of the simulation
+        # (``SimEngine._validate_positive_frequency``); validated BEFORE
+        # ``_initialize_robot`` opens the serial port, so a rejected rate never
+        # touches the arm.
+        if rate_error := positive_finite_number_error(control_frequency, "control_frequency", "Robot"):
+            raise ValueError(rate_error)
         self.control_frequency = control_frequency
         self.action_sleep_time = 1.0 / control_frequency  # Time between actions
 
