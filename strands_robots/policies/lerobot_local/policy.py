@@ -21,7 +21,7 @@ import numpy as np
 import torch
 
 from .. import Policy
-from .embodiment import ZeroActionMonitor, diagnose_action_dim
+from .embodiment import ZeroActionMonitor, diagnose_action_dim, hardware_pos_keys
 from .processor import ProcessorBridge
 from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
 
@@ -1707,6 +1707,42 @@ class LerobotLocalPolicy(Policy):
 
     # Inference
 
+    def _hardware_action_keys(self, observation_dict: dict[str, Any]) -> list[str] | None:
+        """Actuator names to emit actions under when a SIM embodiment is driven from hardware.
+
+        lerobot ``SOFollower`` & friends key joint scalars as ``'<motor>.pos'``.
+        When a SIM embodiment (numeric / named sim joints) is fed a hardware
+        observation, the action tensor must still be emitted under those
+        ``'.pos'`` names, and WITHOUT the sim unit conversion, for
+        ``SOFollower.send_action`` to accept it.
+
+        Detection uses the same :func:`hardware_pos_keys` predicate as the state
+        side (``PackStateProcessorStep``). The two used to be written separately
+        and could disagree: this side ran a plain-``float`` pass and only tried a
+        numpy pass ``if not _pos:``, so a PARTIALLY matching first pass poisoned
+        the retry and left the override unset, while the state side - one
+        combined pass - succeeded on the same observation. The model was then fed
+        raw hardware degrees while its action was emitted with the sim
+        radian->degree conversion applied (~57x under-scaled), and nothing
+        warned, because the state side had succeeded.
+
+        Args:
+            observation_dict: The raw observation for this step.
+
+        Returns:
+            The hardware actuator names to bind the action vector to, or ``None``
+            when this is not a hardware observation (or the embodiment already
+            declares ``'.pos'`` action keys, making the override a no-op).
+        """
+        if self._embodiment is None or not self._embodiment.action_keys:
+            return None
+        if any(str(key).endswith(".pos") for key in self._embodiment.action_keys):
+            return None
+        pos_keys = hardware_pos_keys(observation_dict)
+        if len(pos_keys) < len(self._embodiment.action_keys):
+            return None
+        return pos_keys[: len(self._embodiment.action_keys)]
+
     async def get_actions(self, observation_dict: dict[str, Any], instruction: str, **kwargs) -> list[dict[str, Any]]:
         """Get actions from policy given observation and instruction.
 
@@ -1732,37 +1768,7 @@ class LerobotLocalPolicy(Policy):
         if instruction and "task" not in observation:
             observation["task"] = instruction
 
-        # Detect REAL-hardware observations: lerobot SOFollower & friends key
-        # joint scalars as '<motor>.pos'. When a SIM embodiment (numeric/ named
-        # sim joints) is driven from hardware, the action tensor must still be
-        # emitted under these '.pos' names (and WITHOUT the sim unit conversion)
-        # so SOFollower.send_action accepts it. We capture the '.pos' order here
-        # (lerobot motor order) and thread it into _tensor_to_action_dicts. When
-        # the embodiment's own action_keys are ALREADY '.pos' (e.g. so_real /
-        # so101_follower) this is a harmless no-op override with identical keys.
-        _hw_action_keys: list[str] | None = None
-        if (
-            self._embodiment is not None
-            and self._embodiment.action_keys
-            and not any(str(k).endswith(".pos") for k in self._embodiment.action_keys)
-        ):
-            _pos = [
-                k
-                for k in observation_dict
-                if isinstance(k, str) and k.endswith(".pos") and isinstance(observation_dict[k], (int, float))
-            ]
-            # numpy scalar / 0-d support (np imported at module top)
-            if not _pos:
-                _pos = [
-                    k
-                    for k in observation_dict
-                    if isinstance(k, str)
-                    and k.endswith(".pos")
-                    and isinstance(observation_dict[k], (np.floating, np.ndarray))
-                    and (not isinstance(observation_dict[k], np.ndarray) or observation_dict[k].ndim == 0)
-                ]
-            if len(_pos) >= len(self._embodiment.action_keys):
-                _hw_action_keys = _pos[: len(self._embodiment.action_keys)]
+        _hw_action_keys = self._hardware_action_keys(observation_dict)
 
         # When the processor bridge has a preprocessor, delegate normalization
         # and tokenization to it, then fix up any remaining raw arrays/tensors
