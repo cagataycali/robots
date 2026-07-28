@@ -239,12 +239,19 @@ class TestExternalForces:
         assert result["status"] == "error"
 
     def test_force_changes_acceleration(self, sim):
-        # Get initial state
+        """A latched force accelerates the body it names.
+
+        Asserts the motion rather than a physics buffer: which buffer carries
+        the latch is an implementation choice, whereas a 100 N upward force on
+        a 1 kg box under gravity has to lift it.
+        """
         data = sim._world._data
-        old_qfrc = data.qfrc_applied.copy()
-        sim.apply_force(body_name="box1", force=[0, 0, 100])
-        # qfrc_applied should change
-        assert not np.array_equal(old_qfrc, data.qfrc_applied)
+        z_before = float(data.qpos[2])
+
+        assert sim.apply_force(body_name="box1", force=[0, 0, 100])["status"] == "success"
+        sim.step(50)
+
+        assert float(data.qpos[2]) > z_before, "box1 did not rise under a 100 N upward force"
 
 
 class TestMassMatrix:

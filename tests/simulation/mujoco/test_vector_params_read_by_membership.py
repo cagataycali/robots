@@ -116,7 +116,7 @@ class TestNumpyVectorsAreAccepted:
         """``apply_force`` accepts a NumPy force/torque/point and moves the body.
 
         A computed wrench is an array; assert the body actually accelerated
-        along it so the force reached ``qfrc_applied`` rather than being
+        along it so the force reached the physics buffer rather than being
         reported as applied.
         """
         sim.add_object(name="puck", shape="box", size=[0.05, 0.05, 0.05], position=[0.0, 0.0, 0.05])
