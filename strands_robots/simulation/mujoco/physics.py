@@ -211,16 +211,24 @@ def _coerce_finite_joint_map(
 def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     """Return the dense ``nv x nv`` mass matrix M(q), robust to MuJoCo drift.
 
-    ``mj_fullM`` changed its binding signature across MuJoCo releases:
+    MuJoCo moved this API twice inside the supported version range:
 
+    - MuJoCo < 3.10: ``mj_fullM(model, dst, qM)``, reading the legacy
+      ancestor-walk sparse buffer ``data.qM`` - accepted either as a 1D array
+      or as a 2D ``[m, 1]`` column, depending on the build.
     - MuJoCo >= 3.10: ``mj_fullM(model, data, dst)`` - the sparse buffer is
       read from ``data`` internally; ``dst`` must be writeable + C-contiguous.
-    - Older builds: ``mj_fullM(model, dst, qM)`` where ``qM`` is the sparse
-      inertia buffer, accepted either as a 1D array or a 2D ``[m, 1]`` column.
+    - MuJoCo >= 3.11: ``data.qM`` is removed. The joint-space inertia is kept
+      only as the compressed-sparse-row ``data.M``, and ``mju_sym2dense`` is
+      the conversion MuJoCo's release notes prescribe for callers that used to
+      pass ``qM`` to ``mj_fullM``.
 
-    Probe the modern signature first, then fall back to the legacy orders so
-    the call works regardless of the installed MuJoCo version. ``dst`` is
-    always allocated C-contiguous to satisfy the binding's buffer contract.
+    Probe the modern signature first, then the legacy orders - but only on a
+    build that still exposes ``qM``, because the CSR ``data.M`` that replaced
+    it is a different layout and passing it to the legacy call would fill
+    ``dst`` from the wrong buffer rather than fail - then the CSR conversion.
+    ``dst`` is always allocated C-contiguous to satisfy the buffer contract of
+    every one of those calls.
 
     Args:
         mj: The imported ``mujoco`` module.
@@ -233,6 +241,8 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
 
     Raises:
         TypeError: If no known ``mj_fullM`` signature accepts the arguments.
+        AttributeError: If MjData exposes the joint-space inertia under
+            neither ``qM`` nor ``M``.
     """
     nv = model.nv
     dst = np.zeros((nv, nv), dtype=np.float64, order="C")
@@ -244,13 +254,32 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
         return dst
     except TypeError:
         pass
-    # Legacy signature: mj_fullM(model, dst, qM). Some builds require the
-    # sparse buffer as a 2D [m, 1] column; others accept the raw 1D buffer.
-    qm = np.ascontiguousarray(data.qM, dtype=np.float64)
-    try:
-        mj.mj_fullM(model, dst, qm.reshape(-1, 1))
-    except TypeError:
-        mj.mj_fullM(model, dst, qm)
+    legacy = getattr(data, "qM", None)
+    if legacy is not None:
+        # Legacy signature: mj_fullM(model, dst, qM). Some builds require the
+        # sparse buffer as a 2D [m, 1] column; others accept the raw 1D buffer.
+        qm = np.ascontiguousarray(legacy, dtype=np.float64)
+        try:
+            mj.mj_fullM(model, dst, qm.reshape(-1, 1))
+        except TypeError:
+            mj.mj_fullM(model, dst, qm)
+        return dst
+    # MuJoCo >= 3.11: no legacy buffer to pass, so convert the CSR inertia
+    # directly. nv is taken from dst's shape by the binding.
+    csr = getattr(data, "M", None)
+    if csr is None:
+        raise AttributeError(
+            "MjData exposes the joint-space inertia under neither name (tried "
+            f"data.qM and data.M) on mujoco {getattr(mj, '__version__', 'unknown')}, "
+            "so the dense mass matrix cannot be built."
+        )
+    mj.mju_sym2dense(
+        dst,
+        np.ascontiguousarray(csr, dtype=np.float64),
+        model.M_rownnz,
+        model.M_rowadr,
+        model.M_colind,
+    )
     return dst
 
 
@@ -895,7 +924,8 @@ class PhysicsMixin:
         Reflects the CURRENT configuration. ``mj_energyPos`` reads the
         position-stage derived state (``data.xipos`` for the gravitational
         term, spring/tendon lengths) and ``mj_energyVel`` reads the
-        config-dependent inertia (``data.qM``, itself position-stage derived)
+        config-dependent inertia (the sparse joint-space inertia, itself
+        position-stage derived)
         against ``data.qvel``. All of that is stale after a bare ``qpos``/
         ``qvel`` write (e.g. a direct ``data.qpos`` write from a planning/IK
         loop, or ``set_joint_velocities``), so the position pipeline is
@@ -942,7 +972,7 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        # data.qM is only valid after a forward pass. Serialize the
+        # The sparse inertia is only valid after a forward pass. Serialize the
         # forward+fullM read against concurrent policy threads (GH: concurrency
         # audit) so a sibling robot's mj_step can't mutate data mid-read.
         with self._lock:

@@ -5,6 +5,37 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: the mass matrix survives MuJoCo removing the legacy sparse inertia
+
+MuJoCo 3.11 removed `mjData.qM`, the legacy ancestor-walk sparse inertia buffer,
+keeping the joint-space inertia only in the CSR `mjData.M`. `_full_mass_matrix`
+exists to absorb exactly that kind of drift - it already probes both `mj_fullM`
+argument orders - but its legacy order read `data.qM` unconditionally, so on a
+3.11 build (inside the supported `mujoco>=3.2,<4.0` range) it raised an opaque
+`AttributeError: 'MjData' object has no attribute 'qM'` from inside the helper
+written to prevent that.
+
+The fallback chain is now layout-correct rather than name-guessing:
+
+- the modern `mj_fullM(model, data, dst)` order first (MuJoCo >= 3.10),
+- then the legacy `mj_fullM(model, dst, qM)` orders, but only on a build that
+  still exposes `qM` - the CSR `data.M` is a different layout, so substituting
+  it there would have filled the matrix from the wrong buffer instead of
+  failing,
+- then `mju_sym2dense` on the CSR inertia, the conversion MuJoCo's own release
+  notes prescribe for callers that used to pass `qM`. It reproduces `mj_fullM`
+  exactly (`max|delta| = 0.0`).
+
+If a build exposes the inertia under neither name the error now names both
+spellings and the installed MuJoCo version instead of surfacing whichever
+attribute the code happened to touch last.
+
+The two drift regression tests emulated only half of an old build - a shim
+`mujoco` module with the legacy `mj_fullM`, but the sparse buffer read off the
+*installed* `MjData` - so they broke on the release that removed it. They now
+present a matching legacy `MjData`, keeping the coverage portable across every
+supported MuJoCo, and the CSR path plus the no-buffer error are pinned too.
+
 ### Fixed: a leader arm is refused by Robot() instead of built as a follower
 
 `so101_leader` was an alias of the `so101` registry entry, whose
