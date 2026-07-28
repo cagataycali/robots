@@ -24,11 +24,11 @@ import threading
 import numpy as np
 import pytest
 
+from strands_robots.simulation.base import randomization_range_error
 from strands_robots.simulation.newton.randomization import (
     _OBS_NOISE_PARAMS,
     _RANDOMIZE_PARAMS,
     DomainRandomizationMixin,
-    _validate_range,
 )
 
 _HAS_NEWTON = importlib.util.find_spec("newton") is not None and importlib.util.find_spec("warp") is not None
@@ -101,21 +101,21 @@ class TestUnknownParamsRejected:
 
 class TestValidateRange:
     def test_accepts_ordered_non_negative_pair(self):
-        assert _validate_range("mass_range", (0.5, 2.0)) is None
+        assert randomization_range_error((0.5, 2.0), "mass_range") is None
 
     def test_rejects_inverted_bounds(self):
-        msg = _validate_range("mass_range", (2.0, 0.5))
+        msg = randomization_range_error((2.0, 0.5), "mass_range")
         assert msg is not None and "exceeds upper bound" in msg
 
     def test_rejects_negative_bound(self):
-        msg = _validate_range("friction_range", (-0.1, 1.0))
+        msg = randomization_range_error((-0.1, 1.0), "friction_range")
         assert msg is not None and "non-negative" in msg
 
     def test_rejects_non_numeric(self):
-        assert _validate_range("color_range", "nope") is not None
+        assert randomization_range_error("nope", "color_range") is not None
 
     def test_rejects_non_finite(self):
-        assert _validate_range("mass_range", (0.0, float("inf"))) is not None
+        assert randomization_range_error((0.0, float("inf")), "mass_range") is not None
 
 
 class TestSetObsNoiseValidation:

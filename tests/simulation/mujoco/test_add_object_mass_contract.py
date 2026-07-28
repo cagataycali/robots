@@ -102,8 +102,31 @@ class TestAddObjectMassDomain:
         result = sim.add_object("dust", shape="box", mass=1e-16)
         assert result["status"] == "error", result
         assert "mjMINVAL" in result["content"][0]["text"]
-        # The floor itself is accepted, so the boundary is not over-tightened.
-        assert sim.add_object("speck", shape="box", mass=float(mujoco.mjMINVAL))["status"] == "success"
+        # Not over-tightened: a mass far below any physical object still
+        # compiles, because the bound that matters is on the integrated inertia.
+        assert sim.add_object("speck", shape="box", mass=1e-9)["status"] == "success"
+
+    def test_a_mass_whose_inertia_falls_under_the_floor_reports_the_compiler_reason(self, sim):
+        """The mass floor is necessary, not sufficient - and the residual says why.
+
+        MuJoCo's invariant covers the mass *and* the inertia, and the inertia is
+        integrated from the geom's shape, so a mass at ``mjMINVAL`` integrates to
+        an inertia far below it on a 5 cm cube. ``add_object``'s numeric
+        pre-check cannot express that bound without reimplementing the
+        compiler's per-shape integration, so this case has to arrive as the
+        compiler's own message rather than as the generic
+        ``"spec recompile refused."`` that left the reason in the log.
+        """
+        result = sim.add_object("speck", shape="box", mass=float(mujoco.mjMINVAL))
+        assert result["status"] == "error", result
+        text = result["content"][0]["text"]
+        assert "mass and inertia" in text, text
+        assert "spec recompile refused" not in text
+
+        # The refusal rolled the half-built body back out, so the scene is still
+        # usable and the name is still free.
+        assert "speck" not in sim._world.objects
+        assert sim.add_object("speck", shape="box", mass=1.0)["status"] == "success"
 
     def test_non_numeric_mass_leaves_the_scene_usable(self, sim):
         """Pre-fix this raised mid-mutation and bricked every later scene edit."""

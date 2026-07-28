@@ -31,6 +31,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.utils import positive_whole_number_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -42,7 +44,7 @@ def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | No
     ``fps`` is. ``fps`` is a frame count per second, so the accepted domain is
     the shared one the plain-MP4 recorders and the ``run_policy(video=...)``
     dict already enforce
-    (:func:`~strands_robots.simulation.policy_runner.positive_whole_number_error`):
+    (:func:`~strands_robots.utils.positive_whole_number_error`):
     a positive whole number.
 
     Without this guard an unusable ``fps`` was reported as ``status="success"``
@@ -63,11 +65,6 @@ def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | No
         A structured ``{"status": "error", ...}`` dict naming ``fps``, or
         ``None`` when the value is usable.
     """
-    # Imported lazily: ``policy_runner`` pulls in the rollout machinery, and
-    # this module sits below it in the import graph (backends import the mixin
-    # while constructing their engine class).
-    from strands_robots.simulation.policy_runner import positive_whole_number_error
-
     if text := positive_whole_number_error(fps, "fps", method):
         return {"status": "error", "content": [{"text": text}]}
     return None

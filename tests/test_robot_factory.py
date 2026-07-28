@@ -273,6 +273,115 @@ class TestRobotFactory:
         assert callable(lr)
 
 
+class TestFactoryForwardsPosition:
+    """``Robot(position=...)`` reaches the backend exactly as the caller wrote it.
+
+    The factory is a thin wrapper over ``add_robot``, which validates a base
+    pose up front: a wrong-length, non-numeric or non-finite vector is refused
+    with an actionable message, an omitted pose spawns at the origin, and a
+    NumPy pose is accepted. Reading the parameter by truthiness in the factory
+    made the wrapper both less capable and less safe than the method it wraps -
+    an empty vector read as "omitted" so the origin was substituted for a caller
+    mistake ``add_robot`` refuses, and a NumPy pose raised a bare
+    ``ValueError: truth value of an array ... is ambiguous``.
+    """
+
+    MJCF = """<mujoco model="test_arm">
+      <worldbody>
+        <light pos="0 0 3"/>
+        <geom type="plane" size="1 1 0.1"/>
+        <body name="link0" pos="0 0 0.1">
+          <joint name="joint0" type="hinge" axis="0 0 1"/>
+          <geom type="capsule" size="0.02" fromto="0 0 0  0 0 0.2"/>
+        </body>
+      </worldbody>
+      <actuator><motor joint="joint0" ctrlrange="-1 1"/></actuator>
+    </mujoco>"""
+
+    @classmethod
+    def _model(cls, tmp_path):
+        """Write the minimal inline arm so no downloaded asset is needed."""
+        path = tmp_path / "test_arm.xml"
+        path.write_text(cls.MJCF)
+        return str(path)
+
+    def _spawned_position(self, tmp_path, **kwargs):
+        """Return the base position the factory actually gave the backend."""
+        sim = Robot("so100", mode="sim", urdf_path=self._model(tmp_path), mesh=False, **kwargs)
+        try:
+            return list(sim._world.robots["so100"].position)
+        finally:
+            sim.destroy()
+
+    def test_omitted_position_spawns_at_the_origin(self, tmp_path):
+        """The documented default survives: no position means the origin."""
+        pytest.importorskip("mujoco")
+        assert self._spawned_position(tmp_path) == [0.0, 0.0, 0.0]
+
+    def test_list_position_is_forwarded_unchanged(self, tmp_path):
+        pytest.importorskip("mujoco")
+        assert self._spawned_position(tmp_path, position=[0.4, 0.2, 0.1]) == [0.4, 0.2, 0.1]
+
+    def test_numpy_position_is_forwarded_unchanged(self, tmp_path):
+        """A pose computed with NumPy is what pose arithmetic produces, and
+        ``add_robot`` accepts it; the factory must not reject it."""
+        pytest.importorskip("mujoco")
+        np = pytest.importorskip("numpy")
+        assert self._spawned_position(tmp_path, position=np.array([0.4, 0.2, 0.1])) == [0.4, 0.2, 0.1]
+
+    def test_empty_position_is_refused_not_replaced_by_the_origin(self, tmp_path):
+        """An empty vector is a caller mistake, not a request for the default.
+
+        Substituting the origin would place the robot somewhere the caller never
+        asked for while reporting success.
+        """
+        pytest.importorskip("mujoco")
+        with pytest.raises(RuntimeError, match="3-element vector"):
+            Robot("so100", mode="sim", urdf_path=self._model(tmp_path), mesh=False, position=[])
+
+    def test_non_finite_position_is_refused(self, tmp_path):
+        """nan/inf would propagate through the whole physics state."""
+        pytest.importorskip("mujoco")
+        with pytest.raises(RuntimeError, match="finite numbers"):
+            Robot(
+                "so100",
+                mode="sim",
+                urdf_path=self._model(tmp_path),
+                mesh=False,
+                position=[float("nan"), 0.0, 0.0],
+            )
+
+    def test_factory_and_add_robot_agree_on_every_position(self, tmp_path):
+        """Parity: the wrapper accepts a pose if and only if the backend does.
+
+        Any value where the two verdicts differ is a pose the caller can only
+        express through one of the two entry points.
+        """
+        pytest.importorskip("mujoco")
+        np = pytest.importorskip("numpy")
+        from strands_robots import Simulation
+
+        model = self._model(tmp_path)
+        cases = [[], [0.5], [0.4, 0.2, 0.1], [float("inf"), 0.0, 0.0], np.array([0.4, 0.2, 0.1])]
+
+        for position in cases:
+            sim = Simulation(tool_name="parity", mesh=False)
+            try:
+                sim.create_world()
+                backend_accepts = sim.add_robot(name="so100", urdf_path=model, position=position)["status"] != "error"
+            finally:
+                sim.destroy()
+
+            try:
+                factory = Robot("so100", mode="sim", urdf_path=model, mesh=False, position=position)
+                factory.destroy()
+                factory_accepts = True
+            except RuntimeError:
+                factory_accepts = False
+
+            assert factory_accepts is backend_accepts, f"verdicts differ for position={position!r}"
+
+
 class TestRobotRealMode:
     """Tests for mode='real' path (mocked - no physical hardware)."""
 

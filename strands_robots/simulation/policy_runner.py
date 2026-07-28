@@ -46,7 +46,7 @@ import numpy as np
 
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.policies.base import resolve_chunk_length
-from strands_robots.utils import process_rss_mb, require_optional
+from strands_robots.utils import positive_whole_number_error, process_rss_mb, require_optional
 
 if TYPE_CHECKING:
     from strands_robots.policies.base import Policy
@@ -173,39 +173,6 @@ def _extract_frame_ndarray(render_result: dict) -> np.ndarray | None:
             return np.asarray(Image.open(io.BytesIO(png_bytes)).convert("RGB"))
         except Exception:
             return None
-    return None
-
-
-def positive_whole_number_error(value: Any, param: str, context: str) -> str | None:
-    """Error text when ``value`` is not a usable positive whole number.
-
-    Shared domain for every recording knob that counts frames or pixels -
-    ``fps``, ``width``, ``height`` and the in-memory frame cap. Only a positive
-    whole number can be honored: ``0`` makes the capture loop's ``1 / fps``
-    period undefined, a negative rate is rejected by the ffmpeg writer, and a
-    zero/negative frame cap drops every frame. Accepts any real scalar with an
-    integral value (so a NumPy ``np.int64`` height or a ``30.0`` computed from a
-    config float passes) and rejects ``bool`` explicitly - an ``int`` subclass
-    whose ``True`` would act as a silent 1.
-
-    Args:
-        value: The caller-supplied value.
-        param: The parameter (or dict key) it came from, used in the message.
-        context: Message prefix identifying the surface that received it -
-            ``"video"`` for the :class:`VideoConfig` dict, the method name for a
-            keyword parameter.
-
-    Returns:
-        An error message, or ``None`` when the value is usable.
-    """
-    message = f"{context}: {param} must be a positive whole number, got {value!r}."
-    if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        return message
-    numeric = float(value)
-    # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it
-    # out of the integrality check below.
-    if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
-        return message
     return None
 
 

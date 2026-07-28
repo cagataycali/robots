@@ -278,11 +278,20 @@ then only a lower bound, reported in the `unreadable_files` diagnostics.
 | `start_cameras_recording` / `stop_cameras_recording` | `[sim-mujoco]` alone | Plain MP4, no parquet |
 
 `fps`, `width`, `height` and `max_frames_per_camera` on the plain-MP4 recorders
-must be positive whole numbers - the same domain `run_policy(video={...})`
-enforces. An unusable value (`fps=0`, a negative frame cap) is a structured
-error naming the parameter rather than a recording that reports success and
-writes no file. Omit `width`/`height` to use each camera's configured
-resolution.
+must be positive whole numbers - the same domain `run_policy(video={...})`,
+`start_recording(fps=...)` and the shared encoder
+`strands_robots.rendering.encode_clip` enforce. An unusable value (`fps=0`, a
+negative frame cap) is a structured error naming the parameter rather than a
+recording that reports success and writes no file. Omit `width`/`height` to use
+each camera's configured resolution.
+
+Encoding frames directly through `encode_clip(frames, path, fps=...)` follows the
+same rule and raises `ValueError` for a rate it cannot honor - a fractional or
+non-positive `fps` previously produced a clip at some other rate (the GIF writer
+clamped it to 1 fps, ffmpeg substituted its own default) or no file at all, with
+the output path still returned. `encode_clip` also raises `RuntimeError` when the
+encoder wrote no clip despite accepting the frames, so a returned path always
+names a clip that exists.
 
 ## Video codec (H.264 default, AV1 opt-in)
 

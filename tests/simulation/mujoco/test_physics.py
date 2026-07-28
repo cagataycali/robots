@@ -276,6 +276,48 @@ class TestMassMatrix:
         assert np.all(eigvals > 0), f"mass matrix must be PD, got eigvals {eigvals}"
 
 
+class _LegacyMjData:
+    """MjData proxy exposing the pre-3.11 legacy ancestor-walk buffer ``qM``.
+
+    MuJoCo 3.11 removed ``data.qM``, so a test driving the legacy
+    ``mj_fullM(model, dst, qM)`` order cannot read that buffer off the
+    installed MjData. Presenting one here keeps the drift coverage portable
+    across every supported MuJoCo instead of only the builds that still have
+    the attribute.
+    """
+
+    def __init__(self, data, qm):
+        self._data = data
+        self.qM = qm
+
+    def __getattr__(self, attr):
+        return getattr(self._data, attr)
+
+
+class _CsrOnlyMjData:
+    """MjData proxy exposing the inertia only as the CSR ``M`` (MuJoCo >= 3.11)."""
+
+    def __init__(self, data):
+        self._data = data
+
+    def __getattr__(self, attr):
+        if attr == "qM":
+            raise AttributeError(attr)
+        return getattr(self._data, attr)
+
+
+class _NoInertiaMjData:
+    """MjData proxy exposing the joint-space inertia under neither name."""
+
+    def __init__(self, data):
+        self._data = data
+
+    def __getattr__(self, attr):
+        if attr in ("qM", "M"):
+            raise AttributeError(attr)
+        return getattr(self._data, attr)
+
+
 class TestFullMassMatrixSignatureDrift:
     """Regression: ``mj_fullM`` changed its binding signature across MuJoCo
     releases. ``_full_mass_matrix`` must work against every variant rather than
@@ -297,6 +339,12 @@ class TestFullMassMatrixSignatureDrift:
         # (model, data, dst) order and expects (model, dst, qM). The helper
         # must transparently fall back and still produce the correct matrix.
         #
+        # BOTH halves of that older build are emulated: the module (a shim
+        # mj_fullM) and MjData (a proxy carrying the legacy `qM` buffer, which
+        # MuJoCo 3.11 removed). Reading the buffer off the installed MjData
+        # instead would pin this drift test to one MuJoCo layout - the exact
+        # coupling it exists to catch.
+        #
         # The legacy emulation must not delegate to the installed mj_fullM in a
         # fixed argument order: the installed binding may itself be the legacy
         # one (mujoco < 3.10), so a hard-coded modern call would raise and make
@@ -306,6 +354,7 @@ class TestFullMassMatrixSignatureDrift:
         model, data = sim._world._model, sim._world._data
         mj.mj_forward(model, data)
         reference = _full_mass_matrix(mj, model, data)
+        legacy_qm = np.linspace(1.0, 2.0, model.nM)
 
         class _LegacyShim:
             """Proxy mujoco module exposing only a legacy mj_fullM."""
@@ -315,24 +364,22 @@ class TestFullMassMatrixSignatureDrift:
 
             @staticmethod
             def mj_fullM(m, a, b):
-                # Reject the modern call where the 3rd arg is the dst buffer
-                # (i.e. the 2nd arg is MjData), forcing the legacy path.
-                import mujoco as _mj
-
-                if isinstance(a, _mj.MjData):
+                # Reject the modern call, whose 2nd arg is MjData rather than
+                # the dst buffer, forcing the legacy path.
+                if not isinstance(a, np.ndarray):
                     raise TypeError("legacy binding: expected (model, dst, qM)")
                 # Legacy contract: a is the dense dst buffer, b is the sparse
                 # inertia qM (1D or [m, 1]). Validate that contract, then fill
                 # dst from the known-correct reference (version-independent, so
                 # the emulation works whatever signature the installed mujoco
                 # binding actually uses).
-                assert isinstance(a, np.ndarray) and a.flags["WRITEABLE"]
-                qm = np.asarray(b).reshape(-1)
-                assert qm.shape[0] == data.qM.shape[0]
+                assert a.flags["WRITEABLE"]
+                # The helper must forward the buffer it read off MjData, not a
+                # differently-shaped stand-in.
+                assert np.array_equal(np.asarray(b).reshape(-1), legacy_qm)
                 a[...] = reference
 
-        shim = _LegacyShim()
-        M = _full_mass_matrix(shim, model, data)
+        M = _full_mass_matrix(_LegacyShim(), model, _LegacyMjData(data, legacy_qm))
         assert np.allclose(M, reference)
 
     def test_helper_falls_back_to_1d_only_legacy_signature(self, sim):
@@ -345,6 +392,7 @@ class TestFullMassMatrixSignatureDrift:
         model, data = sim._world._model, sim._world._data
         mj.mj_forward(model, data)
         reference = _full_mass_matrix(mj, model, data)
+        legacy_qm = np.linspace(1.0, 2.0, model.nM)
 
         class _OneDLegacyShim:
             """mujoco proxy whose mj_fullM accepts only (model, dst, qM_1d)."""
@@ -355,22 +403,81 @@ class TestFullMassMatrixSignatureDrift:
             @staticmethod
             def mj_fullM(m, a, b):
                 # Reject the modern (model, data, dst) order.
-                import mujoco as _mj
-
-                if isinstance(a, _mj.MjData):
+                if not isinstance(a, np.ndarray):
                     raise TypeError("legacy binding: expected (model, dst, qM)")
                 # Reject the [m, 1] column buffer the first legacy attempt uses:
                 # only the raw 1-D sparse form is accepted here.
                 arr = np.asarray(b)
                 if arr.ndim != 1:
                     raise TypeError("oldest binding: expected a 1-D sparse buffer")
-                assert isinstance(a, np.ndarray) and a.flags["WRITEABLE"]
-                assert arr.shape[0] == data.qM.shape[0]
+                assert a.flags["WRITEABLE"]
+                assert np.array_equal(arr, legacy_qm)
                 a[...] = reference
 
-        shim = _OneDLegacyShim()
-        M = _full_mass_matrix(shim, model, data)
+        M = _full_mass_matrix(_OneDLegacyShim(), model, _LegacyMjData(data, legacy_qm))
         assert np.allclose(M, reference)
+
+    def test_helper_reads_csr_inertia_when_the_legacy_buffer_is_gone(self, sim):
+        # MuJoCo 3.11 removed data.qM: the joint-space inertia lives only in the
+        # CSR data.M. With the modern mj_fullM order rejected there is no legacy
+        # buffer left to pass, so the helper must convert the CSR form rather
+        # than reach for an attribute that release deleted.
+        model, data = sim._world._model, sim._world._data
+        mj.mj_forward(model, data)
+        reference = _full_mass_matrix(mj, model, data)
+        if not hasattr(data, "M"):
+            pytest.skip("installed mujoco predates the CSR data.M inertia")
+
+        class _ModernOnlyShim:
+            """mujoco proxy whose mj_fullM rejects every argument order."""
+
+            def __getattr__(self, attr):
+                return getattr(mj, attr)
+
+            @staticmethod
+            def mj_fullM(m, a, b):
+                raise TypeError("mj_fullM unavailable in this binding")
+
+        M = _full_mass_matrix(_ModernOnlyShim(), model, _CsrOnlyMjData(data))
+        # The CSR conversion is exact, not an approximation of mj_fullM.
+        assert np.array_equal(M, reference)
+        assert M.flags["C_CONTIGUOUS"]
+        assert M.dtype == np.float64
+
+    def test_helper_names_both_buffers_when_neither_exists(self, sim):
+        # Nothing left to read: fail with a message naming both spellings and
+        # the installed version, rather than an opaque AttributeError raised by
+        # whichever attribute the code happened to touch last.
+        model, data = sim._world._model, sim._world._data
+        mj.mj_forward(model, data)
+
+        class _NoFullMShim:
+            def __getattr__(self, attr):
+                return getattr(mj, attr)
+
+            @staticmethod
+            def mj_fullM(m, a, b):
+                raise TypeError("mj_fullM unavailable in this binding")
+
+        with pytest.raises(AttributeError) as exc:
+            _full_mass_matrix(_NoFullMShim(), model, _NoInertiaMjData(data))
+        message = str(exc.value)
+        assert "data.qM" in message
+        assert "data.M" in message
+        assert mj.__version__ in message
+
+    def test_get_mass_matrix_tool_works_without_the_legacy_buffer(self, sim):
+        # End-to-end through the agent-facing tool: a build without data.qM must
+        # still report a symmetric positive-definite M(q), not an error.
+        model, data = sim._world._model, sim._world._data
+        mj.mj_forward(model, data)
+        if not hasattr(data, "M"):
+            pytest.skip("installed mujoco predates the CSR data.M inertia")
+        reference = _full_mass_matrix(mj, model, data)
+        M = _full_mass_matrix(mj, model, _CsrOnlyMjData(data))
+        assert np.allclose(M, reference)
+        assert np.allclose(M, M.T)
+        assert np.all(np.linalg.eigvalsh(M) > 0)
 
     def test_helper_returns_empty_for_zero_dof(self):
         # A model with no DoFs must return a well-typed (0, 0) array, never
@@ -678,18 +785,28 @@ class TestRuntimeModification:
         assert sim.set_body_properties(body_name="box1", mass=0.5)["status"] == "success"
         assert model.body_inertia[body_id] == pytest.approx(cur_inertia * (0.5 / cur_mass))
 
-    def test_set_body_mass_massless_body_no_crash(self, sim):
-        """A massless frame (mass 0, inertia 0) is handled without dividing by zero.
+    def test_set_body_mass_on_a_massless_body_is_refused(self, sim):
+        """A massless frame has no inertial to scale, so the mass is refused.
 
-        There is no geometry-derived inertia to scale from a zero prior mass, so
-        the inertia stays zero; the mass update still succeeds.
+        ``arm_base`` is a pure kinematic frame: no ``<inertial>`` and no geom of
+        its own, so its compiled mass is 0 and there is nothing for a mass change
+        to scale. Reporting success here produced a body heavy in translation with
+        zero rotational resistance - the same physically inconsistent state
+        ``test_set_body_mass_rejects_nonfinite`` exists to prevent, differing only
+        in which component is corrupt. It was also a value nothing could keep: the
+        mass lives on a body's inertial or on its geoms, and this body has
+        neither, so the next scene recompile discarded it.
+
+        The division by zero this test originally guarded is still not reached -
+        the refusal happens before the ratio is taken.
         """
         model = sim._world._model
         body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "arm_base")
         assert float(model.body_mass[body_id]) == pytest.approx(0.0)
         result = sim.set_body_properties(body_name="arm_base", mass=2.0)
-        assert result["status"] == "success"
-        assert model.body_mass[body_id] == pytest.approx(2.0)
+        assert result["status"] == "error"
+        assert "no mass of its own" in result["content"][0]["text"]
+        assert model.body_mass[body_id] == pytest.approx(0.0)
         assert model.body_inertia[body_id] == pytest.approx([0.0, 0.0, 0.0])
 
     def test_set_body_mass_rejects_nonfinite(self, sim):

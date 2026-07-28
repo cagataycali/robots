@@ -87,6 +87,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     inject_object_into_scene,
     inject_robot_into_scene,
     patch_scene_mjcf,
+    persist_world_option,
     replace_scene_mjcf,
     reposition_body_in_scene,
 )
@@ -2642,9 +2643,15 @@ class MuJoCoSimEngine(
                 return mass_err
             # MuJoCo additionally refuses to compile a moving body lighter than
             # mjMINVAL ("mass and inertia of moving bodies must be larger than
-            # mjMINVAL"), which is the last mass value that reached the generic
-            # recompile refusal. Name the floor instead, so every mass this
-            # method accepts is one the compiler accepts.
+            # mjMINVAL"). Name that floor here so the common case is rejected by
+            # parameter name rather than by a recompile. It is a necessary but
+            # not a sufficient condition: the same invariant also covers the
+            # INERTIA, which the compiler integrates from the geom's shape, so a
+            # mass above this floor can still integrate to an inertia below it
+            # on a very small geom. Reproducing that bound here would mean
+            # reimplementing MuJoCo's per-shape integration, so the residual
+            # case is reported with the compiler's own message instead (see
+            # scene_ops.inject_object_into_scene).
             minimum = float(_ensure_mujoco().mjMINVAL)
             if float(mass) < minimum:
                 return {
@@ -3355,6 +3362,11 @@ class MuJoCoSimEngine(
         from a config array or produced by ``np.degrees(...)``). A NumPy
         array is treated as the vector form, not a scalar.
 
+        The value is recorded in the scene spec as well as ``model.opt``, which is
+        compiled from it: without that, the next scene recompile - triggered by any
+        ``add_object`` / ``add_camera`` / ``add_robot`` call - would silently restore
+        the value the scene was created with.
+
         Args:
             gravity: Gravity as ``[x, y, z]`` (m/s^2) or a real scalar z-component.
 
@@ -3375,12 +3387,23 @@ class MuJoCoSimEngine(
         if components is None:
             return cast("dict[str, Any]", gravity_error)
         with self._lock:
+            # model.opt is compiled from spec.option, so a gravity written only
+            # into the model is restored to the scene's declared value by the
+            # next recompile. Record it in the spec first, so a scene that
+            # cannot carry the change is refused before anything is touched.
+            if reason := persist_world_option(self._world, gravity=components):
+                return {"status": "error", "content": [{"text": f"set_gravity: {reason}"}]}
             self._world._model.opt.gravity[:] = components
             self._world.gravity = components
         return {"status": "success", "content": [{"text": f"Gravity: {components}"}]}
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
         """Set the physics integration timestep in seconds.
+
+        The value is recorded in the scene spec as well as ``model.opt``, which is
+        compiled from it: without that, the next scene recompile - triggered by any
+        ``add_object`` / ``add_camera`` / ``add_robot`` call - would silently restore
+        the value the scene was created with.
 
         Args:
             timestep: A finite positive float.
@@ -3403,6 +3426,10 @@ class MuJoCoSimEngine(
         if timestep > 0.1:
             warn = f" Warning: unusually large timestep (>{0.1}s); physics may be unstable"
         with self._lock:
+            # Same as set_gravity: model.opt is derived from spec.option, so the
+            # step has to be recorded there to survive the next recompile.
+            if reason := persist_world_option(self._world, timestep=timestep):
+                return {"status": "error", "content": [{"text": f"set_timestep: {reason}"}]}
             self._world._model.opt.timestep = timestep
             self._world.timestep = timestep
         return {"status": "success", "content": [{"text": f"Timestep: {timestep}s ({1 / timestep:.0f}Hz){warn}"}]}

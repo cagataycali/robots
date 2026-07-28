@@ -38,6 +38,20 @@ leader = Teleoperator("so101_leader", port="/dev/ttyACM1", id="leader")
 that teleoperator's config (`port`, `id`, `left_port`, …) and validated -
 unknown kwargs raise immediately so typos surface fast.
 
+### A leader arm is a teleoperator, not a `Robot`
+
+A leader carries the same servo bus as the follower it drives, so its name reads
+like a robot name - but `Robot()` builds a *follower* driver, which would
+torque-enable the arm you are holding. `Robot()` refuses every `*_leader` name
+and points here:
+
+```python
+Robot("so101_leader", mode="real", port="/dev/ttyACM1")
+# ValueError: 'so101_leader' is a teleoperator (leader) device, not a robot.
+#   Build it with ``Teleoperator('so101_leader', port=...)`` and attach it to
+#   the follower it drives ...
+```
+
 ### Available teleoperators
 
 | Teleoperator | Emits (action keys) |

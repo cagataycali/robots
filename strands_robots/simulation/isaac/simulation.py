@@ -36,6 +36,7 @@ import numpy as np
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
+from strands_robots.utils import positive_whole_number_error
 
 if TYPE_CHECKING:
     from strands_robots.rendering import CameraParams
@@ -401,6 +402,47 @@ class _RobotState:
         # ``/World/Robots/arm`` being requested). Used by
         # ``gripper_frame_pose`` to walk the actual robot subtree.
         self.actual_prim_path = actual_prim_path or prim_path
+
+
+def _cameras_recording_option_error(
+    method: str,
+    fps: Any,
+    max_frames_per_camera: Any,
+) -> dict[str, Any] | None:
+    """Reject a rollout-video option the Isaac recorder cannot honor.
+
+    Pre-flight guard for :meth:`IsaacSimulation.start_cameras_recording`,
+    mirroring the MuJoCo backend's guard of the same name
+    (:func:`strands_robots.simulation.mujoco.rendering._cameras_recording_option_error`)
+    against the one shared domain
+    (:func:`~strands_robots.utils.positive_whole_number_error`), so the two
+    recording surfaces cannot disagree on what a usable ``fps`` is. Isaac takes
+    no ``width``/``height`` here - each camera carries its own resolution from
+    :meth:`IsaacSimulation.add_camera` - so only the two frame counts are
+    checked.
+
+    Refusing at ``start`` is what keeps the flush honest: ``fps`` is stored in
+    the recording state and handed to
+    :func:`~strands_robots.rendering.encode_clip` by
+    :meth:`IsaacSimulation.stop_cameras_recording`, which refuses a rate it
+    cannot encode at. Validating only at flush time would surface the mistake
+    after a whole rollout's frames had been buffered, and
+    ``max_frames_per_camera=0`` would drop every frame while both calls still
+    reported success.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        fps: Encoded MP4 frame rate.
+        max_frames_per_camera: In-memory per-camera frame cap.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming the first
+        offending parameter, or ``None`` when both options are usable.
+    """
+    for param, value in (("fps", fps), ("max_frames_per_camera", max_frames_per_camera)):
+        if text := positive_whole_number_error(value, param, method):
+            return {"status": "error", "content": [{"text": text}]}
+    return None
 
 
 class _CameraState:
@@ -3162,12 +3204,15 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             Directory for the ``{name}__{camera}.mp4`` files. Defaults to
             ``$TMPDIR/strands_robots/recordings``.
         fps : int
-            Encoded MP4 frame rate. Default 30.
+            Encoded MP4 frame rate. Default 30. Must be a positive whole
+            number - the rate the flush encodes at, refused here rather
+            than after a rollout's frames have been buffered.
         name : str
             Filename tag. Auto-generated (``rec_<uuid>``) when ``None``.
         max_frames_per_camera : int
             Safety cap on in-memory buffers. Frames beyond the cap are
-            silently dropped. Default 3000.
+            silently dropped. Default 3000. Must be a positive whole
+            number; a cap below 1 drops every frame.
 
         Returns
         -------
@@ -3176,13 +3221,22 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             {"json": {"on_frame": <callable>, "cameras": [...],
             "output_dir": ..., "name": ...}}]}``. The ``on_frame`` closure
             isn't JSON-serializable; Python callers unpack it from the
-            json block. On error (no world, already recording, unknown
-            cameras, none to record): ``{"status": "error", ...}``.
+            json block. On error (unusable ``fps`` or
+            ``max_frames_per_camera``, no world, already recording,
+            unknown cameras, none to record):
+            ``{"status": "error", ...}``.
         """
         import os as _os
         import tempfile as _tempfile
         import time as _time
         import uuid as _uuid
+
+        # Refuse a frame count the recorder cannot honor before any filesystem
+        # or buffer work: ``fps`` reaches ``encode_clip`` at flush time, which
+        # refuses a rate it cannot encode at, and a non-positive frame cap
+        # drops every captured frame.
+        if error := _cameras_recording_option_error("start_cameras_recording", fps, max_frames_per_camera):
+            return error
 
         with self._lock:
             if not self._world_created:
@@ -3325,32 +3379,49 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             errors = state["errors"][cam]
             frames_written = 0
             size_kb = 0.0
+            flush_error = None
             if frames_buffer:
                 # Shared encoder (strands_robots.rendering.video, issue #1537);
                 # same imageio/libx264 invocation as the previous inline writer.
                 try:
                     encode_clip(frames_buffer, path, fps=state["fps"])
+                    frames_written = len(frames_buffer)
                 except ImportError:
                     return {
                         "status": "error",
                         "content": [{"text": "imageio not installed. pip install imageio imageio-ffmpeg"}],
                     }
-                frames_written = len(frames_buffer)
+                except (RuntimeError, ValueError) as e:
+                    # ``encode_clip`` refused the clip: ``RuntimeError`` when it
+                    # wrote no file, ``ValueError`` when it will not encode at
+                    # the requested rate. ``start_cameras_recording`` pre-flights
+                    # that rate, so the second is unreachable through the tool
+                    # pair; it is caught anyway because this method's contract is
+                    # best-effort and never-raise, and the flush is the last
+                    # chance to hand back the buffered frames' fate. Report the
+                    # reason on the artifact line and keep ``frames_written`` at
+                    # 0 rather than claiming frames that reached no file.
+                    flush_error = f"{type(e).__name__}: {e}"
+                    logger.warning("camera recorder flush failed for %r -> %s: %s", cam, path, flush_error)
                 if _os.path.exists(path):
                     size_kb = _os.path.getsize(path) / 1024
-            lines.append(
+            line = (
                 f"   {cam:20s} {frames_written:>5d} frames  {size_kb:>7.1f} KB  "
                 f"({errors} errors)  -> {_os.path.basename(path)}"
             )
-            artifacts.append(
-                {
-                    "camera": cam,
-                    "path": path,
-                    "frames": frames_written,
-                    "errors": errors,
-                    "size_kb": size_kb,
-                }
-            )
+            if flush_error:
+                line += f"  [flush failed: {flush_error}]"
+            lines.append(line)
+            artifact = {
+                "camera": cam,
+                "path": path,
+                "frames": frames_written,
+                "errors": errors,
+                "size_kb": size_kb,
+            }
+            if flush_error:
+                artifact["flush_error"] = flush_error
+            artifacts.append(artifact)
 
         return {
             "status": "success",

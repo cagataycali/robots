@@ -26,6 +26,10 @@ from strands_robots.simulation.mujoco.backend import (
     _ensure_mujoco,
     filter_mujoco_attach_noise,
 )
+from strands_robots.simulation.mujoco.scene_ops import (
+    persist_body_mass,
+    persist_geom_properties,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -211,16 +215,24 @@ def _coerce_finite_joint_map(
 def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     """Return the dense ``nv x nv`` mass matrix M(q), robust to MuJoCo drift.
 
-    ``mj_fullM`` changed its binding signature across MuJoCo releases:
+    MuJoCo moved this API twice inside the supported version range:
 
+    - MuJoCo < 3.10: ``mj_fullM(model, dst, qM)``, reading the legacy
+      ancestor-walk sparse buffer ``data.qM`` - accepted either as a 1D array
+      or as a 2D ``[m, 1]`` column, depending on the build.
     - MuJoCo >= 3.10: ``mj_fullM(model, data, dst)`` - the sparse buffer is
       read from ``data`` internally; ``dst`` must be writeable + C-contiguous.
-    - Older builds: ``mj_fullM(model, dst, qM)`` where ``qM`` is the sparse
-      inertia buffer, accepted either as a 1D array or a 2D ``[m, 1]`` column.
+    - MuJoCo >= 3.11: ``data.qM`` is removed. The joint-space inertia is kept
+      only as the compressed-sparse-row ``data.M``, and ``mju_sym2dense`` is
+      the conversion MuJoCo's release notes prescribe for callers that used to
+      pass ``qM`` to ``mj_fullM``.
 
-    Probe the modern signature first, then fall back to the legacy orders so
-    the call works regardless of the installed MuJoCo version. ``dst`` is
-    always allocated C-contiguous to satisfy the binding's buffer contract.
+    Probe the modern signature first, then the legacy orders - but only on a
+    build that still exposes ``qM``, because the CSR ``data.M`` that replaced
+    it is a different layout and passing it to the legacy call would fill
+    ``dst`` from the wrong buffer rather than fail - then the CSR conversion.
+    ``dst`` is always allocated C-contiguous to satisfy the buffer contract of
+    every one of those calls.
 
     Args:
         mj: The imported ``mujoco`` module.
@@ -233,6 +245,8 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
 
     Raises:
         TypeError: If no known ``mj_fullM`` signature accepts the arguments.
+        AttributeError: If MjData exposes the joint-space inertia under
+            neither ``qM`` nor ``M``.
     """
     nv = model.nv
     dst = np.zeros((nv, nv), dtype=np.float64, order="C")
@@ -244,13 +258,32 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
         return dst
     except TypeError:
         pass
-    # Legacy signature: mj_fullM(model, dst, qM). Some builds require the
-    # sparse buffer as a 2D [m, 1] column; others accept the raw 1D buffer.
-    qm = np.ascontiguousarray(data.qM, dtype=np.float64)
-    try:
-        mj.mj_fullM(model, dst, qm.reshape(-1, 1))
-    except TypeError:
-        mj.mj_fullM(model, dst, qm)
+    legacy = getattr(data, "qM", None)
+    if legacy is not None:
+        # Legacy signature: mj_fullM(model, dst, qM). Some builds require the
+        # sparse buffer as a 2D [m, 1] column; others accept the raw 1D buffer.
+        qm = np.ascontiguousarray(legacy, dtype=np.float64)
+        try:
+            mj.mj_fullM(model, dst, qm.reshape(-1, 1))
+        except TypeError:
+            mj.mj_fullM(model, dst, qm)
+        return dst
+    # MuJoCo >= 3.11: no legacy buffer to pass, so convert the CSR inertia
+    # directly. nv is taken from dst's shape by the binding.
+    csr = getattr(data, "M", None)
+    if csr is None:
+        raise AttributeError(
+            "MjData exposes the joint-space inertia under neither name (tried "
+            f"data.qM and data.M) on mujoco {getattr(mj, '__version__', 'unknown')}, "
+            "so the dense mass matrix cannot be built."
+        )
+    mj.mju_sym2dense(
+        dst,
+        np.ascontiguousarray(csr, dtype=np.float64),
+        model.M_rownnz,
+        model.M_rowadr,
+        model.M_colind,
+    )
     return dst
 
 
@@ -895,7 +928,8 @@ class PhysicsMixin:
         Reflects the CURRENT configuration. ``mj_energyPos`` reads the
         position-stage derived state (``data.xipos`` for the gravitational
         term, spring/tendon lengths) and ``mj_energyVel`` reads the
-        config-dependent inertia (``data.qM``, itself position-stage derived)
+        config-dependent inertia (the sparse joint-space inertia, itself
+        position-stage derived)
         against ``data.qvel``. All of that is stale after a bare ``qpos``/
         ``qvel`` write (e.g. a direct ``data.qpos`` write from a planning/IK
         loop, or ``set_joint_velocities``), so the position pipeline is
@@ -942,7 +976,7 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
-        # data.qM is only valid after a forward pass. Serialize the
+        # The sparse inertia is only valid after a forward pass. Serialize the
         # forward+fullM read against concurrent policy threads (GH: concurrency
         # audit) so a sibling robot's mj_step can't mutate data mid-read.
         with self._lock:
@@ -1480,6 +1514,13 @@ class PhysicsMixin:
 
         Changes take effect on the next ``mj_step``.
 
+        Changes are recorded in the scene spec as well as the compiled model, so
+        they survive the next scene recompile. The model is derived state that
+        every scene mutation (``add_object`` / ``add_camera`` / ``add_robot``)
+        rebuilds from the spec, so a value written only there would be restored
+        to whatever the scene was compiled with - after this call had already
+        reported the new one.
+
         Args:
             body_name: Name of the body to modify.
             mass: New absolute mass (kg); must be a finite number ``> 0``. When set, the body's
@@ -1487,8 +1528,10 @@ class PhysicsMixin:
 
         Returns:
             A tool-result dict; ``status="error"`` if the world is missing, a
-            policy is running, ``mass`` is not a finite positive number, or the body is
-            not found, otherwise ``status="success"`` summarizing the change.
+            policy is running, ``mass`` is not a finite positive number, the body is
+            not found, or the body has no mass of its own to scale (the world body
+            declares no inertial and owns no geom), otherwise ``status="success"``
+            summarizing the change.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1512,6 +1555,32 @@ class PhysicsMixin:
         with self._lock:
             if mass is not None:
                 old_mass = float(model.body_mass[body_id])
+                if old_mass <= 0:
+                    # A mass change is applied as a scale (see below), which a
+                    # body with no mass of its own cannot carry: there is no
+                    # inertial and no geom whose density the ratio could move.
+                    # The world body is the one such body in a normal scene.
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"set_body_properties: body '{body_name}' has no mass of its own "
+                                    f"({old_mass:.3f} kg), so there is nothing to scale to {mass} kg. Only a "
+                                    "body that declares an <inertial> or owns geoms carries a mass."
+                                )
+                            }
+                        ],
+                    }
+                mass_ratio = mass / old_mass
+                # model is DERIVED from the scene spec: the next scene mutation
+                # recompiles the spec over it, so a mass written only here is
+                # restored to the compiled value while the caller has already
+                # been told the change took effect. Record it in the spec first,
+                # so a scene that cannot carry the change is refused before
+                # either representation is touched.
+                if reason := persist_body_mass(self._world, body_id, mass_ratio=mass_ratio):
+                    return {"status": "error", "content": [{"text": f"set_body_properties: {reason}"}]}
                 model.body_mass[body_id] = mass
                 changes.append(f"mass: {old_mass:.3f} → {mass:.3f}")
                 # Inertia tracks mass for fixed geometry: setting a rigid body's
@@ -1524,8 +1593,7 @@ class PhysicsMixin:
                 # since mass is the only settable property). Scale body_inertia
                 # by the same ratio (matches randomize(randomize_physics=True)
                 # and the Newton backend, which scale both together).
-                if old_mass > 0:
-                    model.body_inertia[body_id] *= mass / old_mass
+                model.body_inertia[body_id] *= mass_ratio
 
         return {
             "status": "success",
@@ -1549,6 +1617,18 @@ class PhysicsMixin:
         mid-phase) are recomputed so a grown geom collides correctly instead of
         letting other bodies pass through it. A plane's bounds are type-derived,
         so only its stored ``geom_size`` changes.
+
+        Changes are recorded in the scene spec as well as the compiled model, so
+        they survive the next scene recompile. The model is derived state that
+        every scene mutation (``add_object`` / ``add_camera`` / ``add_robot``)
+        rebuilds from the spec, so a value written only there would be restored
+        to whatever the scene was compiled with - after this call had already
+        reported the new one.
+
+        A resize is the one property with a further consequence at recompile time:
+        the model write resizes the geom without re-deriving the owning body's
+        inertia, whereas the recompile integrates the inertia from the persisted
+        shape - the physically consistent value for the new extents.
 
         Every vector must carry the exact number of components its target
         defines, because there is no meaningful value to invent for a component
@@ -1675,6 +1755,15 @@ class PhysicsMixin:
         changes = []
 
         with self._lock:
+            # model is DERIVED from the scene spec, which the next scene
+            # mutation recompiles over it - so a value written only here is
+            # discarded by the next add_object/add_camera/add_robot call and the
+            # geom silently reverts after this call reported the new value.
+            # Record it in the spec first, so a scene that cannot carry the
+            # change is refused before either representation is touched.
+            if reason := persist_geom_properties(self._world, gid, color=color, friction=friction, size=size):
+                return {"status": "error", "content": [{"text": f"set_geom_properties: {reason}"}]}
+
             if color is not None:
                 # Already coerced to 4 components (RGB got an opaque alpha).
                 model.geom_rgba[gid] = color

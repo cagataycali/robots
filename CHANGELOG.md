@@ -5,6 +5,213 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: a live MJPEG stream refuses options it cannot honor
+
+`mjpeg_frames` is the one media entry point in `strands_robots.rendering` that
+validated nothing, while `encode_clip` beside it already refuses a frame rate it
+cannot encode at. Each of the stream's four options therefore had values that
+were accepted and then not honored:
+
+```python
+# documented: "target frame rate; the generator sleeps to pace emission"
+list(mjpeg_frames(render, fps=0, max_frames=6))     # 6 chunks in 0.001 s
+list(mjpeg_frames(render, fps=float("inf"), ...))   # ditto: 1 / inf is 0.0 too
+list(mjpeg_frames(render, quality=500, ...))        # encoded at 100, not 500
+list(mjpeg_frames(render, max_frames=2.7))          # 3 chunks
+list(mjpeg_frames(render, size=(0, 0)))             # bare ValueError from Pillow
+```
+
+`fps` of `0`, a negative, `nan` or `inf` all landed in a `frame_dt = 0.0`
+fallback that disabled pacing outright, so the generator emitted as fast as it
+could encode JPEGs - measured at ~16,000 chunks/s against a requested rate, the
+opposite of a rate limit. A non-numeric `fps` or `max_frames` leaked a bare
+`TypeError` from a comparison, `True` acted as a silent `1`, and Pillow quietly
+substituted any `quality` outside `[1, 95]`.
+
+`fps` now has to be a positive finite number (deliberately wider than
+`encode_clip`'s whole-number container rate - pacing a live view is just a sleep
+interval, so `12.5` is honorable), `quality` a whole number in `[1, 95]`,
+`max_frames` a positive whole number, and `size` a `(width, height)` pair drawn
+from the shared pixel-count domain.
+
+The refusals are raised by the `mjpeg_frames` call itself rather than from the
+generator body. A generator function runs nothing until the consumer's first
+`next()`, by which point an HTTP handler has already committed the
+`multipart/x-mixed-replace` response headers and can only truncate the stream;
+the emission loop moved into a private helper so an unusable configuration is
+reported before any of that.
+
+### Fixed: Robot() forwards the base position it was given
+
+The `Robot()` factory wraps `add_robot`, which validates a base pose up front:
+an omitted pose spawns at the origin, a NumPy pose is accepted, and a
+wrong-length / non-numeric / non-finite vector is refused with an actionable
+message. The factory read the parameter by truthiness
+(`position or [0.0, 0.0, 0.0]`), which made the wrapper both less capable and
+less safe than the method it wraps:
+
+```python
+Robot("so100", position=np.array([0.4, 0.2, 0.0]))
+# before: ValueError: truth value of an array with more than one element is ambiguous
+# after:  base at [0.4, 0.2, 0.0]   (add_robot accepted this value all along)
+
+Robot("so100", position=[])
+# before: success, base silently at [0.0, 0.0, 0.0]
+# after:  RuntimeError: add_robot: 'position' must be a 3-element vector, got 0 ([])
+```
+
+An empty vector is a caller mistake, not a request for the default, and reading
+it as "omitted" placed the robot somewhere the caller never asked for while
+reporting success - the guard that refuses it was unreachable through the
+factory. The position is now passed through verbatim, so `None` (the documented
+"spawn at the origin") stays the single source of truth for that default
+instead of a copy in the factory that can drift from the backend's.
+
+
+### Fixed: the state and action sides agree on what a hardware observation is
+
+Detection of `'<motor>.pos'` hardware joint readings was implemented twice in the
+local LeRobot policy. The action side (`get_actions`) ran a plain-`float` pass and
+only retried with numpy `if not _pos:`; the state side
+(`PackStateProcessorStep`) ran one combined pass. `isinstance(np.float64(1.0),
+float)` is True but `isinstance(np.float32(1.0), float)` is False, so an
+observation mixing the two matched *partially* on the first pass - non-empty, so
+the numpy retry never ran, and too short to cover the embodiment's actuators:
+
+```python
+# 3 x float + 3 x np.float32, e.g. a driver read merged with a filtered estimate
+obs = {"shoulder_pan.pos": 1.0, ..., "gripper.pos": np.float32(6.0)}
+# state side:  packs all 6 readings into observation.state RAW (already model units)
+# action side: sees no hardware keys -> emits the command under the SIM joint
+#              names ('1'..'6'), which SOFollower.send_action does not accept,
+#              with the model-degrees -> sim-radians conversion applied (1/57.3)
+```
+
+The model was conditioned on raw hardware degrees while its command was keyed and
+scaled for the sim, and nothing warned, because the state side had succeeded.
+Both sides now call one `hardware_pos_keys()` predicate. It also accepts python /
+numpy integers and 0-d tensors, and - a change on the state side - refuses
+booleans in every flavour an observation spells them (`bool`, `np.bool_`, and 0-d
+`bool` arrays / tensors), so a driver status flag (`is_homed.pos`) can no longer
+take a joint column and be commanded as an absolute `1.0`. A flag accepted there
+does not fail loudly: both sides slice the key list to their actuator count, so
+one extra key in front renames every reading to its neighbour and drops the
+last.
+
+### Fixed: the mass matrix survives MuJoCo removing the legacy sparse inertia
+
+MuJoCo 3.11 removed `mjData.qM`, the legacy ancestor-walk sparse inertia buffer,
+keeping the joint-space inertia only in the CSR `mjData.M`. `_full_mass_matrix`
+exists to absorb exactly that kind of drift - it already probes both `mj_fullM`
+argument orders - but its legacy order read `data.qM` unconditionally, so on a
+3.11 build (inside the supported `mujoco>=3.2,<4.0` range) it raised an opaque
+`AttributeError: 'MjData' object has no attribute 'qM'` from inside the helper
+written to prevent that.
+
+The fallback chain is now layout-correct rather than name-guessing:
+
+- the modern `mj_fullM(model, data, dst)` order first (MuJoCo >= 3.10),
+- then the legacy `mj_fullM(model, dst, qM)` orders, but only on a build that
+  still exposes `qM` - the CSR `data.M` is a different layout, so substituting
+  it there would have filled the matrix from the wrong buffer instead of
+  failing,
+- then `mju_sym2dense` on the CSR inertia, the conversion MuJoCo's own release
+  notes prescribe for callers that used to pass `qM`. It reproduces `mj_fullM`
+  exactly (`max|delta| = 0.0`).
+
+If a build exposes the inertia under neither name the error now names both
+spellings and the installed MuJoCo version instead of surfacing whichever
+attribute the code happened to touch last.
+
+The two drift regression tests emulated only half of an old build - a shim
+`mujoco` module with the legacy `mj_fullM`, but the sparse buffer read off the
+*installed* `MjData` - so they broke on the release that removed it. They now
+present a matching legacy `MjData`, keeping the coverage portable across every
+supported MuJoCo, and the CSR path plus the no-buffer error are pinned too.
+
+### Fixed: a leader arm is refused by Robot() instead of built as a follower
+
+`so101_leader` was an alias of the `so101` registry entry, whose
+`hardware.lerobot_type` is `so101_follower`. Naming the leader therefore built a
+follower driver on the leader's own motor bus:
+
+```python
+Robot("so101_leader", mode="real", port="/dev/ttyACM1")
+# before: HardwareRobot(tool_name="so101", robot="so101_follower", port="/dev/ttyACM1")
+```
+
+That torque-enables the arm the operator is holding and drives it as a rigid
+position servo against the hand on it - and the resulting tool answered to
+`so101`, so nothing in the session named the swap. The alias is gone, and
+`Robot()` now refuses every `*_leader` name with a `ValueError` naming the
+teleoperator route (`Teleoperator(...)` + `attach_teleop(...)`) rather than the
+generic registry listing, which would have invited a retry with the follower
+name on the same port. `so101_follower` / `so101_dualcam` / `so101_tricam` and
+every other alias resolve as before.
+
+### Fixed: get_camera_params refuses an image size it cannot produce intrinsics for
+
+`render`, `render_depth` and `get_frame` all validate `width`/`height` through
+the same guard - positive whole numbers within the offscreen framebuffer cap.
+`get_camera_params`, which builds the pinhole `K` describing the very frame
+those three render, validated nothing and coerced with `int(...)`. Every
+dimension its siblings reject was accepted:
+
+```python
+cam = sim.get_camera_params("look", height=-48)   # returned CameraParams
+cam.K[1][1]                                       # -41.57  (fy negative: Y axis flipped)
+# unprojecting the cube-top pixel with it recovers (-1.080, 0.000, 1.709) m
+# instead of (0.000, 0.000, 0.100) m - a 1.94 m error, no error raised
+
+sim.get_camera_params("look", height=0)           # fy = 0.0 -> K singular (rank 2)
+sim.get_camera_params("look", width=2.7)          # silently truncated to 2 px
+sim.get_camera_params("look", width="640")        # string accepted by int()
+sim.get_camera_params("look", width=5000, height=5000)
+sim.render("look", width=5000, height=5000)       # status=error: exceeds the 4096 cap
+```
+
+`get_camera_params` now applies the same guard as its three siblings and raises
+`ValueError` carrying the identical message text, so the params always describe
+a frame the renderer can actually draw. The shared guard also names `bool`
+explicitly (`isinstance(True, int)` is true, so `width=True` previously reached
+MuJoCo and came back as "an integer is required").
+
+### Fixed: a cuRobo goal embedded in the instruction survives neighbouring braces
+
+`CuroboPolicy.get_actions` reads the goal from the well-known `target_pose` /
+`target_joints` kwargs and falls back to parsing a JSON object out of the
+natural-language instruction for LLM-driven workflows. The fallback took the
+span from the FIRST `{` to the LAST `}` in the string, so any brace elsewhere in
+the instruction swallowed the payload into an unparseable span:
+
+```python
+policy.get_actions_sync(
+    {"observation.state": [0.0] * 6},
+    'pick up the {block} and go to {"target_pose": [0.4, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0]}',
+)
+# ValueError: CuroboPolicy.get_actions requires at least one of
+#   target_pose=[x,y,z,qw,qx,qy,qz] or target_joints={joint:value} ...
+```
+
+The goal was right there in the input; the span `{block} and go to {"target_pose":
+...}` simply is not JSON, so the parse returned no goal and the caller reported a
+missing one. The same happened with a brace after the payload (`... {"target_pose":
+[...]} then release the {clamp}`).
+
+Each candidate `{` is now decoded with `json.JSONDecoder.raw_decode`, which ends
+the object at its own closing brace, and the first object carrying a top-level
+goal field wins. A payload that merely nests a goal
+(`{"goal": {"target_pose": [...]}}`) is still not a goal - only top-level fields
+count, unchanged.
+
+Two side effects of the old regex are gone with it. `re.search(r"\{.*\}", ...,
+re.DOTALL)` restarted a full-length scan at every `{` when the braces never
+balanced, so a long LLM-authored instruction stalled the 50Hz caller
+(quadratic; 3.1 s for 100k unclosed braces, and `py/polynomial-redos` in code
+scanning). And an instruction that mentions a goal field whose JSON does not
+decode is now logged at WARNING instead of being indistinguishable from an
+instruction that never carried one.
+
 ### Fixed: resuming a dataset recording at a different frame rate is refused
 
 `start_recording(overwrite=False)` on an existing dataset resumes it, and
@@ -41,6 +248,85 @@ Use overwrite=True for a fresh dataset, or restore the original scene. Differenc
 Resuming at the dataset's own rate still appends as before. The comparison is
 shared by the MuJoCo, Newton and Isaac backends (`fps` is a required
 keyword-only argument of the schema check, so no backend can resume without it).
+
+### Fixed: domain randomization refuses ranges, noise amplitudes and seeds it cannot apply
+
+`randomize` writes its numeric arguments straight into the live MuJoCo model
+(`body_mass`, `body_inertia`, `geom_friction`, `geom_rgba`) and into
+`data.qpos`, and `set_obs_noise` stores a seed that is only drawn from later.
+Neither validated those values, so a range with no usable sampling interval
+either raised past the tool envelope or, worse, succeeded and left a world that
+models nothing:
+
+```python
+sim.randomize(randomize_physics=True, mass_range=(-1.0, -1.0))
+# -> success: "Physics: 3 geoms friction-scaled, 2 bodies mass-scaled"
+# body_mass is now -1 kg, so the crate FALLS UPWARD: 0.30 m -> 1.25 m in 220 steps
+
+sim.randomize(randomize_physics=True, mass_range=(0.0, 0.0))
+# -> success; the massless body then hovers, immune to gravity
+
+sim.randomize(randomize_physics=True, friction_range=(-2.0, -1.0))
+# -> success, with a negative Coulomb friction coefficient
+
+sim.randomize(mass_range=0.5)          # TypeError past the tool envelope
+sim.randomize(color_range=(0.1,))      # IndexError
+sim.randomize(randomize_positions=True, position_noise=float("nan"))  # OverflowError
+sim.set_obs_noise(joint_pos_std=0.01, seed=2.5)  # TypeError from default_rng
+```
+
+The Newton backend already refused the three shared ranges, through a private
+copy of the rule. That rule is now the shared
+`strands_robots.simulation.base.randomization_range_error`, joined by
+`finite_non_negative_error` (the sensor-noise standard deviations and
+`position_noise`) and `randomization_seed_error`, and both backends call all
+three from both `randomize` and `set_obs_noise` - so their accepted domains
+cannot diverge again. `mass_range` is additionally required to be strictly
+positive: a zero multiplier leaves a massless body that ignores gravity rather
+than a lighter one. Usable values are unaffected, including a zero lower bound
+for `friction_range` (a frictionless surface) and `color_range` (a black
+channel).
+
+### Fixed: a clip is encoded at the requested frame rate, or refused
+
+`encode_clip` - the shared MP4/GIF encoder behind the camera recorders and the
+render pipelines - never validated `fps`, and each container silently invented a
+different rate for the same unusable value:
+
+```python
+from strands_robots.rendering import encode_clip
+
+encode_clip(frames, "clip.gif", fps=0)   # -> clip.gif at 1 fps (clamped)
+encode_clip(frames, "clip.mp4", fps=0)   # -> clip.mp4 at 16 fps (ffmpeg default)
+encode_clip(frames, "clip.mp4", fps=-5)  # -> returns the path; no file was written
+encode_clip(frames, "clip.mp4", fps=2.7) # -> clip.mp4 at 2 fps (truncated)
+```
+
+The GIF writer clamped the rate (`duration=1000.0 / max(1, int(fps))`), so `0`
+and every negative rate became a 1 fps clip; the MP4 writer passed the value to
+ffmpeg, which substituted its own default for `0`, refused a negative rate
+without writing anything, and truncated a fractional one. `fps=True` - an `int`
+subclass - encoded at 1 fps, and `nan`/`inf`/`None`/`"20"` dead-ended in a bare
+`int()` `ValueError`/`OverflowError`/`TypeError` that never named the parameter.
+In every case the output path was returned, so a caller had no signal that the
+clip it names is mistimed or absent.
+
+`fps` is now validated against the same positive-whole-number domain the
+recorders and `run_policy(video=...)` already share (moved to
+`strands_robots.utils.positive_whole_number_error`, which both the simulation
+and rendering layers can depend on), raising `ValueError` before any encoder is
+probed. `encode_clip` additionally raises `RuntimeError` when the encoder wrote
+no clip despite accepting the frames - previously a `macro_block_size` that
+rounds the frame size to dimensions libx264 refuses also returned a path to a
+file that does not exist. The Isaac camera flush now reports such a refusal on
+its artifact line (with `flush_error`, matching the MuJoCo backend) instead of
+letting it escape `stop_cameras_recording` and instead of counting buffered
+frames as written.
+
+Isaac's `start_cameras_recording` now pre-flights `fps` and
+`max_frames_per_camera` against that same domain, as the MuJoCo recorder already
+did, so a rate the flush cannot encode at is refused before a rollout's frames
+are buffered rather than after they have been captured and lost.
 
 ### Fixed: a dataset recording is refused at a frame rate it cannot be written at
 
@@ -206,6 +492,7 @@ cannot diverge again. Direct joint/position/torque actuators are unchanged (the
 unit mapping applies to tendon transmissions only), and a mapped tendon command
 no longer emits a spurious "MuJoCo will clamp it" warning through the
 actuator-name spelling.
+
 ### Fixed: sim teardown releases MuJoCo whatever the mesh handle is
 
 `Simulation.cleanup()` detaches from the peer mesh before it tears down MuJoCo,
@@ -430,6 +717,7 @@ sim.run_policy(..., control_substeps=0)
 instead of clamping it, so callers driving the runner directly also fail loudly,
 and `PolicyRunner.run` resolves substeps through that shared helper rather than
 its own inline copy of the derivation.
+
 ### Fixed: rollout entry points reject a `duration` they cannot run
 
 `duration` is the DEFAULT rollout horizon: with no `n_steps` / `max_steps` the
@@ -3573,6 +3861,7 @@ Memory note: the cache shares the SAME live `nn.Module` across instances of one
 per-episode state between episodes); `PersistentPolicy`'s lock makes concurrent
 reuse safe too. Opt out with `create_policy(..., cache_model=False)` for an
 independent live copy.
+
 ### Added: Newton backend domain randomization + sensor-noise hooks
 
 The Newton (GPU) backend gained `randomize()` and `set_obs_noise()`, the
@@ -3620,6 +3909,7 @@ prefix-attention guidance is computed with the correct freeze count and the
 chunk seam blends identically in sim and on hardware. A regression test routes
 the wrapper's exact kwargs through lerobot's real `RTCProcessor.denoise_step`
 and fails (TypeError) on the pre-fix code.
+
 ### Fix: re-anchor the RTC chunk-seam prefix for relative-action policies
 
 Real-Time Chunking for relative-action flow checkpoints (pi0 / pi0.5 / pi0-FAST

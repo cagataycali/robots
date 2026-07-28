@@ -36,7 +36,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 from strands_robots.teleop_mixin import TeleopMixin
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_finite_number_error, require_optional
 
 if TYPE_CHECKING:
     from lerobot.robots.config import RobotConfig
@@ -239,7 +239,12 @@ class Robot(TeleopMixin, AgentTool):
                 {"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}}
             action_horizon: Actions per inference step
             data_config: Data configuration (for GR00T compatibility)
-            control_frequency: Control loop frequency in Hz (default: 50Hz)
+            control_frequency: Control loop frequency in Hz (default: 50Hz).
+                Must be a positive finite number - it is the divisor of the
+                loop's per-action period (``1 / control_frequency``), the only
+                throttle between two servo commands. A ``0``, negative,
+                ``nan`` or ``inf`` rate raises ``ValueError`` here rather than
+                leaving the loop unthrottled against real hardware.
             ros2_bridge: When True, publish this robot's live observation
                 (``joint_states`` + one ``image_raw`` per camera) on a ROS 2
                 domain so external ROS 2 nodes can subscribe to the physical
@@ -283,6 +288,20 @@ class Robot(TeleopMixin, AgentTool):
         self.tool_name_str = tool_name
         self.action_horizon = action_horizon
         self.data_config = data_config
+        # ``action_sleep_time`` is ``1 / control_frequency`` and is the ONLY
+        # thing bounding how fast the task loop commands the physical servo
+        # bus: it is what ``_execute_task_async`` awaits between two
+        # ``send_action`` calls. A non-positive or non-finite rate turns that
+        # period into ``<= 0`` (``asyncio.sleep`` then returns immediately) or
+        # into ``nan`` (``asyncio.sleep`` raises mid-task, after the first
+        # action has already been applied), so the same rollout the simulation
+        # refuses outright would run here against real hardware. The identical
+        # domain is enforced on the rollout knobs of the simulation
+        # (``SimEngine._validate_positive_frequency``); validated BEFORE
+        # ``_initialize_robot`` opens the serial port, so a rejected rate never
+        # touches the arm.
+        if rate_error := positive_finite_number_error(control_frequency, "control_frequency", "Robot"):
+            raise ValueError(rate_error)
         self.control_frequency = control_frequency
         self.action_sleep_time = 1.0 / control_frequency  # Time between actions
 
@@ -1667,10 +1686,23 @@ class Robot(TeleopMixin, AgentTool):
             hz: Publishing frequency in Hz.
 
         Returns:
-            Status dict with topic and peer_id for the receiver to use.
+            Status dict with topic and peer_id for the receiver to use, or an
+            error dict when the mesh is inactive or ``device_name`` is not a
+            valid mesh identifier.
         """
         if not self.mesh or not self.mesh.alive:
             return {"status": "error", "content": [{"text": "Mesh not active. Cannot publish input."}]}
+
+        from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
+
+        # ``device_name`` becomes a segment of the published key expression and
+        # a key in ``_input_publishers``. Validate before stopping any existing
+        # publisher for that name so a rejected call cannot tear down a live
+        # stream, and report through the tool envelope rather than raising.
+        try:
+            validate_mesh_identifier(device_name, "start_teleop_publish.device_name")
+        except ValidationError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
 
         from strands_robots.mesh import InputPublisher
 
@@ -1723,10 +1755,26 @@ class Robot(TeleopMixin, AgentTool):
                 Defaults to calling ``robot.send_action(action)``.
 
         Returns:
-            Status dict.
+            Status dict, or an error dict when the mesh is inactive or
+            ``source_peer_id`` / ``device_name`` is not a valid mesh
+            identifier.
         """
         if not self.mesh or not self.mesh.alive:
             return {"status": "error", "content": [{"text": "Mesh not active. Cannot receive input."}]}
+
+        from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
+
+        # Both identifiers become segments of the subscribed key expression, so
+        # a Zenoh wildcard here would make this follower apply joint commands
+        # from every peer instead of the named leader. Validate before stopping
+        # any existing receiver for that key so a rejected call cannot tear
+        # down a live stream, and report through the tool envelope rather than
+        # raising past dispatch.
+        try:
+            validate_mesh_identifier(source_peer_id, "start_teleop_receive.source_peer_id")
+            validate_mesh_identifier(device_name, "start_teleop_receive.device_name")
+        except ValidationError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
 
         from strands_robots.mesh import InputReceiver
 

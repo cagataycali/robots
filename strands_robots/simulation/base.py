@@ -132,6 +132,105 @@ def unknown_kwargs_error(method: str, kwargs: Mapping[str, Any], accepted: Seque
     }
 
 
+def randomization_range_error(value: Any, param: str, *, allow_zero: bool = True) -> str | None:
+    """Return why a ``(lo, hi)`` randomization range cannot be applied.
+
+    Domain randomization multiplies live physics constants (body mass, geom
+    friction) and re-samples colours inside a caller-supplied range. A range
+    that is not a pair of finite numbers with ``0 <= lo <= hi`` has no sampling
+    interval a backend could draw from: the sampler either raises deep inside
+    the mutation loop or, worse, succeeds and installs a physically impossible
+    constant - a negative body mass falls *upward* under gravity and a negative
+    friction coefficient is not a Coulomb model. Either way the randomized world
+    no longer models anything, so the request is refused up front.
+
+    Args:
+        value: The candidate ``(lo, hi)`` pair.
+        param: Parameter name to quote in the message (``"mass_range"``).
+        allow_zero: Whether ``lo == 0`` is meaningful for this quantity. True
+            for the ranges where zero is a real physical setting (a frictionless
+            surface, a black colour channel); pass False for a multiplicative
+            mass scale, where a zero multiplier leaves a massless body that
+            ignores gravity instead of a lighter one.
+
+    Returns:
+        ``None`` when the range is usable, otherwise the reason as a string.
+    """
+    try:
+        lo, hi = value
+        lo, hi = float(lo), float(hi)
+    except (TypeError, ValueError):
+        return f"{param} must be a (lo, hi) pair of numbers, got {value!r}"
+    if not (math.isfinite(lo) and math.isfinite(hi)):
+        return f"{param} bounds must be finite, got {value!r}"
+    if lo > hi:
+        return f"{param} lower bound {lo} exceeds upper bound {hi}"
+    if allow_zero:
+        if lo < 0:
+            return f"{param} bounds must be non-negative, got {value!r}"
+    elif lo <= 0:
+        detail = (
+            "a zero scale erases the quantity it multiplies"
+            if lo == 0
+            else "a negative scale flips the sign of the quantity it multiplies"
+        )
+        return f"{param} bounds must be positive, got {value!r} ({detail})"
+    return None
+
+
+def finite_non_negative_error(value: Any, param: str, context: str) -> str | None:
+    """Return why a magnitude parameter cannot be used as a noise/offset scale.
+
+    Shared by the sensor-noise standard deviations and the position-jitter
+    amplitude: all of them are half-widths or standard deviations, so a
+    non-numeric, non-finite or negative value describes no distribution. A
+    NaN amplitude propagates into ``qpos`` and poisons the whole physics state
+    on the next step, and a negative half-width inverts the sampling bounds.
+
+    Args:
+        value: The candidate magnitude.
+        param: Parameter name to quote in the message.
+        context: Method name to prefix the message with.
+
+    Returns:
+        ``None`` when the value is a finite non-negative number, otherwise the
+        reason as a string.
+    """
+    try:
+        fvalue = float(value)
+    except (TypeError, ValueError):
+        return f"{context}: {param} must be a number, got {value!r}"
+    if not math.isfinite(fvalue) or fvalue < 0:
+        return f"{context}: {param} must be a finite non-negative number, got {value!r}"
+    return None
+
+
+def randomization_seed_error(value: Any, context: str) -> str | None:
+    """Return why a value cannot seed a reproducible randomization stream.
+
+    The seed reaches ``numpy.random.default_rng``, which accepts only
+    non-negative integers (and a few RNG objects the ``int | None`` annotations
+    on these methods do not advertise). A float or string seed raises there -
+    on the sensor-noise path not until the first observation is drawn, long
+    after the configuring call reported success - so it is rejected at the call
+    that supplied it.
+
+    Args:
+        value: The candidate seed (``None`` selects fresh entropy).
+        context: Method name to prefix the message with.
+
+    Returns:
+        ``None`` when the seed is usable, otherwise the reason as a string.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, numbers.Integral):
+        return f"{context}: seed must be a non-negative integer or None, got {value!r} (None draws fresh entropy)"
+    if int(value) < 0:
+        return f"{context}: seed must be a non-negative integer or None, got {value!r} (None draws fresh entropy)"
+    return None
+
+
 class SimEngine(ABC):
     """Abstract base class for simulation engines.
 

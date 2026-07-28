@@ -131,6 +131,20 @@ def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) 
         and not (has_sim(canonical) or has_hardware(canonical))
         and not is_discoverable(canonical)
     ):
+        # A leader arm is an input device, not a robot: it carries the same
+        # servo bus and USB-serial shape as its follower, so "so101_leader"
+        # reads as a plausible Robot() name. Answering it with the generic
+        # registry listing invites the caller to retry with the follower name
+        # on the leader's port - the exact mistake that torque-enables the arm
+        # a human is holding. Name the teleoperator entry point instead.
+        if canonical.endswith("_leader"):
+            raise ValueError(
+                f"{original!r} is a teleoperator (leader) device, not a robot. "
+                f"Build it with ``Teleoperator({canonical!r}, port=...)`` and attach it to the "
+                f"follower it drives: ``Robot('<follower>', mode='real', port=...)"
+                f".attach_teleop({canonical!r}, port=...)``. Passing a leader to ``Robot()`` would "
+                "drive the arm a human is holding as a position servo."
+            )
         raise ValueError(
             f"Unknown robot {original!r} (resolved to {canonical!r}). "
             "Pass a registered name (see ``list_robots()``), one of the "
@@ -227,7 +241,12 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             via the simulation tool (``add_camera`` action). They cannot
             be passed to the factory yet.
 
-        position: Robot position in sim world [x, y, z].
+        position: Robot base position in the sim world, ``[x, y, z]``. Passed
+            through to the backend's ``add_robot`` verbatim, so the backend's
+            contract governs: omitting it spawns at the origin, and a
+            wrong-length, non-numeric or non-finite vector is refused with an
+            actionable message (surfaced here as ``RuntimeError``) instead of
+            being replaced by the origin.
         data_config: Data configuration name for observation/action schema.
                      Defaults to the canonical robot name. For multi-camera
                      setups, specify explicitly: ``data_config="so100_dualcam"``.
@@ -324,11 +343,23 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                 msg = content[0].get("text", str(result)) if content else str(result)
                 raise RuntimeError(f"Failed to create sim world for {canonical!r}: {msg}")
 
+            # Forward ``position`` exactly as the caller wrote it. Reading it
+            # by truthiness (``position or [0.0, 0.0, 0.0]``) broke the
+            # parameter twice over: a NumPy pose - what any pose arithmetic
+            # produces, and a value ``add_robot`` itself accepts - raised a bare
+            # ``ValueError: truth value of an array ... is ambiguous`` out of the
+            # factory, and an empty vector read as "omitted", so the origin was
+            # substituted for a caller mistake that ``add_robot`` refuses with an
+            # actionable message. Membership (``is not None``) is the only
+            # correct supplied-test for a vector, and here even that is
+            # unnecessary: ``position=None`` is what ``add_robot`` already
+            # documents as "spawn at the origin", so passing it through keeps ONE
+            # source of truth for that default instead of a copy that can drift.
             result = sim.add_robot(
                 name=name,
                 urdf_path=urdf_path,
                 data_config=data_config or canonical,
-                position=position or [0.0, 0.0, 0.0],
+                position=position,
             )
             if result.get("status") == "error":
                 content = result.get("content", [])

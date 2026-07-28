@@ -216,20 +216,22 @@ class TestSharedPositiveWholeNumberDomain:
     # that is a real supplied number is rejected identically by both.
     @pytest.mark.parametrize("bad", [0, -1, 2.5, float("nan"), float("inf"), "30", True])
     def test_video_config_and_recorder_agree_on_rejection(self, bad):
-        from strands_robots.simulation.policy_runner import VideoConfig, positive_whole_number_error
+        from strands_robots.simulation.policy_runner import VideoConfig
+        from strands_robots.utils import positive_whole_number_error
 
         assert positive_whole_number_error(bad, "fps", "start_cameras_recording") is not None
         assert VideoConfig.validation_error({"path": "/tmp/a.mp4", "fps": bad}) is not None
 
     @pytest.mark.parametrize("good", [1, 30, 30.0])
     def test_video_config_and_recorder_agree_on_acceptance(self, good):
-        from strands_robots.simulation.policy_runner import VideoConfig, positive_whole_number_error
+        from strands_robots.simulation.policy_runner import VideoConfig
+        from strands_robots.utils import positive_whole_number_error
 
         assert positive_whole_number_error(good, "fps", "start_cameras_recording") is None
         assert VideoConfig.validation_error({"path": "/tmp/a.mp4", "fps": good}) is None
 
     def test_error_text_names_the_receiving_surface(self):
-        from strands_robots.simulation.policy_runner import positive_whole_number_error
+        from strands_robots.utils import positive_whole_number_error
 
         assert positive_whole_number_error(0, "fps", "video") == "video: fps must be a positive whole number, got 0."
         assert (

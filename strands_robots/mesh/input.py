@@ -25,7 +25,13 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.mesh.security import ValidationError, validate_input_frame
+from strands_robots.mesh.security import (
+    ValidationError,
+    input_frame_slew_violation,
+    merge_slew_baseline,
+    validate_input_frame,
+    validate_mesh_identifier,
+)
 
 _log_safety_event: Callable[..., None] | None
 try:  # audit is best-effort; never let an import issue break teleop apply
@@ -103,6 +109,11 @@ class InputPublisher:
 
     Runs in a background thread, polling the teleoperator and publishing
     normalized action dicts.
+
+    Raises:
+        ValidationError: ``device_name`` is not a valid mesh identifier
+            (see :func:`~strands_robots.mesh.security.validate_mesh_identifier`);
+            it is interpolated into the published key expression.
     """
 
     def __init__(
@@ -115,7 +126,11 @@ class InputPublisher:
     ) -> None:
         self.mesh = mesh
         self.teleoperator = teleoperator
-        self.device_name = device_name
+        # ``device_name`` is interpolated into this publisher's key expression
+        # (see ``topic``), so it carries the same identifier discipline as the
+        # wire ``teleop_receive`` surface -- a wildcard or an extra ``/``
+        # segment here publishes actuator data to a key no receiver named.
+        self.device_name = validate_mesh_identifier(device_name, "InputPublisher.device_name")
         self.method = method
         self.hz = hz
         self._running = False
@@ -264,6 +279,13 @@ class InputReceiver:
 
     Listens on ``strands/{source_peer_id}/input/{device_name}`` and calls
     ``robot.send_action(action)`` for each received frame.
+
+    Raises:
+        ValidationError: ``source_peer_id`` or ``device_name`` is not a valid
+            mesh identifier (see
+            :func:`~strands_robots.mesh.security.validate_mesh_identifier`).
+            Both are interpolated into the subscribed key expression, where a
+            Zenoh wildcard would widen this stream to every publishing peer.
     """
 
     def __init__(
@@ -276,8 +298,15 @@ class InputReceiver:
     ) -> None:
         self.mesh = mesh
         self.robot = robot
-        self.source_peer_id = source_peer_id
-        self.device_name = device_name
+        # Source scoping is the only thing that makes this a point-to-point
+        # stream: both identifiers are interpolated into the subscribed key
+        # expression (see ``topic``). Zenoh reads ``*`` / ``**`` as wildcards,
+        # so an unvalidated ``source_peer_id`` turns "follow this leader" into
+        # "apply joint commands from any peer that publishes an input frame".
+        # Same validator the wire ``teleop_receive`` path uses, so the accepted
+        # domains cannot diverge.
+        self.source_peer_id = validate_mesh_identifier(source_peer_id, "InputReceiver.source_peer_id")
+        self.device_name = validate_mesh_identifier(device_name, "InputReceiver.device_name")
         self._apply_fn = apply_fn or self._default_apply
         self._running = False
         self._sub_name: str | None = None
@@ -287,7 +316,14 @@ class InputReceiver:
         self._drops = 0
         self._rejected = 0
         self._rate_dropped = 0
-        self._last_apply_mono = 0.0
+        self._slew_rejected = 0
+        self._last_rate_gate_mono = 0.0
+        # Baseline for the per-joint slew bound: for each joint, the last
+        # value actually applied and when. Updated only on a successful apply,
+        # so a refused frame never becomes the reference for the next one, and
+        # merged rather than replaced, so a frame carrying a subset of the
+        # joints cannot erase the baseline of the ones it omits.
+        self._last_applied: dict[str, tuple[float, float]] = {}
         self._start_time = 0.0
 
     def __repr__(self) -> str:
@@ -308,7 +344,9 @@ class InputReceiver:
         subscription is ``running``, ``frames_received``, ``errors``, and the
         loss/back-pressure breakdown - out-of-order ``drops``, ``rejected``
         frames (E-stop lockout, replay-freshness, or ACL checks), and
-        ``rate_dropped`` frames (shed to hold the apply-rate cap) -
+        ``rate_dropped`` frames (shed to hold the apply-rate cap), and
+        ``slew_rejected`` frames (refused for commanding a joint faster
+        than the per-joint slew bound) -
         plus the achieved ``hz_actual``.
         """
         elapsed = time.time() - self._start_time if self._start_time else 0
@@ -321,6 +359,7 @@ class InputReceiver:
             "drops": self._drops,
             "rejected": self._rejected,
             "rate_dropped": self._rate_dropped,
+            "slew_rejected": self._slew_rejected,
             "hz_actual": self._frame_count / elapsed if elapsed > 0 else 0,
         }
 
@@ -441,7 +480,7 @@ class InputReceiver:
             if max_hz > 0:
                 now_mono = time.perf_counter()
                 min_interval = 1.0 / max_hz
-                if self._last_apply_mono and (now_mono - self._last_apply_mono) < min_interval:
+                if self._last_rate_gate_mono and (now_mono - self._last_rate_gate_mono) < min_interval:
                     self._rate_dropped = getattr(self, "_rate_dropped", 0) + 1
                     if self._rate_dropped <= 5:
                         logger.warning(
@@ -450,7 +489,7 @@ class InputReceiver:
                             max_hz,
                         )
                     return
-                self._last_apply_mono = now_mono
+                self._last_rate_gate_mono = now_mono
             # B-04 / F-02: validate the teleop frame before it reaches
             # send_action(). A LAN-adjacent peer that discovers this
             # source peer_id could otherwise drive the follower's joints
@@ -469,7 +508,56 @@ class InputReceiver:
                         verr,
                     )
                 return
+            # Per-joint slew bound. The guards above bound each frame in
+            # isolation - who sent it, how fresh it is, how densely frames
+            # arrive, how large a value may be - but none bounds the distance
+            # between consecutive commands for one joint. A stream inside every
+            # one of those caps can still reverse a joint full-scale on every
+            # frame (1.8 units at 50 Hz is 90 units/s, over an order of
+            # magnitude past what the leader's own servos can travel), which is
+            # the overcurrent / gear-strip trajectory the rate cap exists to
+            # prevent in the time domain. Refuse-and-count, matching every
+            # other guard on this path: clamping toward the commanded value
+            # would silently alter an actuator command. Because the bound is a
+            # speed measured per joint from that joint's last applied value,
+            # the allowance grows while a joint is not moving, so a refused
+            # stream resumes by itself once the commanded pose is reachable
+            # safely - no resync handshake - and a joint that pauses while
+            # others move is not over-refused when it starts moving again.
+            # The baseline is per joint, and merged rather than replaced,
+            # because the frame shape is the sender's choice: a stream that
+            # interleaved single-joint frames could otherwise erase the
+            # baseline of the joint it was about to reverse, arriving with no
+            # reference every time and never tripping the bound at all.
+            # Frames can reach this point faster than real time - a batched
+            # or buffered delivery, or a legitimate burst on a network where
+            # the operator disabled the apply-rate cap. The intermediate
+            # commands of such a burst are superseded before an actuator can
+            # act on them, so the interval charged to the move is floored at
+            # the minimum inter-apply interval the rate cap guarantees; frames
+            # spaced closer than that are the rate cap's business, which lets
+            # the two guards compose instead of contradicting each other. With
+            # the cap disabled there is no guaranteed spacing, so the nominal
+            # publish period stands in.
+            apply_mono = time.perf_counter()
+            min_apply_interval = 1.0 / max_hz if max_hz > 0 else 1.0 / INPUT_HZ_DEFAULT
+            slew_reason = input_frame_slew_violation(
+                safe_action,
+                self._last_applied,
+                apply_mono,
+                min_apply_interval,
+            )
+            if slew_reason is not None:
+                self._slew_rejected += 1
+                if self._slew_rejected <= 5:
+                    logger.warning(
+                        "[mesh] input frame refused from %s: %s",
+                        self.source_peer_id,
+                        slew_reason,
+                    )
+                return
             self._apply_fn(self.robot, safe_action)
+            self._last_applied = merge_slew_baseline(self._last_applied, safe_action, apply_mono)
             self._frame_count += 1
             # M-5: sampled positive audit of the live teleop stream so a
             # successful remote actuation is not invisible to forensics.

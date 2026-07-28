@@ -282,7 +282,6 @@
         "robotstudio_so101",
         "so101_dualcam",
         "so101_follower",
-        "so101_leader",
         "so101_tricam"
       ]
     },

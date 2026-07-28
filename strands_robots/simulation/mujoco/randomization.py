@@ -5,7 +5,12 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.base import unknown_kwargs_error
+from strands_robots.simulation.base import (
+    finite_non_negative_error,
+    randomization_range_error,
+    randomization_seed_error,
+    unknown_kwargs_error,
+)
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
 
 logger = logging.getLogger(__name__)
@@ -99,11 +104,25 @@ class RandomizationMixin:
                                   mass so each randomized body stays physically
                                   consistent).
             randomize_positions:  Add uniform noise to dynamic-object xyz.
-            position_noise:       Max ± xyz offset in meters when randomising positions.
+            position_noise:       Max ± xyz offset in meters when randomising
+                                  positions. A finite non-negative number: a
+                                  NaN half-width writes NaN into ``qpos`` and
+                                  poisons every later step, a negative one
+                                  inverts the sampling bounds.
             color_range:          (lo, hi) for uniform RGB sampling.
             friction_range:       (lo, hi) multiplicative scale on friction[0].
             mass_range:           (lo, hi) multiplicative scale on body_mass.
-            seed:                 Optional np.random seed for reproducibility.
+                                  Each range must be a pair of finite numbers
+                                  with ``lo <= hi``, non-negative for friction
+                                  and colour and strictly positive for mass -
+                                  the domain :func:`~strands_robots.simulation.base.randomization_range_error`
+                                  defines and the Newton backend shares. A
+                                  scale a body cannot have is refused, not
+                                  installed: a negative mass falls upward and a
+                                  zero mass ignores gravity.
+            seed:                 Optional seed for a reproducible stream; a
+                                  non-negative integer, or None for fresh
+                                  entropy.
             **kwargs:             Declared only to match the ``**kwargs``-typed
                                   ``SimEngine.randomize`` signature; nothing is
                                   forwarded, so any keyword arriving here is
@@ -114,7 +133,8 @@ class RandomizationMixin:
 
         Returns:
             Status dict listing the axes applied, or an error dict when a
-            keyword is unknown, no world exists, or a policy is running.
+            keyword is unknown, a range/noise/seed value cannot be applied, no
+            world exists, or a policy is running.
         """
         if err := unknown_kwargs_error("randomize", kwargs, _RANDOMIZE_PARAMS):
             return err
@@ -123,6 +143,26 @@ class RandomizationMixin:
         # domain randomization mutates model arrays; a running policy racing with it is UB
         if err := self._require_no_running_policy("randomize"):
             return err
+        # Every numeric knob below is written straight into the live model (or
+        # into ``data.qpos``), so a value with no valid sampling interval either
+        # raises deep inside the mutation loop - past the tool envelope - or
+        # succeeds and leaves an unphysical world reporting success. Reject at
+        # the call instead, with the same accepted domain the Newton backend
+        # already enforces for the three ranges it shares.
+        for label, rng_range, allow_zero in (
+            # A zero MASS multiplier is not a lighter body, it is a massless one
+            # that ignores gravity; zero friction and zero colour are both real
+            # physical settings.
+            ("mass_range", mass_range, False),
+            ("friction_range", friction_range, True),
+            ("color_range", color_range, True),
+        ):
+            if msg := randomization_range_error(rng_range, label, allow_zero=allow_zero):
+                return {"status": "error", "content": [{"text": msg}]}
+        if msg := finite_non_negative_error(position_noise, "position_noise", "randomize"):
+            return {"status": "error", "content": [{"text": msg}]}
+        if msg := randomization_seed_error(seed, "randomize"):
+            return {"status": "error", "content": [{"text": msg}]}
 
         rng = np.random.default_rng(seed)
         mj = _ensure_mujoco()
@@ -247,7 +287,10 @@ class RandomizationMixin:
                 and the ``velocity`` field in ``get_robot_state``.
             camera_jitter_px: Max integer pixel shift applied to rendered
                 frames (uniform in ``[-px, px]`` per axis).
-            seed: Optional seed for a reproducible noise stream.
+            seed: Optional seed for a reproducible noise stream; a non-negative
+                integer, or None for fresh entropy. Validated here rather than
+                where the stream is first drawn, so an unusable seed is reported
+                by the call that supplied it.
             **kwargs: Declared only to match the ``**kwargs``-typed
                 ``SimEngine.set_obs_noise`` signature; nothing is forwarded, so
                 any keyword arriving here is rejected with an error naming the
@@ -265,20 +308,13 @@ class RandomizationMixin:
             ("joint_vel_std", joint_vel_std),
             ("camera_jitter_px", camera_jitter_px),
         ):
-            try:
-                fvalue = float(value)
-            except (TypeError, ValueError):
-                return {
-                    "status": "error",
-                    "content": [{"text": f"set_obs_noise: {label} must be a number, got {value!r}"}],
-                }
-            if not np.isfinite(fvalue) or fvalue < 0:
-                return {
-                    "status": "error",
-                    "content": [
-                        {"text": f"set_obs_noise: {label} must be a finite non-negative number, got {value!r}"}
-                    ],
-                }
+            if msg := finite_non_negative_error(value, label, "set_obs_noise"):
+                return {"status": "error", "content": [{"text": msg}]}
+        # The seed only reaches ``default_rng`` here; an unusable one would
+        # otherwise raise on the first observation drawn, long after this call
+        # reported the noise configured.
+        if msg := randomization_seed_error(seed, "set_obs_noise"):
+            return {"status": "error", "content": [{"text": msg}]}
 
         with self._lock:
             self._obs_noise = {
