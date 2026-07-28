@@ -5,29 +5,69 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
-### Fixed: a patch_scene_mjcf op key outside its vocabulary is rejected, not defaulted
+### Fixed: a live MJPEG stream refuses options it cannot honor
 
-Every field of every structured op was read with a fallback default, and no op
-checked for keys it does not read. A key the op did not recognise therefore left
-that default in place and the patch reported success:
+`mjpeg_frames` is the one media entry point in `strands_robots.rendering` that
+validated nothing, while `encode_clip` beside it already refuses a frame rate it
+cannot encode at. Each of the stream's four options therefore had values that
+were accepted and then not honored:
 
 ```python
-sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "position": [0.4, 0, 0.9]}])
-# before: status=success "1 op(s) applied" - and the crate moved to [0, 0, 0]
+# documented: "target frame rate; the generator sleeps to pace emission"
+list(mjpeg_frames(render, fps=0, max_frames=6))     # 6 chunks in 0.001 s
+list(mjpeg_frames(render, fps=float("inf"), ...))   # ditto: 1 / inf is 0.0 too
+list(mjpeg_frames(render, quality=500, ...))        # encoded at 100, not 500
+list(mjpeg_frames(render, max_frames=2.7))          # 3 chunks
+list(mjpeg_frames(render, size=(0, 0)))             # bare ValueError from Pillow
 ```
 
-`pos` defaults to the origin, `quat` to identity, `type` to `"box"` and `parent`
-to the worldbody, so the same hole covered six ops: a misspelled `pos` teleported
-a body to the world origin (or spawned it there), a misspelled `quat` reset the
-orientation to identity, `add_geom` with `shape=`/`color=` compiled a grey box
-where a coloured sphere was asked for, `add_site` with a misspelled `pos` placed
-the site at the body origin, and `add_body` with `parent_body=` re-parented the
-new body to the worldbody instead of the intended parent.
+`fps` of `0`, a negative, `nan` or `inf` all landed in a `frame_dt = 0.0`
+fallback that disabled pacing outright, so the generator emitted as fast as it
+could encode JPEGs - measured at ~16,000 chunks/s against a requested rate, the
+opposite of a rate limit. A non-numeric `fps` or `max_frames` leaked a bare
+`TypeError` from a comparison, `True` acted as a silent `1`, and Pillow quietly
+substituted any `quality` outside `[1, 95]`.
 
-Each op now declares the keys it reads, and anything else is refused with the op
-name, the unrecognised key, a close match where one exists, and the accepted
-list. The batch stays atomic, so a rejected key leaves the scene exactly as it
-was rather than half-patched.
+`fps` now has to be a positive finite number (deliberately wider than
+`encode_clip`'s whole-number container rate - pacing a live view is just a sleep
+interval, so `12.5` is honorable), `quality` a whole number in `[1, 95]`,
+`max_frames` a positive whole number, and `size` a `(width, height)` pair drawn
+from the shared pixel-count domain.
+
+The refusals are raised by the `mjpeg_frames` call itself rather than from the
+generator body. A generator function runs nothing until the consumer's first
+`next()`, by which point an HTTP handler has already committed the
+`multipart/x-mixed-replace` response headers and can only truncate the stream;
+the emission loop moved into a private helper so an unusable configuration is
+reported before any of that.
+
+### Fixed: Robot() forwards the base position it was given
+
+The `Robot()` factory wraps `add_robot`, which validates a base pose up front:
+an omitted pose spawns at the origin, a NumPy pose is accepted, and a
+wrong-length / non-numeric / non-finite vector is refused with an actionable
+message. The factory read the parameter by truthiness
+(`position or [0.0, 0.0, 0.0]`), which made the wrapper both less capable and
+less safe than the method it wraps:
+
+```python
+Robot("so100", position=np.array([0.4, 0.2, 0.0]))
+# before: ValueError: truth value of an array with more than one element is ambiguous
+# after:  base at [0.4, 0.2, 0.0]   (add_robot accepted this value all along)
+
+Robot("so100", position=[])
+# before: success, base silently at [0.0, 0.0, 0.0]
+# after:  RuntimeError: add_robot: 'position' must be a 3-element vector, got 0 ([])
+```
+
+An empty vector is a caller mistake, not a request for the default, and reading
+it as "omitted" placed the robot somewhere the caller never asked for while
+reporting success - the guard that refuses it was unreachable through the
+factory. The position is now passed through verbatim, so `None` (the documented
+"spawn at the origin") stays the single source of truth for that default
+instead of a copy in the factory that can drift from the backend's.
+
+
 ### Fixed: the state and action sides agree on what a hardware observation is
 
 Detection of `'<motor>.pos'` hardware joint readings was implemented twice in the
