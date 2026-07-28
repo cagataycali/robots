@@ -1234,10 +1234,13 @@ class TestDirectJointControlListForm:
 
 
 class TestMultiRaycast:
-    """Batch raycasting: origin validation plus per-ray fail-soft contract.
+    """Batch raycasting: origin validation plus the all-or-nothing batch contract.
 
-    A single malformed ray must not abort the whole batch; it produces a
-    per-ray error entry while valid rays still resolve.
+    A single malformed direction refuses the whole batch, naming its index. The
+    batch previously cast the remaining rays and reported ``distance: None`` for
+    the malformed one, which is exactly what a genuine miss reports - so a ray
+    that was never cast read as free space in the very clearance checks this
+    method serves.
     """
 
     def test_multi_raycast_origin_wrong_length(self, sim):
@@ -1250,23 +1253,25 @@ class TestMultiRaycast:
         assert result["status"] == "error"
         assert "list of 3 numbers" in result["content"][0]["text"]
 
-    def test_multi_raycast_per_ray_bad_direction_length(self, sim):
+    def test_multi_raycast_bad_direction_length_refuses_the_batch(self, sim):
+        """A 2-component direction refuses the batch and names its index."""
         result = sim.multi_raycast(origin=[0, 0, 2], directions=[[0, 0, -1], [0, 1]])
-        assert result["status"] == "success"
-        rays = _extract_json_block(result, 1)["rays"]
-        assert "must have 3 elements" in rays[1]["error"]
+        assert result["status"] == "error"
+        invalid = _extract_json_block(result, 1)["invalid_directions"]
+        assert [entry["index"] for entry in invalid] == [1]
+        assert "must have exactly 3 component" in invalid[0]["error"]
 
-    def test_multi_raycast_per_ray_zero_direction(self, sim):
+    def test_multi_raycast_zero_direction_refuses_the_batch(self, sim):
         result = sim.multi_raycast(origin=[0, 0, 2], directions=[[0, 0, 0]])
-        assert result["status"] == "success"
-        rays = _extract_json_block(result, 1)["rays"]
-        assert "zero-length" in rays[0]["error"]
+        assert result["status"] == "error"
+        invalid = _extract_json_block(result, 1)["invalid_directions"]
+        assert "zero-length" in invalid[0]["error"]
 
-    def test_multi_raycast_per_ray_direction_not_iterable(self, sim):
+    def test_multi_raycast_direction_not_iterable_refuses_the_batch(self, sim):
         result = sim.multi_raycast(origin=[0, 0, 2], directions=[7])
-        assert result["status"] == "success"
-        rays = _extract_json_block(result, 1)["rays"]
-        assert "list of 3 numbers" in rays[0]["error"]
+        assert result["status"] == "error"
+        invalid = _extract_json_block(result, 1)["invalid_directions"]
+        assert "must be a sequence of numbers" in invalid[0]["error"]
 
     def test_multi_raycast_hit_from_above(self, sim):
         # Cast straight down from above the ground plane: expect a hit.

@@ -29,7 +29,7 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `replace_scene_mjcf(xml)` | Swap entire world XML |
 | `patch_scene_mjcf(ops)` | Incremental patches, no full recompile |
 | `raycast(origin, direction, ...)` | Single ray–mesh intersection |
-| `multi_raycast(rays, ...)` | Batch ray–mesh intersections |
+| `multi_raycast(origin, directions, ...)` | Batch ray–mesh intersections from one origin; all-or-nothing, a direction it cannot cast refuses the batch |
 
 ## Robots
 

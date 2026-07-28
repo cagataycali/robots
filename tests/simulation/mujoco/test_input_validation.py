@@ -118,18 +118,21 @@ class TestRaycastValidation:
         res = sim_with_robot.raycast(origin=[0, 0, 5], direction=[0, 0, -1])
         assert res["status"] == "success"
 
-    def test_multi_raycast_zero_direction_isolates_error(self, sim_with_robot):
-        """A zero-length direction in one ray must not abort the whole batch."""
+    def test_multi_raycast_zero_direction_refuses_the_batch(self, sim_with_robot):
+        """A zero-length direction refuses the batch instead of half-casting it.
+
+        Reporting the other two rays under ``status: "success"`` gave ray[1] the
+        same ``distance: None`` a genuine miss carries, so the bearing that was
+        never cast read as clear.
+        """
         res = sim_with_robot.multi_raycast(
             origin=[0, 0, 5],
             directions=[[0, 0, -1], [0, 0, 0], [1, 0, -1]],
         )
-        assert res["status"] == "success"
-        # The JSON payload should show error on ray[1] only
-        rays = res["content"][1]["json"]["rays"]
-        assert len(rays) == 3
-        assert rays[1].get("error") is not None
-        assert "zero-length" in rays[1]["error"]
+        assert res["status"] == "error"
+        invalid = res["content"][1]["json"]["invalid_directions"]
+        assert [entry["index"] for entry in invalid] == [1]
+        assert "zero-length" in invalid[0]["error"]
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
     def test_nonfinite_direction_errors(self, sim_with_robot, bad):
@@ -170,21 +173,17 @@ class TestRaycastValidation:
         assert res["status"] == "error"
         assert "finite" in res["content"][0]["text"].lower()
 
-    def test_multi_raycast_nonfinite_direction_isolates_error(self, sim_with_robot):
-        """A nan direction in one ray must be reported per-ray, not abort the
-        batch or silently pass a poisoned vector to mj_ray."""
+    def test_multi_raycast_nonfinite_direction_refuses_the_batch(self, sim_with_robot):
+        """A nan direction refuses the batch, naming its index, and never reaches
+        mj_ray as a poisoned vector."""
         res = sim_with_robot.multi_raycast(
             origin=[0, 0, 5],
             directions=[[0, 0, -1], [float("nan"), 0.0, 0.0], [1, 0, -1]],
         )
-        assert res["status"] == "success"
-        rays = res["content"][1]["json"]["rays"]
-        assert len(rays) == 3
-        assert rays[1].get("error") is not None
-        assert "finite" in rays[1]["error"].lower()
-        # Valid rays around the bad one are unaffected.
-        assert rays[0].get("error") is None
-        assert rays[2].get("error") is None
+        assert res["status"] == "error"
+        invalid = res["content"][1]["json"]["invalid_directions"]
+        assert [entry["index"] for entry in invalid] == [1]
+        assert "finite" in invalid[0]["error"].lower()
 
 
 class TestApplyForceValidation:

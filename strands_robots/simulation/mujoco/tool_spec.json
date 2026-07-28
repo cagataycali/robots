@@ -396,11 +396,11 @@
           "type": "number"
         }
       },
-      "description": "Multiple ray directions for multi_raycast"
+      "description": "Multiple ray directions for multi_raycast - one [dx, dy, dz] per ray, at least one. The batch is all-or-nothing: a direction that cannot be cast refuses it, so a rejected ray is never reported as a miss"
     },
     "exclude_body": {
       "type": "integer",
-      "description": "Body ID to exclude from raycast (-1=none)"
+      "description": "Body ID whose geoms a ray passes through (-1 = exclude nothing); any other value must be a body id the model defines - read one from list_bodies"
     },
     "include_static": {
       "type": "boolean",
