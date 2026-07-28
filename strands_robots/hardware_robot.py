@@ -1667,10 +1667,23 @@ class Robot(TeleopMixin, AgentTool):
             hz: Publishing frequency in Hz.
 
         Returns:
-            Status dict with topic and peer_id for the receiver to use.
+            Status dict with topic and peer_id for the receiver to use, or an
+            error dict when the mesh is inactive or ``device_name`` is not a
+            valid mesh identifier.
         """
         if not self.mesh or not self.mesh.alive:
             return {"status": "error", "content": [{"text": "Mesh not active. Cannot publish input."}]}
+
+        from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
+
+        # ``device_name`` becomes a segment of the published key expression and
+        # a key in ``_input_publishers``. Validate before stopping any existing
+        # publisher for that name so a rejected call cannot tear down a live
+        # stream, and report through the tool envelope rather than raising.
+        try:
+            validate_mesh_identifier(device_name, "start_teleop_publish.device_name")
+        except ValidationError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
 
         from strands_robots.mesh import InputPublisher
 
@@ -1723,10 +1736,26 @@ class Robot(TeleopMixin, AgentTool):
                 Defaults to calling ``robot.send_action(action)``.
 
         Returns:
-            Status dict.
+            Status dict, or an error dict when the mesh is inactive or
+            ``source_peer_id`` / ``device_name`` is not a valid mesh
+            identifier.
         """
         if not self.mesh or not self.mesh.alive:
             return {"status": "error", "content": [{"text": "Mesh not active. Cannot receive input."}]}
+
+        from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
+
+        # Both identifiers become segments of the subscribed key expression, so
+        # a Zenoh wildcard here would make this follower apply joint commands
+        # from every peer instead of the named leader. Validate before stopping
+        # any existing receiver for that key so a rejected call cannot tear
+        # down a live stream, and report through the tool envelope rather than
+        # raising past dispatch.
+        try:
+            validate_mesh_identifier(source_peer_id, "start_teleop_receive.source_peer_id")
+            validate_mesh_identifier(device_name, "start_teleop_receive.device_name")
+        except ValidationError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
 
         from strands_robots.mesh import InputReceiver
 
