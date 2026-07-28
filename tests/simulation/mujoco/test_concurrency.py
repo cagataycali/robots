@@ -142,8 +142,8 @@ class TestApplyForceLatchedBehavior:
     def test_force_persists_across_multiple_steps(self, sim_with_robot):
         """Apply lateral force to a body, step 50 times, verify body moved.
 
-        This validates the docstring contract: force is latched in
-        qfrc_applied and applied on every subsequent step.
+        This validates the docstring contract: the wrench is latched on the
+        body and applied on every subsequent step.
 
         NOTE: We use an X-force (lateral) because a Z-force along the
         kinematic chain of hinge joints produces zero generalized torque
@@ -177,17 +177,26 @@ class TestApplyForceLatchedBehavior:
         )
 
     def test_zero_force_stops_effect(self, sim_with_robot):
-        """Apply force, then zero it, verify force buffer is cleared."""
+        """Apply force, then zero it, verify the latched wrench is cleared.
+
+        The wrench is latched in the target body's own ``xfrc_applied`` row, so
+        after zeroing it no body in the world is left holding an external
+        wrench.
+        """
         sim = sim_with_robot
+        model, data = sim._world._model, sim._world._data
+        body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "arm1/link2")
+        if body_id < 0:
+            body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "link2")
+        assert body_id >= 0
 
-        # Apply lateral (X) force - produces non-zero generalized torques
+        # Apply lateral (X) force - it is latched on link2 and nowhere else
         sim.apply_force("link2", force=[50.0, 0, 0])
-        assert np.any(sim._world._data.qfrc_applied != 0), "X-force on link2 should produce non-zero generalized forces"
+        assert np.any(data.xfrc_applied[body_id] != 0), "X-force on link2 should be latched on link2"
 
-        # Zero it - apply_force zeros buffer first, then applies zero force
+        # Zero it - this body's latched wrench is replaced by nothing
         sim.apply_force("link2", force=[0, 0, 0])
-        # After zeroing + applying zero force/torque, buffer should be all zeros
-        assert np.allclose(sim._world._data.qfrc_applied, 0.0)
+        assert np.allclose(data.xfrc_applied, 0.0)
 
 
 class TestThreadSafety:

@@ -97,7 +97,7 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `set_gravity` | `gravity=[x,y,z]` or a scalar z-component |
 | `set_timestep` | `timestep` |
 | `get_contacts` / `get_contact_forces` | - |
-| `apply_force` | `body_name`, `force`, `torque`, `point` |
+| `apply_force` | `body_name`, `force`, `torque`, `point` - latched on that body and re-applied every step until the next `apply_force` for it, so several bodies can hold wrenches at once (`force=[0,0,0]` stops one, `reset()` stops all) |
 | `get_jacobian` | `body_name` *or* `site_name` *or* `geom_name` |
 | `get_mass_matrix` | - |
 | `inverse_dynamics` | - (compensation torques to hold the current `qpos`/`qvel`) |

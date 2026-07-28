@@ -232,8 +232,8 @@ class TestApplyForceValidation:
     @pytest.mark.parametrize(
         "kwargs",
         [
-            # nan/inf pass the length check and, pre-fix, are silently applied to
-            # qfrc_applied - poisoning every subsequent mj_step.
+            # nan/inf pass the length check and, pre-fix, were silently latched
+            # on the body - poisoning every subsequent mj_step.
             {"force": [float("nan"), 0.0, 0.0]},
             {"force": [float("inf"), 0.0, 0.0]},
             {"torque": [0.0, float("-inf"), 0.0]},
