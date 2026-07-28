@@ -1097,6 +1097,9 @@ class Robot(TeleopMixin, AgentTool):
         arguments are ignored - the ``run_policy`` path. ``n_steps`` caps the
         number of applied actions; the loop stops at whichever of
         ``duration`` / ``n_steps`` comes first.
+
+        Either way the policy's per-episode state is reset before the rollout,
+        so a task never begins from the state the previous task left behind.
         """
         # resolve_chunk_length lives in the light policies.base module (no torch);
         # imported lazily to match this file's policy-import convention.
@@ -1144,6 +1147,28 @@ class Robot(TeleopMixin, AgentTool):
             # sim. Without it a wrong assumed rate corrupts RTC blending at every
             # frequency except the assumed one. No-op for non-RTC policies.
             policy_instance.set_control_frequency(self.control_frequency)
+
+            # Clear per-episode policy state before the rollout, mirroring the
+            # per-episode reset PolicyRunner performs in
+            # strands_robots/simulation/policy_runner.py. A caller may drive one
+            # policy object through several tasks (that is the documented
+            # ``run_policy(policy_object=...)`` usage), and Policy.reset exists
+            # to clear exactly the state that must not cross that boundary -
+            # action chunk caches, sampler RNG, KV-caches. Without it the first
+            # actions of a task can be the PREVIOUS task's cached chunk, so the
+            # arm executes commands inferred for a different instruction.
+            # No seed is passed: a hardware task has no per-episode seed to
+            # forward, so this asks only for a state clear.
+            #
+            # Fail-soft, matching PolicyRunner: a policy whose reset raises
+            # still gets driven, with the stale state named in the warning.
+            try:
+                policy_instance.reset()
+            except Exception as e:  # noqa: BLE001 - reset is best-effort
+                logger.warning(
+                    "policy.reset() raised %s; continuing with possibly stale per-episode state",
+                    e,
+                )
 
             self._task_state.status = TaskStatus.RUNNING
             start_time = time.time()
@@ -1330,6 +1355,9 @@ class Robot(TeleopMixin, AgentTool):
                 own device / embodiment / chunking configuration is honored;
                 the loop only injects the robot state keys and the RTC
                 control rate, exactly as it does for server-backed policies.
+                Its per-episode state is cleared via ``Policy.reset`` at the
+                start of every task, so one object can be reused across tasks
+                without the previous task's cached action chunk being driven.
             instruction: Natural-language instruction passed to the policy on
                 every ``get_actions`` call.
             duration: Wall-clock budget in seconds (same default as
