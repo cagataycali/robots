@@ -736,6 +736,53 @@ def _coerce_int(name: str, value: Any, *, lo: int, hi: int, default: int | None)
     return coerced
 
 
+def validate_mesh_identifier(value: Any, param: str) -> str:
+    """Validate one mesh key-expression segment and return it unchanged.
+
+    A mesh identifier is a single segment of a Zenoh key expression -- a
+    ``peer_id`` or a teleop ``device_name`` interpolated into
+    ``strands/{peer_id}/input/{device_name}`` by
+    :class:`~strands_robots.mesh.input.InputPublisher` and
+    :class:`~strands_robots.mesh.input.InputReceiver`.
+
+    Zenoh treats ``*`` and ``**`` as key-expression wildcards, so an
+    unvalidated segment silently widens a point-to-point subscription into a
+    match-any one: a receiver built with ``source_peer_id="**"`` subscribes to
+    ``strands/**/input/leader`` and applies joint commands from *every* peer on
+    the mesh, not just the configured leader. The remaining rejected shapes
+    (whitespace, NULs, C0 controls, shell metacharacters, ``/``) keep an
+    identifier from smuggling extra key segments or corrupting the log lines
+    and per-device state keys it also lands in.
+
+    Args:
+        value: Candidate identifier. Must be a non-empty ``str`` of at most
+            :data:`MAX_PEER_ID_LEN` characters matching :data:`_PEER_ID_RE`.
+        param: Dotted name of the parameter being validated, used verbatim as
+            the message prefix (e.g. ``"teleop_receive.source_peer_id"``).
+
+    Returns:
+        The validated identifier.
+
+    Raises:
+        ValidationError: The value is not a string, is empty, exceeds
+            :data:`MAX_PEER_ID_LEN`, or contains a character outside
+            :data:`_PEER_ID_RE` (wildcards included).
+    """
+    if not isinstance(value, str):
+        raise ValidationError(f"{param} must be a string (got {type(value).__name__})")
+    if not value:
+        raise ValidationError(f"{param} must be non-empty")
+    if len(value) > MAX_PEER_ID_LEN:
+        raise ValidationError(f"{param} length {len(value)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN}).")
+    if not _PEER_ID_RE.fullmatch(value):
+        raise ValidationError(
+            f"{param} must match [A-Za-z0-9_.-]+ "
+            "(no whitespace, NULs, control chars, shell metacharacters, "
+            "Zenoh wildcards ('*' / '**'), or '/')."
+        )
+    return value
+
+
 def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
     """Validate a mesh command and return a sanitised copy.
 
@@ -997,44 +1044,20 @@ def validate_command(cmd: dict[str, Any]) -> dict[str, Any]:
         out["steps"] = _coerce_int("steps", cmd.get("steps", 1), lo=1, hi=10_000, default=1)
 
     elif action == "teleop_receive":
-        source = cmd.get("source_peer_id", "")
-        if not isinstance(source, str) or not source:
-            raise ValidationError("teleop_receive requires non-empty source_peer_id")
-        # ``source_peer_id`` flows into ``r.start_teleop_receive(source, dev)``
-        # and into log messages, and is concatenated into device-key state. An
-        # authenticated peer publishing a ``teleop_receive`` cmd whose
-        # ``source_peer_id`` carries arbitrary unicode / control characters /
-        # NUL bytes / shell metacharacters has no business reaching downstream
-        # code, regardless of whether today's downstream consumers happen to
-        # be safe. The validator's job is to enforce the contract at the wire.
-        if len(source) > MAX_PEER_ID_LEN:
-            raise ValidationError(
-                f"teleop_receive.source_peer_id length {len(source)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN})."
-            )
-        if not _PEER_ID_RE.fullmatch(source):
-            raise ValidationError(
-                "teleop_receive.source_peer_id must match [A-Za-z0-9_.-]+ "
-                "(no whitespace, NULs, control chars, shell metacharacters, or '/')."
-            )
-        out["source_peer_id"] = source
+        # Both fields flow into ``r.start_teleop_receive(source, dev)``, which
+        # interpolates them into the ``strands/{peer}/input/{device}`` key
+        # expression the follower subscribes to, into log messages, and into
+        # the per-device state keys. An authenticated peer publishing a
+        # ``teleop_receive`` cmd whose identifiers carry a Zenoh wildcard or
+        # arbitrary unicode / control characters / shell metacharacters has no
+        # business reaching downstream code, regardless of whether today's
+        # downstream consumers happen to be safe. Shared with the constructors
+        # of InputReceiver / InputPublisher so the wire surface and the direct
+        # API cannot drift apart on what a valid identifier is.
+        out["source_peer_id"] = validate_mesh_identifier(cmd.get("source_peer_id", ""), "teleop_receive.source_peer_id")
         # device_name is optional and defaults to "leader" in _dispatch.
         if "device_name" in cmd:
-            device = cmd["device_name"]
-            if not isinstance(device, str):
-                raise ValidationError("teleop_receive.device_name must be a string")
-            # Same charset + length discipline for device_name -- it is
-            # concatenated into log messages and used as a key in internal
-            # state mappings (e.g. the per-device state dict).
-            if len(device) > MAX_PEER_ID_LEN:
-                raise ValidationError(
-                    f"teleop_receive.device_name length {len(device)} > MAX_PEER_ID_LEN ({MAX_PEER_ID_LEN})."
-                )
-            if not _PEER_ID_RE.fullmatch(device):
-                raise ValidationError(
-                    "teleop_receive.device_name must match [A-Za-z0-9_.-]+ "
-                    "(no whitespace, NULs, control chars, shell metacharacters, or '/')."
-                )
-            out["device_name"] = device
+            out["device_name"] = validate_mesh_identifier(cmd["device_name"], "teleop_receive.device_name")
 
     elif action == "teleop_stop":
         # device_name optional; if present, must be a string.
@@ -1375,6 +1398,7 @@ __all__ = [
     "input_frame_slew_violation",
     "merge_slew_baseline",
     "validate_input_frame",
+    "validate_mesh_identifier",
     "MAX_DC_RPC_FUNC_LEN",
     "MAX_DC_RPC_PARAMS_BYTES",
     "LockoutError",

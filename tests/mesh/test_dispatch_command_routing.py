@@ -137,11 +137,13 @@ def test_dispatch_routes_resume_to_lockout_release_even_under_lockout(monkeypatc
     assert m._estop_lockout.is_set()
 
 
-def test_dispatch_stop_falls_back_when_robot_lacks_stop_task() -> None:
-    # A robot with no ``stop_task`` (e.g. a bare status-only peer) still gets a
-    # well-formed acknowledgement rather than an error or an exception.
+def test_dispatch_stop_reports_failure_when_robot_lacks_stop_task() -> None:
+    # A robot with no ``stop_task`` stopped NOTHING. It must say so: reporting
+    # ok=True was an affirmative lie on the fleet safety path, counting an
+    # unstoppable peer as halted.
     m = Mesh(_StatusRobot(), peer_id="p")
 
     out = m._dispatch({"action": "stop"})
 
-    assert out == {"ok": True}
+    assert out["ok"] is False
+    assert "no stop_task" in out["error"]

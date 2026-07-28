@@ -9,6 +9,7 @@ description: Error → fix table for the most common gotchas across install, sim
 | Symptom | Likely cause | Fix |
 |---------|--------------|-----|
 | `ModuleNotFoundError: mujoco` | Missing `[sim-mujoco]` | `uv pip install "strands-robots[sim-mujoco]"` |
+| `move_to: IK bridge unavailable: ... No module named 'mink'` | Missing `[sim-mujoco]` (the extra declares the IK solver) | `uv pip install "strands-robots[sim-mujoco]"` |
 | `ModuleNotFoundError: lerobot` | Missing `[lerobot]` | `uv pip install "strands-robots[lerobot]"` |
 | `ImportError: cannot import name '...' from 'lerobot'` | LeRobot version skew | `uv pip install "strands-robots[lerobot]"` (pins `lerobot>=0.6.0,<0.7.0`) |
 | `ImportError: cannot import name 'MolmoAct2Policy'` | `lerobot < 0.6` (`MolmoAct2Policy` ships in lerobot >= 0.6) | `uv pip install "strands-robots[molmoact2]"` |

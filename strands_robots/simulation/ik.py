@@ -43,15 +43,16 @@ _PREFERRED_QP_SOLVERS = ("daqp", "quadprog", "osqp", "proxqp", "cvxopt", "scs")
 _DEFAULT_INSTALL_HINT = (
     "The mink IK bridge needs 'mink' + 'mujoco' + a qpsolvers backend, which "
     "were not importable. Install the sim extra:\n"
-    "  uv pip install 'strands-robots[sim-mujoco]' mink\n"
-    "This pulls mink (differential IK on the MuJoCo model) and mujoco, turning "
-    "Cartesian end-effector targets into joint configurations the arm can track."
+    "  uv pip install 'strands-robots[sim-mujoco]'\n"
+    "This pulls mink (differential IK on the MuJoCo model), mujoco and a QP "
+    "backend, turning Cartesian end-effector targets into joint configurations "
+    "the arm can track."
 )
 
 _DEFAULT_NO_BACKEND_MSG = (
     "No qpsolvers backend is installed; the mink IK bridge needs one "
-    "(e.g. 'daqp' or 'quadprog'). Install: "
-    "uv pip install 'strands-robots[sim-mujoco]' 'qpsolvers[quadprog]'."
+    "(e.g. 'daqp' or 'quadprog'). Install the sim extra: "
+    "uv pip install 'strands-robots[sim-mujoco]'."
 )
 
 

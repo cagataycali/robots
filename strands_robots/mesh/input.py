@@ -30,6 +30,7 @@ from strands_robots.mesh.security import (
     input_frame_slew_violation,
     merge_slew_baseline,
     validate_input_frame,
+    validate_mesh_identifier,
 )
 
 _log_safety_event: Callable[..., None] | None
@@ -108,6 +109,11 @@ class InputPublisher:
 
     Runs in a background thread, polling the teleoperator and publishing
     normalized action dicts.
+
+    Raises:
+        ValidationError: ``device_name`` is not a valid mesh identifier
+            (see :func:`~strands_robots.mesh.security.validate_mesh_identifier`);
+            it is interpolated into the published key expression.
     """
 
     def __init__(
@@ -120,7 +126,11 @@ class InputPublisher:
     ) -> None:
         self.mesh = mesh
         self.teleoperator = teleoperator
-        self.device_name = device_name
+        # ``device_name`` is interpolated into this publisher's key expression
+        # (see ``topic``), so it carries the same identifier discipline as the
+        # wire ``teleop_receive`` surface -- a wildcard or an extra ``/``
+        # segment here publishes actuator data to a key no receiver named.
+        self.device_name = validate_mesh_identifier(device_name, "InputPublisher.device_name")
         self.method = method
         self.hz = hz
         self._running = False
@@ -269,6 +279,13 @@ class InputReceiver:
 
     Listens on ``strands/{source_peer_id}/input/{device_name}`` and calls
     ``robot.send_action(action)`` for each received frame.
+
+    Raises:
+        ValidationError: ``source_peer_id`` or ``device_name`` is not a valid
+            mesh identifier (see
+            :func:`~strands_robots.mesh.security.validate_mesh_identifier`).
+            Both are interpolated into the subscribed key expression, where a
+            Zenoh wildcard would widen this stream to every publishing peer.
     """
 
     def __init__(
@@ -281,8 +298,15 @@ class InputReceiver:
     ) -> None:
         self.mesh = mesh
         self.robot = robot
-        self.source_peer_id = source_peer_id
-        self.device_name = device_name
+        # Source scoping is the only thing that makes this a point-to-point
+        # stream: both identifiers are interpolated into the subscribed key
+        # expression (see ``topic``). Zenoh reads ``*`` / ``**`` as wildcards,
+        # so an unvalidated ``source_peer_id`` turns "follow this leader" into
+        # "apply joint commands from any peer that publishes an input frame".
+        # Same validator the wire ``teleop_receive`` path uses, so the accepted
+        # domains cannot diverge.
+        self.source_peer_id = validate_mesh_identifier(source_peer_id, "InputReceiver.source_peer_id")
+        self.device_name = validate_mesh_identifier(device_name, "InputReceiver.device_name")
         self._apply_fn = apply_fn or self._default_apply
         self._running = False
         self._sub_name: str | None = None
