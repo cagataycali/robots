@@ -5,6 +5,42 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
+### Fixed: a live MJPEG stream refuses options it cannot honor
+
+`mjpeg_frames` is the one media entry point in `strands_robots.rendering` that
+validated nothing, while `encode_clip` beside it already refuses a frame rate it
+cannot encode at. Each of the stream's four options therefore had values that
+were accepted and then not honored:
+
+```python
+# documented: "target frame rate; the generator sleeps to pace emission"
+list(mjpeg_frames(render, fps=0, max_frames=6))     # 6 chunks in 0.001 s
+list(mjpeg_frames(render, fps=float("inf"), ...))   # ditto: 1 / inf is 0.0 too
+list(mjpeg_frames(render, quality=500, ...))        # encoded at 100, not 500
+list(mjpeg_frames(render, max_frames=2.7))          # 3 chunks
+list(mjpeg_frames(render, size=(0, 0)))             # bare ValueError from Pillow
+```
+
+`fps` of `0`, a negative, `nan` or `inf` all landed in a `frame_dt = 0.0`
+fallback that disabled pacing outright, so the generator emitted as fast as it
+could encode JPEGs - measured at ~16,000 chunks/s against a requested rate, the
+opposite of a rate limit. A non-numeric `fps` or `max_frames` leaked a bare
+`TypeError` from a comparison, `True` acted as a silent `1`, and Pillow quietly
+substituted any `quality` outside `[1, 95]`.
+
+`fps` now has to be a positive finite number (deliberately wider than
+`encode_clip`'s whole-number container rate - pacing a live view is just a sleep
+interval, so `12.5` is honorable), `quality` a whole number in `[1, 95]`,
+`max_frames` a positive whole number, and `size` a `(width, height)` pair drawn
+from the shared pixel-count domain.
+
+The refusals are raised by the `mjpeg_frames` call itself rather than from the
+generator body. A generator function runs nothing until the consumer's first
+`next()`, by which point an HTTP handler has already committed the
+`multipart/x-mixed-replace` response headers and can only truncate the stream;
+the emission loop moved into a private helper so an unusable configuration is
+reported before any of that.
+
 ### Fixed: Robot() forwards the base position it was given
 
 The `Robot()` factory wraps `add_robot`, which validates a base pose up front:
@@ -30,48 +66,6 @@ reporting success - the guard that refuses it was unreachable through the
 factory. The position is now passed through verbatim, so `None` (the documented
 "spawn at the origin") stays the single source of truth for that default
 instead of a copy in the factory that can drift from the backend's.
-
-
-### Fixed: a teleop stream cannot command a joint faster than it can travel
-
-`InputReceiver` bounded each inbound teleop frame on four axes - who sent it,
-how fresh it is, how densely frames may arrive (`STRANDS_MESH_INPUT_MAX_HZ`)
-and how large a single value may be (`MAX_INPUT_VALUE_ABS`) - but every one of
-those judged a frame in isolation. Nothing bounded the distance between
-consecutive commands for the same joint, so a stream inside all four caps could
-still reverse a joint full-scale on every frame. Measured on a MuJoCo Panda
-follower at 50 Hz, half the permitted frame rate: 60 of 60 reversals applied,
-`rejected` and `rate_dropped` both zero, each frame commanding 90 units/s -
-roughly 14x the no-load speed of the Feetech STS3215 servos on an SO-100 class
-arm, which is the overcurrent / gear-strip trajectory the rate cap exists to
-prevent in the time domain.
-
-Frames are now also bounded on per-joint speed, via
-`security.input_frame_slew_violation` and `STRANDS_MESH_INPUT_SLEW_ABS`
-(default `8pi` units/second, above what a leader arm's own servos can produce,
-so only a synthetic stream trips it). An over-speed frame is refused and
-counted in the new `slew_rejected` stat, matching how every other guard on this
-path behaves; the commanded value is never silently altered.
-
-The baseline each command is measured against is kept *per joint* and merged on
-every apply, because the shape of the frames is the sender's choice: a stream
-that interleaves single-joint frames would otherwise erase the baseline of the
-joint it is about to reverse, so every frame would arrive with no reference and
-the bound would never fire. Measured on the same follower, that stream applied
-60 of 60 frames at 45 units/s with `slew_rejected` at zero; it is now refused.
-The baseline is pruned of entries old enough that no permissible command could
-exceed the bound from them, which cannot change a verdict and keeps a mapping
-keyed by sender-chosen joint names bounded.
-
-Because the bound is a speed measured from each joint's own last applied
-command, the allowance grows while that joint is not moving: a refused stream
-resumes on its own once the commanded pose is reachable safely, with no resync
-handshake, and a joint that pauses while others move is not over-refused when it
-starts again. The interval charged to a move is floored at the minimum
-inter-apply interval the rate cap guarantees, so a batched delivery - whose
-intermediate commands are superseded before an actuator can act on them - is not
-mistaken for a high-speed command, and the two guards compose rather than
-contradict.
 
 
 ### Fixed: the state and action sides agree on what a hardware observation is
