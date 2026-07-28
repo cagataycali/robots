@@ -841,6 +841,24 @@ class MuJoCoSimEngine(
             {"op": "set_body_quat", "name": "foo",     "quat": [1,0,0,0]}
             {"op": "delete_body",   "name": "foo"}
 
+        Each op accepts only the keys it reads, and every other key is
+        refused::
+
+            add_body       op, parent, name, pos, quat
+            add_geom       op, body, type, size, rgba, name, pos, quat
+            add_site       op, body, name, pos, size, rgba
+            set_body_pos   op, name, pos
+            set_body_quat  op, name, quat
+            delete_body    op, name
+
+        Rejecting the rest is not pedantry: every field has a fallback default
+        (``pos`` the origin, ``quat`` identity, ``type`` ``"box"``, ``parent``
+        the worldbody), so a misspelled key would apply that default and report
+        success - ``{"op": "set_body_pos", "name": "crate", "position": [...]}``
+        would move the body to the origin instead of to the requested pose. The
+        error names the op, the unrecognised key, a close match where one
+        exists, and the keys that op accepts.
+
         The whole batch is applied, then the spec is recompiled once. If any
         op fails, the batch is rejected and the world is rolled back to its
         pre-patch state (from an XML snapshot). Use this for fast iterative

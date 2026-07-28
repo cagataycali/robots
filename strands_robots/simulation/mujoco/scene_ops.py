@@ -27,7 +27,9 @@ the legacy API) so call sites in :mod:`simulation` don't need to change.
 
 from __future__ import annotations
 
+import difflib
 import logging
+from collections.abc import Mapping
 from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
@@ -728,17 +730,61 @@ def replace_scene_mjcf(world: SimWorld, xml: str) -> bool:
 
 # Structured-op patching of the live spec (Stage 6, part 2 - GH #125)
 
-# Supported ops for patch_scene_mjcf. Kept narrow on purpose - adding unchecked
-# attribute setters would make the tool an arbitrary-code hole. Agents that
-# need exotic MJCF should go through replace_scene_mjcf with a full XML.
-_PATCH_OPS = {
-    "add_body",
-    "add_geom",
-    "add_site",
-    "set_body_pos",
-    "set_body_quat",
-    "delete_body",
+# Supported ops for patch_scene_mjcf, each mapped to the complete set of keys
+# that op reads. Kept narrow on purpose - adding unchecked attribute setters
+# would make the tool an arbitrary-code hole. Agents that need exotic MJCF
+# should go through replace_scene_mjcf with a full XML.
+#
+# This mapping is the single source of truth for the op vocabulary: it names
+# the supported ops AND, per op, every key that reaches MuJoCo. Any other key
+# is refused, because each field below is read with a fallback default - a
+# misspelled key would otherwise apply that default and report success, so
+# ``{"op": "set_body_pos", "name": "crate", "position": [...]}`` would move the
+# body to the origin rather than to the requested pose.
+_PATCH_OP_KEYS: dict[str, frozenset[str]] = {
+    "add_body": frozenset({"op", "parent", "name", "pos", "quat"}),
+    "add_geom": frozenset({"op", "body", "type", "size", "rgba", "name", "pos", "quat"}),
+    "add_site": frozenset({"op", "body", "name", "pos", "size", "rgba"}),
+    "set_body_pos": frozenset({"op", "name", "pos"}),
+    "set_body_quat": frozenset({"op", "name", "quat"}),
+    "delete_body": frozenset({"op", "name"}),
 }
+
+
+def _unknown_op_keys_error(kind: str, op: Mapping[str, Any]) -> str | None:
+    """Reject keys a patch op does not read, before its defaults are applied.
+
+    Every field of every op is read with a fallback default (``pos`` defaults
+    to the origin, ``quat`` to identity, ``type`` to ``"box"``, ``parent`` to
+    ``"world"``), so an unrecognised key is not an inert extra: the op runs
+    with that default and reports success. A misspelled ``pos`` silently moves
+    a body to the world origin, a misspelled ``parent`` re-parents it to the
+    worldbody, and a misspelled ``type`` compiles a box where a sphere was
+    asked for.
+
+    Args:
+        kind: The op name, already known to be in :data:`_PATCH_OP_KEYS`.
+        op: The caller-supplied op dict.
+
+    Returns:
+        An error message naming the unknown key(s), a close-match suggestion
+        where one exists, and the keys this op accepts - or ``None`` when
+        every key is honored.
+    """
+    accepted = _PATCH_OP_KEYS[kind]
+    unknown = [key for key in op if key not in accepted]
+    if not unknown:
+        return None
+    known = sorted(accepted)
+    # Suggest field names only. "op" selects the op and is already validated
+    # above, so it is never what a misspelled field meant - offering it turns a
+    # real MJCF attribute like "group" into a nonsense hint.
+    candidates = [key for key in known if key != "op"]
+    described = []
+    for key in sorted(unknown, key=str):
+        close = difflib.get_close_matches(str(key).lower(), candidates, n=1, cutoff=0.5)
+        described.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
+    return f"{kind}: unknown op key(s): {', '.join(described)}. Accepted keys: {', '.join(known)}."
 
 
 def _find_body(spec: Any, name: str, new_bodies: dict[str, Any]) -> Any:
@@ -778,8 +824,10 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
         raise ValueError(f"each op must be a dict, got {type(op).__name__}")
 
     kind = op.get("op")
-    if kind not in _PATCH_OPS:
-        raise ValueError(f"unknown op '{kind}'. Supported: {sorted(_PATCH_OPS)}")
+    if kind not in _PATCH_OP_KEYS:
+        raise ValueError(f"unknown op '{kind}'. Supported: {sorted(_PATCH_OP_KEYS)}")
+    if err := _unknown_op_keys_error(str(kind), op):
+        raise ValueError(err)
 
     if kind == "add_body":
         parent = op.get("parent", "world")
@@ -883,6 +931,10 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
         {"op": "add_geom", "body": "foo", "type": "sphere", "size": [0.1]}
         {"op": "set_body_pos", "name": "foo", "pos": [1,0,1]}
         {"op": "delete_body", "name": "foo"}
+
+    Each op accepts exactly the keys listed for it in :data:`_PATCH_OP_KEYS`;
+    anything else is rejected, because an unread key would leave the op running
+    on its fallback default (see :func:`_unknown_op_keys_error`).
 
     The list is applied atomically: if any op raises, the whole patch is
     rejected and the world is left in its original state. After all ops

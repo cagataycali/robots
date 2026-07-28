@@ -256,6 +256,36 @@ an **image texture**; the `checker` builtin reads as a literal checkerboard.
 Materials are currently supported by the MuJoCo backend; the Newton backend
 rejects a non-`None` `material` rather than silently ignoring it.
 
+## Surgical MJCF edits
+
+`patch_scene_mjcf(ops)` applies a list of structured ops to the live spec and
+recompiles once, preserving joint state for untouched joints. Each op accepts
+only the keys it reads:
+
+| Op | Keys |
+|----|------|
+| `add_body` | `parent` (default `"world"`), `name` (required), `pos`, `quat` |
+| `add_geom` | `body` (required), `type` (default `"box"`), `size`, `rgba`, `name`, `pos`, `quat` |
+| `add_site` | `body` (default `"world"`), `name` (required), `pos`, `size`, `rgba` |
+| `set_body_pos` | `name` (required), `pos` |
+| `set_body_quat` | `name` (required), `quat` |
+| `delete_body` | `name` (required) |
+
+Any other key is rejected. Every field above has a fallback default (`pos` the
+origin, `quat` identity, `type` `"box"`, `parent` the worldbody), so a key the op
+does not read is not inert - it would leave that default in place while the patch
+reports success:
+
+```python
+sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "position": [0.4, 0, 0.9]}])
+# status=error: set_body_pos: unknown op key(s): 'position' (did you mean 'pos'?).
+#               Accepted keys: name, op, pos.
+```
+
+The batch is atomic: if any op is rejected the world is rolled back to its
+pre-patch state, so a bad key never leaves a half-applied scene. Use
+`replace_scene_mjcf(xml)` for MJCF elements this vocabulary does not cover.
+
 ## Cameras
 
 Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` - no `add_camera` needed.
