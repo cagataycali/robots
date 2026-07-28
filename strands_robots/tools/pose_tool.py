@@ -233,6 +233,40 @@ class MotorController:
             logger.error(f"Failed to move motor {motor_name}: {e}")
             return False
 
+    def disable_torque(self) -> list[str]:
+        """De-energize every configured motor, returning the ones that failed.
+
+        Writes ``Torque_Enable = 0`` to each motor. That register is address 40
+        (1 byte) on the Feetech STS/SMS control table -- the authority is
+        ``lerobot.motors.feetech.tables``, the same table that gives
+        ``Goal_Position`` address 42 used by :meth:`move_motor`.
+
+        Every motor is attempted even after one fails: a stop that gave up on
+        the remaining joints would be worse than no stop at all, because the
+        caller would be told the whole arm was released when part of it is
+        still driven.
+
+        Returns:
+            Names of the motors whose write failed, empty when all succeeded. A
+            non-empty list means the arm is NOT fully de-energized.
+        """
+        if not self.serial_conn or not self.serial_conn.is_open:
+            return list(self.motor_configs)
+
+        failed: list[str] = []
+        for motor_name, config in self.motor_configs.items():
+            try:
+                # INST_WRITE (0x03), Torque_Enable address (0x28), value 0.
+                packet = self.build_feetech_packet(config["id"], 0x03, [0x28, 0x00])
+                self.serial_conn.write(packet)
+            except OSError as e:
+                # Narrow to the transport: ``serial.SerialException`` subclasses
+                # ``OSError``. Record and continue so the remaining motors are
+                # still attempted, then report which ones are still driven.
+                logger.error(f"Failed to disable torque on {motor_name}: {e}")
+                failed.append(motor_name)
+        return failed
+
     def read_motor_position(self, motor_name: str) -> float | None:
         """Read current motor position in degrees."""
         if not self.serial_conn or not self.serial_conn.is_open:
@@ -346,7 +380,10 @@ def pose_tool(
 
         System:
         - "connect": Test robot connection
-        - "emergency_stop": Stop all motor movement
+        - "emergency_stop": De-energize every motor (Torque_Enable=0). The arm
+          goes LIMP and falls under gravity -- it does not hold position, so
+          anything it is grasping is dropped. Reports an error when any motor
+          could not be released.
         - "reset_to_home": Move to safe home position
 
     Args:
@@ -660,8 +697,55 @@ def pose_tool(
                 controller.disconnect()
 
         if action == "emergency_stop":
-            # This would require torque disable in real implementation
-            return {"status": "success", "content": [{"text": "Emergency stop executed (torque disabled)"}]}
+            # This handler used to return "Emergency stop executed (torque
+            # disabled)" while executing no code at all. A fabricated
+            # confirmation is the worst possible failure on a safety path: an
+            # operator or agent reading success believes a moving arm has been
+            # released, and the one action they would reach for in an emergency
+            # is the one that never did anything.
+            connected, connect_error = controller.connect()
+            if not connected:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"EMERGENCY STOP FAILED - the arm was NOT de-energized: {connect_error}. "
+                                "Use the hardware power cutoff."
+                            )
+                        }
+                    ],
+                }
+            try:
+                failed = controller.disable_torque()
+            finally:
+                controller.disconnect()
+
+            if failed:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                "EMERGENCY STOP INCOMPLETE - torque is still enabled on: "
+                                f"{', '.join(failed)}. Those joints are still driven; use the "
+                                "hardware power cutoff."
+                            )
+                        }
+                    ],
+                }
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            "Emergency stop executed - torque disabled on "
+                            f"{len(controller.motor_configs)} motors. The arm is limp and will "
+                            "fall under gravity; anything held has been dropped."
+                        )
+                    }
+                ],
+            }
 
         else:
             return {

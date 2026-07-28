@@ -33,6 +33,8 @@ from strands_robots.tools.pose_tool import (
 )
 from tests.tool_result_contract import tool_json
 
+from .conftest import FakeSerial
+
 
 def _texts(result: dict[str, Any]) -> str:
     """Concatenate all content ``text`` fields from a tool result."""
@@ -48,51 +50,6 @@ def _assert_ascii(result: dict[str, Any]) -> None:
 # --------------------------------------------------------------------------- #
 # Fake serial layer
 # --------------------------------------------------------------------------- #
-class FakeSerial:
-    """Minimal stand-in for ``serial.Serial`` recording writes and serving reads."""
-
-    def __init__(self, port: str, baudrate: int, timeout: float = 1.0) -> None:
-        self.port = port
-        self.baudrate = baudrate
-        self.timeout = timeout
-        self.writes: list[bytes] = []
-        self._read_queue: list[bytes] = []
-        self.is_open = True
-
-    def queue_read(self, data: bytes) -> None:
-        self._read_queue.append(data)
-
-    def write(self, data: bytes) -> None:
-        self.writes.append(bytes(data))
-
-    def read(self, n: int = 1) -> bytes:
-        if self._read_queue:
-            return self._read_queue.pop(0)
-        return b""
-
-    def close(self) -> None:
-        self.is_open = False
-
-
-@pytest.fixture
-def fake_serial(monkeypatch):
-    """Patch ``serial.Serial`` to return a single shared FakeSerial instance."""
-    instances: list[FakeSerial] = []
-
-    def _ctor(port: str, baudrate: int, timeout: float = 1.0) -> FakeSerial:
-        fs = FakeSerial(port, baudrate, timeout)
-        instances.append(fs)
-        return fs
-
-    monkeypatch.setattr(serial, "Serial", _ctor)
-    return instances
-
-
-@pytest.fixture
-def cwd_tmp(tmp_path, monkeypatch):
-    """Run with cwd in a temp dir so PoseManager persists under tmp."""
-    monkeypatch.chdir(tmp_path)
-    return tmp_path
 
 
 # --------------------------------------------------------------------------- #
@@ -329,8 +286,12 @@ def test_pose_tool_move_motor_success_is_ascii(cwd_tmp, fake_serial) -> None:
     _assert_ascii(result)
 
 
-def test_pose_tool_emergency_stop_is_ascii(cwd_tmp) -> None:
-    result = pose_tool(action="emergency_stop", robot_id="hw_arm")
+def test_pose_tool_emergency_stop_is_ascii(cwd_tmp, fake_serial) -> None:
+    # An explicit fake port is mandatory here: ``port`` defaults to
+    # "/dev/ttyACM0" and ``emergency_stop`` now really opens the bus and writes
+    # Torque_Enable=0, so a portless call would de-energize whatever arm is
+    # plugged into the machine running the suite.
+    result = pose_tool(action="emergency_stop", robot_id="hw_arm", port="/dev/ttyTEST")
     assert result["status"] == "success"
     _assert_ascii(result)
 
