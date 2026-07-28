@@ -5,38 +5,67 @@ All notable behavioural changes to `strands-robots` are logged here. Follows
 
 ## [Unreleased]
 
-### Fixed: HybridCompositor refuses render options it cannot honor
+### Fixed: a live MJPEG stream refuses options it cannot honor
 
-Every option the hybrid compositor takes was coerced rather than checked, so a
-value with no usable interpretation still returned a frame - just not the one
-the caller asked for. `depth_epsilon` (the "this pixel has no geometry" depth
-threshold) was stored with a bare `float(...)`:
+`mjpeg_frames` is the one media entry point in `strands_robots.rendering` that
+validated nothing, while `encode_clip` beside it already refuses a frame rate it
+cannot encode at. Each of the stream's four options therefore had values that
+were accepted and then not honored:
 
 ```python
-frame = HybridCompositor(sim, depth_epsilon=float("nan")).render("look")
-frame.foreground_mask.mean()   # 0.0000 - the whole robot is gone
+# documented: "target frame rate; the generator sleeps to pace emission"
+list(mjpeg_frames(render, fps=0, max_frames=6))     # 6 chunks in 0.001 s
+list(mjpeg_frames(render, fps=float("inf"), ...))   # ditto: 1 / inf is 0.0 too
+list(mjpeg_frames(render, quality=500, ...))        # encoded at 100, not 500
+list(mjpeg_frames(render, max_frames=2.7))          # 3 chunks
+list(mjpeg_frames(render, size=(0, 0)))             # bare ValueError from Pillow
 ```
 
-`fg_depth > nan` is false for every pixel, so the entire simulation foreground
-read as empty and the composite was the background alone, with no diagnostic.
-`inf` did the same; a negative threshold did the opposite, admitting the no-hit
-pixels (Isaac's RTX annotator reports them as `0`) that the parameter exists to
-exclude, painting simulation sky over the background.
+`fps` of `0`, a negative, `nan` or `inf` all landed in a `frame_dt = 0.0`
+fallback that disabled pacing outright, so the generator emitted as fast as it
+could encode JPEGs - measured at ~16,000 chunks/s against a requested rate, the
+opposite of a rate limit. A non-numeric `fps` or `max_frames` leaked a bare
+`TypeError` from a comparison, `True` acted as a silent `1`, and Pillow quietly
+substituted any `quality` outside `[1, 95]`.
 
-`feather_pixels` was clamped with `max(0, int(value))`, so `-5` and `2.7`
-silently became `0` and `2` - the first disabling the seam blend the parameter
-exists to apply. And `render(width=..., height=...)` read its size with
-`width or self.default_width`, so a supplied `0` read as "not supplied" and the
-frame came back at the default size, even though that same `0` is refused when
-it reaches `get_camera_params` as `default_width`.
+`fps` now has to be a positive finite number (deliberately wider than
+`encode_clip`'s whole-number container rate - pacing a live view is just a sleep
+interval, so `12.5` is honorable), `quality` a whole number in `[1, 95]`,
+`max_frames` a positive whole number, and `size` a `(width, height)` pair drawn
+from the shared pixel-count domain.
 
-All four options are now validated where they are supplied - pixel counts
-through the shared `positive_whole_number_error` domain, `depth_epsilon` as a
-finite distance in meters `>= 0` (`0` remains valid: "only an exactly-zero
-depth is no geometry"), and the render size read by membership rather than
-truthiness - so a `default_width` mistake names `default_width` instead of
-surfacing later as a render error. Integral options are normalized to plain
-`int`, so a `np.int64` size no longer leaks into the requested camera size.
+The refusals are raised by the `mjpeg_frames` call itself rather than from the
+generator body. A generator function runs nothing until the consumer's first
+`next()`, by which point an HTTP handler has already committed the
+`multipart/x-mixed-replace` response headers and can only truncate the stream;
+the emission loop moved into a private helper so an unusable configuration is
+reported before any of that.
+
+### Fixed: Robot() forwards the base position it was given
+
+The `Robot()` factory wraps `add_robot`, which validates a base pose up front:
+an omitted pose spawns at the origin, a NumPy pose is accepted, and a
+wrong-length / non-numeric / non-finite vector is refused with an actionable
+message. The factory read the parameter by truthiness
+(`position or [0.0, 0.0, 0.0]`), which made the wrapper both less capable and
+less safe than the method it wraps:
+
+```python
+Robot("so100", position=np.array([0.4, 0.2, 0.0]))
+# before: ValueError: truth value of an array with more than one element is ambiguous
+# after:  base at [0.4, 0.2, 0.0]   (add_robot accepted this value all along)
+
+Robot("so100", position=[])
+# before: success, base silently at [0.0, 0.0, 0.0]
+# after:  RuntimeError: add_robot: 'position' must be a 3-element vector, got 0 ([])
+```
+
+An empty vector is a caller mistake, not a request for the default, and reading
+it as "omitted" placed the robot somewhere the caller never asked for while
+reporting success - the guard that refuses it was unreachable through the
+factory. The position is now passed through verbatim, so `None` (the documented
+"spawn at the origin") stays the single source of truth for that default
+instead of a copy in the factory that can drift from the backend's.
 
 
 ### Fixed: the state and action sides agree on what a hardware observation is
