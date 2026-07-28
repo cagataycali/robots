@@ -241,7 +241,12 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             via the simulation tool (``add_camera`` action). They cannot
             be passed to the factory yet.
 
-        position: Robot position in sim world [x, y, z].
+        position: Robot base position in the sim world, ``[x, y, z]``. Passed
+            through to the backend's ``add_robot`` verbatim, so the backend's
+            contract governs: omitting it spawns at the origin, and a
+            wrong-length, non-numeric or non-finite vector is refused with an
+            actionable message (surfaced here as ``RuntimeError``) instead of
+            being replaced by the origin.
         data_config: Data configuration name for observation/action schema.
                      Defaults to the canonical robot name. For multi-camera
                      setups, specify explicitly: ``data_config="so100_dualcam"``.
@@ -338,11 +343,23 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                 msg = content[0].get("text", str(result)) if content else str(result)
                 raise RuntimeError(f"Failed to create sim world for {canonical!r}: {msg}")
 
+            # Forward ``position`` exactly as the caller wrote it. Reading it
+            # by truthiness (``position or [0.0, 0.0, 0.0]``) broke the
+            # parameter twice over: a NumPy pose - what any pose arithmetic
+            # produces, and a value ``add_robot`` itself accepts - raised a bare
+            # ``ValueError: truth value of an array ... is ambiguous`` out of the
+            # factory, and an empty vector read as "omitted", so the origin was
+            # substituted for a caller mistake that ``add_robot`` refuses with an
+            # actionable message. Membership (``is not None``) is the only
+            # correct supplied-test for a vector, and here even that is
+            # unnecessary: ``position=None`` is what ``add_robot`` already
+            # documents as "spawn at the origin", so passing it through keeps ONE
+            # source of truth for that default instead of a copy that can drift.
             result = sim.add_robot(
                 name=name,
                 urdf_path=urdf_path,
                 data_config=data_config or canonical,
-                position=position or [0.0, 0.0, 0.0],
+                position=position,
             )
             if result.get("status") == "error":
                 content = result.get("content", [])
