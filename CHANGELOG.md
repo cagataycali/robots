@@ -29,6 +29,36 @@ them through `features = ["all"]` like every other dependency; and the four IK
 install hints name only extras, matching the `cosmos3-sim` hint that was already
 self-sufficient. `mink` brings its own QP backend (`qpsolvers[daqp]`, the
 bridge's first preference), so no additional solver has to be chosen.
+### Fixed: the state and action sides agree on what a hardware observation is
+
+Detection of `'<motor>.pos'` hardware joint readings was implemented twice in the
+local LeRobot policy. The action side (`get_actions`) ran a plain-`float` pass and
+only retried with numpy `if not _pos:`; the state side
+(`PackStateProcessorStep`) ran one combined pass. `isinstance(np.float64(1.0),
+float)` is True but `isinstance(np.float32(1.0), float)` is False, so an
+observation mixing the two matched *partially* on the first pass - non-empty, so
+the numpy retry never ran, and too short to cover the embodiment's actuators:
+
+```python
+# 3 x float + 3 x np.float32, e.g. a driver read merged with a filtered estimate
+obs = {"shoulder_pan.pos": 1.0, ..., "gripper.pos": np.float32(6.0)}
+# state side:  packs all 6 readings into observation.state RAW (already model units)
+# action side: sees no hardware keys -> emits the command under the SIM joint
+#              names ('1'..'6'), which SOFollower.send_action does not accept,
+#              with the model-degrees -> sim-radians conversion applied (1/57.3)
+```
+
+The model was conditioned on raw hardware degrees while its command was keyed and
+scaled for the sim, and nothing warned, because the state side had succeeded.
+Both sides now call one `hardware_pos_keys()` predicate. It also accepts python /
+numpy integers and 0-d tensors, and - a change on the state side - refuses
+booleans in every flavour an observation spells them (`bool`, `np.bool_`, and 0-d
+`bool` arrays / tensors), so a driver status flag (`is_homed.pos`) can no longer
+take a joint column and be commanded as an absolute `1.0`. A flag accepted there
+does not fail loudly: both sides slice the key list to their actuator count, so
+one extra key in front renames every reading to its neighbour and drops the
+last.
+
 ### Fixed: the mass matrix survives MuJoCo removing the legacy sparse inertia
 
 MuJoCo 3.11 removed `mjData.qM`, the legacy ancestor-walk sparse inertia buffer,
@@ -179,6 +209,7 @@ Use overwrite=True for a fresh dataset, or restore the original scene. Differenc
 Resuming at the dataset's own rate still appends as before. The comparison is
 shared by the MuJoCo, Newton and Isaac backends (`fps` is a required
 keyword-only argument of the schema check, so no backend can resume without it).
+
 ### Fixed: domain randomization refuses ranges, noise amplitudes and seeds it cannot apply
 
 `randomize` writes its numeric arguments straight into the live MuJoCo model
@@ -422,6 +453,7 @@ cannot diverge again. Direct joint/position/torque actuators are unchanged (the
 unit mapping applies to tendon transmissions only), and a mapped tendon command
 no longer emits a spurious "MuJoCo will clamp it" warning through the
 actuator-name spelling.
+
 ### Fixed: sim teardown releases MuJoCo whatever the mesh handle is
 
 `Simulation.cleanup()` detaches from the peer mesh before it tears down MuJoCo,
@@ -646,6 +678,7 @@ sim.run_policy(..., control_substeps=0)
 instead of clamping it, so callers driving the runner directly also fail loudly,
 and `PolicyRunner.run` resolves substeps through that shared helper rather than
 its own inline copy of the derivation.
+
 ### Fixed: rollout entry points reject a `duration` they cannot run
 
 `duration` is the DEFAULT rollout horizon: with no `n_steps` / `max_steps` the
@@ -3789,6 +3822,7 @@ Memory note: the cache shares the SAME live `nn.Module` across instances of one
 per-episode state between episodes); `PersistentPolicy`'s lock makes concurrent
 reuse safe too. Opt out with `create_policy(..., cache_model=False)` for an
 independent live copy.
+
 ### Added: Newton backend domain randomization + sensor-noise hooks
 
 The Newton (GPU) backend gained `randomize()` and `set_obs_noise()`, the
@@ -3836,6 +3870,7 @@ prefix-attention guidance is computed with the correct freeze count and the
 chunk seam blends identically in sim and on hardware. A regression test routes
 the wrapper's exact kwargs through lerobot's real `RTCProcessor.denoise_step`
 and fails (TypeError) on the pre-fix code.
+
 ### Fix: re-anchor the RTC chunk-seam prefix for relative-action policies
 
 Real-Time Chunking for relative-action flow checkpoints (pi0 / pi0.5 / pi0-FAST
