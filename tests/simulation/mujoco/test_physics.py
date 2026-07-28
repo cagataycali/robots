@@ -239,12 +239,19 @@ class TestExternalForces:
         assert result["status"] == "error"
 
     def test_force_changes_acceleration(self, sim):
-        # Get initial state
+        # The wrench is latched in xfrc_applied (the Cartesian buffer MuJoCo
+        # re-projects every step) rather than pre-projected once into
+        # qfrc_applied, so a world-frame force stays world-frame as the body
+        # moves. Assert on the buffer that now carries it, and on the physical
+        # effect, rather than on the old implementation detail.
+        import mujoco as _mj
+
         data = sim._world._data
-        old_qfrc = data.qfrc_applied.copy()
+        body_id = sim._resolve_mj_name(_mj.mjtObj.mjOBJ_BODY, "box1")
+        old_xfrc = data.xfrc_applied.copy()
         sim.apply_force(body_name="box1", force=[0, 0, 100])
-        # qfrc_applied should change
-        assert not np.array_equal(old_qfrc, data.qfrc_applied)
+        assert not np.array_equal(old_xfrc, data.xfrc_applied)
+        assert data.xfrc_applied[body_id, 2] == pytest.approx(100.0)
 
 
 class TestMassMatrix:
@@ -1182,13 +1189,25 @@ class TestDirectJointControlListForm:
         assert data.qpos[model.jnt_qposadr[sid]] == pytest.approx(0.4)
         assert data.qpos[model.jnt_qposadr[eid]] == pytest.approx(-0.2)
 
-    def test_list_form_namespace_fallback(self, sim):
+    def test_list_form_namespace_fallback_rejects_multi_dof_joint(self, sim):
         # Robot with no explicit joint_names falls back to enumerating model
-        # joints under its namespace ("" matches all joints in the scene).
+        # joints under its namespace ("" matches all joints in the scene) - which
+        # here includes the scene's ``box_free`` freejoint. One scalar per joint
+        # cannot address a 7-qpos free joint: writing only its first component
+        # applied a pose the caller never asked for (y/z and the whole
+        # orientation left at their old values) under status="success". The call
+        # is now refused with nothing written.
         self._add_robot(sim, "arm", [], namespace="")
-        njnt = sim._world._model.njnt
+        model, data = sim._world._model, sim._world._data
+        before = data.qpos.copy()
+
+        njnt = model.njnt
         result = sim.set_joint_positions(positions=[0.0] * njnt, robot_name="arm")
-        assert result["status"] == "success"
+
+        assert result["status"] == "error"
+        assert "box_free" in result["content"][0]["text"]
+        assert "multi-DOF" in result["content"][0]["text"]
+        assert np.array_equal(before, data.qpos), "a refused write must leave qpos untouched"
 
     def test_velocities_list_form_success(self, sim):
         self._add_robot(sim, "arm", ["shoulder", "elbow"])
@@ -1235,12 +1254,17 @@ class TestDirectJointControlListForm:
         joint_names = [mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid) for jid in range(model.njnt)]
         # One distinct velocity per joint so a mis-ordered write is caught.
         velocities = [0.1 * (i + 1) for i in range(model.njnt)]
+        before = data.qvel.copy()
 
         result = sim.set_joint_velocities(velocities=velocities, robot_name="arm")
-        assert result["status"] == "success"
 
-        for jid, expected in enumerate(velocities):
-            assert data.qvel[model.jnt_dofadr[jid]] == pytest.approx(expected), joint_names[jid]
+        # The scene's ``box_free`` freejoint spans 6 qvel, so one scalar per
+        # joint cannot address it - the write is refused rather than landing on
+        # the joint's first slot and leaving the other five at their old values.
+        assert result["status"] == "error"
+        assert "box_free" in result["content"][0]["text"]
+        assert np.array_equal(before, data.qvel), "a refused write must leave qvel untouched"
+        assert joint_names  # the enumeration itself still resolves every joint
 
 
 class TestMultiRaycast:

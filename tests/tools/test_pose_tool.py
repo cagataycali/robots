@@ -329,10 +329,27 @@ def test_pose_tool_move_motor_success_is_ascii(cwd_tmp, fake_serial) -> None:
     _assert_ascii(result)
 
 
-def test_pose_tool_emergency_stop_is_ascii(cwd_tmp) -> None:
-    result = pose_tool(action="emergency_stop", robot_id="hw_arm")
+def test_pose_tool_emergency_stop_is_ascii(cwd_tmp, fake_serial) -> None:
+    # emergency_stop now actually opens the port and writes Torque_Enable=0, so
+    # it needs a serial stand-in and an explicit port - the default /dev/ttyACM0
+    # only "succeeds" on a host with the arm physically attached (it errored in
+    # CI, which has no device). fake_serial + an explicit port make the success
+    # path deterministic everywhere.
+    result = pose_tool(action="emergency_stop", robot_id="hw_arm", port="/dev/ttyTEST")
     assert result["status"] == "success"
     _assert_ascii(result)
+
+
+def test_pose_tool_emergency_stop_without_a_device_reports_a_failed_stop(cwd_tmp, monkeypatch) -> None:
+    """A stop that never reached the bus must never read as success."""
+
+    def _boom(*a, **k):
+        raise OSError("no device")
+
+    monkeypatch.setattr(serial, "Serial", _boom)
+    result = pose_tool(action="emergency_stop", robot_id="hw_arm", port="/dev/ttyTEST")
+    assert result["status"] == "error"
+    assert "EMERGENCY STOP FAILED" in _texts(result)
 
 
 def test_pose_tool_unknown_action(cwd_tmp) -> None:

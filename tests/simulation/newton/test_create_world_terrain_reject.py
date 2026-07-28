@@ -47,7 +47,7 @@ def test_newton_terrain_none_is_not_rejected() -> None:
     eng._lock = threading.RLock()
     eng.default_timestep = 0.002
     eng._solver_name = "mujoco"
-    eng._rebuild = lambda: None  # type: ignore[method-assign]
+    eng._rebuild = lambda preserve_state=True: None  # type: ignore[method-assign]
     r = eng.create_world(terrain=None)
     assert r["status"] == "success"
 
@@ -101,6 +101,6 @@ def test_newton_default_difficulty_not_rejected() -> None:
     eng._lock = threading.RLock()
     eng.default_timestep = 0.002
     eng._solver_name = "mujoco"
-    eng._rebuild = lambda: None  # type: ignore[method-assign]
+    eng._rebuild = lambda preserve_state=True: None  # type: ignore[method-assign]
     r = eng.create_world(difficulty=1.0)
     assert r["status"] == "success"

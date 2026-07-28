@@ -21,6 +21,10 @@ from typing import Any
 
 import pytest
 
+# The transport wraps the AWS IoT Device SDK; without it these tests error
+# at ``import awsiot.mqtt5_client_builder`` instead of skipping cleanly.
+pytest.importorskip("awsiot")
+
 from strands_robots.mesh.transport.iot_transport import IotMqttTransport
 
 

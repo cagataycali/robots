@@ -4,7 +4,7 @@ Exposes the deep MuJoCo C API through clean Python methods:
 - Raycasting (mj_ray)
 - Jacobians (mj_jacBody, mj_jacSite, mj_jacGeom)
 - Energy computation (mj_energyPos, mj_energyVel)
-- External forces (mj_applyFT, xfrc_applied)
+- External forces (xfrc_applied, re-projected every step)
 - Mass matrix (mj_fullM)
 - State checkpointing (mj_getState, mj_setState)
 - Inverse dynamics (mj_inverse)
@@ -32,6 +32,12 @@ from strands_robots.simulation.mujoco.scene_ops import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: Chars of MJCF echoed into ``export_xml``'s human-readable text block. The full
+#: document always ships in the json block, so this only bounds how much XML
+#: lands in an LLM's context window - it never truncates the machine-readable
+#: payload (which it used to, mid-attribute, making the XML unparseable).
+_XML_PREVIEW_CHARS = 2000
 
 
 def _coerce_finite_vector(
@@ -339,6 +345,83 @@ def _recompute_primitive_geom_bounds(mj: Any, model: Any, gid: int) -> bool:
     return True
 
 
+#: Largest leftover ``qvel`` (rad/s or m/s) a ``set_joint_positions`` teleport may
+#: carry without the result flagging it. A settling arm under gravity legitimately
+#: shows a few tenths of a rad/s, so a lower bar would cry wolf on every ordinary
+#: teleport; the case worth naming is real retained motion (measured 2.2 rad/s on
+#: a Panda teleported mid-swing, which drifted 76x further in the first step than
+#: the same teleport after ``zero_dynamics``).
+_TELEPORT_QVEL_NOTE_THRESHOLD = 0.5
+
+
+def _primitive_unit_inertia(mj: Any, model: Any, gid: int) -> list[float] | None:
+    """Diagonal inertia of geom ``gid`` for UNIT mass, from its current size.
+
+    Used to refresh ``body_inertia`` after a runtime ``geom_size`` write.
+    ``body_inertia`` is a COMPILE-TIME product: the compiler integrates the
+    geom's shape once, so resizing the geom at runtime leaves the rotational
+    inertia describing the OLD shape. Because only the ratio to the current
+    value is needed, returning the unit-mass tensor lets the caller rescale by
+    the real body mass without assuming a density.
+
+    Standard solid-primitive tensors about the centre of mass; ``geom_size``
+    holds half-extents / radii, matching the layouts in
+    :data:`_GEOM_SIZE_LAYOUTS`. A capsule is treated as the cylinder plus its
+    two hemispherical caps by volume weighting, which is what the compiler does.
+
+    Args:
+        mj: The imported ``mujoco`` module.
+        model: The live ``MjModel``.
+        gid: Geom id whose current ``geom_size`` defines the shape.
+
+    Returns:
+        ``[Ixx, Iyy, Izz]`` per unit mass, or ``None`` for a type whose extent
+        is not defined by ``geom_size`` (mesh / plane / height field / SDF), for
+        which no size-derived refresh is possible.
+    """
+    g = mj.mjtGeom
+    gtype = int(model.geom_type[gid])
+    s = [float(v) for v in model.geom_size[gid]]
+
+    if gtype == g.mjGEOM_SPHERE:
+        i = 0.4 * s[0] ** 2  # 2/5 r^2
+        return [i, i, i]
+    if gtype == g.mjGEOM_BOX:
+        # (1/12)(b^2 + c^2) over FULL edges; geom_size holds half-extents.
+        fx, fy, fz = 2 * s[0], 2 * s[1], 2 * s[2]
+        return [(fy**2 + fz**2) / 12.0, (fx**2 + fz**2) / 12.0, (fx**2 + fy**2) / 12.0]
+    if gtype == g.mjGEOM_ELLIPSOID:
+        a, b, c = s[0], s[1], s[2]
+        return [(b**2 + c**2) / 5.0, (a**2 + c**2) / 5.0, (a**2 + b**2) / 5.0]
+    if gtype == g.mjGEOM_CYLINDER:
+        r, hh = s[0], s[1]
+        radial = (3.0 * r**2 + (2.0 * hh) ** 2) / 12.0
+        return [radial, radial, 0.5 * r**2]
+    if gtype == g.mjGEOM_CAPSULE:
+        # Volume-weighted cylinder + two hemispheres, each about the shared
+        # centre (the hemispheres' own inertia plus their parallel-axis term).
+        r, hh = s[0], s[1]
+        v_cyl = math.pi * r**2 * 2.0 * hh
+        v_cap = 4.0 / 3.0 * math.pi * r**3
+        total = v_cyl + v_cap
+        if total <= 0.0:  # pragma: no cover - defensive; sizes are validated > 0
+            return None
+        f_cyl, f_cap = v_cyl / total, v_cap / total
+        axial = f_cyl * 0.5 * r**2 + f_cap * 0.4 * r**2
+        radial_cyl = (3.0 * r**2 + (2.0 * hh) ** 2) / 12.0
+        # Two hemispheres, parallel-axis shifted to the capsule centre. The
+        # familiar 0.4 r^2 is about the SPHERE centre, so the shift must start
+        # from the hemisphere's OWN centroid: subtracting (3r/8)^2 = 9/64 r^2
+        # first. Using 0.4 r^2 + d^2 double-counts that offset and overstates a
+        # stubby capsule's radial inertia by up to 19% (verified against a fresh
+        # compile across r/hh from 0.25 to 4).
+        d = hh + 3.0 * r / 8.0
+        radial_cap = (0.4 - 9.0 / 64.0) * r**2 + d**2
+        radial = f_cyl * radial_cyl + f_cap * radial_cap
+        return [radial, radial, axial]
+    return None
+
+
 # Number of ``geom_size`` components each MuJoCo geom type defines, plus the
 # meaning of each one. MuJoCo stores every geom's extent in a 3-wide
 # ``geom_size`` row, but only the leading components its type defines carry
@@ -394,6 +477,7 @@ class PhysicsMixin:
 
         _lock: "threading.RLock"
         _world: "SimWorld | None"
+        _mj: "Any"  # the ``mujoco`` module, set on the concrete engine
 
         # Bodies are one-line docstrings rather than ``...`` because an
         # ellipsis body is an expression statement with no effect.
@@ -551,10 +635,19 @@ class PhysicsMixin:
     ) -> dict[str, Any]:
         """Apply an external force and/or torque to a body (latched).
 
-        Uses mj_applyFT for precise force application at a world-frame point.
-        The force is latched in ``qfrc_applied`` and applied on every
+        The wrench is latched in ``data.xfrc_applied``, the Cartesian buffer
+        MuJoCo re-projects into generalized coordinates on **every** step, so a
+        world-frame force stays world-frame as the body moves. Applied on every
         subsequent ``mj_step`` until overwritten by the next ``apply_force``
         call. Each call zeroes the buffer first (replacing, not accumulating).
+
+        This previously wrote ``mj_applyFT`` into ``qfrc_applied``, which
+        projects the wrench **once, at the pose held when the call was made**,
+        and then freezes it. A frozen generalized force is only equivalent to
+        the requested world force at that one pose: on a hinge arm the latched
+        value stayed +5 N·m while the true value swung to -5 N·m half a turn
+        later, so a constant "downward" force reversed sign and drove the arm
+        to 1925 degrees instead of settling at 89 degrees hanging down.
 
         To stop the force: ``apply_force(body, force=[0, 0, 0])``.
 
@@ -623,7 +716,7 @@ class PhysicsMixin:
                         }
 
         mj = _ensure_mujoco()
-        model, data = self._world._model, self._world._data
+        data = self._world._data
 
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
@@ -640,12 +733,19 @@ class PhysicsMixin:
         t = np.array([0.0, 0.0, 0.0] if torque is None else torque, dtype=np.float64)
         p = np.array(point, dtype=np.float64) if point is not None else data.xipos[body_id].copy()
 
+        # ``xfrc_applied`` is defined at the body's CoM, so a force requested at
+        # some other world point carries an extra moment r x f about the CoM.
+        # Fold it into the torque rather than silently dropping the lever arm.
+        torque_total = t + np.cross(p - data.xipos[body_id], f)
+
         # Zero the buffer first so calls are idempotent (replace, not accumulate).
-        # NOTE: MuJoCo does NOT reset qfrc_applied in mj_step - the force
+        # NOTE: MuJoCo does NOT reset xfrc_applied in mj_step - the wrench
         # persists on every subsequent step until the next apply_force call.
         with self._lock:
+            data.xfrc_applied[:] = 0.0
             data.qfrc_applied[:] = 0.0
-            mj.mj_applyFT(model, data, f, t, p, body_id, data.qfrc_applied)
+            data.xfrc_applied[body_id, :3] = f
+            data.xfrc_applied[body_id, 3:] = torque_total
 
         return {
             "status": "success",
@@ -662,6 +762,126 @@ class PhysicsMixin:
         }
 
     # Raycasting
+
+    def _sync_sim_object(self, body_or_geom_name: str, **changes: Any) -> None:
+        """Mirror a runtime property onto the tracked ``SimObject``.
+
+        The declarative rebuild (``SpecBuilder.build``, used by
+        ``eject_robot_from_scene``) reconstructs geometry from ``world.objects``,
+        so a change mirrored only onto the spec was still reverted by a full
+        rebuild: ``remove_robot`` restored a cube's original mass, colour,
+        friction and size. Accepts the body name or the ``"<name>_geom"`` form.
+        Unknown names are ignored - a robot's own geom is not a tracked object.
+        """
+        if self._world is None:
+            return
+        candidates = [body_or_geom_name]
+        if body_or_geom_name.endswith("_geom"):
+            candidates.append(body_or_geom_name[: -len("_geom")])
+        for name in candidates:
+            obj = self._world.objects.get(name)
+            if obj is None:
+                continue
+            for attr, value in changes.items():
+                if value is not None and hasattr(obj, attr):
+                    setattr(obj, attr, list(value) if isinstance(value, (list, tuple)) else value)
+            return
+
+    def _sync_spec_geom(self, geom_name: str, **changes: Any) -> None:
+        """Mirror a runtime geom property onto the live ``MjSpec``.
+
+        ``set_geom_properties`` writes ``model.*`` for immediate effect, but every
+        scene mutation recompiles from ``_backend_state["spec"]`` - the
+        incremental ``add_object`` path appends to that spec and never re-reads
+        ``world.objects`` - so a change recorded only in the compiled model was
+        silently reverted by the next ``add_object`` / ``remove_object``: a cube
+        set green with 2.0 friction and 6 cm sides came back red, 1.0, and 2 cm.
+
+        ``size`` is given in MuJoCo's own convention (half-extents for a box),
+        matching what was just written to ``model.geom_size``. Best-effort: an
+        unnamed geom, or one MuJoCo will not let us address, leaves ``model.*``
+        correct for the current model and logs at debug.
+        """
+        if self._world is None:
+            return
+        spec = self._world._backend_state.get("spec")
+        if spec is None:
+            return
+        try:
+            geom = spec.geom(geom_name)
+        except (KeyError, ValueError) as e:
+            logger.debug("could not mirror geom %r onto the spec: %s", geom_name, e)
+            return
+        if geom is None:
+            # ``spec.geom()`` RETURNS None for an unknown name instead of
+            # raising, so the handler above never fired and a name mismatch was
+            # invisible - the write went to model.* only and reverted on the next
+            # recompile. Warn: a silently reverted property is the whole defect.
+            logger.warning(
+                "geom %r is not in the live spec, so %s cannot be preserved across the next scene "
+                "rebuild (the compiled model is correct until then). This is a name mismatch, not a "
+                "bad value.",
+                geom_name,
+                ", ".join(sorted(k for k, v in changes.items() if v is not None)) or "the change",
+            )
+            return
+        for attr, value in changes.items():
+            if value is None:
+                continue
+            try:
+                setattr(geom, attr, list(value))
+            except (AttributeError, ValueError, TypeError) as e:  # pragma: no cover - defensive
+                logger.debug("could not mirror geom %r.%s: %s", geom_name, attr, e)
+
+    def _sync_spec_body(self, body_name: str, **changes: Any) -> None:
+        """Mirror a runtime body property (mass/inertia) onto the live ``MjSpec``.
+
+        Same rationale as :meth:`_sync_spec_geom`: the spec is what a recompile
+        reads, so a mass written only to ``model.body_mass`` reverted on the next
+        scene mutation.
+
+        A ``mass`` change is mirrored onto the ``MjsBody``. SpecBuilder emits
+        dynamic objects with an explicit inertial block (``explicitinertial`` +
+        ``body.mass`` + ``body.inertia``), so a ``body.mass`` write survives a
+        recompile (``spec.body(name).mass = 5.0`` then recompile yields
+        ``body_mass == 5.0``). Only mass is mirrored here; the inertia scalar in
+        the explicit block is left as declared, matching how the object was
+        first built.
+        """
+        if self._world is None:
+            return
+        spec = self._world._backend_state.get("spec")
+        if spec is None:
+            return
+        try:
+            body = spec.body(body_name)
+        except (KeyError, ValueError) as e:
+            logger.debug("could not mirror body %r onto the spec: %s", body_name, e)
+            return
+        for attr, value in changes.items():
+            if value is None:
+                continue
+            target: Any = body
+            # ``mass`` is routed to the body's first GEOM, because that is where
+            # ``SpecBuilder.add_object`` declares it - on the geom, so the compiler
+            # derives the rotational inertia from the real shape rather than a
+            # hardcoded constant. With no ``explicitinertial`` block, a write to
+            # ``MjsBody.mass`` is SILENTLY DROPPED at compile time
+            # (``spec.body(name).mass = 5.0`` then recompile still yields
+            # ``body_mass == 0.2``), so the runtime change reverted on the next
+            # scene mutation. Setting ``geom.mass`` updates the mass AND rescales
+            # the inertia consistently (measured 0.2 kg / 3.33e-04 -> 5.0 kg /
+            # 8.33e-03, exactly the 25x a uniform density change implies). A robot
+            # link from a URDF carries its own body inertial, so the body remains
+            # the correct target when it has no geoms of its own.
+            if attr == "mass":
+                geoms = list(getattr(body, "geoms", []) or [])
+                if geoms:
+                    target = geoms[0]
+            try:
+                setattr(target, attr, list(value) if isinstance(value, (list, tuple)) else value)
+            except (AttributeError, ValueError, TypeError) as e:  # pragma: no cover - defensive
+                logger.debug("could not mirror body %r.%s: %s", body_name, attr, e)
 
     def _resolve_mj_name(self, obj_type: int, name: str) -> int:
         """Look up a MuJoCo name, tolerating robot namespacing.
@@ -1042,21 +1262,39 @@ class PhysicsMixin:
             data.qacc[:] = 0.0
             try:
                 mj.mj_inverse(model, data)
-                # Build named force mapping
-                forces = {}
+                # Build named force mapping. A joint owns as many DOFs as its
+                # type defines (free=6, ball=3, hinge/slide=1), so reading a
+                # single scalar at ``jnt_dofadr`` silently discarded every other
+                # component: on a floating base the reported value was the x
+                # force while the z gravity-compensation term - the whole point
+                # of the query - stayed invisible (37.3 N reported as 0.0), and
+                # 2 of 3 ball-joint torques vanished. Emit the joint's full DOF
+                # block, as a scalar for 1-DOF joints (unchanged for the common
+                # manipulator case) and as a list for multi-DOF joints.
+                forces: dict[str, Any] = {}
+                dofnum = {
+                    int(mj.mjtJoint.mjJNT_FREE): 6,
+                    int(mj.mjtJoint.mjJNT_BALL): 3,
+                }
                 for i in range(model.njnt):
                     name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
-                    if name:
-                        dof_adr = model.jnt_dofadr[i]
-                        forces[name] = float(data.qfrc_inverse[dof_adr])
+                    if not name:
+                        continue
+                    dof_adr = int(model.jnt_dofadr[i])
+                    n = dofnum.get(int(model.jnt_type[i]), 1)
+                    block = [float(v) for v in data.qfrc_inverse[dof_adr : dof_adr + n]]
+                    forces[name] = block[0] if n == 1 else block
+                # The raw nv-vector is the unambiguous form for a caller that
+                # wants to index by DOF rather than by joint name.
+                qfrc_vector = [float(v) for v in data.qfrc_inverse]
             finally:
                 data.qacc[:] = saved_qacc
 
         return {
             "status": "success",
             "content": [
-                {"text": f"Inverse dynamics: {len(forces)} joint forces computed"},
-                {"json": {"qfrc_inverse": forces}},
+                {"text": f"Inverse dynamics: {len(forces)} joint forces computed ({len(qfrc_vector)} DOFs)"},
+                {"json": {"qfrc_inverse": forces, "qfrc_inverse_dof": qfrc_vector}},
             ],
         }
 
@@ -1181,6 +1419,42 @@ class PhysicsMixin:
             else:
                 unresolved.append(jnt_name)
         if not unresolved:
+            # A FREE joint spans 7 qpos / 6 qvel and a BALL joint 4 qpos / 3
+            # qvel, so a single scalar cannot address one. Writing only the
+            # first component applied a pose the caller never asked for while
+            # reporting "Set 1/1": a free joint kept its old y/z and
+            # orientation, and a ball joint was left holding a NON-UNIT
+            # quaternion (0.7 -> [0.7, 0, 0, 0], norm 0.7) that mj_forward then
+            # evaluated - so the reported pose was invalid and the next mj_step
+            # silently renormalized it to something else again. Reject instead:
+            # the docstring promises the write is all-or-nothing.
+            multi_dof_labels = {
+                int(mj.mjtJoint.mjJNT_FREE): "free (7 qpos / 6 qvel)",
+                int(mj.mjtJoint.mjJNT_BALL): "ball (4 qpos / 3 qvel)",
+            }
+            model = self._world._model if self._world is not None else None
+            multi = []
+            if model is not None:
+                for jnt_name, jnt_id in resolved.items():
+                    label = multi_dof_labels.get(int(model.jnt_type[jnt_id]))
+                    if label is not None:
+                        multi.append((jnt_name, label))
+            if multi:
+                detail = ", ".join(f"{n!r} is {label}" for n, label in multi)
+                return {}, {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"{method}: {detail}. A multi-DOF joint cannot be set from a single "
+                                f"scalar - one component would be written and the rest left at their "
+                                f"current values (a ball joint would be left with a non-unit "
+                                f"quaternion). Nothing was written. Set the free/ball joint's state "
+                                f"via load_state / a keyframe, or move the body with move_object."
+                            )
+                        }
+                    ],
+                }
             return resolved, None
 
         detail = self._unknown_mj_entity_msg("Joint", unresolved[0])
@@ -1207,6 +1481,13 @@ class PhysicsMixin:
 
         Writes to qpos and runs mj_forward to update kinematics.
         Useful for teleportation, IK solutions, or keyframe setting.
+
+        VELOCITY IS NOT CLEARED. ``qvel`` is deliberately left alone (a caller
+        may be setting a pose and a velocity together), so a teleport made from a
+        moving state carries the old momentum into the new pose and the very next
+        step integrates away from it. When any leftover velocity is significant
+        the result text says so and names the remedy: call ``zero_dynamics`` for
+        a pose-only teleport, or ``set_joint_velocities`` to choose the velocity.
 
         Accepts EITHER form:
 
@@ -1317,11 +1598,31 @@ class PhysicsMixin:
                 data.qpos[qpos_adr] = float(value)
 
             mj.mj_forward(model, data)
+            # A qpos write does NOT clear qvel, so a teleport made from a moving
+            # state carries the old velocity into the new pose - the exact
+            # discontinuity ``zero_dynamics`` exists to remove. The result said
+            # only "FK updated", so the leftover momentum was invisible: measured
+            # on a Panda teleported mid-motion, the commanded joint drifted
+            # 4.469 mrad off target in the FIRST step versus 0.059 mrad after
+            # zero_dynamics - 76x - and by 10 steps the pose was visibly gone.
+            # Zeroing here would silently change a documented "writes to qpos"
+            # contract (and a caller may be setting a pose AND a velocity), so
+            # report it instead and name the remedy.
+            residual_qvel = float(np.abs(data.qvel).max()) if int(model.nv) else 0.0
 
         count = len(positions)
+        text = f"Set {count}/{count} joint positions, FK updated"
+        if residual_qvel > _TELEPORT_QVEL_NOTE_THRESHOLD:
+            text += (
+                f"\nNote: qvel was left untouched and still carries up to "
+                f"{residual_qvel:.3f} rad/s from before the write, so the first step will "
+                f"integrate away from this pose. Call zero_dynamics (optionally "
+                f"robot_name=...) for a pose-only teleport, or set_joint_velocities to "
+                f"choose the velocity."
+            )
         return {
             "status": "success",
-            "content": [{"text": f"Set {count}/{count} joint positions, FK updated"}],
+            "content": [{"text": text}],
         }
 
     def set_joint_velocities(
@@ -1430,6 +1731,79 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [{"text": msg}],
+        }
+
+    # Joint state readout
+
+    def get_joint_state(self, joint_name: str) -> dict[str, Any]:
+        """Read one joint's position and velocity straight from ``mjData``.
+
+        Covers ANY joint in the scene, not just those belonging to a registered
+        robot. ``get_observation`` only enumerates ``robot.joint_names``, so
+        articulated *scene* joints - a drawer slide, a door or cabinet hinge:
+        exactly the class of object the ``joint_above`` / ``joint_below`` /
+        ``joint_progress`` predicates exist to score - were invisible to them.
+        A wide-open drawer at ``qpos=0.29`` therefore failed a ``> 0.15``
+        success check and reported 0.0 progress, so drawer/door benchmarks
+        (including every LIBERO ``(open X)`` / ``(closed X)`` goal, which
+        compiles to these predicates) scored a permanent 0% while the task was
+        physically solved.
+
+        Runs the position pipeline first so the read is never a stale earlier
+        state. Multi-DOF joints report their full block; 1-DOF joints report a
+        scalar, which is what the predicates consume.
+
+        Args:
+            joint_name: Joint name, resolved verbatim or through a robot
+                namespace (same resolution as every other physics method).
+
+        Returns:
+            A tool-result dict whose json block carries ``position`` /
+            ``velocity`` (scalars for hinge/slide, lists for ball/free),
+            ``type`` and ``dof_count``; ``status="error"`` when the world is
+            missing or the joint does not resolve.
+        """
+        if self._world is None or self._world._model is None or self._world._data is None:
+            return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+
+        mj = _ensure_mujoco()
+        model, data = self._world._model, self._world._data
+        jnt_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_JOINT, joint_name)
+        if jnt_id < 0:
+            return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Joint", joint_name)}]}
+
+        jnt_type = int(model.jnt_type[jnt_id])
+        nq, nv = {
+            int(mj.mjtJoint.mjJNT_FREE): (7, 6),
+            int(mj.mjtJoint.mjJNT_BALL): (4, 3),
+        }.get(jnt_type, (1, 1))
+        type_label = {
+            int(mj.mjtJoint.mjJNT_FREE): "free",
+            int(mj.mjtJoint.mjJNT_BALL): "ball",
+            int(mj.mjtJoint.mjJNT_SLIDE): "slide",
+            int(mj.mjtJoint.mjJNT_HINGE): "hinge",
+        }.get(jnt_type, "unknown")
+
+        with self._lock:
+            mj.mj_kinematics(model, data)
+            qadr = int(model.jnt_qposadr[jnt_id])
+            vadr = int(model.jnt_dofadr[jnt_id])
+            qpos = [float(v) for v in data.qpos[qadr : qadr + nq]]
+            qvel = [float(v) for v in data.qvel[vadr : vadr + nv]]
+
+        payload = {
+            "joint": joint_name,
+            "type": type_label,
+            "dof_count": nv,
+            "position": qpos[0] if nq == 1 else qpos,
+            "velocity": qvel[0] if nv == 1 else qvel,
+        }
+        return {
+            "status": "success",
+            "content": [
+                {"text": f"Joint '{joint_name}' ({type_label}): position={payload['position']}"},
+                {"json": payload},
+            ],
         }
 
     # Sensor Readout
@@ -1594,11 +1968,67 @@ class PhysicsMixin:
                 # by the same ratio (matches randomize(randomize_physics=True)
                 # and the Newton backend, which scale both together).
                 model.body_inertia[body_id] *= mass_ratio
+                # body_mass / body_inertia are COMPILE-TIME INPUTS: MuJoCo
+                # derives body_subtreemass, dof_M0, dof_invweight0 and
+                # body_invweight0 from them in mj_setConst, and the constraint
+                # solver reads those derived arrays for its impedance. Writing
+                # the mass arrays alone leaves every derived constant at the
+                # pre-change value, so a heavier body is solved with the old
+                # (far too soft) impedance - a 0.1 -> 50 kg box then sank 2.5 cm
+                # into the floor instead of 0.1 mm (dof_invweight0 was 500x
+                # wrong). Refresh the derived constants so the new mass is
+                # actually honoured by the solver. (persist_body_mass above
+                # already mirrored the change onto the spec/SimObject for the
+                # rebuild path.)
+                mj.mj_setConst(model, self._world._data)
+                # ALSO mirror the absolute mass onto the tracked SimObject. Two
+                # rebuild paths exist and read different sources: the incremental
+                # one recompiles the spec (persist_body_mass above), but
+                # eject_robot_from_scene does a FULL SpecBuilder.build from
+                # ``world.objects`` - so a spec-only mirror still reverted the
+                # mass on remove_robot (5.0 -> 0.2). SimObject.mass is absolute,
+                # so store the new value, not the ratio.
+                self._sync_sim_object(body_name, mass=mass)
 
         return {
             "status": "success",
             "content": [{"text": f"Body '{body_name}': {', '.join(changes)}"}],
         }
+
+    def _friction_pair_note(self, model: Any, geom_id: int, friction: list[float]) -> str:
+        """Warn when a lowered sliding friction will be inert against the ground.
+
+        MuJoCo combines a contact pair's friction as the **max** of the two geoms
+        (unless an explicit ``<pair>`` overrides it), so lowering ONE geom's
+        coefficient below its partner's changes nothing. The scene's ground plane
+        declares no friction and therefore takes MuJoCo's default ``1.0``, so
+        every ``friction < 1.0`` an agent sets on an object is a silent no-op
+        against the floor - measured identical travel (0.0027 m under a fixed
+        push) for 0.1, 0.3 and 1.0, with ``model.geom_friction`` faithfully
+        showing the requested value the whole time. Lowering the ground too takes
+        the same push to 0.9004 m, matching the analytic prediction.
+
+        Returns a note to append to the success text, or ``""`` when the value
+        will actually take effect. Purely advisory: the write already happened and
+        is correct - the pair rule is MuJoCo's, not ours.
+        """
+        mj = self._mj
+        try:
+            requested = float(friction[0])
+            ground_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, "ground")
+            if ground_id < 0 or ground_id == geom_id:
+                return ""
+            ground_mu = float(model.geom_friction[ground_id][0])
+        except (IndexError, TypeError, ValueError):  # pragma: no cover - defensive
+            return ""
+        if requested >= ground_mu:
+            return ""
+        return (
+            f"note: sliding friction {requested} is below the ground plane's {ground_mu}, and MuJoCo "
+            "combines a contact pair's friction as the MAX of the two geoms - so this value has no "
+            "effect against the floor. Lower the ground's friction too (set_geom_properties on "
+            "'ground'), or add an explicit MJCF <pair>, to make the object slip more."
+        )
 
     def set_geom_properties(
         self,
@@ -1752,6 +2182,14 @@ class PhysicsMixin:
                 return err
 
         label = geom_name or f"geom_{gid}"
+        # The spec mirror must use the geom's REAL compiled name, not whatever
+        # alias the caller passed. ``add_object`` names geoms ``{object}_geom``
+        # and the resolution above accepts the bare object name as an alias, so
+        # mirroring under ``label`` looked up ``spec.geom("cube")`` - which
+        # returns None rather than raising, so the miss was swallowed and the
+        # edit reverted on the next recompile: friction 2.0 -> 1.0 and the colour
+        # back to grey on the following add_object.
+        spec_geom_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, gid) or label
         changes = []
 
         with self._lock:
@@ -1773,6 +2211,9 @@ class PhysicsMixin:
                 # Validated as exactly the three MuJoCo coefficients.
                 model.geom_friction[gid] = friction
                 changes.append(f"friction → {friction}")
+                note = self._friction_pair_note(model, gid, friction)
+                if note:
+                    changes.append(note)
 
             if size is not None:
                 # Validated as exactly the component count this geom's type
@@ -1785,13 +2226,126 @@ class PhysicsMixin:
                 # it. Recompute both for size-defined primitives.
                 _recompute_primitive_geom_bounds(mj, model, gid)
                 changes.append(f"size → {model.geom_size[gid].tolist()}")
+                inertia_note = self._refresh_inertia_for_resized_geom(model, gid)
+                if inertia_note:
+                    changes.append(inertia_note)
+
+            # Keep the tracked SimObject in step so a later scene rebuild
+            # reproduces these values instead of reverting to the originals.
+            # ``size`` is stored in the FULL-edge convention add_object accepts,
+            # while model.geom_size holds half-extents, so scale back up.
+            self._sync_spec_geom(
+                spec_geom_name,
+                rgba=color,
+                friction=friction,
+                size=model.geom_size[gid].tolist() if size is not None else None,
+            )
+            # ALSO mirror onto the tracked SimObject. Two rebuild paths exist and
+            # they read different sources: the incremental one recompiles the
+            # spec (covered above), but eject_robot_from_scene does a FULL
+            # SpecBuilder.build from ``world.objects`` - so a spec-only mirror
+            # still reverted on remove_robot. ``size`` is stored in the
+            # full-edge convention add_object accepts, while model.geom_size
+            # holds half-extents.
+            self._sync_sim_object(
+                label,
+                color=color,
+                friction=friction,
+                size=[2.0 * float(v) for v in model.geom_size[gid]] if size is not None else None,
+            )
 
         return {
             "status": "success",
             "content": [{"text": f"Geom '{label}': {', '.join(changes)}"}],
         }
 
+    def _refresh_inertia_for_resized_geom(self, model: Any, gid: int) -> str:
+        """Re-derive the owning body's inertia after ``gid``'s size changed.
+
+        ``body_inertia`` is a COMPILE-TIME product - the compiler integrates the
+        geom's shape once - so a runtime ``geom_size`` write left the rotational
+        inertia describing the OLD shape while collision used the new one. The
+        error was silent and large: growing a 0.1 m cube to 0.4 m kept
+        ``body_inertia`` at 0.00167 instead of 0.10667, so the same 0.1 Nm torque
+        spun the body at 60 rad/s instead of 0.9375 rad/s - **64x** wrong. Worse,
+        an unrelated later ``add_object`` recompiled the spec and silently
+        corrected it, so identical call sequences gave different physics
+        depending on what happened afterwards.
+
+        Mass is deliberately preserved (a resize is a density change, not a
+        material gain): only the shape-dependent tensor is rebuilt, from the
+        geom's new size at the body's existing mass.
+
+        Only applied when the geom is its body's ONLY geom. With several geoms
+        the compiler integrates their union, and the per-geom mass split is not
+        recoverable from ``mjModel``, so inventing one would be a different kind
+        of wrong; those bodies keep the compiled tensor until the next recompile
+        re-derives it properly, and the caller is told so.
+
+        ``mj_setConst`` is then required for the same reason
+        ``set_body_properties`` needs it: ``dof_M0``, ``dof_invweight0`` and
+        ``body_invweight0`` are derived from the mass properties and feed the
+        constraint solver's impedance.
+
+        Args:
+            model: The live ``MjModel``, already carrying the new ``geom_size``.
+            gid: The geom that was just resized.
+
+        Returns:
+            A short note for the result text, or ``""`` when nothing was changed.
+        """
+        mj = self._mj
+        body_id = int(model.geom_bodyid[gid])
+        # The world body has no inertia to refresh, and a static body's is unused.
+        if body_id == 0:
+            return ""
+        own_geoms = int(model.body_geomnum[body_id])
+        if own_geoms != 1:
+            return (
+                f"note: body '{mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id)}' has "
+                f"{own_geoms} geoms, so its inertia cannot be re-derived from one geom's "
+                "size - it still describes the compiled shape until the next scene recompile"
+            )
+        unit = _primitive_unit_inertia(mj, model, gid)
+        if unit is None:
+            return ""
+        mass = float(model.body_mass[body_id])
+        model.body_inertia[body_id] = [mass * float(v) for v in unit]
+        # Derived mass constants (dof_M0, invweight) feed the solver's impedance.
+        assert self._world is not None
+        mj.mj_setConst(model, self._world._data)
+        return f"inertia → {[round(float(v), 7) for v in model.body_inertia[body_id]]} (re-derived from the new size)"
+
     # Contact Force Analysis
+
+    def _contact_geom_label(self, model: Any, geom_id: int) -> str:
+        """Name a contact's geom: its own name, else ``<body>/geom_<id>``, else id.
+
+        Mirrors ``get_contacts``' ``_resolve_geom`` exactly. Most robot-link
+        collision geoms are unnamed, so without the body prefix the two contact
+        readers labelled the same contact differently and their records could not
+        be joined.
+        """
+        mj = self._mj
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, geom_id)
+        if name:
+            return str(name)
+        try:
+            body_id = int(model.geom_bodyid[geom_id])
+            body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id)
+            if body_name:
+                return f"{body_name}/geom_{geom_id}"
+        except (IndexError, AttributeError):  # pragma: no cover - defensive
+            pass
+        return f"geom_{geom_id}"
+
+    def _contact_body_label(self, model: Any, geom_id: int) -> str:
+        """Parent body name of a geom, or ``""`` when it has none."""
+        mj = self._mj
+        try:
+            return str(mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[geom_id])) or "")
+        except (IndexError, AttributeError):  # pragma: no cover - defensive
+            return ""
 
     def get_contact_forces(self) -> dict[str, Any]:
         """Get detailed contact forces for all active contacts.
@@ -1822,8 +2376,20 @@ class PhysicsMixin:
             mj.mj_forward(model, data)
             for i in range(data.ncon):
                 c = data.contact[i]
-                g1 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom1) or f"geom_{c.geom1}"
-                g2 = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, c.geom2) or f"geom_{c.geom2}"
+                # Identify a contact the same way ``get_contacts`` does. It is the
+                # only place the tangential force lives, so a slip check has to
+                # read it from here and then say WHICH body pair slipped - but the
+                # two methods disagreed for UNNAMED geoms (most robot-link
+                # collision geoms are unnamed):
+                #
+                #     get_contacts        geom1='a/link5/geom_31'  body1='a/link5'
+                #     get_contact_forces  geom1='geom_31'          (no body fields)
+                #
+                # so the same contact carried two identities and could not be
+                # joined, per-body force could not be summed, and a caller matching
+                # on a body name found nothing here.
+                g1 = self._contact_geom_label(model, int(c.geom1))
+                g2 = self._contact_geom_label(model, int(c.geom2))
 
                 # Get contact force (normal + friction in contact frame)
                 force = np.zeros(6)
@@ -1833,6 +2399,8 @@ class PhysicsMixin:
                     {
                         "geom1": g1,
                         "geom2": g2,
+                        "body1": self._contact_body_label(model, int(c.geom1)),
+                        "body2": self._contact_body_label(model, int(c.geom2)),
                         "distance": float(c.dist),
                         "position": c.pos.tolist(),
                         "normal_force": float(force[0]),
@@ -1973,7 +2541,12 @@ class PhysicsMixin:
             mj.mj_camlight(model, data)
 
             if body_name is not None:
-                bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+                # Resolve through the namespace-tolerant helper every sibling
+                # method uses. A raw mj_name2id made this the ONE physics method
+                # that rejected an un-namespaced body name, so "hand" worked in
+                # get_body_state / get_jacobian / set_body_properties and errored
+                # here in the same scene.
+                bid = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
                 if bid < 0:
                     return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
                 body_payload = {
@@ -2099,6 +2672,18 @@ class PhysicsMixin:
         ``replace_scene_mjcf`` / ``patch_scene_mjcf`` / the ``inject_*``
         helpers all do this). The serialised XML reflects any runtime
         mutation, so no extra caching or round-tripping is needed.
+
+        The COMPLETE document is returned in the result's ``json`` block
+        (``{"xml": ..., "length": ...}``); the ``text`` block carries only a
+        bounded preview so a large scene cannot flood an LLM's context.
+
+        Caveat for mesh-based scenes: ``spec.to_xml()`` writes mesh assets as
+        BARE filenames (``file="link0.stl"``) and emits no ``meshdir``, so the
+        exported XML is not self-contained and feeding it back through
+        ``replace_scene_mjcf`` fails with ``Error opening file 'link0.stl'``.
+        That is a MuJoCo serialisation limitation, not a truncation - pass
+        ``output_path`` and keep the XML beside the original asset directory if
+        you need a loadable file.
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2129,7 +2714,24 @@ class PhysicsMixin:
                 f.write(xml)
             return {"status": "success", "content": [{"text": f"Model exported to {output_path}"}]}
 
+        # The COMPLETE xml rides in a json block; only the human-readable text
+        # preview is capped. Previously the text block was the sole carrier and
+        # was truncated at 2000 chars while its own header announced the full
+        # length ("Model XML (18868 chars)" followed by 2003 chars), so the
+        # documented "serialise model to MJCF string" surface returned XML cut
+        # mid-attribute - unparseable, and the export_xml -> replace_scene_mjcf
+        # round-trip was impossible for any scene bigger than a bare world.
+        preview = xml if len(xml) <= _XML_PREVIEW_CHARS else f"{xml[:_XML_PREVIEW_CHARS]}..."
+        header = f"Model XML ({len(xml)} chars"
+        header += (
+            "):"
+            if len(xml) <= _XML_PREVIEW_CHARS
+            else f"; first {_XML_PREVIEW_CHARS} shown, full XML in the json block):"
+        )
         return {
             "status": "success",
-            "content": [{"text": f"Model XML ({len(xml)} chars):\n{xml[:2000]}{'...' if len(xml) > 2000 else ''}"}],
+            "content": [
+                {"text": f"{header}\n{preview}"},
+                {"json": {"xml": xml, "length": len(xml)}},
+            ],
         }

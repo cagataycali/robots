@@ -27,6 +27,79 @@ from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_
 
 logger = logging.getLogger(__name__)
 
+#: Observation keys that name a SIMULATOR free camera rather than a real sensor.
+#: These carry a wide three-quarter view of the whole scene, not a task view, so
+#: positional image fill must reach for them last - a policy trained on a wrist
+#: view fed the free camera sees a completely different distribution. Mirrors
+#: ``simulation.mujoco.rendering._FREE_CAMERA_TOKENS``.
+_FREE_CAMERA_SOURCE_KEYS: frozenset[str] = frozenset({"default", "free"})
+
+
+def _state_fallback_scalar_keys(observation: dict[str, Any]) -> list[str]:
+    """Scalar observation keys usable as a positional ``observation.state`` order.
+
+    Used only by the FALLBACK path, i.e. when the configured ``robot_state_keys``
+    match nothing in the observation and the ordering has to come from the
+    observation itself.
+
+    Excludes a ``"<joint>.vel"`` key whose ``"<joint>"`` companion is also present.
+    The MuJoCo backend emits a velocity sibling per joint, and the unfiltered
+    comprehension took them in insertion order, so the packed state became
+    ``[pos0, vel0, pos1, vel1, ...]`` - twice the DOF count, then truncated to the
+    model's dim, so half the slots held VELOCITIES and the trailing joints were
+    dropped entirely. Measured on a 6-DoF arm: the model received
+    ``[0.2981, -0.47, -0.1973, 0.6561, 0.4978, -0.5439]`` where the correct
+    positions were ``[0.2981, -0.1973, 0.4978, 0.0987, -0.3974, 0.2474]``.
+
+    A standalone ``.vel`` key with no position companion is KEPT: some embodiments
+    legitimately declare velocity state (``embodiments.json`` has ``x.vel`` /
+    ``y.vel`` / ``theta.vel`` for mobile bases), and dropping it would corrupt
+    those instead.
+
+    Args:
+        observation: The raw observation dict.
+
+    Returns:
+        Ordered scalar keys, velocity companions removed.
+    """
+    return [
+        key
+        for key, value in observation.items()
+        if key != "task"
+        and not (isinstance(value, np.ndarray) and value.ndim >= 2)
+        and not (key.endswith(".vel") and key[: -len(".vel")] in observation)
+    ]
+
+
+def _rename_target_is_image(target: str, input_features: dict[str, Any] | None = None) -> bool:
+    """Classify an ``obs_rename`` TARGET as a camera feature.
+
+    A rename target names a MODEL feature, so it must be classified with the same
+    authority as the declared side: look it up in ``input_features`` and use its
+    ``FeatureType.VISUAL``, falling back to the key-name convention only when the
+    feature is unknown (or no features are available at all, as in the classmethod
+    ``preflight``, which runs before any model is loaded).
+
+    Three call sites used to answer this question two different ways: the declared
+    side used :func:`_declared_feature_is_image` (authoritative) while the rename
+    side used a bare ``"image" in dst`` substring. An embodiment whose target is a
+    BARE declared image key - MolmoAct2's ``base`` / ``wrist``, the very case
+    ``_declared_feature_is_image``'s docstring exists for - was therefore invisible
+    to the rename side, so the image-remap repair found no image sources, declined,
+    and the load raised even though the routing was unambiguous.
+
+    Args:
+        target: The rename target (a model feature key).
+        input_features: The model's declared features, when known.
+
+    Returns:
+        True when the target is a camera/image feature.
+    """
+    feature = (input_features or {}).get(target)
+    if feature is not None:
+        return _declared_feature_is_image(target, feature)
+    return "image" in target
+
 
 def _declared_feature_is_image(name: str, feature: Any = None) -> bool:
     """Return True if a declared input feature is a camera/image (VISUAL) feature.
@@ -81,6 +154,30 @@ def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | No
             merged[src] = dst
         else:
             merged.pop(src, None)
+    return merged
+
+
+def _merge_obs_rename_nullable(
+    base: dict[str, str | None] | None,
+    extra: dict[str, str | None],
+) -> dict[str, str | None]:
+    """Layer one ``obs_rename_override`` over another, PRESERVING ``None`` values.
+
+    Distinct from :func:`_merge_obs_rename`, which resolves an override against a
+    concrete rename map and therefore drops ``None`` entries. Here both operands
+    are overrides that will be applied later, so a ``None`` is meaningful data
+    ("drop this source key") and must survive the merge rather than being
+    collapsed away.
+
+    Args:
+        base: Existing override (may be ``None``).
+        extra: Override to layer on top; its entries win.
+
+    Returns:
+        The combined override map, ``None`` values intact.
+    """
+    merged: dict[str, str | None] = dict(base or {})
+    merged.update(extra)
     return merged
 
 
@@ -251,6 +348,8 @@ class LerobotLocalPolicy(Policy):
         strict_keys: bool = False,
         cache_model: bool = True,
         revision: str | None = None,
+        allow_unnormalized: bool = False,
+        pad_short_actions: bool = True,
         **kwargs,
     ):
         self.pretrained_name_or_path = pretrained_name_or_path
@@ -293,6 +392,26 @@ class LerobotLocalPolicy(Policy):
         # consulted by the class-level :meth:`preflight` so the override is
         # honoured before any model download.
         self._obs_rename_override = dict(obs_rename_override) if obs_rename_override else None
+        # Escape hatch for the embodiment-incompatible-with-checkpoint case. An
+        # embodiment that cannot be configured means the ACTIVE normalization
+        # pipeline gets discarded, so the model runs on RAW inputs and its
+        # outputs are never unnormalized back into robot units - roughly a 25x
+        # magnitude error on an SO-101, i.e. the arm drives to ~0 on every joint.
+        # That is a wrong-motion fault, not a degraded mode, so it raises by
+        # default (AGENTS.md: raise on fatal errors, never warn-and-continue).
+        # Set True only to deliberately inspect a raw/normalized-space policy.
+        self.allow_unnormalized = allow_unnormalized
+        # When the model's action dim is SHORTER than the robot's action keys, the
+        # trailing keys are filled with 0.0 (the default, which keeps the action
+        # dict shape stable). That fill is a real absolute position command on
+        # hardware - the calibration mid-point for a DEGREES joint, a closed end
+        # stop for a RANGE_0_100 gripper - so set this False to OMIT those keys
+        # instead, which lerobot's send_action genuinely ignores. See
+        # _tensor_to_action_dicts and diagnose_action_dim.
+        self.pad_short_actions = pad_short_actions
+        # Keys already reported as needing a resize, so a long rollout logs once
+        # per camera rather than per frame (mirrors _state_key_mismatch_warned).
+        self._image_resize_warned: set[str] = set()
         # When True, raise instead of routing cameras positionally if their
         # names cannot be matched to the policy's declared image keys (and no
         # camera_key_map covers them). Defaults to False (positional fallback
@@ -884,26 +1003,53 @@ class LerobotLocalPolicy(Policy):
                     self._configure_embodiment()
                 except ValueError as exc:
                     # The pipeline loaded and was active, but the embodiment /
-                    # image_keys do not match the model's declared features. Do NOT
-                    # swallow this at debug: discarding an otherwise-working
-                    # normalization pipeline is a silent behaviour change, and the
-                    # missing-postprocessor warning below would misattribute it to a
-                    # checkpoint lacking a policy_postprocessor.json.
-                    if self.processor_overrides:
+                    # image_keys do not match the model's declared features.
+                    # Before giving up, try the unambiguous repair: when the
+                    # mismatch is only that the embodiment's single image rename
+                    # names a different feature than the model's single declared
+                    # image feature, the intended routing is not in doubt.
+                    if self._retry_embodiment_with_remapped_images():
+                        pass
+                    elif self.processor_overrides:
                         raise RuntimeError(
                             f"Embodiment configuration failed but processor_overrides were specified: {exc}"
                         ) from exc
-                    logger.warning(
-                        "lerobot_local: %s loaded an ACTIVE processor pipeline but its "
-                        "embodiment could not be configured (%s). The pipeline (including "
-                        "normalization) was discarded and the policy falls back to the raw "
-                        "obs/action flow -- align the embodiment / image_keys with the "
-                        "model's declared input/output features.",
-                        self.pretrained_name_or_path or "<model>",
-                        exc,
-                    )
-                    self._processor_bridge = None
-                    self._embodiment_config_failed = True
+                    elif not self.allow_unnormalized:
+                        # Discarding an ACTIVE pipeline drops normalization on the
+                        # way in AND unnormalization on the way out, so the policy
+                        # emits raw model-space values that a robot driver accepts
+                        # verbatim - a wrong-motion fault, not a degraded mode.
+                        # Fail loudly (AGENTS.md: no silent defaults on error).
+                        raise RuntimeError(
+                            f"lerobot_local: {self.pretrained_name_or_path or '<model>'} loaded an "
+                            f"ACTIVE processor pipeline but its embodiment could not be configured "
+                            f"({exc}). Refusing to continue: discarding that pipeline would drop "
+                            f"input normalization AND action unnormalization, so actions would be "
+                            f"emitted in the model's raw/normalized space and driven onto the robot "
+                            f"as if they were robot units. Fix one of:\n"
+                            f"  (a) align the embodiment / image_keys with the model's declared "
+                            f"input/output features,\n"
+                            f"  (b) pass obs_rename_override to map your camera onto the model's "
+                            f"declared image feature, using a None value to DROP a rename the model "
+                            f"does not declare (e.g. "
+                            f"obs_rename_override={{'front': '<model_image_feature>', 'wrist': None}}),\n"
+                            f"  (c) omit embodiment= and set camera_key_map + set_robot_state_keys(...) "
+                            f"instead,\n"
+                            f"  (d) pass allow_unnormalized=True to accept RAW, UNNORMALIZED actions "
+                            f"(inspection only - do NOT drive a physical robot with these)."
+                        ) from exc
+                    else:
+                        logger.warning(
+                            "lerobot_local: %s loaded an ACTIVE processor pipeline but its "
+                            "embodiment could not be configured (%s). allow_unnormalized=True, so "
+                            "the pipeline (including normalization) was discarded and the policy "
+                            "falls back to the raw obs/action flow -- actions are in the model's "
+                            "RAW/normalized space and are NOT robot units.",
+                            self.pretrained_name_or_path or "<model>",
+                            exc,
+                        )
+                        self._processor_bridge = None
+                        self._embodiment_config_failed = True
             else:
                 self._processor_bridge = None
                 logger.debug("No processor configs found, using raw obs/action flow")
@@ -1216,7 +1362,10 @@ class LerobotLocalPolicy(Policy):
         # the embodiment's default source key is absent.
         targets: dict[str, list[str]] = {}
         for src, dst in obs_rename.items():
-            if "image" in dst:
+            # No model is loaded in preflight, so the classifier falls back to the
+            # key-name convention here; the instance sites pass their declared
+            # features and get the authoritative VISUAL answer.
+            if _rename_target_is_image(dst):
                 targets.setdefault(dst, []).append(src)
         if not targets:
             return
@@ -1238,6 +1387,182 @@ class LerobotLocalPolicy(Policy):
             f"{{'<your_camera_name>': '{missing_features[0]}'}}}} to map an existing "
             f"camera onto the model's image feature without renaming it."
         )
+
+    def _warn_if_home_state_is_out_of_distribution(self, embodiment: Any) -> None:
+        """Warn when a SIM embodiment's home pose falls outside the training range.
+
+        The SO sim embodiments declare ``state_units="degrees"``, and
+        ``_convert_joint_vector`` implements lerobot's MID-POINT-CENTERED DEGREES
+        mode. No embodiment sets ``joint_mids``, so every conversion uses mid=0 -
+        i.e. it assumes the MJCF's kinematic zero coincides with the physical
+        arm's calibration mid. It does not. MuJoCo's home ``qpos=0`` therefore
+        packs to a state vector several sigma outside the checkpoint's
+        distribution, and because ``q01_q99`` / ``min_max`` normalizers CLIP,
+        whole dimensions collapse to exactly +/-1 and their proprioceptive
+        information is destroyed.
+
+        Measured against MolmoAct2's shipped ``q01_q99`` state stats, whose q01 for
+        joints 2 and 3 is +43.7 and +38.4 degrees - the training data never
+        contains a near-zero reading for those joints::
+
+            home qpos=0 -> packed [0, 0, 0, 0, 0, 9.1]
+                        -> normalized [-0.071, -1.0, -1.0, -1.0, 0.193, -0.622]
+                           SATURATED: 3 of 6 dims
+
+        This is the diagnosable-instead-of-silent half of the fix. Correcting the
+        offset needs a per-embodiment sim-vs-hardware zero delta, which is a data
+        change per robot and per checkpoint, so it is deliberately NOT guessed here.
+
+        Best-effort: any failure to obtain stats is a diagnostic miss, never a load
+        failure.
+
+        Args:
+            embodiment: The configured embodiment map.
+        """
+        if getattr(embodiment, "state_units", "native") != "degrees":
+            return
+        try:
+            from . import norm_stats as _norm_stats
+
+            payload = _norm_stats.load_norm_stats(self.pretrained_name_or_path or "", revision=self.revision)
+            if not payload:
+                return
+            tag_stats = (payload.get("metadata_by_tag") or {}).get(
+                self._molmoact2_norm_tag or next(iter(payload.get("metadata_by_tag") or {}), "")
+            )
+            if not tag_stats:
+                return
+            normalizer = _norm_stats.FeatureNormalizer.from_stats(
+                tag_stats.get("state_stats"), str(payload.get("norm_mode", "min_max"))
+            )
+            if normalizer is None:
+                return
+            n = len(getattr(embodiment, "state_keys", []) or [])
+            if n == 0:
+                return
+            # The sim home pose: every joint at its kinematic zero, converted the
+            # way a real observation would be.
+            home = embodiment.sim_state_to_model([0.0] * n) if hasattr(embodiment, "sim_state_to_model") else [0.0] * n
+            saturated = normalizer.saturating_dims(home)
+        except Exception as exc:  # noqa: BLE001 - a diagnostic must not break the load
+            logger.debug("home-state distribution check skipped: %s", exc)
+            return
+
+        if not saturated:
+            return
+        keys = list(getattr(embodiment, "state_keys", []) or [])
+        names = [keys[i] if i < len(keys) else str(i) for i in saturated]
+        logger.warning(
+            "lerobot_local: embodiment %r declares state_units='degrees' but its HOME pose (every "
+            "joint at the MJCF's kinematic zero) falls OUTSIDE this checkpoint's state distribution "
+            "on %d of %d dimension(s): %s. The normalizer CLIPS, so those dimensions saturate to "
+            "+/-1 and the model cannot see those joints at all. The sim's zero convention does not "
+            "match the arm the checkpoint was recorded on. Drive the sim to a pose inside the "
+            "training range, or record/convert with the hardware zero offset; a sim rollout from "
+            "home is out-of-distribution.",
+            getattr(embodiment, "name", "<embodiment>"),
+            len(saturated),
+            len(keys) or len(saturated),
+            names,
+        )
+
+    def _retry_embodiment_with_remapped_images(self) -> bool:
+        """Retry embodiment configuration after an unambiguous image remap.
+
+        The dominant real-world cause of an embodiment-vs-checkpoint mismatch is
+        a naming difference, not a structural one: every SO-arm embodiment
+        hardcodes ``obs_rename`` onto ``observation.images.image`` (plus
+        ``wrist_image``), while a checkpoint may declare a differently named
+        single image feature (e.g. an ACT checkpoint trained with
+        ``observation.images.laptop``). When the model declares exactly ONE image
+        feature, the intended routing is not in doubt - the embodiment's primary
+        camera feeds it - so repair the rename instead of discarding the whole
+        normalization pipeline over a name.
+
+        Deliberately narrow: it only fires when the model declares exactly one
+        image feature and the embodiment declares at least one image rename that
+        does not name it. Any ambiguous case (two or more declared image
+        features) is left to the caller, who must say which camera feeds which
+        feature via ``obs_rename_override`` / ``camera_key_map``. The primary
+        source key is the one whose target the embodiment lists first, so a
+        ``front`` + ``wrist`` embodiment keeps ``front`` as the surviving camera;
+        the extra renames are dropped because the model has no feature for them.
+
+        Returns:
+            True when a remap was found AND ``_configure_embodiment`` then
+            succeeded (the pipeline is live). False when the situation is not the
+            unambiguous single-image case, or the retry still failed - the caller
+            then reports the original error.
+        """
+        declared_images = [f for f, feat in self._input_features.items() if _declared_feature_is_image(f, feat)]
+        if len(declared_images) != 1:
+            return False
+        target = declared_images[0]
+
+        from .embodiment import load_embodiment
+
+        spec = self._embodiment_spec
+        if spec is None:
+            return False
+        try:
+            embodiment = load_embodiment(spec)
+        except (ValueError, RuntimeError):
+            return False
+        current = _merge_obs_rename(embodiment.obs_rename, self._obs_rename_override)
+        # Which renames are camera renames? A target the model DECLARES is
+        # classified authoritatively by its FeatureType.VISUAL. A target the model
+        # does NOT declare is precisely what this repair exists to fix, and its
+        # name is all there is to go on - but the substring convention alone
+        # misses a BARE key (MolmoAct2 declares image features named ``base`` /
+        # ``wrist``), which made the repair find no sources and decline. So an
+        # undeclared target counts as an image when it looks like one OR when the
+        # only thing the model declares is a single image feature, since in that
+        # case there is nothing else a camera rename could have been aiming at.
+        sole_image_target = len(declared_images) == 1 and len(self._input_features) - 1 <= 1
+        image_sources = [
+            src
+            for src, dst in current.items()
+            if _rename_target_is_image(dst, self._input_features)
+            or (dst not in self._input_features and sole_image_target)
+        ]
+        # The trigger is "does ANY image rename target a feature the model does
+        # not declare?", NOT "is the declared target already routed?". Both are
+        # true at once in the dominant real-SO-101 shape - every SO embodiment
+        # renames BOTH front->observation.images.image AND
+        # wrist->observation.images.wrist_image, so against a single-camera
+        # checkpoint declaring observation.images.image the front rename is
+        # already correct while the wrist rename is the mismatch. Asking the
+        # wrong question there declined the repair and the load then raised, so
+        # the repair could not work for its most common intended input.
+        undeclared = [src for src in image_sources if current[src] not in self._input_features]
+        if not undeclared:
+            return False
+
+        # Route the camera that ALREADY targets the declared feature when there
+        # is one (so a correct rename is never rewritten), else the first image
+        # source. Drop only the renames whose targets the model does not declare;
+        # a None value in the override means "drop".
+        primary = next((src for src in image_sources if current[src] == target), image_sources[0])
+        repair: dict[str, str | None] = {src: None for src in undeclared if src != primary}
+        repair[primary] = target
+        previous_override = self._obs_rename_override
+        self._obs_rename_override = _merge_obs_rename_nullable(previous_override, repair)
+        try:
+            self._configure_embodiment()
+        except ValueError:
+            self._obs_rename_override = previous_override
+            return False
+        logger.info(
+            "lerobot_local: embodiment %r renames camera(s) %s onto image feature(s) the model does "
+            "not declare; the model declares exactly one (%r), so %r was routed onto it and %s "
+            "dropped. Normalization is preserved. Pass obs_rename_override to route explicitly.",
+            embodiment.name,
+            sorted(src for src in undeclared),
+            target,
+            primary,
+            sorted(src for src in undeclared if src != primary) or "nothing",
+        )
+        return True
 
     def _synthesized_camera_renames(self) -> dict[str, str]:
         """Derive camera ``obs_rename`` entries for a state-only embodiment.
@@ -1335,6 +1660,8 @@ class LerobotLocalPolicy(Policy):
         # Inject into the pipeline (rename_map + pack-state step).
         assert self._processor_bridge is not None
         self._processor_bridge.apply_embodiment(embodiment, input_features=self._input_features)
+
+        self._warn_if_home_state_is_out_of_distribution(embodiment)
 
         self._embodiment = embodiment
         # Action-side mapping: prefer the embodiment's declared action_keys so
@@ -1910,8 +2237,95 @@ class LerobotLocalPolicy(Policy):
             # HWC -> CHW (a trailing channel dim of 1/3/4 is the giveaway).
             if img.ndim == 3 and img.shape[-1] in (1, 3, 4) and img.shape[0] not in (1, 3, 4):
                 img = img.permute(2, 0, 1)
+            img = self._resize_to_declared_shape(key, img)
             out[key] = img
         return out
+
+    def _declared_image_shape(self, key: str) -> tuple[int, int] | None:
+        """The ``(H, W)`` the checkpoint declares for the frame arriving as ``key``.
+
+        ``key`` may already be a model feature name
+        (``observation.images.laptop``) or still be the robot-native source key
+        (``front``) when the embodiment's rename runs later inside the pipeline -
+        so the source key is resolved through the embodiment's ``obs_rename``
+        first.
+
+        Returns:
+            ``(height, width)``, or ``None`` when the feature is unknown or
+            declares no usable spatial shape (then no check is possible).
+        """
+        feature = self._input_features.get(key)
+        if feature is None:
+            emb = self._embodiment
+            target = (getattr(emb, "obs_rename", {}) or {}).get(key) if emb is not None else None
+            if target is None:
+                return None
+            feature = self._input_features.get(target)
+        shape = getattr(feature, "shape", None)
+        if not shape or len(shape) < 3:
+            return None
+        height, width = int(shape[-2]), int(shape[-1])
+        return (height, width) if height > 0 and width > 0 else None
+
+    def _resize_to_declared_shape(self, key: str, img: torch.Tensor) -> torch.Tensor:
+        """Resize a CHW frame to the resolution the checkpoint was trained on.
+
+        Nothing in this stack compared the incoming frame's H/W against the
+        declared ``observation.images.*`` shape, and lerobot 0.6.0's only
+        registered resize step (``hil_processor.image_crop_resize_processor``) is
+        NOT included by ``make_pre_post_processors`` - so the caller owns the
+        resize, and this caller did not do it. ACT's ResNet backbone plus its
+        spatial-softmax head accepts any input size, so a 1080p or 320x240 camera
+        ran to completion and returned DIFFERENT actions with no signal: measured
+        19.5 degrees of divergence on shoulder_lift from one rescaled scene.
+
+        Resizing (rather than raising) matches what the training dataloader saw,
+        since lerobot datasets store frames at the declared resolution. Logged
+        once per key so a long rollout is not spammed; raises under
+        ``strict_keys`` for callers who would rather fix the camera config.
+
+        Args:
+            key: The observation key the frame arrived under.
+            img: The frame, already CHW float32.
+
+        Returns:
+            The frame at the declared resolution, or unchanged when no declared
+            shape is available or it already matches.
+
+        Raises:
+            ValueError: On a mismatch when ``strict_keys`` is set.
+        """
+        declared = self._declared_image_shape(key)
+        if declared is None or img.ndim < 3:
+            return img
+        actual = (int(img.shape[-2]), int(img.shape[-1]))
+        if actual == declared:
+            return img
+        if self.strict_keys:
+            raise ValueError(
+                f"strict_keys=True: camera {key!r} delivered {actual[0]}x{actual[1]} but the "
+                f"checkpoint declares {declared[0]}x{declared[1]}. Feeding a different resolution "
+                f"changes the policy's output with no error. Configure the camera at the declared "
+                f"resolution, or drop strict_keys to have it resized automatically."
+            )
+        if key not in self._image_resize_warned:
+            self._image_resize_warned.add(key)
+            safe_key = key.replace("\r", "").replace("\n", "")
+            logger.info(
+                "lerobot_local: camera %r delivers %dx%d but the checkpoint declares %dx%d; "
+                "resizing every frame (bilinear, antialias) to match what the model was trained on. "
+                "Configuring the camera at the declared resolution avoids the per-frame cost.",
+                safe_key,
+                actual[0],
+                actual[1],
+                declared[0],
+                declared[1],
+            )
+        batched = img.unsqueeze(0) if img.ndim == 3 else img
+        resized = torch.nn.functional.interpolate(
+            batched, size=declared, mode="bilinear", align_corners=False, antialias=True
+        )
+        return resized.squeeze(0) if img.ndim == 3 else resized
 
     def _embodiment_image_source_keys(self) -> set[str]:
         """Bare observation keys the embodiment renames onto a declared image feature.
@@ -2035,12 +2449,28 @@ class LerobotLocalPolicy(Policy):
             f"None of the configured robot_state_keys {shown}{ellipsis} are present "
             f"in the observation. Observed joint/state keys: {scalar_keys}. This "
             "usually means generic auto-generated keys (joint_0..joint_N) were "
-            "paired with a robot/sim that reports named joints. Pass "
-            "embodiment='<name>' (e.g. embodiment='so101') or call "
-            "set_robot_state_keys([...]) with the robot's actual joint names."
+            f"paired with a robot/sim that reports named joints. {self._state_key_remedy(scalar_keys)}"
         )
         if self.strict_keys:
             raise ValueError("strict_keys=True: " + msg)
+        # A scalar count that is an EXACT MULTIPLE of the model's expected state
+        # dim is near-certain companion pollution: the observation carries N
+        # channels per joint (position + velocity, or more), so a positional
+        # fallback would pack interleaved channels and then truncate, putting the
+        # wrong quantity in half the slots. That is silently wrong motion rather
+        # than a degraded binding, so it raises regardless of strict_keys.
+        state_feature = self._input_features.get("observation.state")
+        expected_dim = getattr(state_feature, "shape", None)
+        expected = int(expected_dim[0]) if expected_dim else 0
+        if expected > 1 and len(scalar_keys) > expected and len(scalar_keys) % expected == 0:
+            raise ValueError(
+                f"{len(scalar_keys)} scalar observation keys is an exact multiple of the model's "
+                f"observation.state dim {expected}, which means the observation carries "
+                f"{len(scalar_keys) // expected} channels per joint (e.g. a position and a velocity). "
+                f"A positional fallback would interleave them and then truncate, so half the state "
+                f"slots would hold the wrong quantity. Bind the joint names explicitly with "
+                f"set_robot_state_keys([...]) or an embodiment. Observed keys: {scalar_keys}"
+            )
         # Surface the degraded binding as machine-detectable telemetry
         # (run_policy / eval_policy read generic_state_keys_used) and warn at
         # most once per policy so a long rollout is not spammed.
@@ -2049,6 +2479,45 @@ class LerobotLocalPolicy(Policy):
             logger.warning(msg)
             self._state_key_mismatch_warned = True
         return scalar_keys
+
+    @staticmethod
+    def _state_key_remedy(scalar_keys: list[str]) -> str:
+        """Return the remedy sentence appropriate to the observation's shape.
+
+        The guidance has to differ by observation source, because the two cases
+        want opposite fixes:
+
+        * REAL hardware (lerobot ``SOFollower`` and friends key joints as
+          ``"<motor>.pos"``): the fix is ``set_robot_state_keys([...])`` with
+          those exact names. Recommending an embodiment here is actively
+          misleading - the SO-arm embodiments hardcode ``obs_rename`` onto
+          ``observation.images.image``, so on a checkpoint that declares any
+          other image feature the embodiment cannot be configured at all.
+        * SIM (bare joint names like ``shoulder_pan`` / ``1``..``6``): an
+          embodiment is the right answer, since it also carries the sim-radian
+          to model-degree conversion that bare state keys do not.
+
+        Args:
+            scalar_keys: Non-image scalar keys present in the observation.
+
+        Returns:
+            One or two sentences naming the concrete fix, ASCII only.
+        """
+        hardware_keys = [k for k in scalar_keys if isinstance(k, str) and k.endswith(".pos")]
+        if hardware_keys:
+            return (
+                "The observation carries real-hardware '<motor>.pos' keys "
+                f"({hardware_keys[:8]}), so call "
+                f"set_robot_state_keys({hardware_keys[:8]!r}) to bind the policy to them. "
+                "Do NOT reach for a sim embodiment here: the SO-arm embodiments rename cameras "
+                "onto 'observation.images.image', which a checkpoint declaring a different image "
+                "feature does not accept."
+            )
+        return (
+            "Pass embodiment='<name>' matching this robot (an embodiment also carries the "
+            "sim-radian to model-degree conversion), or call set_robot_state_keys([...]) with "
+            "the robot's actual joint names."
+        )
 
     def _collect_state_values(self, observation_dict: dict[str, Any], order: list[str]) -> list[float]:
         """Pull the joint-state vector from ``observation_dict`` in ``order``.
@@ -2203,6 +2672,17 @@ class LerobotLocalPolicy(Policy):
                 "Provide an explicit mapping (camera_key_map) "
                 "or set strict_keys=False to allow positional fallback."
             )
+        # Deprioritize the simulator's own free camera. The sim now yields it
+        # last, but an observation can reach here from any source (a replayed
+        # dataset, a dict built by hand, a benchmark adapter), and if it is
+        # first in THAT dict it takes the first declared image slot and the
+        # task-relevant frame is dropped. Sorting here is defence in depth for
+        # exactly the case the sim-side ordering fixes; a stable sort, so the
+        # relative order of real cameras is untouched. When the free camera is
+        # the ONLY unmatched source it still gets used - deprioritized, not
+        # discarded.
+        if len(unmatched_imgs) > 1:
+            unmatched_imgs.sort(key=lambda item: item[0] in _FREE_CAMERA_SOURCE_KEYS)
         for (k, v), feat in zip(unmatched_imgs, free_feats):
             self.positional_fallback_used = True
             logger.warning(
@@ -2217,9 +2697,7 @@ class LerobotLocalPolicy(Policy):
             used_feats.add(feat)
 
         # 2) Collect scalar joint values into observation.state.
-        scalar_keys = [
-            k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)
-        ]
+        scalar_keys = _state_fallback_scalar_keys(observation_dict)
         # Resolve the joint-state ordering, raising/warning loudly when the
         # configured robot_state_keys cannot describe this observation (the
         # generic joint_0..N vs named-joint mismatch) instead of silently
@@ -2544,9 +3022,7 @@ class LerobotLocalPolicy(Policy):
         # raises (strict_keys) or warns + falls back to the observation's own
         # scalar keys, instead of silently dropping observation.state and
         # running the policy open-loop (see _resolve_state_order).
-        scalar_keys = [
-            k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)
-        ]
+        scalar_keys = _state_fallback_scalar_keys(observation_dict)
         order = self._resolve_state_order(observation_dict, scalar_keys)
 
         # Collect state values index-aligned with the resolved order. A key in
@@ -2738,6 +3214,17 @@ class LerobotLocalPolicy(Policy):
             if convert and emb is not None:
                 vals = emb.model_action_to_sim(vals)
             action_dict = {key: vals[index] for index, key in enumerate(out_keys)}
+            # A key past the model's action dim was filled with 0.0, and on a real
+            # follower that is an ABSOLUTE position command, not a "no command":
+            # lerobot's send_action forwards every '.pos' entry to
+            # sync_write("Goal_Position", ...) with no sentinel value, and 0.0 maps
+            # to the calibration mid-point in DEGREES or to range_min (a hard end
+            # stop) for the RANGE_0_100 gripper. Omitting the key instead IS a
+            # genuine no-op: lerobot's comprehension never sees it, and the sim
+            # reports it under unresolved_keys. Padding stays the default because
+            # it keeps the action dict shape stable for index-based consumers.
+            if not self.pad_short_actions and len(action_values) < len(out_keys):
+                action_dict = {key: action_dict[key] for key in out_keys[: len(action_values)]}
             result.append(action_dict)
 
         return result

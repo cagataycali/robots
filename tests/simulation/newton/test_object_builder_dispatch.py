@@ -66,14 +66,35 @@ class _RecordingBuilder:
         self.calls.append(("cylinder", body, kwargs))
 
 
+class _RecordedCfg:
+    """Stand-in for ``ShapeConfig``, recording the density that was derived.
+
+    ``_add_object_to_builder`` now passes ``cfg=`` so the requested mass is the
+    ONLY mass: Newton's ``add_shape_*`` defaults to ``density=1000`` and
+    ACCUMULATES onto the body, which used to make the real mass
+    ``requested + 1000 * volume``. See test_object_mass_fidelity.py.
+    """
+
+    def __init__(self, density: float) -> None:
+        self.density = density
+
+
 def _engine_stub():
     """A tiny NewtonSimEngine stand-in carrying just ``_wp`` and the bound
-    ``_wxyz_to_wp_quat`` helper, so ``_add_object_to_builder`` runs without
-    importing newton/warp or touching a GPU.
+    ``_wxyz_to_wp_quat`` / ``_shape_density_cfg`` helpers, so
+    ``_add_object_to_builder`` runs without importing newton/warp or touching a
+    GPU.
     """
     wp = _RecordingWp()
     stub = types.SimpleNamespace(_wp=wp)
     stub._wxyz_to_wp_quat = lambda wxyz: NewtonSimEngine._wxyz_to_wp_quat(stub, wxyz)
+    # The real helper builds a newton ShapeConfig; substitute a recorder so this
+    # file keeps running without newton installed while still asserting that a
+    # cfg IS passed and carries mass/volume.
+    stub._shape_density_cfg = lambda obj, body, volume: (
+        None if body < 0 or not volume or volume <= 0 else _RecordedCfg(obj.mass / volume)
+    )
+    stub._mesh_volume = staticmethod(lambda vertices, indices, scale: 1.0)
     return stub
 
 
@@ -131,9 +152,30 @@ class TestStaticVsDynamicBody:
         assert builder.calls[1][1] == builder.body_id
         assert builder.calls[1][2]["xform"][2] == ("quat_identity",)
 
-    def test_dynamic_body_forwards_mass(self):
+    def test_dynamic_body_is_massless_and_the_mass_rides_on_the_shape(self):
+        """The mass moved from ``add_body`` to the shape's density.
+
+        This used to assert ``add_body(mass=2.5)``, but Newton's ``add_shape_*``
+        ACCUMULATES its own density-derived mass onto the body, so that gave
+        ``2.5 + 1000 * volume``. The body is now created massless and the whole
+        mass is expressed as a density over the shape volume - which is also what
+        makes the inertia tensor correct. See test_object_mass_fidelity.py.
+        """
         builder = _add(SimObject(name="cube", shape="box", size=[0.2, 0.2, 0.2], mass=2.5))
-        assert builder.calls[0][1]["mass"] == 2.5
+
+        assert builder.calls[0][1]["mass"] == 0.0
+        cfg = builder.calls[1][2]["cfg"]
+        assert cfg is not None, "no ShapeConfig passed, so the shape keeps density=1000"
+        volume = 8 * 0.2 * 0.2 * 0.2
+        assert cfg.density == pytest.approx(2.5 / volume)
+
+    def test_a_static_shape_gets_no_density_config(self):
+        """No body means no mass to express; the shape keeps Newton's default."""
+        builder = _add(SimObject(name="ground", shape="box", size=[1.0, 1.0, 0.01], is_static=True))
+
+        kinds = [c[0] for c in builder.calls]
+        assert "add_body" not in kinds
+        assert builder.calls[0][2]["cfg"] is None
 
 
 class TestShapeDispatch:

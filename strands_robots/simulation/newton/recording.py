@@ -253,7 +253,16 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             if resume_existing:
                 logger.info("Resuming existing dataset for append: %s", dataset_dir)
                 resumed = _DatasetRecorder.resume(repo_id=repo_id, root=root, task=task, vcodec=vcodec)
-                self._verify_resume_schema(resumed, state_names_full, camera_keys, camera_dims, fps=fps)
+                # ``action_names`` was omitted here while the MuJoCo backend passes
+                # it, so an action-column divergence on resume went undetected on
+                # this backend only - a resumed dataset whose action schema no
+                # longer matches the scene appends silently mismatched columns.
+                # This backend does not pass action_names to create() either, so
+                # the action schema defaults to joint_names; check against that
+                # same list rather than inventing a second source of truth.
+                self._verify_resume_schema(
+                    resumed, state_names_full, camera_keys, camera_dims, list(joint_names), fps=fps
+                )
                 world._backend_state["dataset_recorder"] = resumed
             else:
                 world._backend_state["dataset_recorder"] = _DatasetRecorder.create(

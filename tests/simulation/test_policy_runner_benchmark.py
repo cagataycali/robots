@@ -352,6 +352,14 @@ class TestAugmentObservationHook:
                 # records the rate to honor the contract without acting on it.
                 self.control_frequency = hz
 
+            def set_rtc_observed_delay(self, steps):
+                # The spec-eval path now DECLARES the RTC observed delay (exactly
+                # 0, since the world is paused during inference) instead of
+                # letting LerobotLocalPolicy fall back to a non-reproducible
+                # wall-clock estimate. Recorded here to honor the Policy contract
+                # without acting on it, same as set_control_frequency above.
+                self.rtc_observed_delay_steps = steps
+
             def get_actions(self, obs, instruction):
                 captured.append(dict(obs))
                 return [{"j0": 0.0, "j1": 0.0}]

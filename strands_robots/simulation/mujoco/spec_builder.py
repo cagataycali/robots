@@ -474,8 +474,21 @@ class SpecBuilder:
         # they'll come back automatically via ``spec.attach(robot_spec)``.
         # Re-adding them at the top level would collide with the attached
         # namespaced copy at compile time.
+        #
+        # A camera MOUNTED on a body (``parent_body``, e.g. a wrist cam on
+        # ``a/hand``) is skipped here too: this method deliberately does not
+        # attach robots (see the class docstring), so the parent body does not
+        # exist yet and ``add_camera`` raised an uncaught ``ValueError`` -
+        # escaping the tool contract and taking ``remove_robot`` down with it:
+        #
+        #     add_robot("a"); add_camera("wrist", parent_body="a/hand")
+        #     remove_robot("b")  ->  ValueError: add_camera: parent_body
+        #                            'a/hand' not found in scene.
+        #
+        # The caller re-adds them via :meth:`add_deferred_cameras` once every
+        # robot has been attached.
         for cam in world.cameras.values():
-            if getattr(cam, "origin_robot", ""):
+            if getattr(cam, "origin_robot", "") or getattr(cam, "parent_body", ""):
                 continue
             SpecBuilder.add_camera(spec, cam)
 
@@ -484,6 +497,32 @@ class SpecBuilder:
             SpecBuilder.add_object(spec, obj)
 
         return spec
+
+    @staticmethod
+    def add_deferred_cameras(spec: Any, world: SimWorld) -> None:
+        """Add the body-mounted cameras :meth:`build` had to skip.
+
+        Call this after every robot has been attached to ``spec``. A camera with
+        a ``parent_body`` needs that body to exist, and ``build`` runs before the
+        attaches, so those cameras are added here instead.
+
+        A parent that STILL does not resolve (its robot was the one just removed)
+        is dropped with a warning rather than raising: the alternative is an
+        uncaught ``ValueError`` out of ``remove_robot``, and a camera whose mount
+        point no longer exists cannot be reinstated.
+        """
+        for cam in world.cameras.values():
+            if getattr(cam, "origin_robot", "") or not getattr(cam, "parent_body", ""):
+                continue
+            try:
+                SpecBuilder.add_camera(spec, cam)
+            except ValueError as e:
+                logger.warning(
+                    "add_deferred_cameras: dropping camera %r mounted on %r: %s",
+                    cam.name,
+                    cam.parent_body,
+                    e,
+                )
 
     # from_mjcf
     @staticmethod
@@ -556,13 +595,32 @@ class SpecBuilder:
                 "rgba": list(obj.color),
                 "condim": 3,
             }
+            if not obj.is_static:
+                # Declare the mass HERE, on the geom, rather than as an explicit
+                # body inertial, so the compiler integrates the real shape for the
+                # rotational inertia. A hardcoded ``body.inertia = [0.001]*3`` +
+                # ``explicitinertial = True`` applied that constant to every object
+                # regardless of shape, size OR mass (analytic vs constant, box,
+                # 0.1 kg): edge 2 cm -> 6.7e-06 vs 1e-03 = 150x too resistant to
+                # spin; edge 5 cm -> 24x; edge 50 cm -> 0.24x. Independent of mass
+                # too, so a 10 g cube was off by 240x - while ``body_mass`` looked
+                # correct, so the model inspected fine and only the dynamics were
+                # wrong. Verified against analytic box/sphere formulas and
+                # w = tau*t/I.
+                geom_kwargs["mass"] = float(obj.mass)
             if obj.shape == "mesh":
                 geom_kwargs["meshname"] = f"mesh_{obj.name}"
             else:
                 geom_kwargs["size"] = _normalize_size(obj.shape, list(obj.size))
 
-            # Legacy code only set explicit friction on boxes; preserve parity.
-            if obj.shape == "box":
+            # A runtime set_geom_properties(friction=...) is recorded on the
+            # SimObject so this rebuild reproduces it; otherwise the per-shape
+            # default silently overwrote it (a 2.0 sliding coefficient came back
+            # 1.0 after any full rebuild, e.g. remove_robot).
+            if obj.friction is not None:
+                geom_kwargs["friction"] = list(obj.friction)
+            elif obj.shape == "box":
+                # Legacy code only set explicit friction on boxes; preserve parity.
                 geom_kwargs["friction"] = [1.0, 0.5, 0.001]
 
             if material_name is not None:
@@ -944,7 +1002,78 @@ class SpecBuilder:
         )
         scene_spec.attach(robot_spec, prefix=f"{robot.name}/", frame=frame)
 
+        # MJCF <option> is model-global and does NOT transfer through a spec
+        # attach, so the robot would otherwise be simulated with the generated
+        # world's defaults instead of the settings its authors declared.
+        SpecBuilder._merge_robot_option(scene_spec, robot_spec, robot.name)
+
         return source_joint_names
+
+    #: Physics ``<option>`` fields that describe a ROBOT's own contact/solver
+    #: requirements and therefore follow the robot through an attach, paired
+    #: with the rule for resolving a conflict between two robots. ``timestep``
+    #: and ``gravity`` are deliberately absent: they are world-level, owned by
+    #: ``create_world`` / ``set_timestep`` / ``set_gravity``, and an added robot
+    #: must never silently overwrite an explicit world value. See #1653.
+    #:
+    #: The conflict rule is "strictest wins", so every robot ends up at least as
+    #: well-conditioned as its model asks for:
+    #:   * ``cone``: elliptic (1) over pyramidal (0) - exact friction cone.
+    #:   * ``integrator``: implicit variants over Euler - more stable.
+    #:   * ``impratio`` / iteration counts: the maximum.
+    #:   * ``noslip_tolerance``: the minimum (tighter).
+    _ROBOT_OPTION_FIELDS: dict[str, str] = {
+        "cone": "max",
+        "impratio": "max",
+        "integrator": "integrator",
+        "noslip_iterations": "max",
+        "noslip_tolerance": "min",
+        "iterations": "max",
+        "ls_iterations": "max",
+    }
+
+    #: Preference order for ``integrator`` when two robots disagree: a more
+    #: implicit scheme is more stable for contact-rich manipulation. Values are
+    #: ``mjtIntegrator`` enum ints (EULER=0, RK4=1, IMPLICIT=2, IMPLICITFAST=3).
+    #: RK4 is ranked below the implicit schemes for contact work but above Euler.
+    _INTEGRATOR_RANK: dict[int, int] = {0: 0, 1: 1, 3: 2, 2: 3}
+
+    @staticmethod
+    def _merge_robot_option(scene_spec: Any, robot_spec: Any, robot_name: str) -> None:
+        """Merge a robot model's declared physics ``<option>`` into the scene.
+
+        Only the contact/solver group in :data:`_ROBOT_OPTION_FIELDS` transfers;
+        ``timestep`` and ``gravity`` stay world-owned. When a value differs from
+        what the scene already carries, the stricter of the two wins and an INFO
+        log names the robot it came from, so the substitution is never silent.
+
+        A robot that declares no ``<option>`` still parses to a spec carrying
+        MuJoCo's defaults, so this is a no-op in that case (the defaults equal
+        the scene's own defaults and nothing is logged).
+        """
+        scene_opt, robot_opt = scene_spec.option, robot_spec.option
+        for field, rule in SpecBuilder._ROBOT_OPTION_FIELDS.items():
+            robot_val = getattr(robot_opt, field, None)
+            scene_val = getattr(scene_opt, field, None)
+            if robot_val is None or scene_val is None:
+                continue
+            if rule == "integrator":
+                rank = SpecBuilder._INTEGRATOR_RANK
+                winner = robot_val if rank.get(int(robot_val), -1) > rank.get(int(scene_val), -1) else scene_val
+            elif rule == "min":
+                winner = min(robot_val, scene_val)
+            else:
+                winner = max(robot_val, scene_val)
+            if winner == scene_val:
+                continue
+            setattr(scene_opt, field, winner)
+            logger.info(
+                "attach_robot: adopted option %s=%s declared by robot %r (was %s)",
+                field,
+                winner,
+                robot_name,
+                scene_val,
+            )
 
 
 def _is_z0_ground_plane(geom: Any) -> bool:

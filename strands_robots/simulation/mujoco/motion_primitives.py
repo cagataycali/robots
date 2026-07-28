@@ -101,6 +101,26 @@ _WORKSPACE_SANITY_RADIUS_M = 5.0
 # case is still a sub-second solve budget.
 _IK_RESTART_SEEDS = 8
 
+# Joint motion commanded per control tick while ramping ``move_to``'s set-point
+# from the live pose to the IK solution (radians). A position servo handed a far
+# target applies its full gain at once, and the resulting jerk shakes a held
+# object out of the gripper; ramping bounds the commanded velocity instead.
+# 0.005 rad/tick over _SUBSTEPS_PER_TICK steps of a 0.002 s timestep is 0.5 rad/s
+# of commanded joint velocity - about an order of magnitude below the 5.9 rad/s
+# the un-ramped step command produced, and still fast enough that a 1 rad
+# shoulder move ramps in 200 ticks (0.4 s hold time before free servoing).
+_RAMP_RAD_PER_TICK = 0.005
+
+# How deep a contact may be at an IK solution before the pose counts as
+# self-colliding (meters). The IK bridge is kinematics-only, so it will happily
+# return a posture whose links overlap; the physics solver then refuses to hold
+# it and the servo stalls against an actuator force limit. A tolerance is needed
+# rather than a strict "ncon == 0" test because a resting arm legitimately
+# carries sub-0.1 mm contact depths (and touching the scene is not an error) -
+# 1 mm sits an order of magnitude above that floor and an order of magnitude
+# below the 3.5-10 mm penetrations that actually stall the descent.
+_SELF_COLLISION_TOL_M = 1e-3
+
 
 def _is_finite_real(value: Any) -> bool:
     """True when ``value`` is a real, finite scalar (bool rejected)."""
@@ -402,6 +422,14 @@ class MotionPrimitivesMixin:
         change the surface. Motion is NOT recorded into an active dataset
         recording session (see module docstring).
 
+        The one exception is the arm's OWN geometry at the solved goal: a
+        kinematics-only IK solution can put the arm through itself, and the
+        physics solver then refuses to hold that pose, so the descent stalls
+        against an actuator force limit no matter how many steps it is given.
+        Such a solution is rejected like an out-of-tolerance one, and the restart
+        search prefers a collision-free branch over a merely closer one. Poses
+        along the way are still unchecked - only the goal is.
+
         Args:
             robot_name: Robot to move; defaults to the single robot in the
                 world (errors if ambiguous).
@@ -533,20 +561,52 @@ class MotionPrimitivesMixin:
                 # pose (the zero orientation cost makes it a soft no-op).
                 target_pose[:3, :3] = bridge.ee_pose(q0)[:3, :3]
 
+            # The IK bridge is purely kinematic: it knows joint limits but not
+            # geometry, so a solution can satisfy the EE target while the arm
+            # passes through ITSELF. The servo can never realize such a pose -
+            # the solver holds the links apart - so the descent stalls with an
+            # actuator pinned at its force limit. Measured on the Panda: three
+            # of four workspace targets solved to ~0.5 mm residual while
+            # penetrating link5 against the hand by 3.5-10 mm, and move_to then
+            # timed out at 13-24 mm with joint 6 saturated at its +-12 Nm limit
+            # while reporting "the servo may need more steps" - more steps could
+            # never have helped. Treat self-penetration as a solve failure so the
+            # restart search below looks for another branch.
+            penetration_probe = self._mj.MjData(model)
+
+            def _worst_penetration(q: np.ndarray) -> float:
+                """Deepest contact penetration at ``q`` (<= 0; 0.0 when clear).
+
+                A private scratch ``MjData`` keeps this off the live state:
+                ``mj_forward`` on the real ``data`` mid-solve would clobber the
+                solver/warmstart state the servo loop is about to integrate.
+                Costs ~40 us per call, negligible against a 200-iteration solve.
+                """
+                penetration_probe.qpos[:] = q
+                self._mj.mj_forward(model, penetration_probe)
+                return min(
+                    (float(penetration_probe.contact[i].dist) for i in range(int(penetration_probe.ncon))),
+                    default=0.0,
+                )
+
+            def _ik_rejected(residual: float, penetration: float) -> bool:
+                return residual > float(tol) or penetration < -_SELF_COLLISION_TOL_M
+
             q_star = bridge.solve(target_pose, q0)
             ik_residual = float(np.linalg.norm(bridge.ee_pose(q_star)[:3, 3] - target))
+            ik_penetration = _worst_penetration(q_star)
 
             # Damped-least-squares IK is a local method: from a distant seed it
             # can stall in a joint-limit / elbow-branch local minimum even for a
-            # reachable target. When the direct solve misses, retry from a few
-            # DETERMINISTIC restart seeds and keep the best solution: the first
-            # restart uses the model's home keyframe when one exists (for a
-            # from-home arm that is usually the branch that converges, and it
-            # is free), the rest set the robot's own ARM hinge/slide joints
-            # uniformly within their ranges. Gripper DOFs and everything else
-            # (other robots, object free joints) stay at the live state.
-            # Bounded and reproducible: same target, same answer.
-            if ik_residual > float(tol):
+            # reachable target. When the direct solve misses - on residual OR on
+            # self-penetration - retry from a few DETERMINISTIC restart seeds and
+            # keep the best solution: the first restart uses the model's home
+            # keyframe when one exists (for a from-home arm that is usually the
+            # branch that converges, and it is free), the rest set the robot's
+            # own ARM hinge/slide joints uniformly within their ranges. Gripper
+            # DOFs and everything else (other robots, object free joints) stay at
+            # the live state. Bounded and reproducible: same target, same answer.
+            if _ik_rejected(ik_residual, ik_penetration):
                 # The RNG is deliberately reconstructed with a fixed seed PER
                 # CALL (not module-level): identical calls draw identical seed
                 # sequences, which is what makes move_to reproducible. Two
@@ -571,39 +631,95 @@ class MotionPrimitivesMixin:
                             q_seed[qadr] = rng.uniform(lo, hi)
                     q_try = bridge.solve(target_pose, q_seed)
                     residual_try = float(np.linalg.norm(bridge.ee_pose(q_try)[:3, 3] - target))
-                    if residual_try < ik_residual:
-                        q_star, ik_residual = q_try, residual_try
-                    if ik_residual <= float(tol):
+                    penetration_try = _worst_penetration(q_try)
+                    # A collision-free candidate beats a self-penetrating one
+                    # even when its residual is larger: the servo can actually
+                    # reach the former. Between two candidates of the same
+                    # collision class, the smaller residual wins.
+                    clear_try = penetration_try >= -_SELF_COLLISION_TOL_M
+                    clear_best = ik_penetration >= -_SELF_COLLISION_TOL_M
+                    if (clear_try, -residual_try) > (clear_best, -ik_residual):
+                        q_star, ik_residual, ik_penetration = q_try, residual_try, penetration_try
+                    if not _ik_rejected(ik_residual, ik_penetration):
                         break
 
-            if ik_residual > float(tol):
+            if ik_residual > float(tol) or ik_penetration < -_SELF_COLLISION_TOL_M:
+                # Name WHICH failure it was. A self-colliding-only solve used to
+                # fall through to the servo loop and time out with "the servo may
+                # need more steps", which was actively misleading: the pose is
+                # geometrically unrealizable, so no number of steps would reach
+                # it. Reporting the penetration points at the real remedy.
+                if ik_residual > float(tol):
+                    reason = (
+                        f"is unreachable for '{robot_name}' within tol={float(tol)} m - best IK "
+                        f"solution leaves a residual of {ik_residual:.4f} m. Choose a closer "
+                        "target or loosen tol."
+                    )
+                else:
+                    reason = (
+                        f"needs a self-colliding arm posture for '{robot_name}' - every IK branch "
+                        f"tried penetrates the robot's own geometry by up to {-ik_penetration * 1000:.1f} mm "
+                        f"(residual {ik_residual:.4f} m). The servo cannot hold such a pose. Approach "
+                        "from a different side, or pass an 'orientation' that admits a clear posture."
+                    )
                 return _err(
-                    f"move_to: target {target.tolist()} is unreachable for '{robot_name}' "
-                    f"within tol={float(tol)} m - best IK solution leaves a residual of "
-                    f"{ik_residual:.4f} m. Choose a closer target or loosen tol.",
+                    f"move_to: target {target.tolist()} {reason}",
                     {
                         "reached": False,
                         "steps": 0,
                         "ik_residual_m": ik_residual,
+                        "ik_self_penetration_m": ik_penetration,
                         "frame": frame_name,
                         "frame_type": frame_type,
                     },
                 )
 
-            # Command ARM joints to the solve; HOLD gripper joints at their
-            # live position (see the arm/gripper split above - this is the
-            # grasp-preservation contract, and mirrors rotate_wrist's
-            # hold-everything-else behaviour).
+            # Command ARM joints to the solve; HOLD the gripper (see the
+            # arm/gripper split above - this is the grasp-preservation contract,
+            # and mirrors rotate_wrist's hold-everything-else behaviour).
             ctrl_targets = {
                 act_id: float(q_star[int(model.jnt_qposadr[jnt_id])]) for jnt_id, act_id in arm_jact.items()
             }
-            ctrl_targets.update(
-                {
-                    act_id: float(data.qpos[int(model.jnt_qposadr[jnt_id])])
-                    for jnt_id, act_id in jact.items()
-                    if act_id in grip_acts
-                }
-            )
+            # Hold every gripper actuator at its CURRENT COMMAND, not at its
+            # measured joint position. Two bugs lived here:
+            #
+            # 1. Iterating ``jact`` skipped any gripper with a non-joint
+            #    transmission, so a TENDON-driven gripper (the Franka Panda's,
+            #    and every split gripper like it) was left out of ctrl_targets
+            #    entirely - the exact case the surrounding comment says must not
+            #    happen. ``grip_acts`` is the authoritative set; use it directly.
+            # 2. Seeding from ``data.qpos`` re-commanded the jaw to where the
+            #    grasped object was HOLDING it open, which for a position servo
+            #    means "stop squeezing". Re-asserting that every tick let the
+            #    fingers creep shut through the object.
+            #
+            # Measured on the Panda holding a 4 cm cube: the fingers collapsed
+            # from 0.00997 m (the cube's half-width) to 0.00163 m within 25
+            # control ticks of move_to and the cube was left behind, while
+            # move_to reported success - a silent failure of the documented
+            # "set_gripper('close') -> move_to(...) carries the object" contract.
+            # ``data.ctrl`` is what set_gripper last commanded, so holding it is
+            # a true no-op on the grasp.
+            ctrl_targets.update({act_id: float(data.ctrl[act_id]) for act_id in grip_acts})
+
+            # RAMP the arm command instead of stepping it to the solve at once.
+            # A position servo handed a far set-point applies its full gain
+            # immediately, which accelerates the arm hard enough to shake a held
+            # object out of the gripper: measured on the Panda lifting a 4 cm
+            # cube, the step command peaked at 5.9 rad/s within 5 control ticks
+            # and the cube was left behind (the grasp itself was fine - 3.28x
+            # static friction margin, and stationary it held for 600 steps with
+            # zero drift). Interpolating the same command over the first ticks
+            # peaks at 0.16 rad/s and lifts the cube to 0.25 m with the fingers
+            # steady to 4e-5 m.
+            #
+            # The ramp is sized by the LARGEST joint travel so a short correction
+            # is not slowed to the pace of a long transport: at most
+            # _RAMP_RAD_PER_TICK of joint motion is commanded per tick, capped so
+            # the ramp can never consume the caller's whole step budget.
+            arm_start = {act_id: float(data.ctrl[act_id]) for act_id in arm_jact.values()}
+            max_travel = max((abs(ctrl_targets[a] - arm_start[a]) for a in arm_start), default=0.0)
+            ramp_ticks = min(int(max_travel / _RAMP_RAD_PER_TICK) + 1, max(1, max_steps // 2))
 
         # ---- servo loop: self-locking per control tick ----
         steps_used = 0
@@ -611,12 +727,19 @@ class MotionPrimitivesMixin:
         position_error = math.inf
         ee_pos = target
         ee_quat = np.array([1.0, 0.0, 0.0, 0.0])
-        for _ in range(max_steps):
+        for tick in range(max_steps):
+            if tick < ramp_ticks:
+                blend = (tick + 1) / ramp_ticks
+                tick_targets = dict(ctrl_targets)
+                for act_id, start in arm_start.items():
+                    tick_targets[act_id] = start + blend * (ctrl_targets[act_id] - start)
+            else:
+                tick_targets = ctrl_targets
             with self._lock:
                 abort = self._primitive_abort_reason("move_to", robot_name, model)
                 if abort is not None:
                     return abort
-                self._primitive_tick(model, data, ctrl_targets)
+                self._primitive_tick(model, data, tick_targets)
                 ee_pos, ee_quat = self._frame_world_pose(model, data, frame_name, frame_type)
             steps_used += 1
             position_error = float(np.linalg.norm(ee_pos - target))
@@ -907,6 +1030,15 @@ class MotionPrimitivesMixin:
             for jnt_id, act_id in jact.items():
                 qadr = int(model.jnt_qposadr[jnt_id])
                 ctrl_targets[act_id] = target_yaw if jnt_id == wrist_jnt else float(data.qpos[qadr])
+            # ``jact`` only carries JOINT-transmission actuators, so a gripper
+            # driven by a TENDON (the Franka Panda's, and every split gripper like
+            # it) is absent from the loop above and its ctrl channel is never
+            # written - the same omission that made move_to drop grasped objects.
+            # Hold it at its CURRENT COMMAND: rotating the wrist must not disturb
+            # a grasp, and re-commanding a servo to the position its load is
+            # forcing on it reads as "stop squeezing".
+            for act_id in grip_acts:
+                ctrl_targets.setdefault(act_id, float(data.ctrl[act_id]))
             wrist_qadr = int(model.jnt_qposadr[wrist_jnt])
 
         steps_used = 0

@@ -330,3 +330,72 @@ class TestZeroDynamics:
             # (it reflects gravity), matching test_zeroes_all_dofs.
             assert [float(v) for v in d.qvel[adr : adr + width]] == pytest.approx([0.0] * width, abs=1e-12)
             assert [float(v) for v in d.qacc_warmstart[adr : adr + width]] == pytest.approx([0.0] * width, abs=1e-12)
+
+
+class TestActuationSurvivesSceneRebuild:
+    """``actuate_robot`` surgery must survive a FULL scene rebuild.
+
+    ``eject_robot_from_scene`` (triggered by removing ANY robot) reconstructs each
+    surviving robot from its URDF via ``SpecBuilder.attach_robot`` - which carries
+    no runtime servos. So removing an UNRELATED robot silently stripped this
+    robot's position actuators, reverted the scene integrator to Euler, and zeroed
+    its damping / armature / gravity compensation:
+
+        actuators: ['arm_act_shoulder', 'arm_act_elbow'] -> []
+        integrator: implicitfast (3) -> Euler (0)
+        gravcomp 1.0 -> 0.0, damping 2.0 -> 0.0
+
+    ``send_action`` then returned ``unresolved_keys`` for every servo and the arm
+    was undrivable for the rest of the episode.
+    """
+
+    @pytest.fixture
+    def two_robot_sim(self, arm_sim, tmp_path):
+        """``arm`` (actuated) plus an unrelated ``spare`` robot to remove."""
+        urdf = tmp_path / "spare_arm.urdf"
+        urdf.write_text(MINI_ARM_URDF)
+        assert arm_sim.add_robot(name="spare", urdf_path=str(urdf), position=[2, 0, 0])["status"] == "success"
+        assert arm_sim.actuate_robot("arm", kp=200.0)["status"] == "success"
+        return arm_sim
+
+    @staticmethod
+    def _servo_names(sim):
+        model = sim._world._model
+        out = []
+        for i in range(model.nu):
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, i)
+            if name and name.startswith("arm_act_"):
+                out.append(name)
+        return out
+
+    def test_servos_survive_removal_of_an_unrelated_robot(self, two_robot_sim):
+        before = self._servo_names(two_robot_sim)
+        assert before, "fixture must add servos"
+        assert two_robot_sim.remove_robot(name="spare")["status"] == "success"
+        assert self._servo_names(two_robot_sim) == before
+
+    def test_integrator_and_joint_tuning_survive(self, two_robot_sim):
+        model = two_robot_sim._world._model
+        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "arm/shoulder")
+        damping_before = float(model.dof_damping[model.jnt_dofadr[jid]])
+        assert damping_before > 0.0
+
+        assert two_robot_sim.remove_robot(name="spare")["status"] == "success"
+
+        model = two_robot_sim._world._model
+        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "arm/shoulder")
+        assert int(model.opt.integrator) == int(mj.mjtIntegrator.mjINT_IMPLICITFAST)
+        assert float(model.dof_damping[model.jnt_dofadr[jid]]) == pytest.approx(damping_before)
+
+    def test_send_action_still_resolves_the_servos(self, two_robot_sim):
+        assert two_robot_sim.remove_robot(name="spare")["status"] == "success"
+        servo = self._servo_names(two_robot_sim)[0]
+        result = two_robot_sim.send_action({servo: 0.3}, robot_name="arm")
+        assert result["status"] == "success", result
+        for block in result["content"]:
+            if "json" in block:
+                assert not block["json"].get("unresolved_keys")
+
+    def test_unactuated_robot_records_nothing(self, arm_sim):
+        """A robot never actuated must not gain a replay record."""
+        assert getattr(arm_sim._world.robots["arm"], "actuation", None) is None

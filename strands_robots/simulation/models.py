@@ -57,6 +57,21 @@ class SimRobot:
     # for robots spawned without a keyframe (the default zero pose), so reset()
     # stays byte-identical for those robots.
     home_qpos: dict[str, list[float]] = field(default_factory=dict)
+    # Companion actuator targets from the same ``<keyframe>`` row, mapping each
+    # (namespaced) actuator name to its ``key_ctrl`` value. A servo model's
+    # configuration is UNDER-DETERMINED by qpos alone - which is exactly why
+    # MuJoCo's ``<key>`` carries ctrl next to qpos and ``mj_resetDataKeyframe``
+    # restores both. Writing only qpos left every servo target at 0, so the
+    # first ``mj_step`` drove the arm off the home pose it had just been placed
+    # in (panda joint4: -1.5708 -> -0.0696 within one second).
+    home_ctrl: dict[str, float] = field(default_factory=dict)
+    #: Parameters of a runtime ``actuate_robot`` surgery (position servos +
+    #: damping/armature/gravcomp/self-collision), or ``None`` when the robot was
+    #: never actuated. Recorded so a FULL scene rebuild
+    #: (``eject_robot_from_scene``, triggered by removing ANY robot) can re-apply
+    #: it; the rebuild reconstructs robots from their URDF, which has none of it,
+    #: so an un-recorded surgery was silently lost and the arm became undrivable.
+    actuation: dict[str, Any] | None = None
     policy_running: bool = False
     policy_steps: int = 0
     policy_instruction: str = ""
@@ -83,6 +98,12 @@ class SimObject:
     size: list[float] = field(default_factory=lambda: [0.05, 0.05, 0.05])
     color: list[float] = field(default_factory=lambda: [0.5, 0.5, 0.5, 1.0])  # RGBA
     mass: float = 0.1
+    #: Contact friction ``[sliding, torsional, rolling]``. ``None`` keeps the
+    #: backend's per-shape default. Tracked here (not only in the compiled model)
+    #: so a full scene rebuild - which reconstructs geometry from this dataclass -
+    #: reproduces a runtime ``set_geom_properties(friction=...)`` instead of
+    #: silently restoring the default.
+    friction: list[float] | None = None
     mesh_path: str | None = None
     # Optional visual material/texture spec (post-material PR). When ``None``
     # the geom renders with the flat ``color`` rgba (byte-for-byte the old

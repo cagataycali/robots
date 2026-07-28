@@ -97,6 +97,114 @@ take a joint column and be commanded as an absolute `1.0`. A flag accepted there
 does not fail loudly: both sides slice the key list to their actuator count, so
 one extra key in front renames every reading to its neighbour and drops the
 last.
+### Fixed: a starved camera recording reports its shortfall instead of plain success
+
+`start_cameras_recording` paces capture by the WALL CLOCK on a daemon thread that
+renders under the sim lock, so a tight `step()` / policy loop starves it. Measured
+at `fps=20` on a GPU renderer:
+
+```
+for _ in range(120): step(5)   (1.2 s simulated)  ->   1 frame,  24.1 KB
+time.sleep(1.0), no stepping                      ->  20 frames, 47.1 KB
+```
+
+Both returned `status="success"`, and neither the report nor the docstring said the
+footage did not cover the rollout - so an agent recording a fast rollout kept a
+one-frame MP4 believing it had a video. The pacing is deliberate (it is what makes
+interactive viewing real-time), so `stop_cameras_recording` now names the shortfall:
+the frames it got, the frames the requested rate implies, and the two remedies
+(interleave a short sleep, or `render()` per step and encode the frames yourself).
+`start_cameras_recording` documents the pacing.
+
+The shortfall is judged over the window in which capture was possible rather than
+the whole recording. The recorder thread warms its GL context before entering the
+capture loop and collects nothing while it does, and that warmup is a large share of
+a brief clip wherever rendering is expensive - one 160x120 frame is microseconds
+through a GPU driver and a large fraction of a second through software GL. Charging
+it to the capture rate flagged recorders that never had the chance to capture. A clip
+whose capture window implies fewer than ten frames is still not judged at all.
+
+### Fixed: a relative output path lands in the sandbox root, not the process cwd
+
+`validate_output_path` resolved a relative path with `Path.resolve()`, which anchors
+to the cwd, so with a sandbox root configured the same call succeeded or failed
+depending on where the process was started:
+
+```
+STRANDS_ROBOTS_RENDER_ROOT=/tmp/box
+cwd=/repo      render(output_path="shot.png")  -> error: outside the sandbox
+cwd=/tmp/box   render(output_path="shot.png")  -> success
+```
+
+A root exists precisely to be where an unqualified name lands, so a relative path is
+now anchored to it (the root is resolved first, so a symlinked root admits its own
+relative paths). Confinement is unchanged: `..` traversal, an absolute path outside
+the root, and tilde expansion outside it are all still refused.
+
+The symlink guard runs after the anchoring rather than before. `Path("link.png")
+.is_symlink()` asks about the cwd, so a relative name for a link planted inside the
+root read as an ordinary file and `resolve()` then followed it: a link pointing
+outside was still refused, but by the confinement check and with a misleading
+message, and one pointing at another file inside the root was followed silently.
+
+### Fixed: `Robot(mode="sim", backend="newton")` accepts the `tool_name` the factory injects
+
+`Robot` builds every sim backend through one call - `create_simulation(backend,
+tool_name=f"{name}_sim", **kwargs)` - and `NewtonSimEngine.__init__` did not declare
+`tool_name`. While its residual `**kwargs` were silently dropped that went unnoticed;
+once the constructor started rejecting unknown keywords (right in itself) the
+documented entry point failed outright:
+
+```python
+Robot("so100", mode="sim", backend="newton")
+# TypeError: NewtonSimEngine got unexpected keyword argument(s): 'tool_name'.
+#            Accepted: solver, default_timestep, substeps, device, ...
+```
+
+The rejection runs before `ensure_newton()`, so this also replaced the
+`pip install 'strands-robots[sim-newton]'` hint the same call is supposed to give
+where the backend is not installed. `tool_name` is now a declared parameter (stored
+as `tool_name_str`, matching the MuJoCo backend) and appears in the accepted-keyword
+list the rejection prints - rather than being absorbed by an allowance and dropped,
+which is the silent no-op that rejection exists to prevent. A signature-level parity
+test covers every inspectable backend engine, so it runs where the optional GPU deps
+are absent too.
+
+### Fixed: a recording schema that matches nothing is reported, not zero-filled
+
+`DatasetRecorder.add_frame` fills `0.0` for every declared schema name absent
+from the frame, so a schema that matched NOTHING wrote a fully zero state and
+action vector while `add_frame` returned normally, `frame_count` incremented and
+`save_episode` reported success. That is what happens whenever the declared names
+and the runtime keys use different spellings - bare joint names against lerobot's
+`"<joint>.pos"` keys, or a multi-robot prefix that was never remapped - and the
+damage was only visible afterwards, as `verify_dataset`'s "identically zero
+across episode - dead control column".
+
+The state/action path now gets the diagnostic the camera path already had: a
+one-shot warning per column naming the declared names, the keys the frame
+carried and the remedy, a `zero_filled_frame_count` that survives the log guard,
+and a `ValueError` under `strict` so a dead column fails fast instead of
+producing an unusable episode. A PARTIAL miss (an optional key absent from one
+frame) is the legitimate zero-fill path and stays silent.
+
+### Fixed: contact predicates require a load-bearing contact
+
+`mjData.contact` lists every geom pair within `margin + gap`, including the ones
+the solver excluded because they fall in the gap: those carry `exclude != 0`,
+`efc_address < 0` and exactly zero force. `get_contacts` reported geometry only,
+so a physically airborne body read as "touching" to every consumer -
+`unitree_go2` ships `margin="0.001"`, so a foot half a millimetre off the floor
+counted as ground contact, and `contact_any` / `contact_between` / `grasped` /
+`body_on(require_contact=True)` could all pass in mid-air.
+
+`get_contacts` now also reports `normal_force`, `exclude` and the two parent body
+names, and the contact predicates drop records that are not load-bearing. A
+payload without the new keys keeps the old geometry-only behaviour, so other
+backends are unaffected. `_body_contact` also matches on the synthesized
+`"<body>/geom_<id>"` names that unnamed geoms get, which is what every LIBERO
+`(on A B)` goal is gated on.
+
 
 ### Fixed: the mass matrix survives MuJoCo removing the legacy sparse inertia
 

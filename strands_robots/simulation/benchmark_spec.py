@@ -58,6 +58,8 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import numbers
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -142,6 +144,43 @@ def _compile_bool_group(
     return check
 
 
+def _reject_non_finite_kwargs(kwargs: dict[str, Any], *, context: str, pred_name: str) -> None:
+    """Refuse a ``nan`` / ``inf`` numeric anywhere in a predicate call's kwargs.
+
+    The registry is closed, so a spec cannot name an unknown predicate - but its
+    kwargs were forwarded VERBATIM and no factory checks them, so a non-finite
+    number sailed through to the reward. JSON spells it ``1e999``; YAML spells it
+    ``.inf``. Measured end to end, from a file the agent authored:
+
+        dense_reward: [{predicate: constant, value: 1e999}]
+        register_benchmark_from_file  -> success
+        evaluate_benchmark            -> success, "Avg reward: inf"
+        json                          -> avg_reward = inf
+
+    Also reachable via ``weight: 1e999`` on any float term (-> -inf). Every gate
+    reported success, so an eval run silently produced a meaningless score - and a
+    ``nan`` reward poisons any training objective that consumes it. Validating
+    here covers success / failure / dense_reward / stop_when at once, since every
+    spec predicate is compiled through :func:`_compile_call`.
+
+    Lists are checked element-wise (``point``, ``bounds`` and friends take
+    sequences of floats). ``bool`` is an ``int`` subclass and always finite.
+    """
+    for key, value in kwargs.items():
+        candidates = value if isinstance(value, (list, tuple)) else [value]
+        for index, item in enumerate(candidates):
+            if isinstance(item, bool) or not isinstance(item, numbers.Real):
+                continue
+            if math.isfinite(float(item)):
+                continue
+            where = f"{key}[{index}]" if isinstance(value, (list, tuple)) else key
+            raise ValueError(
+                f"{context}: predicate {pred_name!r} kwarg '{where}' is not finite ({item}). "
+                "A non-finite threshold or weight propagates into the reward - an eval run "
+                "reports 'Avg reward: inf' while every call still returns success."
+            )
+
+
 def _compile_call(entry: Any, *, context: str, require_kind: str | None = None) -> Callable[[SimEngine], Any]:
     """Compile one ``{predicate: <name>, **kwargs}`` entry to a callable.
 
@@ -165,6 +204,7 @@ def _compile_call(entry: Any, *, context: str, require_kind: str | None = None) 
             f"predicates: {bool_preds}"
         )
     kwargs = {k: v for k, v in entry.items() if k != "predicate"}
+    _reject_non_finite_kwargs(kwargs, context=context, pred_name=pred_name)
     try:
         return make_predicate(pred_name, **kwargs)
     except ValueError:

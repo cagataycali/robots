@@ -155,3 +155,89 @@ class TestListUrdfsUnion:
         assert isinstance(urdf_robots, list) and len(urdf_robots) > 0
         if urdf_robots:
             assert "robot_descriptions" in result["content"][0]["text"]
+
+
+class TestDataConfigResolvesTheAsset:
+    """``data_config`` is the registry key; ``name`` is the instance label.
+
+    Newton's ``add_robot`` documented ``data_config`` as "Accepted for ABC parity;
+    unused by Newton" and resolved purely on ``name``. So the multi-robot form the
+    MuJoCo backend actively recommends - its own hint reads "Prefer:
+    add_robot(name='<instance_label>', data_config='so101')" - failed here::
+
+        MUJOCO add_robot(name='armA', data_config='so101') -> success, joints 1..6
+        NEWTON add_robot(name='armA', data_config='so101') -> error
+               "Could not resolve a sim asset for robot 'armA'."
+
+    The single-robot ``Robot("so101", backend="newton")`` only worked because the
+    instance label happened to BE the registry key.
+    """
+
+    def test_data_config_resolves_an_instance_label(self, engine):
+        """The regression: this errored on Newton and succeeded on MuJoCo."""
+        result = engine.add_robot(name="armA", data_config="so101")
+
+        assert result["status"] == "success", result
+        assert engine.robot_joint_names("armA") == ["1", "2", "3", "4", "5", "6"]
+
+    def test_two_instances_of_one_config_get_distinct_index_maps(self, engine):
+        """The point of the form: two arms from one registry entry."""
+        assert engine.add_robot(name="armA", data_config="so101")["status"] == "success"
+        assert engine.add_robot(name="armB", data_config="so101", position=[0.6, 0.0, 0.0])["status"] == "success"
+
+        first = {j: engine._joint_dof_index[("armA", j)] for j in engine.robot_joint_names("armA")}
+        second = {j: engine._joint_dof_index[("armB", j)] for j in engine.robot_joint_names("armB")}
+
+        assert set(first.values()).isdisjoint(second.values()), (first, second)
+
+    def test_actuating_one_instance_leaves_the_other_alone(self, engine):
+        """Distinct maps must mean distinct actuation, not just distinct numbers."""
+        assert engine.add_robot(name="armA", data_config="so101")["status"] == "success"
+        assert engine.add_robot(name="armB", data_config="so101", position=[0.6, 0.0, 0.0])["status"] == "success"
+
+        assert engine.send_action({"1": 0.8}, robot_name="armA")["status"] == "success"
+        engine.step(40)
+
+        assert float(engine.get_observation("armA")["1"]) > 0.5
+        assert float(engine.get_observation("armB")["1"]) == pytest.approx(0.0, abs=1e-3)
+
+    def test_the_data_config_is_recorded_on_the_robot(self, engine):
+        engine.add_robot(name="armA", data_config="so101")
+
+        assert engine._world.robots["armA"].data_config == "so101"
+
+    def test_a_name_only_caller_still_resolves(self, engine):
+        """The fallback must stay: ``name`` as the registry key."""
+        result = engine.add_robot("so101")
+
+        assert result["status"] == "success", result
+        assert engine.robot_joint_names("so101") == ["1", "2", "3", "4", "5", "6"]
+
+    def test_an_unknown_data_config_names_the_config_not_the_label(self, engine):
+        """Naming the instance label would send the caller after the wrong key."""
+        result = engine.add_robot(name="armC", data_config="not_a_robot")
+
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert "not_a_robot" in text, text
+        assert "armC" not in text, text
+        assert text.isascii()
+
+    def test_an_explicit_urdf_path_still_wins(self, engine, urdf_file):
+        """Precedence: urdf_path > data_config > name."""
+        result = engine.add_robot(name="armD", urdf_path=urdf_file, data_config="so101")
+
+        assert result["status"] == "success", result
+        # The mini URDF's joints, not so101's "1".."6".
+        assert engine.robot_joint_names("armD") == ["shoulder", "elbow"]
+
+    def test_resolve_asset_prefers_data_config_over_name(self, engine):
+        """Unit-level: the resolver itself, independent of add_robot."""
+        by_config, error = engine._resolve_asset("armA", None, "so100")
+
+        assert error is None
+        assert by_config is not None and by_config.endswith(".xml")
+        # And the same label without a data_config does NOT resolve.
+        by_name, name_error = engine._resolve_asset("armA", None)
+        assert by_name is None
+        assert name_error is not None

@@ -455,9 +455,20 @@ class TestGraspPreservation:
 
     def test_direct_path_move_to_preserves_open_gripper(self, sim):
         """The direct-solve path must hold the jaw too (the gripper channel is
-        written every tick with the LIVE position, not left to stale ctrl)."""
+        written every tick with the COMMAND, not left to stale ctrl).
+
+        ``steps=200`` lets the jaw servo finish travelling before the comparison.
+        With ``steps=40`` it is still mid-travel (qpos 1.347 against ctrl 1.5) and
+        this test would be asserting that ``move_to`` FREEZES a moving jaw - which
+        is what the old hold-at-``data.qpos`` implementation did, and is exactly
+        the bug that dropped grasped objects: re-commanding a position servo to
+        wherever the load is currently holding it means "stop applying force". The
+        held value is now ``data.ctrl``, so the jaw completes its commanded travel
+        during ``move_to`` instead of being pinned mid-stroke. With a settled jaw
+        the hold is an exact no-op (measured delta 1e-5).
+        """
         pytest.importorskip("mink")
-        r = _dispatch(sim, "set_gripper", robot_name="arm", state="open", steps=40)
+        r = _dispatch(sim, "set_gripper", robot_name="arm", state="open", steps=200)
         assert r["status"] == "success", r
         jaw_before = _jaw_pos(sim)
         assert jaw_before > 1.0, f"jaw did not open: {jaw_before}"

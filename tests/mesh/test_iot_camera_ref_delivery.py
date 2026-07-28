@@ -66,6 +66,9 @@ class TestCameraRefReachesTheWire:
     MQTT client, and never hand it a raw frame."""
 
     def _connected_transport(self) -> IotMqttTransport:
+        # put() builds a real mqtt5.PublishPacket even with a fake client;
+        # without awscrt the ref delivery path cannot be exercised.
+        pytest.importorskip("awscrt")
         t = IotMqttTransport(thing_name="thor-arm", endpoint="x-ats.iot.us-west-2.amazonaws.com")
         t._client = _FakeClient()
         t._connected.set()

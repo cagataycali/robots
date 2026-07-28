@@ -231,6 +231,29 @@ def _ensure_mujoco() -> "Any":
     return _mujoco
 
 
+def _actuator_target_joint(model: "Any", act_id: int) -> int:
+    """Joint id an actuator drives directly, or ``-1`` if it drives no joint.
+
+    ``model.actuator_trnid[act_id, 0]`` is only a JOINT id when the actuator's
+    transmission is JOINT / JOINTINPARENT. For a TENDON drive it is a *tendon*
+    id, for SITE / BODY a site / body id -- all of which share the same small
+    integer space as joint ids. Comparing the raw value against a set of joint
+    ids therefore produces false matches (a Panda's tendon gripper has
+    ``trnid[0] == 0`` and collides with joint id 0), which silently
+    misattributes actuators between robots and reads the wrong ``qpos`` into a
+    gripper's ``ctrl``.
+
+    Callers that need tendon-driven joints too should additionally walk the
+    tendon's wrap list (see ``_actuator_for_joint`` in :mod:`rendering`); this
+    helper deliberately answers only the direct-transmission question.
+    """
+    mj = _ensure_mujoco()
+    trntype = int(model.actuator_trntype[act_id])
+    if trntype not in (int(mj.mjtTrn.mjTRN_JOINT), int(mj.mjtTrn.mjTRN_JOINTINPARENT)):
+        return -1
+    return int(model.actuator_trnid[act_id, 0])
+
+
 _rendering_available: bool | None = None
 
 # One-shot guard so the software-rendering warning fires at most once per

@@ -470,7 +470,14 @@ class IotMqttTransport:
 
         try:
             from awscrt import mqtt5
+        except ImportError as exc:
+            # A missing awscrt is a PERMANENT failure (every future publish
+            # fails too), not a transient publish error - surface it loudly
+            # instead of burying it in the fire-and-forget debug log below.
+            logger.warning("MQTT put on %s dropped: awscrt not installed (%s)", key, exc)
+            return
 
+        try:
             qos_enum = mqtt5.QoS.AT_MOST_ONCE if qos == 0 else mqtt5.QoS.AT_LEAST_ONCE
             self._client.publish(
                 mqtt5.PublishPacket(

@@ -21,6 +21,7 @@ Usage:
     recorder.push_to_hub()
 """
 
+import functools
 import json
 import logging
 import re
@@ -379,6 +380,93 @@ def _lerobot_home() -> Path:
         return Path.home() / ".cache" / "huggingface" / "lerobot"
 
 
+def _is_camera_feature(spec: Any) -> bool:
+    """Is this ``robot_features`` / ``action_features`` entry a CAMERA?
+
+    Only the dict form (``{"dtype": "image"|"video", ...}``) used to be
+    recognised, but lerobot's real hardware feature dicts express a camera as a
+    bare TUPLE of dimensions - ``{"front": (48, 64, 3)}`` - so every camera fell
+    through to the scalar branch and was appended to ``observation.state``:
+
+        lerobot ground truth: observation.state (6,) + observation.images.front + .wrist
+        strands:              observation.state (8,) names [...6 motors, 'front', 'wrist']
+
+    Two outcomes, both bad. With the camera present in the observation,
+    ``add_frame`` flattened the ``(48,64,3)`` ndarray into the state vector -
+    9222 values against a declared ``(7,)``, which lerobot rejects on every
+    frame. With the camera absent (``skip_images``, or declared only via
+    ``camera_keys=``), the slot was zero-filled forever: a phantom state column
+    that ``verify_dataset`` calls clean and that a trained policy bakes into
+    ``input_features["observation.state"].shape``, so an SO-101 emitting 6 values
+    no longer matches its own checkpoint.
+
+    ``docs/recording.md`` instructs exactly this call
+    (``robot_features=robot.observation_features``), i.e. it is the documented
+    real-hardware entry point.
+
+    Matches lerobot 0.6.0's own ``hw_to_dataset_features``, whose camera test is
+    ``isinstance(shape, tuple)``; a list is accepted too, since a JSON-round-tripped
+    feature dict loses the tuple type.
+
+    Args:
+        spec: One feature-dict value.
+
+    Returns:
+        ``True`` when the entry describes a camera rather than a scalar signal.
+    """
+    if isinstance(spec, dict):
+        return spec.get("dtype") in ("image", "video")
+    # A bare (H, W, C) shape - lerobot's hardware convention.
+    if isinstance(spec, (tuple, list)):
+        return True
+    return False
+
+
+def _state_source_keys_from_schema(dataset: Any) -> list[str] | None:
+    """Invert the vector-state expansion to recover ``add_frame``'s read order.
+
+    ``create`` records ``_state_source_keys`` (``["hip", "knee", "base_pos",
+    "base_quat"]``) alongside a schema whose ``observation.state`` names are
+    EXPANDED (``base_pos.x``, ``base_quat.w``, ...). ``resume`` inherits only the
+    schema, so the source order has to be reconstructed from it: scalars stay
+    verbatim, and each ``<src>.<comp>`` group collapses to ``<src>`` at the
+    position of its first component.
+
+    Returns ``None`` when no dotted name is present, which keeps the scalar-only
+    case (every fixed-base arm - the common live path) on exactly the historical
+    behaviour: ``add_frame`` derives its read order from the schema names, which
+    for a scalar schema is already correct.
+
+    A component name containing a further dot is split once from the RIGHT, so a
+    joint legitimately named ``arm.wrist`` with components stays groupable.
+
+    Args:
+        dataset: The resumed ``LeRobotDataset``; its
+            ``features["observation.state"]["names"]`` is read.
+
+    Returns:
+        Source keys in first-appearance order, or ``None`` for a scalar-only
+        schema (or when the schema cannot be read).
+    """
+    try:
+        feature = dataset.features["observation.state"]
+        names = feature.get("names", []) if isinstance(feature, dict) else getattr(feature, "names", [])
+    except (AttributeError, KeyError, TypeError):
+        return None
+    if not names:
+        return None
+    sources: list[str] = []
+    for name in names:
+        source = name.rsplit(".", 1)[0] if "." in name else name
+        if source not in sources:
+            sources.append(source)
+    # No expansion happened, so the schema names ARE the source keys and the
+    # historical fallback already handles them.
+    if sources == list(names):
+        return None
+    return sources
+
+
 def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
     """Resolve the on-disk directory a dataset will live in.
 
@@ -386,9 +474,24 @@ def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
     target before ``create``/``resume``:
 
     * explicit ``root`` -> used verbatim;
-    * a ``repo_id`` that is itself a path (absolute, ``./`` prefixed, or with no
-      ``owner/name`` slash) -> treated as a local directory;
+    * a ``repo_id`` that is unambiguously a path (``/``, ``./``, ``../`` or
+      ``~`` prefixed) -> treated as a local directory;
     * otherwise ``$HF_LEROBOT_HOME/{repo_id}``.
+
+    A SLASH-LESS ``repo_id`` is NOT a local path. lerobot resolves
+    ``HF_LEROBOT_HOME / repo_id`` unconditionally
+    (``dataset_metadata.py:101`` and ``:778``), so returning ``Path(repo_id)``
+    aimed every consumer of this function at a directory lerobot never touches:
+
+    * ``overwrite=True`` rmtree'd a nonexistent ``./mydataset``, leaving
+      lerobot's own ``mkdir(exist_ok=False)`` to raise the bare
+      ``FileExistsError`` that ``_prepare_create_target`` exists to prevent;
+    * the "existing dataset -> name overwrite/resume" guard never fired;
+    * the sim facade stashed the wrong ``last_dataset_root``, so the idle-path
+      bucket sync uploaded from a path that does not exist;
+    * and worst, if a directory of that name happened to exist in the CWD,
+      ``overwrite=True`` DELETED IT - measured, an unrelated ``./mydataset``
+      holding a sentinel file did not survive.
 
     Args:
         repo_id: HuggingFace dataset id (``owner/name``) or a local path.
@@ -399,8 +502,10 @@ def resolve_dataset_dir(repo_id: str, root: str | None = None) -> Path:
     """
     if root:
         return Path(root)
-    if "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
-        return Path(repo_id)
+    # ``~`` is expanded here because lerobot's own path handling does not, and
+    # an unexpanded ``~`` would create a literal directory named "~".
+    if repo_id.startswith(("/", "./", "../", "~")):
+        return Path(repo_id).expanduser()
     return _lerobot_home() / repo_id
 
 
@@ -492,6 +597,20 @@ class DatasetRecorder:
         self.dropped_frame_count = 0
         self.strict = strict
         self.episode_count = 0
+        # Session-scoped counts: frames/episodes THIS recorder produced. Distinct
+        # from frame_count / episode_count, which ``resume()`` seeds from the
+        # dataset already on disk "so reporting reflects totals" - that seeding
+        # makes the totals useless as an "did this session capture anything"
+        # test, so an append session that recorded NOTHING had pending == 0 and
+        # captured > 0, skipped both guard branches, and stop_recording reported
+        # success with the INHERITED counts ("5 frames, 1 episode(s)" for a
+        # session that ran no rollout at all). Never seeded by resume().
+        self.session_frame_count = 0
+        self.session_episode_count = 0
+        # Episodes already on disk when this recorder resumed, so the
+        # parquet-truth gate can compare seeded + session against
+        # meta.total_episodes instead of comparing a seeded total to itself.
+        self.episodes_seeded_at_resume = 0
         self._closed = False
         self._cached_state_keys: list[str] | None = None
         self._cached_action_keys: list[str] | None = None
@@ -510,6 +629,13 @@ class DatasetRecorder:
         # One-shot guard so the camera-key-mismatch diagnostic is logged once
         # per recorder instead of every control step (50Hz would flood logs).
         self._warned_camera_mismatch = False
+        # Frames whose state OR action vector came ENTIRELY from the zero-fill
+        # because no declared schema name matched the incoming dict. That is a
+        # dead column, not a gap: the episode records [0,0,...] while add_frame
+        # returns normally, frame_count increments and save_episode succeeds.
+        self.zero_filled_frame_count = 0
+        self._warned_state_mismatch = False
+        self._warned_action_mismatch = False
 
     @staticmethod
     def _normalize_camera_key_map(camera_key_map: dict[str, str] | None) -> dict[str, str]:
@@ -745,7 +871,24 @@ class DatasetRecorder:
             )
 
         resume_sig = inspect.signature(LeRobotDatasetCls.resume).parameters
-        resume_kwargs: dict[str, Any] = dict(repo_id=repo_id, root=root)
+        # Resolve the root before forwarding. lerobot 0.6.0's ``resume`` hard-
+        # rejects a falsy root ("resume() requires an explicit 'root' directory
+        # because it creates a DatasetWriter"), so forwarding the caller's raw
+        # ``root`` made ``resume(root=None)`` impossible - and that is the
+        # DOCUMENTED workflow: ``docs/recording.md`` says "start_recording resumes
+        # it and appends new episodes" and shows ``resume()`` with no root, while
+        # both sim backends pass the caller's raw root straight through. So every
+        # append failed:
+        #
+        #     start#1 success ; stop#1 success
+        #     start#2 (append): error | resume() requires an explicit 'root' ...
+        #
+        # The recorder already knows where the dataset lives; ``resolve_dataset_dir``
+        # is the same resolver ``_prepare_create_target`` uses, so the create and
+        # resume paths agree on the location by construction. The sim backends need
+        # no change.
+        resolved_root = str(root) if root else str(resolve_dataset_dir(repo_id, root))
+        resume_kwargs: dict[str, Any] = dict(repo_id=repo_id, root=resolved_root)
         # Mirror create()'s version-tolerant codec routing.
         resume_kwargs.update(_codec_create_kwargs(resume_sig, vcodec, context="resume"))
         if "streaming_encoding" in resume_sig:
@@ -761,8 +904,28 @@ class DatasetRecorder:
         try:
             recorder.episode_count = int(dataset.meta.total_episodes)
             recorder.frame_count = int(dataset.meta.total_frames)
+            # Remember what was inherited so the parquet gate keeps its
+            # discriminating power on the append path; the session_* counters
+            # stay at 0 on purpose (see __init__).
+            recorder.episodes_seeded_at_resume = int(dataset.meta.total_episodes)
         except Exception:  # noqa: BLE001 - counters are best-effort
             pass
+        # Reconstruct the SOURCE read order from the inherited schema. ``create``
+        # sets ``_state_source_keys`` so ``add_frame`` reads ``base_quat`` and
+        # flattens it into the four expanded ``base_quat.*`` slots; ``resume``
+        # left it None, so add_frame fell back to the dataset's EXPANDED names -
+        # none of which exist in the observation - and zero-filled the whole
+        # block. Measured, one frame per session with an identical observation:
+        #
+        #     SESSION1 state: [0.1, 0.2, 1.0, 2.0, 3.0, 1.0, 0.0, 0.0, 0.0]
+        #     SESSION2 state: [0.1, 0.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        #
+        # So every appended episode of a humanoid / quadruped / mobile-base /
+        # LeKiwi dataset lost its entire base block, and ``base_quat.w = 0``
+        # is an INVALID quaternion (norm 0) rather than merely a wrong one.
+        # verify_dataset's dead-column check requires the WHOLE vector to be
+        # zero, so the joints kept it quiet.
+        recorder._state_source_keys = _state_source_keys_from_schema(dataset)
         logger.info(
             "DatasetRecorder resumed: %s (%d existing episodes)",
             repo_id,
@@ -818,11 +981,7 @@ class DatasetRecorder:
         state_names = []
         if robot_features:
             # Count scalar features (exclude cameras)
-            state_keys = [
-                k
-                for k, v in robot_features.items()
-                if not isinstance(v, dict) or v.get("dtype") not in ("image", "video")
-            ]
+            state_keys = [k for k, v in robot_features.items() if not _is_camera_feature(v)]
             state_dim = len(state_keys)
             state_names = state_keys
         elif joint_names:
@@ -857,11 +1016,7 @@ class DatasetRecorder:
         action_dim = 0
         action_col_names: list[str] = []
         if action_features:
-            action_keys = [
-                k
-                for k, v in action_features.items()
-                if not isinstance(v, dict) or v.get("dtype") not in ("image", "video")
-            ]
+            action_keys = [k for k, v in action_features.items() if not _is_camera_feature(v)]
             action_dim = len(action_keys)
             action_col_names = action_keys
         elif action_names:
@@ -921,6 +1076,11 @@ class DatasetRecorder:
                     img = (np.clip(img, 0, 1) * 255).astype(np.uint8)
                 frame[f"observation.images.{cam_key}"] = img
 
+        # Set in the two vector blocks below; declared here so the diagnostic
+        # after them is reachable whichever branch ran.
+        all_missed_state = False
+        all_missed_action = False
+
         # State → observation.state (flattened vector)
         # Use feature schema ordering to match the dataset schema declared in _build_features().
         if state_keys:
@@ -935,6 +1095,7 @@ class DatasetRecorder:
                     state_names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
                     self._cached_state_keys = state_names if state_names else sorted(state_keys)
 
+            state_matched = 0
             for k in self._cached_state_keys:
                 v = observation.get(k)
                 if v is None:
@@ -948,8 +1109,11 @@ class DatasetRecorder:
                 elif isinstance(v, (list, np.ndarray)):
                     arr = np.asarray(v, dtype=np.float32).flatten()
                     state_vals.extend(arr.tolist())
+                if v is not None:
+                    state_matched += 1
             if state_vals:
                 frame["observation.state"] = np.array(state_vals, dtype=np.float32)
+            all_missed_state = state_matched == 0 and bool(self._cached_state_keys)
 
         # Action → flattened vector
         # Use feature schema ordering for actions too.
@@ -960,6 +1124,7 @@ class DatasetRecorder:
                 action_names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
                 self._cached_action_keys = action_names if action_names else sorted(action.keys())
 
+            action_matched = 0
             for k in self._cached_action_keys:
                 v = action.get(k)
                 if v is None:
@@ -973,8 +1138,56 @@ class DatasetRecorder:
                 elif isinstance(v, (list, np.ndarray)):
                     arr = np.asarray(v, dtype=np.float32).flatten()
                     action_vals.extend(arr.tolist())
+                if v is not None:
+                    action_matched += 1
             if action_vals:
                 frame["action"] = np.array(action_vals, dtype=np.float32)
+            all_missed_action = action_matched == 0 and bool(self._cached_action_keys)
+
+        # Surface the silent data-loss case for the LOAD-BEARING columns - the
+        # counterpart of the camera diagnostic further down. When no declared
+        # schema name is present in the incoming dict, every frame is written as
+        # an all-zero vector while add_frame returns normally and save_episode
+        # reports success, so the episode looks complete and trains on a dead
+        # control column. Usual cause: a schema of bare joint names against a
+        # runtime emitting '<joint>.pos' (or the reverse, or an un-remapped
+        # multi-robot prefix). ONLY the all-missed case - a partial miss is the
+        # legitimate "declare 6 joints, this frame carries 5" path.
+        if all_missed_state and not self._warned_state_mismatch:
+            self._warned_state_mismatch = True
+            logger.warning(
+                "DatasetRecorder: none of the declared state names %s are present in the observation "
+                "(observed keys %s), so observation.state is being written as an all-zero vector - the "
+                "dataset will train on a dead column. Declare joint_names matching the keys the runtime "
+                "emits (e.g. '<joint>.pos' vs '<joint>'), or remap them before add_frame.",
+                sorted(self._cached_state_keys or [])[:12],
+                sorted(k for k, v in observation.items() if isinstance(v, (int, float, np.generic)))[:12],
+            )
+        if all_missed_action and not self._warned_action_mismatch:
+            self._warned_action_mismatch = True
+            logger.warning(
+                "DatasetRecorder: none of the declared action names %s are present in the action dict "
+                "(observed keys %s), so action is being written as an all-zero vector - the dataset will "
+                "train on a dead column. Declare action_names matching the keys the policy emits, or "
+                "remap them before add_frame.",
+                sorted(self._cached_action_keys or [])[:12],
+                sorted(action.keys())[:12] if action else [],
+            )
+        if all_missed_state or all_missed_action:
+            self.zero_filled_frame_count += 1
+            if self.strict:
+                raise ValueError(
+                    "DatasetRecorder(strict=True): "
+                    + (
+                        "no declared state name matched the observation"
+                        if all_missed_state
+                        else "no declared action name matched the action dict"
+                    )
+                    + f"; declared state={sorted(self._cached_state_keys or [])[:8]}, "
+                    + f"declared action={sorted(self._cached_action_keys or [])[:8]}. "
+                    "Refusing to record an all-zero vector. Fix the key naming, or set strict=False "
+                    "to record anyway."
+                )
 
         # Task (mandatory for LeRobot v3)
         frame["task"] = task or self.default_task or "untitled"
@@ -1047,6 +1260,7 @@ class DatasetRecorder:
             self.dataset.add_frame(frame)
             self.frame_count += 1
             self.episode_frame_count += 1
+            self.session_frame_count += 1
         except Exception as e:
             if self.strict:
                 raise  # Fail-fast per AGENTS.md convention #5
@@ -1076,6 +1290,7 @@ class DatasetRecorder:
         try:
             self.dataset.save_episode()
             self.episode_count += 1
+            self.session_episode_count += 1
             # Report frames in THIS episode, not the cumulative total.
             # frame_count is monotonic across all episodes; episode_frame_count
             # is the count since the last save. Reset it after reporting.
@@ -1088,12 +1303,37 @@ class DatasetRecorder:
                 ep_frames,
                 total_frames,
             )
-            return {
+            # Report the loss counters alongside the frame counts. lerobot
+            # derives timestamps POSITIONALLY (frame_index = len(buffer);
+            # timestamp = frame_index / fps), so a dropped frame is not a gap -
+            # the survivors are renumbered contiguously and the discontinuity is
+            # ERASED. Measured: 5 frames with the 3rd rejected recorded
+            # j1=[0.0, 1.0, 3.0, 4.0] under timestamps [0, .0333, .0667, .1],
+            # i.e. a 1.0 -> 3.0 jump presented as one control period. The result
+            # is internally consistent and passes verify_dataset while encoding a
+            # trajectory that was never executed - so the only way a caller can
+            # know is if these counters are in the payload.
+            result = {
                 "status": "success",
                 "episode": self.episode_count,
                 "episode_frames": ep_frames,
                 "total_frames": total_frames,
+                "dropped_frame_count": self.dropped_frame_count,
+                "zero_filled_frame_count": self.zero_filled_frame_count,
             }
+            if self.dropped_frame_count or self.zero_filled_frame_count:
+                result["degraded"] = True
+                logger.warning(
+                    "Episode %d saved but the dataset is DEGRADED: %d frame(s) dropped and %d "
+                    "written as all-zero vectors. Dropped frames are renumbered contiguously by "
+                    "lerobot, so the timestamps hide the discontinuity and the episode encodes a "
+                    "trajectory that was never executed. Discard this episode rather than training "
+                    "on it.",
+                    self.episode_count,
+                    self.dropped_frame_count,
+                    self.zero_filled_frame_count,
+                )
+            return result
         except Exception as e:
             logger.error("save_episode failed: %s", e)
             # Mark recorder as poisoned - the LeRobot episode buffer is in
@@ -1251,6 +1491,29 @@ class DatasetRecorder:
 # Shared replay-episode helpers
 
 
+@functools.cache
+def resolve_video_backend() -> str | None:
+    """Pick the LeRobotDataset video *decode* backend usable on this host.
+
+    ``None`` defers to lerobot's platform default (torchcodec on Linux). But a
+    torchcodec wheel whose native cores cannot load (FFmpeg major mismatch or
+    a torch ABI gap - the NVIDIA Tegra situation) makes every video read-back
+    raise deep inside decoding. Probe once per process: when torchcodec's
+    decoder actually loads, defer to the default; otherwise fall back to
+    ``"pyav"`` with a one-shot warning.
+    """
+    try:
+        from torchcodec.decoders import VideoDecoder  # noqa: F401
+
+        return None
+    except Exception as exc:  # noqa: BLE001 - native-loader errors vary by platform
+        logger.warning(
+            "torchcodec is unusable on this host (%s); using video_backend='pyav' for dataset read-back",
+            str(exc).splitlines()[0][:160],
+        )
+        return "pyav"
+
+
 def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None):
     """Load a LeRobotDataset and resolve the frame range for an episode.
 
@@ -1267,7 +1530,7 @@ def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id=repo_id, root=root)
+    ds = LeRobotDataset(repo_id=repo_id, root=root, video_backend=resolve_video_backend())
 
     num_episodes = ds.meta.total_episodes if hasattr(ds.meta, "total_episodes") else len(ds.meta.episodes)
     if episode >= num_episodes:

@@ -38,6 +38,26 @@ logger = logging.getLogger(__name__)
 _GROOT_VERSION: str | None = None  # "n1.5", "n1.6", "n1.7", or None
 
 
+def _probe_module(dotted: str) -> bool:
+    """True if ``dotted`` resolves to an importable module spec.
+
+    ``find_spec("a.b.c")`` IMPORTS the parent packages (``a.b``) to resolve
+    the tail, so a gr00t checkout whose import-time code is broken (e.g. a
+    dataclass field-ordering TypeError on a new Python) can raise arbitrary
+    exceptions here - not just ModuleNotFoundError. For detection purposes
+    any failure means "no usable install": the error is logged so a broken
+    local checkout stays visible, service mode keeps working without local
+    gr00t, and local mode still fails loudly when it actually imports it.
+    """
+    try:
+        return importlib.util.find_spec(dotted) is not None
+    except (ModuleNotFoundError, ValueError):
+        return False
+    except Exception as exc:  # noqa: BLE001 - probing third-party import-time code
+        logger.warning("Isaac-GR00T probe %r failed at import time: %s", dotted, exc)
+        return False
+
+
 def _detect_groot_version(*, force: bool = False) -> str | None:
     """Auto-detect which Isaac-GR00T version (if any) is installed.
 
@@ -59,32 +79,15 @@ def _detect_groot_version(*, force: bool = False) -> str | None:
     # Reset before re-detection
     _GROOT_VERSION = None
 
-    # N1.7 first - the new Cosmos-Reason2-2B backbone lives here.
-    # Detecting by subpackage (not enum values) keeps the probe cheap.
-    try:
-        if importlib.util.find_spec("gr00t.model.gr00t_n1d7") is not None:
-            _GROOT_VERSION = "n1.7"
-            logger.info("Detected Isaac-GR00T N1.7")
+    for dotted, version, label in (
+        ("gr00t.model.gr00t_n1d7", "n1.7", "N1.7"),
+        ("gr00t.policy.gr00t_policy", "n1.6", "N1.6"),
+        ("gr00t.model.policy", "n1.5", "N1.5"),
+    ):
+        if _probe_module(dotted):
+            _GROOT_VERSION = version
+            logger.info("Detected Isaac-GR00T %s", label)
             return _GROOT_VERSION
-    except (ModuleNotFoundError, ValueError):
-        pass
-
-    try:
-        if importlib.util.find_spec("gr00t.policy.gr00t_policy") is not None:
-            _GROOT_VERSION = "n1.6"
-            logger.info("Detected Isaac-GR00T N1.6")
-            return _GROOT_VERSION
-    except (ModuleNotFoundError, ValueError):
-        pass
-
-    try:
-        if importlib.util.find_spec("gr00t.model.policy") is not None:
-            _GROOT_VERSION = "n1.5"
-            logger.info("Detected Isaac-GR00T N1.5")
-            return _GROOT_VERSION
-    except (ModuleNotFoundError, ValueError):
-        pass
-
     return None
 
 

@@ -99,11 +99,29 @@ class _FakeMesh:
         self.indices = indices
 
 
+class _RecordedCfg:
+    """Stand-in for ``ShapeConfig``, recording the derived density.
+
+    ``_add_object_to_builder`` passes ``cfg=`` so the requested mass is the ONLY
+    mass: Newton's ``add_shape_*`` defaults to ``density=1000`` and ACCUMULATES
+    onto the body. See ``test_object_mass_fidelity.py``.
+    """
+
+    def __init__(self, density: float) -> None:
+        self.density = density
+
+
 def _mesh_engine_stub(vertices, indices):
     wp = _RecordingWp()
     stub = types.SimpleNamespace(_wp=wp, _nt=types.SimpleNamespace(Mesh=_FakeMesh))
     stub._wxyz_to_wp_quat = lambda wxyz: NewtonSimEngine._wxyz_to_wp_quat(stub, wxyz)
     stub._load_mesh_geometry = lambda mesh_path: (vertices, indices)
+    # Real helpers need newton installed; substitute recorders so this file keeps
+    # running GL-free while still exercising the cfg-passing path.
+    stub._mesh_volume = staticmethod(NewtonSimEngine._mesh_volume)
+    stub._shape_density_cfg = lambda obj, body, volume: (
+        None if body < 0 or not volume or volume <= 0 else _RecordedCfg(obj.mass / volume)
+    )
     return stub
 
 

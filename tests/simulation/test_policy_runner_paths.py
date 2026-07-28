@@ -504,14 +504,37 @@ def test_maybe_sim_time_get_state_without_sim_time_returns_none():
 # ── _resolve_success_fn "contact" positive detection ─────────────────
 
 
-def test_contact_success_fn_true_on_n_contacts():
-    """``success_fn="contact"`` reports success when the backend's
-    ``get_contacts`` returns a positive ``n_contacts`` count.
+def _contact_envelope(contacts: list[dict]) -> dict:
+    """The shape every real backend returns: the agent-tool envelope.
+
+    ``RenderingMixin.get_contacts`` (the only implementation in the tree) returns
+    ``{"status", "content"}`` with the payload in a ``json`` content block. Only
+    those two keys exist at the top level, so a predicate that reads
+    ``result["n_contacts"]`` / ``result["contacts"]`` sees nothing.
+    """
+    return {
+        "status": "success",
+        "content": [
+            {"text": f"{len(contacts)} contacts"},
+            {"json": {"contacts": contacts, "n_contacts": len(contacts)}},
+        ],
+    }
+
+
+def test_contact_success_fn_true_on_real_envelope():
+    """``success_fn="contact"`` must read the ENVELOPE every backend returns.
+
+    Regression: the runner's own copy of this predicate read ``n_contacts`` /
+    ``contacts`` off the top level, which no backend emits, so it returned False
+    unconditionally - and ``eval_policy`` then reported ``success_rate=0.0``
+    alongside ``success_measured=True``, presenting "never succeeded" as a
+    measurement. The two tests this replaces asserted a bare-dict shape that no
+    in-tree backend produces, so they passed while the feature was broken.
     """
 
     class _ContactSim(_MinimalSim):
         def get_contacts(self):
-            return {"n_contacts": 2}
+            return _contact_envelope([{"body1": "cube", "body2": "floor", "dist": -0.001, "force": 2.0}])
 
     sim = _ContactSim(robots=["r0"])
     fn = PolicyRunner(sim)._resolve_success_fn("contact")
@@ -519,16 +542,33 @@ def test_contact_success_fn_true_on_n_contacts():
     assert fn({}) is True
 
 
-def test_contact_success_fn_true_on_contacts_list():
-    """``success_fn="contact"`` also accepts the ``{"contacts": [...]}`` shape."""
+def test_contact_success_fn_false_on_empty_envelope():
+    """An envelope carrying no contacts must report False, not crash."""
 
-    class _ContactListSim(_MinimalSim):
+    class _NoContactSim(_MinimalSim):
         def get_contacts(self):
-            return {"contacts": [{"a": "hand", "b": "cube"}]}
+            return _contact_envelope([])
 
-    sim = _ContactListSim(robots=["r0"])
+    sim = _NoContactSim(robots=["r0"])
     fn = PolicyRunner(sim)._resolve_success_fn("contact")
-    assert fn({}) is True
+    assert fn({}) is False
+
+
+def test_contact_success_fn_matches_the_predicate_dsl():
+    """The runner path and ``predicates._contact_any`` must not diverge again.
+
+    ``_contact_any``'s docstring claims it "matches the legacy
+    ``success_fn='contact'`` path"; this pins that claim by construction.
+    """
+    from strands_robots.simulation.predicates import _contact_any
+
+    class _ContactSim(_MinimalSim):
+        def get_contacts(self):
+            return _contact_envelope([{"body1": "cube", "body2": "floor", "dist": -0.001, "force": 2.0}])
+
+    sim = _ContactSim(robots=["r0"])
+    runner_fn = PolicyRunner(sim)._resolve_success_fn("contact")
+    assert runner_fn({}) is _contact_any()(sim)
 
 
 def test_contact_success_fn_false_when_no_get_contacts():

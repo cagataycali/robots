@@ -10,6 +10,7 @@ installed in the test environment.  Mesh-specific tests opt back in
 explicitly via ``monkeypatch.delenv`` or by patching ``init_mesh``.
 """
 
+import importlib
 import os
 
 # Disable mesh BEFORE any strands_robots import below pulls in robot.py.
@@ -27,3 +28,11 @@ from tests.mocks.torch_mock import install_torch_mock
 
 # Must run before any test imports policy modules
 install_torch_mock()
+
+# Configure the MuJoCo GL backend BEFORE any test imports mujoco.
+# ``strands_robots.__init__`` sets MUJOCO_GL exactly once (egl on headless GPU
+# hosts), and MuJoCo locks the backend at first import -- a test whose
+# ``pytest.importorskip("mujoco")`` runs first would otherwise lock the default
+# glfw backend, which fails without a display and poisons every offscreen
+# render in the whole pytest process.
+importlib.import_module("strands_robots")  # noqa: E402  (imported for its MUJOCO_GL side effect)

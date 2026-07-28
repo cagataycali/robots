@@ -814,22 +814,24 @@ class TestRealModeConfigDiscovery:
         assert (front.fps, front.width, front.height) == (60, 1280, 720)
 
     def test_unsupported_camera_type_raises_value_error(self):
-        """A non-opencv camera ``type`` is rejected with an actionable error.
+        """An UNKNOWN camera ``type`` is rejected with an actionable error.
 
-        ``opencv`` is the only backend ``_create_minimal_config`` knows how to
-        build; any other ``type`` (e.g. a typo or an unimplemented backend) must
-        fail loudly at config-build time rather than be silently dropped, so the
-        operator learns immediately the camera will not be wired up.
+        Camera configs are built from the resolved dataclass's own fields, so the
+        supported backends are whatever ``_CAMERA_CONFIG_CLASSES`` maps (opencv
+        and realsense today). A ``type`` outside that map (a typo, or a backend
+        lerobot does not ship) must fail loudly at config-build time rather than
+        be silently dropped, so the operator learns immediately that the camera
+        will not be wired up.
         """
         pytest.importorskip("lerobot.robots.so_follower")
         from strands_robots.hardware_robot import Robot as HwRobot
 
         hw = HwRobot.__new__(HwRobot)
         hw.tool_name_str = "so101_badcam"
-        with pytest.raises(ValueError, match="Unsupported camera type: realsense"):
+        with pytest.raises(ValueError, match="Unsupported camera type 'webcam42'"):
             hw._create_minimal_config(
                 "so101_follower",
-                cameras={"depth": {"type": "realsense", "index_or_path": 0}},
+                cameras={"depth": {"type": "webcam42", "index_or_path": 0}},
                 port="/dev/null",
             )
 

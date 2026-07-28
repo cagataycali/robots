@@ -349,22 +349,35 @@ class DomainRandomizationMixin:
         }
 
     def _apply_joint_pos_noise(self, obs: dict[str, float]) -> dict[str, float]:
-        """Return ``obs`` with Gaussian noise added to each joint position.
+        """Return ``obs`` with Gaussian sensor noise added to each joint entry.
 
-        A no-op (returns the input unchanged) when no positive-std joint
-        position noise is configured.
+        Position entries take ``joint_pos_std`` and velocity entries (the
+        additive ``<joint>.vel`` keys) take ``joint_vel_std``, matching the
+        MuJoCo backend's ``_apply_obs_noise``. Routing by key matters: a
+        velocity is a different physical quantity in different units, so
+        applying the position std to it would silently model the wrong sensor -
+        and the two stds are configured independently via ``set_obs_noise``.
+
+        A no-op (returns the input unchanged) when neither std is positive.
 
         Args:
-            obs: Mapping of joint name to position (radians).
+            obs: Mapping of joint name to position (radians), plus any
+                ``<joint>.vel`` velocity entries (rad/s).
 
         Returns:
             New mapping with noise applied, or the original when disabled.
         """
-        std = (self._obs_noise or {}).get("joint_pos_std", 0.0)
+        cfg = self._obs_noise or {}
+        pos_std = cfg.get("joint_pos_std", 0.0)
+        vel_std = cfg.get("joint_vel_std", 0.0)
         rng = self._obs_noise_rng
-        if std <= 0 or rng is None or not obs:
+        if (pos_std <= 0 and vel_std <= 0) or rng is None or not obs:
             return obs
-        return {k: float(v) + float(rng.normal(0.0, std)) for k, v in obs.items()}
+        out: dict[str, float] = {}
+        for key, value in obs.items():
+            std = vel_std if key.endswith(".vel") else pos_std
+            out[key] = float(value) + (float(rng.normal(0.0, std)) if std > 0 else 0.0)
+        return out
 
     def _apply_state_noise(self, state: dict[str, dict[str, float]]) -> dict[str, dict[str, float]]:
         """Return ``state`` with Gaussian noise added to positions and velocities.

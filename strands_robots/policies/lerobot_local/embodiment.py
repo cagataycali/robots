@@ -273,9 +273,12 @@ def diagnose_action_dim(n_action_values: int, n_action_keys: int, *, name: str =
         missing = n_action_keys - n_action_values
         return (
             f"Policy action dim {n_action_values} < embodiment{label} actuator count "
-            f"{n_action_keys}: the {missing} unmatched actuator(s) are zero-filled and will "
-            f"not move. Check the embodiment's action_keys order/count against the "
-            f"checkpoint's action dimension."
+            f"{n_action_keys}: the {missing} unmatched actuator(s) are zero-filled, i.e. "
+            f"COMMANDED TO 0.0 every control step -- not left alone. On a real follower 0.0 is "
+            f"an ABSOLUTE target: the calibration mid-point for a DEGREES joint, and one hard "
+            f"end of travel for a RANGE_0_100 gripper (a closed end-stop). Check the "
+            f"embodiment's action_keys order/count against the checkpoint's action dimension, "
+            f"or pass pad_short_actions=False to OMIT the unmatched keys instead."
         )
     extra = n_action_values - n_action_keys
     return (

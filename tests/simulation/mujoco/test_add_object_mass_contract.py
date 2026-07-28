@@ -98,7 +98,14 @@ class TestAddObjectMassDomain:
         assert sim.add_object("crate", shape="box", mass=1.0)["status"] == "success"
 
     def test_mass_below_the_compiler_floor_names_the_floor(self, sim):
-        """``0 < mass < mjMINVAL`` is positive yet uncompilable; say so."""
+        """A mass whose DERIVED inertia falls below mjMINVAL is uncompilable; say so.
+
+        ``add_object`` declares mass on the geom (not an ``explicitinertial``
+        block), so the compiler integrates the real shape for the rotational
+        inertia. A vanishingly small mass therefore yields an inertia below
+        MuJoCo's ``mjMINVAL`` floor and the compile refuses - the error must name
+        the floor rather than surfacing a bare "spec recompile refused".
+        """
         result = sim.add_object("dust", shape="box", mass=1e-16)
         assert result["status"] == "error", result
         assert "mjMINVAL" in result["content"][0]["text"]

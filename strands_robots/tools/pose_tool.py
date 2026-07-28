@@ -12,6 +12,7 @@ This tool provides comprehensive pose management for robotic arms, including:
 
 import json
 import logging
+import os
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -137,13 +138,74 @@ class MotorConfig(TypedDict):
     resolution: int
 
 
+#: STS3215 tick span. ``lerobot``'s conversion divides by ``resolution - 1``
+#: (``model_resolution_table[...] - 1``), so the usable span is 4095.
+_TICK_SPAN = 4095
+
+
+def load_lerobot_calibration(calibration_id: str) -> dict[str, dict[str, int]] | None:
+    """Load a lerobot follower calibration by id, or ``None`` when absent.
+
+    lerobot 0.5+ stores SO-family FOLLOWER calibration at
+    ``$HF_LEROBOT_CALIBRATION/robots/so_follower/<id>.json`` (the directory is the
+    driver CLASS name, ``so_follower``, not the robot type ``so101_follower``), one
+    record per motor: ``{id, drive_mode, homing_offset, range_min, range_max}``.
+
+    Without it, ``degrees_to_position`` had to assume every joint's centre sits at
+    the midpoint of a hardcoded degree range, i.e. tick 2047 for 0 degrees. Real
+    calibration on this class of arm puts the centres elsewhere: measured against
+    ``so_follower/so101.json`` the hardcoded mapping is off by 152 ticks
+    (13.4 degrees) on shoulder_pan, 110 (9.7 degrees) on wrist_flex, and 2029
+    ticks (178 degrees) on the gripper - the gripper being the dangerous one,
+    since a "fully closed" command became a hard slam past the mechanical stop.
+
+    Args:
+        calibration_id: The lerobot ``--robot.id`` the arm was calibrated under
+            (e.g. ``"so101"``), NOT the robot type.
+
+    Returns:
+        Mapping of motor name to its calibration record, or ``None`` when no file
+        exists or it cannot be parsed (the caller then reports the uncalibrated
+        state rather than silently guessing).
+    """
+    root = os.environ.get("HF_LEROBOT_CALIBRATION")
+    base = Path(root) if root else Path.home() / ".cache" / "huggingface" / "lerobot" / "calibration"
+    path = base / "robots" / "so_follower" / f"{calibration_id}.json"
+    if not path.is_file():
+        logger.debug("no lerobot calibration at %s", path)
+        return None
+    try:
+        with open(path) as fh:
+            data = json.load(fh)
+    except (OSError, ValueError) as e:
+        logger.warning("could not read lerobot calibration %s: %s", path, e)
+        return None
+    if not isinstance(data, dict) or not data:
+        logger.warning("lerobot calibration %s is not a non-empty object", path)
+        return None
+    return data
+
+
 class MotorController:
     """Low-level motor control for fine movements."""
 
-    def __init__(self, port: str, baudrate: int = 1000000):
+    def __init__(
+        self,
+        port: str,
+        baudrate: int = 1000000,
+        calibration: dict[str, dict[str, int]] | None = None,
+    ):
         self.port = port
         self.baudrate = baudrate
         self.serial_conn: serial.Serial | None = None
+        # lerobot calibration records keyed by motor name, when available. When
+        # present, degrees_to_position / position_to_degrees use the SAME formula
+        # lerobot's MotorsBus uses, so a pose stored or commanded here refers to
+        # the same physical configuration the policy/teleop path does. When None,
+        # the hardcoded midpoint mapping is used and the caller is told (see
+        # ``pose_tool``): guessing silently is what made this tool disagree with
+        # every other driver in the stack by up to 13 degrees per joint.
+        self.calibration = calibration or None
 
         # Default motor configurations for SO-101
         self.motor_configs: dict[str, MotorConfig] = {
@@ -192,6 +254,24 @@ class MotorController:
         # Clamp to range
         degrees = max(min_deg, min(max_deg, degrees))
 
+        record = (self.calibration or {}).get(motor_name)
+        if record is not None:
+            # Same formula as lerobot MotorsBus._unnormalize, so a tick computed
+            # here means the same physical pose the policy / teleop path commands.
+            range_min = int(record["range_min"])
+            range_max = int(record["range_max"])
+            if range_max == range_min:
+                raise ValueError(
+                    f"Invalid calibration for motor {motor_name!r}: range_min == range_max == {range_min}."
+                )
+            if motor_name == "gripper":
+                # MotorNormMode.RANGE_0_100: 0..100 maps across the measured span.
+                bounded = min(100.0, max(0.0, degrees))
+                return int((bounded / 100.0) * (range_max - range_min) + range_min)
+            # MotorNormMode.DEGREES: mid-point-centred, NOT range-normalised.
+            mid = (range_min + range_max) / 2
+            return int(degrees * _TICK_SPAN / 360 + mid)
+
         # Convert to position (0-4095 for most servos)
         if motor_name == "gripper":
             # Gripper uses 0-100 percentage
@@ -208,6 +288,21 @@ class MotorController:
 
         config = self.motor_configs[motor_name]
         min_deg, max_deg = config["range"]
+
+        record = (self.calibration or {}).get(motor_name)
+        if record is not None:
+            # Exact inverse of the calibrated branch of degrees_to_position, so a
+            # read-back value round-trips instead of drifting by the offset.
+            range_min = int(record["range_min"])
+            range_max = int(record["range_max"])
+            if range_max == range_min:
+                raise ValueError(
+                    f"Invalid calibration for motor {motor_name!r}: range_min == range_max == {range_min}."
+                )
+            if motor_name == "gripper":
+                return ((position - range_min) / (range_max - range_min)) * 100.0
+            mid = (range_min + range_max) / 2
+            return (position - mid) * 360 / _TICK_SPAN
 
         if motor_name == "gripper":
             return (position / config["resolution"]) * 100.0
@@ -232,6 +327,35 @@ class MotorController:
         except Exception as e:
             logger.error(f"Failed to move motor {motor_name}: {e}")
             return False
+
+    def disable_torque(self) -> list[str]:
+        """De-energize every configured motor, returning the ones that failed.
+
+        Writes ``Torque_Enable = 0`` to each motor. The register is address 40
+        (1 byte) on the Feetech STS3215 control table - the authority is
+        ``lerobote.motors.feetech.tables`` (``"Torque_Enable": (40, 1)``), the same
+        table that gives ``Goal_Position`` address 42 used by :meth:`move_motor`.
+
+        Every motor is attempted even if an earlier one fails: a partial stop
+        that silently gave up on the remaining joints would be worse than no
+        stop, because the caller would believe the whole arm was released.
+
+        Returns:
+            Names of motors whose write failed - empty when all succeeded. A
+            non-empty list means the arm is NOT fully de-energized.
+        """
+        if not self.serial_conn or not self.serial_conn.is_open:
+            return list(self.motor_configs)
+
+        failed: list[str] = []
+        for motor_name, config in self.motor_configs.items():
+            try:
+                packet = self.build_feetech_packet(config["id"], 0x03, [0x28, 0x00])
+                self.serial_conn.write(packet)
+            except Exception as e:  # noqa: BLE001 - try every motor, report the rest
+                logger.error(f"Failed to disable torque on {motor_name}: {e}")
+                failed.append(motor_name)
+        return failed
 
     def read_motor_position(self, motor_name: str) -> float | None:
         """Read current motor position in degrees."""
@@ -324,6 +448,7 @@ def pose_tool(
     smooth: bool = True,
     steps: int = 20,
     step_delay: float = 0.05,
+    calibration_id: str | None = None,
 ) -> dict[str, Any]:
     """
     Advanced robot pose management tool with fine motor control.
@@ -346,7 +471,10 @@ def pose_tool(
 
         System:
         - "connect": Test robot connection
-        - "emergency_stop": Stop all motor movement
+        - "emergency_stop": De-energize every motor (Torque_Enable=0). The arm
+          goes LIMP and falls under gravity - it does not hold position, so
+          anything grasped is dropped. Reports an error when any motor could
+          not be released.
         - "reset_to_home": Move to safe home position
 
     Args:
@@ -362,6 +490,12 @@ def pose_tool(
         smooth: Use smooth interpolated movement
         steps: Number of steps for smooth movement
         step_delay: Delay between movement steps
+        calibration_id: lerobot ``--robot.id`` whose calibration to drive the arm
+            through (defaults to ``robot_id``). Degrees are converted with the
+            same formula lerobot's MotorsBus uses, so a pose here matches what the
+            policy / teleop path commands. When no calibration file exists the
+            tool warns and falls back to a nominal midpoint mapping, which on a
+            real arm is off by up to 13 degrees per joint.
 
     Returns:
         Dict containing status and response content
@@ -445,7 +579,24 @@ def pose_tool(
         if not port:
             return {"status": "error", "content": [{"text": "port required for motor operations"}]}
 
-        controller = MotorController(port)
+        # Drive the arm through its lerobot calibration when one exists, so a
+        # degree here means the same physical pose the policy / teleop path
+        # commands. ``calibration_id`` is the lerobot ``--robot.id`` (default:
+        # the tool's ``robot_id``, which also names the pose store).
+        calibration = load_lerobot_calibration(calibration_id or robot_id)
+        controller = MotorController(port, calibration=calibration)
+        if calibration is None:
+            logger.warning(
+                "pose_tool: no lerobot calibration found for id %r; falling back to the nominal "
+                "midpoint mapping (0 deg -> tick %d for every joint). Measured against a real "
+                "SO-101 calibration that is off by up to 152 ticks (13 deg) per joint and 2029 "
+                "ticks on the gripper, so commanded poses will NOT match what the policy or teleop "
+                "path produces. Calibrate with 'lerobot-calibrate --robot.type=so101_follower "
+                "--robot.id=%s', or pass calibration_id= for an arm calibrated under another id.",
+                calibration_id or robot_id,
+                _TICK_SPAN // 2,
+                calibration_id or robot_id,
+            )
 
         if action == "connect":
             connected, error = controller.connect()
@@ -660,8 +811,57 @@ def pose_tool(
                 controller.disconnect()
 
         if action == "emergency_stop":
-            # This would require torque disable in real implementation
-            return {"status": "success", "content": [{"text": "Emergency stop executed (torque disabled)"}]}
+            # This handler used to return "Emergency stop executed (torque
+            # disabled)" while executing NO code at all - a fabricated safety
+            # confirmation, the worst possible failure on a safety path: an
+            # operator (or an agent) reading success would believe a moving arm
+            # had been released. It now actually writes Torque_Enable=0 to every
+            # motor, and reports failure when it cannot.
+            connected, error = controller.connect()
+            if not connected:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"EMERGENCY STOP FAILED - the arm was NOT de-energized: {error}. "
+                                "Use the hardware power cutoff."
+                            )
+                        }
+                    ],
+                }
+            try:
+                failed = controller.disable_torque()
+            finally:
+                controller.disconnect()
+
+            if failed:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                "EMERGENCY STOP INCOMPLETE - torque is still enabled on "
+                                f"{sorted(failed)}; those joints are NOT released. Use the "
+                                "hardware power cutoff."
+                            )
+                        },
+                        {"json": {"torque_disabled": False, "failed_motors": sorted(failed)}},
+                    ],
+                }
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            "Emergency stop executed: Torque_Enable=0 written to all "
+                            f"{len(controller.motor_configs)} motors. The arm is de-energized and "
+                            "will fall limp under gravity - it is NOT holding position."
+                        )
+                    },
+                    {"json": {"torque_disabled": True, "motors": sorted(controller.motor_configs)}},
+                ],
+            }
 
         else:
             return {

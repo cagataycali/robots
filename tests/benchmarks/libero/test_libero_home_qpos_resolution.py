@@ -76,6 +76,16 @@ def _reset_resolver_caches():
     libero_adapter._CACHED_PANDA_GRIPPER_INIT_QPOS_RESOLVED = False
 
 
+def _block_module(*paths: str) -> None:
+    """Make ``import <path>`` raise ImportError even when the real package
+    is installed on this host. A ``None`` entry in ``sys.modules`` halts the
+    import machinery for that exact dotted name, which is how these tests
+    simulate an absent earlier-priority source; the autouse fixture restores
+    the original entries afterwards."""
+    for path in paths:
+        sys.modules[path] = None  # type: ignore[assignment]
+
+
 def _install_fake_module(path: str, attr: str, init_qpos_factory) -> None:
     """Register a fake leaf module exposing ``attr`` whose instances carry
     an ``init_qpos`` property backed by ``init_qpos_factory()``."""
@@ -105,6 +115,7 @@ def test_arm_home_resolves_from_stock_libero_layout():
 
 def test_arm_home_falls_through_to_libero_pro_layout():
     # Stock layout absent -> the LIBERO-PRO import path is tried next.
+    _block_module(_LIBERO_STOCK_PATH)
     _install_fake_module(_LIBERO_PRO_PATH, "MountedPanda", lambda: _MOUNTED_PANDA_HOME.copy())
 
     out = libero_adapter._resolve_libero_arm_home_qpos(7)
@@ -115,6 +126,7 @@ def test_arm_home_falls_through_to_libero_pro_layout():
 
 def test_arm_home_falls_back_to_robosuite_panda_when_libero_absent():
     # No libero layout at all -> stock robosuite Panda is the last source.
+    _block_module(_LIBERO_STOCK_PATH, _LIBERO_PRO_PATH)
     _install_fake_module(_ROBOSUITE_ARM_PATH, "Panda", lambda: _ROBOSUITE_PANDA_HOME.copy())
 
     out = libero_adapter._resolve_libero_arm_home_qpos(7)
@@ -125,6 +137,7 @@ def test_arm_home_falls_back_to_robosuite_panda_when_libero_absent():
 
 def test_arm_home_returns_none_when_nothing_importable():
     # The real harness env: neither libero nor robosuite installed.
+    _block_module(_LIBERO_STOCK_PATH, _LIBERO_PRO_PATH, _ROBOSUITE_ARM_PATH)
     out = libero_adapter._resolve_libero_arm_home_qpos(7)
 
     assert out is None
@@ -156,6 +169,7 @@ def test_arm_home_swallows_init_qpos_construction_error():
         raise RuntimeError("MJCF asset missing")
 
     _install_fake_module(_LIBERO_STOCK_PATH, "MountedPanda", _boom)
+    _block_module(_LIBERO_PRO_PATH, _ROBOSUITE_ARM_PATH)
 
     out = libero_adapter._resolve_libero_arm_home_qpos(7)
 
@@ -176,6 +190,7 @@ def test_arm_home_caches_first_resolution():
 
 def test_arm_home_cached_none_short_circuits():
     # First call (nothing installed) caches None; second returns it directly.
+    _block_module(_LIBERO_STOCK_PATH, _LIBERO_PRO_PATH, _ROBOSUITE_ARM_PATH)
     assert libero_adapter._resolve_libero_arm_home_qpos(7) is None
     assert libero_adapter._CACHED_LIBERO_HOME_QPOS_RESOLVED is True
     assert libero_adapter._resolve_libero_arm_home_qpos(7) is None
@@ -202,6 +217,7 @@ def test_gripper_init_resolves_from_robosuite():
 
 
 def test_gripper_init_returns_none_when_robosuite_absent():
+    _block_module(_ROBOSUITE_GRIPPER_PATH)
     out = libero_adapter._resolve_panda_gripper_init_qpos(2)
 
     assert out is None
@@ -238,6 +254,7 @@ def test_gripper_init_caches_first_resolution():
 
 
 def test_gripper_init_cached_none_short_circuits():
+    _block_module(_ROBOSUITE_GRIPPER_PATH)
     assert libero_adapter._resolve_panda_gripper_init_qpos(2) is None
     assert libero_adapter._CACHED_PANDA_GRIPPER_INIT_QPOS_RESOLVED is True
     assert libero_adapter._resolve_panda_gripper_init_qpos(2) is None
@@ -263,6 +280,7 @@ def test_arm_home_robosuite_fallback_swallows_construction_error():
     def _boom():
         raise RuntimeError("robosuite Panda MJCF missing")
 
+    _block_module(_LIBERO_STOCK_PATH, _LIBERO_PRO_PATH)
     _install_fake_module(_ROBOSUITE_ARM_PATH, "Panda", _boom)
 
     out = libero_adapter._resolve_libero_arm_home_qpos(7)

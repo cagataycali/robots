@@ -1,9 +1,14 @@
 """Newton GPU-native simulation backend for strands-robots.
 
-Newton (newton-physics/newton) runs on NVIDIA Warp + MuJoCo-Warp and supports
-GPU-batched parallel environments. It ingests the same MJCF assets as the
-MuJoCo backend and renders headlessly via a ray-traced tiled camera, so it
-requires no display server. Install via the ``[sim-newton]`` extra.
+Newton (newton-physics/newton) runs on NVIDIA Warp + MuJoCo-Warp. It ingests the
+same MJCF assets as the MuJoCo backend and renders headlessly via a ray-traced
+tiled camera, so it requires no display server. Install via the ``[sim-newton]``
+extra.
+
+This backend runs a SINGLE world. Newton the library supports GPU-batched
+parallel environments, but this integration does not implement them - so
+``num_envs`` is rejected by the constructor rather than accepted and ignored.
+Use ``backend="isaac"`` for batched environments.
 
 Usage::
 

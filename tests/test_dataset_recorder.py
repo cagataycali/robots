@@ -490,7 +490,7 @@ class _FakeMeta:
 class _FakeDatasetWithIndex:
     """Fast path: exposes episode_data_index with from/to columns."""
 
-    def __init__(self, repo_id, root=None) -> None:
+    def __init__(self, repo_id, root=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
         self.meta = _FakeMeta(total_episodes=3)
@@ -503,7 +503,7 @@ class _FakeDatasetWithIndex:
 class _FakeDatasetMetaLengths:
     """No episode_data_index; lengths live in meta.episodes."""
 
-    def __init__(self, repo_id, root=None) -> None:
+    def __init__(self, repo_id, root=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
         self.meta = _FakeMeta(
@@ -531,7 +531,7 @@ class _FakeDatasetScan:
     frames by their episode_index field.
     """
 
-    def __init__(self, repo_id, root=None) -> None:
+    def __init__(self, repo_id, root=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
         self.meta = _FakeMeta(total_episodes=2)
@@ -620,7 +620,7 @@ def test_load_episode_rejects_empty_episode(monkeypatch):
     from strands_robots import dataset_recorder as dr
 
     class _EmptyEpisode:
-        def __init__(self, repo_id, root=None) -> None:
+        def __init__(self, repo_id, root=None, video_backend=None) -> None:
             self.meta = _FakeMeta(episodes=[{"length": 0}])
 
     _patch_lerobot_dataset(monkeypatch, _EmptyEpisode)
@@ -821,7 +821,7 @@ class _FakeDatasetVcodecResume:
 
     last_resume_kwargs: dict = {}
 
-    def __init__(self, repo_id, root=None, meta=None) -> None:
+    def __init__(self, repo_id, root=None, meta=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
         self.meta = meta or _ResumeMeta(total_episodes=2, total_frames=40)
@@ -842,7 +842,7 @@ class _FakeDatasetCameraEncoderResume:
 
     last_resume_kwargs: dict = {}
 
-    def __init__(self, repo_id, root=None, meta=None) -> None:
+    def __init__(self, repo_id, root=None, meta=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
         self.meta = meta or _ResumeMeta(total_episodes=5, total_frames=123)
@@ -891,7 +891,7 @@ def test_resume_raises_clear_error_when_lerobot_lacks_resume(monkeypatch):
     from strands_robots import dataset_recorder as dr
 
     class _NoResumeDataset:
-        def __init__(self, repo_id, root=None) -> None:
+        def __init__(self, repo_id, root=None, video_backend=None) -> None:
             self.repo_id = repo_id
 
     _patch_lerobot_dataset(monkeypatch, _NoResumeDataset)
@@ -981,7 +981,7 @@ def test_resume_tolerates_unreadable_meta_counters(monkeypatch):
             raise AttributeError("no totals on this meta")
 
     class _FakeDatasetBadMeta(_FakeDatasetVcodecResume):
-        def __init__(self, repo_id, root=None, meta=None) -> None:
+        def __init__(self, repo_id, root=None, meta=None, video_backend=None) -> None:
             super().__init__(repo_id, root=root, meta=_BadMeta())
 
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetBadMeta)
@@ -1010,7 +1010,7 @@ class _FakeDatasetVcodecCreate:
 
     last_create_kwargs: dict = {}
 
-    def __init__(self, repo_id, root=None) -> None:
+    def __init__(self, repo_id, root=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
 
@@ -1046,7 +1046,7 @@ class _FakeDatasetCameraEncoderCreate:
 
     last_create_kwargs: dict = {}
 
-    def __init__(self, repo_id, root=None) -> None:
+    def __init__(self, repo_id, root=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
 
@@ -1122,7 +1122,7 @@ class _VideoBackendProbeCreate:
     _UNSET = "__unset__"
     last_create_kwargs: dict = {}
 
-    def __init__(self, repo_id, root=None) -> None:
+    def __init__(self, repo_id, root=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
 
@@ -1150,7 +1150,7 @@ class _VideoBackendProbeResume:
     _UNSET = "__unset__"
     last_resume_kwargs: dict = {}
 
-    def __init__(self, repo_id, root=None, meta=None) -> None:
+    def __init__(self, repo_id, root=None, meta=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
         self.meta = meta or _ResumeMeta(total_episodes=0, total_frames=0)
@@ -1233,7 +1233,7 @@ def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
     class _FakeDatasetMinimalCreate:
         last_create_kwargs: dict = {}
 
-        def __init__(self, repo_id, root=None) -> None:
+        def __init__(self, repo_id, root=None, video_backend=None) -> None:
             self.repo_id = repo_id
             self.root = root
 
@@ -2298,7 +2298,7 @@ class _FakeDatasetOverwriteCreate:
 
     created = 0
 
-    def __init__(self, repo_id, root=None) -> None:
+    def __init__(self, repo_id, root=None, video_backend=None) -> None:
         self.repo_id = repo_id
         self.root = root
 
@@ -2316,11 +2316,66 @@ def test_resolve_dataset_dir_prefers_explicit_root():
     assert resolve_dataset_dir("user/data", root="/tmp/somewhere") == Path("/tmp/somewhere")
 
 
-def test_resolve_dataset_dir_treats_bare_repo_id_as_local_path():
+def test_resolve_dataset_dir_puts_a_bare_repo_id_under_the_lerobot_home():
+    """A slash-less repo_id is NOT a local path - lerobot resolves it in HF home.
+
+    This test previously asserted the opposite, and so pinned the defect.
+    lerobot uses ``HF_LEROBOT_HOME / repo_id`` unconditionally
+    (``dataset_metadata.py:101`` and ``:778``), with no path-like special case,
+    so ``Path(repo_id)`` aimed every consumer at a directory lerobot never
+    touches: ``overwrite=True`` rmtree'd a nonexistent ``./mydataset`` and left
+    lerobot's ``mkdir(exist_ok=False)`` to raise the bare ``FileExistsError``
+    that ``_prepare_create_target`` exists to prevent, the existing-dataset guard
+    never fired, and the sim facade stashed a ``last_dataset_root`` that does not
+    exist. Measured from a clean CWD with ``HF_LEROBOT_HOME`` pointed at a tmpdir::
+
+        resolve_dataset_dir('mydataset') -> 'mydataset'
+        lerobot would use               -> $HF_LEROBOT_HOME/mydataset
+    """
+    from strands_robots.dataset_recorder import _lerobot_home, resolve_dataset_dir
+
+    assert resolve_dataset_dir("my_local_dataset") == _lerobot_home() / "my_local_dataset"
+
+
+@pytest.mark.parametrize("prefix", ["/", "./", "../"])
+def test_resolve_dataset_dir_still_honours_path_like_repo_ids(prefix):
+    """An unambiguously path-like repo_id stays a local directory."""
     from strands_robots.dataset_recorder import resolve_dataset_dir
 
-    # No owner/name slash -> a local directory path, not $HF_LEROBOT_HOME/<id>.
-    assert resolve_dataset_dir("my_local_dataset") == Path("my_local_dataset")
+    resolved = resolve_dataset_dir(f"{prefix}some_dir")
+
+    assert resolved == Path(f"{prefix}some_dir")
+
+
+def test_resolve_dataset_dir_expands_a_tilde_repo_id():
+    """``~`` must expand, or a literal directory named '~' gets created."""
+    from strands_robots.dataset_recorder import resolve_dataset_dir
+
+    resolved = resolve_dataset_dir("~/some_dataset")
+
+    assert resolved == Path("~/some_dataset").expanduser()
+    assert "~" not in str(resolved)
+
+
+def test_resolve_dataset_dir_does_not_point_at_a_same_named_cwd_directory(tmp_path, monkeypatch):
+    """The worst consequence: overwrite=True DELETED an unrelated CWD directory.
+
+    Measured pre-fix - an unrelated ``./mydataset`` holding a sentinel file did
+    not survive ``create(repo_id='mydataset', overwrite=True)``.
+    """
+    from strands_robots.dataset_recorder import resolve_dataset_dir
+
+    monkeypatch.chdir(tmp_path)
+    victim = tmp_path / "mydataset"
+    victim.mkdir()
+    (victim / "IMPORTANT.txt").write_text("do not delete")
+
+    resolved = resolve_dataset_dir("mydataset")
+
+    assert resolved.resolve() != victim.resolve(), (
+        "the resolver still points at an unrelated CWD directory, so overwrite=True would delete it"
+    )
+    assert (victim / "IMPORTANT.txt").exists()
 
 
 def test_create_raises_clear_error_on_existing_dataset_without_overwrite(tmp_path, monkeypatch):
@@ -2445,3 +2500,189 @@ def test_resolve_dataset_dir_falls_back_to_default_home_when_lerobot_absent(monk
     resolved = resolve_dataset_dir("user/data")
 
     assert resolved == Path.home() / ".cache" / "huggingface" / "lerobot" / "user" / "data"
+
+
+# --- D49: a slash-less repo_id must resolve where lerobot actually writes ------
+
+
+def test_slashless_overwrite_targets_the_lerobot_home_not_the_cwd(tmp_path, monkeypatch):
+    """``overwrite=True`` must rmtree the HF-home dir, never a CWD lookalike.
+
+    Pre-fix the resolver returned ``Path('mydataset')``, so ``overwrite=True``
+    rmtree'd a path lerobot never uses - and if a directory of that name happened
+    to exist in the CWD it was DELETED. Measured: an unrelated ``./mydataset``
+    holding a sentinel file did not survive
+    ``create(repo_id='mydataset', overwrite=True)``.
+
+    Uses the filesystem-free fake dataset, so nothing here can reach the real
+    ``~/.cache/huggingface/lerobot``.
+    """
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    import strands_robots.dataset_recorder as dr
+
+    home = tmp_path / "lrh"
+    monkeypatch.setattr(dr, "_lerobot_home", lambda: home)
+    monkeypatch.chdir(tmp_path)
+
+    # A real dataset at the HF-home location, plus an unrelated CWD lookalike.
+    (home / "mydataset" / "meta").mkdir(parents=True)
+    victim = tmp_path / "mydataset"
+    victim.mkdir()
+    (victim / "IMPORTANT.txt").write_text("do not delete")
+
+    dr.DatasetRecorder.create(
+        repo_id="mydataset",
+        fps=30,
+        robot_type="so101",
+        joint_names=["j1"],
+        action_names=["j1"],
+        camera_keys=[],
+        camera_dims={},
+        task="t",
+        overwrite=True,
+    )
+
+    assert (victim / "IMPORTANT.txt").exists(), "overwrite=True deleted an unrelated CWD directory"
+    assert not (home / "mydataset" / "meta").exists(), "the real dataset dir was not replaced"
+
+
+def test_slashless_create_without_overwrite_names_the_remedies(tmp_path, monkeypatch):
+    """The existing-dataset guard must fire on the HF-home path.
+
+    Pre-fix it checked the wrong directory, so it never fired for a bare repo_id
+    and lerobot raised a bare ``FileExistsError`` instead.
+    """
+    _FakeDatasetOverwriteCreate.created = 0
+    _patch_lerobot_dataset(monkeypatch, _FakeDatasetOverwriteCreate)
+    import strands_robots.dataset_recorder as dr
+
+    home = tmp_path / "lrh"
+    monkeypatch.setattr(dr, "_lerobot_home", lambda: home)
+    monkeypatch.chdir(tmp_path)
+    (home / "mydataset" / "meta").mkdir(parents=True)
+
+    with pytest.raises(FileExistsError) as excinfo:
+        dr.DatasetRecorder.create(
+            repo_id="mydataset",
+            fps=30,
+            robot_type="so101",
+            joint_names=["j1"],
+            action_names=["j1"],
+            camera_keys=[],
+            camera_dims={},
+            task="t",
+        )
+
+    message = str(excinfo.value)
+    assert "overwrite" in message, message
+    assert "resume" in message, message
+    assert str(home / "mydataset") in message, message
+
+
+# --- D22: resume() must resolve its own root ------------------------------------
+
+
+def test_resume_resolves_the_root_when_none_is_given(tmp_path, monkeypatch):
+    """``resume(root=None)`` must work - it is the DOCUMENTED workflow.
+
+    ``resume`` built ``resume_kwargs = dict(repo_id=repo_id, root=root)`` and
+    forwarded the caller's raw ``root``. Installed lerobot 0.6.0 hard-rejects a
+    falsy one::
+
+        resume(root=None) -> ValueError: resume() requires an explicit 'root'
+            directory because it creates a DatasetWriter.
+
+    Both sim backends pass the caller's raw root straight through, so the SECOND
+    ``start_recording`` of a session - i.e. every append - failed, while
+    ``docs/recording.md`` says "start_recording resumes it and appends new
+    episodes" and shows ``resume()`` with no root.
+
+    The recorder already knew where the dataset lives: ``resolve_dataset_dir`` is
+    the same resolver ``_prepare_create_target`` uses.
+    """
+    pytest.importorskip("lerobot")
+    import strands_robots.dataset_recorder as dr
+
+    root = tmp_path / "ds"
+    recorder = dr.DatasetRecorder.create(
+        repo_id="u/resume_none",
+        fps=30,
+        robot_type="so101",
+        joint_names=["j1"],
+        action_names=["j1"],
+        camera_keys=[],
+        camera_dims={},
+        task="t",
+        root=str(root),
+    )
+    recorder.add_frame({"j1": 0.5}, {"j1": 0.6}, task="t")
+    recorder.save_episode()
+    recorder.finalize()
+
+    # Point the resolver's no-root branch at that same directory, the way
+    # $HF_LEROBOT_HOME/{repo_id} would in a real install.
+    monkeypatch.setattr(dr, "resolve_dataset_dir", lambda repo_id, r=None: Path(r) if r else root)
+
+    resumed = dr.DatasetRecorder.resume(repo_id="u/resume_none", root=None, task="t")
+
+    assert Path(resumed.root).resolve() == root.resolve()
+    assert resumed.frame_count == 1, "the resumed recorder did not inherit the dataset total"
+
+
+def test_resume_still_honours_an_explicit_root(tmp_path):
+    """An explicit root must be forwarded verbatim, not re-resolved."""
+    pytest.importorskip("lerobot")
+    import strands_robots.dataset_recorder as dr
+
+    root = tmp_path / "ds"
+    recorder = dr.DatasetRecorder.create(
+        repo_id="u/resume_explicit",
+        fps=30,
+        robot_type="so101",
+        joint_names=["j1"],
+        action_names=["j1"],
+        camera_keys=[],
+        camera_dims={},
+        task="t",
+        root=str(root),
+    )
+    recorder.add_frame({"j1": 0.5}, {"j1": 0.6}, task="t")
+    recorder.save_episode()
+    recorder.finalize()
+
+    resumed = dr.DatasetRecorder.resume(repo_id="u/resume_explicit", root=str(root), task="t")
+
+    assert Path(resumed.root).resolve() == root.resolve()
+
+
+def test_resume_never_forwards_a_falsy_root(monkeypatch, tmp_path):
+    """Pin the contract at the boundary: lerobot must never see a falsy root.
+
+    Captures the kwargs handed to ``LeRobotDataset.resume`` so the assertion does
+    not depend on lerobot's error text.
+    """
+    import strands_robots.dataset_recorder as dr
+
+    seen: dict[str, object] = {}
+
+    class _CapturingDataset:
+        def __init__(self, repo_id="", root=None) -> None:
+            self.repo_id = repo_id
+            self.root = root
+            self.meta = type("_M", (), {"total_episodes": 0, "total_frames": 0, "fps": 30})()
+
+        @classmethod
+        def resume(cls, **kwargs):
+            seen.update(kwargs)
+            return cls(repo_id=kwargs.get("repo_id", ""), root=kwargs.get("root"))
+
+    _patch_lerobot_dataset(monkeypatch, _CapturingDataset)
+    monkeypatch.setattr(
+        dr, "resolve_dataset_dir", lambda repo_id, r=None: Path(r) if r else tmp_path / "home" / repo_id
+    )
+
+    dr.DatasetRecorder.resume(repo_id="u/ds", root=None, task="t")
+
+    assert seen.get("root"), f"resume forwarded a falsy root: {seen.get('root')!r}"
+    assert str(seen["root"]).endswith("u/ds"), seen["root"]

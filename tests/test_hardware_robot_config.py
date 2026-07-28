@@ -80,13 +80,33 @@ class TestCreateMinimalConfig:
         assert cam.height == 480
 
     def test_unsupported_camera_type_is_rejected(self):
+        """An unknown camera ``type`` names the supported backends.
+
+        ``realsense`` is no longer unsupported (lerobot ships
+        ``RealSenseCameraConfig``, and camera configs are now built from the
+        target dataclass's own fields), so this asserts on a genuinely unknown
+        backend instead.
+        """
         hw = _make_robot()
-        with pytest.raises(ValueError, match="Unsupported camera type: realsense"):
+        with pytest.raises(ValueError, match="Unsupported camera type 'webcam42'"):
             hw._create_minimal_config(
                 "so101_follower",
-                {"c": {"type": "realsense", "index_or_path": 0}},
+                {"c": {"type": "webcam42", "index_or_path": 0}},
                 port="/dev/ttyACM0",
             )
+
+    def test_realsense_camera_type_is_supported(self):
+        """Regression: this used to raise "Unsupported camera type: realsense"."""
+        pytest.importorskip("lerobot.cameras.realsense.configuration_realsense")
+        hw = _make_robot()
+
+        config = hw._create_minimal_config(
+            "so101_follower",
+            {"depth": {"type": "realsense", "serial_number_or_name": "123", "use_depth": True}},
+            port="/dev/ttyACM0",
+        )
+
+        assert type(config.cameras["depth"]).__name__ == "RealSenseCameraConfig"
 
     def test_unknown_kwarg_is_rejected_not_silently_dropped(self):
         hw = _make_robot()

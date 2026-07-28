@@ -36,6 +36,27 @@ logger = logging.getLogger(__name__)
 # (STRANDS_ROBOTS_RENDER_* env vars) are bound here.
 _DEFAULT_MAX_RENDER_BYTES = 50 * 1024 * 1024  # 50 MB
 
+# Minimum tendon ctrlrange span for a value in [lo, lo + 1] to be read as a
+# normalised [0, 1] open/close fraction rather than a literal command in the
+# actuator's own units. At 10.0 one command unit is <= 10% of travel, which
+# covers the wide tendon-unit ranges VLA policies target (the Panda and Robotiq
+# grippers use [0, 255]) while leaving physical-unit tendons - the Shadow Hand's
+# [0, 3.1415] rad, a finger-travel [0, 0.04] m - interpreted literally.
+_TENDON_NORMALISED_MIN_SPAN = 10.0
+
+#: Camera-name tokens that address MuJoCo's built-in FREE camera (``cam_id = -1``)
+#: rather than a camera compiled into the model. ``render`` / ``render_depth`` /
+#: ``get_frame`` / ``get_camera_params`` all resolve these to the free view, and
+#: ``docs/simulation/overview.md`` documents ``"default"`` as "the built-in
+#: ``\"default\"`` free view". ``create_world`` also registers a ``SimCamera``
+#: named ``"default"``, which the spec builder compiles into a REAL MJCF camera -
+#: so a plain ``mj_name2id`` lookup resolves the same token to a different view.
+#: Everything that maps a camera name to a view must consult this set first, or
+#: one declared key yields two different images (a rollout video and the
+#: LeRobot dataset recorded beside it disagreed by 35.6/255 mean pixel
+#: difference, with the same marker at 0.687 vs 0.355 of frame width).
+_FREE_CAMERA_TOKENS: frozenset[str | None] = frozenset({None, "", "default", "free"})
+
 
 def _is_pixel_count(value: Any) -> bool:
     """True when ``value`` is usable as a pixel dimension (an int, not a bool)."""
@@ -270,24 +291,100 @@ class RenderingMixin:
         if self._renderer_tls.model is not self._world._model:
             renderers.clear()
             self._renderer_tls.model = self._world._model
+            # The eviction history describes the cache we just dropped, so a
+            # recompile must not make the next legitimate first-fill look like
+            # thrashing.
+            self._renderer_tls.evicted_keys = set()
             # Keep the per-instance marker for compatibility with any remaining
             # read paths that checked self._renderer_model.
             self._renderer_model = self._world._model
 
         key = (width, height)
         if key not in renderers:
-            # Bound the cache: max 4 resolutions per thread. Evict oldest
-            # (first-inserted) to prevent unbounded GL context accumulation.
-            _MAX_RENDERERS_PER_THREAD = 4
-            if len(renderers) >= _MAX_RENDERERS_PER_THREAD:
+            # Bound the cache to prevent unbounded GL context accumulation, but
+            # size the bound from the SCENE rather than a flat 4. A
+            # ``mujoco.Renderer`` costs ~226 ms to construct against ~0.03 ms for
+            # a cached lookup, and ``_get_sim_observation`` requests each
+            # camera's own configured resolution - so once the distinct
+            # resolutions in one observation exceeded the cap, every
+            # get_observation evicted and rebuilt GL contexts in a loop:
+            #
+            #     3 cams, 4 distinct keys ->     9.6 ms/obs
+            #     4 cams, 5 distinct keys ->  1340.8 ms/obs   (140x)
+            #     4 cams at ONE resolution ->   10.3 ms/obs   (isolates the cause)
+            #
+            # The scene's own cameras plus the free camera and one video size
+            # must always be resident, so that is what the cap allows.
+            if len(renderers) >= self._max_renderers_per_thread():
                 oldest_key = next(iter(renderers))
                 try:
                     renderers[oldest_key].close()
                 except Exception:
                     pass
                 del renderers[oldest_key]
+                self._note_renderer_eviction(oldest_key, key)
             renderers[key] = mj.Renderer(self._world._model, height=height, width=width)
         return renderers[key]
+
+    #: Floor for the per-thread renderer cache, and the headroom added on top of
+    #: the scene's distinct camera resolutions (one slot for the free camera,
+    #: one for a ``record_video`` size that differs from every camera).
+    _RENDERER_CACHE_FLOOR = 4
+    _RENDERER_CACHE_HEADROOM = 2
+
+    def _max_renderers_per_thread(self) -> int:
+        """How many distinct-resolution renderers one thread may hold.
+
+        Derived from the scene so a legitimately configured multi-camera rig
+        never thrashes: every camera's resolution, plus headroom for the free
+        camera and a video size. Bounded by scene configuration rather than
+        caller behaviour, so an unbounded ``render(width=..., height=...)``
+        sweep still evicts instead of leaking contexts.
+
+        Returns:
+            The cache cap, never below :data:`_RENDERER_CACHE_FLOOR`.
+        """
+        world = self._world
+        if world is None:
+            return self._RENDERER_CACHE_FLOOR
+        distinct = {
+            (int(getattr(cam, "width", 0) or 0), int(getattr(cam, "height", 0) or 0)) for cam in world.cameras.values()
+        }
+        return max(self._RENDERER_CACHE_FLOOR, len(distinct) + self._RENDERER_CACHE_HEADROOM)
+
+    def _note_renderer_eviction(self, evicted: tuple[int, int], requested: tuple[int, int]) -> None:
+        """Warn once when eviction starts costing a rebuild of a key still in use.
+
+        An eviction is only a problem when the evicted resolution is asked for
+        again - that is the thrash, and it is silent: the render loop goes from
+        render-bound to construction-bound with no log line at all, while the
+        repo already treats a comparable ~100x slowdown as warning-worthy
+        (``_warn_if_software_rendering`` fires on llvmpipe). One-shot, following
+        that same pattern.
+
+        Args:
+            evicted: The ``(width, height)`` just closed.
+            requested: The ``(width, height)`` that forced the eviction.
+        """
+        recent = getattr(self._renderer_tls, "evicted_keys", None)
+        if recent is None:
+            recent = set()
+            self._renderer_tls.evicted_keys = recent
+        if requested in recent:
+            if not getattr(self._renderer_tls, "thrash_warned", False):
+                self._renderer_tls.thrash_warned = True
+                logger.warning(
+                    "MuJoCo renderer cache is thrashing: %dx%d was evicted and immediately requested "
+                    "again (cap %d, resolutions in play %s). Every miss reconstructs a GL context "
+                    "(~226ms vs ~0.03ms for a cache hit), so this makes get_observation hundreds of "
+                    "times slower. Give the scene's cameras the same width/height, or reduce the "
+                    "number of distinct render resolutions.",
+                    requested[0],
+                    requested[1],
+                    self._max_renderers_per_thread(),
+                    sorted(recent | {evicted, requested}),
+                )
+        recent.add(evicted)
 
     def _get_viz_option(self) -> Any:
         """Return an ``mujoco.MjvOption`` from ``world._backend_state["viz_option"]``, or ``None``.
@@ -462,11 +559,32 @@ class RenderingMixin:
         for pycam_name in self._world.cameras:
             if pycam_name not in cameras_to_render:
                 cameras_to_render.append(pycam_name)
+        # Put the framework's own free camera LAST. Model cameras come in MJCF
+        # declaration order, which puts the auto-created ``default`` view (
+        # registered unconditionally by create_world) ahead of every camera the
+        # user actually added. Dict insertion order then handed ``default`` to
+        # the policy first, so LerobotLocalPolicy's positional image fill gave
+        # the 640x480 free-camera view the first declared image slot and the
+        # task-relevant wrist frame was dropped entirely:
+        #
+        #     image keys IN ORDER: [('default', (480, 640, 3)), ('wrist', (224, 224, 3))]
+        #     observation.images.top <- SOURCE CAMERA 'default'; wrist never reached the model
+        #
+        # A stable sort, so the relative order of the user's own cameras is
+        # untouched. Only ordering changes here, never contents - every camera
+        # is still rendered under its own name.
+        cameras_to_render.sort(key=lambda name: name in _FREE_CAMERA_TOKENS)
 
         for cname in cameras_to_render:
             if not cname:
                 continue
-            cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
+            # Resolve the reserved free-camera tokens to cam_id = -1 the way
+            # render()/render_depth()/get_frame() do. Without this, "default"
+            # resolved by name to the MJCF camera create_world() compiles under
+            # that name, so obs["default"] and render("default") returned two
+            # DIFFERENT views under one key - an eval video and the dataset
+            # recorded alongside it showed different viewpoints.
+            cam_id = -1 if cname in _FREE_CAMERA_TOKENS else mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
             cam_info = self._world.cameras.get(cname)
             h = cam_info.height if cam_info else self.default_height
             w = cam_info.width if cam_info else self.default_width
@@ -880,22 +998,30 @@ class RenderingMixin:
         if lo < 0.0:
             return min(hi, max(lo, value))
         # A normalised [0, 1] open/close fraction is the conventional gripper
-        # command from VLA policies. When the actuator ctrlrange is much wider
-        # than unit scale (e.g. the Panda tendon's [0, 255]), a value within
-        # [lo, lo + 1] is overwhelmingly likely to be such a fraction rather
-        # than a literal tendon-unit command, so we map it onto the full range.
-        # If the caller already passes a clearly in-range value (> lo + 1 and
-        # <= hi), we trust it verbatim.
+        # command from VLA policies, but "is this 0.5 a fraction or a literal
+        # tendon command?" is only answerable when one command unit is a
+        # negligible slice of travel. On the Panda's [0, 255] a command of 1.0
+        # is 0.4% of travel - nobody means that, so it is a fraction. On the
+        # Shadow Hand's [0, 3.1415] (radians) 1.0 rad is 32% of travel, and on a
+        # finger-travel range like [0, 0.04] (metres) every valid command is
+        # below 1.0 - there, remapping corrupts a legitimate command instead of
+        # rescuing a normalised one.
         #
-        # #367 item 1b: use a small epsilon on the boundary so a normalised
-        # 1.0 + FP-noise (from a quantised VLA head) is still treated as the
-        # fraction 1.0 (-> hi) rather than slipping into the verbatim branch and
-        # writing ~1.0 onto a [0, 255] range (a nearly-closed gripper).
-        if span > 1.0 and value > (lo + 1.0 + 1e-6) and value <= hi:
-            return value
-        # Treat the incoming value as a normalised [0, 1] open/close fraction.
-        frac = min(1.0, max(0.0, value))
-        return lo + frac * span
+        # Requiring the range to be at least an order of magnitude wider than
+        # the unit interval keeps the intended [0, 255] rescue while leaving
+        # physical-unit tendons alone. Previously any ``span > 1.0`` remapped,
+        # which scaled a 0.02 m command to 0.0008 m (25x short) and made the
+        # Shadow Hand discontinuous: 1.0 rad -> 3.14 rad but 1.5 rad -> 1.5 rad.
+        #
+        # #367 item 1b: the epsilon keeps a normalised 1.0 + FP-noise (from a
+        # quantised VLA head) on the fraction path rather than writing ~1.0 onto
+        # a [0, 255] range (a nearly-closed gripper).
+        if span >= _TENDON_NORMALISED_MIN_SPAN and value <= (lo + 1.0 + 1e-6):
+            frac = min(1.0, max(0.0, value))
+            return lo + frac * span
+        # Otherwise the command is already in the actuator's own units; honour it
+        # and let the ctrlrange bound it (MuJoCo would clamp anyway).
+        return min(hi, max(lo, value))
 
     def render(
         self,
@@ -943,7 +1069,7 @@ class RenderingMixin:
         # with get_observation, which already keys off the per-camera config.
         # The free camera ("default"/"free") and model-only cameras that have no
         # SimCamera entry fall back to the engine default.
-        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in _FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
@@ -968,7 +1094,7 @@ class RenderingMixin:
             # Special 'default' / 'free' tokens route to the free camera; any
             # other name MUST resolve or we error (prevents the LLM from
             # believing it rendered viewpoint X while actually getting free-cam).
-            if camera_name in (None, "", "default", "free"):
+            if camera_name in _FREE_CAMERA_TOKENS:
                 cam_id = -1
                 label = "free (default)"
             else:
@@ -1080,7 +1206,7 @@ class RenderingMixin:
         # frame render() produces for the same camera (and with get_observation).
         # The free camera and model-only cameras with no SimCamera entry fall
         # back to the engine default.
-        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in _FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
@@ -1088,7 +1214,7 @@ class RenderingMixin:
 
         try:
             # strict camera validation (same policy as render())
-            if camera_name in (None, "", "default", "free"):
+            if camera_name in _FREE_CAMERA_TOKENS:
                 cam_id = -1
                 label = "free (default)"
             else:
@@ -1277,7 +1403,7 @@ class RenderingMixin:
             raise RuntimeError(_NO_WORLD_MSG)
 
         mj = _ensure_mujoco()
-        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in _FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
@@ -1292,7 +1418,7 @@ class RenderingMixin:
                     "Rendering unavailable (no OpenGL context). "
                     "Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
                 )
-            if camera_name in (None, "", "default", "free"):
+            if camera_name in _FREE_CAMERA_TOKENS:
                 cam_id = -1
             else:
                 cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
@@ -1629,15 +1755,33 @@ class RenderingMixin:
         with self._lock:
             mj.mj_forward(model, data)
             ncon = int(data.ncon)
-            contact_snapshot = [
-                {
-                    "geom1": int(data.contact[i].geom1),
-                    "geom2": int(data.contact[i].geom2),
-                    "dist": float(data.contact[i].dist),
-                    "pos": data.contact[i].pos.tolist(),
-                }
-                for i in range(ncon)
-            ]
+            # ``mjData.contact`` lists every pair within ``margin``, INCLUDING
+            # ones the solver excluded because they fall inside ``gap``: those
+            # carry ``exclude != 0``, ``efc_address < 0`` and exactly zero force
+            # (MuJoCo admits a contact to the solver only when
+            # ``dist < margin - gap``). Reporting geometry alone made a geom that
+            # is physically airborne read as "touching" to every downstream
+            # consumer - unitree_go2 ships ``margin="0.001"``, so a foot 0.5 mm
+            # off the floor counted as ground contact. Surface the force and the
+            # exclude flag so callers can tell a load-bearing contact from a
+            # proximity record, plus the parent bodies so a consumer does not
+            # have to pattern-match synthesized geom names.
+            import numpy as _np
+
+            force_buf = _np.zeros(6)
+            contact_snapshot = []
+            for i in range(ncon):
+                mj.mj_contactForce(model, data, i, force_buf)
+                contact_snapshot.append(
+                    {
+                        "geom1": int(data.contact[i].geom1),
+                        "geom2": int(data.contact[i].geom2),
+                        "dist": float(data.contact[i].dist),
+                        "pos": data.contact[i].pos.tolist(),
+                        "exclude": int(data.contact[i].exclude),
+                        "normal_force": abs(float(force_buf[0])),
+                    }
+                )
 
         def _resolve_geom(gid: int) -> str:
             """Prefer the geom name; fall back to its parent body name; then id."""
@@ -1654,11 +1798,27 @@ class RenderingMixin:
                 pass
             return f"geom_{gid}"
 
+        def _resolve_body(gid: int) -> str:
+            """Parent body name of a geom (empty when it has none)."""
+            try:
+                return mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.geom_bodyid[gid])) or ""
+            except (IndexError, AttributeError):
+                return ""
+
         contacts = []
         for c in contact_snapshot:
-            g1 = _resolve_geom(c["geom1"])
-            g2 = _resolve_geom(c["geom2"])
-            contacts.append({"geom1": g1, "geom2": g2, "dist": c["dist"], "pos": c["pos"]})
+            contacts.append(
+                {
+                    "geom1": _resolve_geom(c["geom1"]),
+                    "geom2": _resolve_geom(c["geom2"]),
+                    "body1": _resolve_body(c["geom1"]),
+                    "body2": _resolve_body(c["geom2"]),
+                    "dist": c["dist"],
+                    "pos": c["pos"],
+                    "exclude": c["exclude"],
+                    "normal_force": c["normal_force"],
+                }
+            )
 
         text = f"{len(contacts)} contacts" if contacts else "No contacts."
         if contacts:
@@ -1815,6 +1975,16 @@ class RenderingMixin:
 
         Memory cost: H*W*3 bytes * fps * duration * n_cams. For a 2s / 4-cam /
         320x240 / 15fps rollout: ~27 MB. Bounded by ``max_frames_per_camera``.
+
+        Pacing (important): capture is paced by the **wall clock**, not simulated
+        time, and the capture thread renders under the sim lock. A tight
+        ``step()`` / policy loop therefore starves it - a 1.2 s simulated rollout
+        driven by ``for _ in range(120): step(5)`` captured ONE frame, where a bare
+        1.0 s sleep captured the full 20 at ``fps=20``. Use this for interactive /
+        real-time viewing; for a video that tracks a fast rollout frame-for-frame,
+        call :meth:`render` per step and encode the frames yourself (or record
+        through ``start_recording``, whose frames are driven by ``run_policy``).
+        ``stop_cameras_recording`` reports the shortfall when it happens.
 
         Args:
             cameras: list of camera names; None = every camera.
@@ -1999,6 +2169,14 @@ class RenderingMixin:
             # the caller waiting in start_cameras_recording so the success
             # return coincides with the first captured frame, not the cold
             # thread launch.
+            #
+            # Warmup captures nothing, so the shortfall report judges the rate
+            # from HERE rather than from start_cameras_recording: a cold
+            # software-GL context can spend most of a second warming, and
+            # charging that window to the capture rate flags a recorder that
+            # never had the chance to capture (see
+            # :meth:`_flush_cameras_recording_state`).
+            state["capture_started_at"] = _time.time()
             state["ready"].set()
 
             interval = 1.0 / fps
@@ -2098,6 +2276,12 @@ class RenderingMixin:
         from strands_robots.rendering.video import encode_clip
 
         elapsed = _time.time() - state["started_at"]
+        # Frames can only land once the capture loop is running. The daemon
+        # recorder warms its GL context first and captures nothing while it
+        # does, so the shortfall check below uses the capture window; the
+        # synchronous recorder has no separate warmup and its whole span is the
+        # capture window.
+        capture_window = _time.time() - state.get("capture_started_at", state["started_at"])
         lines = [
             f"Stopped '{state['name']}' after {elapsed:.1f}s",
             f"   output_dir: {state['output_dir']}",
@@ -2156,6 +2340,25 @@ class RenderingMixin:
                 f"   {cam:20s} {frames_written:>5d} frames  {size_kb:>7.1f} KB  "
                 f"({errors} errors)  -> {_os.path.basename(path)}"
             )
+            # Capture is paced by the WALL CLOCK on a daemon thread that renders
+            # under the sim lock, so a tight ``step()`` loop starves it: a 1.2 s
+            # simulated rollout driven by ``for _ in range(120): step(5)`` captured
+            # ONE frame, while a bare 1.0 s sleep captured the full 20 at fps=20.
+            # Both reported success with a ~24 KB near-empty MP4, and nothing said
+            # the video did not cover the rollout. Flag the shortfall.
+            # Only judge a recording long enough for the shortfall to be
+            # unambiguous: a brief clip legitimately lands under its nominal
+            # rate (a 0.3 s capture nominally expects 5 frames and delivering 1
+            # is not evidence of starvation). Ten expected frames is half a
+            # second at 20 fps.
+            expected = int(capture_window * state["fps"])
+            if expected >= 10 and frames_written * 2 < expected:
+                line += (
+                    f"  [captured {frames_written} of ~{expected} expected at {state['fps']} fps - "
+                    "capture is wall-clock paced on a background thread that renders under the sim "
+                    "lock, so a tight step()/policy loop starves it. Interleave a short sleep, or "
+                    "render() per step and encode yourself, for a video that covers the rollout]"
+                )
             if frames_skipped:
                 line += f"  [{frames_skipped} skipped: size mismatch]"
             if flush_error:

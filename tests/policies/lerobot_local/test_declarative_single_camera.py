@@ -175,6 +175,9 @@ class TestDeclarativeSingleCameraEndToEnd:
         policy._configure_embodiment()
 
         obs = {f"j{i}": float(i) for i in range(6)}
+        # The declared feature is (3, 480, 640) and frames are now resized to the
+        # checkpoint's shape, so this small frame is upscaled rather than passed
+        # through at its own size.
         obs["front"] = np.ones((48, 64, 3), dtype=np.uint8) * 255
         obs = policy._canonicalize_obs_images(obs, image_source_keys=policy._embodiment_image_source_keys())
         batch = policy._processor_bridge.preprocess(obs, instruction="pick up the cube")
@@ -183,7 +186,7 @@ class TestDeclarativeSingleCameraEndToEnd:
         assert "observation.images.front" in batch
         assert "front" not in batch
         img = batch["observation.images.front"]
-        assert tuple(img.shape) == (1, 3, 48, 64)
+        assert tuple(img.shape) == (1, 3, 480, 640)
         assert img.dtype.is_floating_point
         assert float(img.max()) <= 1.0
 
@@ -245,9 +248,12 @@ class TestDeclarativeBatchesWithoutAddBatchDimensionStep:
         policy._requires_action_chunk = lambda: False
 
         obs = {f"j{i}": float(i) for i in range(6)}
+        # The declared feature is (3, 480, 640) and frames are now resized to the
+        # checkpoint's shape, so this small frame is upscaled rather than passed
+        # through at its own size.
         obs["front"] = np.ones((48, 64, 3), dtype=np.uint8) * 255
         policy.get_actions_sync(obs, "pick up the cube")
 
         # State and image both reach the model batched (no rank mismatch).
         assert tuple(captured["batch"]["observation.state"]) == (1, 6)
-        assert tuple(captured["batch"]["observation.images.front"]) == (1, 3, 48, 64)
+        assert tuple(captured["batch"]["observation.images.front"]) == (1, 3, 480, 640)

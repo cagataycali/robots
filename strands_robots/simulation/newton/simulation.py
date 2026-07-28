@@ -25,6 +25,8 @@ Lifecycle::
 
 from __future__ import annotations
 
+import functools
+import inspect
 import logging
 import math
 import os
@@ -58,10 +60,24 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Newton's default control rate. MJCF position actuators settle within a few
-# hundred substeps; 60 Hz frames with 10 substeps each matches the Newton
-# example cadence and keeps position-servo arms tracking their targets.
-_DEFAULT_TIMESTEP = 1.0 / 600.0
+# Newton's default FRAME dt. ``_advance`` divides this by ``substeps`` to get
+# the solver dt, so 1/60 with the default substeps=10 runs the solver at 600 Hz
+# - the cadence the Newton examples use (example_robot_g1.py: fps=60,
+# sim_substeps=6 -> 360 Hz) and close to the 500 Hz the so101 MJCF itself asks
+# for via opt.timestep=0.002.
+#
+# This used to be 1/600, which made the solver run at 6000 Hz - twelve times the
+# asset's own request - while the comment claimed it was the 60 Hz frame rate.
+# PolicyRunner._control_substeps derives frames-per-action from
+# physics_timestep(), so a 50 Hz control loop ran round((1/50)/(1/600)) = 12
+# frames x 10 substeps = 120 solver steps per action: 641.6 ms for one 20 ms
+# control budget (0.031x realtime). At 1/60 the same action is 55.0 ms
+# (0.364x), an 11.7x speedup, and fidelity is unchanged where it matters -
+# measured on so101 + a dropped cube: position-servo tracking error 0.0009 rad
+# vs 0.0010, identical resting height on the ground plane, free-fall error over
+# 0.5 s 0.33% vs 0.03%. Callers needing the old integration rate pass
+# ``default_timestep=1/600`` (or raise ``substeps``).
+_DEFAULT_TIMESTEP = 1.0 / 60.0
 
 # Valid ``add_robot(source=...)`` selectors. ``None``/``"registry"`` resolve
 # the curated registry + MJCF asset manager (the same path the MuJoCo backend
@@ -71,6 +87,55 @@ _DEFAULT_TIMESTEP = 1.0 / 600.0
 # registry has no asset, so the URDF-only long tail resolves without an
 # explicit selector.
 _ROBOT_SOURCES = (None, "registry", "robot_descriptions")
+
+# Contact/constraint buffer floor for MuJoCo-Warp. mujoco-warp preallocates
+# fixed-size GPU contact (``nconmax``) and constraint-row (``njmax``) arrays; it
+# does NOT grow them. Left to its own devices it picks a tiny default (njmax=64
+# for a 6-DoF arm), and the FIRST actuated pose that brings links into contact
+# overflows the broadphase:
+#     "broadphase overflow - please increase nconmax to 49 or naconmax to 49"
+# The overflow is not a soft failure - the very next constraint-solver kernel
+# dereferences past the end of the buffer and the launch aborts with
+# "CUDA error 700: an illegal memory access was encountered", which poisons the
+# CUDA context: every later Warp deallocation then errors and the process is
+# unrecoverable. An unactuated world never trips it, so it presents as
+# "send_action kills the simulator". Sizing the buffers up front is the only
+# defence (mujoco-warp has no resize path), so allocate real headroom: these
+# are GPU arrays of a few hundred KB at this size, cheap next to a poisoned
+# context. Scaled by the model's own collision-pair count so a scene with many
+# objects grows too, and overridable per instance via the ``nconmax`` /
+# ``njmax`` constructor kwargs. See issue #1654.
+_CONTACT_LIMIT_FLOOR = 1024
+_CONTACT_LIMIT_PER_PAIR = 32
+
+
+@functools.cache
+def _mujoco_only_methods() -> frozenset[str]:
+    """Public method names the MuJoCo engine has and the Newton engine lacks.
+
+    Derived by comparing the two classes rather than hardcoded, so it cannot
+    drift as either backend gains methods - a hardcoded list would go stale on
+    the first new MuJoCo action and start reporting a real Newton method as
+    missing (or vice versa).
+
+    Cached: the answer is fixed for the process (both classes are immutable once
+    imported) and this is consulted from ``NewtonSimEngine.__getattr__``, which
+    also runs for ordinary typos.
+
+    Returns:
+        The MuJoCo-only public method names, or an empty set when the MuJoCo
+        backend is not importable (it is an optional extra; a missing MuJoCo
+        install must not turn the Newton path into an ImportError).
+    """
+    try:
+        from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
+    except ImportError:
+        return frozenset()
+
+    def _public_methods(cls: type) -> set[str]:
+        return {n for n in dir(cls) if not n.startswith("_") and callable(getattr(cls, n, None))}
+
+    return frozenset(_public_methods(MuJoCoSimEngine) - _public_methods(NewtonSimEngine))
 
 
 def _short_joint_name(label: str) -> str:
@@ -127,34 +192,61 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
     def __init__(
         self,
+        tool_name: str = "newton_simulation",
         solver: str = "mujoco",
         default_timestep: float = _DEFAULT_TIMESTEP,
         substeps: int = 10,
         device: str | None = None,
         default_width: int = 640,
         default_height: int = 480,
+        nconmax: int | None = None,
+        njmax: int | None = None,
         **kwargs: Any,
     ) -> None:
         """Construct a Newton simulation engine.
 
         Args:
+            tool_name: Identifier surfaced to the agent, mirroring the MuJoCo
+                backend. ``Robot(name, mode="sim", backend=...)`` builds every
+                backend through ``create_simulation(backend,
+                tool_name=f"{name}_sim", ...)``, so this must be accepted here
+                for that entry point to work at all.
             solver: Friendly solver name. One of
                 :func:`~strands_robots.simulation.newton.backend.solver_registry`
                 (default ``"mujoco"``, i.e. MuJoCo-Warp).
-            default_timestep: Physics integration timestep in seconds.
-            substeps: Physics substeps per :meth:`step` call.
+            default_timestep: FRAME timestep in seconds - the amount of sim
+                time one :meth:`step` advances, and what
+                :meth:`physics_timestep` reports. The solver integrates at
+                ``default_timestep / substeps``, so the two together set the
+                integration rate (default 1/60 with 10 substeps = 600 Hz).
+            substeps: Solver substeps per frame, i.e. per :meth:`step` call.
             device: Warp device string (e.g. ``"cuda:0"`` or ``"cpu"``).
                 ``None`` selects Warp's default device (GPU when available).
             default_width: Default render width in pixels.
             default_height: Default render height in pixels.
-            **kwargs: Ignored; accepted for forward compatibility. Robot-setup
-                arguments (``robot_name`` / ``robot``) are rejected rather than
-                dropped - use ``Robot("so101", mode="sim")`` or ``add_robot``.
+            nconmax: Maximum simultaneous contacts the MuJoCo-Warp solver
+                preallocates. ``None`` derives a value from the scene's
+                collision-pair count (see :data:`_CONTACT_LIMIT_FLOOR`).
+                Overflowing this limit aborts a CUDA kernel and poisons the
+                context, so it is sized generously; raise it for scenes with
+                many contacting objects. Ignored by solvers other than
+                ``"mujoco"``, which do not preallocate contact buffers.
+            njmax: Maximum constraint rows the MuJoCo-Warp solver preallocates.
+                Same semantics as ``nconmax``.
+            **kwargs: Rejected, not dropped. A discarding sink turns a
+                misspelled or invented parameter into a successful no-op, which
+                is how ``num_envs=4096`` was accepted here while no batching
+                code exists anywhere in this backend.
 
         Raises:
-            ValueError: If ``solver`` is not a known solver name.
+            ValueError: If ``solver`` is not a known solver name, or if
+                ``substeps`` / ``default_width`` / ``default_height`` /
+                ``nconmax`` / ``njmax`` is not a positive integer.
+            TypeError: If a robot-setup argument (``robot_name`` / ``robot``) or
+                any keyword this backend does not implement is passed.
         """
         reject_setup_kwargs(kwargs)
+        self._reject_unsupported_setup_kwargs(kwargs)
         super().__init__()
         # State that teardown (destroy/cleanup/__del__) touches must be set
         # before any fallible construction step. Otherwise a partially built
@@ -175,15 +267,60 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if solver.lower() not in solver_registry():
             raise ValueError(f"Unknown Newton solver {solver!r}. Available: {sorted(solver_registry())}")
         self._solver_name = solver.lower()
+        # Same attribute name the MuJoCo backend uses, so callers that read the
+        # engine's advertised identity work across backends.
+        self.tool_name_str = tool_name
         self.default_timestep = default_timestep
+        # Counts that must be positive whole numbers. Validated at construction,
+        # next to the caller that supplied them, for the same reason the
+        # contact-buffer overrides below are: ``substeps`` was stored unvalidated
+        # nine lines above that loop, and every bad value failed LATE and badly.
+        # ``_advance`` computes ``dt = timestep / substeps`` and loops
+        # ``range(substeps)``, so measured:
+        #
+        #   substeps=0   ctor/create_world/add_robot all OK, then an uncaught
+        #                ZeroDivisionError inside send_action
+        #   substeps=-3  send_action returns status="success" and sim_time
+        #                advances 0.3333s while range(-3) runs ZERO solver steps
+        #                - the joint does not move and nothing says so
+        #   substeps=1.5 uncaught TypeError deep in range()
+        #   substeps=True acts as a silent 1 (bool is an int subclass)
+        #
+        # The repo already owns this contract for the same quantity on the
+        # rollout side (``SimEngine._validate_control_substeps`` /
+        # ``PolicyRunner._control_substeps``), whose commit message is literally
+        # "control_substeps is honored or rejected, never silently clamped".
+        for name, value in (
+            ("substeps", substeps),
+            ("default_width", default_width),
+            ("default_height", default_height),
+        ):
+            if not isinstance(value, int) or isinstance(value, bool) or value < 1:
+                raise ValueError(f"{name} must be a positive integer, got {value!r}")
         self.substeps = substeps
         self.device = device
         self.default_width = default_width
         self.default_height = default_height
 
+        # Explicit contact-buffer overrides. Validated here rather than at
+        # _rebuild time so a bad value fails at construction, next to the
+        # caller that supplied it, instead of on the first add_robot.
+        def _validate_limit(name: str, value: int | None) -> None:
+            if value is not None and (not isinstance(value, int) or isinstance(value, bool) or value <= 0):
+                raise ValueError(f"{name} must be a positive integer or None, got {value!r}")
+
+        _validate_limit("nconmax", nconmax)
+        _validate_limit("njmax", njmax)
+        self._nconmax: int | None = nconmax
+        self._njmax: int | None = njmax
+
         # Newton handles (rebuilt on every scene mutation via _rebuild).
         self._model: Any = None
         self._solver: Any = None
+        # Collision buffer for solvers that do NOT run their own collision
+        # pipeline (everything except SolverMuJoCo). None means "the solver
+        # supplies its own contacts"; see _allocate_contacts and _advance.
+        self._contacts: Any = None
         self._state_0: Any = None
         self._state_1: Any = None
         self._control: Any = None
@@ -191,6 +328,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         self._joint_order: list[str] = []
         # Pending position targets keyed by (robot_name, short joint name).
         self._targets: dict[tuple[str, str], float] = {}
+        # Host staging array for the joint-target buffer, reused across every
+        # send_action so _write_targets neither reallocates on the device nor
+        # rebinds Control.joint_target_q. Rebuilt lazily (and dropped by
+        # _rebuild) whenever the model's DOF count changes.
+        self._target_host: np.ndarray | None = None
         # Coordinate index of each (robot, joint) in the global joint_q /
         # joint_target_q vector. For the revolute/prismatic joints of robot
         # arms one coordinate maps to one DOF, so this also indexes targets.
@@ -221,6 +363,18 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # Additive sensor-noise config + reproducible RNG (set_obs_noise).
         self._obs_noise: dict[str, float] | None = None
         self._obs_noise_rng: np.random.Generator | None = None
+        # Ray-traced render resources keyed by (width, height, fov_deg). The
+        # tiled camera, its light, the per-pixel ray grid and the color output
+        # buffer are invariant for a fixed resolution and FOV - only the camera
+        # transform changes per frame - so building them per call cost ~45x the
+        # render itself (30.6ms -> 0.7ms measured at 224x224 on Thor). The
+        # SensorTiledCamera binds the model, so _rebuild and destroy must drop
+        # this cache (see _invalidate_render_cache).
+        self._render_cache: dict[tuple[int, int, float], dict[str, Any]] = {}
+        # Light direction the cached cameras were built with, so a randomize()
+        # that changes it re-applies the light instead of rendering stale
+        # lighting from the cache.
+        self._render_cache_light_dir: tuple[float, float, float] | None = None
 
         logger.info("Newton simulation engine initialised (solver=%s)", self._solver_name)
 
@@ -310,8 +464,74 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 gravity=components,
                 ground_plane=ground_plane,
             )
-            self._rebuild()
-        return {"status": "success", "content": [{"text": f"Newton world created (solver={self._solver_name})."}]}
+            # Register the built-in three-quarter view as a real camera, matching
+            # the MuJoCo backend. ``render()`` and ``list_cameras()`` already
+            # treat "default" as available, but ``get_observation`` iterates
+            # ``world.cameras`` - so without this entry a Newton world that never
+            # called add_camera returned a pixel-less observation while MuJoCo
+            # returned a frame. A vision policy then saw no image key on Newton
+            # only, with nothing raising to say why. Same pose/size as the MuJoCo
+            # default so a rollout framed on one backend is framed on the other.
+            self._world.cameras["default"] = SimCamera(
+                name="default",
+                position=[1.5, 1.5, 1.2],
+                target=[0.0, 0.0, 0.3],
+                # getattr-guarded because create_world is reachable on an engine
+                # built through __new__ (these render-size attributes are set by
+                # __init__); the fallbacks match __init__'s own defaults.
+                width=getattr(self, "default_width", 640),
+                height=getattr(self, "default_height", 480),
+            )
+            # A brand-new world has no robots, so there is nothing to carry
+            # over; say so explicitly rather than relying on the snapshot
+            # happening to be empty.
+            self._rebuild(preserve_state=False)
+        return {
+            "status": "success",
+            "content": [{"text": f"Newton world created (solver={self._solver_name}). Default camera ready."}],
+        }
+
+    def __getattr__(self, name: str) -> Any:
+        """Explain a MuJoCo-only method instead of a bare ``AttributeError``.
+
+        The Newton backend implements every abstract :class:`SimEngine` method,
+        but the MuJoCo engine carries a large surface beyond the ABC (teleop,
+        multi-policy, camera recording, state checkpointing, analytic dynamics
+        queries, MJCF scene surgery). A caller that moves working code from
+        ``backend="mujoco"`` to ``backend="newton"`` hit
+        ``'NewtonSimEngine' object has no attribute 'set_joint_positions'``,
+        which names neither the backend that lacks it nor the one that has it.
+
+        This hook fires ONLY for genuinely absent attributes (Python calls it
+        after normal lookup fails), so it costs nothing on the hot path. It
+        resolves the MuJoCo-only set by asking the MuJoCo class at call time
+        rather than hardcoding a list, which would silently drift every time
+        either backend gains a method. When the MuJoCo backend is not installed
+        the check degrades to the plain error - the import must not be a hard
+        dependency of the Newton path.
+
+        Args:
+            name: The attribute Python could not find.
+
+        Raises:
+            NotImplementedError: When ``name`` is a method the MuJoCo backend
+                provides, with the backend to switch to.
+            AttributeError: For any other unknown attribute (a typo), so normal
+                Python semantics and ``hasattr`` probes are preserved.
+        """
+        # Dunder/private lookups must stay cheap and must never be re-routed:
+        # copy/pickle/inspect probe names like __deepcopy__ and __getstate__.
+        if name.startswith("_"):
+            raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
+        if name in _mujoco_only_methods():
+            raise NotImplementedError(
+                f"{name}() is implemented by the MuJoCo backend and not by the Newton backend. "
+                f"Use create_simulation('mujoco') / Robot(..., backend='mujoco') for this call, "
+                f"or keep the Newton engine and drop it from the sequence. Newton implements the "
+                f"full SimEngine contract (create_world/add_robot/send_action/step/get_observation/"
+                f"get_state/render/reset/destroy) plus randomize/set_obs_noise and dataset recording."
+            )
+        raise AttributeError(f"{type(self).__name__!r} object has no attribute {name!r}")
 
     def destroy(self) -> dict[str, Any]:
         """Destroy the world and release Newton/Warp handles."""
@@ -328,6 +548,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             self._dr_light_dir = None
             self._obs_noise = None
             self._obs_noise_rng = None
+            self._invalidate_render_cache()
         return {"status": "success", "content": [{"text": "Newton world destroyed."}]}
 
     def reset(self) -> dict[str, Any]:
@@ -338,7 +559,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             self._targets = {}
             self._world.sim_time = 0.0
             self._world.step_count = 0
-            self._rebuild()
+            # The only rebuild that SHOULD discard live state: reset's contract
+            # is to return to the rest pose. Every other caller preserves it.
+            self._rebuild(preserve_state=False)
         return {"status": "success", "content": [{"text": "Newton world reset."}]}
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
@@ -364,20 +587,90 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
     # Robot management
 
-    def _resolve_asset(self, name: str, source: str | None) -> tuple[str | None, str | None]:
-        """Resolve a robot name to an MJCF/URDF model path for the given source.
+    #: Constructor keywords this backend accepts but does NOT implement, mapped
+    #: to what to tell the caller. Rejected rather than dropped: a discarding
+    #: ``**kwargs`` sink turns an unimplemented feature into a successful no-op.
+    #: ``num_envs=4096`` was accepted and silently ignored while ``robot.py`` and
+    #: the package metadata both advertised GPU-batched parallel envs - measured,
+    #: the engine gained no ``num_envs`` attribute, the model held one arm's 6
+    #: coordinates and ``world_count`` was 1. Implementing real batching spans
+    #: ``_rebuild``, the index maps, ``get_observation`` and rendering, so this
+    #: says so instead of pretending.
+    _UNIMPLEMENTED_SETUP_KWARGS: dict[str, str] = {
+        "num_envs": (
+            "GPU-batched parallel environments are not implemented by the Newton backend. "
+            "Use backend='isaac' for batched envs, or drop num_envs to run a single world."
+        ),
+    }
+
+    def _reject_unsupported_setup_kwargs(self, kwargs: dict[str, Any]) -> None:
+        """Reject constructor keywords this backend cannot honor.
+
+        Named explicitly when the keyword is a real feature this backend lacks
+        (see :data:`_UNIMPLEMENTED_SETUP_KWARGS`), and reported as unknown
+        otherwise - a typo like ``sbsteps=3`` was swallowed by the same sink and
+        was indistinguishable from a working call.
 
         Args:
-            name: Robot name or alias to resolve.
+            kwargs: The residual keyword arguments the constructor would drop.
+
+        Raises:
+            TypeError: If any keyword remains, since a constructor cannot return
+                the tool-envelope error ``unknown_kwargs_error`` produces.
+        """
+        if not kwargs:
+            return
+        for name, reason in self._UNIMPLEMENTED_SETUP_KWARGS.items():
+            if name in kwargs:
+                raise TypeError(f"NewtonSimEngine does not support {name!r}: {reason}")
+        unexpected = ", ".join(repr(key) for key in sorted(kwargs))
+        raise TypeError(
+            f"NewtonSimEngine got unexpected keyword argument(s): {unexpected}. "
+            "Accepted: tool_name, solver, default_timestep, substeps, device, "
+            "default_width, default_height, nconmax, njmax."
+        )
+
+    def _resolve_asset(
+        self, name: str, source: str | None, data_config: str | None = None
+    ) -> tuple[str | None, str | None]:
+        """Resolve a robot to an MJCF/URDF model path for the given source.
+
+        Resolution precedence mirrors the MuJoCo backend: an explicit
+        ``urdf_path`` (handled by the caller), then ``data_config`` as the
+        registry key, then ``name`` as the registry key. ``data_config`` used to
+        be ignored here entirely - documented as "Accepted for ABC parity; unused
+        by Newton" - so the multi-robot form the MuJoCo backend actively
+        recommends (its own hint says "Prefer: add_robot(name='<instance_label>',
+        data_config='so101')") failed on Newton::
+
+            MUJOCO add_robot(name='armA', data_config='so101') -> success
+            NEWTON add_robot(name='armA', data_config='so101') -> error
+                   "Could not resolve a sim asset for robot 'armA'."
+
+        Name-only callers are unaffected: ``name`` remains the fallback key, which
+        is why the single-robot ``Robot("so101", backend="newton")`` worked at all.
+
+        Args:
+            name: Robot instance label, also tried as a registry key.
             source: One of :data:`_ROBOT_SOURCES`. ``"robot_descriptions"``
                 resolves a URDF directly; ``"registry"`` restricts to the
                 curated registry / MJCF asset manager; ``None`` tries the
                 registry first then falls back to a ``robot_descriptions`` URDF.
+            data_config: Registry key for the asset, independent of the instance
+                label. Tried BEFORE ``name`` when given.
 
         Returns:
             ``(model_path, None)`` on success, or ``(None, error_text)`` with a
             human-readable reason on failure.
         """
+        if data_config:
+            # The instance label is arbitrary when data_config is supplied, so
+            # resolve on data_config alone and report failure against IT - naming
+            # the label would send the caller looking for the wrong key.
+            resolved, error = self._resolve_asset(data_config, source)
+            if resolved is not None:
+                return resolved, None
+            return None, error
         if source == "robot_descriptions":
             urdf = discover_urdf_path(name)
             if urdf:
@@ -433,7 +726,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 MJCF/URDF file.
             urdf_path: Optional explicit MJCF/URDF path. When given it wins
                 outright and ``source`` is ignored.
-            data_config: Accepted for ABC parity; unused by Newton.
+            data_config: Registry key for the robot asset, independent of the
+                instance ``name``. Takes precedence over ``name`` as the lookup
+                key, matching the MuJoCo backend - so the multi-robot form
+                ``add_robot(name='armA', data_config='so101')`` works on both
+                backends. Ignored when ``urdf_path`` is given.
             position: World position ``[x, y, z]`` (default origin).
             orientation: World orientation as a wxyz quaternion
                 (default identity).
@@ -483,7 +780,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if urdf_path is not None:
             model_path = urdf_path
         else:
-            resolved_path, error = self._resolve_asset(name, source)
+            resolved_path, error = self._resolve_asset(name, source, data_config)
             if resolved_path is None:
                 return {"status": "error", "content": [{"text": error}]}
             model_path = resolved_path
@@ -710,7 +1007,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 state only (used by control loops that do not need pixels).
 
         Returns:
-            Mapping of short joint name to joint position (float), plus one
+            Mapping of short joint name to joint position (float), each paired
+            with an additive ``"<joint>.vel"`` velocity entry (rad/s), plus one
             entry per registered camera (name -> RGB ndarray) when
             ``skip_images`` is False. A robot with a floating base additionally
             carries ``base_pos`` (world x,y,z incl. height), ``base_quat``
@@ -754,6 +1052,18 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 idx = self._joint_coord_index.get((robot_name, jname))
                 if idx is not None and idx < len(joint_q):
                     obs[jname] = float(joint_q[idx])
+                # Per-joint velocity, matching the MuJoCo backend's additive
+                # ``<name>.vel`` key. Read through _joint_dof_index (joint_qd),
+                # NOT _joint_coord_index (joint_q): the two indices diverge once
+                # a robot has a multi-coordinate joint, because a free joint
+                # spans 7 coordinates but only 6 DOFs. Without this key a
+                # velocity-feedback consumer silently loses its feedback term on
+                # this backend while working on MuJoCo: WBCPolicy warns once and
+                # then balances on zeros for dqj, and training.rl.SimEnv raises
+                # for a '<joint>.vel' entry in actor_obs_keys.
+                dof = self._joint_dof_index.get((robot_name, jname))
+                if dof is not None and dof < len(joint_qd):
+                    obs[f"{jname}.vel"] = float(joint_qd[dof])
         # Joint-position sensor noise applies only to the float joint entries;
         # camera frames are added afterwards (and carry their own jitter via the
         # render path), so the result holds mixed float/ndarray values.
@@ -844,7 +1154,13 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         return {"status": "success", "content": [{"text": f"Action applied to '{robot_name}' ({len(applied)} keys)."}]}
 
     def physics_timestep(self) -> float | None:
-        """Return the physics integration timestep in seconds."""
+        """Return the FRAME timestep in seconds - the sim time one step advances.
+
+        Not the solver's integration step: ``_advance`` integrates at
+        ``timestep / substeps``. ``PolicyRunner._control_substeps`` divides a
+        control period by this value to get frames per action, so it must be the
+        frame dt.
+        """
         if self._world is None:
             return None
         return float(self._world.timestep)
@@ -1068,8 +1384,17 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         return {"status": "success", "content": [{"text": f"Camera '{name}' removed."}]}
 
     def list_cameras(self) -> list[str]:
-        """Return all renderable camera names (the built-in ``'default'`` plus user cameras)."""
-        return ["default", *(self._world.cameras if self._world else {})]
+        """Return all renderable camera names (the built-in ``'default'`` plus user cameras).
+
+        ``create_world`` registers ``"default"`` as a real entry in
+        ``world.cameras``, so it is listed from there rather than prepended -
+        prepending as well would report it twice. It is still synthesised when no
+        world exists (or a world predates the registration), because
+        :meth:`render` accepts the name unconditionally and the list must not
+        under-report what is renderable.
+        """
+        names = list(self._world.cameras) if self._world else []
+        return names if "default" in names else ["default", *names]
 
     def render(
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
@@ -1206,19 +1531,21 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         with self._lock:
             sensors = self._nt.sensors
-            cam = sensors.SensorTiledCamera(model=self._model)
-            light_dir = self._wp.vec3f(*self._dr_light_dir) if self._dr_light_dir is not None else None
-            cam.utils.create_default_light(enable_shadows=False, direction=light_dir)
-            rays = cam.utils.compute_pinhole_camera_rays(w, h, math.radians(fov_deg))
-            color = cam.utils.create_color_image_output(w, h, 1)
+            resources = self._render_resources(w, h, fov_deg)
+            cam = resources["camera"]
+            # Only the camera transform depends on simulation state, so write the
+            # new pose into the existing device array instead of allocating one.
             q = self._look_at_quat(tuple(eye), tuple(target))
-            wp = self._wp
-            cam_tf = wp.array([[wp.transformf(wp.vec3f(*eye), wp.quatf(*q))]], dtype=wp.transformf)
+            pose = resources["transform_host"]
+            pose[0, 0, 0:3] = eye
+            pose[0, 0, 3:7] = q
+            resources["transform"].assign(pose)
+            color = resources["color"]
             self._model.bvh_refit_shapes(self._state_0)
             cam.update(
                 self._state_0,
-                cam_tf,
-                rays,
+                resources["transform"],
+                resources["rays"],
                 color_image=color,
                 clear_data=sensors.SensorTiledCamera.GRAY_CLEAR_DATA,
             )
@@ -1226,6 +1553,79 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         frame = rgba[0, 0] if rgba.ndim == 5 else rgba[0]
         frame = np.ascontiguousarray(frame[..., :3])
         return self._maybe_jitter_frame(frame)
+
+    def _render_resources(self, w: int, h: int, fov_deg: float) -> dict[str, Any]:
+        """Return the cached ray-trace resources for one ``(w, h, fov_deg)`` view.
+
+        The tiled camera, its directional light, the per-pixel ray grid and the
+        color output buffer do not depend on simulation state, so they are built
+        once per distinct resolution/FOV and reused. Building them per frame -
+        which is what ``_render_rgb`` used to do - cost roughly 45x the render
+        itself (30.6ms vs 0.7ms at 224x224 on an NVIDIA Thor).
+
+        The cache is keyed on ``(w, h, fov_deg)`` because the ray grid encodes
+        both; a second camera at the same resolution and FOV shares one entry
+        (the per-frame pose is written into the transform array, not baked into
+        these objects).
+
+        Must be called with ``self._lock`` held.
+
+        Args:
+            w: Render width in pixels.
+            h: Render height in pixels.
+            fov_deg: Vertical field of view in degrees.
+
+        Returns:
+            Dict with ``camera`` / ``rays`` / ``color`` / ``transform`` (a
+            ``wp.array`` of one ``transformf``) / ``transform_host`` (the numpy
+            staging buffer written per frame).
+        """
+        assert self._model is not None
+        wp = self._wp
+        key = (int(w), int(h), float(fov_deg))
+        # A randomize() that changes the light direction must be visible, and
+        # the light lives on the cached camera's render context. Rebuilding the
+        # whole cache is correct and rare (once per randomize, not per frame).
+        if self._render_cache_light_dir != self._dr_light_dir:
+            self._render_cache = {}
+            self._render_cache_light_dir = self._dr_light_dir
+        cached = self._render_cache.get(key)
+        if cached is not None:
+            return cached
+
+        cam = self._nt.sensors.SensorTiledCamera(model=self._model)
+        light_dir = wp.vec3f(*self._dr_light_dir) if self._dr_light_dir is not None else None
+        cam.utils.create_default_light(enable_shadows=False, direction=light_dir)
+        # compute_pinhole_camera_rays is deprecated in newton 1.4.0 in favour of
+        # compute_camera_rays_pinhole; prefer the new name and fall back only
+        # for older newton, where the new name does not exist at all.
+        if hasattr(cam.utils, "compute_camera_rays_pinhole"):
+            rays = cam.utils.compute_camera_rays_pinhole(w, h, camera_fovs=math.radians(fov_deg))
+        else:
+            rays = cam.utils.compute_pinhole_camera_rays(w, h, math.radians(fov_deg))
+        resources: dict[str, Any] = {
+            "camera": cam,
+            "rays": rays,
+            "color": cam.utils.create_color_image_output(w, h, 1),
+            "transform": wp.array(
+                [[wp.transformf(wp.vec3f(0.0, 0.0, 0.0), wp.quatf(0.0, 0.0, 0.0, 1.0))]], dtype=wp.transformf
+            ),
+            "transform_host": np.zeros((1, 1, 7), dtype=np.float32),
+        }
+        self._render_cache[key] = resources
+        logger.debug("Newton render resources built for %dx%d fov=%.1f", w, h, fov_deg)
+        return resources
+
+    def _invalidate_render_cache(self) -> None:
+        """Drop cached render resources.
+
+        A ``SensorTiledCamera`` binds the ``Model`` it was constructed with, so
+        every rebuild (which finalizes a NEW immutable model) and every destroy
+        must drop these or the next render traces the old geometry. Must be
+        called with ``self._lock`` held.
+        """
+        self._render_cache = {}
+        self._render_cache_light_dir = None
 
     def get_frame(
         self, camera_name: str = "default", width: int | None = None, height: int | None = None
@@ -2044,11 +2444,64 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         for _ in range(max(1, n_steps)):
             for _ in range(self.substeps):
                 self._state_0.clear_forces()
-                self._solver.step(self._state_0, self._state_1, self._control, None, dt)
+                # Solvers that do NOT run their own collision pipeline consume the
+                # ``contacts`` argument, so it has to be refreshed against the
+                # CURRENT state before every substep. Passing None (as this loop
+                # used to, unconditionally) meant every non-MuJoCo solver saw no
+                # contacts at all: a 0.2 kg cube dropped from z=0.30 fell to
+                # -27.91 m in 2.4 s, exactly free-fall, while the engine reported
+                # success and rendered. SolverMuJoCo supplies its own contacts and
+                # ignores the argument, so self._contacts stays None for it and
+                # this costs nothing on the default path.
+                if self._contacts is not None:
+                    self._model.collide(self._state_0, self._contacts)
+                self._solver.step(self._state_0, self._state_1, self._control, self._contacts, dt)
                 self._state_0, self._state_1 = self._state_1, self._state_0
             self._world.sim_time += self._world.timestep
             self._world.step_count += 1
         self._sync_viewer()
+
+    def _allocate_contacts(self) -> Any:
+        """Allocate a ``Contacts`` buffer, or ``None`` when the solver owns collision.
+
+        newton's solver contract is
+        ``step(state_in, state_out, control, contacts, dt)``. ``SolverMuJoCo`` runs
+        the MuJoCo-Warp collision pipeline internally and ignores the argument, but
+        every other rigid solver (``featherstone``, ``xpbd``, ``semi_implicit``)
+        CONSUMES it - and this engine passed a hard-coded ``None``, so those
+        solvers saw no contacts whatsoever. Reproduced: a 0.2 kg cube dropped from
+        z=0.30 reached -27.91 m in 2.4 s under featherstone and xpbd (exactly
+        free-fall at 9.81 m/s^2) while ``create_simulation`` reported success,
+        rendered, and stepped. Every shipped newton example on a non-MuJoCo solver
+        builds ``model.contacts()`` and calls ``model.collide`` per substep.
+
+        Must be called with ``self._lock`` held, after the solver is constructed.
+
+        Returns:
+            A ``Contacts`` buffer, or ``None`` when the solver provides its own (or
+            no solver/model exists yet, or the buffer cannot be allocated - the
+            latter is logged, since it means collision will be absent).
+        """
+        if self._solver is None or self._model is None:
+            return None
+        # SolverMuJoCo collides internally and ignores the argument. newton 1.4.0
+        # exposes the flag PRIVATELY as ``_use_mujoco_contacts`` (the public name
+        # the ledger suggested does not exist - verified with dir() on a live
+        # solver), so both spellings are probed and a future rename to the public
+        # one keeps working.
+        for attr in ("use_mujoco_contacts", "_use_mujoco_contacts"):
+            if getattr(self._solver, attr, False):
+                return None
+        try:
+            return self._model.contacts()
+        except Exception as exc:  # noqa: BLE001 - report, never break the build
+            logger.error(
+                "Newton solver %r does not supply its own contacts and a Contacts buffer could not "
+                "be allocated (%s): this scene will simulate WITHOUT COLLISION. Use solver='mujoco'.",
+                self._solver_name,
+                exc,
+            )
+            return None
 
     def _apply_gravity(self) -> None:
         """Write the world's gravity vec3 onto the finalized model.
@@ -2067,29 +2520,192 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         vec = np.tile(np.asarray(self._world.gravity, dtype=np.float32), (n_worlds, 1))
         self._model.gravity = self._wp.array(vec, dtype=self._wp.vec3, device=self._model.device)
 
+    def _solver_contact_limits(self, solver_cls: type) -> dict[str, int]:
+        """Contact/constraint buffer sizes to pass to ``solver_cls``.
+
+        Only MuJoCo-Warp preallocates these buffers, and only it accepts the
+        kwargs, so the mapping is empty for every other solver rather than
+        being forwarded blindly (``SolverXPBD(model, nconmax=...)`` is a
+        ``TypeError``). Sized from the model's own collision-pair count with a
+        generous floor, because an overflow is an unrecoverable CUDA fault
+        rather than a degraded step - see :data:`_CONTACT_LIMIT_FLOOR`.
+        Explicit ``nconmax`` / ``njmax`` constructor arguments win.
+
+        Must be called with ``self._lock`` held, after ``builder.finalize``.
+
+        Args:
+            solver_cls: The resolved ``newton.solvers`` class about to be built.
+
+        Returns:
+            Keyword arguments for ``solver_cls``; empty when it does not
+            preallocate contact buffers.
+        """
+        assert self._model is not None
+        # solver_cls is a class object (typed `type`); introspecting its
+        # constructor signature is intentional. mypy flags __init__-on-instance
+        # unsoundness, which does not apply to a class.
+        params = inspect.signature(solver_cls.__init__).parameters  # type: ignore[misc]
+        if "nconmax" not in params or "njmax" not in params:
+            return {}
+        pairs = int(getattr(self._model, "shape_contact_pair_count", 0) or 0)
+        derived = max(_CONTACT_LIMIT_FLOOR, pairs * _CONTACT_LIMIT_PER_PAIR)
+        limits = {
+            "nconmax": self._nconmax if self._nconmax is not None else derived,
+            "njmax": self._njmax if self._njmax is not None else derived,
+        }
+        logger.debug(
+            "Newton solver contact limits: nconmax=%d njmax=%d (%d collision pairs)",
+            limits["nconmax"],
+            limits["njmax"],
+            pairs,
+        )
+        return limits
+
     def _write_targets(self) -> None:
         """Push pending position targets into the Newton control buffer.
+
+        Writes IN PLACE into the existing device allocation rather than binding a
+        fresh ``wp.array`` onto ``Control.joint_target_q``. The rebind was called
+        once per :meth:`send_action` - i.e. once per control step of every policy
+        rollout - and each one cost a device-to-host copy, a host mutation and a
+        new device allocation (measured ~153us per call for a 6-DoF arm, with the
+        buffer pointer changing underneath the solver). Reusing one host staging
+        array and one device allocation keeps the pointer stable, which is also
+        the precondition for CUDA-graph capture: capture records the addresses it
+        was traced with, so a per-step reallocation is exactly what prevents the
+        GPU-side speedup Newton exists to provide.
+
+        Targets are addressed by DOF index, not coordinate index. ``joint_target_q``
+        is DOF-shaped (``joint_dof_count``) unless ``newton.use_coord_layout_targets``
+        is set, which defaults to False and this backend never enables. The two
+        layouts diverge as soon as the model holds a multi-coordinate joint: a FREE
+        joint spans 7 coordinates but 6 DOFs (a BALL joint 4 and 3), so every joint
+        after a floating base has ``coord_index == dof_index + 1``. Indexing the
+        DOF-shaped buffer with coordinate indices therefore actuated the joint one
+        slot LATER than the one commanded, and the final joint's coordinate index
+        fell off the end of the array so its command was silently discarded by the
+        bounds guard. Verified on unitree_g1: commanding ``left_hip_pitch_joint``
+        moved ``left_hip_roll_joint`` instead. It also corrupted a plain arm that
+        merely shared a world with a floating-base robot added before it.
 
         Must be called with ``self._lock`` held.
         """
         if self._control is None or self._control.joint_target_q is None:
             return
-        tgt = self._control.joint_target_q.numpy()
+        target = self._control.joint_target_q
+        # Staging array reused across calls; rebuilt only when the model is
+        # rebuilt and the DOF count changes (_rebuild drops it).
+        host = self._target_host
+        if host is None or host.shape != target.shape:
+            host = target.numpy().copy()
+            self._target_host = host
         for (robot_name, jname), value in self._targets.items():
-            idx = self._joint_coord_index.get((robot_name, jname))
-            if idx is not None and idx < len(tgt):
-                tgt[idx] = value
-        self._control.joint_target_q = self._wp.array(tgt, dtype=self._wp.float32, device=self._model.device)
+            # A floating base is a 6-DoF joint, not a scalar target: writing one
+            # float at its DOF start would command a base translation. Skip it -
+            # get_observation excludes it from the scalar joint state for the
+            # same reason.
+            if jname == self._robot_free_base_joint.get(robot_name):
+                continue
+            idx = self._joint_dof_index.get((robot_name, jname))
+            if idx is not None and idx < len(host):
+                host[idx] = value
+        target.assign(host)
 
-    def _rebuild(self) -> None:
+    def _snapshot_joint_state(self) -> dict[tuple[str, str], tuple[float, float]]:
+        """Capture live ``(position, velocity)`` per ``(robot, joint)``.
+
+        Read through the CURRENT index maps, so it must be called before
+        :meth:`_rebuild` clears them. Returns an empty mapping when there is no
+        state yet (the first ``create_world`` / ``add_robot``).
+
+        The free base joint of a floating-base robot is skipped: its coordinates
+        are ``[xyz + quaternion]``, not a scalar angle, so it cannot round-trip
+        through this scalar mapping. Its pose is re-derived from the model
+        defaults, matching the pre-existing behaviour for base bodies.
+
+        Returns:
+            ``{(robot_name, joint_name): (joint_q value, joint_qd value)}``.
+        """
+        if self._state_0 is None or not self._joint_coord_index:
+            return {}
+        # A jointless world (ground plane only, before the first add_robot) has
+        # a State whose joint arrays are None, not empty.
+        joint_q = getattr(self._state_0, "joint_q", None)
+        joint_qd = getattr(self._state_0, "joint_qd", None)
+        if joint_q is None or joint_qd is None:
+            return {}
+        base_joints = set(self._robot_free_base_joint.items())
+        positions = joint_q.numpy()
+        velocities = joint_qd.numpy()
+        snapshot: dict[tuple[str, str], tuple[float, float]] = {}
+        for key, coord in self._joint_coord_index.items():
+            if key in base_joints:
+                continue
+            dof = self._joint_dof_index.get(key)
+            if dof is None or coord >= len(positions) or dof >= len(velocities):
+                continue
+            snapshot[key] = (float(positions[coord]), float(velocities[dof]))
+        return snapshot
+
+    def _restore_joint_state(self, snapshot: dict[tuple[str, str], tuple[float, float]]) -> None:
+        """Scatter a :meth:`_snapshot_joint_state` result into the new state.
+
+        Joints that no longer exist (a removed robot) are dropped; joints that
+        are new keep their model default. ``eval_fk`` is re-run afterwards so
+        ``body_q`` - which the renderer and every body-pose query read - matches
+        the restored joint coordinates instead of the rest pose.
+
+        Args:
+            snapshot: Mapping captured before the rebuild.
+        """
+        if not snapshot or self._state_0 is None:
+            return
+        joint_q = getattr(self._state_0, "joint_q", None)
+        joint_qd = getattr(self._state_0, "joint_qd", None)
+        if joint_q is None or joint_qd is None:
+            return
+        positions = joint_q.numpy().copy()
+        velocities = joint_qd.numpy().copy()
+        restored = 0
+        for key, (position, velocity) in snapshot.items():
+            coord = self._joint_coord_index.get(key)
+            dof = self._joint_dof_index.get(key)
+            if coord is None or dof is None or coord >= len(positions) or dof >= len(velocities):
+                continue
+            positions[coord] = position
+            velocities[dof] = velocity
+            restored += 1
+        if restored == 0:
+            return
+        joint_q.assign(positions)
+        joint_qd.assign(velocities)
+        self._nt.eval_fk(self._model, joint_q, joint_qd, self._state_0)
+        dropped = len(snapshot) - restored
+        if dropped:
+            logger.debug("Newton rebuild restored %d joint(s), dropped %d that no longer exist", restored, dropped)
+
+    def _rebuild(self, preserve_state: bool = True) -> None:
         """(Re)build the Newton model from the current world state.
 
         Newton finalises an immutable model from a builder, so every scene
         mutation triggers a full rebuild. Joint targets that still reference
         existing joints are preserved. Must be called with ``self._lock`` held.
+
+        Args:
+            preserve_state: Carry the live joint positions and velocities across
+                the rebuild. True for scene mutations (``add_object`` /
+                ``move_object`` / ``set_gravity`` / ``add_robot`` ...), which
+                must not teleport the arm mid-episode: the new model's
+                ``joint_q`` defaults are the REST pose, so re-seeding from them
+                snapped every joint back to 0 and zeroed all velocities while
+                ``sim_time`` kept counting - a physically impossible jump,
+                unmarked, in the middle of a recorded episode. ``False`` is for
+                :meth:`reset`, whose contract IS to return to the rest pose.
         """
         assert self._world is not None
         nt, wp = self._nt, self._wp
+        # Snapshot through the OLD index maps, before they are cleared below.
+        snapshot = self._snapshot_joint_state() if preserve_state else {}
         builder = nt.ModelBuilder()
         solver_cls = resolve_solver_class(self._solver_name)
         if hasattr(solver_cls, "register_custom_attributes"):
@@ -2159,6 +2775,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         self._apply_domain_randomization(builder)
 
         self._model = builder.finalize(device=self.device)
+        # The cached tiled cameras bind the OLD model; keeping them would render
+        # the pre-mutation geometry forever.
+        self._invalidate_render_cache()
         # Newton solvers snapshot gravity at construction, and ModelBuilder only
         # expresses gravity as a scalar magnitude along its up-axis (silently
         # dropping any non-axis-aligned component). Write the world's full
@@ -2169,11 +2788,24 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # Rigid-body solvers (notably SolverMuJoCo) require at least one joint.
         # An empty world (ground plane only) has none, so defer solver creation
         # until a robot is added; stepping is a no-op until then.
-        self._solver = solver_cls(self._model) if self._model.joint_dof_count > 0 else None
+        self._solver = (
+            solver_cls(self._model, **self._solver_contact_limits(solver_cls))
+            if self._model.joint_dof_count > 0
+            else None
+        )
         self._state_0 = self._model.state()
         self._state_1 = self._model.state()
         self._control = self._model.control()
+        self._contacts = self._allocate_contacts()
+        # The fresh Control owns a new device buffer whose length tracks the
+        # rebuilt model's DOF count, so the old host staging array is stale.
+        # Drop it; _write_targets re-derives it from the new buffer.
+        self._target_host = None
         nt.eval_fk(self._model, self._model.joint_q, self._model.joint_qd, self._state_0)
+        # eval_fk above seeded the REST pose from the model defaults. Put the
+        # live configuration back for every joint that survived the rebuild, or
+        # a mid-episode add_object teleports the arm to zero.
+        self._restore_joint_state(snapshot)
         self._joint_order = [name for names in self._robot_joint_map.values() for name in names]
 
         # Re-apply targets that still reference live joints.
@@ -2190,34 +2822,126 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 self._close_viewer()
 
     def _add_object_to_builder(self, builder: Any, obj: SimObject) -> None:
-        """Add one :class:`SimObject` primitive to a Newton builder."""
+        """Add one :class:`SimObject` primitive to a Newton builder.
+
+        The requested ``obj.mass`` is the ONLY mass the body ends up with.
+        Newton's ``add_shape_*`` defaults to ``ShapeConfig.density = 1000.0`` and
+        ACCUMULATES the shape's density-derived mass and inertia onto the parent
+        body, so passing ``add_body(mass=obj.mass)`` alongside a default-density
+        shape produced ``requested + 1000 * volume``. Measured, with the extra
+        matching ``1000 * volume`` exactly for every shape::
+
+            box  [0.05]^3  requested 0.500 -> 1.5000  (extra 1.0000)
+            box  [0.03]^3  requested 0.100 -> 0.3160  (extra 0.2160)
+            sphere r=0.04  requested 0.200 -> 0.4681  (extra 0.2681)
+            cylinder       requested 0.300 -> 0.5827  (extra 0.2827)
+            capsule        requested 0.250 -> 0.3840  (extra 0.1340)
+
+        ``list_objects`` reports ``obj.mass``, so the tool was describing a mass
+        the physics did not use, and the inertia tensor was that of the
+        accumulated mass (2x off for the first box). The MuJoCo backend, the
+        parity reference, reports 0.5 for that same box.
+
+        So the body is created massless and the requested mass is expressed as a
+        density over the shape's own volume: Newton then derives BOTH the mass
+        and a geometry-consistent inertia tensor. A shape whose volume cannot be
+        computed (a degenerate size) keeps Newton's default density rather than
+        dividing by zero - and says so, because a silently wrong mass is what
+        this defect was.
+        """
         wp = self._wp
         xform = wp.transform(wp.vec3(*obj.position), self._wxyz_to_wp_quat(obj.orientation))
         if obj.is_static or obj.mass <= 0:
             body = -1
         else:
-            body = builder.add_body(xform=xform, mass=obj.mass)
+            # Massless body: all of the mass comes from the shape's density
+            # below, which is also what gives the correct inertia tensor.
+            body = builder.add_body(xform=xform, mass=0.0)
         shape_xform = wp.transform(wp.vec3(0.0, 0.0, 0.0), wp.quat_identity()) if body >= 0 else xform
         color = tuple(obj.color[:3])
         size = obj.size
         if obj.shape == "box":
             hx, hy, hz = (size + [0.05, 0.05, 0.05])[:3]
-            builder.add_shape_box(body, xform=shape_xform, hx=hx, hy=hy, hz=hz, color=color)
+            cfg = self._shape_density_cfg(obj, body, 8.0 * hx * hy * hz)
+            builder.add_shape_box(body, xform=shape_xform, hx=hx, hy=hy, hz=hz, color=color, cfg=cfg)
         elif obj.shape == "sphere":
-            builder.add_shape_sphere(body, xform=shape_xform, radius=size[0], color=color)
+            radius = size[0]
+            cfg = self._shape_density_cfg(obj, body, 4.0 / 3.0 * math.pi * radius**3)
+            builder.add_shape_sphere(body, xform=shape_xform, radius=radius, color=color, cfg=cfg)
         elif obj.shape == "capsule":
             radius = size[0]
             half_height = size[1] if len(size) > 1 else size[0]
-            builder.add_shape_capsule(body, xform=shape_xform, radius=radius, half_height=half_height, color=color)
+            # Cylinder barrel plus the two hemispherical caps (one full sphere).
+            volume = math.pi * radius**2 * 2.0 * half_height + 4.0 / 3.0 * math.pi * radius**3
+            cfg = self._shape_density_cfg(obj, body, volume)
+            builder.add_shape_capsule(
+                body, xform=shape_xform, radius=radius, half_height=half_height, color=color, cfg=cfg
+            )
         elif obj.shape == "cylinder":
             radius = size[0]
             half_height = size[1] if len(size) > 1 else size[0]
-            builder.add_shape_cylinder(body, xform=shape_xform, radius=radius, half_height=half_height, color=color)
+            cfg = self._shape_density_cfg(obj, body, math.pi * radius**2 * 2.0 * half_height)
+            builder.add_shape_cylinder(
+                body, xform=shape_xform, radius=radius, half_height=half_height, color=color, cfg=cfg
+            )
         elif obj.shape == "mesh":
             vertices, indices = self._load_mesh_geometry(obj.mesh_path)
             mesh = self._nt.Mesh(vertices, indices)
             sx, sy, sz = (size + [1.0, 1.0, 1.0])[:3]
-            builder.add_shape_mesh(body, xform=shape_xform, mesh=mesh, scale=wp.vec3(sx, sy, sz), color=color)
+            cfg = self._shape_density_cfg(obj, body, self._mesh_volume(vertices, indices, (sx, sy, sz)))
+            builder.add_shape_mesh(body, xform=shape_xform, mesh=mesh, scale=wp.vec3(sx, sy, sz), color=color, cfg=cfg)
+
+    def _shape_density_cfg(self, obj: SimObject, body: int, volume: float) -> Any:
+        """Return a ``ShapeConfig`` whose density yields exactly ``obj.mass``.
+
+        Args:
+            obj: The object being built; ``mass`` is the requested total.
+            body: The parent body id, or ``-1`` for a static shape.
+            volume: The shape's own volume in m^3.
+
+        Returns:
+            A ``ShapeConfig`` with ``density = obj.mass / volume``, or ``None``
+            for a static shape (no body to carry mass) or a non-positive volume.
+        """
+        if body < 0:
+            return None
+        if not math.isfinite(volume) or volume <= 0.0:
+            logger.warning(
+                "object %r has a non-positive %s volume (%r); its mass will come from Newton's default "
+                "density instead of the requested %.4f kg. Check the size argument.",
+                obj.name,
+                obj.shape,
+                volume,
+                obj.mass,
+            )
+            return None
+        return self._nt.ModelBuilder.ShapeConfig(density=obj.mass / volume)
+
+    @staticmethod
+    def _mesh_volume(vertices: Any, indices: Any, scale: tuple[float, float, float]) -> float:
+        """Signed volume of a closed triangle mesh, via the divergence theorem.
+
+        Each triangle contributes ``dot(v0, cross(v1, v2)) / 6`` - the signed
+        volume of the tetrahedron it forms with the origin. Correct for any
+        closed, consistently-wound mesh regardless of where the origin sits.
+        Anisotropic ``scale`` multiplies the volume by ``sx * sy * sz``.
+
+        Args:
+            vertices: ``(N, 3)`` float array of mesh vertices.
+            indices: Flat triangle index array (3 per face).
+            scale: Per-axis scale applied to the mesh.
+
+        Returns:
+            Volume in m^3; ``0.0`` for a mesh that is not a closed solid (the
+            caller then falls back to Newton's default density and warns).
+        """
+        tris = np.asarray(indices, dtype=np.int64).reshape(-1, 3)
+        verts = np.asarray(vertices, dtype=np.float64)
+        if tris.size == 0 or verts.size == 0:
+            return 0.0
+        v0, v1, v2 = verts[tris[:, 0]], verts[tris[:, 1]], verts[tris[:, 2]]
+        volume = float(np.abs(np.einsum("ij,ij->i", v0, np.cross(v1, v2)).sum()) / 6.0)
+        return volume * abs(scale[0] * scale[1] * scale[2])
 
     def _load_mesh_geometry(self, mesh_path: str | None) -> tuple[Any, Any]:
         """Load a mesh asset into ``(vertices, indices)`` arrays for Newton.

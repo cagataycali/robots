@@ -18,6 +18,8 @@ import tempfile
 
 import pytest
 
+from strands_robots.dataset_recorder import resolve_video_backend
+
 pytest.importorskip("mujoco")
 
 os.environ.setdefault("MUJOCO_GL", "glfw")
@@ -217,7 +219,7 @@ def test_b12_multi_episode_resume_appends(sim_with_two_robots, tmp_path):
     # Readback: two episodes appended into one dataset.
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id="local/multiep", root=root)
+    ds = LeRobotDataset(repo_id="local/multiep", root=root, video_backend=resolve_video_backend())
     assert ds.meta.total_episodes == 2, f"expected 2 episodes, got {ds.meta.total_episodes}"
 
 
@@ -312,7 +314,7 @@ def test_b4_synchronized_multi_robot_recording(sim_with_two_robots, tmp_path):
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id="local/sync_multi", root=root)
+    ds = LeRobotDataset(repo_id="local/sync_multi", root=root, video_backend=resolve_video_backend())
 
     # Schema: 2 robots × 3 joints (the inline test arm) = 6-dim, prefixed.
     af = ds.features["action"]
@@ -479,7 +481,7 @@ def test_run_multi_policy_action_horizon_batches_inference(sim_with_two_robots, 
     # Batching must NOT break the co-observation invariant.
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id="local/hz2", root=str(tmp_path / "hz2"))
+    ds = LeRobotDataset(repo_id="local/hz2", root=str(tmp_path / "hz2"), video_backend=resolve_video_backend())
     af = ds.features["action"]
     names = af["names"] if isinstance(af, dict) else getattr(af, "names", None)
     half = len(names) // 2
@@ -684,13 +686,22 @@ def test_start_recording_resolves_namespaced_repo_id_under_hf_cache(sim_with_two
     assert not stale.exists()
 
 
-def test_start_recording_resolves_bare_repo_id_as_local_path(sim_with_two_robots, monkeypatch, tmp_path):
-    """A repo_id with no namespace slash resolves to a local relative path
-    (Path(repo_id)), not the HF cache. Verified via the overwrite wipe."""
+def test_start_recording_bare_repo_id_does_not_wipe_a_cwd_directory(sim_with_two_robots, monkeypatch, tmp_path):
+    """A repo_id with no namespace slash resolves to the HF home, NOT the CWD.
+
+    This test previously asserted the opposite - that ``overwrite=True`` wipes a
+    same-named directory in the current working directory - and so pinned a
+    defect (D49). lerobot resolves ``HF_LEROBOT_HOME / repo_id`` unconditionally
+    (``dataset_metadata.py:101`` and ``:778``), so treating a bare repo_id as a
+    local path aimed ``overwrite=True``'s rmtree at a directory lerobot never
+    writes to. Measured pre-fix: an unrelated ``./mydataset`` holding a sentinel
+    file did not survive.
+    """
     import strands_robots.dataset_recorder as dr
 
     monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: True)
     monkeypatch.setattr(dr.DatasetRecorder, "create", classmethod(lambda cls, **kw: object()))
+    monkeypatch.setattr(dr, "_lerobot_home", lambda: tmp_path / "lrh")
     monkeypatch.chdir(tmp_path)
 
     local_dir = tmp_path / "bare_local"
@@ -699,8 +710,9 @@ def test_start_recording_resolves_bare_repo_id_as_local_path(sim_with_two_robots
     stale.write_text("old")
 
     r = sim_with_two_robots.start_recording(repo_id="bare_local", root=None, overwrite=True)
+
     assert r["status"] == "success"
-    assert not stale.exists()
+    assert stale.exists(), "overwrite=True wiped an unrelated CWD directory"
 
 
 def test_start_recording_recorder_init_failure_clears_recording_flag(sim_with_two_robots, monkeypatch, tmp_path):
@@ -782,7 +794,7 @@ def test_save_episode_delimits_one_episode_per_rollout(sim_with_one_robot, tmp_p
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id="local/perep", root=root)
+    ds = LeRobotDataset(repo_id="local/perep", root=root, video_backend=resolve_video_backend())
     assert ds.meta.total_episodes == n_episodes, f"expected {n_episodes} episodes, got {ds.meta.total_episodes}"
     # Each episode carries its own length and the frames partition cleanly.
     lengths = [ds.meta.episodes[ep]["length"] for ep in range(n_episodes)]
@@ -817,7 +829,7 @@ def test_without_save_episode_rollouts_collapse_into_one_episode(sim_with_one_ro
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id="local/collapsed", root=root)
+    ds = LeRobotDataset(repo_id="local/collapsed", root=root, video_backend=resolve_video_backend())
     assert ds.meta.total_episodes == 1
     assert ds.meta.total_frames == 15
 
@@ -898,7 +910,7 @@ def test_reset_flushes_pending_recording_episode(sim_with_one_robot, tmp_path):
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id="local/reset_flush", root=root)
+    ds = LeRobotDataset(repo_id="local/reset_flush", root=root, video_backend=resolve_video_backend())
     assert ds.meta.total_episodes == n_episodes, f"expected {n_episodes} episodes, got {ds.meta.total_episodes}"
     lengths = [ds.meta.episodes[ep]["length"] for ep in range(n_episodes)]
     assert all(length == 5 for length in lengths), f"episode lengths: {lengths}"
@@ -960,7 +972,7 @@ def test_reset_empty_buffer_during_recording_does_not_create_episode(sim_with_on
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id="local/reset_empty", root=root)
+    ds = LeRobotDataset(repo_id="local/reset_empty", root=root, video_backend=resolve_video_backend())
     assert ds.meta.total_episodes == 1, f"expected 1 episode, got {ds.meta.total_episodes}"
     assert ds.meta.total_frames == 5
 
@@ -1067,7 +1079,7 @@ def test_start_recording_existing_empty_root_records(sim_with_two_robots, tmp_pa
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    ds = LeRobotDataset(repo_id="local/empty_root_probe", root=root)
+    ds = LeRobotDataset(repo_id="local/empty_root_probe", root=root, video_backend=resolve_video_backend())
     assert ds.meta.total_episodes == 1, f"expected 1 episode, got {ds.meta.total_episodes}"
     assert ds.meta.total_frames > 0
 
@@ -1121,7 +1133,7 @@ def test_run_multi_policy_single_robot_records_unnamespaced_columns(tmp_path):
 
         from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-        ds = LeRobotDataset(repo_id="local/solo_multi", root=root)
+        ds = LeRobotDataset(repo_id="local/solo_multi", root=root, video_backend=resolve_video_backend())
 
         af = ds.features["action"]
         names = af["names"] if isinstance(af, dict) else getattr(af, "names", None)

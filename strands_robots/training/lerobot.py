@@ -928,6 +928,14 @@ class LerobotTrainer(Trainer):
         }
         if spec.streaming:
             dataset_kwargs["streaming"] = True
+        # Hosts where torchcodec's native cores cannot load (e.g. Tegra torch
+        # builds) must decode training videos via pyav, or every train run
+        # dies at the first frame fetch. resolve_video_backend probes once.
+        from strands_robots.dataset_recorder import resolve_video_backend
+
+        backend = resolve_video_backend()
+        if backend is not None:
+            dataset_kwargs["video_backend"] = backend
         return DatasetConfig(**dataset_kwargs)
 
     def _apply_common_config(self, cfg: TrainPipelineConfig, spec: TrainSpec) -> None:

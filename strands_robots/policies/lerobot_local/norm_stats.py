@@ -177,6 +177,40 @@ class FeatureNormalizer:
             )
         raise ValueError(f"Unsupported robot normalization mode {mode!r}.")
 
+    def saturating_dims(self, values: Any) -> list[int]:
+        """Indices of ``values`` that this normalizer would clip to +/-1.
+
+        A value outside the normalizer's declared range does not merely scale
+        oddly - the ``q01_q99`` / ``q10_q90`` / ``min_max`` modes CLIP, so every
+        such dimension collapses to exactly +/-1 and its proprioceptive
+        information is destroyed. That is silent: the rollout runs, the model just
+        cannot see those joints.
+
+        Only the clipping modes can saturate; ``mean_std`` and ``none`` return an
+        empty list because they have no bounds to exceed.
+
+        Args:
+            values: A 1-D sequence of pre-normalization values.
+
+        Returns:
+            Zero-based indices that would saturate, ascending. Empty when the mode
+            does not clip, the bounds are unavailable, or nothing is out of range.
+        """
+        if self.mode == "q01_q99" or self.mode == "q10_q90":
+            low, high = self.q_low, self.q_high
+        elif self.mode == "min_max":
+            low, high = self.min_val, self.max_val
+        else:
+            return []
+        if low is None or high is None:
+            return []
+        try:
+            arr = np.asarray(values, dtype=np.float64).reshape(-1)
+        except (TypeError, ValueError):
+            return []
+        n = min(len(arr), len(low), len(high))
+        return [i for i in range(n) if arr[i] < low[i] or arr[i] > high[i]]
+
     def normalize(self, x: Any) -> Any:
         """Map raw values into the model's normalized space.
 

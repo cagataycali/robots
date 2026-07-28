@@ -64,6 +64,68 @@ class AttachedTeleop:
     map_fn: MapFn | None = None
 
 
+def _clamp_teleop_action(
+    action: ActionDict,
+    previous: ActionDict,
+    joint_limits: dict[str, tuple[float, float]] | None,
+    max_step: float | None,
+) -> tuple[ActionDict, str]:
+    """Validate a merged leader frame against joint limits and a per-tick cap.
+
+    Two independent safety layers, both absent from the teleop path before:
+
+    * ``joint_limits`` - REJECT-WHOLE on any out-of-range key, matching the
+      documented semantics of the ROS 2 command bridge, which is the only place
+      the ``joint_limits`` kwarg was ever threaded. Rejecting the whole frame
+      rather than clamping the offending key avoids commanding a pose the
+      operator never made (a clamped joint plus five unclamped ones is a
+      different arm configuration, not a safer version of the requested one).
+    * ``max_step`` - per-key delta cap against the PREVIOUSLY APPLIED action, so
+      a leader that jumps (a re-connect, a dropped frame, a calibration change)
+      cannot slam the follower. Clamped, not rejected: limiting the rate toward
+      the requested pose is the intent, and it converges over subsequent ticks.
+      Skipped on the first tick, where there is no previous pose to measure from.
+
+    Args:
+        action: The merged leader frame.
+        previous: The last action actually applied, for the delta cap.
+        joint_limits: Per-key ``(low, high)`` inclusive bounds, or ``None``.
+        max_step: Maximum absolute change per key per tick, or ``None``.
+
+    Returns:
+        ``(action_to_send, rejection_reason)``. ``rejection_reason`` is empty
+        when the frame may be sent; when non-empty the caller must NOT send.
+    """
+    if joint_limits:
+        violations = [
+            f"{key}={value:.4g} outside [{low:.4g}, {high:.4g}]"
+            for key, value in action.items()
+            if (bounds := joint_limits.get(key)) is not None
+            for low, high in (bounds,)
+            if not low <= float(value) <= high
+        ]
+        if violations:
+            return action, "; ".join(sorted(violations))
+
+    if max_step is not None and previous:
+        limited: ActionDict = {}
+        for key, value in action.items():
+            prior = previous.get(key)
+            if prior is None:
+                limited[key] = value
+                continue
+            delta = float(value) - float(prior)
+            if delta > max_step:
+                limited[key] = float(prior) + max_step
+            elif delta < -max_step:
+                limited[key] = float(prior) - max_step
+            else:
+                limited[key] = value
+        return limited, ""
+
+    return action, ""
+
+
 class TeleopMixin:
     """Mixin adding ``attach_teleop`` / ``teleoperate`` to a robot or sim.
 
@@ -254,6 +316,9 @@ class TeleopMixin:
         publish: bool = False,
         block: bool = False,
         duration: float | None = None,
+        joint_limits: dict[str, tuple[float, float]] | None = None,
+        max_step: float | None = None,
+        stale_ticks: int | None = None,
     ) -> dict[str, Any]:
         """Drive this robot/sim from its attached teleoperator(s).
 
@@ -281,6 +346,23 @@ class TeleopMixin:
             duration: Stop automatically after N seconds. Must be a positive
                 finite number when given; ``None`` = run until
                 ``stop_teleoperate()`` (background) / Ctrl+C (block).
+            joint_limits: Per-key ``{name: (low, high)}`` inclusive bounds. A
+                leader frame with ANY key outside its range is REJECTED WHOLE
+                (not clamped, not partially applied) and counted as an error,
+                matching the ROS 2 command bridge's documented semantics - which
+                was previously the ONLY path this kwarg reached, so the same robot
+                enforced limits on a ROS command but not on an attached leader.
+            max_step: Maximum absolute change per key per tick, measured against
+                the last APPLIED action and clamped (not rejected), so a leader
+                that jumps on re-connect cannot slam the follower. Independent of
+                the driver's ``max_relative_target``, which whole robot families
+                (bi_so_follower, bi_openarm_follower, lekiwi_client, unitree_g1,
+                ...) do not declare at all.
+            stale_ticks: Stop after this many consecutive BYTE-IDENTICAL leader
+                frames. A wedged leader USB link keeps ``is_connected`` True and
+                returns the last pose forever, so without this the loop replays it
+                and the session reports ``success`` with no errors. ``None``
+                disables the watchdog.
 
         Returns:
             Status dict. Background mode returns immediately; ``block=True``
@@ -379,7 +461,9 @@ class TeleopMixin:
         self._teleop_start_time = time.time()
         self._teleop_running = True
 
-        loop = lambda: self._teleop_loop(selected, robot_name, hz, duration)  # noqa: E731
+        loop = lambda: self._teleop_loop(  # noqa: E731
+            selected, robot_name, hz, duration, joint_limits, max_step, stale_ticks
+        )
 
         if block:
             try:
@@ -473,12 +557,21 @@ class TeleopMixin:
         base = getattr(self, "tool_name_str", type(self).__name__)
         return f"{base}/{robot_name}" if robot_name else base
 
+    def _teleop_sleep(self, loop_start: float, period: float) -> None:
+        """Hold the remainder of one control period, interruptibly."""
+        sleep_time = period - (time.perf_counter() - loop_start)
+        if sleep_time > 0:
+            self._teleop_stop_event.wait(sleep_time)
+
     def _teleop_loop(
         self,
         selected: list[str],
         robot_name: str | None,
         hz: float,
         duration: float | None,
+        joint_limits: dict[str, tuple[float, float]] | None = None,
+        max_step: float | None = None,
+        stale_ticks: int | None = None,
     ) -> None:
         # ``hz`` and ``duration`` are validated in :meth:`teleoperate` (the only
         # caller), so the division is safe. ``duration`` is read by membership,
@@ -486,6 +579,10 @@ class TeleopMixin:
         period = 1.0 / float(hz)
         deadline = (self._teleop_start_time + duration) if duration is not None else None
         warned_conflicts: set[str] = set()
+        previous_applied: ActionDict = {}
+        identical_ticks = 0
+        last_raw: ActionDict | None = None
+        warned_clamp = False
 
         while self._teleop_running and not self._teleop_stop_event.is_set():
             loop_start = time.perf_counter()
@@ -514,6 +611,53 @@ class TeleopMixin:
                         merged[k] = v
 
                 if merged:
+                    # Stale-leader watchdog. A wedged leader USB link keeps
+                    # ``is_connected`` True and ``get_action()`` returning the LAST
+                    # pose forever, so the loop replays it, no error is ever
+                    # counted, and _teleop_stats reports "success" for a session
+                    # in which the operator's arm was disconnected. Byte-identical
+                    # frames for stale_ticks ticks is the only observable signal.
+                    if stale_ticks:
+                        if last_raw is not None and merged == last_raw:
+                            identical_ticks += 1
+                            if identical_ticks >= stale_ticks:
+                                self._teleop_errors += 1
+                                logger.error(
+                                    "[teleop] leader frame unchanged for %d consecutive ticks "
+                                    "(~%.1fs at %.0fHz); treating the leader as stale and stopping. "
+                                    "Check the leader's USB link.",
+                                    identical_ticks,
+                                    identical_ticks * period,
+                                    hz,
+                                )
+                                break
+                        else:
+                            identical_ticks = 0
+                        last_raw = dict(merged)
+
+                    # Safety clamp. Applied here rather than relying on the
+                    # driver: ``max_relative_target`` is not declared by whole
+                    # robot families (bi_so_follower, bi_openarm_follower,
+                    # lekiwi_client, unitree_g1, ...), where it is silently
+                    # dropped, and ``joint_limits`` was threaded ONLY into the
+                    # ROS 2 bridges - so the same robot enforced limits on a ROS
+                    # command but not on a physically attached leader arm.
+                    if joint_limits or max_step is not None:
+                        merged, rejected = _clamp_teleop_action(merged, previous_applied, joint_limits, max_step)
+                        if rejected:
+                            self._teleop_errors += 1
+                            if not warned_clamp:
+                                warned_clamp = True
+                                logger.warning(
+                                    "[teleop] frame REJECTED (not sent): %s. Reject-whole matches the "
+                                    "ROS 2 bridge's documented semantics, so a bad leader frame never "
+                                    "moves the arm partially.",
+                                    rejected,
+                                )
+                            self._teleop_frames += 1
+                            self._teleop_sleep(loop_start, period)
+                            continue
+
                     result = self.send_action(merged, robot_name=robot_name)
                     if isinstance(result, dict) and result.get("status") == "error":
                         self._teleop_errors += 1
@@ -521,15 +665,13 @@ class TeleopMixin:
                             txt = result.get("content", [{}])[0].get("text", "")
                             logger.warning("[teleop] send_action error: %s", txt)
                     self._teleop_frames += 1
+                    previous_applied = dict(merged)
             except Exception as exc:  # noqa: BLE001 - hot loop, count + rate-limit
                 self._teleop_errors += 1
                 if self._teleop_errors <= 5:
                     logger.warning("[teleop] loop error: %s", exc)
 
-            elapsed = time.perf_counter() - loop_start
-            sleep_time = period - elapsed
-            if sleep_time > 0:
-                self._teleop_stop_event.wait(sleep_time)
+            self._teleop_sleep(loop_start, period)
 
         self._teleop_running = False
         logger.info("[teleop] loop stopped (%d frames, %d errors)", self._teleop_frames, self._teleop_errors)

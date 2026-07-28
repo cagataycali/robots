@@ -180,13 +180,16 @@ class TestApplyForceLatchedBehavior:
         """Apply force, then zero it, verify force buffer is cleared."""
         sim = sim_with_robot
 
-        # Apply lateral (X) force - produces non-zero generalized torques
+        # The wrench lands in xfrc_applied (Cartesian, re-projected by MuJoCo
+        # every step) instead of being pre-projected once into qfrc_applied, so
+        # a world-frame force stays world-frame as the body moves. Assert on the
+        # buffer that carries it now.
         sim.apply_force("link2", force=[50.0, 0, 0])
-        assert np.any(sim._world._data.qfrc_applied != 0), "X-force on link2 should produce non-zero generalized forces"
+        assert np.any(sim._world._data.xfrc_applied != 0), "X-force on link2 should populate xfrc_applied"
 
-        # Zero it - apply_force zeros buffer first, then applies zero force
+        # Zero it - apply_force zeros the buffer first, then applies zero force
         sim.apply_force("link2", force=[0, 0, 0])
-        # After zeroing + applying zero force/torque, buffer should be all zeros
+        assert np.allclose(sim._world._data.xfrc_applied, 0.0)
         assert np.allclose(sim._world._data.qfrc_applied, 0.0)
 
 

@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
-"""
-GR00T Inference Service Management Tool
+"""GR00T Inference Service Management Tool.
 
-Manages GR00T policy inference services running in Docker containers.
-Uses Isaac-GR00T's native inference service for proper ZMQ/HTTP communication.
-
-Container lifecycle (``build_image`` / ``download_checkpoint`` /
-``start_container`` / ``lifecycle="full"``) wraps the four manual setup
-steps so an LLM driving the AgentTool can fully orchestrate a GR00T eval
-from a single prompt - see #148 for the motivation.
+Manages GR00T policy inference services running in Docker containers via
+Isaac-GR00T's native inference service (ZMQ/HTTP). The container-lifecycle
+actions (``build_image`` / ``download_checkpoint`` / ``start_container`` /
+``lifecycle``) wrap the manual four-step setup so an LLM driving the tool
+can orchestrate a GR00T eval from a single prompt.
 """
 
 import os
@@ -23,9 +20,8 @@ from strands import tool
 
 from strands_robots.utils import get_base_dir, require_optional
 
-# Default cache layout for the lifecycle helpers. Mirrors the layout
-# documented in the Isaac-GR00T README so users moving from the manual
-# four-step setup don't have to relocate their existing artefacts.
+# Default cache layout for the lifecycle helpers (mirrors the Isaac-GR00T
+# README so users moving from the manual setup keep their artefacts).
 _DEFAULT_REPO_URL = "https://github.com/NVIDIA/Isaac-GR00T"
 _DEFAULT_REPO_TAG = "n1.7-release"
 _DEFAULT_IMAGE_NAME = "gr00t:latest"
@@ -34,50 +30,42 @@ _DEFAULT_CONTAINER_COMMAND = "tail -f /dev/null"
 
 # --- container hardening: image allowlist + dangerous-mount guard -------
 #
-# ``_start_container`` builds a ``docker run`` argv. The agent-facing
-# ``gr00t_inference`` tool deliberately does NOT expose ``volumes``,
-# ``image_name``, or ``container_command`` as parameters -- a prompt-
-# injected agent must never be able to mount the host filesystem, pick an
-# arbitrary image, or inject a container command. Container topology is
-# operator-config-driven (env vars below), not agent-driven.
-#
-# The image the container runs is resolved from the operator environment
-# (``STRANDS_GR00T_IMAGE``) and validated against an allowlist. The default
-# allowlist covers the canonical GR00T images; operators extend it via
-# ``STRANDS_GR00T_IMAGE_ALLOW`` (comma-separated; supports a trailing ``*``
-# tag wildcard, e.g. ``myregistry/gr00t:*``).
+# The agent-facing ``gr00t_inference`` tool deliberately does NOT expose
+# ``volumes``, ``image_name``, or ``container_command`` as parameters: a
+# prompt-injected agent must never be able to mount the host filesystem,
+# pick an arbitrary image, or inject a container command. Container
+# topology is operator-config-driven: the image comes from
+# ``STRANDS_GR00T_IMAGE`` and must pass the allowlist below (extend via
+# ``STRANDS_GR00T_IMAGE_ALLOW``, comma-separated, trailing ``*`` = tag
+# wildcard).
 
 # Built-in image-name allowlist patterns. A trailing ``*`` is a tag/suffix
-# wildcard (matches any characters); everything else is matched literally.
+# wildcard; everything else is matched literally.
 _DEFAULT_IMAGE_ALLOW: tuple[str, ...] = (
     "gr00t:*",
     "nvcr.io/nvidia/isaac-gr00t:*",
 )
 
-# Built-in repo-URL allowlist for ``build_image`` source clones. Unlike the
-# image allowlist (a tag wildcard), repo URLs are matched EXACTLY against the
-# canonical set (with/without the ``.git`` suffix): a trailing-``*`` wildcard
-# on a URL would let ``https://github.com/NVIDIA/Isaac-GR00T-evil`` slip past a
-# ``...Isaac-GR00T*`` pattern. Operators add private mirrors via
-# ``STRANDS_GR00T_REPO_URL_ALLOW`` (comma-separated, each entry exact-matched).
+# Built-in repo-URL allowlist for ``build_image`` source clones. Repo URLs
+# are matched EXACTLY (with/without ``.git``): a trailing-``*`` wildcard
+# would let ``https://github.com/NVIDIA/Isaac-GR00T-evil`` slip past.
+# Operators add private mirrors via ``STRANDS_GR00T_REPO_URL_ALLOW``
+# (comma-separated, each entry exact-matched).
 _DEFAULT_REPO_URL_ALLOW: tuple[str, ...] = (
     _DEFAULT_REPO_URL,
     _DEFAULT_REPO_URL + ".git",
 )
 
 # Host paths that must never be bind-mounted into a container. Mounting any
-# of these hands the container (and anything that can influence its command)
-# control over the host: root fs, the docker socket (daemon takeover),
-# credential/identity dirs, and kernel/proc/sys pseudo-filesystems.
-# NOTE (#384, item 1): ``/home`` is blocked wholesale, not narrowed to the
-# sensitive subpaths (~/.ssh, ~/.aws, ~/.config). Rationale: this guard is
-# defence-in-depth for an untrusted/prompt-injected caller, and any home
-# directory may hold credentials, tokens, or dotfiles whose names we cannot
-# enumerate ahead of time. Operators who need a checkpoint bind-mount must
-# place it OUTSIDE ``/home`` (e.g. ``/data/checkpoints`` or ``/opt/...``); the
-# auto-derived default (``~/.cache/huggingface``) is never agent-controlled
-# and reaches docker only via the curated ``effective_volumes`` set. See the
-# README Configuration section for the operator-facing guidance.
+# of these hands the container control over the host: root fs, the docker
+# socket (daemon takeover), credential/identity dirs, and kernel/proc/sys
+# pseudo-filesystems. ``/home`` is blocked wholesale (not narrowed to
+# ~/.ssh, ~/.aws, ...): this guard is defence-in-depth against a
+# prompt-injected caller, and any home directory may hold credentials whose
+# names we cannot enumerate. Operator checkpoint bind-mounts must live
+# OUTSIDE ``/home`` (e.g. ``/data/checkpoints``); the auto-derived default
+# (``~/.cache/huggingface``) is never agent-controlled and reaches docker
+# only via the curated ``effective_volumes`` set.
 _BLOCKED_VOLUME_HOST_PATHS: tuple[str, ...] = (
     "/",
     "/etc",
@@ -110,20 +98,19 @@ def _image_allowlist() -> tuple[str, ...]:
 
 
 # Image-name charset gate: docker image refs use [A-Za-z0-9._:/@-] only.
-# Anything outside that (whitespace, ``;$()`` `\`` etc.) is rejected before
-# the value reaches argv, defence in depth even though the container is
-# started with subprocess in argv-mode (no shell).
+# Anything else (whitespace, shell metacharacters) is rejected before the
+# value reaches argv - defence in depth even though subprocess runs in
+# argv-mode (no shell).
 _IMAGE_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]*$")
 
 
 def _is_allowed_image(image_name: str) -> bool:
     """True iff *image_name* matches an allowlist pattern.
 
-    A pattern ending in ``*`` matches any image whose name starts with the
-    pattern prefix (tag wildcard). Other patterns match literally. The image
-    name itself must also pass a charset gate so shell metacharacters in the
-    tag (``gr00t:;rm``, ``gr00t:$(x)``) cannot ride through even if they
-    matched a wildcard prefix.
+    A pattern ending in ``*`` matches any image starting with the prefix
+    (tag wildcard); other patterns match literally. The name must also pass
+    the charset gate so shell metacharacters in a tag (``gr00t:;rm``,
+    ``gr00t:$(x)``) cannot ride through a wildcard prefix.
     """
     if not isinstance(image_name, str) or not image_name:
         return False
@@ -139,11 +126,10 @@ def _is_allowed_image(image_name: str) -> bool:
 
 
 def _resolve_image_name() -> str:
-    """Resolve the container image from operator config.
+    """Resolve the container image from operator config (``STRANDS_GR00T_IMAGE``).
 
-    The agent has no say in the image. Operators set ``STRANDS_GR00T_IMAGE``
-    (defaulting to the canonical ``gr00t:latest``); the value must pass the
-    allowlist or resolution fails closed.
+    The agent has no say in the image; the value must pass the allowlist or
+    resolution fails closed.
     """
     return os.getenv("STRANDS_GR00T_IMAGE", _DEFAULT_IMAGE_NAME)
 
@@ -159,18 +145,18 @@ def _is_allowed_repo_url(repo_url: str) -> bool:
     """True iff *repo_url* is an exact match for an allowlisted URL.
 
     Exact match only (no wildcard): a substring/prefix test would let an
-    attacker-controlled host (``...Isaac-GR00T-evil``, ``...Isaac-GR00T.evil``)
-    slip past. A leading ``-`` is rejected outright so the value can never be
-    consumed as a ``git`` option (argument injection).
+    attacker-controlled host (``...Isaac-GR00T-evil``) slip past. A leading
+    ``-`` is rejected so the value can never be consumed as a ``git`` option
+    (argument injection).
     """
     if not isinstance(repo_url, str) or not repo_url or repo_url.startswith("-"):
         return False
     return repo_url in _repo_url_allowlist()
 
 
-# git refs may legitimately contain letters, digits, and ``._/-``; anything
-# else (whitespace, shell metacharacters, a leading ``-`` that git would read
-# as an option) is rejected before the value reaches ``git --branch``/checkout.
+# git refs may contain letters, digits, and ``._/-``; anything else
+# (whitespace, metacharacters, a leading ``-`` git would read as an option)
+# is rejected before the value reaches ``git --branch``/checkout.
 _REPO_TAG_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
 
 
@@ -180,11 +166,10 @@ def _is_allowed_repo_tag(repo_tag: str) -> bool:
 
 
 def _resolve_repo_url() -> str:
-    """Resolve the Isaac-GR00T clone URL from operator config.
+    """Resolve the Isaac-GR00T clone URL from operator config (``STRANDS_GR00T_REPO_URL``).
 
-    The agent has no say in the source repo. Operators set
-    ``STRANDS_GR00T_REPO_URL`` (defaulting to the canonical NVIDIA repo); the
-    value must pass the allowlist or ``build_image`` fails closed.
+    The agent has no say in the source repo; the value must pass the
+    allowlist or ``build_image`` fails closed.
     """
     return os.getenv("STRANDS_GR00T_REPO_URL", _DEFAULT_REPO_URL)
 
@@ -197,10 +182,10 @@ def _resolve_repo_tag() -> str:
 def _resolve_build_source() -> tuple[str, str] | dict[str, Any]:
     """Resolve+validate the operator-configured clone URL and tag.
 
-    Returns ``(repo_url, repo_tag)`` on success, or a structured error dict if
-    the configured URL is off-allowlist or the tag is not a safe git ref. The
-    agent cannot influence either value (both removed from the tool signature);
-    this guard catches a misconfigured operator env and fails closed.
+    Returns ``(repo_url, repo_tag)`` on success, or a structured error dict
+    if the URL is off-allowlist or the tag is not a safe git ref. The agent
+    cannot influence either value; this guard catches a misconfigured
+    operator env and fails closed.
     """
     repo_url = _resolve_repo_url()
     repo_tag = _resolve_repo_tag()
@@ -227,11 +212,10 @@ def _resolve_build_source() -> tuple[str, str] | dict[str, Any]:
 def _normalize_host_path(host_path: str) -> str:
     """Normalize a bind-mount host path for prefix comparison.
 
-    POSIX trap: ``os.path.normpath('//etc')`` returns ``'//etc'`` (preserves
-    a leading double slash, per POSIX § 4.13). The Linux kernel collapses
-    the leading ``//`` to ``/`` at path-lookup, so ``docker -v //etc:/x``
-    really mounts ``/etc``. We collapse runs of leading slashes ourselves
-    BEFORE normpath so the blocklist comparison matches reality.
+    POSIX trap: ``os.path.normpath('//etc')`` preserves the leading double
+    slash, but the Linux kernel collapses ``//`` to ``/`` at path-lookup, so
+    ``docker -v //etc:/x`` really mounts ``/etc``. Leading slash runs are
+    collapsed BEFORE normpath so the blocklist comparison matches reality.
     """
     expanded = os.path.expanduser(host_path)
     # Collapse any run of leading slashes to a single '/'
@@ -243,19 +227,13 @@ def _normalize_host_path(host_path: str) -> str:
 def _resolve_host_path(host_path: str) -> str:
     """Resolve a bind-mount host path through symlinks for blocklist comparison.
 
-    NOTE (#384, item 2): ``_normalize_host_path`` only canonicalises slashes
-    and runs ``normpath`` -- it does NOT follow symlinks. A pre-existing host
-    symlink pointing at a protected dir (e.g. ``/data/ckpt -> /etc``) would
-    pass the blocklist while docker mounts the resolved target. We additionally
-    compare the ``realpath`` so the symlink target is also checked.
-
-    Residual TOCTOU: ``realpath`` resolves at check time; a symlink swapped
-    between check and ``docker run`` could still differ. That race is not
-    closable at this layer (it is a host-fs-mutation primitive the gr00t tool
-    does not expose to the agent), so we resolve best-effort and accept the
-    residual gap. ``os.path.realpath`` does not raise on missing paths -- it
-    resolves as far as it can -- so this is safe to call on not-yet-created
-    mount sources.
+    ``_normalize_host_path`` does NOT follow symlinks, so a pre-existing host
+    symlink at a protected dir (``/data/ckpt -> /etc``) would pass the
+    blocklist while docker mounts the resolved target; the ``realpath`` is
+    therefore compared too. Residual TOCTOU (a symlink swapped between check
+    and ``docker run``) is not closable at this layer and is accepted.
+    ``os.path.realpath`` does not raise on missing paths, so this is safe on
+    not-yet-created mount sources.
     """
     return os.path.realpath(os.path.expanduser(host_path))
 
@@ -274,17 +252,16 @@ def _check_volume_safety(volumes: dict[str, str] | None) -> str | None:
     blocked_exact = {os.path.normpath(p) for p in _BLOCKED_VOLUME_EXACT}
     for host_path in volumes:
         norm = _normalize_host_path(str(host_path))
-        # #384 item 2: also evaluate the symlink-resolved path so a host symlink
-        # pointing into a protected dir cannot slip past the prefix check.
+        # Also evaluate the symlink-resolved path so a host symlink pointing
+        # into a protected dir cannot slip past the prefix check.
         resolved = _resolve_host_path(str(host_path))
         candidates = {norm, resolved}
         if blocked_exact & candidates:
             return f"refusing to mount {host_path!r}: docker socket / sensitive path"
-        # Prefix check: reject the protected dir itself AND any child of it, so
-        # mounting /etc/shadow, /root/.ssh/id_rsa, /home/<u>/.aws/credentials,
-        # /proc/1/environ, /var/run/docker.sock.bak, etc. is blocked too. Root
-        # ("/") is matched exactly only -- a prefix test on "/" would reject
-        # every absolute path, including legitimate operator mounts.
+        # Prefix check: reject the protected dir itself AND any child of it
+        # (/etc/shadow, /root/.ssh/id_rsa, /proc/1/environ, ...). Root ("/")
+        # is matched exactly only -- a prefix test on "/" would reject every
+        # absolute path, including legitimate operator mounts.
         for blocked in blocked_dirs:
             if blocked == os.sep:
                 if os.sep in candidates:
@@ -300,13 +277,11 @@ def _check_hf_local_dir_safety(hf_local_dir: str | None) -> str | None:
     """Return None if an agent-supplied ``hf_local_dir`` is safe, else a reason.
 
     ``hf_local_dir`` is an untrusted agent string that reaches two host-fs
-    sinks: ``_download_checkpoint`` writes the snapshot to it directly on the
-    host (no docker mediation), and ``_start_container`` bind-mounts it into
-    the container. Both must reject a prompt-injected path like ``/etc`` or
-    ``/root/.ssh``. Validating once at the agent dispatch boundary closes every
-    sink (including ``lifecycle``, which downloads before it starts the
-    container) rather than guarding each call site. Reuses the same
-    expand + prefix-match blocklist as bind-mount validation.
+    sinks: ``_download_checkpoint`` writes to it directly on the host and
+    ``_start_container`` bind-mounts it into the container. Both must reject
+    a prompt-injected path like ``/etc`` or ``/root/.ssh``; validating once
+    at the agent dispatch boundary closes every sink (including
+    ``lifecycle``). Reuses the bind-mount expand + prefix-match blocklist.
     """
     if not hf_local_dir:
         return None
@@ -354,54 +329,39 @@ def gr00t_inference(
 ) -> dict[str, Any]:
     """Manage GR00T N1 inference services in Docker containers.
 
-    Starts, stops, and monitors Isaac-GR00T inference services running inside
-    Docker containers. Supports both ZMQ (low-latency) and HTTP (REST API)
-    protocols, with optional TensorRT acceleration.
-
-    Prerequisites:
-        - Docker installed and running
-        - An Isaac-GR00T container pulled and started (e.g., ``nvcr.io/nvidia/isaac-gr00t``)
-        - A GR00T N1 checkpoint (fine-tuned or pre-trained)
-        - NVIDIA GPU with sufficient VRAM (8GB+ recommended)
+    Starts, stops, and monitors Isaac-GR00T inference services over ZMQ
+    (low-latency, default) or HTTP (REST API), with optional TensorRT
+    acceleration. Requires Docker, a GR00T N1 checkpoint, and an NVIDIA GPU
+    (8GB+ VRAM recommended).
 
     Actions:
-        - ``start``: Launch an inference service with a checkpoint. Requires ``checkpoint_path``.
-        - ``stop``: Terminate a running service on the specified ``port``.
-        - ``status``: Check whether a service is running on the specified ``port``.
-        - ``list``: Discover all running services across common ports (5555-5558, 8000-8003).
-        - ``restart``: Stop and re-start a service (e.g., to swap checkpoints). Requires ``checkpoint_path``.
+        - ``start``: Launch an inference service. Requires ``checkpoint_path``.
+        - ``stop``: Terminate the service on ``port``.
+        - ``status``: Check whether a service is running on ``port``.
+        - ``list``: Discover running services across common ports (5555-5558, 8000-8003).
+        - ``restart``: Stop and re-start (e.g., to swap checkpoints). Requires ``checkpoint_path``.
         - ``find_containers``: List available Isaac-GR00T Docker containers.
-        - ``build_image``: Clone Isaac-GR00T at ``repo_tag`` and run ``bash docker/build.sh``.
-          Idempotent - skips the build when ``image_name`` already exists in the local
-          docker daemon. Pass ``force=True`` to rebuild.
-        - ``download_checkpoint``: Download a HuggingFace checkpoint to a local cache
-          directory using ``huggingface_hub``. Requires ``hf_repo``;
-          ``hf_subfolder`` filters to a single sub-checkpoint (e.g.
-          ``"libero_spatial"``). Idempotent - skips when the local directory is
-          already populated unless ``force=True``.
+        - ``build_image``: Clone Isaac-GR00T and run ``bash docker/build.sh``.
+          Idempotent - skips when the image already exists unless ``force=True``.
+        - ``download_checkpoint``: Download a HuggingFace checkpoint via
+          ``huggingface_hub``. Requires ``hf_repo``; ``hf_subfolder`` filters
+          to a single sub-checkpoint. Idempotent - skips when the local
+          directory is already populated unless ``force=True``.
         - ``start_container``: ``docker run -d --gpus all --ipc=host`` on the
-          operator-configured image with ``container_name``, the default
-          checkpoint + HF-cache volume mounts,
-          ``HF_TOKEN`` env passthrough, and ``-p {port}:{port}``. Idempotent -
-          skips when a running container with the same name exists; reuses a
-          stopped container when ``force=True``.
+          operator-configured image with the default checkpoint + HF-cache
+          volume mounts, ``HF_TOKEN`` env passthrough, and ``-p {port}:{port}``.
+          Idempotent - skips when a running container with the same name
+          exists; reuses a stopped container when ``force=True``.
         - ``lifecycle``: One-call orchestration. ``lifecycle="full"`` runs
-          ``build_image`` → ``download_checkpoint`` → ``start_container`` → ``start`` and
-          waits for the inference port. ``lifecycle="teardown"`` removes the
-          container (and its volumes when ``remove_volumes=True``). Each sub-step
-          stays idempotent so re-running ``lifecycle="full"`` after a crash
-          resumes from where it stopped.
-
-    Protocol selection:
-        - **ZMQ** (default, ``http_server=False``): Low-latency binary protocol on port 5555.
-          Best for real-time robot control loops.
-        - **HTTP** (``http_server=True``): REST API on port 8000 (auto-switched from 5555).
-          Best for remote access, debugging, or multi-client scenarios.
-          Endpoint: ``http://<host>:<port>/act``
+          ``build_image`` -> ``download_checkpoint`` -> ``start_container`` ->
+          ``start`` and waits for the inference port; ``lifecycle="teardown"``
+          removes the container (and its volumes when ``remove_volumes=True``).
+          Each sub-step stays idempotent, so re-running ``lifecycle="full"``
+          after a crash resumes from where it stopped.
 
     Data configs:
-        The ``data_config`` parameter selects the embodiment-specific observation/action schema.
-        Available configs (defined in ``data_configs.json``):
+        ``data_config`` selects the embodiment-specific observation/action
+        schema. Available configs (defined in ``data_configs.json``):
 
         **SO-100/101 arms:**
           ``so100``, ``so100_dualcam``, ``so100_4cam``,
@@ -413,9 +373,8 @@ def gr00t_inference(
 
         **Unitree G1 humanoid:**
           ``unitree_g1_real`` (N1.7 REAL_G1 embodiment - locomotion + bimanual
-          manipulation; PRETRAIN - works directly with the base model),
-          ``unitree_g1`` [posttrain], ``unitree_g1_full_body`` [posttrain],
-          ``unitree_g1_locomanip``,
+          manipulation; pretrain), ``unitree_g1`` [posttrain],
+          ``unitree_g1_full_body`` [posttrain], ``unitree_g1_locomanip``,
           ``unitree_g1_sonic`` [posttrain] (SONIC whole-body controller - the
           VLA emits 64-dim SONIC motion-token latents, NOT executable joint
           commands; they must be decoded by the SONIC runtime from
@@ -441,69 +400,51 @@ def gr00t_inference(
 
         .. note::
            Entries marked ``[posttrain]`` correspond to upstream
-           ``POSTTRAIN_TAGS`` (Isaac-GR00T ``gr00t/data/embodiment_tags.py``):
-           ``unitree_g1``, ``unitree_g1_sonic``, ``libero_panda`` / ``libero_sim``,
-           ``simpler_env_google``, ``simpler_env_widowx``. They REQUIRE a
-           finetuned checkpoint - pointing the base ``nvidia/GR00T-N1.7-3B`` at a
-           posttrain tag silently emits garbage actions. Unmarked entries are
-           pretrain tags baked into the base model and work directly.
-
-    TensorRT acceleration:
-        Set ``use_tensorrt=True`` to enable TensorRT inference. This compiles the model
-        into an optimized engine on first run (may take several minutes). Subsequent runs
-        load from ``trt_engine_path``. Dtype flags (``vit_dtype``, ``llm_dtype``, ``dit_dtype``)
-        control precision - lower precision (fp8/nvfp4) trades accuracy for speed.
-
-    Authentication:
-        The ``api_token`` parameter authenticates with the inference service. If omitted,
-        falls back to the ``GROOT_API_TOKEN`` environment variable.
+           ``POSTTRAIN_TAGS`` (Isaac-GR00T ``gr00t/data/embodiment_tags.py``)
+           and REQUIRE a finetuned checkpoint - pointing the base
+           ``nvidia/GR00T-N1.7-3B`` at a posttrain tag silently emits garbage
+           actions. Unmarked entries are pretrain tags baked into the base
+           model and work directly.
 
     Server protocol versions:
-        Isaac-GR00T's inference-service entrypoint and flag set changed between
-        N1.6 and N1.7. The ``protocol`` parameter selects which command to
-        ``docker exec``:
+        The entrypoint and flag set changed between N1.6 and N1.7; ``protocol``
+        selects which command is ``docker exec``'d:
 
-        - ``"n1.5"`` (default) and ``"n1.6"``: ``python /opt/Isaac-GR00T/scripts/inference_service.py``
-          with ``--data-config`` + ``--denoising-steps`` flags. Matches the
-          script that ships with images built before the N1.7 release.
+        - ``"n1.5"`` (default, back-compat) and ``"n1.6"``:
+          ``python /opt/Isaac-GR00T/scripts/inference_service.py`` with
+          ``--data-config`` + ``--denoising-steps`` flags.
         - ``"n1.7"``: ``python -m gr00t.eval.run_gr00t_server``. Drops
-          ``--data-config`` and ``--denoising-steps`` (the server reads them
-          from the model's metadata.json instead). Adds optional
-          ``--use-sim-policy-wrapper`` for sim eval (LIBERO, RoboCasa, …)
-          - pass ``use_sim_policy_wrapper=True`` to enable.
-
-        The default stays ``"n1.5"`` for back-compat. N1.7 users must opt in
-        explicitly: ``gr00t_inference(action="start", ..., protocol="n1.7")``.
+          ``--data-config`` and ``--denoising-steps`` (read from the model's
+          metadata.json) and adds optional ``--use-sim-policy-wrapper``
+          (``use_sim_policy_wrapper=True``) for sim eval (LIBERO, RoboCasa, ...).
 
     Args:
         action: Action to perform (see Actions above).
-        checkpoint_path: Path to model checkpoint directory (required for ``start``/``restart``).
-        policy_name: Optional name for the policy service (for registration/tracking).
-        port: Port for the inference service. Defaults to 5555 (ZMQ) or auto-switches
-            to 8000 when ``http_server=True``.
-        data_config: Embodiment data config name (see Data configs above). N1.5/N1.6 only.
-        embodiment_tag: Embodiment tag for the model (e.g., ``gr1``, ``so100``,
-            ``libero_sim``).
-        denoising_steps: Number of denoising steps for action generation (default: 4).
-            N1.5/N1.6 only - the N1.7 server reads this from the checkpoint.
-        host: Host address to bind the service to (default: ``0.0.0.0``).
-        container_name: Specific Docker container name. Auto-detected if omitted.
-        timeout: Seconds to wait for service startup (default: 60).
-        use_tensorrt: Enable TensorRT acceleration (default: False).
-        trt_engine_path: Directory for TensorRT engine cache (default: ``gr00t_engine``).
-        vit_dtype: ViT precision with TensorRT - ``fp16`` or ``fp8`` (default: ``fp8``).
-        llm_dtype: LLM precision with TensorRT - ``fp16``, ``nvfp4``, or ``fp8`` (default: ``nvfp4``).
-        dit_dtype: DiT precision with TensorRT - ``fp16`` or ``fp8`` (default: ``fp8``).
-        http_server: Use HTTP REST API instead of ZMQ (default: False).
-        api_token: API token for authentication. Falls back to ``GROOT_API_TOKEN`` env var.
-        protocol: Server protocol version - ``"n1.5"`` (default), ``"n1.6"``, or ``"n1.7"``.
-            Determines which inference-service entrypoint and flag set is exec'd in
-            the container. See "Server protocol versions" above.
-        use_sim_policy_wrapper: When ``protocol="n1.7"``, append
-            ``--use-sim-policy-wrapper`` to the server command. Required for sim
-            evaluation (LIBERO, RoboCasa, …) - the wrapper translates
+        checkpoint_path: Model checkpoint directory (required for ``start``/``restart``).
+        policy_name: Optional service name for registration/tracking.
+        port: Service port. Defaults to 5555 (ZMQ); auto-switches to 8000 when
+            ``http_server=True``.
+        data_config: Embodiment data config (see Data configs). N1.5/N1.6 only.
+        embodiment_tag: Embodiment tag for the model (e.g., ``gr1``, ``so100``).
+        denoising_steps: Denoising steps for action generation. N1.5/N1.6 only -
+            the N1.7 server reads this from the checkpoint.
+        host: Bind address for the service.
+        container_name: Docker container name. Auto-detected if omitted.
+        timeout: Seconds to wait for service startup.
+        use_tensorrt: Enable TensorRT. Compiles an engine on first run (may take
+            several minutes); subsequent runs load from ``trt_engine_path``.
+        trt_engine_path: Directory for the TensorRT engine cache.
+        vit_dtype / llm_dtype / dit_dtype: TensorRT precision per component -
+            lower precision (fp8/nvfp4) trades accuracy for speed.
+        http_server: Serve HTTP REST (endpoint ``http://<host>:<port>/act``)
+            instead of ZMQ.
+        api_token: Service auth token. Falls back to the ``GROOT_API_TOKEN``
+            env var.
+        protocol: ``"n1.5"`` (default), ``"n1.6"``, or ``"n1.7"`` (see Server
+            protocol versions above).
+        use_sim_policy_wrapper: N1.7 only - the wrapper translates
             simulator-side observations into the format the policy expects.
-            Ignored for N1.5 / N1.6 (no equivalent flag).
+            Required for sim evaluation; ignored for N1.5/N1.6.
 
     Container lifecycle args (used by ``build_image``, ``download_checkpoint``,
     ``start_container``, ``lifecycle``):
@@ -516,21 +457,17 @@ def gr00t_inference(
         the image is resolved from ``STRANDS_GR00T_IMAGE`` and validated against
         ``STRANDS_GR00T_IMAGE_ALLOW``. Extend the URL allowlist for private
         mirrors via ``STRANDS_GR00T_REPO_URL_ALLOW``.)
-        hf_repo: HuggingFace dataset/model id (e.g., ``"nvidia/GR00T-N1.7-LIBERO"``).
-            Required for ``download_checkpoint``.
-        hf_subfolder: Subfolder pattern within the HF repo (e.g.,
-            ``"libero_spatial"``). When set, only files matching
-            ``<subfolder>/*`` are downloaded.
+        hf_repo: HuggingFace dataset/model id. Required for ``download_checkpoint``.
+        hf_subfolder: Subfolder within the HF repo (e.g., ``"libero_spatial"``).
+            When set, only files matching ``<subfolder>/*`` are downloaded.
         hf_local_dir: Where to download the checkpoint. Defaults to
-            ``$STRANDS_BASE_DIR/checkpoints/<basename(hf_repo)>``.
+            ``$STRANDS_BASE_DIR/checkpoints/<basename(hf_repo)>``; mounted into
+            the container at ``/data/checkpoints``.
         hf_token: HuggingFace API token (gated repos). Falls back to
             ``HF_TOKEN`` / ``HUGGING_FACE_HUB_TOKEN`` env vars.
-            Defaults to mounting ``hf_local_dir`` → ``/data/checkpoints`` and
-            ``~/.cache/huggingface`` → ``/root/.cache/huggingface``.
-        lifecycle: ``"full"`` (default - chain build → download → start_container
-            → start) or ``"teardown"`` (rm container + volumes).
+        lifecycle: ``"full"`` (default) or ``"teardown"`` (see Actions above).
         remove_volumes: When ``lifecycle="teardown"``, also remove docker volumes
-            (default: ``False`` to preserve checkpoint mounts).
+            (default False to preserve checkpoint mounts).
         force: For idempotent steps - rebuild image, redownload checkpoint, or
             recreate container even when the artefact is already present.
 
@@ -554,37 +491,14 @@ def gr00t_inference(
         For ``find_containers``:
           ``containers`` (list of ``{name, image, status, ports}``)
 
-    Examples:
-        Start a ZMQ service for SO-100 dual-camera setup::
+    Example:
+        Start a ZMQ service for an SO-100 dual-camera setup::
 
             gr00t_inference(
                 action="start",
                 checkpoint_path="/data/checkpoints/so100_model",
                 data_config="so100_dualcam",
                 embodiment_tag="so100",
-            )
-
-        Start an HTTP service with TensorRT::
-
-            gr00t_inference(
-                action="start",
-                checkpoint_path="/data/checkpoints/gr1_model",
-                http_server=True,
-                use_tensorrt=True,
-                data_config="fourier_gr1_arms_only",
-            )
-
-        Check service status and list running services::
-
-            gr00t_inference(action="status", port=5555)
-            gr00t_inference(action="list")
-
-        Restart with a different checkpoint::
-
-            gr00t_inference(
-                action="restart",
-                checkpoint_path="/data/checkpoints/gr1_model_v2",
-                port=5555,
             )
     """
     # Resolve api_token from env var if not provided as parameter
@@ -600,11 +514,10 @@ def gr00t_inference(
             "message": f"Unknown protocol {protocol!r}. Valid: {list(valid_protocols)}",
         }
 
-    # Boundary guard: hf_local_dir is an untrusted agent string that reaches
-    # two host-fs sinks (checkpoint download writes to it directly; container
-    # start bind-mounts it). Validate once here -- before any action branch
-    # forwards it -- so a prompt-injected path is rejected for download,
-    # start_container, AND lifecycle (which downloads before it starts).
+    # Boundary guard: hf_local_dir is untrusted agent input that reaches two
+    # host-fs sinks (checkpoint download writes to it; container start
+    # bind-mounts it). Validate once here, before any action branch forwards
+    # it, so a prompt-injected path is rejected for every action.
     _hf_local_dir_reason = _check_hf_local_dir_safety(hf_local_dir)
     if _hf_local_dir_reason is not None:
         return {"status": "error", "message": _hf_local_dir_reason}
@@ -659,10 +572,9 @@ def gr00t_inference(
                     "allowed image or extend STRANDS_GR00T_IMAGE_ALLOW."
                 ),
             }
-        # Container topology is not agent-controllable: the agent cannot
-        # supply bind-mount volumes or a container command. _start_container
-        # computes the default checkpoint + HF-cache mounts and runs the
-        # keep-alive command so subsequent ``start`` actions can docker exec.
+        # Container topology is not agent-controllable: no agent-supplied
+        # volumes or container command. _start_container computes the default
+        # checkpoint + HF-cache mounts and runs the keep-alive command.
         return _start_container(
             image_name=image_name,
             container_name=container_name,
@@ -948,28 +860,19 @@ def _build_inference_command(
 ) -> list[str]:
     """Build the ``docker exec`` argv for the inference service.
 
-    Two entrypoint scripts ship with Isaac-GR00T:
+    Two entrypoints ship with Isaac-GR00T:
 
     * ``/opt/Isaac-GR00T/scripts/inference_service.py`` (N1.5, N1.6) -
-      standalone server with embodiment data-config + denoising-steps
-      flags.
-    * ``python -m gr00t.eval.run_gr00t_server`` (N1.7) - rewritten
-      entrypoint that reads data-config + denoising-steps from the
-      checkpoint metadata and adds an optional ``--use-sim-policy-wrapper``
-      flag for sim eval (LIBERO, RoboCasa, …).
-
-    Both share ``--server``, ``--model-path``, ``--port``, ``--host``,
-    ``--embodiment-tag``, ``--api-token``, and the TensorRT flag set.
-    The split keeps the ``protocol`` branch shallow - one ``if`` per
-    diverging flag rather than two parallel command-builder functions.
+      takes ``--data-config`` + ``--denoising-steps`` flags.
+    * ``python -m gr00t.eval.run_gr00t_server`` (N1.7) - reads those from
+      the checkpoint metadata and adds an optional
+      ``--use-sim-policy-wrapper`` flag for sim eval.
     """
     if protocol == "n1.7":
-        # The N1.7 entrypoint (``python -m gr00t.eval.run_gr00t_server``)
-        # does NOT accept a ``--server`` flag - passing it makes ``tyro``
-        # reject the invocation with ``Unrecognized options: --server``
-        # and the inference process exits before binding the port. The
-        # legacy N1.5/N1.6 ``inference_service.py`` did take ``--server``;
-        # keeping the flag there preserves back-compat for older images.
+        # The N1.7 entrypoint does NOT accept ``--server`` - ``tyro`` rejects
+        # the invocation ("Unrecognized options: --server") and the process
+        # exits before binding the port. The legacy N1.5/N1.6 script did take
+        # ``--server``; keeping it there preserves back-compat.
         cmd = [
             "docker",
             "exec",
@@ -1109,9 +1012,7 @@ def _start_service(
                     "embodiment_tag": embodiment_tag,
                     "message": f"GR00T {wire_protocol} service started on port {port} (server: {protocol})",
                 }
-                # Server flags that only apply to the legacy entrypoint -
-                # surface them only when actually used so the response
-                # accurately reflects what was passed.
+                # Surface protocol-specific flags only when actually passed.
                 if protocol != "n1.7":
                     response["data_config"] = data_config
                     response["denoising_steps"] = denoising_steps
@@ -1138,26 +1039,21 @@ def _start_service(
         return {"status": "error", "message": f"Unexpected error: {e}"}
 
 
-# Container lifecycle helpers (#148-F3 wider)
+# Container lifecycle helpers.
 #
-# Each helper is idempotent and returns a structured status dict. They wrap
-# the manual four-step Isaac-GR00T setup (clone → docker build → hf
-# download → docker run) so an LLM driving this AgentTool can fully
-# orchestrate a GR00T eval from one prompt. Splitting them into per-action
-# entry points (rather than burying everything inside ``start``) keeps
-# each step independently re-runnable and makes the failure surface
-# obvious - if "build_image" succeeds but "download_checkpoint" fails,
-# the user / agent knows exactly which step to retry.
+# Each helper is idempotent and returns a structured status dict, wrapping
+# one step of the manual Isaac-GR00T setup (clone -> docker build -> hf
+# download -> docker run). Per-action entry points keep each step
+# independently re-runnable, so the user / agent knows exactly which step
+# to retry on failure.
 
 
 def _image_exists(image_name: str) -> bool:
     """Return True iff the local docker daemon already has ``image_name``.
 
-    Uses ``docker image inspect`` rather than ``docker images`` because the
-    former returns a non-zero exit code on miss (cleaner branch logic) and
-    works for tag-less digest pins too. Any docker invocation failure
-    (daemon down, command missing) returns False so the caller falls
-    through to a regular build, which then surfaces the real error.
+    Any docker invocation failure (daemon down, command missing) returns
+    False so the caller falls through to a regular build, which then
+    surfaces the real error.
     """
     try:
         result = subprocess.run(
@@ -1203,14 +1099,13 @@ def _build_image(
     """Clone Isaac-GR00T at ``repo_tag`` and run ``bash docker/build.sh``.
 
     Idempotent: when ``image_name`` is already in the local docker daemon
-    AND ``force=False``, returns success without touching the filesystem
-    or the docker daemon. Pass ``force=True`` to clean-rebuild.
+    and ``force=False``, returns success without touching anything.
 
-    Defence in depth: ``repo_url``/``repo_tag`` are resolved+validated at the
-    dispatch boundary (the agent cannot supply them), but this private entry
-    point is reachable by operators/tests, so it re-asserts the same URL
-    allowlist + tag-shape guard before any ``git``/``bash`` subprocess. The
-    clone destination is fixed (``_isaac_gr00t_dir()``), never caller-supplied.
+    Defence in depth: ``repo_url``/``repo_tag`` are validated at the dispatch
+    boundary (the agent cannot supply them), but this private entry point is
+    reachable by operators/tests, so it re-asserts the URL allowlist +
+    tag-shape guard before any ``git``/``bash`` subprocess. The clone
+    destination is fixed (``_isaac_gr00t_dir()``), never caller-supplied.
     """
     if not _is_allowed_repo_url(repo_url):
         return {
@@ -1236,8 +1131,7 @@ def _build_image(
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        # Clone or update the repo at the requested tag. ``git fetch + checkout``
-        # is faster than re-cloning when the branch has just moved.
+        # Clone, or fetch+checkout when a clone already exists.
         if (dest / ".git").is_dir():
             subprocess.run(
                 ["git", "-C", str(dest), "fetch", "--depth", "1", "origin", repo_tag],
@@ -1275,9 +1169,8 @@ def _build_image(
                 check=True,
             )
 
-        # Build the image. ``docker/build.sh`` is the canonical entrypoint
-        # documented in the Isaac-GR00T README. Use bash explicitly so the
-        # script's shebang isn't required.
+        # ``docker/build.sh`` is the canonical entrypoint from the
+        # Isaac-GR00T README; bash is explicit so no shebang is required.
         build_script = dest / "docker" / "build.sh"
         if not build_script.is_file():
             return {
@@ -1322,26 +1215,20 @@ def _download_checkpoint(
 ) -> dict[str, Any]:
     """Download a HuggingFace checkpoint via ``huggingface_hub.snapshot_download``.
 
-    Idempotent: when the target is already populated AND ``force=False``,
+    Idempotent: when the target is already populated and ``force=False``,
     returns success without touching the network. "Already populated" is
     keyed on the artefact actually requested: with ``hf_subfolder`` set,
-    ``local_dir/<hf_subfolder>`` must exist and be non-empty (a shared
-    ``local_dir`` cache holding *other* sub-checkpoints - e.g.
-    ``libero_spatial/`` when ``libero_10`` was requested - must not
-    short-circuit the download); without it, ``local_dir`` itself. Pass
-    ``force=True`` to refresh.
+    ``local_dir/<hf_subfolder>`` must exist and be non-empty (a shared cache
+    holding *other* sub-checkpoints must not short-circuit the download);
+    without it, ``local_dir`` itself.
 
-    HF token resolution order:
-        1. Explicit ``hf_token`` kwarg.
-        2. ``HF_TOKEN`` env var (canonical, what ``huggingface_hub`` reads).
-        3. ``HUGGING_FACE_HUB_TOKEN`` env var (legacy alias).
-        4. None - downloads continue for ungated repos; gated ones surface
-           a clear ``snapshot_download`` error.
+    HF token resolution order: explicit ``hf_token`` kwarg, then ``HF_TOKEN``,
+    then ``HUGGING_FACE_HUB_TOKEN``, then None (ungated repos still download;
+    gated ones surface a clear ``snapshot_download`` error).
     """
     # Defence in depth: hf_local_dir is written to directly on the host here
-    # (no docker mediation). The agent dispatch validates it, but guard the
-    # internal/operator/test entry point too so a future caller that reaches
-    # _download_checkpoint without going through the tool inherits the check.
+    # (no docker mediation). The agent dispatch validates it, but guard this
+    # internal/operator/test entry point too.
     _hf_dir_reason = _check_hf_local_dir_safety(hf_local_dir)
     if _hf_dir_reason is not None:
         return {"status": "error", "message": _hf_dir_reason}
@@ -1410,18 +1297,16 @@ def _start_container(
     """``docker run -d`` the GR00T container so subsequent ``start`` actions can
     ``docker exec`` into it.
 
-    Idempotent: when a container with ``container_name`` is already
-    running, returns success without touching docker. When it exists but
-    is stopped, ``force=True`` removes + recreates it (otherwise returns
-    an error that names the recovery flag).
+    Idempotent: when a container with ``container_name`` is already running,
+    returns success without touching docker. When it exists but is stopped,
+    ``force=True`` removes + recreates it (otherwise returns an error that
+    names the recovery flag).
 
-    Defence in depth: although the agent-facing tool no longer lets a
-    caller supply ``image_name``, ``volumes``, or ``container_command``,
-    this private entry point is still reachable by operators and tests. We
-    validate the image against the allowlist and reject any bind-mount of a
-    protected host path (root fs, system dirs, credential dirs, docker
-    socket) before building the ``docker run`` argv. This closes the
-    host-mount / container-escape surface even for the internal path.
+    Defence in depth: the agent-facing tool cannot supply ``image_name``,
+    ``volumes``, or ``container_command``, but this private entry point is
+    reachable by operators and tests, so the image is re-validated against
+    the allowlist and any bind-mount of a protected host path is rejected
+    before the ``docker run`` argv is built.
     """
     if not _is_allowed_image(image_name):
         return {
@@ -1468,9 +1353,8 @@ def _start_container(
         f"{port}:{port}",
     ]
 
-    # Default volume layout: mount the checkpoint dir into /data/checkpoints
-    # and the host's HF cache so `huggingface_hub` reuses already-downloaded
-    # snapshots. Override with explicit ``volumes={...}`` to customise.
+    # Default volume layout: checkpoint dir -> /data/checkpoints plus the
+    # host's HF cache so `huggingface_hub` reuses downloaded snapshots.
     effective_volumes = dict(volumes) if volumes is not None else {}
     if not volumes:
         if hf_local_dir:
@@ -1480,14 +1364,12 @@ def _start_container(
         hf_cache = os.environ.get("HF_HOME") or os.path.expanduser("~/.cache/huggingface")
         effective_volumes[hf_cache] = "/root/.cache/huggingface"
 
-    # Defence in depth: validate agent-supplied paths in effective_volumes.
-    # The initial _check_volume_safety(volumes) above only sees the caller-
-    # supplied dict (None from the agent path). The hf_local_dir parameter
-    # is agent-supplied and flows into effective_volumes -- validate it
-    # before building the docker argv so a prompt-injected path like '/etc'
-    # is caught by the same prefix-match guard. We check only agent-supplied
-    # entries (hf_local_dir) rather than the full dict, because auto-derived
-    # paths (HF_HOME / ~/.cache/huggingface) are operator-controlled and may
+    # Defence in depth: _check_volume_safety(volumes) above only sees the
+    # caller-supplied dict (None from the agent path), while hf_local_dir is
+    # agent-supplied and flows into effective_volumes -- validate it before
+    # building the docker argv so a prompt-injected path like '/etc' is
+    # caught. Only the agent-supplied entry is checked: auto-derived paths
+    # (HF_HOME / ~/.cache/huggingface) are operator-controlled and may
     # legitimately reside under /home.
     _hf_dir_reason = _check_hf_local_dir_safety(hf_local_dir)
     if _hf_dir_reason is not None:
@@ -1501,8 +1383,7 @@ def _start_container(
         cmd.extend(["-e", f"HF_TOKEN={token}"])
 
     cmd.append(image_name)
-    # Split on whitespace to support both string + list-style commands while
-    # keeping the simple "tail -f /dev/null" default working.
+    # Split on whitespace so the "tail -f /dev/null" default works.
     if container_command:
         cmd.extend(container_command.split())
 
@@ -1598,13 +1479,12 @@ def _lifecycle(
 ) -> dict[str, Any]:
     """Orchestrate the four-step setup or tear down a previously-started container.
 
-    ``phase="full"``: ``build_image`` → ``download_checkpoint`` →
-    ``start_container`` → ``start`` → wait-for-port. Each sub-step is
+    ``phase="full"``: ``build_image`` -> ``download_checkpoint`` ->
+    ``start_container`` -> ``start`` -> wait-for-port. Each sub-step is
     idempotent so re-runs after a crash resume from the failed step.
 
     ``phase="teardown"``: ``_remove_container`` (with optional volume
-    removal). The image and downloaded checkpoint are preserved -
-    teardown is intentionally cheap to re-run.
+    removal). The image and downloaded checkpoint are preserved.
     """
     if phase not in ("full", "teardown"):
         return {"status": "error", "message": f"Unknown lifecycle phase {phase!r}. Valid: ['full', 'teardown']"}
@@ -1654,9 +1534,8 @@ def _lifecycle(
             "message": "lifecycle aborted: download_checkpoint failed",
         }
 
-    # The container needs to mount the just-downloaded checkpoint. If the
-    # caller didn't pre-resolve ``hf_local_dir``, propagate the path the
-    # download step actually used so the container can see the files.
+    # Propagate the path the download step actually used so the container
+    # mounts the just-downloaded checkpoint.
     resolved_local_dir = download_result.get("local_dir") or hf_local_dir
 
     container_result = _start_container(
@@ -1678,9 +1557,8 @@ def _lifecycle(
             "message": "lifecycle aborted: start_container failed",
         }
 
-    # The inference service expects to see the checkpoint mounted under
-    # /data/checkpoints (the default volume mapping). Translate the host
-    # path the user / download step gave us into the in-container path.
+    # The inference service expects the checkpoint under /data/checkpoints
+    # (the default volume mapping); translate to the in-container path.
     mounted_checkpoint = checkpoint_path
     if mounted_checkpoint is None and hf_subfolder:
         mounted_checkpoint = f"/data/checkpoints/{hf_subfolder}"

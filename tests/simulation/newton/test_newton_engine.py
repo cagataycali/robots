@@ -72,8 +72,12 @@ class TestRobotManagement:
 
 class TestObservationAction:
     def test_observation_keys_match_joints(self, engine_with_so100):
-        obs = engine_with_so100.get_observation("so100")
-        assert set(obs) == set(engine_with_so100.robot_joint_names("so100"))
+        obs = engine_with_so100.get_observation("so100", skip_images=True)
+        joints = set(engine_with_so100.robot_joint_names("so100"))
+        # Each joint reports a position plus an additive "<joint>.vel" velocity,
+        # matching the MuJoCo backend (velocity-feedback consumers such as
+        # WBCPolicy and training.rl.SimEnv read those keys by name).
+        assert set(obs) == joints | {f"{j}.vel" for j in joints}
         assert all(isinstance(v, float) for v in obs.values())
 
     def test_send_action_moves_joint(self, engine_with_so100):
@@ -158,8 +162,9 @@ class TestSolverParity:
             sim.create_world()
             sim.add_robot("so100")
             assert sim.step(5)["status"] == "success"
-            obs = sim.get_observation("so100")
-            assert len(obs) == 6
+            obs = sim.get_observation("so100", skip_images=True)
+            # 6 joints, each as a position + a "<joint>.vel" velocity entry.
+            assert len(obs) == 12
             assert all(np.isfinite(v) for v in obs.values())
         finally:
             sim.destroy()

@@ -241,7 +241,20 @@ class TestPeriodIsTheOnlyThrottle:
 
         A period of ``0`` is what ``1 / inf`` produces and what
         ``asyncio.sleep`` returns from immediately, so the loop commands the
-        bus as fast as it can be driven.
+        bus as fast as it can be driven. The bound is stated RELATIVE to the
+        throttled loop rather than as an absolute count: a loaded CI runner
+        drives the free loop far slower in wall-clock terms (hundreds of
+        commands in 0.2 s, not thousands), but always by orders of magnitude
+        more than the ~10 a 50 Hz period admits over the same window, so the
+        multiple holds on any host where an absolute floor would flake.
         """
-        applied = self._drive(0.0)
-        assert applied > 1000
+        throttled = self._drive(1.0 / 50.0)
+        unthrottled = self._drive(0.0)
+        # A 50 Hz period is a mandatory ~0.02 s sleep per iteration, so the
+        # throttled loop is capped near duration / period (~10 in 0.2 s) and
+        # cannot climb with host speed; the unthrottled loop has no such cap.
+        # An order-of-magnitude multiple over the throttled count is therefore
+        # true on any host, where the earlier absolute floor (> 1000) flaked on
+        # a loaded runner that managed only a few hundred.
+        assert unthrottled > 100
+        assert unthrottled > throttled * 10

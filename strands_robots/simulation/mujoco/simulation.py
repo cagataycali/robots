@@ -71,6 +71,7 @@ from strands_robots.simulation.model_registry import (
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimStatus, SimWorld
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
+    _actuator_target_joint,
     _ensure_mujoco,
     filter_mujoco_attach_noise,
 )
@@ -81,6 +82,7 @@ from strands_robots.simulation.mujoco.randomization import RandomizationMixin
 from strands_robots.simulation.mujoco.recording import RecordingMixin
 from strands_robots.simulation.mujoco.rendering import RenderingMixin
 from strands_robots.simulation.mujoco.scene_ops import (
+    _install_model,
     eject_body_from_scene,
     eject_robot_from_scene,
     inject_camera_into_scene,
@@ -521,6 +523,8 @@ class MuJoCoSimEngine(
             robot_name = next(iter(self._world.robots))
         if robot_name not in self._world.robots:
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
+        if substep_error := self._validate_n_substeps(n_substeps):
+            return substep_error
         action_map, coerce_error = self._coerce_action(action, robot_name)
         if coerce_error is not None:
             return coerce_error
@@ -813,7 +817,24 @@ class MuJoCoSimEngine(
         try:
             replace_scene_mjcf(self._world, xml)
         except (ValueError, RuntimeError) as e:
-            return {"status": "error", "content": [{"text": f"MJCF compile failed: {e}"}]}
+            # A mesh MuJoCo cannot open is almost always an ``export_xml`` round
+            # trip: ``spec.to_xml()`` writes mesh assets as BARE filenames
+            # (``file="link3.stl"``) and emits no ``meshdir``, so the XML only
+            # compiles from the directory holding those assets. That makes the
+            # natural recovery from a discarded scene - export before a rebuild,
+            # re-apply after - fail with nothing but "Error opening file
+            # 'link3.stl'" as soon as a ROBOT is in the scene (its URDF meshes are
+            # what break; an object-only scene round-trips fine). Name the cause.
+            hint = ""
+            if "Error opening file" in str(e):
+                hint = (
+                    "\nThis looks like an export_xml round trip: spec.to_xml() writes mesh assets as "
+                    "bare filenames with no meshdir, so the XML compiles only from the directory that "
+                    "holds them. Add a <compiler meshdir='...'> pointing at the asset directory, write "
+                    "the XML beside those assets (export_xml(output_path=...)), or rebuild the scene "
+                    "with add_robot / add_object instead of replaying the export."
+                )
+            return {"status": "error", "content": [{"text": f"MJCF compile failed: {e}{hint}"}]}
 
         model = self._world._model
         return {
@@ -1317,10 +1338,13 @@ class MuJoCoSimEngine(
             # cleanly (naming the available keyframes) without leaving a
             # half-added robot behind.
             home_by_short: dict[str, list[float]] | None = None
+            home_ctrl_by_short: dict[str, float] = {}
             if keyframe is not None:
                 home_by_short, kf_err = self._keyframe_home_qpos(resolved_path, keyframe)
                 if kf_err is not None:
                     return kf_err
+                # The keyframe's ctrl row, read from the same source model.
+                home_ctrl_by_short = self._take_keyframe_home_ctrl()
 
             # Register the robot BEFORE attach so scene_ops can re-discover
             # its joint/actuator IDs inside the merged model.
@@ -1374,7 +1398,7 @@ class MuJoCoSimEngine(
             self._world.sim_time = 0.0
             self._world.step_count = 0
             if home_by_short:
-                self._apply_home_qpos_to_robot(robot, home_by_short)
+                self._apply_home_qpos_to_robot(robot, home_by_short, home_ctrl_by_short)
             # ``mj_resetData`` above zeroed the entire model, which also drops
             # any robot added earlier back to the zero configuration. Re-apply
             # every robot's captured home pose (a no-op for robots spawned
@@ -1431,6 +1455,10 @@ class MuJoCoSimEngine(
         short name to its qpos slice, or ``(None, error_result)`` when the
         source model cannot be compiled or the keyframe name/index is unknown
         (the error names the available keyframes so the caller can fix it).
+
+        The companion ``key_ctrl`` row is read by
+        :meth:`_keyframe_home_ctrl`; both are needed because a servo model's
+        configuration is under-determined by qpos alone.
         """
         mj = self._mj
         fname = os.path.basename(resolved_path)
@@ -1485,12 +1513,104 @@ class MuJoCoSimEngine(
             adr = int(src.jnt_qposadr[j])
             width = _jnt_qpos_width(mj, int(src.jnt_type[j]))
             home[jn] = [float(x) for x in kq[adr : adr + width]]
+        # Stash the companion ctrl row for the caller. Returned out-of-band
+        # rather than as a third tuple element so the five error returns above
+        # keep their shape; add_robot consumes it immediately via
+        # _take_keyframe_home_ctrl.
+        self._pending_home_ctrl = self._keyframe_home_ctrl(src, idx, home)
         return home, None
 
-    def _apply_home_qpos_to_robot(self, robot: SimRobot, home_by_short: dict[str, list[float]]) -> None:
+    def _take_keyframe_home_ctrl(self) -> dict[str, float]:
+        """Consume the ctrl map produced by the last :meth:`_keyframe_home_qpos`.
+
+        Single-use: cleared on read so a later ``add_robot`` without a keyframe
+        can never pick up a previous robot's targets.
+        """
+        pending = getattr(self, "_pending_home_ctrl", None) or {}
+        self._pending_home_ctrl = {}
+        return dict(pending)
+
+    def _keyframe_home_ctrl(self, src: Any, idx: int, home: dict[str, list[float]]) -> dict[str, float]:
+        """Read the ``key_ctrl`` row companion to keyframe ``idx``.
+
+        MuJoCo's ``<key>`` carries ``ctrl`` alongside ``qpos`` precisely because
+        a position-servo model's configuration is under-determined by ``qpos``
+        alone - ``mj_resetDataKeyframe`` restores both. The panda asset makes the
+        coupling explicit::
+
+            <key name="home" qpos="0 0 0 -1.57079 0 1.57079 -0.7853 0.04 0.04"
+                             ctrl="0 0 0 -1.57079 0 1.57079 -0.7853 255"/>
+
+        Keyed by SOURCE actuator short name, which the caller namespaces.
+
+        When the source declares no usable ctrl row (no actuators, or an
+        all-zero row while the home pose is not the zero pose), each direct-JOINT
+        position actuator's target is seeded from its joint's home qpos instead -
+        the same rule ``ManipulationMixin.actuate_robot`` already applies. An
+        all-zero row is treated as absent rather than honoured because a servo
+        model whose home pose is non-zero cannot mean "drive everything to 0";
+        MuJoCo writes that row for assets that simply never specified ctrl.
+
+        Args:
+            src: The compiled SOURCE ``MjModel`` the keyframe was read from.
+            idx: Index of the resolved keyframe.
+            home: Short joint name -> home qpos slice, already read from the row.
+
+        Returns:
+            ``{actuator short name: ctrl value}``; empty when the model has no
+            actuators to command.
+        """
+        mj = self._mj
+        if int(src.nu) == 0:
+            return {}
+        row = [float(x) for x in src.key_ctrl[idx]]
+        declared = any(value != 0.0 for value in row)
+        home_is_zero = all(all(v == 0.0 for v in vals) for vals in home.values())
+        ctrl: dict[str, float] = {}
+        for aid in range(int(src.nu)):
+            name = mj.mj_id2name(src, mj.mjtObj.mjOBJ_ACTUATOR, aid)
+            if not name:
+                continue
+            if declared:
+                ctrl[name] = row[aid]
+                continue
+            if home_is_zero:
+                # Nothing to hold: the zero pose is already the servo default.
+                continue
+            # No ctrl row, but a non-zero home pose: hold each position servo at
+            # its own joint's home angle so the arm does not fall off the pose.
+            jnt_id = _actuator_target_joint(src, aid)
+            if jnt_id < 0:
+                continue
+            jnt_name = mj.mj_id2name(src, mj.mjtObj.mjOBJ_JOINT, jnt_id)
+            vals = home.get(jnt_name or "")
+            if not vals or len(vals) != 1:
+                # Multi-coordinate joints (free/ball) have no scalar target.
+                continue
+            ctrl[name] = vals[0]
+        if not declared and ctrl:
+            logger.debug(
+                "keyframe %d declares no ctrl row; seeding %d position actuator target(s) from the home qpos",
+                idx,
+                len(ctrl),
+            )
+        return ctrl
+
+    def _apply_home_qpos_to_robot(
+        self, robot: SimRobot, home_by_short: dict[str, list[float]], ctrl_by_short: dict[str, float] | None = None
+    ) -> None:
         """Write ``home_by_short`` onto ``robot``'s joints in the live model and
         record the applied pose (keyed by namespaced joint name) on the robot so
         :meth:`reset` can restore it. The caller runs ``mj_forward`` afterwards.
+
+        Args:
+            robot: The robot whose joints to place.
+            home_by_short: Short joint name -> home qpos slice.
+            ctrl_by_short: Short actuator name -> home ``ctrl`` value from the
+                same keyframe row. Written to ``data.ctrl`` and recorded on the
+                robot; without it ``add_robot`` left every servo target at 0
+                (``mj_resetData`` zeroes ``ctrl``) and the first ``mj_step``
+                drove the arm straight off the pose it had just been placed in.
         """
         mj = self._mj
         assert self._world is not None and self._world._model is not None and self._world._data is not None
@@ -1515,11 +1635,27 @@ class MuJoCoSimEngine(
             data.qpos[adr : adr + width] = vals
             stored[jn] = vals
         robot.home_qpos = stored
+        stored_ctrl: dict[str, float] = {}
+        for aid in range(int(model.nu)):
+            an = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, aid)
+            if not an:
+                continue
+            short = an[len(pfx) :] if pfx and an.startswith(pfx) else an
+            value = (ctrl_by_short or {}).get(short)
+            if value is None:
+                continue
+            data.ctrl[aid] = value
+            stored_ctrl[an] = value
+        robot.home_ctrl = stored_ctrl
 
     def _restore_home_poses(self) -> None:
         """Re-apply every robot's captured keyframe home pose onto the live
-        ``qpos`` (a no-op for robots spawned without a keyframe). The caller
-        holds the model lock and runs ``mj_forward`` afterwards.
+        ``qpos`` AND ``ctrl`` (a no-op for robots spawned without a keyframe).
+        The caller holds the model lock and runs ``mj_forward`` afterwards.
+
+        Both halves are needed: ``reset()`` runs ``mj_resetData``, which zeroes
+        ``ctrl``, so restoring qpos alone re-created the original defect - the
+        pose was right at t=0 and gone one second later.
         """
         mj = self._mj
         assert self._world is not None and self._world._model is not None and self._world._data is not None
@@ -1527,14 +1663,21 @@ class MuJoCoSimEngine(
         data = self._world._data
         for robot in self._world.robots.values():
             hq = getattr(robot, "home_qpos", None)
-            if not hq:
+            if hq:
+                for jn, vals in hq.items():
+                    jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jn)
+                    if jid < 0:
+                        continue
+                    adr = int(model.jnt_qposadr[jid])
+                    data.qpos[adr : adr + len(vals)] = vals
+            hc = getattr(robot, "home_ctrl", None)
+            if not hc:
                 continue
-            for jn, vals in hq.items():
-                jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jn)
-                if jid < 0:
+            for an, value in hc.items():
+                aid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, an)
+                if aid < 0:
                     continue
-                adr = int(model.jnt_qposadr[jid])
-                data.qpos[adr : adr + len(vals)] = vals
+                data.ctrl[aid] = value
 
     def _seat_floating_bases_on_terrain(self) -> None:
         """Raise each floating-base robot onto the local terrain surface.
@@ -1655,7 +1798,32 @@ class MuJoCoSimEngine(
                 "content": [{"text": f"Failed to eject robot '{name}' from scene."}],
             }
 
-        return {"status": "success", "content": [{"text": f"Robot '{name}' removed."}]}
+        # The rebuild reconstructs the scene from world.objects / world.cameras,
+        # which cannot describe raw MJCF - so anything ``replace_scene_mjcf``
+        # introduced (extra bodies, sensors, sites, tendons) is gone. Measured on
+        # a scene with two hand-written bodies, a sensor and a site: nbody 25->12,
+        # nsensor 1->0, nsite 1->0, previously reported as a bare
+        # "Robot 'x' removed." Say so rather than destroying the agent's scene
+        # silently; it cannot be reconstructed from the registries.
+        # ``load_scene`` is the same hazard by a different door: an MJCF/XML file's
+        # bodies are equally absent from the registries, so the rebuild drops them
+        # too. Measured on a loaded scene with a table, a free-jointed cup and a
+        # sensor: nbody 25 -> 12, nsensor 1 -> 0, both bodies gone.
+        note = ""
+        source = ""
+        if self._world._backend_state.get("raw_mjcf_scene"):
+            source = "authored via replace_scene_mjcf"
+        elif self._world._backend_state.get("scene_loaded"):
+            source = "loaded from an MJCF/XML file via load_scene"
+        if source:
+            note = (
+                f"\nWarning: this scene was {source}. The rebuild reconstructs the scene "
+                "from world.objects / world.cameras, so elements only that scene declared "
+                "(extra bodies, sensors, sites, tendons) were DISCARDED. Re-apply the "
+                "scene, or express it through add_object / add_robot so it survives scene "
+                "mutations."
+            )
+        return {"status": "success", "content": [{"text": f"Robot '{name}' removed.{note}"}]}
 
     def list_robots(self) -> list[str]:
         """Return ordered robot names (SimEngine ABC).
@@ -2533,7 +2701,8 @@ class MuJoCoSimEngine(
         Returns:
             Agent-tool status dict. ``{"status": "success", ...}`` on success;
             ``{"status": "error", ...}`` when no world exists, a policy is
-            running, the name is taken, ``position``/``orientation``/``color``/
+            running, the name is taken, ``mass`` is not a finite number ``> 0``
+            (for a dynamic object), ``position``/``orientation``/``color``/
             ``size`` contains a non-finite (``nan``/``inf``) or non-numeric
             element or ``position``/``orientation``/``color`` is the wrong length
             (3 / 4 / 3-or-4), ``size`` has a non-positive extent or a component
@@ -2563,6 +2732,26 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_object"):
             return err
+        # An empty / whitespace name compiles to an UNNAMED MJCF body, which no
+        # tool can ever address again: ``mj_id2name`` returns None for it, so
+        # ``get_body_state("")`` reports "not found" while ``move_object("")``
+        # reports success, any predicate referencing it is silently False forever,
+        # and only one can exist (the collision guard keys on the registry, which
+        # does hold ""). ``list_objects`` still advertises it, so the scene the
+        # agent sees and the scene MuJoCo simulates disagree.
+        if not isinstance(name, str) or not name.strip():
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_object: 'name' must be a non-empty string, got {name!r}. An unnamed "
+                            "body cannot be addressed by any later call (move_object / get_body_state / "
+                            "a benchmark predicate all fail to resolve it)."
+                        )
+                    }
+                ],
+            }
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
 
@@ -2609,7 +2798,6 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": e}]}
         if size is not None and (e := _validate_finite_vector("add_object", "size", size)) is not None:
             return {"status": "error", "content": [{"text": e}]}
-
         # 'color' targets the geom's 4-component rgba row, so its component
         # count is part of the contract - the same one set_geom_properties
         # enforces on a live geom. Without the count check an RGB triple (or any
@@ -2709,9 +2897,18 @@ class MuJoCoSimEngine(
             if not inject_object_into_scene(self._world, obj):
                 # Injection returned False (compile error). Clean up.
                 self._world.objects.pop(name, None)
+                # Surface MuJoCo's own reason. "spec recompile refused" alone told
+                # the caller nothing it could act on, and the causes are specific
+                # and fixable: "mass and inertia of moving bodies must be larger
+                # than mjMINVAL" (a mass whose DERIVED inertia underflows - the
+                # legal floor is shape-dependent, so no fixed numeric guard can
+                # express it) or "repeated name 'table' in body" (a collision with
+                # a body from a loaded scene, which world.objects does not track).
+                reason = self._world._backend_state.pop("last_recompile_error", "")
+                detail = f" {reason}" if reason else " spec recompile refused."
                 return {
                     "status": "error",
-                    "content": [{"text": f"Failed to inject '{name}': spec recompile refused."}],
+                    "content": [{"text": f"Failed to inject '{name}':{detail}"}],
                 }
         except (ValueError, RuntimeError) as e:
             self._world.objects.pop(name, None)
@@ -2769,6 +2966,73 @@ class MuJoCoSimEngine(
         # live MjSpec, deletes it, and recompiles preserving remaining state.
         eject_body_from_scene(self._world, name)
         return {"status": "success", "content": [{"text": f"'{name}' removed."}]}
+
+    def _sync_spec_body_pose(
+        self,
+        name: str,
+        position: list[float] | None = None,
+        orientation: list[float] | None = None,
+    ) -> None:
+        """Mirror a runtime pose change onto the body's rest pose.
+
+        A freejoint's ``qpos`` carries the pose while the model runs, but it is
+        RE-DERIVED from the body's ``pos``/``quat`` on every ``mj_resetData`` and
+        on any recompile that shifts the qpos layout. ``add_robot`` does both (it
+        inserts the new robot's bodies earlier in the tree, then deliberately
+        resets to a clean state), and ``reset`` does the latter, so a
+        ``move_object`` that wrote only ``qpos`` was silently undone:
+
+            move_object("dyn", [0.6, 0.1, 0.5])   -> xpos [0.6, 0.1, 0.5]
+            reset()                               -> xpos [0.4, 0.0, 0.3]
+            list_objects()                        -> "dyn: box at [0.6, 0.1, 0.5]"
+
+        i.e. the agent's own inventory disagreed with the physics, and an eval
+        loop that arranged a scene then reset between episodes silently ran every
+        episode from the ORIGINAL layout.
+
+        Three places are written, because three different mechanisms re-derive the
+        pose: ``model.qpos0`` (what ``mj_resetData`` restores ``qpos`` from),
+        ``model.body_pos``/``body_quat`` (the body's rest pose, which a recompile
+        seeds a new freejoint from), and the spec (which the declarative
+        ``SpecBuilder.build`` rebuild reads). Writing the compiled model directly
+        keeps this path cheap - no recompile, which is the whole point of the
+        freejoint fast path. Best-effort on each: a body missing from the model or
+        spec is a debug-level no-op, since the ``qpos`` write has already taken
+        effect for the current model.
+        """
+        if self._world is None:
+            return
+        mj = self._mj
+        model = self._world._model
+        if model is not None:
+            body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, name)
+            if body_id >= 0:
+                if position is not None:
+                    model.body_pos[body_id] = [float(v) for v in position]
+                if orientation is not None:
+                    model.body_quat[body_id] = [float(v) for v in orientation]
+            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, f"{name}_joint")
+            if jnt_id >= 0 and int(model.jnt_type[jnt_id]) == int(mj.mjtJoint.mjJNT_FREE):
+                adr = int(model.jnt_qposadr[jnt_id])
+                if position is not None:
+                    model.qpos0[adr : adr + 3] = [float(v) for v in position]
+                if orientation is not None:
+                    model.qpos0[adr + 3 : adr + 7] = [float(v) for v in orientation]
+        spec = self._world._backend_state.get("spec")
+        if spec is None:
+            return
+        try:
+            body = spec.body(name)
+        except (KeyError, ValueError) as e:
+            logger.debug("could not mirror pose for %r onto the spec: %s", name, e)
+            return
+        try:
+            if position is not None:
+                body.pos = [float(v) for v in position]
+            if orientation is not None:
+                body.quat = [float(v) for v in orientation]
+        except (AttributeError, ValueError, TypeError) as e:  # pragma: no cover - defensive
+            logger.debug("could not mirror pose for %r: %s", name, e)
 
     def move_object(
         self, name: str, position: list[float] | None = None, orientation: list[float] | None = None
@@ -2863,6 +3127,21 @@ class MuJoCoSimEngine(
                     # (rebuilds from the builder at rest).
                     dof_addr = model.jnt_dofadr[jnt_id]
                     data.qvel[dof_addr : dof_addr + 6] = 0.0
+                    # Mirror the pose onto the spec body as well. A freejoint's
+                    # qpos is what carries the pose at RUNTIME, but a recompile
+                    # re-initialises a freejoint from its body's ``pos``/``quat``
+                    # whenever the qpos layout shifts - which ``add_robot`` does,
+                    # since it inserts the new robot's bodies earlier in the tree.
+                    # Writing only qpos therefore teleported a moved object back
+                    # to where it was spawned:
+                    #
+                    #     move_object("dyn", [0.6, 0.1, 0.5])  -> qpos [0.6, 0.1, 0.5]
+                    #     add_robot("b")                       -> qpos [0.4, 0.0, 0.3]
+                    #
+                    # reported as success both times, with ``SimObject.position``
+                    # still claiming the new pose. The static branch below already
+                    # goes through the spec, so this brings the two into agreement.
+                    self._sync_spec_body_pose(name, position=position, orientation=orientation)
                 mj.mj_forward(model, data)
             elif position is not None or orientation is not None:
                 # Static object: welded to the worldbody with no freejoint, so it
@@ -2972,6 +3251,26 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_camera"):
             return err
+
+        # An empty / whitespace name compiles to an UNNAMED MJCF camera. Worse
+        # than the object case: "" is one of the reserved FREE-camera tokens, so
+        # ``render(camera_name="")`` silently renders the free camera instead of
+        # the one just added, reporting success either way - the agent gets a
+        # completely different viewpoint than it asked for, with nothing to
+        # indicate the camera it created is unreachable.
+        if not isinstance(name, str) or not name.strip():
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_camera: 'name' must be a non-empty string, got {name!r}. An unnamed "
+                            "camera cannot be rendered - '' is a reserved free-camera token, so "
+                            "render() would silently return the free view instead."
+                        )
+                    }
+                ],
+            }
 
         # Validate position / target shape before we bake them into XML.
         # Membership, not truthiness: ``position or <default>`` raised a bare
@@ -3123,7 +3422,8 @@ class MuJoCoSimEngine(
             SpecBuilder.remove_camera(spec, mj_name)
             # Recompile so nbody/ncam in _model match the new spec.
             try:
-                self._world._model, self._world._data = spec.recompile(self._world._model, self._world._data)
+                new_model, new_data = spec.recompile(self._world._model, self._world._data)
+                _install_model(self._world, new_model, new_data)
                 try:
                     with filter_mujoco_attach_noise():
                         self._world._backend_state["xml"] = spec.to_xml()
@@ -3138,6 +3438,63 @@ class MuJoCoSimEngine(
 
     _MAX_STEPS_PER_CALL = 100_000  # Hard ceiling to prevent unbounded lock hold.
     _STEPS_PER_BATCH = 1000  # Release lock every N steps for cancellation.
+
+    def _validate_n_substeps(self, n_substeps: Any) -> dict[str, Any] | None:
+        """Validate ``send_action``'s substep count the way ``step`` validates its own.
+
+        ``send_action(n_substeps=N)`` drives the SAME ``mj_step`` loop as ``step``
+        while holding ``self._lock``, but it had none of ``step``'s guards, so:
+
+        * ``n_substeps=10**9`` looped ~forever with the lock held - the ceiling
+          ``_MAX_STEPS_PER_CALL`` exists precisely to "prevent unbounded lock
+          hold", and every other thread (render, recorder, policy worker) blocked
+          behind it. Measured: no return after 60 s.
+        * ``2.5`` / ``inf`` / ``"3"`` raised ``TypeError`` out of
+          ``range()``/``max()``, escaping the ``status``/``content`` tool contract.
+        * ``0`` / ``-1`` / ``nan`` reported ``"Action applied"`` while stepping
+          physics zero times - ``max(1, n_substeps)`` masked the first two and
+          ``nan`` compares false against everything.
+
+        Returns an error dict to hand straight back to the caller, or ``None``
+        when the value is usable.
+        """
+        if isinstance(n_substeps, bool) or not isinstance(n_substeps, numbers.Real):
+            return {
+                "status": "error",
+                "content": [{"text": f"send_action: n_substeps must be an integer, got {type(n_substeps).__name__}."}],
+            }
+        numeric = float(n_substeps)
+        if not math.isfinite(numeric) or numeric != int(numeric):
+            return {
+                "status": "error",
+                "content": [{"text": f"send_action: n_substeps must be a whole finite number, got {n_substeps}."}],
+            }
+        count = int(numeric)
+        if count < 1:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"send_action: n_substeps must be >= 1, got {count}. "
+                            "Use step(n_steps=0) if you want to apply an action without advancing physics."
+                        )
+                    }
+                ],
+            }
+        if count > self._MAX_STEPS_PER_CALL:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"send_action: n_substeps={count} exceeds max {self._MAX_STEPS_PER_CALL}. "
+                            "Break into smaller calls."
+                        )
+                    }
+                ],
+            }
+        return None
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
         """Advance the simulation by ``n_steps`` physics steps.
@@ -3257,6 +3614,10 @@ class MuJoCoSimEngine(
         mj = self._mj
         with self._lock:
             mj.mj_resetData(self._world._model, self._world._data)
+            # A reset is an episode boundary, so restart the observation-noise
+            # stream from its seed - otherwise a seeded run was reproducible only
+            # for its FIRST episode (see reseed_obs_noise).
+            self.reseed_obs_noise()
             # mj_resetData restores qpos/qvel/ctrl but zeroes ALL derived
             # kinematics (xpos, site_xpos, geom_xpos, cam_xpos, ...) until the
             # next mj_step/mj_forward. A consumer that reads state or RENDERS
@@ -3352,6 +3713,31 @@ class MuJoCoSimEngine(
         if hasattr(tls, "model"):
             tls.model = None
 
+    def _sync_spec_option(self) -> None:
+        """Push ``world.timestep`` / ``world.gravity`` onto the live ``MjSpec``.
+
+        ``set_timestep`` / ``set_gravity`` write ``model.opt`` for immediate
+        effect, but every scene mutation recompiles from
+        ``_backend_state["spec"]`` - which still carried the values
+        ``SpecBuilder.build`` baked in at ``create_world``. Without this mirror a
+        runtime physics change survived only until the next ``add_object`` /
+        ``add_robot`` / ``remove_object``, then reverted with no signal.
+
+        Best-effort: a world with no spec (or a spec MuJoCo will not let us
+        write) leaves ``model.opt`` correct for the current model and logs at
+        debug, since the mutation itself already succeeded.
+        """
+        if self._world is None:
+            return
+        spec = self._world._backend_state.get("spec")
+        if spec is None:
+            return
+        try:
+            spec.option.timestep = float(self._world.timestep)
+            spec.option.gravity = list(self._world.gravity)
+        except (AttributeError, ValueError, TypeError) as e:  # pragma: no cover - defensive
+            logger.debug("could not mirror timestep/gravity onto the spec: %s", e)
+
     def set_gravity(self, gravity: list[float] | float | int) -> dict[str, Any]:
         """Set the world gravity vector.
 
@@ -3395,6 +3781,12 @@ class MuJoCoSimEngine(
                 return {"status": "error", "content": [{"text": f"set_gravity: {reason}"}]}
             self._world._model.opt.gravity[:] = components
             self._world.gravity = components
+            # Mirror onto the LIVE SPEC too. ``_recompile_preserving_state``
+            # recompiles from the spec, not from ``world.*``, so a setting written
+            # only to ``model.opt`` was silently reverted by the next scene
+            # mutation: set_gravity(-1) followed by add_object() put gravity back
+            # to -9.81 mid-episode under a success result.
+            self._sync_spec_option()
         return {"status": "success", "content": [{"text": f"Gravity: {components}"}]}
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
@@ -3432,6 +3824,8 @@ class MuJoCoSimEngine(
                 return {"status": "error", "content": [{"text": f"set_timestep: {reason}"}]}
             self._world._model.opt.timestep = timestep
             self._world.timestep = timestep
+            # See set_gravity: the spec is the recompile source of truth.
+            self._sync_spec_option()
         return {"status": "success", "content": [{"text": f"Timestep: {timestep}s ({1 / timestep:.0f}Hz){warn}"}]}
 
     # Viewer
@@ -3539,6 +3933,40 @@ class MuJoCoSimEngine(
 
     # Introspection
 
+    def _robot_mounted_camera_names(self, model: Any, robot: SimRobot) -> list[str]:
+        """Names of cameras physically mounted on ``robot``'s body subtree.
+
+        ``add_camera(parent_body=...)`` bolts a camera to a body without renaming
+        it, so a wrist camera on ``a/hand`` is just ``"wrist"`` - invisible to a
+        namespace-prefix match even though it belongs to that robot. ``cam_bodyid``
+        is the unambiguous signal, so walk each camera's body up the ``body_parentid``
+        chain and claim it when the chain passes through a body carrying the
+        robot's namespace (or, for an un-namespaced single robot, any non-world
+        body). World-fixed cameras sit on body 0 and are never claimed.
+        """
+        mj = self._mj
+        namespace = (getattr(robot, "namespace", "") or "").rstrip("/")
+        prefix = f"{namespace}/" if namespace else ""
+        out: list[str] = []
+        for cam_id in range(int(model.ncam)):
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_CAMERA, cam_id)
+            if not name:
+                continue
+            body_id = int(model.cam_bodyid[cam_id])
+            # Walk to the root; a bounded loop, body_parentid[0] == 0.
+            while body_id > 0:
+                body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id) or ""
+                if prefix:
+                    if body_name.startswith(prefix):
+                        out.append(name)
+                        break
+                else:
+                    # No namespace: a single robot owns every non-world body.
+                    out.append(name)
+                    break
+                body_id = int(model.body_parentid[body_id])
+        return out
+
     def get_features(self, robot_name: str | None = None) -> dict[str, Any]:
         """Describe the simulation's joints / actuators / cameras / robots.
 
@@ -3576,7 +4004,19 @@ class MuJoCoSimEngine(
 
             joint_names = robot.joint_names or _scoped(all_joint_names)
             actuator_names = _scoped(all_actuator_names)
+            # Cameras are scoped by MOUNT POINT, not just by name prefix. A camera
+            # that came from the robot's own MJCF is namespaced ("arm2/wrist") and
+            # the prefix match finds it, but one added at runtime via
+            # ``add_camera(parent_body="a/hand")`` keeps its bare name while being
+            # physically bolted to that robot - so the prefix match reported
+            # ``camera_names: []`` for a robot that plainly has a wrist camera,
+            # while ``get_observation`` returned its frames. That mismatch is a
+            # dataset-schema bug: the recorder declares columns from here.
+            # ``cam_bodyid`` is the unambiguous signal (measured: wa -> a/hand,
+            # wb -> b/hand), so union it with the prefix match.
             camera_names = _scoped(all_camera_names)
+            mounted = self._robot_mounted_camera_names(model, robot)
+            camera_names = camera_names + [n for n in mounted if n not in camera_names]
 
             robots_info = {
                 robot_name: {
@@ -3602,11 +4042,17 @@ class MuJoCoSimEngine(
                     "source": os.path.basename(robot.urdf_path),
                 }
 
+        # Counts must describe the SAME set as the name lists beside them. They
+        # were whole-model (``model.njnt`` / ``model.nu``) while the lists were
+        # robot-scoped, so a scoped call self-contradicted: get_features("a") on a
+        # two-Panda scene reported n_actuators=16 next to 8 actuator_names (and
+        # its own robots["a"]["n_actuators"]=8). A caller sizing an action buffer
+        # from the count then allocated twice the robot's real width.
         features = {
             "n_bodies": model.nbody,
-            "n_joints": model.njnt,
-            "n_actuators": model.nu,
-            "n_cameras": model.ncam,
+            "n_joints": len(joint_names),
+            "n_actuators": len(actuator_names),
+            "n_cameras": len(camera_names),
             "timestep": model.opt.timestep,
             "joint_names": joint_names,
             "actuator_names": actuator_names,
@@ -3616,9 +4062,10 @@ class MuJoCoSimEngine(
 
         lines = [
             "Simulation Features",
-            f"Joints ({model.njnt}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
-            f"Actuators ({model.nu}): {', '.join(actuator_names[:12])}{'...' if len(actuator_names) > 12 else ''}",
-            f"Cameras ({model.ncam}): {', '.join(camera_names) if camera_names else 'none (free camera only)'}",
+            f"Joints ({len(joint_names)}): {', '.join(joint_names[:12])}{'...' if len(joint_names) > 12 else ''}",
+            f"Actuators ({len(actuator_names)}): "
+            f"{', '.join(actuator_names[:12])}{'...' if len(actuator_names) > 12 else ''}",
+            f"Cameras ({len(camera_names)}): {', '.join(camera_names) if camera_names else 'none (free camera only)'}",
             f"Timestep: {model.opt.timestep}s ({1 / model.opt.timestep:.0f}Hz)",
         ]
         for rname, rinfo in robots_info.items():
@@ -4122,6 +4569,7 @@ class MuJoCoSimEngine(
         action_horizon: int | dict[str, int] = _DEFAULT_ACTION_HORIZON,
         n_steps: int | None = None,
         max_steps: int | None = None,
+        control_substeps: int | None = None,
     ) -> dict[str, Any]:
         """Drive MULTIPLE robots with their own policies in a SINGLE
         synchronized control loop, recording ALL robots into ONE merged frame
@@ -4181,6 +4629,13 @@ class MuJoCoSimEngine(
                 mapping uses the default horizon (8).
             n_steps: Alternate horizon in steps (overrides duration when set).
             max_steps: Legacy alias for ``n_steps``.
+            control_substeps: Physics steps per applied action. ``None`` derives
+                it from ``control_frequency`` and the physics timestep via the
+                same helper ``run_policy`` / ``eval_policy`` use, so all three
+                integrate an identical wall-clock period per action. Passing a
+                non-positive or non-integer value is a caller error and raises
+                rather than being clamped, since clamping would silently restore
+                the under-integration this exists to prevent.
 
         Returns:
             Standard status dict with per-robot step counts.
@@ -4258,6 +4713,8 @@ class MuJoCoSimEngine(
         # and report a rollout that never ran as a success.
         if err := self._validate_positive_frequency(control_frequency, "run_multi_policy"):
             return err
+        # This loop records too, so it needs the same fps/control-rate check.
+        self._warn_on_recording_fps_mismatch(control_frequency, "run_multi_policy")
         duration, n_steps, horizon_error = self._resolve_horizon(
             n_steps, max_steps, control_frequency, duration, "run_multi_policy"
         )
@@ -4306,8 +4763,35 @@ class MuJoCoSimEngine(
         any_needs_images = any(getattr(p, "requires_images", True) for p in policies.values())
         skip_images = not (any_needs_images or recording)
 
-        total_steps = int(duration * control_frequency)
+        # Prefer the explicit integer step count. _resolve_horizon converts
+        # n_steps into duration = n_steps / control_frequency, and recomputing
+        # int(duration * control_frequency) truncates on any frequency that does
+        # not divide evenly - the binary float leaves the product a hair below
+        # the integer (0.58 * 50 == 28.999999999999996), so the loop silently ran
+        # n_steps - 1. Measured: n_steps=29 @50Hz -> 28, 57 -> 56, 113 -> 112,
+        # 123 @30Hz -> 122, and n_steps=1 @49Hz -> 0 steps reported as success.
+        # PolicyRunner.run already resolves it exactly this way; this loop is the
+        # one that did not.
+        if n_steps is not None and n_steps > 0:
+            total_steps = int(n_steps)
+        else:
+            # Round rather than truncate, for the same float reason.
+            total_steps = round(duration * control_frequency)
         action_sleep = 1.0 / control_frequency if control_frequency > 0 else 0.0
+
+        # Physics steps per applied action. Stepping ONCE per control iteration
+        # integrated a single physics dt (2ms at the 500Hz default) instead of
+        # the whole control period (20ms at 50Hz), so a position servo covered
+        # ~1/10th of the distance to each target before the next action
+        # overwrote ctrl: multi-robot rollouts looked like the policy was a
+        # no-op, and the recorded sim_time / dataset timestamps were short by
+        # the same factor. PolicyRunner._control_substeps is the documented
+        # single source of truth for this derivation and is what run() /
+        # evaluate() use; sharing it keeps every rollout route integrating the
+        # same wall-clock period per action.
+        from strands_robots.simulation.policy_runner import PolicyRunner
+
+        n_substeps = PolicyRunner(self)._control_substeps(control_frequency, control_substeps)
 
         # Mark all robots as running so stop_policy can interrupt the loop.
         for rname in policies:
@@ -4399,9 +4883,18 @@ class MuJoCoSimEngine(
                         robot = self._world.robots[rname]
                         pfx = robot.namespace or ""
                         self._apply_action_by_name(self._world._model, self._world._data, act, pfx, mj)
-                    mj.mj_step(self._world._model, self._world._data)
+                    # Integrate the FULL control period, not one physics dt.
+                    # data.ctrl is held constant across mj_step, so a position
+                    # servo only closes its error if it is given the whole period.
+                    for _ in range(n_substeps):
+                        mj.mj_step(self._world._model, self._world._data)
+                        # Kinematically attached bodies follow their parent every
+                        # physics step, matching the single-robot policy path; a
+                        # grasped object would otherwise drift for the rest of
+                        # the control period. Fast no-op when none registered.
+                        self._apply_kinematic_attachments()
                     self._world.sim_time = self._world._data.time
-                    self._world.step_count += 1
+                    self._world.step_count += n_substeps
                     if hasattr(self, "_viewer_handle") and self._viewer_handle is not None:
                         self._viewer_handle.sync()
 

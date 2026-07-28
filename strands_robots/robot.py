@@ -29,7 +29,11 @@ GPU backends (resolved through ``create_simulation``; require the backend's
 optional dependency or the ``strands-robots-sim`` plugin to be installed)::
 
     sim = Robot("unitree_go2", backend="isaac", num_envs=4096)
-    sim = Robot("so100", backend="newton", num_envs=4096, device="cuda:0")
+    sim = Robot("so100", backend="newton", device="cuda:0")
+
+``num_envs`` is an ISAAC capability. The Newton backend implements no batching, so
+it rejects ``num_envs`` rather than accepting and ignoring it - this example used
+to pass ``num_envs=4096`` to newton, which was silently dropped.
 """
 
 from __future__ import annotations
@@ -227,9 +231,11 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
                  out-of-tree backends (``"isaac"``) ship in the ``strands-robots-sim``
                  plugin package and resolve once installed. An unavailable backend
                  surfaces the factory's actionable install hint. Backend-specific
-                 kwargs (e.g. ``num_envs``, ``device``) are forwarded to the
-                 backend constructor. Only applies to ``mode="sim"``; ignored for
-                 ``mode="real"``.
+                 kwargs (e.g. ``device``, or ``num_envs`` on ``"isaac"``) are
+                 forwarded to the backend constructor, which REJECTS any keyword
+                 it does not implement - so a kwarg aimed at the wrong backend
+                 fails loudly instead of being dropped. Only applies to
+                 ``mode="sim"``; ignored for ``mode="real"``.
         urdf_path: Explicit path to URDF/MJCF file. If not provided,
                    resolved via ``strands_robots.simulation.model_registry``
                    (asset manager or ``STRANDS_ASSETS_DIR`` search paths).
@@ -295,12 +301,13 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
         agent("Pick up the red cube")
     """
     canonical = resolve_name(name)
-    _validate_known_robot(canonical, name, urdf_path)
 
     mode = _normalize_mode(mode)
 
     if mode == "auto":
         mode = _auto_detect_mode(canonical)
+
+    _validate_known_robot(canonical, name, urdf_path)
 
     # Resolve the mesh opt-in. Mesh is OFF by default so a bare
     # ``Robot("so100")`` is quiet and never spins up Zenoh/ACL/e-stop

@@ -396,3 +396,182 @@ class TestApplyHomeQposWidthGuard:
         assert data.qpos[el_adr] == 0.9
         # Only the correctly-sized joint is recorded for reset() to restore.
         assert robot.home_qpos == {"a/elbow": [0.9]}
+
+
+# --- D12: the keyframe's ctrl row ---------------------------------------------
+#
+# ``_keyframe_home_qpos`` read only ``src.key_qpos[idx]``; ``grep -rn key_ctrl
+# strands_robots/`` returned ZERO hits. ``_apply_home_qpos_to_robot`` wrote only
+# ``data.qpos``, and ``add_robot`` runs ``mj_resetData`` first, which zeroes
+# ``ctrl``. On a position-servo model qpos sat at the home pose while every servo
+# target was 0, so the first ``mj_step`` drove every joint toward 0.
+# ``_restore_home_poses`` had the identical hole, so ``reset()`` re-created it.
+#
+# Measured pre-fix with the shipped panda asset (data_config="panda",
+# keyframe="home"), whose <key> declares
+# ctrl="0 0 0 -1.57079 0 1.57079 -0.7853 255":
+#
+#     t=0 qpos joint4 = -1.5708      OK
+#     t=0 ctrl        = [0,0,0,0,0,0,0,0]        <- the row was never read
+#     after  10 steps joint4 = -1.5454
+#     after 100 steps joint4 = -0.4169           <- home pose gone in 200 ms
+#     after 500 steps joint4 = -0.0696
+#
+# 93 shipped models declare a <keyframe> and 81 carry a NONZERO key_ctrl row.
+#
+# MuJoCo's <key> carries qpos, qvel, ctrl, act and mpos/mquat precisely because a
+# servo model's configuration is UNDER-DETERMINED by qpos alone;
+# mj_resetDataKeyframe restores all of them.
+
+# Same two-hinge arm, but its keyframe declares an explicit ctrl row that does
+# NOT equal the qpos row - so a test cannot pass by coincidence.
+_CTRL_KEYFRAME_MJCF = """
+<mujoco model="kf_ctrl_arm">
+  <compiler angle="radian"/>
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <worldbody>
+    <body name="l1" pos="0 0 0.1">
+      <joint name="shoulder" type="hinge" axis="0 1 0"/>
+      <geom type="capsule" fromto="0 0 0 0 0 0.3" size="0.03" mass="1"/>
+      <body name="l2" pos="0 0 0.3">
+        <joint name="elbow" type="hinge" axis="0 1 0"/>
+        <geom type="capsule" fromto="0 0 0 0 0 0.3" size="0.03" mass="1"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="s_act" joint="shoulder" kp="2000"/>
+    <position name="e_act" joint="elbow" kp="2000"/>
+  </actuator>
+  <keyframe>
+    <key name="home" qpos="0.5 -1.2" ctrl="0.4 -1.1"/>
+  </keyframe>
+</mujoco>
+"""
+
+_CTRL_ROW = [0.4, -1.1]
+
+
+@pytest.fixture
+def ctrl_arm_xml(tmp_path):
+    p = tmp_path / "kf_ctrl_arm.xml"
+    p.write_text(_CTRL_KEYFRAME_MJCF)
+    return str(p)
+
+
+def _ctrl(sim, actuator_name: str) -> float:
+    world = sim._world
+    aid = mj.mj_name2id(world._model, mj.mjtObj.mjOBJ_ACTUATOR, actuator_name)
+    assert aid >= 0, f"actuator {actuator_name!r} not in compiled model"
+    return float(world._data.ctrl[aid])
+
+
+def _joint(sim, joint_name: str) -> float:
+    world = sim._world
+    jid = mj.mj_name2id(world._model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+    assert jid >= 0, f"joint {joint_name!r} not in compiled model"
+    return float(world._data.qpos[int(world._model.jnt_qposadr[jid])])
+
+
+class TestKeyframeCtrlRowIsApplied:
+    def test_declared_ctrl_row_lands_in_data_ctrl(self, sim, ctrl_arm_xml):
+        """The regression: data.ctrl was all-zero after a keyframe spawn."""
+        assert sim.add_robot(name="arm", urdf_path=ctrl_arm_xml, keyframe="home")["status"] == "success"
+
+        assert _ctrl(sim, "arm/s_act") == pytest.approx(_CTRL_ROW[0], abs=1e-6)
+        assert _ctrl(sim, "arm/e_act") == pytest.approx(_CTRL_ROW[1], abs=1e-6)
+
+    def test_the_ctrl_row_is_used_not_the_qpos_row(self, sim, ctrl_arm_xml):
+        """A ctrl row that differs from qpos must be honoured verbatim."""
+        assert sim.add_robot(name="arm", urdf_path=ctrl_arm_xml, keyframe="home")["status"] == "success"
+
+        # qpos says 0.5 / -1.2; ctrl says 0.4 / -1.1. Copying qpos would pass a
+        # weaker test but is wrong.
+        assert _ctrl(sim, "arm/s_act") != pytest.approx(_HOME[0], abs=1e-6)
+        assert _joint(sim, "arm/shoulder") == pytest.approx(_HOME[0], abs=1e-6)
+
+    def test_home_ctrl_is_recorded_on_the_robot(self, sim, ctrl_arm_xml):
+        assert sim.add_robot(name="arm", urdf_path=ctrl_arm_xml, keyframe="home")["status"] == "success"
+
+        robot = sim._world.robots["arm"]
+        assert robot.home_ctrl == {
+            "arm/s_act": pytest.approx(_CTRL_ROW[0], abs=1e-6),
+            "arm/e_act": pytest.approx(_CTRL_ROW[1], abs=1e-6),
+        }
+
+    def test_reset_re_applies_the_ctrl_row(self, sim, ctrl_arm_xml):
+        """reset() runs mj_resetData, which zeroes ctrl - so it must re-apply."""
+        assert sim.add_robot(name="arm", urdf_path=ctrl_arm_xml, keyframe="home")["status"] == "success"
+        sim.step(n_steps=200)
+
+        assert sim.reset()["status"] == "success"
+
+        assert _ctrl(sim, "arm/s_act") == pytest.approx(_CTRL_ROW[0], abs=1e-6)
+        assert _ctrl(sim, "arm/e_act") == pytest.approx(_CTRL_ROW[1], abs=1e-6)
+
+    def test_a_second_robot_without_a_keyframe_gets_no_targets(self, sim, ctrl_arm_xml, arm_xml):
+        """The pending ctrl map must not leak to the next add_robot."""
+        assert sim.add_robot(name="arm", urdf_path=ctrl_arm_xml, keyframe="home")["status"] == "success"
+
+        assert sim.add_robot(name="plain", urdf_path=arm_xml, position=[1.0, 0.0, 0.0])["status"] == "success"
+
+        assert sim._world.robots["plain"].home_ctrl == {}
+        assert sim._world.robots["arm"].home_ctrl, "the first robot lost its targets"
+
+    def test_no_keyframe_spawn_leaves_ctrl_untouched(self, sim, arm_xml):
+        """keyframe=None must stay byte-identical to the historical behaviour."""
+        assert sim.add_robot(name="arm", urdf_path=arm_xml)["status"] == "success"
+
+        assert sim._world.robots["arm"].home_ctrl == {}
+        assert not sim._world._data.ctrl.any()
+
+
+class TestKeyframeWithoutACtrlRow:
+    """A keyframe declaring no ctrl row must still hold its pose.
+
+    MuJoCo materialises an all-zero ``key_ctrl`` row for a ``<key>`` that never
+    specified ctrl. Honouring that literally would command every servo to 0 -
+    the exact defect. So an all-zero row on a NON-zero home pose is treated as
+    absent, and each direct-JOINT position actuator is seeded from its own
+    joint's home qpos (the rule ``ManipulationMixin.actuate_robot`` already uses).
+    """
+
+    def test_position_servos_are_seeded_from_the_home_qpos(self, sim, arm_xml):
+        assert sim.add_robot(name="arm", urdf_path=arm_xml, keyframe="home")["status"] == "success"
+
+        assert _ctrl(sim, "arm/s_act") == pytest.approx(_HOME[0], abs=1e-6)
+        assert _ctrl(sim, "arm/e_act") == pytest.approx(_HOME[1], abs=1e-6)
+
+    def test_the_arm_does_not_collapse_off_the_home_pose(self, sim, arm_xml):
+        """The physical consequence: joints were driven toward 0 immediately."""
+        assert sim.add_robot(name="arm", urdf_path=arm_xml, keyframe="home")["status"] == "success"
+        before = _joint(sim, "arm/elbow")
+        assert before == pytest.approx(_HOME[1], abs=1e-6)
+
+        sim.step(n_steps=500)
+
+        after = _joint(sim, "arm/elbow")
+        # kp=50 against gravity cannot hold -1.2 exactly, but the joint must stay
+        # on the commanded side and nowhere near the 0 it used to be driven to.
+        assert after < -0.5, f"elbow collapsed toward zero: {before:.4f} -> {after:.4f}"
+
+
+class TestShippedAssetKeyframe:
+    """The panda asset from the ledger's evidence, end to end."""
+
+    def test_panda_home_ctrl_matches_the_asset_and_holds(self, sim):
+        result = sim.add_robot("panda", keyframe="home")
+        if result.get("status") != "success":
+            pytest.skip(f"panda asset unavailable: {result.get('content')}")
+        world = sim._world
+        source = mj.MjModel.from_xml_path(str(world.robots["panda"].urdf_path))
+        expected = [float(x) for x in source.key_ctrl[0]]
+        assert any(expected), "the panda asset no longer declares a ctrl row"
+
+        actual = [float(x) for x in world._data.ctrl]
+        assert actual == pytest.approx(expected, abs=1e-6)
+
+        # And the pose survives a second of physics (pre-fix: -1.5708 -> -0.0696).
+        held = _joint(sim, "panda/joint4")
+        sim.step(n_steps=500)
+        assert _joint(sim, "panda/joint4") == pytest.approx(held, abs=0.05)

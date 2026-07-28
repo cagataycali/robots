@@ -326,7 +326,19 @@ class DatasetRecordingMixin:
         #      success with "0 frames, 0 episode(s)", silently producing a
         #      dataset with only meta/info.json (no parquet/video).
         pending = getattr(recorder, "episode_frame_count", 0)
-        captured = getattr(recorder, "frame_count", 0)
+        # SESSION-scoped, not the dataset total. ``resume()`` seeds ``frame_count``
+        # from the dataset already on disk "so reporting reflects totals", so on
+        # any append session it starts non-zero - and an append that captured
+        # ZERO new frames had pending == 0 and frame_count > 0, skipped both
+        # branches below, and returned success with the INHERITED counts.
+        # Measured: session 2 resumed a 5-frame dataset, ran no rollout at all,
+        # and reported `success | local/d48 -- 5 frames, 1 episode(s)`. The
+        # equivalent FRESH session correctly errored, so the guard was right about
+        # everything except which counter it read.
+        captured = getattr(recorder, "session_frame_count", None)
+        if captured is None:
+            captured = getattr(recorder, "frame_count", 0)
+        dataset_total_frames = getattr(recorder, "frame_count", 0)
         if pending > 0:
             save_result = recorder.save_episode()
             if isinstance(save_result, dict) and save_result.get("status") == "error":
@@ -352,8 +364,14 @@ class DatasetRecordingMixin:
                 "content": [
                     {
                         "text": (
-                            "stop_recording captured no frames - dataset would be empty "
-                            "(0 frames). Frames are written only by run_policy(...) while "
+                            "stop_recording captured no frames in THIS session"
+                            + (
+                                f" (the dataset already on disk has {dataset_total_frames} frame(s) "
+                                "from earlier sessions, which this session did not add to)"
+                                if dataset_total_frames
+                                else " - dataset would be empty (0 frames)"
+                            )
+                            + ". Frames are written only by run_policy(...) while "
                             "recording is active (its on_frame hook calls add_frame). "
                             "eval_policy / evaluate / replay_episode and bare step loops do "
                             "NOT feed the recorder. To record a dataset: start_recording -> "
@@ -367,6 +385,13 @@ class DatasetRecordingMixin:
         frame_count = recorder.frame_count
         episode_count = recorder.episode_count
         root = recorder.root
+        # Data-loss counters. Neither was reported, and neither is inferable
+        # from the dataset: lerobot renumbers surviving frames contiguously, so a
+        # dropped frame leaves NO gap in the timestamps - the episode reads as a
+        # clean trajectory that was never executed, and passes verify_dataset.
+        # A caller (or CI parsing this payload) can only find out from here.
+        dropped_frame_count = int(getattr(recorder, "dropped_frame_count", 0) or 0)
+        zero_filled_frame_count = int(getattr(recorder, "zero_filled_frame_count", 0) or 0)
 
         # Finalize FIRST so meta/ (stats/info) is written before any bucket sync
         # - streaming/training downstream needs it.
@@ -388,19 +413,32 @@ class DatasetRecordingMixin:
             ds_meta = getattr(getattr(recorder, "dataset", None), "meta", None)
             if ds_meta is not None:
                 parquet_episode_count = int(getattr(ds_meta, "total_episodes", 0))
-                if parquet_episode_count != episode_count:
+                # Compose the expectation from what was INHERITED plus what this
+                # session saved. Comparing ``recorder.episode_count`` directly is
+                # a tautology on the append path: ``resume()`` seeds it from
+                # ``meta.total_episodes``, i.e. from the very number being
+                # compared against, so the gate could never fire on a resumed
+                # dataset - exactly where a silent collapse is hardest to notice.
+                seeded = int(getattr(recorder, "episodes_seeded_at_resume", 0) or 0)
+                session_episodes = getattr(recorder, "session_episode_count", None)
+                expected_episode_count = (
+                    seeded + int(session_episodes) if session_episodes is not None else episode_count
+                )
+                if parquet_episode_count != expected_episode_count:
                     episode_count_mismatch = True
                     logger.warning(
-                        "stop_recording: recorder.episode_count=%d but "
-                        "dataset.meta.total_episodes=%d. Trust the parquet. "
+                        "stop_recording: expected %d episode(s) (%d inherited on resume + %d saved "
+                        "this session) but dataset.meta.total_episodes=%d. Trust the parquet. "
                         "(#708 silent-collapse gate)",
-                        episode_count,
+                        expected_episode_count,
+                        seeded,
+                        expected_episode_count - seeded,
                         parquet_episode_count,
                     )
                     # The parquet is the ground truth - report it as the
-                    # canonical episode_count downstream. Stash the original
-                    # recorder.episode_count so the text payload can name both.
-                    episode_count_mismatch_orig = episode_count
+                    # canonical episode_count downstream. Stash the EXPECTED
+                    # count so the text payload can name both.
+                    episode_count_mismatch_orig = expected_episode_count
                     episode_count = parquet_episode_count
         except Exception as e:  # noqa: BLE001 - never fail finalize on a probe
             logger.debug("episode_count gate probe failed: %s", e)
@@ -435,11 +473,22 @@ class DatasetRecordingMixin:
         else:
             text_episode_note = ""
 
+        degraded = bool(dropped_frame_count or zero_filled_frame_count)
+        if degraded:
+            loss_note = (
+                f"\nWARNING: {dropped_frame_count} frame(s) dropped and {zero_filled_frame_count} "
+                f"recorded as all-zero vectors. lerobot renumbers surviving frames contiguously, so "
+                f"the timestamps do NOT show the gap - this episode encodes a trajectory that was "
+                f"never executed. Discard it rather than training on it."
+            )
+        else:
+            loss_note = ""
+
         text = (
             f"Episode saved to LeRobotDataset\n"
             f"{repo_id} -- {frame_count} frames, {episode_count} episode(s)"
             f"{text_episode_note}\n"
-            f"Local: {root}{extra}"
+            f"Local: {root}{extra}{loss_note}"
         )
 
         return {
@@ -454,6 +503,9 @@ class DatasetRecordingMixin:
                         "parquet_episode_count": parquet_episode_count,
                         "episode_count_mismatch": episode_count_mismatch,
                         "root": root,
+                        "dropped_frame_count": dropped_frame_count,
+                        "zero_filled_frame_count": zero_filled_frame_count,
+                        "degraded": degraded,
                     }
                 },
             ],

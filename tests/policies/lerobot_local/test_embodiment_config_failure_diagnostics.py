@@ -9,12 +9,13 @@ reported differently:
   missing-postprocessor warning still fires.
 * ``_configure_embodiment`` raises ``ValueError`` -> the pipeline loaded and was
   ACTIVE, but the caller's embodiment / ``image_keys`` are incompatible with the
-  model's declared features. The (working) normalization pipeline is discarded,
-  which is a silent behaviour change. Previously this was swallowed at debug and
-  the downstream warning then falsely blamed a missing ``policy_postprocessor.json``.
-  It must now surface the real cause as a warning (or raise under
-  ``processor_overrides``), and must NOT emit the misleading missing-postprocessor
-  message.
+  model's declared features. Discarding that pipeline drops input normalization
+  AND action unnormalization, so the policy emits raw model-space values that a
+  robot driver then accepts as if they were robot units (~25x magnitude error on
+  an SO-101). That is a wrong-motion fault, so it now RAISES by default; a caller
+  can opt into the raw flow with ``allow_unnormalized=True``, in which case the
+  warning must name the real cause and must NOT emit the misleading
+  missing-postprocessor message.
 """
 
 from __future__ import annotations
@@ -74,11 +75,34 @@ def _incompatible_embodiment() -> EmbodimentMap:
     )
 
 
-def test_embodiment_config_failure_warns_with_real_cause_and_discards(monkeypatch, caplog):
-    """An active pipeline + incompatible embodiment -> accurate warning, bridge discarded."""
+def test_embodiment_config_failure_raises_by_default(monkeypatch):
+    """An active pipeline + incompatible embodiment must RAISE, not degrade.
+
+    Regression for the silent-normalization-loss fault: discarding the pipeline
+    left the policy emitting raw normalized values (order 0.5) where the robot
+    expects degrees (order 100), so the arm drove to ~0 on every joint while the
+    call reported success. The error must name the fault and the ways out.
+    """
     bridge = _fake_bridge(active=True, has_postprocessor=True)
     _patch_from_pretrained(monkeypatch, bridge)
     pol = _make_policy(embodiment=_incompatible_embodiment())
+
+    with pytest.raises(RuntimeError) as excinfo:
+        pol._load_processor_bridge()
+    message = str(excinfo.value)
+    assert "embodiment could not be configured" in message
+    assert "unnormalization" in message
+    # The message must be actionable: it names every escape hatch.
+    assert "obs_rename_override" in message
+    assert "camera_key_map" in message
+    assert "allow_unnormalized=True" in message
+
+
+def test_embodiment_config_failure_warns_when_unnormalized_allowed(monkeypatch, caplog):
+    """allow_unnormalized=True is the documented opt-in to the raw flow."""
+    bridge = _fake_bridge(active=True, has_postprocessor=True)
+    _patch_from_pretrained(monkeypatch, bridge)
+    pol = _make_policy(embodiment=_incompatible_embodiment(), allow_unnormalized=True)
 
     with caplog.at_level(logging.WARNING):
         pol._load_processor_bridge()
@@ -89,6 +113,8 @@ def test_embodiment_config_failure_warns_with_real_cause_and_discards(monkeypatc
     # ... with a warning that names the real cause (embodiment misconfiguration) ...
     msgs = [r.getMessage() for r in caplog.records if r.levelno >= logging.WARNING]
     assert any("embodiment could not be configured" in m for m in msgs), msgs
+    # ... says the actions are NOT robot units ...
+    assert any("RAW/normalized space" in m for m in msgs), msgs
     # ... and NOT the misleading "no policy_postprocessor.json" message (the
     # checkpoint shipped one; it was discarded here, not absent).
     assert not any("policy_postprocessor.json" in m for m in msgs), msgs

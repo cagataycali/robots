@@ -24,6 +24,8 @@ import os
 import numpy as np
 import pytest
 
+from strands_robots.dataset_recorder import resolve_video_backend
+
 pytest.importorskip("mujoco")
 pytest.importorskip("lerobot")
 
@@ -97,7 +99,7 @@ def _record(sim, dataset_dir, vcodec=None):
 def _reopen(dataset_dir):
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
-    return LeRobotDataset("local/decode_fidelity", root=str(dataset_dir))
+    return LeRobotDataset("local/decode_fidelity", root=str(dataset_dir), video_backend=resolve_video_backend())
 
 
 def _decoded_hwc_uint8(ds, idx, key):

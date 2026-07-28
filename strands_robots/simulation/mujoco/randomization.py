@@ -62,11 +62,191 @@ class RandomizationMixin:
         _world: "SimWorld | None"
         _obs_noise: "dict[str, float] | None"
         _obs_noise_rng: "np.random.Generator | None"
+        _obs_noise_seed: "int | None"
+        _mj: "Any"
 
         def _require_no_running_policy(
             self, action_name: str, robot_name: str | None = None
         ) -> dict[str, Any] | None: ...
         def _require_world(self) -> dict[str, Any] | None: ...
+        def _sync_spec_geom(self, geom_name: str, **changes: Any) -> None:
+            """Provided by PhysicsMixin."""
+
+        def _sync_spec_body(self, body_name: str, **changes: Any) -> None:
+            """Provided by PhysicsMixin."""
+
+    def _sync_randomization_to_spec(self, model: Any, colors: bool, physics: bool) -> None:
+        """Mirror a randomization sample onto the live ``MjSpec``.
+
+        ``randomize`` writes ``model.geom_rgba`` / ``mat_rgba`` /
+        ``geom_friction`` / ``body_mass`` / ``body_inertia`` for immediate effect,
+        but the spec is what every scene mutation recompiles from, so the sample
+        was reverted by the next ``add_object`` / ``remove_object`` /
+        ``add_camera`` / ``add_robot``. Keyed by NAME, never by index: a recompile
+        shifts geom and body ids (AGENTS.md "Per-name state copy").
+
+        Unnamed geoms and bodies are skipped - the spec cannot address them, and
+        that is not new: their ``model.*`` values stay correct for the current
+        model and are re-randomised by the next ``randomize`` call. ``lighting``
+        is deliberately NOT mirrored: it is re-derived from ``light_pos``
+        baselines each call and the renderer reads ``data.light_xpos``, so there
+        is no cross-recompile contract to keep.
+
+        Args:
+            model: The live compiled model holding the sampled values.
+            colors: Whether the colour axis was randomised.
+            physics: Whether the friction/mass axis was randomised.
+        """
+        if self._world is None:
+            return
+        spec = self._world._backend_state.get("spec")
+        if spec is None:
+            return
+        mj = self._mj
+        for geom_id in range(int(model.ngeom)):
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, geom_id)
+            if not name:
+                continue
+            changes: dict[str, Any] = {}
+            if colors:
+                changes["rgba"] = [float(v) for v in model.geom_rgba[geom_id]]
+            if physics:
+                changes["friction"] = [float(v) for v in model.geom_friction[geom_id]]
+            if changes:
+                self._sync_spec_geom(name, **changes)
+        if not physics:
+            return
+        for body_id in range(int(model.nbody)):
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body_id)
+            if not name or float(model.body_mass[body_id]) <= 0.0:
+                continue
+            self._sync_spec_body(name, mass=float(model.body_mass[body_id]))
+
+    def _dr_baseline(self, model: Any) -> dict[str, Any]:
+        """Un-randomized copies of every model array ``randomize`` perturbs.
+
+        Domain randomization must sample around the ORIGINAL model, not around
+        whatever the previous call produced. These axes write ``model.*`` arrays,
+        which ``reset()`` does not restore (``mj_resetData`` only touches
+        ``data``), so scaling in place compounded every call: the documented
+        per-episode loop (``for ep: sim.reset(); sim.randomize(...)``) drove a
+        0.5 kg body to 1.2 kg after four calls with ``mass_range=(0.5, 2.0)``
+        - outside the requested [0.25, 1.0] window - and to absurd values over a
+        long eval run, while ``light_pos`` random-walked away from the scene.
+
+        Snapshotted on first use and RE-MAPPED (not re-read) whenever the scene is
+        recompiled, keyed on ``_recompile_generation``, so the baseline always
+        describes the CURRENT model's bodies and geoms while still holding their
+        un-randomised values.
+        """
+        assert self._world is not None  # callers hold the world guard
+        # Key the cache on the recompile GENERATION, not on ``ngeom``. A shape
+        # check misses any rebuild that leaves the counts unchanged: a
+        # remove_object + add_object pair returns ngeom to its old value while
+        # the arrays now describe DIFFERENT bodies, so the stale baseline was
+        # applied to whichever body took the freed slot. Measured: an object with
+        # a 0.1 kg base scaled against the removed body's 0.5 kg baseline reached
+        # 0.2907 kg, outside its legal [0.05, 0.2] window.
+        cache = self._world._backend_state.get("dr_baseline")
+        generation = int(getattr(self._world, "_recompile_generation", 0))
+        if cache is None:
+            self._world._backend_state["dr_baseline"] = self._snapshot_dr_baseline(model, generation)
+            return self._world._backend_state["dr_baseline"]
+        if int(cache.get("generation", -1)) != generation:
+            # The scene changed shape, so the cached arrays no longer line up by
+            # index - but they DO still hold the pristine values, and the live
+            # arrays hold randomised ones. Re-reading the live model here made the
+            # current randomisation the new "original", so an eval loop that
+            # churned the scene compounded without bound:
+            #
+            #     for ep: reset(); randomize(); (add_object + remove_object)
+            #     baseline_mass[keep]  0.5000 -> 0.5134 -> 0.4078 -> 0.6664 ...
+            #     live mass at ep 7    1.1423     (legal window is [0.25, 1.0])
+            #
+            # Carry the old values across by NAME instead, and only fall back to
+            # the live model for entities the previous baseline never saw (newly
+            # added bodies/geoms, which are un-randomised anyway).
+            cache = self._remap_dr_baseline(model, cache, generation)
+            self._world._backend_state["dr_baseline"] = cache
+        return cache
+
+    def _snapshot_dr_baseline(self, model: Any, generation: int) -> dict[str, Any]:
+        """Fresh copy of every array ``randomize`` perturbs, keyed by name.
+
+        The name maps are what let :meth:`_remap_dr_baseline` carry pristine
+        values across a recompile that renumbers bodies and geoms.
+        """
+        mj = _ensure_mujoco()
+        body_by_name: dict[str, Any] = {}
+        for i in range(int(model.nbody)):
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
+            if name:
+                body_by_name[name] = (float(model.body_mass[i]), model.body_inertia[i].copy())
+        geom_by_name: dict[str, Any] = {}
+        for i in range(int(model.ngeom)):
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i)
+            if name:
+                geom_by_name[name] = model.geom_friction[i].copy()
+        return {
+            "generation": generation,
+            "ngeom": int(model.ngeom),
+            "geom_friction": model.geom_friction.copy(),
+            "body_mass": model.body_mass.copy(),
+            "body_inertia": model.body_inertia.copy(),
+            "light_pos": model.light_pos.copy(),
+            "body_by_name": body_by_name,
+            "geom_by_name": geom_by_name,
+        }
+
+    def _remap_dr_baseline(self, model: Any, cache: dict[str, Any], generation: int) -> dict[str, Any]:
+        """Re-index a baseline onto a recompiled model, keeping pristine values.
+
+        Entities present in the old baseline keep their un-randomised value at
+        their NEW index; entities the baseline never saw take the live model's
+        value (they were just added, so they are un-randomised by definition).
+        """
+        mj = _ensure_mujoco()
+        fresh = self._snapshot_dr_baseline(model, generation)
+        old_bodies = cache.get("body_by_name") or {}
+        old_geoms = cache.get("geom_by_name") or {}
+        for i in range(int(model.nbody)):
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
+            prior = old_bodies.get(name) if name else None
+            if prior is None:
+                continue
+            mass, inertia = prior
+            fresh["body_mass"][i] = mass
+            fresh["body_inertia"][i] = inertia
+            fresh["body_by_name"][name] = (mass, inertia.copy())
+        for i in range(int(model.ngeom)):
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i)
+            prior = old_geoms.get(name) if name else None
+            if prior is None:
+                continue
+            fresh["geom_friction"][i] = prior
+            fresh["geom_by_name"][name] = prior.copy()
+        # ``light_pos`` has no names to key on; lights are declared by the scene
+        # builder and not renumbered by object churn, so carry the old rows for
+        # every light that still exists.
+        old_lights = cache.get("light_pos")
+        if old_lights is not None:
+            shared = min(len(old_lights), len(fresh["light_pos"]))
+            fresh["light_pos"][:shared] = old_lights[:shared]
+        return fresh
+
+    def reseed_obs_noise(self) -> None:
+        """Restart the observation-noise stream from its configured seed.
+
+        Called by ``reset()`` so a seeded run is reproducible PER EPISODE. The
+        generator is otherwise continuous: episode 2 inherited wherever episode 1
+        left off, so its noise depended on how many observations the previous
+        episode happened to consume. A no-op when no seed was given (an unseeded
+        stream is explicitly non-reproducible) or when noise is off.
+        """
+        seed = getattr(self, "_obs_noise_seed", None)
+        if seed is None or getattr(self, "_obs_noise_rng", None) is None:
+            return
+        self._obs_noise_rng = np.random.default_rng(seed)
 
     def randomize(
         self,
@@ -195,24 +375,26 @@ class RandomizationMixin:
                 changes.append(f"Colors: {n_recolored} geoms randomized")
 
             if randomize_lighting:
+                base = self._dr_baseline(model)
                 for i in range(model.nlight):
-                    model.light_pos[i] += rng.uniform(-0.5, 0.5, size=3)
+                    model.light_pos[i] = base["light_pos"][i] + rng.uniform(-0.5, 0.5, size=3)
                     model.light_diffuse[i] = rng.uniform(0.3, 1.0, size=3)
                 changes.append(f"Lighting: {model.nlight} lights randomized")
 
             if randomize_physics:
+                base = self._dr_baseline(model)
                 friction_scales = {}
                 for i in range(model.ngeom):
                     gn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_GEOM, i) or f"geom_{i}"
                     f = float(rng.uniform(*friction_range))
-                    model.geom_friction[i, 0] *= f
+                    model.geom_friction[i, 0] = base["geom_friction"][i, 0] * f
                     friction_scales[gn] = f
                 mass_scales = {}
                 for i in range(model.nbody):
                     if model.body_mass[i] > 0:
                         bn = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i) or f"body_{i}"
                         s = float(rng.uniform(*mass_range))
-                        model.body_mass[i] *= s
+                        model.body_mass[i] = base["body_mass"][i] * s
                         # Inertia tracks mass for fixed geometry: scaling a
                         # rigid body's mass by ``s`` at constant shape (a uniform
                         # density change) scales its inertia tensor by the same
@@ -222,7 +404,7 @@ class RandomizationMixin:
                         # resistance - which silently corrupts the dynamics the
                         # randomization is meant to perturb. Match the Newton
                         # backend, which scales both.
-                        model.body_inertia[i] *= s
+                        model.body_inertia[i] = base["body_inertia"][i] * s
                         mass_scales[bn] = s
                 changes.append(
                     f"Physics: {len(friction_scales)} geoms friction-scaled, {len(mass_scales)} bodies mass-scaled"
@@ -252,7 +434,23 @@ class RandomizationMixin:
             # move_object(). Guarded on ``changes`` so a no-flag call stays a
             # true no-op.
             if changes:
+                # body_mass / body_inertia are compile-time inputs: MuJoCo
+                # derives body_subtreemass, dof_M0, dof_invweight0 and
+                # body_invweight0 from them, and the constraint solver reads
+                # those derived arrays. Without this refresh a mass-scaled body
+                # is solved with the pre-scale impedance and sinks into the
+                # floor. mj_setConst also runs the forward pass we need below.
+                if randomize_physics:
+                    mj.mj_setConst(model, data)
                 mj.mj_forward(model, data)
+                # Every write above went to ``model.*`` only, and every scene
+                # mutation recompiles from ``_backend_state["spec"]`` - so one
+                # add_object after a randomize silently reverted the whole
+                # sample. Measured: post-DR mass 0.1307 / friction 1.2535 /
+                # rgba 0.561, then post-add_object 0.1000 / 1.0000 / 0.500, i.e.
+                # back to the un-randomised model. A rollout that adds a
+                # distractor mid-episode trained on the WRONG domain.
+                self._sync_randomization_to_spec(model, randomize_colors, randomize_physics)
 
         return {
             "status": "success",
@@ -322,6 +520,12 @@ class RandomizationMixin:
                 "joint_vel_std": float(joint_vel_std),
                 "camera_jitter_px": float(camera_jitter_px),
             }
+            # Retain the seed so ``reset()`` can restart the SAME stream at each
+            # episode boundary. Without it a seeded eval was not reproducible
+            # per episode: the generator advanced continuously across resets, so
+            # episode 2 of a run drew different noise than episode 2 of a re-run
+            # whose episode 1 consumed a different number of observations.
+            self._obs_noise_seed = seed
             self._obs_noise_rng = np.random.default_rng(seed)
         return {
             "status": "success",

@@ -51,6 +51,13 @@ def resolve_sandbox_root(env_var: str, default_subdir: str) -> Path:
     return Path(raw).expanduser().resolve(strict=False)
 
 
+#: Largest caller-supplied filename tag we accept, in bytes. POSIX caps a single
+#: path component at 255 bytes; callers append a suffix (``__<camera>.mp4``), so
+#: reserve headroom for a generously long camera name rather than letting the
+#: overflow surface as a failed file open after the work is already done.
+_MAX_NAME_COMPONENT_BYTES = 180
+
+
 def _reject_unsafe_chars(value: str, *, label: str) -> None:
     """Reject empty strings, shell metacharacters, and backslash separators."""
     if not value or not value.strip():
@@ -98,10 +105,38 @@ def validate_output_path(
     # directory, while plain absolute paths without ".." remain permitted.
     if ".." in raw.parts:
         raise ValueError(f"unsafe {label}: path traversal")
+    # A RELATIVE path is anchored to the sandbox root, not to the process cwd.
+    # ``Path.resolve()`` anchors to the cwd, which made a relative path succeed or
+    # fail depending on where the process happened to be started:
+    #
+    #     STRANDS_ROBOTS_RENDER_ROOT=/tmp/box
+    #     cwd=/repo   render(output_path="shot.png")
+    #       -> error: /repo/shot.png is outside the sandbox /tmp/box
+    #     cwd=/tmp/box, same call -> success
+    #
+    # A sandbox root exists precisely to be where unqualified paths land, so
+    # anchoring there makes the obvious call work and keeps the confinement check
+    # meaningful (an absolute path still has to be inside the root, and ``..`` is
+    # already rejected above, so this cannot be used to escape).
+    #
+    # Compare against a RESOLVED root: ``resolve_sandbox_root`` already returns one,
+    # but a caller passing a symlinked path directly would otherwise have its own
+    # relative paths rejected (they resolve through the link to the real directory,
+    # which is not "under" the unresolved root by string comparison).
+    if sandbox_root is not None:
+        sandbox_root = sandbox_root.resolve(strict=False)
+        if not raw.is_absolute():
+            raw = sandbox_root / raw
+
     # Refuse to follow a symlink planted at the target (arbitrary-write vector).
+    # Checked AFTER anchoring: ``Path("link.png").is_symlink()`` asks about the
+    # CWD, so a relative name naming a symlink inside the root looked ordinary
+    # here and the link was then followed by resolve() below. One planted at a
+    # target elsewhere still failed the confinement check - but for the wrong
+    # reason - and one pointing at another file INSIDE the root was followed
+    # silently.
     if raw.is_symlink():
         raise ValueError(f"{label} {output_path!r} is a symlink - refusing to follow")
-
     # resolve() normalizes "..", expands the chain, and follows any intermediate
     # symlinks, so the confinement check below sees the true on-disk destination.
     resolved = raw.resolve(strict=False)
@@ -141,8 +176,16 @@ def sanitize_name_component(name: str, *, label: str = "name") -> str:
 
     A ``name`` that carries path separators or ``..`` can escape the directory
     it is joined into (e.g. ``name="../../etc/x"`` -> a write outside
-    ``output_dir``). Reject separators, traversal, metacharacters, and leading
+    ``output_dir``). Reject separators, traversal, metacharacters, and traversal
     dots rather than silently sanitizing, so the caller sees the rejection.
+
+    Also rejects a tag no filesystem can hold. Callers interpolate it into a
+    longer filename (``{name}__{camera}.mp4``), so a tag near the ``NAME_MAX``
+    limit produces a path that only fails when the file is finally opened. For
+    ``start_cameras_recording`` that is AFTER the capture, so ffmpeg died with
+    ``Error opening output files: File name too long`` and the whole buffered
+    recording was discarded - a 300-character tag cost the entire rollout, while
+    every other unusable ``name`` is refused up front.
 
     Args:
         name: Caller-supplied filename tag.
@@ -159,6 +202,13 @@ def sanitize_name_component(name: str, *, label: str = "name") -> str:
         raise ValueError(f"unsafe {label}: path separators not allowed")
     if name in (".", "..") or name.startswith(".."):
         raise ValueError(f"unsafe {label}: path traversal")
+    # Leave headroom for the suffix callers append (a camera name + extension).
+    if len(name.encode("utf-8")) > _MAX_NAME_COMPONENT_BYTES:
+        raise ValueError(
+            f"unsafe {label}: {len(name.encode('utf-8'))} bytes exceeds the "
+            f"{_MAX_NAME_COMPONENT_BYTES}-byte limit (callers append a suffix such as "
+            "'__<camera>.mp4', and the filesystem caps a path component at 255 bytes)"
+        )
     return name
 
 

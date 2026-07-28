@@ -34,7 +34,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import (
+    _NO_WORLD_MSG,
+    _actuator_target_joint,
+    _ensure_mujoco,
+)
 from strands_robots.simulation.mujoco.scene_ops import (
     actuate_robot_in_scene,
     add_weld_constraint,
@@ -107,6 +111,9 @@ class ManipulationMixin:
 
         def _unknown_robot_msg(self, requested: str) -> str:
             """Provided by ``Simulation``; declared here for type-checkers."""
+
+        def _robot_free_base_joint_id(self, model: Any, robot: Any) -> int:
+            """Provided by ``RenderingMixin``; declared here for type-checkers."""
 
     # -- shared guards -----------------------------------------------------
 
@@ -258,7 +265,36 @@ class ManipulationMixin:
             relpos, relquat = _relative_pose(mj, data, parent_id, child_id)
 
             if mode == "weld":
-                eq_name = f"attach_weld_{parent}__{child}"
+                # A child welded to the WORLD tree has no DOF of its own, so the
+                # equality cannot carry it - it anchors the PARENT to the world
+                # instead. Measured: a free-falling carrier welded to a static
+                # child stopped mid-air (fell 1.0 cm instead of 1.76 m) while the
+                # result reported a normal grasp. Two static bodies produce a
+                # 100% inert constraint. Refuse, mirroring the kinematic branch's
+                # freejoint requirement below.
+                if int(model.body_weldid[child_id]) == 0:
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"attach_bodies: child '{child}' is static (welded to the world), so a "
+                                    f"weld equality would anchor parent '{parent}' to the world instead of "
+                                    "carrying the child. Add the child with add_object(is_static=False) so "
+                                    "it has a freejoint, or attach in the other direction."
+                                )
+                            }
+                        ],
+                    }
+                # Keyed by CHILD only. The registry already allows one
+                # attachment per child (a second attach on the same child is
+                # rejected above), so the child name alone is unique - while the
+                # old ``{parent}__{child}`` form was not: ``__`` is legal inside
+                # a body name, so ("a__b", "c") and ("a", "b__c") both produced
+                # ``attach_weld_a__b__c``. The duplicate made MuJoCo reject the
+                # name, which raised past this method's contract and left an
+                # orphan equality that bricked the world permanently.
+                eq_name = f"attach_weld_{child}"
                 if not add_weld_constraint(
                     self._world,
                     name=eq_name,
@@ -272,7 +308,17 @@ class ManipulationMixin:
                         "status": "error",
                         "content": [{"text": f"attach_bodies: weld recompile failed for '{parent}' <- '{child}'."}],
                     }
-                registry[child] = {"parent": parent, "mode": "weld", "eq_name": eq_name}
+                # relpos/relquat/torquescale are recorded so a scene rebuild
+                # (eject_robot_from_scene) can re-create this weld; without them
+                # an unrelated robot removal silently dropped the constraint.
+                registry[child] = {
+                    "parent": parent,
+                    "mode": "weld",
+                    "eq_name": eq_name,
+                    "relpos": relpos,
+                    "relquat": relquat,
+                    "torquescale": float(torquescale),
+                }
             else:
                 free_jid = _find_free_joint(mj, model, child_id)
                 if free_jid < 0:
@@ -345,18 +391,35 @@ class ManipulationMixin:
                     ],
                 }
 
+            stale_constraint = False
             if record["mode"] == "weld":
-                if not remove_equality_constraint(self._world, record["eq_name"]):
-                    return {
-                        "status": "error",
-                        "content": [
-                            {"text": f"detach_bodies: failed to remove weld constraint for '{child}' (see logs)."}
-                        ],
-                    }
+                # Drop the registry record even when the constraint could not be
+                # removed. ``remove_equality_constraint`` returns False when the
+                # equality is MISSING from the spec (an external spec edit, a
+                # patch_scene_mjcf, a rebuild), which means the record is stale by
+                # definition. Returning early left it in place and blocked every
+                # recovery route at once: retrying detach hit the same failure,
+                # remove_object refused ("referenced by an active attachment"),
+                # and re-attaching refused ("already attached") - the object
+                # became permanently unattachable AND unremovable.
+                stale_constraint = not remove_equality_constraint(self._world, record["eq_name"])
             else:
                 self._kinematic_attachments().pop(child, None)
             registry.pop(child, None)
 
+        if stale_constraint:
+            return {
+                "status": "success",
+                "content": [
+                    {
+                        "text": (
+                            f"'{child}' detached from '{parent}'. Note: its weld constraint "
+                            f"({record['eq_name']!r}) was already absent from the scene, so only the "
+                            "stale attachment record was cleared - the bodies were not held together."
+                        )
+                    }
+                ],
+            }
         return {"status": "success", "content": [{"text": f"'{child}' detached from '{parent}'."}]}
 
     def _apply_kinematic_attachments(self) -> None:
@@ -379,6 +442,7 @@ class ManipulationMixin:
         mj = _ensure_mujoco()
         model, data = world._model, world._data
         stale: list[str] = []
+        teleported = False
         for child, record in attachments.items():
             parent_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, str(record["parent"]))
             child_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, child)
@@ -396,6 +460,19 @@ class ManipulationMixin:
             data.qpos[qpos_adr : qpos_adr + 3] = world_pos
             data.qpos[qpos_adr + 3 : qpos_adr + 7] = world_quat
             data.qvel[dof_adr : dof_adr + 6] = 0.0
+            teleported = True
+        # A qpos write leaves every derived array (xpos, xquat, geom_xpos,
+        # cam_xmat) holding the PRE-teleport pose, so refresh kinematics here
+        # rather than relying on each caller. ``step()`` happened to re-forward
+        # afterwards, but the policy path (``_apply_sim_action``) did not - so a
+        # carried body reported a pose ~6 mm behind its own qpos at 3 m/s, and
+        # renders, contact reads and recorded datasets all inherited that error
+        # on exactly the path policies use. Position-only: mj_kinematics is
+        # enough for the pose arrays and, unlike mj_forward, cannot perturb the
+        # solver state mid-substep.
+        if teleported:
+            mj.mj_kinematics(model, data)
+            mj.mj_comPos(model, data)
         for child in stale:
             attachments.pop(child, None)
             registry = world._backend_state.get(_ATTACH_REGISTRY_KEY)
@@ -486,9 +563,15 @@ class ManipulationMixin:
         with self._lock:
             model, data = self._world._model, self._world._data
 
+            # Only a DIRECT joint transmission means "this joint is already
+            # driven". ``trnid[0]`` is a tendon/site/body id for the other
+            # transmission types and shares the joint id space, so testing it
+            # raw made a robot whose only actuator is a tendon gripper look
+            # fully actuated - actuate_robot then refused, and the arm could
+            # never be given position servos at all.
             robot_joint_ids = set(robot.joint_ids)
             for act_id in range(model.nu):
-                if int(model.actuator_trnid[act_id, 0]) in robot_joint_ids:
+                if _actuator_target_joint(model, act_id) in robot_joint_ids:
                     return {
                         "status": "error",
                         "content": [
@@ -571,9 +654,14 @@ class ManipulationMixin:
             # its joint's current qpos so the arm doesn't snap to zero on the
             # next step. _recompile_preserving_state already re-discovered
             # robot.actuator_ids.
+            # Guard the transmission type: a tendon/site/body drive's
+            # ``trnid[0]`` is not a joint id, so seeding its ctrl from
+            # ``qpos[jnt_qposadr[trnid[0]]]`` writes an unrelated joint angle
+            # into (for example) a gripper whose ctrlrange is [0, 255] - a
+            # position command in the wrong units and the wrong DOF.
             model, data = self._world._model, self._world._data
             for act_id in robot.actuator_ids:
-                jnt_id = int(model.actuator_trnid[act_id, 0])
+                jnt_id = _actuator_target_joint(model, act_id)
                 if 0 <= jnt_id < model.njnt:
                     data.ctrl[act_id] = data.qpos[int(model.jnt_qposadr[jnt_id])]
             mj.mj_forward(model, data)
@@ -633,8 +721,21 @@ class ManipulationMixin:
                 robot = self._world.robots.get(robot_name)
                 if robot is None:
                     return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
+                # ``robot.joint_ids`` holds the ARTICULATED joints only - a
+                # floating base's ``<freejoint>`` is never in it (it is resolved
+                # separately for observation/recording). Zeroing just those left
+                # the base's 6 DOFs carrying their pre-teleport velocity, which
+                # are exactly the DOFs whose discontinuity produces the
+                # "QACC nan" divergence this method exists to prevent: a Go2
+                # teleported with qvel=7 kept [7,7,7] linear and [7,7,7] angular
+                # while the result claimed "12 DOFs ... zeroed".
+                jids = list(robot.joint_ids)
+                base_jid = self._robot_free_base_joint_id(model, robot)
+                if base_jid >= 0 and base_jid not in jids:
+                    jids.append(base_jid)
                 n_zeroed = 0
-                for jid in robot.joint_ids:
+                zeroed_slices: list[tuple[int, int]] = []
+                for jid in jids:
                     jnt_type = int(model.jnt_type[jid])
                     if jnt_type == int(mj.mjtJoint.mjJNT_FREE):
                         width = 6
@@ -646,8 +747,22 @@ class ManipulationMixin:
                     data.qvel[dof_adr : dof_adr + width] = 0.0
                     data.qacc[dof_adr : dof_adr + width] = 0.0
                     data.qacc_warmstart[dof_adr : dof_adr + width] = 0.0
+                    zeroed_slices.append((dof_adr, width))
                     n_zeroed += width
                 scope = f"{n_zeroed} DOFs of robot '{robot_name}'"
             mj.mj_forward(model, data)
+            # mj_forward RECOMPUTES qacc from the current state, so the zeroing
+            # above is undone before this method returns - yet the result text
+            # claims qacc was cleared (measured 49.14 rad/s^2 on a Panda after a
+            # 100-step run). That matters because ``inverse_dynamics`` reads
+            # ``data.qacc`` as the *desired* acceleration, so the documented
+            # "teleport -> zero_dynamics -> inverse_dynamics" recipe solved for a
+            # bogus target. Re-clear after the forward pass; qvel and
+            # qacc_warmstart are not repopulated by mj_forward and stay zero.
+            if robot_name is None:
+                data.qacc[:] = 0.0
+            else:
+                for dof_adr, width in zeroed_slices:
+                    data.qacc[dof_adr : dof_adr + width] = 0.0
 
         return {"status": "success", "content": [{"text": f"Dynamics zeroed ({scope}): qvel, qacc, qacc_warmstart."}]}
