@@ -49,11 +49,15 @@ def _obs(values: list) -> dict:
 
 def _torch_scalar(value: float):
     torch = pytest.importorskip("torch")
+    if not hasattr(torch.Tensor, "__torch_function__"):
+        pytest.skip("torch mock does not replicate 0-d tensor semantics")
     return torch.tensor(value)
 
 
 def _torch_bool(value: bool = True):
     torch = pytest.importorskip("torch")
+    if not hasattr(torch.Tensor, "__torch_function__"):
+        pytest.skip("torch mock does not replicate 0-d tensor semantics")
     return torch.tensor(value, dtype=torch.bool)
 
 
