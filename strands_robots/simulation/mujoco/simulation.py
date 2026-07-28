@@ -4764,6 +4764,13 @@ class MuJoCoSimEngine(
     # Override in tests via ``cleanup(policy_stop_timeout=...)`` if needed.
     _DEFAULT_POLICY_STOP_TIMEOUT = 5.0
 
+    # Bounded wait for the world-handoff lock (seconds). A motion primitive
+    # holds ``self._lock`` only for one control tick (a few physics substeps,
+    # sub-millisecond), so this ceiling is generous; it exists so cleanup can
+    # never hang the host process on a wedged lock holder - the same tradeoff
+    # ``_DEFAULT_POLICY_STOP_TIMEOUT`` makes for a wedged policy worker.
+    _WORLD_HANDOFF_LOCK_TIMEOUT = 5.0
+
     def cleanup(self, policy_stop_timeout: float | None = None) -> None:
         """Release every resource owned by this Simulation instance.
 
@@ -4785,7 +4792,12 @@ class MuJoCoSimEngine(
              outside MuJoCo and a stale-pointer segfault is the lesser evil
              than hanging the host process on exit.
           4. Only AFTER workers have unwound do we null ``self._world``
-             and tear down renderers / the viewer / the executor.
+             and tear down renderers / the viewer / the executor. The
+             nulling itself happens under ``self._lock`` (bounded acquire):
+             an analytic motion primitive runs on its caller's thread rather
+             than through the executor, so the join in step 2 cannot cover
+             it and the lock is the only thing that keeps the handoff from
+             landing inside one of its control ticks.
 
         Args:
             policy_stop_timeout: Seconds to wait per active policy future.
@@ -4864,11 +4876,42 @@ class MuJoCoSimEngine(
                     )
             self._policy_threads.clear()
 
-        # Step 3: now it's safe to null the world. Any worker still alive
-        # at this point has already escaped MuJoCo (we've confirmed via
-        # fut.result()), so a nulled _model / _data is no longer racy.
-        if self._world:
-            self._world = None
+        # Step 3: hand the world off UNDER ``self._lock``.
+        #
+        # The join above covers every worker submitted to the executor, but a
+        # motion primitive (``move_to`` / ``set_gripper`` / ``rotate_wrist``)
+        # runs on its CALLER's thread: no Future awaits it, and the
+        # ``policy_running`` flag signalled in step 1 never applies to it
+        # (primitives refuse to start while a policy runs, so they never set
+        # it). ``self._lock`` is the only synchronisation such a primitive
+        # has - it takes the lock per control tick to re-check the world,
+        # step physics, then write back ``sim_time`` / ``step_count``.
+        # Nulling ``self._world`` outside the lock therefore lands INSIDE a
+        # tick, and the write-back raises ``AttributeError`` out of an API
+        # documented never to raise. Holding the lock makes the handoff
+        # atomic against a tick, so the primitive's next
+        # ``_primitive_abort_reason`` check reports the structured
+        # "world was destroyed ... aborting" error instead - the outcome that
+        # helper is written to produce. ``load_scene`` brackets its own world
+        # handoff the same way and for the same reason.
+        #
+        # The join must stay OUTSIDE the lock: a live policy worker takes the
+        # lock per step, so awaiting it while holding the lock deadlocks. The
+        # acquire is bounded for the same reason step 2 is bounded - cleanup
+        # must not hang the host process on a wedged lock holder.
+        handoff_locked = self._lock.acquire(timeout=self._WORLD_HANDOFF_LOCK_TIMEOUT)
+        if not handoff_locked:
+            logger.warning(
+                "cleanup: world-handoff lock still held after %.1fs; nulling the world anyway "
+                "(a concurrent control tick may raise).",
+                self._WORLD_HANDOFF_LOCK_TIMEOUT,
+            )
+        try:
+            if self._world:
+                self._world = None
+        finally:
+            if handoff_locked:
+                self._lock.release()
 
         self._close_viewer()
         # close main-thread renderers before dropping the TLS object.
