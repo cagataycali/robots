@@ -30,6 +30,37 @@ points report through the tool envelope and validate before tearing down an
 existing stream, so a rejected call cannot stop a live one. Well-formed
 identifiers and their key expressions are unchanged.
 
+### Fixed: the mass matrix survives MuJoCo removing the legacy sparse inertia
+
+MuJoCo 3.11 removed `mjData.qM`, the legacy ancestor-walk sparse inertia buffer,
+keeping the joint-space inertia only in the CSR `mjData.M`. `_full_mass_matrix`
+exists to absorb exactly that kind of drift - it already probes both `mj_fullM`
+argument orders - but its legacy order read `data.qM` unconditionally, so on a
+3.11 build (inside the supported `mujoco>=3.2,<4.0` range) it raised an opaque
+`AttributeError: 'MjData' object has no attribute 'qM'` from inside the helper
+written to prevent that.
+
+The fallback chain is now layout-correct rather than name-guessing:
+
+- the modern `mj_fullM(model, data, dst)` order first (MuJoCo >= 3.10),
+- then the legacy `mj_fullM(model, dst, qM)` orders, but only on a build that
+  still exposes `qM` - the CSR `data.M` is a different layout, so substituting
+  it there would have filled the matrix from the wrong buffer instead of
+  failing,
+- then `mju_sym2dense` on the CSR inertia, the conversion MuJoCo's own release
+  notes prescribe for callers that used to pass `qM`. It reproduces `mj_fullM`
+  exactly (`max|delta| = 0.0`).
+
+If a build exposes the inertia under neither name the error now names both
+spellings and the installed MuJoCo version instead of surfacing whichever
+attribute the code happened to touch last.
+
+The two drift regression tests emulated only half of an old build - a shim
+`mujoco` module with the legacy `mj_fullM`, but the sparse buffer read off the
+*installed* `MjData` - so they broke on the release that removed it. They now
+present a matching legacy `MjData`, keeping the coverage portable across every
+supported MuJoCo, and the CSR path plus the no-buffer error are pinned too.
+
 ### Fixed: a leader arm is refused by Robot() instead of built as a follower
 
 `so101_leader` was an alias of the `so101` registry entry, whose
@@ -149,6 +180,7 @@ Use overwrite=True for a fresh dataset, or restore the original scene. Differenc
 Resuming at the dataset's own rate still appends as before. The comparison is
 shared by the MuJoCo, Newton and Isaac backends (`fps` is a required
 keyword-only argument of the schema check, so no backend can resume without it).
+
 ### Fixed: domain randomization refuses ranges, noise amplitudes and seeds it cannot apply
 
 `randomize` writes its numeric arguments straight into the live MuJoCo model
@@ -392,6 +424,7 @@ cannot diverge again. Direct joint/position/torque actuators are unchanged (the
 unit mapping applies to tendon transmissions only), and a mapped tendon command
 no longer emits a spurious "MuJoCo will clamp it" warning through the
 actuator-name spelling.
+
 ### Fixed: sim teardown releases MuJoCo whatever the mesh handle is
 
 `Simulation.cleanup()` detaches from the peer mesh before it tears down MuJoCo,
@@ -616,6 +649,7 @@ sim.run_policy(..., control_substeps=0)
 instead of clamping it, so callers driving the runner directly also fail loudly,
 and `PolicyRunner.run` resolves substeps through that shared helper rather than
 its own inline copy of the derivation.
+
 ### Fixed: rollout entry points reject a `duration` they cannot run
 
 `duration` is the DEFAULT rollout horizon: with no `n_steps` / `max_steps` the
@@ -3759,6 +3793,7 @@ Memory note: the cache shares the SAME live `nn.Module` across instances of one
 per-episode state between episodes); `PersistentPolicy`'s lock makes concurrent
 reuse safe too. Opt out with `create_policy(..., cache_model=False)` for an
 independent live copy.
+
 ### Added: Newton backend domain randomization + sensor-noise hooks
 
 The Newton (GPU) backend gained `randomize()` and `set_obs_noise()`, the
@@ -3806,6 +3841,7 @@ prefix-attention guidance is computed with the correct freeze count and the
 chunk seam blends identically in sim and on hardware. A regression test routes
 the wrapper's exact kwargs through lerobot's real `RTCProcessor.denoise_step`
 and fails (TypeError) on the pre-fix code.
+
 ### Fix: re-anchor the RTC chunk-seam prefix for relative-action policies
 
 Real-Time Chunking for relative-action flow checkpoints (pi0 / pi0.5 / pi0-FAST
