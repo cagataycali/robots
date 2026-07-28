@@ -2079,8 +2079,11 @@ class MuJoCoSimEngine(
         )
         base["methods"]["apply_force"] = (
             "(body_name: str, force=None, torque=None, point=None) -> dict  # "
-            "apply an external force/torque wrench to a body for the next step "
-            "(push-recovery / disturbance-rejection perturbation testing)"
+            "latch an external force/torque wrench on a body; MuJoCo re-applies "
+            "it on every subsequent step until the next apply_force for THAT "
+            "body, so several bodies can hold wrenches at once (push-recovery / "
+            "disturbance-rejection perturbation testing, wind, thrusters); "
+            "apply_force(body, force=[0,0,0]) stops one body, reset() stops all"
         )
 
         # Sim-state checkpoint + direct pose-setting surface. describe() teaches

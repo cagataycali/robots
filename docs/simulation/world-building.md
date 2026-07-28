@@ -60,6 +60,43 @@ is an error that lists the model's available keyframes. `keyframe=None` (the
 default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
 `keyframe=` as not-yet-supported.)
 
+## Declared physics options
+
+A robot MJCF may declare the solver settings its contacts and actuators were
+tuned for. `add_robot` carries them onto the scene, because MuJoCo's `<option>`
+is model-global and does not survive the spec attach:
+
+```python
+sim.create_world()
+sim.add_robot(name="panda")          # model declares integrator="implicitfast"
+sim.mj_model.opt.integrator          # -> mjINT_IMPLICITFAST
+```
+
+This matters for manipulation. Under the default Euler integrator a Panda's
+position servos diverge enough that a top-down grasp pushes the object away and
+squeezes through it; `so100`, `so101`, `aloha`, `shadow_hand` and `robotiq_2f85`
+likewise declare `cone="elliptic" impratio="10"` so their grippers can hold load.
+
+Precedence, highest first:
+
+| Source | Wins for |
+| --- | --- |
+| `create_world(timestep=, gravity=)` | `timestep`, `gravity` - always |
+| Your own scene MJCF (`replace_scene_mjcf`) | any field it sets |
+| First robot attached that declares the field | everything else |
+
+A model-global field holds one value, so if a second robot declares a different
+value for a field already set, the existing value is kept and the discarded
+request is logged with the field, both values and the robot name. Add that robot
+first, or declare the value in your own scene MJCF, to make it win.
+
+Vector environment fields (`wind`, `magnetic`, contact overrides) and the flag
+bitfields describe the world rather than the robot and are never adopted.
+
+Adoption is committed only once the robot is actually in the scene, so an
+`add_robot` that reports an error leaves the world's solver settings exactly as
+they were - and leaves the field free for the next robot that declares it.
+
 ## Rough terrain
 
 By default `create_world()` lays down a flat ground plane. A locomotion

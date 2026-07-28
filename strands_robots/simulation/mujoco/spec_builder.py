@@ -938,13 +938,175 @@ class SpecBuilder:
         for top_body in robot_spec.worldbody.bodies:
             _walk(top_body)
 
+        # Read the solver settings the robot model declares for itself. The read
+        # has to happen here, before ``attach`` consumes the child spec, but the
+        # scene is only written once the attach below has succeeded: everything
+        # from ``add_frame`` on can raise (``inject_robot_into_scene`` catches
+        # exactly that and reports a failed add), and the live spec outlives the
+        # failed call, so a scene mutated on the way to an error would keep
+        # solver settings for a robot that never entered the world.
+        declared_options = SpecBuilder.declared_options(robot_spec)
+
         frame = scene_spec.worldbody.add_frame(
             pos=list(robot.position),
             quat=list(robot.orientation),
         )
         scene_spec.attach(robot_spec, prefix=f"{robot.name}/", frame=frame)
 
+        SpecBuilder.adopt_declared_options(scene_spec, declared_options, robot.name)
+
         return source_joint_names
+
+    @staticmethod
+    def declared_options(robot_spec: Any) -> dict[str, Any]:
+        """Read the ``<option>`` fields a robot model declares for itself.
+
+        Call this before ``spec.attach()``, which consumes the child spec. The
+        result is a plain mapping and reading it mutates nothing, so a caller
+        can hold it across the attach and only commit it to the scene once the
+        attach has actually succeeded - see :meth:`adopt_declared_options`.
+
+        Args:
+            robot_spec: the robot's freshly loaded spec.
+
+        Returns:
+            Mapping of field name to declared value, for every field in
+            :data:`_ADOPTED_OPTION_FIELDS` this model sets away from MuJoCo's
+            default. Empty when the model declares nothing beyond the defaults.
+        """
+        mujoco = _ensure_mujoco()
+
+        defaults = mujoco.MjSpec().option
+        declared: dict[str, Any] = {}
+        for field in _ADOPTED_OPTION_FIELDS:
+            value = getattr(robot_spec.option, field)
+            # A field restating MuJoCo's default is indistinguishable from one
+            # the model does not mention, and adopting it would claim the field
+            # against the next robot for no gain.
+            if value != getattr(defaults, field):
+                declared[field] = value
+        return declared
+
+    @staticmethod
+    def adopt_declared_options(
+        scene_spec: Any,
+        declared_options: Mapping[str, Any],
+        robot_name: str,
+    ) -> dict[str, Any]:
+        """Apply a robot's declared ``<option>`` fields onto the scene.
+
+        ``<option>`` is model-global and does not survive ``spec.attach()``, so
+        without this a robot is simulated under solver settings its own model
+        rejects. See :data:`_ADOPTED_OPTION_FIELDS` for the adopted set and the
+        fields deliberately left to the world.
+
+        This writes to ``scene_spec``, so call it only once the robot is
+        actually in the scene - i.e. after a successful ``attach``. The values
+        themselves come from :meth:`declared_options`, which has to run before
+        the attach; splitting the read from the write is what keeps a failed
+        attach from leaving the scene holding this robot's settings.
+
+        Precedence, in order:
+
+        1. A field the scene already sets to a non-default value belongs to
+           whoever set it - the caller's own scene MJCF, or a robot attached
+           earlier. It is kept.
+        2. Otherwise the robot's declared value is adopted.
+
+        A model-global field holds exactly one value, so when an already-set
+        field disagrees with this robot's declaration the scene value wins and
+        the discarded request is logged by field, value and robot: the caller
+        can force the other value by declaring it in their own scene MJCF or by
+        adding that robot first.
+
+        Args:
+            scene_spec: the scene spec to mutate.
+            declared_options: this robot's declared fields, from
+                :meth:`declared_options`.
+            robot_name: robot name, used in the conflict log.
+
+        Returns:
+            Mapping of field name to the value adopted from this robot. Empty
+            when the model declared nothing, or when the scene already owned
+            every field it declared.
+        """
+        mujoco = _ensure_mujoco()
+
+        defaults = mujoco.MjSpec().option
+        adopted: dict[str, Any] = {}
+        for field, declared in declared_options.items():
+            default = getattr(defaults, field)
+            current = getattr(scene_spec.option, field)
+            if current != default:
+                if current != declared:
+                    logger.warning(
+                        "add_robot(%r): scene already sets option %s=%s, so the "
+                        "%s=%s this model declares is not applied. A model-global "
+                        "option holds one value: declare it in the scene MJCF, or "
+                        "attach this robot first, to make it win.",
+                        robot_name,
+                        field,
+                        current,
+                        field,
+                        declared,
+                    )
+                continue
+            setattr(scene_spec.option, field, declared)
+            adopted[field] = declared
+
+        if adopted:
+            logger.debug(
+                "add_robot(%r): adopted declared physics option(s) %r",
+                robot_name,
+                adopted,
+            )
+        return adopted
+
+
+# Model-global ``<option>`` fields adopted from an attached robot model.
+#
+# ``<option>`` is model-global, so it does not come across ``spec.attach()``:
+# a robot MJCF that declares the solver settings its own contacts and actuators
+# were tuned for loses them the moment it is composed into a generated scene.
+# The consequences are physical, not cosmetic - a Franka Panda declares
+# ``integrator="implicitfast"``, and under the default Euler integrator its
+# position servos diverge enough that a top-down grasp pushes the object away on
+# approach and squeezes through it on the lift. ``actuate_robot`` already flips
+# the integrator to ``implicitfast`` scene-wide for the robots it actuates
+# itself, for exactly that reason; a robot that ships the same declaration in
+# its own model deserves the same treatment.
+#
+# Excluded on purpose:
+#   * ``timestep`` / ``gravity`` - owned by ``create_world(timestep=, gravity=)``.
+#     The world always writes both, so a robot's declaration cannot be told
+#     apart from the caller's and adopting it would move the world's dt (and the
+#     rollout duration math built on it) without the caller asking.
+#   * ``wind`` / ``magnetic`` / ``o_solref`` / ``o_solimp`` / ``o_friction`` -
+#     vector-valued environment and contact-override fields that describe the
+#     world a robot is placed in, not the robot.
+#   * ``disableflags`` / ``enableflags`` / ``disableactuator`` - bitfields. One
+#     value per field is a resolvable arbitration; merging bitmasks from several
+#     models is a different decision and is not made here.
+_ADOPTED_OPTION_FIELDS: tuple[str, ...] = (
+    "integrator",
+    "cone",
+    "jacobian",
+    "solver",
+    "iterations",
+    "ls_iterations",
+    "noslip_iterations",
+    "ccd_iterations",
+    "sdf_iterations",
+    "sdf_initpoints",
+    "impratio",
+    "tolerance",
+    "ls_tolerance",
+    "noslip_tolerance",
+    "ccd_tolerance",
+    "density",
+    "viscosity",
+    "o_margin",
+)
 
 
 def _is_z0_ground_plane(geom: Any) -> bool:
