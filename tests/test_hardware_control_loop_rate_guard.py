@@ -169,8 +169,9 @@ class TestPeriodIsTheOnlyThrottle:
 
     Pins that ``action_sleep_time`` alone bounds the command rate, so a period
     of ``<= 0`` leaves ``_execute_task_async`` free-running against the servo
-    bus. Bounds are deliberately loose (an unthrottled loop overshoots by
-    orders of magnitude) so the assertion holds on any host.
+    bus. The free-running loop is measured against the throttled one in the
+    same process rather than against an absolute iteration count, so what the
+    assertion reflects is the throttle and not the speed of the host.
     """
 
     @staticmethod
@@ -242,6 +243,20 @@ class TestPeriodIsTheOnlyThrottle:
         A period of ``0`` is what ``1 / inf`` produces and what
         ``asyncio.sleep`` returns from immediately, so the loop commands the
         bus as fast as it can be driven.
+
+        The comparison is against the throttled loop measured in the same
+        process. How many iterations a free-running loop fits into ``duration``
+        is a property of the host and of whatever tracing is attached to it,
+        not of the code under test: under the coverage tracer the suite runs
+        with, that count drops to roughly 0.6x of its uninstrumented value.
+        The throttled count is the stable half of the pair -- ``duration *
+        control_frequency`` caps it on any host -- which is what makes it
+        usable as the reference.
         """
-        applied = self._drive(0.0)
-        assert applied > 1000
+        throttled = self._drive(1.0 / 50.0)
+        unthrottled = self._drive(0.0)
+
+        # Both ends: a zero baseline would satisfy any ratio, so pin that the
+        # throttled loop actually ran before comparing against it.
+        assert throttled > 0
+        assert unthrottled > 10 * throttled
