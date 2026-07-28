@@ -68,7 +68,7 @@ def _sync_cached_xml(world: SimWorld, spec: Any) -> None:
         logger.debug("spec.to_xml() failed; cached XML left stale: %s", xml_err)
 
 
-def _recompile_preserving_state(world: SimWorld, spec: Any) -> bool:
+def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal: bool = False) -> bool:
     """Recompile ``spec`` in place, replacing ``world._model`` and ``_data``.
 
     Uses ``spec.recompile(model, data)`` which auto-preserves qpos/qvel for
@@ -78,6 +78,16 @@ def _recompile_preserving_state(world: SimWorld, spec: Any) -> bool:
     Also re-discovers per-robot joint and actuator IDs (they may have shifted
     as new bodies were inserted earlier in the body tree). Returns True on
     success, False on compile failure (logged).
+
+    Args:
+        world: The scene whose model/data are replaced on success.
+        spec: The ``MjSpec`` to compile.
+        raise_on_refusal: Re-raise the compiler's exception instead of folding
+            it into a ``False`` return. A refusal message names what the
+            compiler could not honor, and a ``bool`` cannot carry it: a caller
+            that reports the reason to a user needs it, whereas a caller that
+            only rolls back does not. Off by default so existing callers keep
+            the ``bool`` contract.
     """
     mj = _ensure_mujoco()
     try:
@@ -85,6 +95,8 @@ def _recompile_preserving_state(world: SimWorld, spec: Any) -> bool:
             new_model, new_data = spec.recompile(world._model, world._data)
     except (ValueError, RuntimeError) as e:
         logger.error("spec.recompile failed: %s", e)
+        if raise_on_refusal:
+            raise
         return False
 
     world._model = new_model
@@ -216,11 +228,27 @@ def inject_object_into_scene(world: SimWorld, obj: SimObject) -> bool:
         SpecBuilder.remove_mesh(spec, f"mesh_{obj.name}")
         raise
 
-    if not _recompile_preserving_state(world, spec):
-        # Roll the just-added body (and any mesh asset) back out so the spec
-        # returns to its last good, compilable state (a worldbody body delete
-        # is safe - the attach/delete segfault only affects spec.attach()
-        # child specs).
+    # Roll the just-added body (and any mesh asset) back out so the spec
+    # returns to its last good, compilable state (a worldbody body delete is
+    # safe - the attach/delete segfault only affects spec.attach() child specs).
+    #
+    # Ask for the compiler's own reason rather than a bare False. Because the
+    # object's mass is declared on its geom, MuJoCo integrates the inertia from
+    # the shape, so its "mass and inertia of moving bodies must be larger than
+    # mjMINVAL" floor is shape-dependent: a mass above mjMINVAL can still
+    # integrate to an inertia below it on a small geom. add_object's numeric
+    # pre-check cannot express that floor without duplicating the compiler's
+    # per-shape integration, so the residual case has to arrive as the reason
+    # the compiler gives. Folded into a False it became "spec recompile
+    # refused." with the actionable text left in the log - the same dead end
+    # the unsupported-shape path was fixed to stop producing.
+    try:
+        recompiled = _recompile_preserving_state(world, spec, raise_on_refusal=True)
+    except (ValueError, RuntimeError):
+        SpecBuilder.remove_body(spec, obj.name)
+        SpecBuilder.remove_mesh(spec, f"mesh_{obj.name}")
+        raise
+    if not recompiled:
         SpecBuilder.remove_body(spec, obj.name)
         SpecBuilder.remove_mesh(spec, f"mesh_{obj.name}")
         return False
