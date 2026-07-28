@@ -551,12 +551,20 @@ class PhysicsMixin:
     ) -> dict[str, Any]:
         """Apply an external force and/or torque to a body (latched).
 
-        Uses mj_applyFT for precise force application at a world-frame point.
-        The force is latched in ``qfrc_applied`` and applied on every
-        subsequent ``mj_step`` until overwritten by the next ``apply_force``
-        call. Each call zeroes the buffer first (replacing, not accumulating).
+        The wrench is latched in the target body's own ``xfrc_applied`` row
+        and applied on every subsequent ``mj_step`` until the next
+        ``apply_force`` call for that body. A call replaces the wrench latched
+        on its own target rather than accumulating onto it, and leaves wrenches
+        latched on other bodies alone - so a wind field, two thrusters, or a
+        per-object disturbance sweep can hold several bodies at once.
 
-        To stop the force: ``apply_force(body, force=[0, 0, 0])``.
+        MuJoCo re-maps that Cartesian wrench into joint space on every step,
+        so a latched force keeps pointing the way the caller asked as the body
+        moves. ``force`` and ``torque`` are world-frame; a ``point`` away from
+        the body centre of mass contributes its lever-arm torque.
+
+        To stop the force on one body: ``apply_force(body, force=[0, 0, 0])``.
+        ``reset()`` clears every latched wrench in the world.
 
         Each vector may be a list, a tuple or a NumPy array (a computed wrench
         is an array), and every element must be a finite real number.
@@ -623,7 +631,7 @@ class PhysicsMixin:
                         }
 
         mj = _ensure_mujoco()
-        model, data = self._world._model, self._world._data
+        data = self._world._data
 
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
@@ -640,12 +648,32 @@ class PhysicsMixin:
         t = np.array([0.0, 0.0, 0.0] if torque is None else torque, dtype=np.float64)
         p = np.array(point, dtype=np.float64) if point is not None else data.xipos[body_id].copy()
 
-        # Zero the buffer first so calls are idempotent (replace, not accumulate).
-        # NOTE: MuJoCo does NOT reset qfrc_applied in mj_step - the force
-        # persists on every subsequent step until the next apply_force call.
+        # Latch the wrench in this body's own row of ``xfrc_applied``.
+        #
+        # The buffer choice is the whole per-body contract. ``qfrc_applied`` is
+        # one world-wide generalized-force vector, and a wrench on a body part
+        # way down a kinematic chain writes into its ancestors' DOFs too - so
+        # there is no slice of it that belongs to one body, and zeroing it to
+        # make a call idempotent revoked every wrench already latched on every
+        # other body. ``xfrc_applied`` is indexed by body, so replacing this
+        # body's wrench cannot touch anyone else's.
+        #
+        # It is also the more faithful latch: MuJoCo re-maps the Cartesian
+        # wrench through the current configuration on every step, whereas a
+        # generalized force frozen by mj_applyFT at call time stops describing
+        # the caller's world-frame wrench as soon as the body moves.
+        #
+        # NOTE: MuJoCo does NOT reset xfrc_applied in mj_step - the wrench
+        # persists on every subsequent step until the next apply_force call
+        # for this body (or a reset()).
         with self._lock:
-            data.qfrc_applied[:] = 0.0
-            mj.mj_applyFT(model, data, f, t, p, body_id, data.qfrc_applied)
+            # xfrc_applied's torque acts about the body centre of mass, so a
+            # force applied at an offset point contributes (point - com) x
+            # force. A caller who named no point asked for the CoM itself,
+            # where that lever arm is exactly zero.
+            com_torque = t if point is None else t + np.cross(p - data.xipos[body_id], f)
+            data.xfrc_applied[body_id, :3] = f
+            data.xfrc_applied[body_id, 3:] = com_torque
 
         return {
             "status": "success",
