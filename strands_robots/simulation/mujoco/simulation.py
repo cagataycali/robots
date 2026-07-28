@@ -87,6 +87,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     inject_object_into_scene,
     inject_robot_into_scene,
     patch_scene_mjcf,
+    persist_world_option,
     replace_scene_mjcf,
     reposition_body_in_scene,
 )
@@ -3361,6 +3362,11 @@ class MuJoCoSimEngine(
         from a config array or produced by ``np.degrees(...)``). A NumPy
         array is treated as the vector form, not a scalar.
 
+        The value is recorded in the scene spec as well as ``model.opt``, which is
+        compiled from it: without that, the next scene recompile - triggered by any
+        ``add_object`` / ``add_camera`` / ``add_robot`` call - would silently restore
+        the value the scene was created with.
+
         Args:
             gravity: Gravity as ``[x, y, z]`` (m/s^2) or a real scalar z-component.
 
@@ -3381,12 +3387,23 @@ class MuJoCoSimEngine(
         if components is None:
             return cast("dict[str, Any]", gravity_error)
         with self._lock:
+            # model.opt is compiled from spec.option, so a gravity written only
+            # into the model is restored to the scene's declared value by the
+            # next recompile. Record it in the spec first, so a scene that
+            # cannot carry the change is refused before anything is touched.
+            if reason := persist_world_option(self._world, gravity=components):
+                return {"status": "error", "content": [{"text": f"set_gravity: {reason}"}]}
             self._world._model.opt.gravity[:] = components
             self._world.gravity = components
         return {"status": "success", "content": [{"text": f"Gravity: {components}"}]}
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
         """Set the physics integration timestep in seconds.
+
+        The value is recorded in the scene spec as well as ``model.opt``, which is
+        compiled from it: without that, the next scene recompile - triggered by any
+        ``add_object`` / ``add_camera`` / ``add_robot`` call - would silently restore
+        the value the scene was created with.
 
         Args:
             timestep: A finite positive float.
@@ -3409,6 +3426,10 @@ class MuJoCoSimEngine(
         if timestep > 0.1:
             warn = f" Warning: unusually large timestep (>{0.1}s); physics may be unstable"
         with self._lock:
+            # Same as set_gravity: model.opt is derived from spec.option, so the
+            # step has to be recorded there to survive the next recompile.
+            if reason := persist_world_option(self._world, timestep=timestep):
+                return {"status": "error", "content": [{"text": f"set_timestep: {reason}"}]}
             self._world._model.opt.timestep = timestep
             self._world.timestep = timestep
         return {"status": "success", "content": [{"text": f"Timestep: {timestep}s ({1 / timestep:.0f}Hz){warn}"}]}

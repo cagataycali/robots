@@ -26,6 +26,10 @@ from strands_robots.simulation.mujoco.backend import (
     _ensure_mujoco,
     filter_mujoco_attach_noise,
 )
+from strands_robots.simulation.mujoco.scene_ops import (
+    persist_body_mass,
+    persist_geom_properties,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1510,6 +1514,13 @@ class PhysicsMixin:
 
         Changes take effect on the next ``mj_step``.
 
+        Changes are recorded in the scene spec as well as the compiled model, so
+        they survive the next scene recompile. The model is derived state that
+        every scene mutation (``add_object`` / ``add_camera`` / ``add_robot``)
+        rebuilds from the spec, so a value written only there would be restored
+        to whatever the scene was compiled with - after this call had already
+        reported the new one.
+
         Args:
             body_name: Name of the body to modify.
             mass: New absolute mass (kg); must be a finite number ``> 0``. When set, the body's
@@ -1517,8 +1528,10 @@ class PhysicsMixin:
 
         Returns:
             A tool-result dict; ``status="error"`` if the world is missing, a
-            policy is running, ``mass`` is not a finite positive number, or the body is
-            not found, otherwise ``status="success"`` summarizing the change.
+            policy is running, ``mass`` is not a finite positive number, the body is
+            not found, or the body has no mass of its own to scale (the world body
+            declares no inertial and owns no geom), otherwise ``status="success"``
+            summarizing the change.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1542,6 +1555,32 @@ class PhysicsMixin:
         with self._lock:
             if mass is not None:
                 old_mass = float(model.body_mass[body_id])
+                if old_mass <= 0:
+                    # A mass change is applied as a scale (see below), which a
+                    # body with no mass of its own cannot carry: there is no
+                    # inertial and no geom whose density the ratio could move.
+                    # The world body is the one such body in a normal scene.
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"set_body_properties: body '{body_name}' has no mass of its own "
+                                    f"({old_mass:.3f} kg), so there is nothing to scale to {mass} kg. Only a "
+                                    "body that declares an <inertial> or owns geoms carries a mass."
+                                )
+                            }
+                        ],
+                    }
+                mass_ratio = mass / old_mass
+                # model is DERIVED from the scene spec: the next scene mutation
+                # recompiles the spec over it, so a mass written only here is
+                # restored to the compiled value while the caller has already
+                # been told the change took effect. Record it in the spec first,
+                # so a scene that cannot carry the change is refused before
+                # either representation is touched.
+                if reason := persist_body_mass(self._world, body_id, mass_ratio=mass_ratio):
+                    return {"status": "error", "content": [{"text": f"set_body_properties: {reason}"}]}
                 model.body_mass[body_id] = mass
                 changes.append(f"mass: {old_mass:.3f} → {mass:.3f}")
                 # Inertia tracks mass for fixed geometry: setting a rigid body's
@@ -1554,8 +1593,7 @@ class PhysicsMixin:
                 # since mass is the only settable property). Scale body_inertia
                 # by the same ratio (matches randomize(randomize_physics=True)
                 # and the Newton backend, which scale both together).
-                if old_mass > 0:
-                    model.body_inertia[body_id] *= mass / old_mass
+                model.body_inertia[body_id] *= mass_ratio
 
         return {
             "status": "success",
@@ -1579,6 +1617,18 @@ class PhysicsMixin:
         mid-phase) are recomputed so a grown geom collides correctly instead of
         letting other bodies pass through it. A plane's bounds are type-derived,
         so only its stored ``geom_size`` changes.
+
+        Changes are recorded in the scene spec as well as the compiled model, so
+        they survive the next scene recompile. The model is derived state that
+        every scene mutation (``add_object`` / ``add_camera`` / ``add_robot``)
+        rebuilds from the spec, so a value written only there would be restored
+        to whatever the scene was compiled with - after this call had already
+        reported the new one.
+
+        A resize is the one property with a further consequence at recompile time:
+        the model write resizes the geom without re-deriving the owning body's
+        inertia, whereas the recompile integrates the inertia from the persisted
+        shape - the physically consistent value for the new extents.
 
         Every vector must carry the exact number of components its target
         defines, because there is no meaningful value to invent for a component
@@ -1705,6 +1755,15 @@ class PhysicsMixin:
         changes = []
 
         with self._lock:
+            # model is DERIVED from the scene spec, which the next scene
+            # mutation recompiles over it - so a value written only here is
+            # discarded by the next add_object/add_camera/add_robot call and the
+            # geom silently reverts after this call reported the new value.
+            # Record it in the spec first, so a scene that cannot carry the
+            # change is refused before either representation is touched.
+            if reason := persist_geom_properties(self._world, gid, color=color, friction=friction, size=size):
+                return {"status": "error", "content": [{"text": f"set_geom_properties: {reason}"}]}
+
             if color is not None:
                 # Already coerced to 4 components (RGB got an opaque alpha).
                 model.geom_rgba[gid] = color

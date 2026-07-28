@@ -785,18 +785,28 @@ class TestRuntimeModification:
         assert sim.set_body_properties(body_name="box1", mass=0.5)["status"] == "success"
         assert model.body_inertia[body_id] == pytest.approx(cur_inertia * (0.5 / cur_mass))
 
-    def test_set_body_mass_massless_body_no_crash(self, sim):
-        """A massless frame (mass 0, inertia 0) is handled without dividing by zero.
+    def test_set_body_mass_on_a_massless_body_is_refused(self, sim):
+        """A massless frame has no inertial to scale, so the mass is refused.
 
-        There is no geometry-derived inertia to scale from a zero prior mass, so
-        the inertia stays zero; the mass update still succeeds.
+        ``arm_base`` is a pure kinematic frame: no ``<inertial>`` and no geom of
+        its own, so its compiled mass is 0 and there is nothing for a mass change
+        to scale. Reporting success here produced a body heavy in translation with
+        zero rotational resistance - the same physically inconsistent state
+        ``test_set_body_mass_rejects_nonfinite`` exists to prevent, differing only
+        in which component is corrupt. It was also a value nothing could keep: the
+        mass lives on a body's inertial or on its geoms, and this body has
+        neither, so the next scene recompile discarded it.
+
+        The division by zero this test originally guarded is still not reached -
+        the refusal happens before the ratio is taken.
         """
         model = sim._world._model
         body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "arm_base")
         assert float(model.body_mass[body_id]) == pytest.approx(0.0)
         result = sim.set_body_properties(body_name="arm_base", mass=2.0)
-        assert result["status"] == "success"
-        assert model.body_mass[body_id] == pytest.approx(2.0)
+        assert result["status"] == "error"
+        assert "no mass of its own" in result["content"][0]["text"]
+        assert model.body_mass[body_id] == pytest.approx(0.0)
         assert model.body_inertia[body_id] == pytest.approx([0.0, 0.0, 0.0])
 
     def test_set_body_mass_rejects_nonfinite(self, sim):

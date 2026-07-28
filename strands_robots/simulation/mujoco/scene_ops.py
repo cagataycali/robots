@@ -143,6 +143,183 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     return True
 
 
+# Persist
+
+
+_NO_SPEC_REASON = "the scene has no live spec, so the change cannot be recorded durably"
+
+
+def _spec_element_by_id(elements: Any, entity_id: int, kind: str) -> tuple[Any | None, str | None]:
+    """Return the spec element a compiled entity id was built from.
+
+    The compiler emits one model entity per spec element in declaration order and
+    records the resulting index on the element, so a compiled id indexes the
+    spec's element list directly. That mapping is what lets an UNNAMED element be
+    addressed at all: most geoms in a robot scene carry no name, so resolving by
+    name would silently cover almost none of them.
+
+    The recorded ``id`` is verified rather than assumed. Writing a property onto
+    the wrong entity is a worse outcome than not recording it, so a spec that no
+    longer agrees with the compiled model is reported instead of written to.
+
+    Args:
+        elements: The spec's element list (``spec.geoms`` / ``spec.bodies``).
+        entity_id: Compiled index of the entity, as resolved by the caller.
+        kind: Entity name used in the reason text (``"geom"`` / ``"body"``).
+
+    Returns:
+        ``(element, None)`` when the element was located, otherwise
+        ``(None, reason)`` naming why it was not.
+    """
+    count = len(elements)
+    if entity_id < 0 or entity_id >= count:
+        return None, f"{kind} id {entity_id} is outside the scene spec's {count} {kind}(s)"
+    element = elements[entity_id]
+    if element.id != entity_id:
+        return None, (
+            f"the scene spec no longer agrees with the compiled model: the {kind} at index "
+            f"{entity_id} reports id {element.id}"
+        )
+    return element, None
+
+
+def persist_geom_properties(
+    world: SimWorld,
+    geom_id: int,
+    *,
+    color: list[float] | None = None,
+    friction: list[float] | None = None,
+    size: list[float] | None = None,
+) -> str | None:
+    """Record a runtime geom property write in the spec the model is compiled from.
+
+    ``world._model`` is DERIVED state: every scene mutation recompiles the spec
+    over it (see :func:`_recompile_preserving_state`), so a value written only
+    into the model is discarded by the next ``add_object`` / ``add_camera`` /
+    ``add_robot`` call and the geom reverts to whatever it was compiled with -
+    after the setter already reported the new value. Writing the same value into
+    the spec is what makes that reported result durable.
+
+    Nothing is written when a reason is returned, so a caller can refuse before it
+    touches the model and keep the two representations in step.
+
+    Args:
+        world: The scene holding the live spec.
+        geom_id: Compiled geom index, already resolved by the caller.
+        color: RGBA components, already validated.
+        friction: The three friction coefficients, already validated.
+        size: Half-extents, already validated. Only the components the caller
+            supplied are written, matching the model write: the unused tail of
+            the spec's 3-wide row keeps its declared value.
+
+    Returns:
+        ``None`` once the value is recorded, otherwise the reason it could not be.
+    """
+    spec = _get_spec(world)
+    if spec is None:
+        return _NO_SPEC_REASON
+    spec_geom, reason = _spec_element_by_id(spec.geoms, geom_id, "geom")
+    if spec_geom is None:
+        return reason
+
+    if color is not None:
+        spec_geom.rgba = list(color)
+    if friction is not None:
+        spec_geom.friction[:] = friction
+    if size is not None:
+        spec_geom.size[: len(size)] = size
+    return None
+
+
+def persist_body_mass(world: SimWorld, body_id: int, *, mass_ratio: float) -> str | None:
+    """Record a runtime body mass change in the spec the model is compiled from.
+
+    Recording the change as a scale is what keeps the two representations equal:
+    ``set_body_properties`` documents a mass change as a uniform density change at
+    fixed geometry, and both mass and inertia are linear in density, so applying
+    one ratio reproduces exactly the inertial the setter reported.
+
+    A body's compiled inertial comes from one of two places, and only the one in
+    force is writable. A body that declares an explicit ``<inertial>`` carries its
+    own mass and inertia (``explicitinertial``); every other body has both
+    integrated from its geoms, and there assigning ``mass`` on the body element is
+    silently ignored by the compiler - the geoms' mass or density is what has to
+    move.
+
+    Args:
+        world: The scene holding the live spec.
+        body_id: Compiled body index, already resolved by the caller.
+        mass_ratio: The new mass divided by the compiled mass. Finite and ``> 0``,
+            which the caller guarantees by refusing a body with no mass to scale.
+
+    Returns:
+        ``None`` once the change is recorded, otherwise the reason it could not be.
+    """
+    spec = _get_spec(world)
+    if spec is None:
+        return _NO_SPEC_REASON
+    spec_body, reason = _spec_element_by_id(spec.bodies, body_id, "body")
+    if spec_body is None:
+        return reason
+
+    if spec_body.explicitinertial:
+        spec_body.mass *= mass_ratio
+        # A body states its inertia as either the principal diagonal or the six
+        # unique components of the full tensor; whichever form is not in use is
+        # all zeros, so scaling both is exact and needs no branch.
+        spec_body.inertia[:] = [value * mass_ratio for value in spec_body.inertia]
+        spec_body.fullinertia[:] = [value * mass_ratio for value in spec_body.fullinertia]
+        return None
+
+    spec_geoms = list(spec_body.geoms)
+    if not spec_geoms:
+        return (
+            "the body declares no explicit inertial and owns no geom, so it holds "
+            "nothing whose mass the change could scale"
+        )
+    for spec_geom in spec_geoms:
+        # A geom states either an explicit mass or a density, and the compiler
+        # uses the mass only when it is set (an unset mass reads as nan, which
+        # fails every comparison). Scaling whichever one is in force scales that
+        # geom's contribution, so the body total scales by the same ratio.
+        if spec_geom.mass > 0:
+            spec_geom.mass *= mass_ratio
+        else:
+            spec_geom.density *= mass_ratio
+    return None
+
+
+def persist_world_option(
+    world: SimWorld,
+    *,
+    gravity: list[float] | None = None,
+    timestep: float | None = None,
+) -> str | None:
+    """Record a runtime physics-option write in the spec the model is compiled from.
+
+    ``model.opt`` is compiled from ``spec.option``, so a gravity or timestep
+    written only into the model is restored to the scene's declared value by the
+    next recompile - putting a lunar-gravity world back to 9.81 m/s^2 on the next
+    ``add_object``.
+
+    Args:
+        world: The scene holding the live spec.
+        gravity: The three gravity components, already validated.
+        timestep: The integration step in seconds, already validated.
+
+    Returns:
+        ``None`` once the value is recorded, otherwise the reason it could not be.
+    """
+    spec = _get_spec(world)
+    if spec is None:
+        return _NO_SPEC_REASON
+    if gravity is not None:
+        spec.option.gravity[:] = gravity
+    if timestep is not None:
+        spec.option.timestep = timestep
+    return None
+
+
 # Inject
 
 
