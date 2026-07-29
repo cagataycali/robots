@@ -104,6 +104,75 @@ def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | No
 _VELOCITY_SUFFIX = ".vel"
 
 
+def _undeclared_image_feature_error(
+    targets: list[str],
+    embodiment_name: str,
+    policy_config: dict[str, Any],
+) -> str | None:
+    """Report image features the embodiment feeds but ``image_keys`` withholds.
+
+    An explicit ``image_keys=`` is priority 1 in
+    :func:`~strands_robots.policies.lerobot_local.molmoact2.derive_image_keys`,
+    so it replaces the feature list that would otherwise be derived from the
+    embodiment's ``obs_rename`` targets. When the supplied list does not cover
+    those targets, the model is built declaring features the pipeline never
+    feeds, and ``EmbodimentMap.validate`` refuses the mismatch - but only after
+    the weight download, which is exactly what :meth:`LerobotLocalPolicy.preflight`
+    exists to get ahead of. Both inputs are in ``policy_config``, so the verdict
+    is available for free beforehand.
+
+    Scope: ``image_keys`` is honored only on the MolmoAct2 load path and is
+    documented as inert for every other policy type, so the check defers to
+    :func:`~strands_robots.policies.lerobot_local.molmoact2.is_molmoact2` rather
+    than refusing a list some other checkpoint would ignore. That predicate
+    short-circuits with no I/O when the caller declared ``policy_type``; in
+    auto-detect mode it reads ``config.json`` (cached, and returning ``None`` on
+    any failure), which the load path reads anyway.
+
+    Args:
+        targets: Image rename targets the embodiment feeds, as collected by
+            :meth:`LerobotLocalPolicy.preflight`.
+        embodiment_name: Resolved embodiment name, for the message.
+        policy_config: Provider kwargs (``image_keys``, ``policy_type``,
+            ``pretrained_name_or_path``, ``embodiment``, ...).
+
+    Returns:
+        The refusal message, or ``None`` when the configuration is consistent
+        (no explicit ``image_keys``, a non-MolmoAct2 checkpoint, or every target
+        declared).
+    """
+    image_keys = policy_config.get("image_keys")
+    if not image_keys:
+        # Not supplied: the feature list is derived FROM the embodiment, so the
+        # two sides cannot diverge.
+        return None
+
+    from . import molmoact2 as _molmoact2
+
+    if not _molmoact2.is_molmoact2(
+        policy_config.get("pretrained_name_or_path") or "", policy_config.get("policy_type")
+    ):
+        return None
+
+    declared = _molmoact2.derive_image_keys(list(image_keys), policy_config.get("embodiment"))
+    undeclared = [t for t in targets if t not in set(declared)]
+    if not undeclared:
+        return None
+
+    return (
+        f"Embodiment {embodiment_name!r} feeds image feature(s) {undeclared}, but the explicit "
+        f"image_keys={list(declared)} does not declare them, so the model would be built without "
+        f"the inputs the embodiment routes and its configuration is refused after the weight "
+        f"download. Either:\n"
+        f"  (a) drop image_keys= so the features are derived from the embodiment "
+        f"(-> {list(targets)}), or\n"
+        f"  (b) pass image_keys={list(targets)!r} to declare what the embodiment feeds, or\n"
+        f"  (c) pass policy_config={{'obs_rename_override': {{'<your_camera_name>': "
+        f"{declared[0]!r}}}}} for EVERY key you declared, so each declared feature is a "
+        f"rename target."
+    )
+
+
 def _drop_velocity_siblings(scalar_keys: list[str]) -> list[str]:
     """Drop each ``<joint>.vel`` whose ``<joint>`` position companion is present.
 
@@ -1254,6 +1323,15 @@ class LerobotLocalPolicy(Policy):
         ``obs_rename`` first, so an explicit override that maps a present camera
         onto the feature satisfies the check.
 
+        The converse is also checked: an explicit ``image_keys=`` replaces the
+        feature list that would be derived from those same rename targets (it is
+        priority 1 in ``derive_image_keys``), so a list that does not cover them
+        builds a model without the inputs the embodiment routes. That mismatch is
+        refused by ``EmbodimentMap.validate`` only after the weight download, and
+        both sides of it are already in ``policy_config`` here - see
+        :func:`_undeclared_image_feature_error`, which also explains why the check
+        applies to the MolmoAct2 load path only.
+
         No-op when no ``embodiment`` is configured (the policy then uses the
         legacy heuristic camera routing, which this hook cannot reason about),
         or when the embodiment name/spec cannot be resolved (``create_policy``
@@ -1266,7 +1344,8 @@ class LerobotLocalPolicy(Policy):
 
         Raises:
             ValueError: When a model image feature has no satisfiable source
-                camera key in ``observation_keys``.
+                camera key in ``observation_keys``, or when an explicit
+                ``image_keys`` withholds a feature the embodiment feeds.
         """
         spec = policy_config.get("embodiment")
         if spec is None:
@@ -1290,6 +1369,13 @@ class LerobotLocalPolicy(Policy):
                 targets.setdefault(dst, []).append(src)
         if not targets:
             return
+
+        # A declared-feature contradiction is independent of the runtime camera
+        # names and no camera rename can resolve it, so it is reported before the
+        # source-availability check below.
+        undeclared_error = _undeclared_image_feature_error(sorted(targets), embodiment.name, policy_config)
+        if undeclared_error:
+            raise ValueError(undeclared_error)
 
         obs = set(observation_keys)
         unsatisfied = {dst: srcs for dst, srcs in targets.items() if not any(s in obs for s in srcs)}

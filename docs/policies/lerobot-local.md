@@ -449,6 +449,30 @@ Two ways to fix it:
    )
    ```
 
+#### `image_keys` must declare what the embodiment feeds
+
+The pre-flight check works in both directions. An explicit `image_keys=` is
+priority 1 in `derive_image_keys`, so it *replaces* the feature list that would
+otherwise be derived from the embodiment's `obs_rename` targets. If the list does
+not cover those targets, the model is built without the inputs the embodiment
+routes and its configuration is refused after the weight download, so pre-flight
+refuses it up front instead:
+
+```
+Embodiment 'so_real' feeds image feature(s) ['observation.images.image',
+'observation.images.wrist_image'], but the explicit image_keys=['base', 'wrist']
+does not declare them, so the model would be built without the inputs the
+embodiment routes and its configuration is refused after the weight download.
+Either: (a) drop image_keys= ..., or (b) pass image_keys=[...] ..., or
+(c) pass policy_config={'obs_rename_override': {...}} for EVERY key you declared ...
+```
+
+Any of the three named fixes resolves it: drop `image_keys` so the features come
+from the embodiment, declare the embodiment's own targets, or retarget every key
+you declared with `obs_rename_override` so each declared feature is a rename
+target. `image_keys` is a MolmoAct2 knob and is inert for other policy types, so
+this check applies to the MolmoAct2 load path only.
+
 ### Single camera with no embodiment
 
 You do not need an embodiment at all for a single-camera checkpoint. Declare the
