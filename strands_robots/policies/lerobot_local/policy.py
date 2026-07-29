@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from .. import Policy, align_action_values
+from .. import Policy, align_action_values, chunk_count_error
 from .embodiment import ZeroActionMonitor, diagnose_action_dim, hardware_pos_keys, state_key_remedy
 from .processor import ProcessorBridge
 from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
@@ -383,7 +383,11 @@ class LerobotLocalPolicy(Policy):
             call. Defaults to 1 (closed-loop). When left at the default,
             it is auto-set from the loaded model's ``config.n_action_steps``
             (the model's trained open-loop chunk size) if that exceeds 1;
-            pass an explicit value > 1 to override the auto-detection.
+            pass an explicit value > 1 to override the auto-detection. Must be
+            a positive ``int`` - it bounds a slice of the action chunk, and any
+            other value both suppresses that auto-detection (which only fires
+            at the default) and is floored to 1 when the horizon is read, so it
+            is refused here instead.
         use_processor: Whether to load the model's processor pipeline.
         processor_overrides: Dict of overrides for processor pipeline steps.
         tokenizer_max_length: Max token length for VLA language tokenization.
@@ -446,6 +450,16 @@ class LerobotLocalPolicy(Policy):
         self.revision = revision
         self.policy_type = policy_type
         self.requested_device = device
+        # Validated here, where the caller's value arrives and before any
+        # checkpoint is downloaded (``_load_model`` below): the read path
+        # (``execution_horizon``) floors it to 1, which for this provider
+        # ALSO silently forfeits the auto-adoption of the checkpoint's
+        # trained chunk length, since _auto_detect_actions_per_step reads
+        # any value other than the default 1 as a horizon the caller pinned
+        # deliberately. See ``chunk_count_error``.
+        error = chunk_count_error(actions_per_step, "actions_per_step", "lerobot_local")
+        if error:
+            raise ValueError(error)
         self.actions_per_step = actions_per_step
         self.use_processor = use_processor
         self.processor_overrides = processor_overrides
@@ -1400,6 +1414,17 @@ class LerobotLocalPolicy(Policy):
                 camera key in ``observation_keys``, or when an explicit
                 ``image_keys`` withholds a feature the embodiment feeds.
         """
+        # Checked before the embodiment early-return below, so a chunk count
+        # the consumer cannot execute is refused for every configuration rather
+        # than only for the ones that declare an embodiment. Running here (and
+        # not only in ``__init__``) is what turns it into a structured error
+        # from the rollout entry point instead of a raise, and refuses it before
+        # the weight download rather than after.
+        if "actions_per_step" in policy_config:
+            error = chunk_count_error(policy_config["actions_per_step"], "actions_per_step", "lerobot_local")
+            if error:
+                raise ValueError(error)
+
         spec = policy_config.get("embodiment")
         if spec is None:
             return

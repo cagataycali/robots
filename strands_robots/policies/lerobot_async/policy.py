@@ -57,7 +57,7 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.policies.base import Policy, align_action_values
+from strands_robots.policies.base import Policy, align_action_values, chunk_count_error
 from strands_robots.utils import require_optional
 
 logger = logging.getLogger(__name__)
@@ -125,11 +125,15 @@ class LerobotAsyncPolicy(Policy):
             offload inference to a GPU host; override with ``device="cpu"`` for a
             CPU server.
         actions_per_chunk: Max number of actions the server returns per chunk.
+            Must be a positive ``int``; it is also the default for
+            ``actions_per_step``, so it is held to the same domain.
         actions_per_step: Number of actions the consumer executes from one chunk
             before re-querying (the :attr:`execution_horizon`). Defaults to
             ``actions_per_chunk`` so a chunked open-loop policy (ACT, diffusion)
             executes the whole chunk per network round-trip instead of paying a
-            round-trip per control step.
+            round-trip per control step. ``None`` selects that default; any
+            other value must be a positive ``int``, since it bounds a slice of
+            the returned chunk.
         connect_timeout: Seconds to wait for the gRPC ``Ready`` handshake.
         request_timeout: Seconds to wait for each observation/action RPC.
         rename_map: Optional ``{robot_obs_key: model_feature_key}`` map forwarded
@@ -193,6 +197,16 @@ class LerobotAsyncPolicy(Policy):
         self.policy_type = policy_type
         self.pretrained_name_or_path = pretrained_name_or_path
         self.device = device
+        # ``actions_per_chunk`` is validated too, not just as a sibling knob:
+        # it is the default for ``actions_per_step``, so leaving it unchecked
+        # would let a chunk count the consumer cannot execute reach
+        # ``execution_horizon`` through the omitted parameter.
+        for _param, _value in (("actions_per_chunk", actions_per_chunk), ("actions_per_step", actions_per_step)):
+            if _value is None:
+                continue  # omitted: actions_per_step then defaults to the chunk length
+            error = chunk_count_error(_value, _param, "lerobot_async")
+            if error:
+                raise ValueError(error)
         self.actions_per_chunk = int(actions_per_chunk)
         self.actions_per_step = int(actions_per_step) if actions_per_step is not None else self.actions_per_chunk
         self.connect_timeout = connect_timeout

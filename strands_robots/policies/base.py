@@ -29,6 +29,8 @@ from typing import Any, Protocol, runtime_checkable
 
 import numpy as np
 
+from strands_robots.utils import positive_count_error
+
 
 class Policy(ABC):
     """Abstract base class for robot policies (VLA, motion planners, MPC, scripted).
@@ -483,3 +485,46 @@ def resolve_chunk_length(policy: "Policy", action_horizon: int) -> int:
         # RTC owns the interval; action_horizon cannot override it.
         return horizon_int
     return max(int(action_horizon), 1, horizon_int)
+
+
+def chunk_count_error(value: object, param: str, provider: str) -> str | None:
+    """Error text when a per-inference chunk count is not one a policy can execute.
+
+    Shared domain for the counts that describe one inference chunk - how many
+    actions a provider emits (``actions_per_chunk``) and how many of them a
+    consumer executes before re-querying (``actions_per_step``). Both are
+    consumed as slice bounds over the action chunk, so only a true positive
+    ``int`` can be honored; :func:`~strands_robots.utils.positive_count_error`
+    supplies that domain (and rejects ``bool``, which as an ``int`` subclass
+    would otherwise pass as a silent count of one).
+
+    It lives here rather than beside one of its callers because the providers
+    that accept these counts sit in sibling packages
+    (:mod:`strands_robots.policies.lerobot_local` and
+    :mod:`strands_robots.policies.lerobot_async`) and the accepted domain must
+    not diverge between them: the same chunk count cannot be refused by a local
+    checkpoint and accepted by the server serving it.
+
+    Why the count has to be checked where it arrives, rather than where it is
+    read: :attr:`Policy.execution_horizon` resolves the re-query interval
+    through ``max(1, int(...))``, which turns a count no consumer can execute
+    into ``1``. That floor is the right default for a duck-typed chunk source
+    that never passed through a provider constructor, but as a guard it is
+    silently destructive - and specifically so for a provider that treats the
+    default count as a request to adopt the checkpoint's own trained chunk
+    length, because a rejected-then-floored value has already suppressed that
+    adoption and cannot be distinguished from a deliberate single-step request.
+
+    Args:
+        value: The caller-supplied count.
+        param: The parameter name it came from, used in the message.
+        provider: Provider name, used as the message prefix.
+
+    Returns:
+        An error message naming the parameter and the remedy, or ``None`` when
+        the count is usable.
+    """
+    error = positive_count_error(value, param, provider)
+    if error:
+        return f"{error} Omit it to use the provider default."
+    return None

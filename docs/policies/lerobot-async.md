@@ -83,8 +83,8 @@ sim.run_policy(
 | `policy_type`              | -             | **Required.** LeRobot policy type the server loads -- the async-servable set from lerobot's `SUPPORTED_POLICIES` (`act`, `smolvla`, `diffusion`, `tdmpc`, `vqbet`, `pi0`, `pi05`, `groot`, ...); validated client-side against the live lerobot constant |
 | `pretrained_name_or_path`  | -             | **Required.** HuggingFace id or path the server loads       |
 | `device`                   | `cuda`        | Device for **server-side** inference; set `cpu` for a CPU server |
-| `actions_per_chunk`        | `50`          | Max actions the server returns per chunk                    |
-| `actions_per_step`         | `actions_per_chunk` | Actions executed from one chunk before re-querying (the re-query interval) |
+| `actions_per_chunk`        | `50`          | Max actions the server returns per chunk. Positive `int` (it is also the default for `actions_per_step`) |
+| `actions_per_step`         | `actions_per_chunk` | Actions executed from one chunk before re-querying (the re-query interval). Positive `int`, or `None` for the default |
 | `connect_timeout`          | `10.0`        | Seconds to wait for the gRPC `Ready` handshake              |
 | `request_timeout`          | `60.0`        | Seconds to wait for each observation/action RPC             |
 | `rename_map`               | `{}`          | `{robot_obs_key: model_feature_key}` forwarded to the server; renames observation keys before the policy sees them (async analog of `lerobot_local`'s `obs_rename`) |

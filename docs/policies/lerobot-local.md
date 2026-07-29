@@ -26,7 +26,7 @@ LerobotLocalPolicy(
     pretrained_name_or_path="",          # HF model_id or local checkpoint dir (required)
     policy_type=None,                    # override auto-detected class
     device=None,                         # "cuda" | "cpu" | "mps"
-    actions_per_step=1,                   # auto-set from config.n_action_steps if left at 1
+    actions_per_step=1,                  # positive int; auto-set from config.n_action_steps if left at 1
     use_processor=True,                  # observation/action processor bridge
     processor_overrides=None,
     tokenizer_max_length=48,
