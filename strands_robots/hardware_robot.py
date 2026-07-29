@@ -2390,18 +2390,33 @@ class Robot(TeleopMixin, AgentTool):
             }
 
     async def stop(self) -> None:
-        """Stop robot and disconnect."""
+        """Stop the robot and release everything it holds.
+
+        Terminal, exactly as :meth:`cleanup` is -- this is the async spelling
+        of it, and it delegates every step rather than performing any itself.
+
+        The disconnect in particular belongs to that cleanup rather than ahead
+        of it. lerobot gates ``Robot.disconnect()`` on ``is_connected``
+        (``bus.is_connected and all(cam.is_connected ...)``) and raises
+        ``DeviceNotConnectedError`` when it is false, so disconnecting here
+        first meant that stopping a robot which was never connected -- or one
+        left half-open by a failed bring-up -- raised before :meth:`cleanup`
+        was reached. Every terminal guarantee was then silently skipped: no
+        shutdown latch, a task executor still accepting work, and any device a
+        half-open connect had opened still held, with no entry point left that
+        would close it.
+
+        Ordering matters as much as reachability. :meth:`cleanup` closes the
+        devices *last*, once the teleop loop, the task executor, the mesh and
+        the ROS bridge are all down, because :meth:`send_action` re-opens the
+        robot lazily on a command that finds it disconnected. Disconnecting
+        here put that close ahead of every one of those command sources.
+
+        Runs off the event loop: :meth:`cleanup` joins the task executor and
+        closes a serial port, both of which block.
+        """
         try:
-            # Stop any running task first
-            if self._task_state.status == TaskStatus.RUNNING:
-                self.stop_task()
-
-            # Disconnect robot hardware
-            if hasattr(self.robot, "disconnect"):
-                await asyncio.to_thread(self.robot.disconnect)
-
-            # Cleanup resources
-            self.cleanup()
+            await asyncio.to_thread(self.cleanup)
 
             logger.info(f"{self.tool_name_str} stopped and disconnected")
 
