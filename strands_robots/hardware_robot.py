@@ -1785,7 +1785,10 @@ class Robot(TeleopMixin, AgentTool):
             Tool-shaped result confirming the task started, or an error naming
             the offending parameter. A second task is refused while another
             rollout is in flight - including during its connect/policy-build
-            bring-up - because the arm has a single command bus.
+            bring-up - because the arm has a single command bus. A robot that
+            ``cleanup`` / ``stop`` has shut down is refused permanently: the
+            executor and bridges are gone, so a rollout started now would
+            command the arm zero times.
         """
         # Before the submit: the work happens on a background thread, so a
         # budget checked inside it would still report "Task started" to the
@@ -1858,6 +1861,13 @@ class Robot(TeleopMixin, AgentTool):
         connecting or building its policy, before it reports ``RUNNING``.
         Two rollouts admitted at once would interleave ``send_action`` writes
         on one half-duplex bus and share the single task-state slot.
+
+        Terminal after shutdown: ``cleanup`` / ``stop`` release the task
+        executor, the mesh and the ROS bridges and cannot be undone, so a
+        rollout requested afterwards is refused rather than admitted to command
+        the arm zero times. A rollout already running when the shutdown lands is
+        reported ``STOPPED`` - a shutdown truncates a task exactly as
+        ``stop_task`` does, so its step count is a partial one.
 
         Args:
             policy_object: A constructed ``Policy`` instance. The object's
@@ -2173,7 +2183,16 @@ class Robot(TeleopMixin, AgentTool):
             )
 
     def cleanup(self) -> None:
-        """Cleanup resources and stop any running tasks."""
+        """Cleanup resources and stop any running tasks.
+
+        Terminal: this latches a shutdown, releases the task executor, and
+        tears down the mesh and ROS bridges. There is no ``restart``, so
+        ``run_policy`` / ``start_task`` / the ``execute`` action refuse
+        permanently afterwards rather than admit a rollout that would command
+        the arm zero times, and a rollout still in flight when this runs is
+        reported ``STOPPED`` rather than ``COMPLETED``. Construct a new
+        ``Robot`` to run another task.
+        """
         try:
             # Signal shutdown
             self._shutdown_event.set()
