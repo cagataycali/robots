@@ -246,22 +246,32 @@ def hardware_pos_keys(observation: dict[str, Any]) -> list[str]:
 # Action diagnostics
 
 
-def diagnose_action_dim(n_action_values: int, n_action_keys: int, *, name: str = "") -> str | None:
+def diagnose_action_dim(
+    n_action_values: int, n_action_keys: int, *, name: str = "", pad_short: bool = False
+) -> str | None:
     """Return a warning message when a model action vector mis-matches the
     embodiment's declared actuator count, else ``None``.
 
     The local policy maps a model's action tensor onto robot actuators by index
     (``LerobotLocalPolicy._tensor_to_action_dicts``). When the model emits FEWER
     values than the embodiment declares actuator keys, the unmatched actuators
-    are zero-filled -- which silently freezes those joints and looks exactly like
-    "the policy runs but the robot does not move". When it emits MORE, the extra
-    trailing values are dropped. Either case is almost always an
-    embodiment/checkpoint mismatch the operator wants surfaced, not swallowed.
+    get no value from the model, and when it emits MORE the extra trailing values
+    are dropped. Either case is almost always an embodiment/checkpoint mismatch
+    the operator wants surfaced, not swallowed.
+
+    What happens to those unmatched actuators is the caller's choice, so the
+    message has to report the behaviour actually in effect: by default they are
+    omitted from the action dict and hold position, while
+    ``pad_short_actions=True`` sends them an explicit ``0.0``, which on an
+    absolute-position action space travels them to zero.
 
     Args:
         n_action_values: Length of the model's per-step action vector.
         n_action_keys: Number of declared actuator keys (``robot_state_keys``).
         name: Embodiment name for the message (optional).
+        pad_short: Whether the caller pads the unmatched actuators with ``0.0``
+            (see :func:`strands_robots.policies.base.align_action_values`).
+            Selects which consequence the message describes.
 
     Returns:
         A human-readable warning string, or ``None`` when the dims match.
@@ -271,11 +281,17 @@ def diagnose_action_dim(n_action_values: int, n_action_keys: int, *, name: str =
     label = f" '{name}'" if name else ""
     if n_action_values < n_action_keys:
         missing = n_action_keys - n_action_values
+        consequence = (
+            f"the {missing} unmatched actuator(s) are commanded to 0.0 "
+            f"(pad_short_actions=True), which on an absolute-position action space travels "
+            f"them to zero rather than holding them"
+            if pad_short
+            else f"the {missing} unmatched actuator(s) receive no command and hold their current position"
+        )
         return (
             f"Policy action dim {n_action_values} < embodiment{label} actuator count "
-            f"{n_action_keys}: the {missing} unmatched actuator(s) are zero-filled and will "
-            f"not move. Check the embodiment's action_keys order/count against the "
-            f"checkpoint's action dimension."
+            f"{n_action_keys}: {consequence}. Check the embodiment's action_keys "
+            f"order/count against the checkpoint's action dimension."
         )
     extra = n_action_values - n_action_keys
     return (

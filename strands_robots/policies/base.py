@@ -24,7 +24,10 @@ non-VLA reference implementation.
 import asyncio
 import concurrent.futures
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
+
+import numpy as np
 
 
 class Policy(ABC):
@@ -371,6 +374,57 @@ class ChunkedPolicy(Protocol):
 
     actions_per_step: int
     supports_rtc: bool
+
+
+def align_action_values(
+    values: Sequence[float] | np.ndarray,
+    action_keys: Sequence[str],
+    *,
+    pad_short: bool = False,
+) -> tuple[list[float], list[str]]:
+    """Pair a model's ordered action vector with the actuator keys it drives.
+
+    Every provider maps a policy's flat action vector onto actuator names BY
+    INDEX, and the two lengths are not guaranteed to agree: a checkpoint trained
+    for a 6-DOF arm can be pointed at a 7-actuator robot, or an embodiment can
+    declare a gripper the checkpoint never learned. This centralizes the single
+    rule for that mismatch so providers cannot drift.
+
+    * **More values than keys** - the trailing values are dropped. There is no
+      actuator to receive them.
+    * **Fewer values than keys** (the default) - only the leading keys the model
+      actually produced a value for are returned. The unmatched actuators are
+      left out of the action dict entirely, so they receive no command and hold
+      their current position.
+    * **Fewer values than keys with ``pad_short=True``** - the unmatched keys are
+      returned carrying ``0.0``. That is a COMMAND, not an omission: where the
+      action space is absolute position - a LeRobot ``<motor>.pos`` follower, a
+      MuJoCo position actuator - ``0.0`` means "travel to zero", so those
+      actuators MOVE, at whatever rate the servo will do it. Opt in only when
+      the consumer needs a fixed-width action dict and zero is a meaningful
+      target for every key it pads.
+
+    Args:
+        values: The model's per-step action vector. Any sized, indexable
+            numeric sequence - a list or a 1-D array, as the two providers hand
+            over a NumPy row; entries are coerced with ``float``.
+        action_keys: Ordered actuator keys the vector maps onto, index 0 first.
+        pad_short: Emit ``0.0`` for keys past the end of ``values`` instead of
+            omitting them. See the note above before enabling this.
+
+    Returns:
+        ``(values, keys)``, equal length and aligned 1:1 by index - ready to zip
+        into an action dict after any unit conversion has been applied to the
+        values.
+    """
+    keys = list(action_keys)
+    aligned = [float(values[index]) for index in range(min(len(values), len(keys)))]
+    if len(aligned) < len(keys):
+        if pad_short:
+            aligned.extend(0.0 for _ in range(len(keys) - len(aligned)))
+        else:
+            keys = keys[: len(aligned)]
+    return aligned, keys
 
 
 def resolve_chunk_length(policy: "Policy", action_horizon: int) -> int:

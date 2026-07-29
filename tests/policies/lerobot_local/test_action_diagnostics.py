@@ -2,7 +2,7 @@
 
 A VLA (e.g. MolmoAct2 on SO-101) can step every control tick yet leave the arm
 motionless when its action vector mis-matches the embodiment's actuator count
-(unmatched actuators are zero-filled) or when it keeps emitting near-zero
+(unmatched actuators get no command) or when it keeps emitting near-zero
 actions (a broken obs/rename pipeline starves the model). These were silent.
 This pins the surfaced diagnostics: a one-shot action-dim warning, a
 consecutive near-zero-action warning, and an end-to-end MuJoCo check that a
@@ -33,12 +33,21 @@ def test_diagnose_action_dim_match_is_silent():
     assert diagnose_action_dim(6, 6, name="so101") is None
 
 
-def test_diagnose_action_dim_fewer_values_flags_zero_fill():
+def test_diagnose_action_dim_fewer_values_names_the_unmatched_actuators():
+    """The message reports the consequence actually in effect.
+
+    It used to claim the unmatched actuators were "zero-filled and will not
+    move". They are now omitted from the action dict, so they really do hold;
+    the zero-fill only happens under ``pad_short_actions=True``, where it is a
+    command that travels them to zero. See
+    ``tests/policies/test_short_action_holds_unmatched_actuators.py``.
+    """
     msg = diagnose_action_dim(4, 6, name="so101")
     assert msg is not None
-    assert "zero-filled" in msg
+    assert "receive no command" in msg
+    assert "hold their current position" in msg
     assert "so101" in msg
-    # names the count of frozen actuators
+    # names the count of unmatched actuators
     assert "2" in msg
 
 
@@ -92,10 +101,12 @@ def test_tensor_to_action_dicts_warns_on_dim_mismatch(caplog):
     policy.set_robot_state_keys(["1", "2", "3", "4", "5", "6"])
     with caplog.at_level(logging.WARNING):
         result = policy._tensor_to_action_dicts(torch.zeros(4))
-    # unmatched actuators are still returned (zero-filled), but now flagged
-    assert set(result[0].keys()) == {"1", "2", "3", "4", "5", "6"}
-    assert result[0]["5"] == 0.0 and result[0]["6"] == 0.0
-    assert any("action dim 4" in r.message and "zero-filled" in r.message for r in caplog.records)
+    # The unmatched actuators are left out of the action dict (a fabricated 0.0
+    # would be an absolute-position command, not an omission) and the mismatch
+    # is flagged.
+    assert set(result[0].keys()) == {"1", "2", "3", "4"}
+    assert "5" not in result[0] and "6" not in result[0]
+    assert any("action dim 4" in r.message and "hold their current position" in r.message for r in caplog.records)
 
 
 def test_tensor_to_action_dicts_dim_warning_is_one_shot(caplog):

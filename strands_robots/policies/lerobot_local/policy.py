@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from .. import Policy
+from .. import Policy, align_action_values
 from .embodiment import ZeroActionMonitor, diagnose_action_dim, hardware_pos_keys
 from .processor import ProcessorBridge
 from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
@@ -226,6 +226,15 @@ class LerobotLocalPolicy(Policy):
             fallback) if any camera name cannot be matched to a declared
             policy image key by exact name and no ``camera_key_map`` covers
             it. Defaults to False (positional fallback).
+        pad_short_actions: When the model emits FEWER action values than the
+            robot declares actuator keys, command the unmatched actuators to
+            ``0.0`` instead of omitting them. Defaults to False: an omitted
+            actuator holds its position, whereas ``0.0`` is an absolute target
+            on a LeRobot ``<motor>.pos`` follower or a MuJoCo position
+            actuator, so padding TRAVELS those joints to zero. Enable only when
+            the consumer needs a fixed-width action dict and zero is a
+            meaningful target for every key it pads. Either way the dim
+            mismatch itself is reported once via ``diagnose_action_dim``.
     """
 
     def __init__(
@@ -249,6 +258,7 @@ class LerobotLocalPolicy(Policy):
         camera_key_map: dict[str, str] | None = None,
         obs_rename_override: dict[str, str | None] | None = None,
         strict_keys: bool = False,
+        pad_short_actions: bool = False,
         cache_model: bool = True,
         revision: str | None = None,
         **kwargs,
@@ -298,6 +308,11 @@ class LerobotLocalPolicy(Policy):
         # camera_key_map covers them). Defaults to False (positional fallback
         # with a warning), preserving zero-config ergonomics.
         self.strict_keys = strict_keys
+        # When the model emits fewer action values than the robot declares
+        # actuator keys, False (the default) omits the unmatched actuators so
+        # they hold position; True commands them 0.0, which on an absolute-
+        # position action space travels them to zero. See align_action_values.
+        self.pad_short_actions = bool(pad_short_actions)
         # Routing-degradation telemetry. The heuristic (non-declarative)
         # remap path can keep a run alive while silently producing
         # meaningless inputs - a camera routed to an arbitrary model image
@@ -2698,7 +2713,9 @@ class LerobotLocalPolicy(Policy):
         emb_name = self._embodiment.name if self._embodiment is not None else ""
         n_values = len(actions_list[0]) if actions_list else 0
         if not self._action_dim_warned:
-            dim_msg = diagnose_action_dim(n_values, len(self.robot_state_keys), name=emb_name)
+            dim_msg = diagnose_action_dim(
+                n_values, len(self.robot_state_keys), name=emb_name, pad_short=self.pad_short_actions
+            )
             if dim_msg:
                 logger.warning("lerobot_local: %s", dim_msg)
                 self._action_dim_warned = True
@@ -2732,12 +2749,15 @@ class LerobotLocalPolicy(Policy):
 
         result = []
         for action_values in actions_list:
-            vals = [float(action_values[i]) if i < len(action_values) else 0.0 for i in range(len(out_keys))]
+            # Align the model's vector with the actuator keys BEFORE any unit
+            # conversion, so a short vector converts only the columns the model
+            # actually produced (the embodiment's gripper column is positional).
+            vals, keys = align_action_values(action_values, out_keys, pad_short=self.pad_short_actions)
             # `convert` already implies `emb is not None`; the explicit guard lets
             # the type checker narrow `emb` from `EmbodimentMap | None` at the call.
             if convert and emb is not None:
                 vals = emb.model_action_to_sim(vals)
-            action_dict = {key: vals[index] for index, key in enumerate(out_keys)}
+            action_dict = dict(zip(keys, vals, strict=True))
             result.append(action_dict)
 
         return result

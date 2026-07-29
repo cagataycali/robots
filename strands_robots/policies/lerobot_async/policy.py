@@ -57,7 +57,7 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.policies.base import Policy
+from strands_robots.policies.base import Policy, align_action_values
 from strands_robots.utils import require_optional
 
 logger = logging.getLogger(__name__)
@@ -167,6 +167,7 @@ class LerobotAsyncPolicy(Policy):
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         rename_map: dict[str, str] | None = None,
+        pad_short_actions: bool = False,
         **ignored_kwargs: Any,
     ) -> None:
         address = server_address or f"{host}:{port}"
@@ -202,6 +203,11 @@ class LerobotAsyncPolicy(Policy):
                 f"key to the model's expected feature key, got {type(rename_map).__name__}."
             )
         self.rename_map: dict[str, str] = dict(rename_map) if rename_map else {}
+        # A server chunk narrower than robot_state_keys leaves the trailing
+        # actuators unmatched. False (the default) omits them so they hold
+        # position; True commands them 0.0, which is an absolute target on a
+        # <motor>.pos follower. See align_action_values.
+        self.pad_short_actions = bool(pad_short_actions)
 
         if ignored_kwargs:
             logger.warning(
@@ -416,7 +422,10 @@ class LerobotAsyncPolicy(Policy):
         Each ``TimedAction.action`` is a 1D tensor over the policy's action
         dimensions; values are mapped to :attr:`robot_state_keys` by index and
         the chunk is capped at :attr:`execution_horizon` (the re-query interval
-        the consumer drives).
+        the consumer drives). A chunk narrower than ``robot_state_keys`` leaves
+        the trailing actuators without a command (they hold) unless
+        ``pad_short_actions`` is set - see
+        :func:`~strands_robots.policies.base.align_action_values`.
         """
         if not self.robot_state_keys:
             raise RuntimeError(
@@ -427,9 +436,8 @@ class LerobotAsyncPolicy(Policy):
         for timed_action in chunk[: self.execution_horizon]:
             action = timed_action.get_action() if hasattr(timed_action, "get_action") else timed_action.action
             values = np.asarray(action.detach().cpu().numpy() if hasattr(action, "detach") else action).flatten()
-            result.append(
-                {key: (float(values[i]) if i < len(values) else 0.0) for i, key in enumerate(self.robot_state_keys)}
-            )
+            aligned, keys = align_action_values(values, self.robot_state_keys, pad_short=self.pad_short_actions)
+            result.append(dict(zip(keys, aligned, strict=True)))
         if not result:
             raise RuntimeError("lerobot_async: server returned an empty action chunk.")
         return result
