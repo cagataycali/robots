@@ -45,6 +45,49 @@ def _scalar_observation_keys(observation_dict: dict[str, Any]) -> list[str]:
     return [k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)]
 
 
+def _state_key_cause(configured: list[str]) -> str:
+    """Name the likely cause of an all-missing ``robot_state_keys`` binding.
+
+    The diagnostic used to assert the generic-key cause unconditionally, which
+    holds only when the configured keys actually have that shape. A caller who
+    configured a NAMED set describing a different robot - the sim ``so101``
+    embodiment names ``'1'..'6'``, none of which a hardware observation's
+    ``'<motor>.pos'`` keys carry - was told their keys were auto-generated
+    ``joint_N`` placeholders they never configured, i.e. the diagnostic
+    mis-described the one mistake it exists to explain. Reading the configured
+    keys keeps the sentence true for either shape.
+
+    The placeholders are recognised by the exact shape the loader emits:
+    ``joint_0`` through ``joint_{n-1}``, consecutive and zero-based. A bare
+    ``joint_`` prefix is NOT enough to conclude a key was auto-generated - the
+    registry ships ``kinova_gen3``, whose real joint names are ``joint_1``
+    through ``joint_7`` (one-based), so a prefix test would tell a Kinova
+    operator that the arm's own joint names were placeholders it invented.
+    Matching the generator exactly keeps both callers' sentences true, and the
+    alternative sentence asserts nothing about genericity, so it holds for every
+    other set - named, one-based, reordered or mixed.
+
+    The loader records no flag when it fills the list in, so the shape is the
+    only signal available - and it is also the honest one, since a hand-written
+    ``joint_0..joint_N`` set carries exactly the ambiguity the generic sentence
+    describes.
+
+    Args:
+        configured: The ``robot_state_keys`` that matched nothing. Empty is
+            accepted (the caller's guard returns before then) and takes the
+            non-generic branch rather than vacuously claiming the shape.
+
+    Returns:
+        One sentence naming the cause, ending in a period.
+    """
+    if configured and configured == [f"{_GENERIC_STATE_KEY_PREFIX}{i}" for i in range(len(configured))]:
+        return (
+            "This usually means generic auto-generated keys (joint_0..joint_N) were "
+            "paired with a robot/sim that reports named joints."
+        )
+    return "The configured keys describe a different robot/sim than the one reporting this observation."
+
+
 def _declared_feature_is_image(name: str, feature: Any = None) -> bool:
     """Return True if a declared input feature is a camera/image (VISUAL) feature.
 
@@ -100,6 +143,16 @@ def _merge_obs_rename(base: dict[str, str], override: dict[str, str | None] | No
             merged.pop(src, None)
     return merged
 
+
+# Prefix of the placeholder state keys the loader fills in when a checkpoint
+# declares a state/action dim but the caller named no joints: it emits the
+# consecutive zero-based run ``joint_0..joint_{n-1}``. The all-missing
+# diagnostic rebuilds that run to decide whether the generic-key explanation
+# applies, and the user-facing sentence quotes the shape, so the three must stay
+# in step. Real robots can also have joint_-prefixed names (the registry's
+# kinova_gen3 is joint_1..joint_7), which is why the run, not the prefix, is
+# what identifies a placeholder.
+_GENERIC_STATE_KEY_PREFIX = "joint_"
 
 _VELOCITY_SUFFIX = ".vel"
 
@@ -2083,6 +2136,13 @@ class LerobotLocalPolicy(Policy):
             fall back to the observation's own scalar keys so the state is
             populated rather than silently dropped.
 
+        The cause that message names is read from the configured keys
+        (:func:`_state_key_cause`) rather than asserted, so a caller who
+        configured a NAMED set describing a different robot is not told their
+        keys were auto-generated placeholders they never configured. The remedy
+        is chosen from the observation (:func:`state_key_remedy`), so the two
+        halves of the message answer the two different questions the caller has.
+
         Any ordering derived from the observation (both the fallback above and
         the no-``robot_state_keys`` case) is position-only: a ``<joint>.vel``
         sibling of a present ``<joint>`` is dropped by
@@ -2113,11 +2173,14 @@ class LerobotLocalPolicy(Policy):
         ellipsis = "..." if len(self.robot_state_keys) > 8 else ""
         msg = (
             f"None of the configured robot_state_keys {shown}{ellipsis} are present "
-            f"in the observation. Observed joint/state keys: {scalar_keys}. This "
-            "usually means generic auto-generated keys (joint_0..joint_N) were "
-            "paired with a robot/sim that reports named joints. " + state_key_remedy(scalar_keys)
-            # Chosen from the observation, so the advice cannot name an
+            f"in the observation. Observed joint/state keys: {scalar_keys}. "
+            # Cause read from the configured keys, so the sentence does not
+            # assert a key shape they do not have.
+            + _state_key_cause(self.robot_state_keys)
+            + " "
+            # Remedy chosen from the observation, so the advice cannot name an
             # embodiment whose state_keys would land back on this same guard.
+            + state_key_remedy(scalar_keys)
         )
         if self.strict_keys:
             raise ValueError("strict_keys=True: " + msg)
