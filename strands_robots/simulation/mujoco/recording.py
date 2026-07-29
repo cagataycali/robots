@@ -85,8 +85,11 @@ class RecordingMixin(DatasetRecordingMixin):
                 rollout behind a ``status="success"`` return. It must EQUAL the
                 rollout's ``control_frequency``: the recorder captures one frame
                 per control step and never decimates, so a differing rate cannot
-                be honored, only mislabelled, and every rollout entry point
-                refuses the disagreement before writing a frame. When an existing
+                be honored, only mislabelled. The disagreement is refused
+                before any frame is written whichever call comes first: by every
+                rollout entry point when a rollout starts against an open
+                recording, and here when a recording is opened against a rollout
+                already in flight. When an existing
                 dataset is RESUMED (``overwrite=False``), it must equal that
                 dataset's on-disk rate: a resumed dataset keeps the rate it was
                 created at, so a differing request is refused with the on-disk
@@ -134,6 +137,13 @@ class RecordingMixin(DatasetRecordingMixin):
         # probe so the same caller mistake reports the same way regardless of
         # which optional extras this install has.
         if error := dataset_recording_option_error("start_recording", fps):
+            return error
+
+        # Reject a rate a rollout already in flight is not capturing at. The
+        # rollout entry points cover the record-then-rollout ordering; this is
+        # the same disagreement with the calls the other way round, refused
+        # before any dataset is created so a refusal leaves nothing on disk.
+        if error := self._validate_recording_start_rate(fps, "start_recording"):
             return error
 
         _DatasetRecorder: Any = None

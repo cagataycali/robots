@@ -23,15 +23,26 @@ from the dataset rate on the invariant that "the recorded control frequency IS
 the dataset fps" - so the same episode also replays at the wrong speed
 (round-tripped to 0.0000 rad at matching rates, 0.0317 rad at the defaults).
 
+The disagreement has two orderings and both are refused. A rollout started
+against an open recording is refused at every rollout entry point; a recording
+opened against a rollout already in flight is refused by ``start_recording``.
+``start_policy`` makes the second ordering reachable by design - it submits the
+rollout to an executor and returns while it continues - and on the same colliding
+defaults it saved 81 frames captured 0.0200s apart and declared them 0.0333s
+apart: a 2.6667s episode for a 1.62s capture, with ``start_policy``,
+``start_recording`` and ``stop_recording`` all reporting success.
+
 Refused rather than warned, matching the sibling rate guard in the same module:
 ``_verify_resume_schema`` already refuses an ``fps`` that disagrees with the
-dataset on disk. The refusal lands before any frame is written, so a caller
-loses nothing.
+dataset on disk. The refusal lands before any frame is written - and, in the
+inverse ordering, before any dataset is created - so a caller loses nothing.
 """
 
 from __future__ import annotations
 
 import ast
+import contextlib
+import time
 from pathlib import Path
 
 import pytest
@@ -45,7 +56,10 @@ from strands_robots.simulation.policy_runner import PolicyRunner  # noqa: E402
 from strands_robots.simulation.recording import (  # noqa: E402
     dataset_rate_mismatch_error,
     dataset_rate_mismatch_reason,
+    rate_mismatch_explanation,
     recorder_dataset_fps,
+    rollout_rate_mismatch_error,
+    rollout_rate_mismatch_reason,
 )
 
 _ARM = """<mujoco><worldbody><body name="l1">
@@ -358,6 +372,279 @@ class _MetaOnlyRecorder:
 
     def __init__(self, fps) -> None:  # noqa: ANN001
         self.dataset = _Dataset(None, meta=_Meta(fps))
+
+
+@pytest.fixture
+def two_arm_sim(tmp_path):
+    """Two independent arms, so two ``start_policy`` rollouts can overlap."""
+    xml = tmp_path / "arm.xml"
+    xml.write_text(_ARM)
+    engine = MuJoCoSimEngine(tool_name="rate_guard_multi", mesh=False)
+    engine.create_world()
+    engine.add_robot(name="armA", urdf_path=str(xml))
+    engine.add_robot(name="armB", urdf_path=str(xml), position=[0.6, 0.0, 0.0])
+    yield engine
+    engine.cleanup()
+
+
+@contextlib.contextmanager
+def _running_rollout(sim, robot: str, control_frequency: float):
+    """A real in-flight ``start_policy`` rollout on ``robot``, stopped on exit.
+
+    The horizon is long enough that the rollout cannot finish mid-test and be
+    pruned, which would otherwise look like the guard failing to fire. Waits for
+    the worker to have installed its per-frame hook before yielding: until then
+    the hook has not set ``policy_running``, so a ``stop_policy`` on exit would be
+    overwritten and the rollout would outlive the test.
+    """
+    keys = sim.robot_action_keys(robot)
+    result = sim.start_policy(
+        robot_name=robot,
+        policy_object=_Hold(keys),
+        duration=60.0,
+        control_frequency=control_frequency,
+    )
+    assert result["status"] == "success", result
+    handle = sim._world.robots[robot]
+    deadline = time.monotonic() + 20.0
+    while not handle.policy_running:
+        if time.monotonic() > deadline:
+            pytest.fail(f"the rollout on {robot!r} never started")
+        time.sleep(0.005)
+    try:
+        yield
+    finally:
+        sim.stop_policy(robot_name=robot)
+        future = sim._policy_threads.get(robot)
+        if future is not None:
+            # Joined without suppressing: a rollout that outlives its stop would
+            # otherwise leak into the next case as a spurious "already running".
+            future.result(timeout=30.0)
+
+
+class TestARecordingOpenedAgainstARunningRolloutIsRefused:
+    """The inverse ordering: ``start_policy`` first, then ``start_recording``."""
+
+    def test_the_library_defaults_are_refused(self, sim, tmp_path):
+        """``control_frequency=50.0`` running, ``fps=30`` requested - the default pair."""
+        with _running_rollout(sim, "arm", 50.0):
+            result = sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"))
+        assert result["status"] == "error"
+
+    def test_the_refusal_names_the_rollout_both_rates_and_the_distortion(self, sim, tmp_path):
+        with _running_rollout(sim, "arm", 50.0):
+            text = sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"))[
+                "content"
+            ][0]["text"]
+        assert "'arm' at 50 Hz" in text
+        assert "30 fps" in text
+        assert "1.667x" in text
+
+    def test_the_refusal_names_both_remedies(self, sim, tmp_path):
+        with _running_rollout(sim, "arm", 50.0):
+            text = sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"))[
+                "content"
+            ][0]["text"]
+        assert "start_recording(fps=50)" in text
+        assert "stop_policy(robot_name='arm')" in text
+        assert "control_frequency=30" in text
+
+    def test_no_dataset_is_created(self, sim, tmp_path):
+        """The refusal precedes dataset creation, so nothing is left on disk."""
+        root = tmp_path / "inv"
+        with _running_rollout(sim, "arm", 50.0):
+            sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(root))
+        assert not root.exists() or not any(root.iterdir())
+
+    def test_the_recording_session_is_not_left_open(self, sim, tmp_path):
+        """A refused open must not flip the engine into a recording state."""
+        with _running_rollout(sim, "arm", 50.0):
+            sim.start_recording(repo_id="local/inverse", task="hold", fps=30, root=str(tmp_path / "inv"))
+            assert sim._is_recording() is False
+            assert sim._active_recorder() is None
+
+    def test_a_matching_rate_is_accepted_while_the_rollout_runs(self, sim, tmp_path):
+        """The agreeing case is untouched - the guard refuses disagreement only."""
+        with _running_rollout(sim, "arm", 50.0):
+            result = sim.start_recording(repo_id="local/agree", task="hold", fps=50, root=str(tmp_path / "agree"))
+            assert result["status"] == "success", result
+            sim.stop_recording()
+
+    def test_an_unusable_fps_is_still_reported_as_the_parameter_error(self, sim, tmp_path):
+        """Name-and-value guards keep priority: ``fps`` itself is the complaint."""
+        with _running_rollout(sim, "arm", 50.0):
+            text = sim.start_recording(repo_id="local/bad", task="hold", fps=2.7, root=str(tmp_path / "bad"))[
+                "content"
+            ][0]["text"]
+        assert "fps" in text
+        assert "already running" not in text
+
+
+class TestTheAdvisedRemedyIsUsableInTheInverseOrdering:
+    """Every option the refusal names must actually work when followed."""
+
+    def test_recording_at_the_rollouts_rate_records_cleanly(self, sim, tmp_path):
+        """The message says: start_recording(fps=50). Do exactly that."""
+        with _running_rollout(sim, "arm", 50.0):
+            refused = sim.start_recording(repo_id="local/r1", task="hold", fps=30, root=str(tmp_path / "r1"))
+            assert refused["status"] == "error"
+            assert "start_recording(fps=50)" in refused["content"][0]["text"]
+            accepted = sim.start_recording(repo_id="local/r1", task="hold", fps=50, root=str(tmp_path / "r1"))
+            assert accepted["status"] == "success", accepted
+            sim.stop_recording()
+
+    def test_restarting_the_rollout_at_the_recordings_rate_records_cleanly(self, sim, tmp_path):
+        """The message says: stop_policy, then start_policy(control_frequency=30)."""
+        with _running_rollout(sim, "arm", 50.0):
+            refused = sim.start_recording(repo_id="local/r2", task="hold", fps=30, root=str(tmp_path / "r2"))
+            assert refused["status"] == "error"
+        # The context already ran stop_policy(robot_name='arm'), the first half of
+        # the remedy; now restart at the recording's rate as advised.
+        with _running_rollout(sim, "arm", 30.0):
+            accepted = sim.start_recording(repo_id="local/r2", task="hold", fps=30, root=str(tmp_path / "r2"))
+            assert accepted["status"] == "success", accepted
+            sim.stop_recording()
+
+
+class TestConcurrentRolloutsAtDifferentRatesAreRefusedOutright:
+    """Interleaved frames on one declared rate cannot describe two capture rates."""
+
+    def test_two_rates_are_refused_even_when_fps_matches_one_of_them(self, two_arm_sim, tmp_path):
+        with _running_rollout(two_arm_sim, "armA", 50.0), _running_rollout(two_arm_sim, "armB", 25.0):
+            result = two_arm_sim.start_recording(
+                repo_id="local/multi", task="hold", fps=50, root=str(tmp_path / "multi")
+            )
+        assert result["status"] == "error"
+
+    def test_the_refusal_names_every_rollout_and_its_rate(self, two_arm_sim, tmp_path):
+        with _running_rollout(two_arm_sim, "armA", 50.0), _running_rollout(two_arm_sim, "armB", 25.0):
+            text = two_arm_sim.start_recording(
+                repo_id="local/multi", task="hold", fps=30, root=str(tmp_path / "multi")
+            )["content"][0]["text"]
+        assert "'armA' at 50 Hz" in text
+        assert "'armB' at 25 Hz" in text
+        assert "2 different capture rates" in text
+
+    def test_two_rollouts_at_one_shared_rate_may_record_at_that_rate(self, two_arm_sim, tmp_path):
+        with _running_rollout(two_arm_sim, "armA", 40.0), _running_rollout(two_arm_sim, "armB", 40.0):
+            result = two_arm_sim.start_recording(
+                repo_id="local/shared", task="hold", fps=40, root=str(tmp_path / "shared")
+            )
+            assert result["status"] == "success", result
+            two_arm_sim.stop_recording()
+
+
+class TestOnlyLiveRolloutsCanBlockARecording:
+    """A finished rollout must not keep refusing a rate it no longer captures."""
+
+    def test_no_rollout_running_never_refuses(self, sim, tmp_path):
+        result = sim.start_recording(repo_id="local/idle", task="hold", fps=30, root=str(tmp_path / "idle"))
+        assert result["status"] == "success"
+        sim.stop_recording()
+
+    def test_a_stopped_rollout_stops_blocking(self, sim, tmp_path):
+        with _running_rollout(sim, "arm", 50.0):
+            assert sim._active_rollout_rates() == {"arm": 50.0}
+        # The context stopped and joined the rollout; its rate must be gone.
+        assert sim._active_rollout_rates() == {}
+        result = sim.start_recording(repo_id="local/after", task="hold", fps=30, root=str(tmp_path / "after"))
+        assert result["status"] == "success", result
+        sim.stop_recording()
+
+    def test_the_rate_table_is_swept_when_a_robot_is_removed(self, sim):
+        """``remove_robot`` drops the Future directly; the rate must follow it."""
+        with _running_rollout(sim, "arm", 50.0):
+            assert sim._active_rollout_rates() == {"arm": 50.0}
+            assert sim.remove_robot("arm")["status"] == "success"
+            assert sim._active_rollout_rates() == {}
+            assert sim._policy_rates == {}
+
+
+class TestTheRolloutRateGuardHelperIsRobust:
+    def test_no_running_rollout_returns_none(self):
+        assert rollout_rate_mismatch_reason("start_recording", 30, {}) is None
+
+    def test_an_agreeing_rate_returns_none(self):
+        assert rollout_rate_mismatch_reason("start_recording", 50, {"arm": 50.0}) is None
+
+    def test_float_noise_below_the_tolerance_is_not_a_mismatch(self):
+        assert rollout_rate_mismatch_reason("start_recording", 50, {"arm": 50.0 + 1e-12}) is None
+
+    @pytest.mark.parametrize("fps", [2.7, True, "30", None, 0, -5, float("nan"), float("inf")])
+    def test_an_fps_outside_the_writable_domain_is_left_to_its_own_guard(self, fps):
+        """Reporting it here would name a rate disagreement instead of the parameter."""
+        assert rollout_rate_mismatch_reason("start_recording", fps, {"arm": 50.0}) is None
+
+    def test_an_integral_float_fps_is_read_as_that_whole_rate(self):
+        assert rollout_rate_mismatch_reason("start_recording", 50.0, {"arm": 50.0}) is None
+        assert rollout_rate_mismatch_reason("start_recording", 30.0, {"arm": 50.0}) is not None
+
+    def test_a_fractional_capture_rate_offers_only_the_remedy_it_can(self):
+        """``fps`` must be whole, so 33.3 Hz has no rate to advise recording at."""
+        reason = rollout_rate_mismatch_reason("start_recording", 30, {"arm": 33.3})
+        assert reason is not None
+        assert "record at the rollout's rate" not in reason
+        assert "stop_policy(robot_name='arm')" in reason
+
+    def test_the_message_is_prefixed_with_the_calling_method(self):
+        reason = rollout_rate_mismatch_reason("start_recording", 30, {"arm": 50.0})
+        assert reason is not None
+        assert reason.startswith("start_recording: ")
+
+    def test_the_envelope_carries_the_reason_verbatim(self):
+        envelope = rollout_rate_mismatch_error("start_recording", 30, {"arm": 50.0})
+        reason = rollout_rate_mismatch_reason("start_recording", 30, {"arm": 50.0})
+        assert envelope is not None
+        assert envelope["content"][0]["text"] == reason
+        assert envelope["status"] == "error"
+
+    def test_a_backend_with_no_async_rollout_reports_no_rates(self):
+        """The base hook is what makes one call site per backend safe."""
+        from strands_robots.simulation.base import SimEngine
+
+        assert SimEngine._active_rollout_rates(object()) == {}  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("fps", "rate"),
+    [(30, 50.0), (50, 30.0), (30, 30.0), (50, 50.0), (25, 25.0), (30, 33.3), (60, 50.0)],
+)
+def test_both_orderings_reach_the_same_verdict_and_explanation(fps, rate):
+    """One disagreement, so the two orderings may not disagree about it.
+
+    Whichever call came first, the frames and the timestamps come from the same
+    two rates - so a caller who reverses the order of two calls must not be told
+    the pair is acceptable in one direction and not the other, nor be given two
+    different accounts of the distortion.
+    """
+    forward = dataset_rate_mismatch_reason("run_policy", _FakeRecorder(fps), rate)
+    inverse = rollout_rate_mismatch_reason("start_recording", fps, {"arm": rate})
+    assert (forward is None) == (inverse is None), f"the two orderings disagree for fps={fps!r} capture rate={rate!r}"
+    if forward is not None and inverse is not None:
+        shared = rate_mismatch_explanation(fps, rate)
+        assert shared in forward
+        assert shared in inverse
+
+
+_START_RECORDING_BACKENDS = (
+    "strands_robots/simulation/mujoco/recording.py",
+    "strands_robots/simulation/isaac/recording.py",
+    "strands_robots/simulation/newton/recording.py",
+)
+
+
+@pytest.mark.parametrize("module", _START_RECORDING_BACKENDS)
+def test_every_backend_start_recording_checks_the_running_rollout_rate(module):
+    """``start_recording`` is per backend, so each copy must reach the shared guard.
+
+    Pinned structurally rather than behaviourally because the Isaac and Newton
+    backends need their simulators installed to drive, and a backend that grows
+    an asynchronous rollout later must not inherit a ``start_recording`` that
+    silently skipped the check.
+    """
+    assert "_validate_recording_start_rate" in _self_calls(module, "start_recording"), (
+        f"{module}::start_recording does not check the running rollout rate"
+    )
 
 
 _ENTRY_POINTS = {

@@ -299,6 +299,13 @@ class MuJoCoSimEngine(
         # pruned by ``_active_policy_futures()``/``_prune_done_futures()`` so
         # the dict never grows unboundedly and never reports stale "running".
         self._policy_threads: dict[str, Future] = {}
+        # Capture rate of each rollout in ``_policy_threads``, recorded where
+        # the Future is tracked so it is readable from another thread the
+        # instant ``start_policy`` returns (``start_recording`` compares against
+        # it). ``_policy_threads`` stays the sole authority on which rollouts
+        # are live: this table is swept to it by ``_prune_done_futures``, so it
+        # can never report a rate for a rollout that is not running.
+        self._policy_rates: dict[str, float] = {}
         self._shutdown_event = threading.Event()
         # ``self._lock`` (RLock) serializes ALL access to MuJoCo
         # ``model``/``data`` arrays - both reads and writes. MuJoCo arrays
@@ -3635,6 +3642,12 @@ class MuJoCoSimEngine(
         done = [k for k, f in self._policy_threads.items() if f.done()]
         for k in done:
             self._policy_threads.pop(k, None)
+        # The capture-rate table is keyed the same way and is only meaningful
+        # while the rollout's Future is tracked, so it follows _policy_threads
+        # here rather than at each of that dict's own removal sites
+        # (remove_robot deletes an entry, cleanup clears them all).
+        for stale in [k for k in self._policy_rates if k not in self._policy_threads]:
+            self._policy_rates.pop(stale, None)
 
     def _active_policy_robots(self) -> list[str]:
         """Names of robots with a live (not-done) policy Future.
@@ -3644,6 +3657,18 @@ class MuJoCoSimEngine(
         """
         self._prune_done_futures()
         return list(self._policy_threads.keys())
+
+    def _active_rollout_rates(self) -> dict[str, float]:
+        """Capture rate of every ``start_policy`` rollout still in flight.
+
+        Overrides :meth:`SimEngine._active_rollout_rates` so
+        ``start_recording`` can refuse a dataset rate a running rollout is not
+        capturing at. Prunes stale entries first (via
+        :meth:`_prune_done_futures`, which also sweeps the rate table against
+        ``_policy_threads``) so a finished rollout cannot block a recording.
+        """
+        self._prune_done_futures()
+        return dict(self._policy_rates)
 
     def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
         """Return an error dict if a disallowed policy is running, else None.
@@ -3883,6 +3908,7 @@ class MuJoCoSimEngine(
             seed=seed,
         )
         self._policy_threads[robot_name] = future
+        self._policy_rates[robot_name] = float(control_frequency)
 
         return {
             "status": "success",

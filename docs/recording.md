@@ -54,6 +54,27 @@ runner.run("so100", policy, control_frequency=50.0, on_frame=hook)
 #    to PolicyRunner.run()
 ```
 
+The rule holds whichever call comes first. `start_policy` returns while its
+rollout keeps running, so a recording can be opened against a rollout already in
+flight - and on the defaults (`fps=30` against `control_frequency=50.0`) that
+recorded a 1.667x mislabelled episode with every call reporting success.
+`start_recording` refuses the same disagreement, before creating the dataset:
+
+```python
+sim.start_policy(robot_name="so100", policy_provider="mock")   # default 50.0 Hz
+sim.start_recording(repo_id="user/my_dataset", task="t", fps=30)
+# -> "start_recording: this recording would declare 30 fps but a rollout is
+#     already running ('so100' at 50 Hz). [...] Align the two rates: record at
+#     the rollout's rate (start_recording(fps=50)), or restart the rollout at the
+#     recording's rate (stop_policy(robot_name='so100'), then
+#     start_policy(..., control_frequency=30))"
+```
+
+Rollouts running at *different* rates are refused outright, even when `fps`
+matches one of them: their frames interleave into one episode whose single
+declared rate cannot describe both, so there is no `fps` to pass instead. Stop
+all but one, or restart them at a common `control_frequency`.
+
 ## Selecting which cameras to record
 
 By default every camera in the scene is recorded into the dataset - including

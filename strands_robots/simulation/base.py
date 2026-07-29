@@ -1419,6 +1419,46 @@ class SimEngine(ABC):
 
         return dataset_rate_mismatch_error(method, self._active_recorder(), control_frequency)
 
+    def _validate_recording_start_rate(self, fps: Any, method: str) -> dict[str, Any] | None:
+        """Reject opening a recording at a rate an in-flight rollout does not capture at.
+
+        The inverse ordering of :meth:`_validate_recording_rate`, and the same
+        disagreement: that guard runs when a rollout starts against an open
+        recording, this one when a recording is opened against a rollout that is
+        already running. ``start_policy`` makes the second ordering reachable by
+        design - it submits the rollout and returns while it continues - and the
+        two library defaults collide (``fps=30`` against
+        ``control_frequency=50.0``), so the plain sequence produced a 1.667x
+        mislabelled episode with every call reporting success.
+
+        Instance method for the same reason as :meth:`_validate_recording_rate`:
+        the value it compares against lives on the engine. Backends with no
+        asynchronous rollout inherit :meth:`_active_rollout_rates` returning an
+        empty mapping and are unaffected, so one call site per backend's
+        ``start_recording`` covers every backend without each needing its own
+        copy of the rule.
+
+        Args:
+            fps: Caller-supplied dataset frame rate. Validate it with
+                :func:`~strands_robots.simulation.recording.dataset_recording_option_error`
+                first, so a value no dataset can be written at is reported as
+                the parameter error it is rather than as a rate disagreement.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict, or ``None`` when no
+            rollout is in flight or every one of them already captures at
+            ``fps``. See
+            :func:`~strands_robots.simulation.recording.rollout_rate_mismatch_reason`
+            for the contract and the measured consequence.
+        """
+        rates = self._active_rollout_rates()
+        if not rates:
+            return None
+        from strands_robots.simulation.recording import rollout_rate_mismatch_error
+
+        return rollout_rate_mismatch_error(method, fps, rates)
+
     @staticmethod
     def _validate_video_config(video: Any, method: str) -> dict[str, Any] | None:
         """Reject a ``video`` recording config the rollout cannot honor.
@@ -2158,6 +2198,23 @@ class SimEngine(ABC):
         flushes episode boundaries on backends that actually record.
         """
         return False
+
+    def _active_rollout_rates(self) -> dict[str, float]:
+        """Capture rate in Hz of every rollout currently in flight, per robot.
+
+        Backends that can run a rollout asynchronously - returning to the caller
+        while it continues, as the MuJoCo ``start_policy`` does - override this
+        so :meth:`_validate_recording_start_rate` can compare a recording about
+        to be opened against what is already capturing frames. The base runs
+        every rollout to completion before returning, so no rollout can be in
+        flight when a caller reaches ``start_recording`` and the mapping is
+        empty.
+
+        Returns:
+            ``{robot_name: control_frequency}`` for live rollouts only; an empty
+            mapping when none is running.
+        """
+        return {}
 
     def _active_recorder(self) -> Any:
         """Return the active dataset recorder object, or ``None``.

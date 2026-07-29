@@ -198,6 +198,13 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         if error := dataset_recording_option_error("start_recording", fps):
             return error
 
+        # Reject a rate a rollout already in flight is not capturing at. The
+        # rollout entry points cover the record-then-rollout ordering; this is
+        # the same disagreement with the calls the other way round, refused
+        # before any dataset is created so a refusal leaves nothing on disk.
+        if error := self._validate_recording_start_rate(fps, "start_recording"):
+            return error
+
         _DatasetRecorder: Any = None
         _has_lerobot = False
         try:
