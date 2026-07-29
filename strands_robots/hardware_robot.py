@@ -1463,7 +1463,16 @@ class Robot(TeleopMixin, AgentTool):
                 # ``stop_task`` recorded. The latch survives that write, so it
                 # is what decides here - otherwise an interrupted task reports
                 # itself completed.
-                if self._stop_requested.is_set():
+                #
+                # ``_shutdown_event`` is the other latch that ends the loop, and
+                # it needs the same treatment for a reason no entry-point guard
+                # can cover: ``cleanup()`` sets it and only then calls
+                # ``stop_task()``, gated on ``status == RUNNING``. A shutdown
+                # landing while this task is still in ``CONNECTING`` therefore
+                # sets no stop latch, and the rollout goes on to finish bring-up
+                # and exit the loop on its first evaluation - reported as
+                # ``completed`` with 0 steps.
+                if self._stop_requested.is_set() or self._shutdown_event.is_set():
                     self._task_state.status = TaskStatus.STOPPED
                     logger.info(f"Task stopped: '{instruction}' after {self._task_state.step_count} steps")
                 else:
@@ -1517,6 +1526,61 @@ class Robot(TeleopMixin, AgentTool):
         if error := positive_finite_number_error(duration, "duration", method):
             return {"status": "error", "content": [{"text": error}]}
         return None
+
+    def _shutdown_error(self, method: str) -> dict[str, Any] | None:
+        """Refuse a rollout on a robot whose ``cleanup()`` has already run.
+
+        ``_shutdown_event`` is one of the control loop's exit conditions
+        (``not self._shutdown_event.is_set()``), so once ``cleanup()`` has set
+        it the loop body can never execute. Nothing checked it on the way in,
+        though, so a task started afterwards ran the whole bring-up and then
+        fell out of the loop on its first evaluation - the same shape as the
+        unusable ``duration`` that :meth:`_duration_error` refuses, and it
+        reported the same false ``completed``.
+
+        Bring-up is not free of side effects, which is what makes this a
+        refusal rather than a cosmetic status fix. Measured on a two-device arm
+        after ``cleanup()``:
+
+        - ``_connect_robot()`` re-opens the motors bus and warms every camera,
+          and ``cleanup()`` does not disconnect the robot, so the re-opened
+          devices stay open for the life of the process. The executor is
+          already shut down, so no later ``cleanup()`` can close them either.
+        - ``Policy.reset()`` is called, clearing the per-episode state (action
+          chunk cache, sampler RNG, KV-cache) of a policy object the caller may
+          still be driving elsewhere - the documented
+          ``run_policy(policy_object=...)`` reuse pattern.
+        - The policy is never queried and the arm is never commanded, yet
+          ``run_policy`` and the agent-tool ``execute`` action both returned
+          ``status="success"`` with ``steps: 0``, indistinguishable from a
+          rollout that really ran.
+
+        ``start_task`` did not report success - it raised
+        ``RuntimeError("cannot schedule new futures after shutdown")`` from the
+        executor submit, naming an executor internal rather than the robot. The
+        guard makes all three entry points refuse in the same tool shape, per
+        this module's contract that an action handler returns an error dict
+        instead of raising.
+
+        Args:
+            method: Public entry point name, used to prefix the message.
+
+        Returns:
+            A tool-shaped error naming the shut-down robot, or ``None`` when
+            the robot can still accept a rollout.
+        """
+        if not self._shutdown_event.is_set():
+            return None
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": f"{method}: {self.tool_name_str} has been shut down - cleanup() has already run, "
+                    f"so the control loop cannot execute a single step. Construct a new robot to drive "
+                    f"the arm again."
+                }
+            ],
+        }
 
     def _claim_task(self, instruction: str) -> dict[str, Any] | None:
         """Claim the motors bus for one rollout, or refuse a concurrent one.
@@ -1587,6 +1651,8 @@ class Robot(TeleopMixin, AgentTool):
         # budget is refused before the arm is commanded rather than after. The
         # check is stateless, so it runs before the claim - a rejected budget
         # must not take the bus away from a rollout that could still start.
+        if err := self._shutdown_error("execute_task"):
+            return err
         if err := self._duration_error(duration, "execute_task"):
             return err
         if err := self._claim_task(instruction):
@@ -1724,6 +1790,13 @@ class Robot(TeleopMixin, AgentTool):
         # Before the submit: the work happens on a background thread, so a
         # budget checked inside it would still report "Task started" to the
         # caller for a task that commands nothing (or never ends).
+        # Checked before the budget and before the claim: once ``cleanup()`` has
+        # run, the executor submit below raises ``RuntimeError`` from inside
+        # concurrent.futures, which names an executor internal rather than the
+        # robot. Refusing here reports it in the same tool shape as the other
+        # two entry points.
+        if err := self._shutdown_error("start_task"):
+            return err
         if err := self._duration_error(duration, "start_task"):
             return err
 
@@ -1816,6 +1889,8 @@ class Robot(TeleopMixin, AgentTool):
                 "status": "error",
                 "content": [{"text": "policy_object is required (for the provider+port path use start_task)"}],
             }
+        if err := self._shutdown_error("run_policy"):
+            return err
         if err := self._duration_error(duration, "run_policy"):
             return err
         if err := self._claim_task(instruction):
