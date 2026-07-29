@@ -50,7 +50,7 @@ robot.cleanup()
 | `start_task(instruction, policy_port, policy_host, policy_provider, duration)` | Async; returns immediately. |
 | `stop_task()` | Halt the current task. Covers a task still in `CONNECTING` (bring-up): the rollout is abandoned before the arm is commanded. |
 | `get_task_status()` | Returns `RobotTaskState` (status, step count, error). |
-| `cleanup()` | Stop tasks, close cameras, stop mesh. Terminal - see below. |
+| `cleanup()` | Stop tasks, disconnect the motors bus and cameras, stop mesh. Terminal - see below. |
 
 One rollout at a time: the arm has a single command bus, so `start_task` /
 `run_policy` / the `execute` action refuse while another task is in flight and
@@ -59,13 +59,22 @@ bus handshake plus per-camera warmup, seconds on a real arm - not just
 `RUNNING`. Call `stop_task()` to hand the bus over early.
 
 `cleanup()` (and `stop()`, which calls it) is terminal: it latches a shutdown,
-releases the task executor, and tears down the mesh and ROS bridges. There is no
-`restart`, so those same three entry points refuse permanently afterwards and
-name the shutdown, rather than admitting a rollout that would command the arm
-zero times. A rollout already in flight when the shutdown lands is reported
-`STOPPED`, not `COMPLETED` - a shutdown truncates a task exactly as
-`stop_task()` does, so its step count is a partial one. Construct a new `Robot`
-to run another task.
+releases the task executor, disconnects the robot's devices, and tears down the
+mesh and ROS bridges. There is no `restart`, so those same three entry points
+refuse permanently afterwards and name the shutdown, rather than admitting a
+rollout that would command the arm zero times. A rollout already in flight when
+the shutdown lands is reported `STOPPED`, not `COMPLETED` - a shutdown truncates
+a task exactly as `stop_task()` does, so its step count is a partial one.
+Construct a new `Robot` to run another task.
+
+The disconnect is part of that teardown, not something to do first: the serial
+port is exclusive, so releasing it is what lets the next `Robot` - in this
+process or another one - open the same `/dev/tty*`. It runs after the task
+executor has drained, so a rollout still finishing cannot command a port being
+closed underneath it, and it goes through the driver's own `disconnect()`, which
+is where the Feetech `disable_torque_on_disconnect` write lives. Each device is
+then closed independently, so one camera that will not close cannot keep the bus
+or the rest of the set open.
 
 ## AgentTool actions
 

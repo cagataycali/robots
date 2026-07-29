@@ -1,7 +1,7 @@
 """A failed connect must not leave a camera it already opened streaming.
 
-``strands_robots.hardware_robot.Robot._rollback_half_open_connect`` exists so a
-connect that fails partway can be retried. lerobot's robots open their devices
+``strands_robots.hardware_robot.Robot._close_open_devices`` exists so a connect
+that fails partway can be retried. lerobot's robots open their devices
 in sequence -- ``bus.connect()``, then ``for cam in self.cameras.values():
 cam.connect()`` -- and neither the loop nor the failing camera closes the
 cameras opened before it. Rolling back only the serial port therefore leaves
