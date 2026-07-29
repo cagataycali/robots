@@ -1016,22 +1016,57 @@ class Robot(TeleopMixin, AgentTool):
         return create_policy(policy_provider, **policy_config)
 
     def _rollback_half_open_connect(self) -> None:
-        """Close the half-open port a failed connect can leave behind.
+        """Close every device a failed connect can leave half-open.
 
         lerobot's ``MotorsBus.connect()`` opens the serial port *before* the
         motor handshake, so a failed handshake (e.g. an unpowered bus) leaves
         ``is_connected`` True while fire-and-forget writes to the dead bus
-        keep "succeeding". Closing the port makes the next attempt retry the
-        connect and keep surfacing the failure. ``disable_torque=False``: the
-        handshake already failed, so the default disconnect's torque write
-        would only raise again (before ``closePort``) and leave the port open.
+        keep "succeeding". A robot's ``connect()`` then opens its cameras one
+        at a time (``for cam in self.cameras.values(): cam.connect()``) with
+        no cleanup of its own, so a camera that fails to open leaves every
+        camera ahead of it in the set still streaming.
+
+        Either leak makes the *next* attempt unrecoverable rather than merely
+        failing. The retry raises ``DeviceAlreadyConnectedError`` on a device
+        that is perfectly healthy, which masks the device that actually
+        failed, and ``Robot.disconnect()`` cannot recover the state because it
+        is gated on ``is_connected`` -- false while any one device is still
+        shut. Closing every device that is open is what makes the next attempt
+        retry the connect and keep surfacing the real failure.
+
+        Each device is closed independently and best-effort: a rollback runs
+        from an ``except`` handler, so one close that raises must neither mask
+        the original connect error nor stop the remaining devices from being
+        closed.
         """
         bus = getattr(self.robot, "bus", None)
         try:
             if bus is not None and getattr(bus, "is_connected", False):
+                # disable_torque=False: the handshake already failed, so the
+                # default disconnect's torque write would only raise again
+                # (before ``closePort``) and leave the port open.
                 bus.disconnect(disable_torque=False)
         except Exception:  # noqa: BLE001 - best-effort cleanup
             logger.debug("%s post-connect-failure port close failed", self.tool_name_str)
+
+        # lerobot builds ``cameras`` with ``make_cameras_from_configs``, whose
+        # contract is ``dict[str, Camera]``; anything else is not a camera set
+        # this rollback can walk.
+        cameras = getattr(self.robot, "cameras", None)
+        for name, camera in cameras.items() if isinstance(cameras, Mapping) else ():
+            try:
+                # A camera that failed to open already released its own
+                # resources in ``connect()``; disconnecting it again would
+                # raise ``DeviceNotConnectedError``.
+                if getattr(camera, "is_connected", False):
+                    camera.disconnect()
+            except Exception:  # noqa: BLE001 - best-effort, and per camera so
+                # one stuck camera cannot keep the rest of the set open.
+                logger.debug(
+                    "%s post-connect-failure camera %s close failed",
+                    self.tool_name_str,
+                    name,
+                )
 
     async def _connect_robot(self) -> tuple[bool, str]:
         """Connect to robot hardware with proper error handling.
