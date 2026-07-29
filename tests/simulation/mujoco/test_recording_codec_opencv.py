@@ -78,7 +78,10 @@ def _record_episode(sim, dataset_dir, vcodec=None):
     kwargs = dict(
         repo_id="local/codec_demo",
         root=str(dataset_dir),
-        fps=30,
+        # Must equal the rollout's control_frequency (run_policy's default
+        # 50.0 Hz below): the recorder writes one frame per control step, so
+        # a differing fps only mislabels the timestamps.
+        fps=50,
         task="codec round-trip",
         overwrite=True,
         cameras=["base"],

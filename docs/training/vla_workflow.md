@@ -53,7 +53,8 @@ install_wbc_torque_control(sim, policy, "unitree_g1")
 sim.start_recording(
     repo_id="local/g1_locomotion",
     root="/tmp/g1_dataset",
-    fps=30, task="walk forward", overwrite=True,
+    # Matches control_frequency=50.0 below - the dataset rate IS the capture rate.
+    fps=50, task="walk forward", overwrite=True,
 )
 sim.run_policy(
     robot_name="unitree_g1",

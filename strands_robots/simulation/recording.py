@@ -70,20 +70,25 @@ def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | No
     return None
 
 
-def _resumed_dataset_fps(recorder: Any) -> int | None:
-    """Read the on-disk frame rate of a resumed dataset, or None if unavailable.
+def recorder_dataset_fps(recorder: Any) -> int | None:
+    """Read the frame rate of a live recorder's dataset, or None if unavailable.
 
     ``LeRobotDataset`` exposes ``fps`` directly and via ``meta.fps``; both are
     probed so a layout that only carries the metadata object still compares.
 
-    Only a positive WHOLE rate is reported. A dataset whose on-disk rate is
-    fractional cannot be appended to at any rate ``start_recording`` accepts
-    (it requires a positive whole number), so there is no value to advise the
-    caller to pass and the comparison is skipped rather than dead-ending a
-    resume - matching the best-effort posture of the rest of the schema check.
+    Only a positive WHOLE rate is reported. A dataset whose rate is fractional
+    cannot be recorded at any rate ``start_recording`` accepts (it requires a
+    positive whole number), so there is no value to advise the caller to pass
+    and the comparison is skipped rather than dead-ending the call - matching
+    the best-effort posture of the rest of the schema check.
+
+    Shared by the two places that must compare a dataset's declared rate
+    against another rate: the resume schema check (against the ``fps`` the
+    caller asked to append at) and :func:`dataset_rate_mismatch_error`
+    (against the ``control_frequency`` a rollout will actually capture at).
 
     Args:
-        recorder: The resumed ``DatasetRecorder``.
+        recorder: The ``DatasetRecorder`` whose dataset rate to read.
 
     Returns:
         The dataset frame rate as an int, or ``None`` when the dataset does not
@@ -97,6 +102,75 @@ def _resumed_dataset_fps(recorder: Any) -> int | None:
         if value > 0 and float(value).is_integer():
             return int(value)
     return None
+
+
+def dataset_rate_mismatch_error(method: str, recorder: Any, control_frequency: float) -> dict[str, Any] | None:
+    """Reject a rollout whose capture rate the active dataset cannot describe.
+
+    ``start_recording(fps=...)`` fixes the frame rate written into the dataset
+    metadata, and LeRobot derives every frame's timestamp from it positionally
+    (``timestamp = frame_index / fps``). The dataset recorder is driven once per
+    control step with **no decimation**, so the rate frames are actually
+    captured at is the rollout's ``control_frequency`` - which means a differing
+    ``fps`` cannot be honored, only mislabelled.
+
+    The two library defaults are exactly such a pair (``fps=30`` against
+    ``control_frequency=50.0``), so the documented record-then-rollout sequence
+    silently produced a distorted episode: frames captured 0.0200 s apart were
+    timestamped 0.0333 s apart, declaring a 1.30 s episode for a 0.78 s capture.
+    Nothing reported it - ``start_recording``, the rollout and
+    ``stop_recording`` all returned ``status="success"``.
+
+    That distortion is not cosmetic. It is the control period a policy trains
+    on, and :meth:`~strands_robots.simulation.base.SimEngine.replay_episode`
+    derives its per-frame physics budget from the dataset rate on the stated
+    invariant that "the recorded control frequency IS the dataset fps" - so a
+    mislabelled episode also replays at the wrong speed. Measured on a
+    position-servo arm, record then replay round-tripped to 0.0000 rad at
+    matching rates and to 0.0317 rad at the two defaults.
+
+    Refusing (rather than warning) matches the sibling rate guard in this
+    module: ``_verify_resume_schema`` already raises for an ``fps`` that
+    disagrees with the dataset on disk, pointing at the rate to pass instead.
+    This is the same disagreement one step earlier, and it is reported before
+    any frame is written so the caller loses nothing.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        recorder: The active ``DatasetRecorder``.
+        control_frequency: Rate the rollout will capture frames at. Assumed
+            already validated as a positive finite number by the caller's own
+            ``control_frequency`` guard.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming both rates and the
+        remedies, or ``None`` when the rates agree (or the dataset does not
+        report a usable whole rate, which must not block a valid rollout).
+    """
+    fps = recorder_dataset_fps(recorder)
+    if fps is None:
+        return None
+    rate = float(control_frequency)
+    if abs(rate - fps) < 1e-9:
+        return None
+
+    remedy = f"pass control_frequency={fps} to {method}()"
+    if rate.is_integer():
+        # ``fps`` must be a positive whole number, so only an integral capture
+        # rate has a matching dataset rate to advise re-recording at.
+        remedy += (
+            f", or record at the rollout's rate (stop_recording(), then "
+            f"start_recording(fps={int(rate)}, overwrite=True))"
+        )
+    text = (
+        f"{method}: the active recording declares {fps} fps but this rollout captures at "
+        f"control_frequency={rate:g} Hz. The dataset recorder writes one frame per control "
+        f"step with no decimation, so frames captured {1.0 / rate:.4f}s apart would be "
+        f"timestamped {1.0 / fps:.4f}s apart - a {rate / fps:.3f}x distortion of the "
+        f"episode duration, which a policy trains on as its control period and which "
+        f"replay_episode reproduces at the wrong speed. Align the two rates: {remedy}."
+    )
+    return {"status": "error", "content": [{"text": text}]}
 
 
 def _resume_schema_error(diffs: list[str]) -> str:
@@ -780,7 +854,7 @@ class DatasetRecordingMixin:
         # Frame rate first: it is carried by the dataset metadata rather than
         # the feature dict, so it is comparable even on a LeRobot layout whose
         # ``features`` mapping is missing (the early return below).
-        disk_fps = _resumed_dataset_fps(recorder)
+        disk_fps = recorder_dataset_fps(recorder)
         if disk_fps is not None and disk_fps != int(fps):
             diffs.append(
                 f"dataset fps differs: on-disk={disk_fps} vs requested={int(fps)} "

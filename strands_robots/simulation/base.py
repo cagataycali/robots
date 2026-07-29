@@ -1389,6 +1389,36 @@ class SimEngine(ABC):
             return {"status": "error", "content": [{"text": error}]}
         return None
 
+    def _validate_recording_rate(self, control_frequency: float, method: str) -> dict[str, Any] | None:
+        """Reject a rollout whose rate the active dataset recording cannot describe.
+
+        Instance method (not a ``@staticmethod`` like the other numeric guards)
+        because the value it compares against lives on the engine: the rate is
+        only knowable once a recording is open, which happens one call earlier
+        in ``start_recording``. Backends that cannot record inherit
+        :meth:`_is_recording` returning ``False`` and are unaffected, so this
+        one call site per rollout entry point covers every backend without each
+        needing its own copy.
+
+        Args:
+            control_frequency: Rate the rollout will capture frames at. Validate
+                it with :meth:`_validate_positive_frequency` first, so a
+                non-finite value is reported as the parameter error it is
+                rather than as a rate disagreement.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            A structured ``{"status": "error", ...}`` dict, or ``None`` when no
+            recording is active or the rates agree. See
+            :func:`~strands_robots.simulation.recording.dataset_rate_mismatch_error`
+            for the contract and why a mismatch is refused rather than warned.
+        """
+        if not self._is_recording():
+            return None
+        from strands_robots.simulation.recording import dataset_rate_mismatch_error
+
+        return dataset_rate_mismatch_error(method, self._active_recorder(), control_frequency)
+
     @staticmethod
     def _validate_video_config(video: Any, method: str) -> dict[str, Any] | None:
         """Reject a ``video`` recording config the rollout cannot honor.
@@ -1686,6 +1716,11 @@ class SimEngine(ABC):
         if err := self._validate_action_horizon(action_horizon, "run_policy"):
             return err
         if err := self._validate_control_substeps(control_substeps, "run_policy"):
+            return err
+        # Both rates are known only here: the dataset rate was fixed by
+        # start_recording one call earlier. Checked before any policy is
+        # built so a rate disagreement costs no weight download and no frame.
+        if err := self._validate_recording_rate(control_frequency, "run_policy"):
             return err
 
         # Compile the stop_when early-return clause BEFORE any policy is
@@ -2557,6 +2592,11 @@ class SimEngine(ABC):
             return err
         if err := self._validate_control_substeps(control_substeps, "eval_policy"):
             return err
+        # Both rates are known only here: the dataset rate was fixed by
+        # start_recording one call earlier. Checked before any policy is
+        # built so a rate disagreement costs no weight download and no frame.
+        if err := self._validate_recording_rate(control_frequency, "eval_policy"):
+            return err
         # Coerce to a plain Python float now the value is validated: a NumPy
         # scalar (accepted above via numbers.Real) flows into 1 / control_frequency
         # and time.sleep(...) downstream, and time.sleep rejects a numpy.float32
@@ -2740,6 +2780,11 @@ class SimEngine(ABC):
         if err := self._validate_positive_frequency(control_frequency, "evaluate_benchmark"):
             return err
         if err := self._validate_control_substeps(control_substeps, "evaluate_benchmark"):
+            return err
+        # Both rates are known only here: the dataset rate was fixed by
+        # start_recording one call earlier. Checked before any policy is
+        # built so a rate disagreement costs no weight download and no frame.
+        if err := self._validate_recording_rate(control_frequency, "evaluate_benchmark"):
             return err
         # Coerce to a plain Python float now the value is validated: a NumPy
         # scalar (accepted above via numbers.Real) flows into 1 / control_frequency

@@ -55,7 +55,8 @@ from strands_robots.training import create_trainer, TrainSpec
 sim = Robot("so100", mesh=False)
 sim.add_camera(name="front", position=[0.5, 0.0, 0.4], target=[0.2, 0, 0.05])
 sim.start_recording(repo_id="local/demo", root="/tmp/demo_ds",
-                    fps=30, task="pick up the red cube", overwrite=True)
+                    # fps must equal the rollout's control_frequency (default 50.0)
+                    fps=50, task="pick up the red cube", overwrite=True)
 sim.run_policy(robot_name="so100", policy_object=MockPolicy(),
                instruction="pick up the red cube", n_steps=60)
 sim.stop_recording()        # writes a LeRobotDataset v3 at /tmp/demo_ds

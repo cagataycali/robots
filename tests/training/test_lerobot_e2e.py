@@ -28,7 +28,10 @@ def recorded_dataset(tmp_path_factory):
     start = sim.start_recording(
         repo_id="local/e2e",
         root=root,
-        fps=30,
+        # Must equal the rollout's control_frequency (run_policy's default
+        # 50.0 Hz below): the recorder captures one frame per control step, so
+        # a differing rate would only mislabel every recorded timestamp.
+        fps=50,
         task="pick up the red cube",
         overwrite=True,
     )

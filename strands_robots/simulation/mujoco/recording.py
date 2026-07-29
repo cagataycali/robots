@@ -82,9 +82,11 @@ class RecordingMixin(DatasetRecordingMixin):
             fps: Dataset frame rate recorded in the LeRobot metadata. Must be a
                 positive whole number - a fractional or non-numeric rate cannot
                 be written and is rejected up front rather than aborting the
-                rollout behind a ``status="success"`` return. Set it to the
-                ``run_policy`` ``control_frequency`` so recorded timestamps
-                match the cadence frames were captured at. When an existing
+                rollout behind a ``status="success"`` return. It must EQUAL the
+                rollout's ``control_frequency``: the recorder captures one frame
+                per control step and never decimates, so a differing rate cannot
+                be honored, only mislabelled, and every rollout entry point
+                refuses the disagreement before writing a frame. When an existing
                 dataset is RESUMED (``overwrite=False``), it must equal that
                 dataset's on-disk rate: a resumed dataset keeps the rate it was
                 created at, so a differing request is refused with the on-disk

@@ -3852,6 +3852,11 @@ class MuJoCoSimEngine(
             return err
         if err := self._validate_policy_mapping(policy_kwargs, "policy_kwargs", "start_policy"):
             return err
+        # Validate the rate against the open recording synchronously, before
+        # the executor submit below - a refusal after submit would report
+        # "started" to a caller whose rollout cannot be recorded correctly.
+        if err := self._validate_recording_rate(control_frequency, "start_policy"):
+            return err
 
         # Concurrent multi-robot policies run on disjoint ctrl slices (physics
         # serialized by _lock). For SYNCHRONIZED multi-robot *recording* (both
@@ -4217,6 +4222,8 @@ class MuJoCoSimEngine(
         # duration path to compute total_steps = int(duration * frequency) = 0
         # and report a rollout that never ran as a success.
         if err := self._validate_positive_frequency(control_frequency, "run_multi_policy"):
+            return err
+        if err := self._validate_recording_rate(control_frequency, "run_multi_policy"):
             return err
         duration, n_steps, horizon_error = self._resolve_horizon(
             n_steps, max_steps, control_frequency, duration, "run_multi_policy"

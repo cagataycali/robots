@@ -82,7 +82,9 @@ def _record(sim, dataset_dir, vcodec=None):
     kwargs = dict(
         repo_id="local/decode_fidelity",
         root=str(dataset_dir),
-        fps=30,
+        # Matches the rollout's control_frequency (run_policy's default 50.0 Hz):
+        # the dataset rate IS the capture rate, with no decimation.
+        fps=50,
         task="decode fidelity",
         overwrite=True,
         cameras=[_CAM],

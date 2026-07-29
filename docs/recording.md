@@ -8,7 +8,7 @@ description: DatasetRecorder - LeRobot v3 dataset writer used by both Simulation
 from strands_robots import Robot
 
 sim = Robot("so100")
-sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=30)
+sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=50)
 sim.run_policy(robot_name="so100", instruction="pick up the cube",
                policy_provider="mock", duration=10.0)
 sim.stop_recording()
@@ -16,6 +16,30 @@ sim.stop_recording()
 ```
 
 `start_recording` requires `[lerobot]`. Without it, use `start_cameras_recording` for plain MP4.
+
+## `fps` must equal the rollout's `control_frequency`
+
+The recorder captures **one frame per control step and never decimates**, so the
+rate frames arrive at is the rollout's `control_frequency` - and LeRobot derives
+every timestamp from the dataset's declared `fps` positionally
+(`timestamp = frame_index / fps`). A differing `fps` therefore cannot be
+honored, only mislabelled, so it is refused:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", task="t", fps=30)
+sim.run_policy(robot_name="so100", policy_provider="mock")   # default 50.0 Hz
+# -> "run_policy: the active recording declares 30 fps but this rollout captures
+#     at control_frequency=50 Hz. [...] a 1.667x distortion of the episode
+#     duration [...] Align the two rates: pass control_frequency=30 to
+#     run_policy(), or record at the rollout's rate"
+```
+
+The refusal lands before any frame is written, so nothing is lost - pass either
+rate. It matters beyond the label: that per-frame interval is the control period
+a policy trains on, and `replay_episode` derives its per-frame physics budget
+from the dataset rate, so a mislabelled episode also replays at the wrong speed.
+To record at a lower rate than you control at, run the rollout at that rate -
+there is no decimating recorder.
 
 ## Selecting which cameras to record
 
@@ -33,7 +57,7 @@ sim.add_camera(name="camera1", ...)
 sim.add_camera(name="camera2", ...)
 sim.add_camera(name="camera3", ...)
 sim.start_recording(
-    repo_id="user/my_dataset", task="pick up the cube", fps=30,
+    repo_id="user/my_dataset", task="pick up the cube", fps=50,
     cameras=["camera1", "camera2", "camera3"],   # drops the implicit 'default'
 )
 ```
@@ -142,7 +166,7 @@ flushes a dataset episode boundary after each, and resets the sim between
 episodes for you:
 
 ```python
-sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=30)
+sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=50)
 sim.run_policy(robot_name="so100", instruction="pick up the cube",
                policy_provider="mock", n_steps=60, n_episodes=20)
 sim.stop_recording()
@@ -162,7 +186,7 @@ randomization, conditional logic between episodes), drive the loop yourself and
 call `save_episode()` after each rollout to flush it as its own episode:
 
 ```python
-sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=30)
+sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=50)
 for _ in range(20):
     sim.reset()
     sim.run_policy(robot_name="so100", instruction="pick up the cube",
@@ -184,7 +208,7 @@ episode per rollout - the explicit `save_episode()` is optional when you reset
 between rollouts:
 
 ```python
-sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=30)
+sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=50)
 for _ in range(20):
     sim.run_policy(robot_name="so100", instruction="pick up the cube",
                    policy_provider="mock", n_steps=60)
