@@ -3906,6 +3906,29 @@ class MuJoCoSimEngine(
 
         lock = self._lock
 
+        # Action columns this rollout is responsible for: the driven robot's own
+        # actuators. A declared column the policy never produced cannot be written
+        # as a placeholder without persisting a command nobody issued, so
+        # ``add_frame`` refuses it.
+        #
+        # Resolved on the first recorded frame and cached, rather than up front:
+        # ``robot_action_keys`` is explicitly best-effort for the runner's
+        # fail-fast probe (a backend quirk or a mid-rollout teardown may make it
+        # raise, and that must not mask the primary "robot has not moved" signal),
+        # so the hook must not call it for a rollout that is not recording. Where a
+        # recording IS attached the keys are load-bearing - without them the frame
+        # cannot be checked - so a raise there correctly fails the recording.
+        action_key_cache: dict[bool, list[str]] = {}
+
+        def _required_action_keys(prefixed: bool) -> list[str]:
+            """Action columns this frame owes the recorder, resolved once."""
+            cached = action_key_cache.get(prefixed)
+            if cached is None:
+                keys = self.robot_action_keys(robot_name)
+                cached = [f"{robot_name}__{key}" for key in keys] if prefixed else list(keys)
+                action_key_cache[prefixed] = cached
+            return cached
+
         def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             # Cooperative cancellation: stop_policy flips this flag.
             if not robot.policy_running:
@@ -3949,9 +3972,19 @@ class MuJoCoSimEngine(
                                 for k, v in observation.items()
                             }
                             act_keyed = {f"{robot_name}__{k}": v for k, v in action.items()}
-                            rec.add_frame(observation=obs_keyed, action=act_keyed, task=instruction)
+                            rec.add_frame(
+                                observation=obs_keyed,
+                                action=act_keyed,
+                                task=instruction,
+                                required_action_keys=_required_action_keys(True),
+                            )
                         else:
-                            rec.add_frame(observation=observation, action=action, task=instruction)
+                            rec.add_frame(
+                                observation=observation,
+                                action=action,
+                                task=instruction,
+                                required_action_keys=_required_action_keys(False),
+                            )
 
         return _hook
 
@@ -4225,6 +4258,15 @@ class MuJoCoSimEngine(
         multi_robot = len(self._world.robots) > 1
         recorder = self._world._backend_state.get("dataset_recorder")
         recording = bool(self._world._backend_state.get("recording", False)) and recorder is not None
+        # Every robot driven here contributes to the one merged frame, so the
+        # merged action owes a value for each of their actuators. Resolved once
+        # rather than per frame, and only when a recorder will consume it (see the
+        # note on ``robot_action_keys`` being best-effort in _make_run_policy_hook).
+        merged_required_action_keys = (
+            [f"{rname}__{key}" if multi_robot else key for rname in policies for key in self.robot_action_keys(rname)]
+            if recording
+            else []
+        )
 
         # Whether ANY policy needs images (renders are expensive; skip if none
         # need them AND we're not recording - recording always needs frames).
@@ -4358,7 +4400,12 @@ class MuJoCoSimEngine(
                     # and 3, and merged_obs/merged_act are plain copies, so holding
                     # the physics lock across frame writeout would needlessly starve
                     # other lock holders (viewer sync, concurrent tool reads).
-                    recorder.add_frame(observation=merged_obs, action=merged_act, task=task)
+                    recorder.add_frame(
+                        observation=merged_obs,
+                        action=merged_act,
+                        task=task,
+                        required_action_keys=merged_required_action_keys,
+                    )
 
                 step_count += 1
                 for rname in policies:

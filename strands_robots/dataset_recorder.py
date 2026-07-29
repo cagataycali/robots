@@ -25,6 +25,7 @@ import json
 import logging
 import re
 import sys
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -465,6 +466,65 @@ def _prepare_create_target(dataset_dir: Path, *, overwrite: bool) -> None:
     )
 
 
+def unrecordable_action_columns_error(
+    action: Mapping[str, Any],
+    declared: Sequence[str],
+    required: Sequence[str] | None,
+) -> str | None:
+    """Reject a frame whose action omits a declared column the caller requires.
+
+    A LeRobot action column must hold the command that was issued at that step.
+    When the dataset schema declares a column the frame's action dict does not
+    carry, there is no such command, and every candidate placeholder is wrong:
+
+    * ``0.0`` is itself a command wherever the action space is absolute
+      position - a LeRobot ``<motor>.pos`` follower, a MuJoCo position actuator
+      - so the joint TRAVELS to zero at servo speed on replay rather than
+      staying where the un-commanded joint actually stayed.
+    * A joint's measured position is in different units from a normalized or
+      tendon-driven actuator's command, so substituting it moves those
+      actuators too.
+    * The command standing on the actuator cannot be read back, because the
+      action-to-``ctrl`` mapping is deliberately not injective (a normalized
+      open/close fraction and a raw tendon-unit command can share one ``ctrl``).
+
+    So the frame is refused instead of persisted, which keeps the recorded
+    action columns equal to what the policy issued and keeps ``replay_episode``
+    a faithful round trip.
+
+    ``required`` scopes the check to the columns the caller knows must come from
+    this frame - typically the action keys of the robot being driven. Columns
+    outside it (in a shared scene, the robots this rollout does not drive) are
+    not this frame's to supply and are left alone.
+
+    Args:
+        action: The frame's action dict, keyed as the dataset schema spells it.
+        declared: Action column names declared by the dataset schema.
+        required: Column names this frame must supply, or ``None`` to skip the
+            check entirely (the historical behaviour).
+
+    Returns:
+        An actionable message naming the missing columns, or ``None`` when every
+        required column is present.
+    """
+    if required is None:
+        return None
+    declared_set = set(declared)
+    missing = [key for key in required if key in declared_set and key not in action]
+    if not missing:
+        return None
+    return (
+        f"Recorded action column(s) {missing} have no value in this frame's action, so the "
+        "recording would persist a command that was never issued. No placeholder is correct: "
+        "0.0 is a 'travel to zero' command for an absolute-position actuator, a joint's measured "
+        "position is in different units from a normalized or tendon actuator's command, and the "
+        "command standing on the actuator cannot be read back (the action-to-ctrl mapping is not "
+        "injective). Record with a policy that produces a value for every declared action column "
+        "- an action vector narrower than the actuator list is reported by diagnose_action_dim - "
+        "or record a schema covering only the actuators it drives."
+    )
+
+
 class DatasetRecorder:
     """Bridge between strands-robots control loops and LeRobotDataset.
 
@@ -889,6 +949,7 @@ class DatasetRecorder:
         action: dict[str, Any],
         task: str | None = None,
         camera_keys: list[str] | None = None,
+        required_action_keys: Sequence[str] | None = None,
     ) -> None:
         """Add a single control-loop frame to the dataset.
 
@@ -900,6 +961,17 @@ class DatasetRecorder:
             action: Action dict (joint_name → float)
             task: Task description (uses default if None)
             camera_keys: Which keys in observation are camera images
+            required_action_keys: Action column names this frame must
+                supply a value for - typically the action keys of the robot
+                being driven. A declared column in this set that ``action``
+                omits raises ``ValueError`` rather than being written as a
+                fabricated command; see
+                :func:`unrecordable_action_columns_error`. ``None`` skips
+                the check.
+
+        Raises:
+            ValueError: A column in ``required_action_keys`` is declared by
+                the dataset schema but absent from ``action``.
         """
         if self._closed:
             return
@@ -952,15 +1024,26 @@ class DatasetRecorder:
                 frame["observation.state"] = np.array(state_vals, dtype=np.float32)
 
         # Action → flattened vector
-        # Use feature schema ordering for actions too.
+        # Use feature schema ordering for actions too. Resolved before the
+        # `if action:` guard so a frame carrying NO action for a column the
+        # caller requires is refused rather than silently skipped. The sorted()
+        # fallback still only runs for a non-empty action, so an observation-only
+        # frame cannot cache an empty key list for the rest of the episode.
+        if self._cached_action_keys is None:
+            feat = self.dataset.features.get("action", {})
+            action_names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
+            if action_names:
+                self._cached_action_keys = list(action_names)
+            elif action:
+                self._cached_action_keys = sorted(action.keys())
+
+        gap = unrecordable_action_columns_error(action, self._cached_action_keys or [], required_action_keys)
+        if gap is not None:
+            raise ValueError(gap)
+
         if action:
             action_vals = []
-            if self._cached_action_keys is None:
-                feat = self.dataset.features.get("action", {})
-                action_names = feat.get("names", []) if isinstance(feat, dict) else getattr(feat, "names", [])
-                self._cached_action_keys = action_names if action_names else sorted(action.keys())
-
-            for k in self._cached_action_keys:
+            for k in self._cached_action_keys or []:
                 v = action.get(k)
                 if v is None:
                     action_vals.append(0.0)

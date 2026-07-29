@@ -24,3 +24,21 @@ whichever consequence is in effect rather than one that was never true.
 index mapping, so the rule now lives once in
 `strands_robots.policies.align_action_values` alongside `resolve_chunk_length`,
 with a parity test pinning that the two providers agree.
+
+Omitting the actuator moves the same question to the recording path, where a
+LeRobot dataset declares one action column per actuator: `DatasetRecorder`
+defaulted a column the action dict did not carry to `0.0`, so a recorded rollout
+persisted commands that were never issued, and `replay_episode` re-issued them -
+reintroducing the travel-to-zero hazard through record then replay. Measured on
+a Panda, a rollout driving 6 of 8 actuators recorded `actuator8` (a `[0, 255]`
+tendon gripper) as `0.0` for every frame; replaying that episode drove an open
+gripper from a 0.0800 m gap to 0.0000 m.
+
+No placeholder is correct for such a column, so the frame is refused instead of
+recorded. `0.0` is a command; a joint's measured position is in different units
+from a normalized or tendon actuator's command (the Panda gripper's 0.0400 m gap
+replays as 4% open); and the command standing on the actuator cannot be read
+back, because the action-to-`ctrl` mapping is deliberately not injective. Every
+backend's recording hook now declares the action columns the driven robot owes,
+so the refusal is scoped: in a shared scene, the robots a rollout does not drive
+are still not its to report.

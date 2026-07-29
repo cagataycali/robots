@@ -466,6 +466,29 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         robot.policy_steps = 0
         multi_robot = len(self._robots) > 1
 
+        # Action columns this rollout is responsible for: the driven robot's own
+        # actuators. A declared column the policy never produced cannot be written
+        # as a placeholder without persisting a command nobody issued, so
+        # ``add_frame`` refuses it.
+        #
+        # Resolved on the first recorded frame and cached, rather than up front:
+        # ``robot_action_keys`` is explicitly best-effort for the runner's
+        # fail-fast probe (a backend quirk or a mid-rollout teardown may make it
+        # raise, and that must not mask the primary "robot has not moved" signal),
+        # so the hook must not call it for a rollout that is not recording. Where a
+        # recording IS attached the keys are load-bearing - without them the frame
+        # cannot be checked - so a raise there correctly fails the recording.
+        action_key_cache: dict[bool, list[str]] = {}
+
+        def _required_action_keys(prefixed: bool) -> list[str]:
+            """Action columns this frame owes the recorder, resolved once."""
+            cached = action_key_cache.get(prefixed)
+            if cached is None:
+                keys = self.robot_action_keys(robot_name)
+                cached = [f"{robot_name}__{key}" for key in keys] if prefixed else list(keys)
+                action_key_cache[prefixed] = cached
+            return cached
+
         def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             robot.policy_steps = step + 1
             if not state.get("recording", False):
@@ -505,10 +528,20 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 obs = {f"{robot_name}__{k}": v for k, v in scalars.items()}
                 obs.update(images)
                 act = {f"{robot_name}__{k}": v for k, v in action.items()}
-                rec.add_frame(observation=obs, action=act, task=instruction)
+                rec.add_frame(
+                    observation=obs,
+                    action=act,
+                    task=instruction,
+                    required_action_keys=_required_action_keys(True),
+                )
             else:
                 obs = dict(scalars)
                 obs.update(images)
-                rec.add_frame(observation=obs, action=action, task=instruction)
+                rec.add_frame(
+                    observation=obs,
+                    action=action,
+                    task=instruction,
+                    required_action_keys=_required_action_keys(False),
+                )
 
         return _hook
