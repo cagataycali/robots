@@ -4215,8 +4215,8 @@ class _LiberoOSCController:
 
         # Cache mujoco module reference for the substep loop. Lazy import
         # is required because the OSC controller path is only exercised
-        # under the `[sim-libero]` extra; the top-level adapter import
-        # must work without mujoco available.
+        # under the ``strands-robots[benchmark-libero]`` extra; the top-level
+        # adapter import must work without mujoco available.
         import mujoco as mj
 
         n_arm = len(self.arm_actuator_ids)

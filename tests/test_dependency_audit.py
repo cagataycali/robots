@@ -9,7 +9,9 @@ both the live ``pyproject.toml`` and that the reusable audit in
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -470,3 +472,188 @@ def test_ik_install_hints_name_only_declared_extras() -> None:
                     closure = _extra_closure(name)
                     missing = [pkg for pkg in _IK_SOLVER_PACKAGES if pkg not in closure]
                     assert not missing, f"{label} hint points at [{name}], which does not provide {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Every extra a reader is told to install must be an extra that exists.
+#
+# History: docs/policies/vera.md led its install section with
+# ``pip install 'strands-robots[vera]'`` -- an extra that pyproject.toml explains
+# at length can never exist, because VERA ships only as a git repository and PyPI
+# rejects metadata carrying a VCS reference. Two further sites named ``[isaac]``
+# and ``[sim-libero]`` for what are really ``sim-isaac`` and ``benchmark-libero``.
+#
+# The failure mode is silent in the worst direction: pip does NOT fail on an
+# unknown extra. ``pip install 'strands-robots[vera]'`` exits 0, prints one
+# ``WARNING: strands-robots does not provide the extra 'vera'``, and installs the
+# base package with none of the dependencies the reader was promised. The reader
+# sees a successful install, then hits an ImportError somewhere unrelated-looking
+# with nothing tying it back to the install step. That makes an extra name in an
+# install hint load-bearing, and a typo in one is not cosmetic.
+#
+# Two guards, one per surface that hands a name to a user: written instructions,
+# and the runtime ``require_optional(extra=...)`` messages.
+# ---------------------------------------------------------------------------
+
+# A qualified mention -- ``strands-robots[NAME]``. Only the qualified form is
+# swept: a bare ``[wbc]`` in prose is ambiguous, because lerobot's own extras
+# (``[smolvla]``, ``[pi]``, ``[dataset]``) are written exactly the same way, so
+# requiring the distribution name keeps the sweep free of false positives.
+_EXTRA_MENTION_RE = re.compile(r"strands[-_]robots\[([^\]\s]+)\]")
+
+# A token that can be an extra name at all. Anything else caught by the mention
+# regex is a template hole rather than an instruction -- ``[{extra}]`` in the
+# message formatters, ``[<extra>]`` in a docstring, ``[...]`` as prose ellipsis --
+# and naming a hole is not naming a missing extra.
+_EXTRA_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# Trees that can carry an install instruction. CHANGELOG.md and changelog.d/ are
+# deliberately absent, not overlooked: the log is a historical record, so an entry
+# that fixes an extra name has to be free to quote the broken name, and an entry
+# written while an extra existed must not be rewritten when it is later renamed.
+_EXTRA_SCAN_ROOTS = ("strands_robots", "tests", "tests_integ", "examples", "docs", "scripts")
+_EXTRA_SCAN_FILES = ("README.md", "pyproject.toml")
+
+# Skipped by suffix rather than selected by it, so a mention in a file type nobody
+# thought of -- a Dockerfile, a notebook, a compose file -- is still swept.
+_BINARY_SUFFIXES = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".ico",
+        ".svg",
+        ".pdf",
+        ".mp4",
+        ".webm",
+        ".mov",
+        ".zip",
+        ".gz",
+        ".tar",
+        ".whl",
+        ".npy",
+        ".npz",
+        ".pt",
+        ".pth",
+        ".onnx",
+        ".safetensors",
+        ".usd",
+        ".usda",
+        ".usdc",
+        ".stl",
+        ".obj",
+        ".dae",
+        ".bin",
+        ".so",
+        ".dylib",
+        ".pyc",
+        ".woff",
+        ".woff2",
+        ".ttf",
+    }
+)
+
+_EXTRA_MENTION_ALLOWED = {
+    # This test states the rule, so it quotes the broken names the rule forbids.
+    "tests/test_dependency_audit.py",
+    # Exercises the require_optional message formatter with a deliberately
+    # synthetic extra ("my-extra"). It asserts the formatting, not the name.
+    "tests/test_utils.py",
+}
+
+
+def _declared_extras() -> set[str]:
+    """Normalized names in ``[project.optional-dependencies]``."""
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    return {_normalize_extra(name) for name in data["project"]["optional-dependencies"]}
+
+
+def _normalize_extra(name: str) -> str:
+    """Normalize an extra the way PEP 685 requires a resolver to compare them.
+
+    ``strands-robots[Sim_Isaac]`` really does install ``sim-isaac``, so comparing
+    raw spelling would report a working command as broken.
+    """
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _iter_scanned_files() -> list[Path]:
+    files = [_REPO_ROOT / name for name in _EXTRA_SCAN_FILES]
+    for root in _EXTRA_SCAN_ROOTS:
+        files.extend(
+            path
+            for path in (_REPO_ROOT / root).rglob("*")
+            if path.is_file() and path.suffix.lower() not in _BINARY_SUFFIXES and "__pycache__" not in path.parts
+        )
+    return [path for path in files if path.exists()]
+
+
+def test_written_install_hints_name_only_declared_extras() -> None:
+    """Every ``strands-robots[...]`` in the tree must name a declared extra.
+
+    An undeclared name here is an instruction that installs nothing and still
+    exits 0, so the reader is stranded by a command that reported success.
+    """
+    extras = _declared_extras()
+    offenders: list[str] = []
+    mentions = 0
+    for path in _iter_scanned_files():
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        if rel in _EXTRA_MENTION_ALLOWED:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
+            for match in _EXTRA_MENTION_RE.finditer(line):
+                for raw in (part.strip() for part in match.group(1).split(",")):
+                    if not _EXTRA_NAME_RE.match(raw):
+                        continue
+                    mentions += 1
+                    if _normalize_extra(raw) not in extras:
+                        offenders.append(f"{rel}:{lineno} names [{raw}] -- {line.strip()[:100]}")
+    # The sweep is only meaningful if it is actually reading the tree.
+    assert mentions > 100, f"the extras sweep matched only {mentions} mentions; the scan roots have drifted"
+    assert not offenders, (
+        "these sites tell a reader to install an extra that does not exist; pip exits 0 on an "
+        "unknown extra and installs none of the dependencies, so the failure surfaces later and "
+        f"misattributed. Declared extras: {sorted(extras)}\n" + "\n".join(offenders)
+    )
+
+
+def test_require_optional_call_sites_name_declared_extras() -> None:
+    """``require_optional(extra=...)`` must name a declared extra.
+
+    The value is interpolated straight into the ImportError a user sees
+    (``pip install strands-robots[<extra>]``), so an undeclared name here hands
+    out a no-op install command at the exact moment the user needs a working one.
+    """
+    extras = _declared_extras()
+    offenders: list[str] = []
+    checked = 0
+    for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name not in {"require_optional", "require_optionals"}:
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "extra" or not isinstance(keyword.value, ast.Constant):
+                    continue
+                value = keyword.value.value
+                if not isinstance(value, str):
+                    continue
+                checked += 1
+                if _normalize_extra(value.strip()) not in extras:
+                    rel = path.relative_to(_REPO_ROOT).as_posix()
+                    offenders.append(f"{rel}:{node.lineno} passes extra={value!r}")
+    assert checked > 20, f"only {checked} literal extra= call sites found; the audit has stopped seeing them"
+    assert not offenders, (
+        "these require_optional call sites name an extra that does not exist, so the ImportError "
+        "they raise tells the user to run an install that silently does nothing. Declared extras: "
+        f"{sorted(extras)}\n" + "\n".join(offenders)
+    )

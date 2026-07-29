@@ -195,8 +195,18 @@ VERA_LIVE=1 hatch run test-integ tests_integ/policies/vera/
 ## Install
 
 ```bash
-pip install 'strands-robots[vera]'        # provider + the VERA git dep (subprocess mode)
-pip install 'strands-robots[vera-sim]'    # + MimicGen sim deps for the example (also pulls the experimental PushT env)
+# 1. Provider client deps. There is no `vera` extra: the provider needs only a
+#    msgpack + websocket client, and VERA itself is distributed as a git
+#    repository, which no extra can pull (PyPI rejects package metadata
+#    carrying a VCS reference).
+pip install strands-robots websockets msgpack 'numpy>=1.24'
+
+# 2. VERA itself, for the managed-server (subprocess) mode.
+pip install 'vera @ git+https://github.com/sizhe-li/VERA.git'
+
+# 3. Only for the MimicGen sim example: MimicGen sim deps (also pulls the
+#    experimental PushT env).
+pip install 'strands-robots[vera-sim]'
 ```
 
 > **Note on MimicGen.** The `vera-sim` extra does **not** install NVlabs

@@ -223,7 +223,8 @@ def main() -> None:
     available, reason = IsaacSimulation.is_available()
     if not available:
         raise RuntimeError(
-            f"Isaac Sim is not available on this host: {reason}. " "Install Isaac Sim (RTX GPU) and the [isaac] extra."
+            f"Isaac Sim is not available on this host: {reason}. "
+            "Install Isaac Sim (RTX GPU) and the strands-robots[sim-isaac] extra."
         )
 
     from examples.isaac_gs.compositor import IsaacHybridCompositor
