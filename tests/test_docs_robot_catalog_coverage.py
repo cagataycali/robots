@@ -9,7 +9,7 @@ claimed "40+", "50+" and "68" robots for a registry holding 72, and two
 hardware-only robots (``hope_jr_hand``, ``lekiwi_client``) were absent from
 every catalog table, making them undiscoverable to anyone reading the docs.
 
-Three guards, each with a distinct job:
+Four guards, each with a distinct job:
 
 * :func:`test_every_registered_robot_appears_in_a_catalog_table` and its inverse
   pin *membership* - the catalog lists exactly the registered names.
@@ -18,6 +18,9 @@ Three guards, each with a distinct job:
 * :func:`test_no_robot_count_claim_outside_the_known_sites` is the net that
   catches a *new* claim added somewhere none of the above look. The tests above
   are precise about the sites they know; this one refuses an unknown number.
+* :func:`test_the_alias_column_lists_every_alias_the_registry_accepts` pins the
+  catalog's *Aliases* column cell by cell, so a name ``resolve_name()`` accepts
+  cannot be missing from the row that advertises the robot.
 
 Counts are derived from ``robots.json`` directly rather than from
 :func:`~strands_robots.registry.list_robots`, because ``list_robots()`` also
@@ -25,9 +28,13 @@ returns robots registered at runtime through ``register_robot()`` and from the
 user registry on disk, neither of which the docs describe. This mirrors the
 reasoning in ``tests/test_docs_policy_coverage.py``.
 
-Aliases are counted but not cross-checked row by row: the catalog's "Aliases"
-column shows only the first few for readability, which is a presentation choice
-this guard deliberately leaves alone.
+The alias column is a *faithful projection* of ``robots.json``: every alias the
+entry declares, in the order the entry declares it, joined with ", " (or ``-``
+when the entry declares none). It used to show only the first three, silently,
+which hid 19 accepted names -- including ``franka_panda``, one of the first
+spellings a reader guesses. Mirroring the registry's own order rather than
+sorting keeps the projection transformation-free, so the expected cell can be
+quoted verbatim in the failure message.
 """
 
 from __future__ import annotations
@@ -91,6 +98,37 @@ def _catalog_rows() -> dict[str, str]:
                 assert name not in listed, f"{name} is listed twice ({listed.get(name)}, {page})"
                 listed[name] = page
     return listed
+
+
+def _catalog_alias_cells() -> dict[str, str]:
+    """Return each catalogued robot's raw *Aliases* cell, keyed by robot name.
+
+    Reads only the ``## Catalog`` table, and asserts each row has the expected
+    four columns so a stray ``|`` inside a cell fails here rather than silently
+    shifting which text is read as the alias list.
+    """
+    cells: dict[str, str] = {}
+    for page in CATALOG_PAGES:
+        text = (DOCS / "robots" / page).read_text(encoding="utf-8")
+        section = re.search(r"\n## Catalog\b(.*?)(?:\n## |\Z)", text, re.DOTALL)
+        assert section, f"{page} is missing a '## Catalog' section"
+        for line in section.group(1).splitlines():
+            row = re.match(r"\| `([^`]+)` \|", line)
+            if not row:
+                continue
+            columns = line.split("|")
+            assert len(columns) == 6, (
+                f"{page}: expected a 4-column row for {row.group(1)!r}, got {len(columns) - 2}: {line!r}. "
+                "A literal '|' inside a cell must be escaped as '\\|'."
+            )
+            cells[row.group(1)] = columns[4].strip()
+    return cells
+
+
+def _expected_alias_cell(entry: dict) -> str:
+    """Return the *Aliases* cell text a registry entry should produce."""
+    aliases = entry.get("aliases", [])
+    return ", ".join(f"`{alias}`" for alias in aliases) if aliases else "-"
 
 
 def _count_claims() -> list[tuple[Path, int, str, int]]:
@@ -224,4 +262,24 @@ def test_no_robot_count_claim_outside_the_known_sites() -> None:
     assert not stale, (
         f"robot counts that no registry number supports (allowed: {sorted(allowed)}): {stale}. "
         "Update the claim, or add it to EXEMPT_CLAIMS if it counts something else."
+    )
+
+
+def test_the_alias_column_lists_every_alias_the_registry_accepts() -> None:
+    """Each catalog row advertises exactly the aliases its registry entry declares.
+
+    ``resolve_name()`` accepts every alias in ``robots.json``, so an alias the
+    row omits is a working name no reader can find, and an alias the row invents
+    is a name that does not resolve. Both are failures of the same projection,
+    so the whole cell is compared and the expected text is quoted verbatim -
+    fixing a row is a copy-paste, not a merge.
+    """
+    registry, cells = _registry(), _catalog_alias_cells()
+    wrong = [
+        (name, cells[name], _expected_alias_cell(registry[name]))
+        for name in sorted(cells)
+        if name in registry and cells[name] != _expected_alias_cell(registry[name])
+    ]
+    assert not wrong, "docs/robots/ alias cells that do not match robots.json:\n" + "\n".join(
+        f"  {name}\n    is:     {actual}\n    should: {expected}" for name, actual, expected in wrong
     )
