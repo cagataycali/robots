@@ -17,9 +17,10 @@ overwrite the other's step count and terminal status, so one of them reported
 completing steps it never commanded.
 
 Admission is now a claim taken before the bring-up window opens and released
-when the rollout ends - including when it errors or raises, so a failed task
-cannot leave the robot refusing every later one. The check-and-claim runs under
-a lock, so callers racing at the same instant cannot both be admitted, and
+when the rollout ends - including when it errors, raises, or is stopped during
+bring-up, so a failed or interrupted task cannot leave the robot refusing every
+later one. The check-and-claim runs under a lock, so callers racing at the same
+instant cannot both be admitted, and
 `start_task` claims on the caller's thread rather than inside its executor job:
 it returns before that job begins, so a claim taken there would have reported
 "Task started" and only then turned the caller away. The refusal names the

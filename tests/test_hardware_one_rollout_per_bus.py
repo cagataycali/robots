@@ -295,6 +295,30 @@ class TestTheClaimIsAlwaysReleased:
         assert hw._task_claimed is False
         assert hw.run_policy(policy_object=TaggedPolicy("B"), instruction="rollout B", n_steps=4)["status"] == "success"
 
+    def test_a_rollout_stopped_during_bring_up_hands_the_bus_back(self, hw: HwRobot, bus: GatedBus):
+        # Where the two bring-up fixes meet. A stop latched during bring-up is
+        # honored by ``_execute_task_async`` as soon as connect() returns, which
+        # abandons the rollout *before* the arm is commanded - so it never
+        # reaches the terminal block, and the release has to come from the
+        # ``finally`` rather than from a rollout that ran to completion. Without
+        # that, stopping a task during bring-up would cost the bus permanently.
+        thread, stopped = _rollout_in_bringup(hw, bus, "A", steps=4)
+
+        assert hw.stop_task()["status"] == "success"
+        bus.connect_gate.set()
+        thread.join(DEADLINE)
+
+        assert hw._task_state.status is TaskStatus.STOPPED
+        assert stopped["result"]["status"] == "error"
+        # Abandoned during bring-up, so nothing was ever put on the wire.
+        assert bus.writers == []
+        assert hw._task_claimed is False
+
+        # And the bus is genuinely usable again, not merely unclaimed.
+        second = hw.run_policy(policy_object=TaggedPolicy("B"), instruction="rollout B", n_steps=4)
+        assert second["status"] == "success"
+        assert set(bus.writers) == {"B"}
+
     def test_a_failed_submit_does_not_leak_the_claim(self, hw: HwRobot, bus: GatedBus):
         hw._executor.shutdown(wait=True)
 
