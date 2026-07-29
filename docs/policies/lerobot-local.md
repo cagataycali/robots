@@ -317,6 +317,23 @@ warns (or raises under `strict_keys=True`), sets `generic_state_keys_used`, and
 falls back to the observation's own scalar keys so the state is populated rather
 than silently dropped.
 
+Both degradations quote a remedy chosen from the observation itself rather than a
+fixed example. `matching_embodiments(observation_keys)` returns every shipped
+embodiment whose entire `state_keys` set the observation carries, and only those
+are offered:
+
+- one match - the message names it (`embodiment='so100'`);
+- several - all are listed, because an observation cannot always tell them apart
+  (the real SO, Koch and OMX arms all report the same six `'<motor>.pos'` keys);
+- none - no embodiment is suggested at all, only `set_robot_state_keys([...])`,
+  quoted with the observed keys verbatim when the list is short enough to paste.
+
+This matters most on hardware. A real SO arm reports `'<motor>.pos'` keys, while
+the `so101` embodiment declares the MuJoCo asset's numeric joints `'1'..'6'` and
+converts degrees to radians - so recommending it there would re-declare keys the
+observation does not have, landing back on this same guard. `so_real` is the
+configuration that binds that observation, and it is what the message names.
+
 That fallback ordering is **position-only**: a `<joint>.vel` entry is dropped
 when the observation also carries its `<joint>` position companion. The MuJoCo
 backend emits a velocity sibling beside every joint position, so taking its keys

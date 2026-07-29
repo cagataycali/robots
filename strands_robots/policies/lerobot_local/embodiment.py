@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -241,6 +242,98 @@ def hardware_pos_keys(observation: dict[str, Any]) -> list[str]:
         for key, value in observation.items()
         if isinstance(key, str) and key.endswith(".pos") and _is_joint_scalar(value)
     ]
+
+
+# Above this many observation keys the remedy points at the list the diagnostic
+# already printed instead of repeating it - a 29-joint humanoid would otherwise
+# print the same long list twice in one message.
+_REMEDY_KEYS_INLINE_MAX = 8
+
+
+def matching_embodiments(observation_keys: Iterable[Any]) -> list[str]:
+    """Shipped embodiment names whose entire ``state_keys`` set the observation carries.
+
+    The registry is the only place that knows which joint namings the library
+    can already bind, so a diagnostic that wants to recommend an ``embodiment=``
+    must ask it rather than hardcode an example. An embodiment qualifies only
+    when EVERY one of its declared ``state_keys`` is present, because a partial
+    match would reproduce the very mismatch the caller is trying to escape.
+
+    Several embodiments can qualify at once and that is not an error: the real
+    SO, Koch and OMX arms all report the same six ``'<motor>.pos'`` keys, so an
+    observation cannot distinguish them. Callers should present all of them.
+
+    Aliases are excluded so the result names one spelling per configuration.
+
+    Args:
+        observation_keys: Keys of the observation being diagnosed. Non-string
+            entries are ignored rather than rejected, since an observation is
+            not guaranteed to be string-keyed.
+
+    Returns:
+        Sorted matching configuration names; empty when none match.
+    """
+    present = {key for key in observation_keys if isinstance(key, str)}
+    if not present:
+        return []
+    return sorted(
+        name
+        for name, embodiment in EMBODIMENT_MAP.items()
+        if name in _CONFIG_NAMES and embodiment.state_keys and present.issuperset(embodiment.state_keys)
+    )
+
+
+def state_key_remedy(observation_keys: Iterable[Any]) -> str:
+    """Advice for a state-key mismatch, chosen from what the observation contains.
+
+    A fixed example cannot be right for every caller. Recommending
+    ``embodiment='so101'`` to a real SO arm is not merely unhelpful: that
+    configuration declares the MuJoCo asset's numeric joints (``'1'..'6'``),
+    none of which a ``'<motor>.pos'`` hardware observation carries, so following
+    the advice lands back on the same all-missing mismatch - and its
+    ``state_units='degrees'`` would convert units the hardware reports natively.
+
+    So the embodiment is named only when the registry confirms it binds THIS
+    observation (see :func:`matching_embodiments`), and when nothing matches no
+    embodiment is offered at all. ``set_robot_state_keys`` is always offered as
+    the unambiguous alternative, quoting the observed keys verbatim when the
+    list is short enough to paste.
+
+    Args:
+        observation_keys: Keys of the observation being diagnosed, in the order
+            they should be bound.
+
+    Returns:
+        One to three sentences of remedy, plain ASCII, ending in a period. An
+        observation with no string keys at all gets no remedy to follow, only a
+        statement that nothing can bind it.
+    """
+    keys = [key for key in observation_keys if isinstance(key, str)]
+    if not keys:
+        return (
+            "This observation carries no scalar state keys at all, so no embodiment or "
+            "set_robot_state_keys([...]) ordering can bind it - check that the robot/sim "
+            "is reporting joint positions."
+        )
+    if len(keys) <= _REMEDY_KEYS_INLINE_MAX:
+        set_keys = f"call set_robot_state_keys({keys!r})"
+    else:
+        set_keys = "call set_robot_state_keys([...]) with the observed keys above"
+
+    candidates = matching_embodiments(keys)
+    if not candidates:
+        return (
+            f"No shipped embodiment declares state_keys this observation carries, so {set_keys}. "
+            "Passing an embodiment chosen by robot name instead would re-declare keys the "
+            "observation does not have and land back here."
+        )
+    if len(candidates) == 1:
+        return f"Pass embodiment='{candidates[0]}', whose state_keys this observation carries, or {set_keys}."
+    listed = " / ".join(f"'{name}'" for name in candidates)
+    return (
+        f"Pass embodiment= one of {listed} - each declares state_keys this observation "
+        f"carries, so pick the one matching your robot - or {set_keys}."
+    )
 
 
 # Action diagnostics
@@ -757,6 +850,10 @@ EMBODIMENT_MAP: dict[str, EmbodimentMap] = {}
 _defs, _aliases = _load_defs()
 for _cfg_name in _defs:
     EMBODIMENT_MAP[_cfg_name] = _resolve(_cfg_name, _defs)
+# Configuration names only. EMBODIMENT_MAP also holds every alias pointing at
+# the same object, so a diagnostic listing candidates must filter to these or it
+# offers the caller several spellings of one configuration.
+_CONFIG_NAMES: frozenset[str] = frozenset(_defs)
 for _alias, _target in _aliases.items():
     if _target in EMBODIMENT_MAP:
         EMBODIMENT_MAP[_alias] = EMBODIMENT_MAP[_target]
@@ -796,6 +893,8 @@ __all__ = [
     "ZeroActionMonitor",
     "diagnose_action_dim",
     "load_embodiment",
+    "matching_embodiments",
     "reconcile_dim",
     "register_pack_state_step",
+    "state_key_remedy",
 ]

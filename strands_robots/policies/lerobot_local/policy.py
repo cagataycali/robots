@@ -21,11 +21,28 @@ import numpy as np
 import torch
 
 from .. import Policy, align_action_values
-from .embodiment import ZeroActionMonitor, diagnose_action_dim, hardware_pos_keys
+from .embodiment import ZeroActionMonitor, diagnose_action_dim, hardware_pos_keys, state_key_remedy
 from .processor import ProcessorBridge
 from .resolution import resolve_policy_class_by_name, resolve_policy_class_from_hub
 
 logger = logging.getLogger(__name__)
+
+
+def _scalar_observation_keys(observation_dict: dict[str, Any]) -> list[str]:
+    """Observation keys that can carry a joint/state scalar, in observation order.
+
+    Excludes ``task`` (the instruction string) and any array with 2+ dimensions
+    (a camera frame). Both observation-to-batch paths derive their state-ordering
+    fallback from this, and the state-key diagnostics quote it back to the
+    caller, so all three must agree on what counts as a state key.
+
+    Args:
+        observation_dict: Raw strands/sim observation for this step.
+
+    Returns:
+        The candidate state keys, in the observation's own insertion order.
+    """
+    return [k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)]
 
 
 def _declared_feature_is_image(name: str, feature: Any = None) -> bool:
@@ -2098,9 +2115,9 @@ class LerobotLocalPolicy(Policy):
             f"None of the configured robot_state_keys {shown}{ellipsis} are present "
             f"in the observation. Observed joint/state keys: {scalar_keys}. This "
             "usually means generic auto-generated keys (joint_0..joint_N) were "
-            "paired with a robot/sim that reports named joints. Pass "
-            "embodiment='<name>' (e.g. embodiment='so101') or call "
-            "set_robot_state_keys([...]) with the robot's actual joint names."
+            "paired with a robot/sim that reports named joints. " + state_key_remedy(scalar_keys)
+            # Chosen from the observation, so the advice cannot name an
+            # embodiment whose state_keys would land back on this same guard.
         )
         if self.strict_keys:
             raise ValueError("strict_keys=True: " + msg)
@@ -2174,8 +2191,10 @@ class LerobotLocalPolicy(Policy):
                 f"observation: {shown}{ellipsis}. Present joints keep their index and the "
                 "missing dims are zero-filled in place, but the sim/robot does not report "
                 "those joints - commonly a mimic/tendon gripper whose actuator name differs "
-                "from the observation's finger-joint names. Pass embodiment='<name>' or call "
-                "set_robot_state_keys([...]) with names the observation actually contains."
+                "from the observation's finger-joint names. "
+                # Same registry-checked remedy as the all-missing guard, so one
+                # rule serves both degradations.
+                + state_key_remedy(_scalar_observation_keys(observation_dict))
             )
             if self.strict_keys:
                 raise ValueError("strict_keys=True: " + msg)
@@ -2280,9 +2299,7 @@ class LerobotLocalPolicy(Policy):
             used_feats.add(feat)
 
         # 2) Collect scalar joint values into observation.state.
-        scalar_keys = [
-            k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)
-        ]
+        scalar_keys = _scalar_observation_keys(observation_dict)
         # Resolve the joint-state ordering, raising/warning loudly when the
         # configured robot_state_keys cannot describe this observation (the
         # generic joint_0..N vs named-joint mismatch) instead of silently
@@ -2607,9 +2624,7 @@ class LerobotLocalPolicy(Policy):
         # raises (strict_keys) or warns + falls back to the observation's own
         # scalar keys, instead of silently dropping observation.state and
         # running the policy open-loop (see _resolve_state_order).
-        scalar_keys = [
-            k for k, v in observation_dict.items() if k != "task" and not (isinstance(v, np.ndarray) and v.ndim >= 2)
-        ]
+        scalar_keys = _scalar_observation_keys(observation_dict)
         order = self._resolve_state_order(observation_dict, scalar_keys)
 
         # Collect state values index-aligned with the resolved order. A key in
