@@ -299,7 +299,7 @@ class TestStopDoesNotBlockTheEventLoop:
             beat.cancel()
             try:
                 await beat
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # expected: task was explicitly cancelled above
                 pass
             return during
 
