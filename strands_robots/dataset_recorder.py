@@ -525,6 +525,25 @@ def unrecordable_action_columns_error(
     )
 
 
+class RecordingFrameError(RuntimeError):
+    """A frame the dataset recorder could not write, in fail-fast mode.
+
+    Raised by :meth:`DatasetRecorder.add_frame` when the underlying
+    ``LeRobotDataset`` write fails and the recorder was constructed with
+    ``strict=True`` (the default). The frame is already gone at that point, so
+    the episode on disk is shorter than the rollout that produced it and every
+    surviving frame is re-timestamped from the declared ``fps`` - the caller has
+    to be told.
+
+    A distinct type, rather than the underlying error, so a rollout driver can
+    tell a lost recording frame apart from a failure in a caller's telemetry
+    hook. The drivers deliberately tolerate a few consecutive telemetry
+    failures; granting that tolerance to a lost recording frame truncates the
+    dataset while the rollout still reports success. The originating error is
+    chained and its text preserved.
+    """
+
+
 class DatasetRecorder:
     """Bridge between strands-robots control loops and LeRobotDataset.
 
@@ -972,6 +991,10 @@ class DatasetRecorder:
         Raises:
             ValueError: A column in ``required_action_keys`` is declared by
                 the dataset schema but absent from ``action``.
+            RecordingFrameError: The dataset write failed and this recorder is
+                ``strict`` (the default). With ``strict=False`` the frame is
+                counted in ``dropped_frame_count`` and a warning is logged
+                instead.
         """
         if self._closed:
             return
@@ -1132,7 +1155,16 @@ class DatasetRecorder:
             self.episode_frame_count += 1
         except Exception as e:
             if self.strict:
-                raise  # Fail-fast per AGENTS.md convention #5
+                # Fail-fast per AGENTS.md convention #5. Raised as
+                # RecordingFrameError so a rollout driver does not absorb it
+                # into the tolerance it grants a caller's telemetry hook - the
+                # frame is lost, so silently continuing writes a short episode
+                # and reports success. The original error is chained.
+                raise RecordingFrameError(
+                    f"dataset add_frame failed after {self.frame_count} frame(s) written; "
+                    f"the recording is incomplete from this frame on "
+                    f"(strict=True, so it is not dropped silently): {e}"
+                ) from e
             self.dropped_frame_count += 1
             n = self.dropped_frame_count
             # Log at 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, then every 1000

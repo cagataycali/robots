@@ -383,6 +383,30 @@ recorder = DatasetRecorder.create(
 Use `resume()` (not `create(overwrite=True)`) when you want to **append**
 episodes to the existing dataset instead of replacing it.
 
+### A frame the recorder cannot write fails the rollout
+
+`DatasetRecorder` is fail-fast by default (`strict=True`): if the underlying
+`LeRobotDataset` write fails, it raises
+`strands_robots.dataset_recorder.RecordingFrameError` instead of continuing. When
+the recorder is driven by `run_policy`, that ends the rollout with
+`status="error"` naming the frame the recording stopped being complete at:
+
+```
+Policy failed: dataset add_frame failed after 7 frame(s) written; the recording
+is incomplete from this frame on (strict=True, so it is not dropped silently):
+<the underlying error>
+```
+
+Continuing past a lost frame is not a smaller failure. Timestamps are derived
+positionally from the declared `fps`, so the surviving frames are re-stamped into
+a shorter span than they were captured over - a rollout that loses every other
+frame at 50 Hz produces an episode labelled at 2x speed, with no gap to detect.
+
+Construct the recorder with `strict=False` to trade that for best-effort
+recording: a failed write is counted in `dropped_frame_count`, warned about at
+`WARNING` (on the 1st, 2nd, 4th, 8th ... failure so a 50 Hz loop cannot flood the
+log), and the rollout continues.
+
 ## Instance methods
 
 | Method | What |

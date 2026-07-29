@@ -45,6 +45,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots._async_utils import _resolve_coroutine
+from strands_robots.dataset_recorder import RecordingFrameError
 from strands_robots.policies.base import resolve_chunk_length
 from strands_robots.utils import positive_whole_number_error, process_rss_mb, require_optional
 
@@ -502,6 +503,14 @@ class _RolloutVideoWriter:
 # (e.g. a recording hook with a typo'd observation key), we'd complete a 500-step
 # episode with zero frames written and silently corrupt the dataset. After this
 # many *consecutive* failures, the runner raises and fails the episode loudly.
+#
+# The counter resets on every success, so this bounds an ALWAYS-failing hook and
+# nothing else: a hook failing every other step never reaches the limit. That is
+# the right trade for caller telemetry, which is why
+# :class:`~strands_robots.dataset_recorder.RecordingFrameError` is excluded from
+# the tolerance entirely - a lost dataset frame is data loss, not telemetry, and
+# tolerating it writes a short, re-timestamped episode under a successful
+# rollout.
 #
 # Overridable via the ``max_onframe_failures`` kwarg on ``PolicyRunner.run``.
 # See GH #117.
@@ -1258,6 +1267,14 @@ class PolicyRunner:
                         consecutive_onframe_failures = 0
                     except CooperativeStop:
                         # Backend (e.g. MuJoCo) signalled a graceful stop.
+                        raise
+                    except RecordingFrameError:
+                        # A frame the dataset recorder could not write is data
+                        # loss, not telemetry: the episode on disk is already
+                        # shorter than this rollout. Never counted against the
+                        # telemetry tolerance below, which resets on every
+                        # success and so would let an intermittent recorder
+                        # failure truncate the dataset without ever tripping.
                         raise
                     except Exception as e:
                         # on_frame is user-provided telemetry - never fatal
@@ -2275,6 +2292,11 @@ class PolicyRunner:
                     # honors). Propagate to the episode loop; never swallow
                     # it as a best-effort telemetry failure.
                     raise
+                except RecordingFrameError:
+                    # Data loss, not telemetry - see the note on the tolerance
+                    # constant. Propagate so the caller learns the episode is
+                    # incomplete instead of reading a successful eval.
+                    raise
                 except Exception as e:  # noqa: BLE001 - hook is best-effort telemetry
                     logger.warning("on_frame hook failed at global_step=%d: %s", global_step, e)
             global_step += 1
@@ -2698,6 +2720,10 @@ class PolicyRunner:
                                 except CooperativeStop:
                                     # Documented graceful early-stop; propagate
                                     # to the episode loop instead of swallowing.
+                                    raise
+                                except RecordingFrameError:
+                                    # Data loss, not telemetry - see the note on
+                                    # the tolerance constant.
                                     raise
                                 except Exception as e:  # noqa: BLE001 - hook is best-effort
                                     logger.warning(
