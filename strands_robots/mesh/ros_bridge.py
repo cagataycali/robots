@@ -5,7 +5,10 @@ A :class:`RosBridgedRobot` wraps a ROS 2 mobile base (or any robot exposing a
 its state with the same ``Agent(tools=[robot])`` pattern used for simulated and
 hardware robots. All ROS 2 I/O is forwarded through the
 :func:`strands_robots.tools.use_ros.use_ros` tool, so the bridge stays thin and
-inherits ``use_ros``'s in-process ``rclpy`` backend and input validation.
+inherits ``use_ros``'s in-process ``rclpy`` backend and its topic/type
+validation. The parameters ``use_ros`` never sees are validated here: a
+:meth:`RosBridgedRobot.drive` command whose velocity, hold duration or message
+count cannot be honored is refused without publishing anything.
 
 Typical usage::
 
@@ -38,6 +41,11 @@ from strands import tool
 from strands.types.tools import AgentTool
 
 from strands_robots.tools.use_ros import use_ros
+from strands_robots.utils import (
+    finite_number_error,
+    positive_finite_number_error,
+    positive_whole_number_error,
+)
 
 _TWIST_TYPE = "geometry_msgs/msg/Twist"
 _NAV_ACTION_TYPE = "nav2_msgs/action/NavigateToPose"
@@ -80,6 +88,10 @@ class RosBridgedRobot:
         scan_type: Interface type of ``scan_topic``. Optional - resolved from
             the live graph when omitted.
         publish_rate: Default rate (Hz) for multi-message :meth:`drive` calls.
+            Must be > 0 and finite: :meth:`drive` multiplies it by ``duration``
+            to size the message burst and ``use_ros`` publishes at ``1 / rate``,
+            so a non-positive rate removes the pacing entirely rather than
+            slowing it. Raises ``ValueError`` at construction otherwise.
         nav_action: Optional Nav2-style action server name (e.g.
             ``/navigate_to_pose``). When set, :meth:`navigate_to` sends
             goal-level navigation instead of raw velocity, and a
@@ -109,7 +121,9 @@ class RosBridgedRobot:
         self.cmd_vel_type = cmd_vel_type
         self.odom_type = odom_type
         self.scan_type = scan_type
-        self.publish_rate = publish_rate
+        if rate_err := positive_finite_number_error(publish_rate, "publish_rate", type(self).__name__):
+            raise ValueError(rate_err)
+        self.publish_rate = float(publish_rate)
         self.nav_action = _check_topic("nav_action", nav_action) if nav_action else None
         self.nav_action_type = nav_action_type
 
@@ -141,16 +155,49 @@ class RosBridgedRobot:
         """Publish a velocity command to the robot's ``cmd_vel`` topic.
 
         Args:
-            linear: Forward linear velocity (m/s), mapped to ``linear.x``.
-            angular: Yaw angular velocity (rad/s), mapped to ``angular.z``.
+            linear: Forward linear velocity (m/s), mapped to ``linear.x``. Must
+                be a finite number; both signs are valid (negative reverses).
+            angular: Yaw angular velocity (rad/s), mapped to ``angular.z``. Must
+                be a finite number; both signs are valid (negative turns the
+                other way).
             duration: When given, hold the command for this many seconds by
-                publishing ``round(duration * publish_rate)`` messages. Takes
-                precedence over ``count``.
+                publishing ``round(duration * publish_rate)`` messages (at least
+                one). Takes precedence over ``count``, and must be > 0 and
+                finite - a zero or negative hold has no message count that
+                expresses it, and publishing a single velocity command anyway
+                would start the robot moving.
             count: Number of messages to publish when ``duration`` is omitted.
+                Must be a positive whole number; ``0`` or a negative count
+                publishes nothing, so reporting a successful drive for it hides
+                a command that never left the process.
 
         Returns:
-            The ``use_ros`` publish result dict.
+            The ``use_ros`` publish result dict, or an ``{"status": "error"}``
+            result naming the parameter when a value cannot be honored - in
+            which case nothing is published.
         """
+        # A velocity command is the one call on this bridge that physically
+        # moves the robot, so every knob it carries is checked before anything
+        # reaches the wire. ``use_ros`` validates the topic and interface type
+        # but never sees ``duration`` at all (it receives only the derived
+        # message count), so the horizon knobs have no guard downstream.
+        cmd_err = (
+            finite_number_error(linear, "linear", "drive")
+            or finite_number_error(angular, "angular", "drive")
+            or (
+                positive_finite_number_error(duration, "duration", "drive")
+                if duration is not None
+                # ``duration`` supersedes ``count``, so ``count`` is only the
+                # effective horizon when no duration was given; refusing a
+                # ``count`` this call never reads would reject a valid command.
+                else positive_whole_number_error(count, "count", "drive")
+            )
+        )
+        if cmd_err:
+            return {"status": "error", "content": [{"text": cmd_err}]}
+        # ``duration`` is positive and finite here, so this floor is a rounding
+        # rule and not a substitute for validation: a hold shorter than one
+        # publish period still means "send the command once".
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
         fields = {"linear": {"x": float(linear)}, "angular": {"z": float(angular)}}
         return use_ros(

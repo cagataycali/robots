@@ -343,6 +343,43 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
     return None
 
 
+def finite_number_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable finite number of either sign.
+
+    Shared domain for a SIGNED physical quantity a command carries verbatim to a
+    robot - a linear or angular velocity component, an offset, a coordinate read
+    as a scalar. Both signs are legitimate (reverse is a negative linear
+    velocity, clockwise a negative yaw rate), so :func:`positive_finite_number_error`
+    cannot express this domain; only finiteness and numeric-ness are constrained.
+    It lives here rather than beside one of its callers because those callers sit
+    in different layers (:mod:`strands_robots.mesh` must not depend on
+    :mod:`strands_robots.simulation`), and the accepted domain must not diverge
+    between them.
+
+    Only a finite value can be honored. ``nan``/``inf`` serialize into a wire
+    message as a valid IEEE-754 float64, so the transport accepts them and the
+    receiving controller integrates them into its state estimate - a silently
+    poisoned pose rather than a rejected command. A non-real value (a numeric
+    string, ``None``, a list) otherwise raises a bare ``TypeError`` from the
+    ``float()`` coercion, escaping the structured ``{"status": "error"}``
+    tool-result contract. Accepts any real scalar (so a NumPy ``np.float32``
+    velocity read from a policy action passes) and rejects ``bool`` explicitly -
+    an ``int`` subclass whose ``True`` would act as a silent ``1``.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter it came from, used in the message.
+        context: Message prefix identifying the surface that received it -
+            normally the public method name.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(float(value)):
+        return f"{context}: {param} must be a finite number, got {value!r}."
+    return None
+
+
 def positive_whole_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive whole number.
 

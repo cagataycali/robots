@@ -298,13 +298,17 @@ agent("drive forward for two seconds, then tell me the pose")
 ```
 
 The bridge is intentionally thin: every method forwards to `use_ros`, so it
-inherits the same in-process rclpy backend and input validation. Construct it
-freely without a ROS 2 environment present - errors surface only when a method
-is actually called and `rclpy` is unavailable.
+inherits the same in-process rclpy backend and its topic/type validation. The
+parameters `use_ros` never sees are checked by the bridge itself - `drive`
+reports an error result without publishing when a velocity is not finite, a
+`duration` is not positive and finite, or a message `count` is not a positive
+whole number, and `publish_rate` is refused at construction. Construct it freely
+without a ROS 2 environment present - errors surface only when a method is
+actually called and `rclpy` is unavailable.
 
 | Method | ROS 2 action | Notes |
 |--------|--------------|-------|
-| `drive(linear, angular, duration=, count=)` | publish `Twist` to `cmd_vel_topic` | `duration` holds the command at `publish_rate` Hz |
+| `drive(linear, angular, duration=, count=)` | publish `Twist` to `cmd_vel_topic` | `duration` holds the command at `publish_rate` Hz; finite velocities, `duration > 0`, `count >= 1` - anything else is refused without publishing |
 | `stop()` | publish zero `Twist` | |
 | `get_pose()` | echo `odom_topic` | |
 | `get_scan()` | echo `scan_topic` | error when no `scan_topic` configured |
