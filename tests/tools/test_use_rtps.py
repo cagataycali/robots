@@ -249,13 +249,19 @@ def test_echo_returns_samples_as_dicts(with_reader) -> None:
 
 
 def test_echo_times_out_with_empty_samples(with_reader) -> None:
+    """An expired wait returns an empty sample list rather than an error.
+
+    The budget is the smallest usable one rather than ``0.0``: a zero timeout is
+    not a wait a caller can ask for (it is refused up front), and it also skipped
+    the polling loop entirely, so the branch under test never ran.
+    """
     with_reader([])  # reader never yields
     result = use_rtps(
         action="echo",
         topic="/cmd_vel",
         type="geometry_msgs/msg/Twist",
         count=1,
-        timeout=0.0,  # deadline already reached -> no spin, empty result
+        timeout=0.01,  # one poll, then the deadline passes -> empty result
     )
     assert result["status"] == "success"
     text = _texts(result)

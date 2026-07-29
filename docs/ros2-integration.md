@@ -139,6 +139,19 @@ malformed names from reaching the ROS 2 client library. Backend and timeout
 failures are returned as structured `{"status": "error"}` results rather than
 raised exceptions.
 
+The numeric options an action consumes are checked in the same place, ahead of
+the backend probe, so a caller mistake reports identically whether or not a ROS 2
+distro is sourced and a refusal happens before a publisher joins the graph:
+
+| Option | Consumed by | Accepted values |
+|--------|-------------|-----------------|
+| `count` | `echo`, `publish` | a positive integer - it is a `range()` bound, so `0` sends nothing and `2.7` or `"3"` cannot be honored |
+| `rate` | `publish` | a positive finite number of Hz - the inter-message period is `1 / rate`, so `0`, a negative value, `nan` and `inf` all leave the burst unthrottled instead of paced |
+| `timeout` | `echo`, `service_call`, `action_send_goal` | a positive finite number of seconds - `0` and negatives wait for nothing, `inf` never expires |
+
+An option the requested action never reads is not second-guessed:
+`use_ros(action="status", count=-1)` still reports the backend.
+
 ## Sim bridge: publish a simulation on a ROS 2 domain
 
 The simulator can advertise its own live state on ROS 2. Construct any

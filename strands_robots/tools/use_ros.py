@@ -67,6 +67,8 @@ from typing import Any
 
 from strands import tool
 
+from strands_robots.utils import positive_count_error, positive_finite_number_error
+
 logger = logging.getLogger(__name__)
 
 # Validation allowlists. ROS 2 graph names are alnum plus _ / ~ (and the {ns}
@@ -75,6 +77,17 @@ logger = logging.getLogger(__name__)
 # unexpected characters into the rclpy graph API or type-resolution layer.
 _NAME_RE = re.compile(r"^[A-Za-z0-9_/~{}]+$")
 _TYPE_RE = re.compile(r"^[A-Za-z0-9_]+/[A-Za-z0-9_]+/[A-Za-z0-9_]+$")
+
+# Which numeric options each action actually consumes. An action that reads none
+# of them (``status``, the ``list_*`` queries, ``info``) must not be refused for
+# a value it never looks at, so the guard below is driven by this table rather
+# than validating the whole signature unconditionally.
+_ACTION_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
+    "echo": ("timeout", "count"),
+    "publish": ("count", "rate"),
+    "service_call": ("timeout",),
+    "action_send_goal": ("timeout",),
+}
 
 _INSTALL_HINT = (
     "rclpy is not importable - source a ROS 2 distro before launching the agent "
@@ -179,6 +192,40 @@ def _ok(text: str) -> dict[str, Any]:
 
 def _err(text: str) -> dict[str, Any]:
     return {"status": "error", "content": [{"text": f"use_ros: {text}"}]}
+
+
+def _numeric_option_error(action: str, timeout: Any, count: Any, rate: Any) -> str | None:
+    """Error text for the first numeric option ``action`` consumes but cannot honor.
+
+    ``timeout``, ``count`` and ``rate`` are agent-supplied, so each is checked
+    against the shared domain for its kind before any DDS entity is created:
+    ``count`` is a ``range()`` bound (:func:`~strands_robots.utils.positive_count_error`)
+    and ``timeout`` / ``rate`` are a span of seconds and a frequency in Hz
+    (:func:`~strands_robots.utils.positive_finite_number_error`). Reusing those
+    helpers is what keeps this tool, ``use_rtps`` and the mesh bridges from
+    accepting a value one of them refuses.
+
+    Args:
+        action: The requested action; decides which options are effective.
+        timeout: Seconds to wait, as supplied.
+        count: Message/sample count, as supplied.
+        rate: Publish rate in Hz, as supplied.
+
+    Returns:
+        An error message naming the action and the option, or ``None`` when
+        every option this action reads is usable.
+    """
+    consumed = _ACTION_NUMERIC_OPTIONS.get(action, ())
+    for param, value, check in (
+        ("timeout", timeout, positive_finite_number_error),
+        ("count", count, positive_count_error),
+        ("rate", rate, positive_finite_number_error),
+    ):
+        if param in consumed:
+            error = check(value, param, action)
+            if error:
+                return error
+    return None
 
 
 # --------------------------------------------------------------------------
@@ -429,8 +476,13 @@ def use_ros(
             For ``action_send_goal`` this is the end-to-end budget (discovery +
             acceptance + execution); size it to the goal (e.g. 120 for a Nav2
             navigation), and note the goal is cancelled when it expires.
-        count: Number of messages to echo or publish.
-        rate: Publish rate in Hz.
+            A positive finite number of seconds.
+        count: Number of messages to echo or publish. A positive integer;
+            it is consumed as a ``range()`` bound, so ``0`` publishes nothing
+            and a float or a numeric string cannot be honored.
+        rate: Publish rate in Hz. A positive finite number - the inter-message
+            period is ``1 / rate``, so ``0``, a negative value, ``nan`` and
+            ``inf`` all leave the burst unthrottled rather than paced.
 
     Returns:
         A Strands tool result dict ``{"status": ..., "content": [{"text": ...}]}``.
@@ -446,6 +498,14 @@ def use_ros(
         return _err(f"invalid action name: {action_name!r}")
     if type is not None and not _TYPE_RE.match(type):
         return _err(f"invalid interface type: {type!r} (expected pkg/msg/Name or pkg/srv/Name)")
+
+    # Numeric options are checked here, alongside the names and ahead of the
+    # backend probe, so the same caller mistake is reported identically whether
+    # or not rclpy is installed - and so a refusal happens before a publisher
+    # joins the graph.
+    numeric_error = _numeric_option_error(action, timeout, count, rate)
+    if numeric_error:
+        return _err(numeric_error)
 
     if action == "status":
         if _backend.available():

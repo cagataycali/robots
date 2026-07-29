@@ -219,3 +219,11 @@ mangling (absolute `/`-rooted alnum/`_` names; `pkg/msg/Name` types). The tool
 never constructs a shell command or generates source, so there is no
 command-injection or `eval` surface. Backend, type-resolution, and field errors
 are returned as structured `{"status": "error"}` results rather than raised.
+
+The numeric options are checked in the same place, ahead of the backend probe, so
+a refusal happens before a writer joins the graph and reports identically whether
+or not `cyclonedds` is installed. `count` (`publish`, `echo`) must be a positive
+integer, and `rate` (`publish`) and `timeout` (`echo`) must be positive finite
+numbers - the same accepted domain `use_ros` enforces, so a value publishable
+through one transport is publishable through the other. An option the requested
+action never reads is not second-guessed.

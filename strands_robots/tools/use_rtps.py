@@ -51,12 +51,23 @@ from typing import Any
 
 from strands import tool
 
+from strands_robots.utils import positive_count_error, positive_finite_number_error
+
 logger = logging.getLogger(__name__)
 
 # ROS 2 graph names: absolute, alnum/_ segments. Validate before mangling so a
 # malformed agent-supplied name fails with a clear message.
 _TOPIC_RE = re.compile(r"^/[A-Za-z0-9_/]*[A-Za-z0-9_]$")
 _TYPE_RE = re.compile(r"^[A-Za-z0-9_]+/(msg|srv|action)/[A-Za-z0-9_]+$")
+
+# Which numeric options each action actually consumes. ``status``, ``types``,
+# ``advertise`` and ``subscribe`` read none of them, so the guard below is driven
+# by this table rather than validating the whole signature unconditionally - a
+# caller is never refused for a value the requested action never looks at.
+_ACTION_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
+    "publish": ("count", "rate"),
+    "echo": ("timeout", "count"),
+}
 
 
 class _RtpsBackend:
@@ -136,6 +147,40 @@ def _err(text: str) -> dict[str, Any]:
     return {"status": "error", "content": [{"text": f"use_rtps: {text}"}]}
 
 
+def _numeric_option_error(action: str, timeout: Any, count: Any, rate: Any) -> str | None:
+    """Error text for the first numeric option ``action`` consumes but cannot honor.
+
+    ``timeout``, ``count`` and ``rate`` are agent-supplied, so each is checked
+    against the shared domain for its kind before any DDS entity is created:
+    ``count`` is a ``range()`` bound (:func:`~strands_robots.utils.positive_count_error`)
+    and ``timeout`` / ``rate`` are a span of seconds and a frequency in Hz
+    (:func:`~strands_robots.utils.positive_finite_number_error`). Reusing those
+    helpers is what keeps this tool and ``use_ros`` - two transports onto the
+    same ROS 2 graph - from disagreeing about which values are publishable.
+
+    Args:
+        action: The requested action; decides which options are effective.
+        timeout: Seconds to wait, as supplied.
+        count: Message/sample count, as supplied.
+        rate: Publish rate in Hz, as supplied.
+
+    Returns:
+        An error message naming the action and the option, or ``None`` when
+        every option this action reads is usable.
+    """
+    consumed = _ACTION_NUMERIC_OPTIONS.get(action, ())
+    for param, value, check in (
+        ("timeout", timeout, positive_finite_number_error),
+        ("count", count, positive_count_error),
+        ("rate", rate, positive_finite_number_error),
+    ):
+        if param in consumed:
+            error = check(value, param, action)
+            if error:
+                return error
+    return None
+
+
 def _sample_to_dict(sample: Any) -> Any:
     """Recursively convert an IDL dataclass sample to a plain dict."""
     if dataclasses.is_dataclass(sample) and not isinstance(sample, type):
@@ -201,9 +246,14 @@ def use_rtps(
             ``geometry_msgs/msg/Twist``). List with ``action="types"``.
         fields: JSON field dict for ``publish``; nested message fields are built
             recursively. Booleans and nulls are preserved (plain Python values).
-        timeout: Seconds to wait for samples (``echo``).
-        count: Number of messages to publish or samples to echo.
-        rate: Publish rate in Hz.
+        timeout: Seconds to wait for samples (``echo``). A positive finite
+            number.
+        count: Number of messages to publish or samples to echo. A positive
+            integer; it is consumed as a ``range()`` bound, so ``0`` publishes
+            nothing and a float or a numeric string cannot be honored.
+        rate: Publish rate in Hz. A positive finite number - the inter-message
+            period is ``1 / rate``, so ``0``, a negative value, ``nan`` and
+            ``inf`` all leave the burst unthrottled rather than paced.
 
     Returns:
         A Strands tool result dict ``{"status": ..., "content": [{"text": ...}]}``.
@@ -214,6 +264,14 @@ def use_rtps(
         return _err(f"invalid topic name: {topic!r} (expected absolute, e.g. /turtle1/cmd_vel)")
     if type is not None and not _TYPE_RE.match(type):
         return _err(f"invalid interface type: {type!r} (expected pkg/msg/Name)")
+
+    # Numeric options are checked here, alongside the names and ahead of the
+    # backend probe, so the same caller mistake is reported identically whether
+    # or not cyclonedds is installed - and so a refusal happens before a writer
+    # joins the graph.
+    numeric_error = _numeric_option_error(action, timeout, count, rate)
+    if numeric_error:
+        return _err(numeric_error)
 
     if action == "status":
         if _backend.available():
