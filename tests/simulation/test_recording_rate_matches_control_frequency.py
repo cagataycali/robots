@@ -376,12 +376,12 @@ _RUNNER_ENTRY_POINTS = {
 def _self_calls(module: str, method: str) -> set[str]:
     """Names of the ``self.x(...)`` calls made anywhere inside ``module::method``."""
     tree = ast.parse(Path(module).read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == method:
-            return {
-                n.func.attr for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-            }
-    pytest.fail(f"{method} not found in {module}")
+    definitions = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == method]
+    if not definitions:
+        pytest.fail(f"{method} not found in {module}")
+    return {
+        n.func.attr for n in ast.walk(definitions[0]) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+    }
 
 
 @pytest.mark.parametrize(
