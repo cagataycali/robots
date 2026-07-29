@@ -100,6 +100,7 @@ def _make_robot(fake: _FakeLeRobot | None = None, control_frequency: float = 100
     hw._task_state = RobotTaskState()
     hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
     hw._shutdown_event = threading.Event()
+    hw._stop_requested = threading.Event()
     hw.mesh = None
     hw.peer_id = None
     hw.robot = fake if fake is not None else _FakeLeRobot()

@@ -100,6 +100,7 @@ def hw() -> Any:
     robot._task_state = RobotTaskState()
     robot._executor = ThreadPoolExecutor(max_workers=1)
     robot._shutdown_event = threading.Event()
+    robot._stop_requested = threading.Event()
     robot.mesh = None
     robot.peer_id = None
     robot.robot = _FakeArm()

@@ -48,7 +48,7 @@ robot.cleanup()
 | Method | What |
 |--------|------|
 | `start_task(instruction, policy_port, policy_host, policy_provider, duration)` | Async; returns immediately. |
-| `stop_task()` | Halt running policy. |
+| `stop_task()` | Halt the current task. Covers a task still in `CONNECTING` (bring-up): the rollout is abandoned before the arm is commanded. |
 | `get_task_status()` | Returns `RobotTaskState` (status, step count, error). |
 | `cleanup()` | Stop tasks, close cameras, stop mesh. |
 

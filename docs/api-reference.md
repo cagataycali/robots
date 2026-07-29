@@ -99,7 +99,7 @@ from strands_robots.hardware_robot import Robot, TaskStatus, RobotTaskState
 | Method | What |
 |--------|------|
 | `start_task(instruction, policy_port, ...)` | Async task start. |
-| `stop_task()` | Halt running policy. |
+| `stop_task()` | Halt the current task, including one still in `CONNECTING`. |
 | `get_task_status()` | Return `RobotTaskState`. |
 | `cleanup()` | Stop tasks, close cameras, stop mesh. |
 

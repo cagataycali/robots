@@ -442,6 +442,14 @@ class Robot(TeleopMixin, AgentTool):
         self._task_state = RobotTaskState()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{tool_name}_executor")
         self._shutdown_event = threading.Event()
+        # A stop request that arrived for the current task. An Event rather
+        # than a task-state field because ``stop_task`` is called from the
+        # agent-tool thread (and from the mesh dispatch) while the rollout runs
+        # on the executor thread, and because ``_task_state.status`` cannot
+        # carry the request: ``_execute_task_async`` writes ``RUNNING`` over
+        # whatever the status held once the bring-up finishes, so a stop
+        # recorded only as a status is lost.
+        self._stop_requested = threading.Event()
 
         # Mesh attributes - populated by the Robot() factory after init.
         # Plain attributes (not properties) so test code can swap a fake mesh
@@ -1108,6 +1116,28 @@ class Robot(TeleopMixin, AgentTool):
             logger.error(f"Failed to initialize policy: {e}")
             return False
 
+    def _honor_stop_request(self) -> bool:
+        """Record a latched stop request as the task's terminal state.
+
+        Called at each point in ``_execute_task_async`` where the task is about
+        to move on to a stage that commands the arm. ``stop_task`` sets the
+        latch unconditionally, so this is the only thing that has to run for a
+        stop pressed at any point during bring-up to be honored.
+
+        Returns:
+            ``True`` when a stop was requested and the caller must abandon the
+            rollout, ``False`` when the task may proceed.
+        """
+        if not self._stop_requested.is_set():
+            return False
+        self._task_state.status = TaskStatus.STOPPED
+        logger.info(
+            "%s: task stopped during bring-up: '%s'",
+            self.tool_name_str,
+            self._task_state.instruction,
+        )
+        return True
+
     async def _execute_task_async(
         self,
         instruction: str,
@@ -1136,10 +1166,16 @@ class Robot(TeleopMixin, AgentTool):
         from .policies.base import resolve_chunk_length
 
         try:
-            # Update task state
+            # Update task state. The stop latch is cleared here so a stop
+            # pressed while the robot was idle does not pre-empt the next task,
+            # and ``duration`` is reset with it: a task stopped during bring-up
+            # never reaches the terminal block that writes it, and reporting the
+            # PREVIOUS task's elapsed time would misdescribe this one.
+            self._stop_requested.clear()
             self._task_state.status = TaskStatus.CONNECTING
             self._task_state.instruction = instruction
             self._task_state.start_time = time.time()
+            self._task_state.duration = 0.0
             self._task_state.step_count = 0
             self._task_state.error_message = ""
 
@@ -1148,6 +1184,13 @@ class Robot(TeleopMixin, AgentTool):
             if not connected:
                 self._task_state.status = TaskStatus.ERROR
                 self._task_state.error_message = connect_error or f"Failed to connect to {self.tool_name_str}"
+                return
+
+            # A stop pressed during the bring-up window above (a motors-bus
+            # handshake plus per-camera warmup - seconds on a real arm) is
+            # honored here, before the policy is even built, so the rollout is
+            # abandoned without commanding the arm.
+            if self._honor_stop_request():
                 return
 
             # Get policy instance: a caller-supplied pre-built object wins;
@@ -1200,6 +1243,12 @@ class Robot(TeleopMixin, AgentTool):
                     e,
                 )
 
+            # Building a server-backed policy is a second multi-second window
+            # (a network connect plus a handshake), so the latch is re-checked
+            # before the arm is commanded for the first time.
+            if self._honor_stop_request():
+                return
+
             self._task_state.status = TaskStatus.RUNNING
             start_time = time.time()
 
@@ -1207,6 +1256,7 @@ class Robot(TeleopMixin, AgentTool):
                 time.time() - start_time < duration
                 and (n_steps is None or self._task_state.step_count < n_steps)
                 and self._task_state.status == TaskStatus.RUNNING
+                and not self._stop_requested.is_set()
                 and not self._shutdown_event.is_set()
             ):
                 # Get observation from robot
@@ -1254,8 +1304,19 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.duration = elapsed
 
             if self._task_state.status == TaskStatus.RUNNING:
-                self._task_state.status = TaskStatus.COMPLETED
-                logger.info(f"Task completed: '{instruction}' in {elapsed:.1f}s ({self._task_state.step_count} steps)")
+                # A stop can land in the gap between the check above and the
+                # ``RUNNING`` write, which overwrites the ``STOPPED`` status
+                # ``stop_task`` recorded. The latch survives that write, so it
+                # is what decides here - otherwise an interrupted task reports
+                # itself completed.
+                if self._stop_requested.is_set():
+                    self._task_state.status = TaskStatus.STOPPED
+                    logger.info(f"Task stopped: '{instruction}' after {self._task_state.step_count} steps")
+                else:
+                    self._task_state.status = TaskStatus.COMPLETED
+                    logger.info(
+                        f"Task completed: '{instruction}' in {elapsed:.1f}s ({self._task_state.step_count} steps)"
+                    )
 
         except Exception as e:
             logger.error(f"Task execution failed: {e}")
@@ -1535,13 +1596,48 @@ class Robot(TeleopMixin, AgentTool):
         }
 
     def stop_task(self) -> dict[str, Any]:
-        """Stop currently running task."""
+        """Stop the current task, including one that is still connecting.
 
-        if self._task_state.status != TaskStatus.RUNNING:
+        This is the interrupt an operator (or the fleet ``{"action": "stop"}``
+        dispatch, via ``mesh/core.py``) reaches for, so it has to hold for a
+        task in ANY stage that can still command the arm - not only the one
+        stage whose status happens to be ``RUNNING``.
+
+        ``_execute_task_async`` sits in ``CONNECTING`` for the whole hardware
+        bring-up: a motors-bus handshake plus ``warmup_s`` per camera, seconds
+        on a real arm and longer on a multi-camera rig, followed by the policy
+        build. A stop pressed in that window used to be answered with
+        ``status="success"`` and ``"No task running to stop"``, and the arm then
+        moved anyway once the bring-up finished - the operator was told the
+        interrupt was handled while the rollout it was meant to cancel was
+        still pending.
+
+        A status write cannot express the request on its own, because
+        ``_execute_task_async`` writes ``RUNNING`` once bring-up completes and
+        that overwrites any ``STOPPED`` recorded before it. So the request is
+        latched in an event that is set here FIRST, before the status is even
+        read, and cleared only when a new task starts. The rollout honors the
+        latch at each stage boundary and in its loop condition.
+
+        Returns:
+            A tool-shaped result confirming the stop, or - for a robot that is
+            genuinely idle or already in a terminal state - reporting that
+            there was nothing to stop. Both are ``status="success"``: asking an
+            idle robot to stop is satisfied, not an error.
+        """
+        # Latched before the status is read: a stop that lands in the gap
+        # between the rollout's last stage check and its ``RUNNING`` write must
+        # not be lost, and the latch is the only record that survives it.
+        self._stop_requested.set()
+
+        stoppable = (TaskStatus.RUNNING, TaskStatus.CONNECTING)
+        if self._task_state.status not in stoppable:
             return {
                 "status": "success",
                 "content": [{"text": f"No task running to stop (current: {self._task_state.status.value})"}],
             }
+
+        was_connecting = self._task_state.status == TaskStatus.CONNECTING
 
         # Signal task to stop
         self._task_state.status = TaskStatus.STOPPED
@@ -1552,11 +1648,12 @@ class Robot(TeleopMixin, AgentTool):
 
         logger.info(f"Task stopped: {self._task_state.instruction}")
 
+        stage = " (during connect)" if was_connecting else ""
         return {
             "status": "success",
             "content": [
                 {
-                    "text": f"Task stopped: '{self._task_state.instruction}'\n"
+                    "text": f"Task stopped{stage}: '{self._task_state.instruction}'\n"
                     f"Duration: {self._task_state.duration:.1f}s\n"
                     f"Steps completed: {self._task_state.step_count}"
                 }
