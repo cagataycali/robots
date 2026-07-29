@@ -748,6 +748,22 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
             joint_names = SpecBuilder.attach_robot(new_spec, robot, robot.urdf_path)
         robot.joint_names = joint_names
 
+    # Step 2b: mount the body-mounted cameras ``SpecBuilder.build`` deferred,
+    # now that every surviving robot's bodies exist in the spec. A camera whose
+    # parent belonged to the robot being ejected has no parent left, so it is
+    # dropped from the registry with a warning rather than aborting the eject -
+    # the same treatment the robot's own URDF cameras get above. Without this
+    # step the rebuild raised ``ValueError`` straight out of ``remove_robot``,
+    # so a scene with a wrist camera could not remove any robot at all.
+    for cname in SpecBuilder.add_deferred_cameras(new_spec, world):
+        logger.warning(
+            "eject_robot: dropping camera %r - its parent body %r belonged to the removed robot %r.",
+            cname,
+            getattr(world.cameras[cname], "parent_body", ""),
+            robot_name,
+        )
+        del world.cameras[cname]
+
     # Step 3: compile fresh and install. No spec.recompile(model, data)
     # here - recompile implicitly preserves qpos state which doesn't
     # make sense across a scene rebuild, and forcing a fresh compile

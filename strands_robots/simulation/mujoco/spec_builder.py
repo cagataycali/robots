@@ -316,6 +316,28 @@ def _target_quat(position: list[float], target: list[float]) -> list[float] | No
     return quat.tolist()
 
 
+def _find_spec_body(spec: Any, name: str) -> Any | None:
+    """Resolve a body by name in ``spec``, or ``None`` when it is not there.
+
+    ``spec.body(name)`` only resolves bodies that existed at the last compile,
+    and it RETURNS ``None`` for a body added since (rather than raising), so a
+    lookup that trusts it alone misses every body introduced by
+    ``spec.attach()`` or ``add_body`` in the current editing session. Falling
+    back to a scan of ``spec.bodies`` covers those, mirroring the robustness
+    of ``scene_ops._find_body``.
+    """
+    try:
+        body = spec.body(name)
+    except (KeyError, ValueError):
+        body = None
+    if body is not None:
+        return body
+    for candidate in spec.bodies:
+        if candidate.name == name:
+            return candidate
+    return None
+
+
 # SpecBuilder - the public API
 
 
@@ -348,12 +370,18 @@ class SpecBuilder:
           * mesh assets for any objects with ``shape == "mesh"``
           * lights (``main_light``, ``fill_light``)
           * ground plane (if ``world.ground_plane``)
-          * cameras
+          * world-fixed cameras
           * objects
 
         Robots are NOT included here - they're attached separately via
         :meth:`attach_robot` because each attach consumes a fresh MjSpec
         loaded from the URDF/MJCF file on disk.
+
+        Because no robot is attached yet, a BODY-MOUNTED camera (one with
+        ``parent_body`` set, e.g. a wrist camera) has no parent to mount on
+        and is deferred: the caller must invoke :meth:`add_deferred_cameras`
+        after attaching robots and before compiling, or those cameras are
+        absent from the model.
 
         Caller is responsible for ``spec.compile()`` to produce an MjModel.
         """
@@ -470,12 +498,19 @@ class SpecBuilder:
                     condim=3,
                 )
 
-        # Cameras. Skip cameras that were discovered inside a robot's URDF -
-        # they'll come back automatically via ``spec.attach(robot_spec)``.
-        # Re-adding them at the top level would collide with the attached
-        # namespaced copy at compile time.
+        # Cameras. Two kinds are skipped here.
+        #
+        # Cameras discovered inside a robot's URDF come back automatically via
+        # ``spec.attach(robot_spec)``; re-adding them at the top level would
+        # collide with the attached namespaced copy at compile time.
+        #
+        # Body-mounted cameras are DEFERRED: ``build`` does not attach robots
+        # (see this method's own contract), so a camera whose ``parent_body``
+        # is a robot body has no parent in the spec yet. Adding it here raised
+        # ``ValueError`` and aborted the whole rebuild. The caller mounts them
+        # with :meth:`add_deferred_cameras` once every robot is attached.
         for cam in world.cameras.values():
-            if getattr(cam, "origin_robot", ""):
+            if getattr(cam, "origin_robot", "") or getattr(cam, "parent_body", ""):
                 continue
             SpecBuilder.add_camera(spec, cam)
 
@@ -744,20 +779,9 @@ class SpecBuilder:
 
         parent_name = getattr(cam, "parent_body", "") or ""
         if parent_name:
-            # Mount on the named body. spec.body() only resolves bodies that
-            # existed at the last compile; robot bodies introduced via
-            # spec.attach() may not be visible that way, so fall back to a
-            # full scan (mirrors scene_ops._find_body's robustness).
-            parent = None
-            try:
-                parent = spec.body(parent_name)
-            except (KeyError, ValueError):
-                parent = None
-            if parent is None:
-                for body in spec.bodies:
-                    if body.name == parent_name:
-                        parent = body
-                        break
+            # Mount on the named body, so cam.position/target are read in that
+            # body's LOCAL frame and the camera rides along with it.
+            parent = _find_spec_body(spec, parent_name)
             if parent is None:
                 raise ValueError(
                     f"add_camera: parent_body {parent_name!r} not found in scene. "
@@ -766,6 +790,35 @@ class SpecBuilder:
             parent.add_camera(**kwargs)
         else:
             spec.worldbody.add_camera(**kwargs)
+
+    # deferred (body-mounted) cameras
+    @staticmethod
+    def add_deferred_cameras(spec: Any, world: SimWorld) -> list[str]:
+        """Mount the body-mounted cameras :meth:`build` deferred.
+
+        :meth:`build` deliberately does not attach robots, so a camera whose
+        ``parent_body`` names a robot body cannot be added while the base spec
+        is being assembled. Call this once every robot has been attached and
+        before ``spec.compile()``.
+
+        Returns:
+            The names of cameras that could NOT be mounted because their
+            ``parent_body`` is absent from the rebuilt spec -- which happens
+            when the body belonged to a robot that is being removed. They are
+            reported rather than raised so removing a robot stays possible;
+            the caller decides what to do with the now-parentless entries.
+        """
+        unmounted: list[str] = []
+        for cam in world.cameras.values():
+            # Both fields are declared on SimCamera, so read them directly.
+            parent_name = cam.parent_body
+            if not parent_name or cam.origin_robot:
+                continue
+            if _find_spec_body(spec, parent_name) is None:
+                unmounted.append(cam.name)
+                continue
+            SpecBuilder.add_camera(spec, cam)
+        return unmounted
 
     # body remove
     @staticmethod

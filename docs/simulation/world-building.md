@@ -338,6 +338,12 @@ sim.add_camera(name="wrist", parent_body=mount,
 
 `list_bodies()` (no `robot_name`) lists every body in the world; with `robot_name` it scopes to that robot and also returns `gripper_body`, the best-guess end-effector mount.
 
+A mounted camera survives `remove_robot`, which rebuilds the whole scene: it is
+re-mounted on its body once every surviving robot is re-attached, keeping its
+local pose and its tracking. Removing the robot the camera is mounted ON leaves
+it with no mount point, so that camera is dropped (with a warning naming it)
+rather than blocking the removal.
+
 ## Multi-robot policies
 
 ```python
