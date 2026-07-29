@@ -1410,7 +1410,7 @@ class SimEngine(ABC):
         Returns:
             A structured ``{"status": "error", ...}`` dict, or ``None`` when no
             recording is active or the rates agree. See
-            :func:`~strands_robots.simulation.recording.dataset_rate_mismatch_error`
+            :func:`~strands_robots.simulation.recording.dataset_rate_mismatch_reason`
             for the contract and why a mismatch is refused rather than warned.
         """
         if not self._is_recording():

@@ -41,8 +41,10 @@ pytest.importorskip("lerobot")
 
 from strands_robots.policies.base import Policy  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine  # noqa: E402
+from strands_robots.simulation.policy_runner import PolicyRunner  # noqa: E402
 from strands_robots.simulation.recording import (  # noqa: E402
     dataset_rate_mismatch_error,
+    dataset_rate_mismatch_reason,
     recorder_dataset_fps,
 )
 
@@ -214,6 +216,125 @@ class TestTheGuardHelperIsRobust:
         assert recorder_dataset_fps(_FakeRecorder(True)) is None
 
 
+class TestTheRunnerLayerCarriesItsOwnGuarantee:
+    """``PolicyRunner`` is driven directly, with the engine's guard off the path.
+
+    ``docs/policies/lerobot-local.md`` names ``PolicyRunner.run`` beside
+    ``run_policy`` as a caller surface, and ``_control_substeps`` already raises
+    for a bad ``control_substeps`` on the stated grounds that "the public entry
+    points reject such a value ... this raise is the guarantee for callers
+    driving ``PolicyRunner`` directly". The recording rate needs the same
+    treatment: measured before the guard, a direct rollout at ``fps=30`` /
+    ``control_frequency=50`` wrote 20 frames declaring 0.0333s each for a
+    capture 0.0200s apart (1.667x) and reported ``status="success"``.
+    """
+
+    def _keys(self, sim) -> list[str]:  # noqa: ANN001
+        return list(sim.robot_action_keys("arm"))
+
+    def test_direct_run_refuses_a_rate_the_recording_cannot_describe(self, sim, tmp_path):
+        root = _record(sim, tmp_path, fps=30)
+        with pytest.raises(ValueError) as excinfo:
+            PolicyRunner(sim).run(
+                "arm",
+                _Hold(self._keys(sim)),
+                n_steps=20,
+                control_frequency=50.0,
+                on_frame=sim._make_run_policy_hook("arm", "hold"),
+            )
+        message = str(excinfo.value)
+        assert message.startswith("PolicyRunner.run: ")
+        assert "declares 30 fps" in message
+        assert "control_frequency=50 Hz" in message
+        # Refused before the recorder was touched, so nothing has to be undone.
+        assert sim._active_recorder().frame_count == 0
+        assert _frames_on_disk(root) == 0
+
+    def test_direct_evaluate_refuses_the_same_disagreement(self, sim, tmp_path):
+        """The eval loop writes into the same open recording, so it refuses too."""
+        root = _record(sim, tmp_path, fps=30, name="eval_ds")
+        with pytest.raises(ValueError) as excinfo:
+            PolicyRunner(sim).evaluate(
+                "arm",
+                _Hold(self._keys(sim)),
+                n_episodes=1,
+                max_steps=20,
+                control_frequency=50.0,
+                on_frame=sim._make_run_policy_hook("arm", "hold"),
+            )
+        assert str(excinfo.value).startswith("PolicyRunner.evaluate: ")
+        assert _frames_on_disk(root) == 0
+
+    def test_a_matching_rate_still_records_an_exact_timebase(self, sim, tmp_path):
+        """Control: the guard must not cost a correctly configured direct caller."""
+        root = _record(sim, tmp_path, fps=50, name="aligned_ds")
+        result = PolicyRunner(sim).run(
+            "arm",
+            _Hold(self._keys(sim)),
+            n_steps=20,
+            control_frequency=50.0,
+            on_frame=sim._make_run_policy_hook("arm", "hold"),
+        )
+        assert result["status"] == "success"
+        assert sim.stop_recording()["status"] == "success"
+        assert _frames_on_disk(root) == 20
+        pd = pytest.importorskip("pandas")
+        parquets = [p for p in Path(root).rglob("*.parquet") if "data" in p.parts]
+        stamps = pd.concat([pd.read_parquet(p) for p in parquets])["timestamp"].tolist()
+        assert stamps[1] - stamps[0] == pytest.approx(1.0 / 50.0, abs=1e-9)
+
+    def test_a_rollout_with_no_recording_open_is_unaffected(self, sim):
+        """Control: the rates are only comparable while a recording is open."""
+        result = PolicyRunner(sim).run("arm", _Hold(self._keys(sim)), n_steps=5, control_frequency=50.0)
+        assert result["status"] == "success"
+
+    def test_a_sim_without_the_recording_hooks_is_not_probed(self):
+        """A backend that cannot record, or a test double, has neither hook."""
+        PolicyRunner(object())._reject_recording_rate_mismatch(50.0, "PolicyRunner.run")
+
+    def test_a_sim_reporting_no_active_recorder_is_not_probed(self):
+        """``_is_recording`` and ``_active_recorder`` can disagree; trust neither alone."""
+
+        class _Engine:
+            def _is_recording(self) -> bool:
+                return True
+
+            def _active_recorder(self) -> None:
+                return None
+
+        PolicyRunner(_Engine())._reject_recording_rate_mismatch(50.0, "PolicyRunner.run")
+
+
+@pytest.mark.parametrize(
+    ("fps", "control_frequency"),
+    [(30, 50.0), (50, 30.0), (30, 30.0), (50, 50.0), (25, 25.0), (None, 50.0), (29.97, 50.0)],
+)
+def test_the_runner_and_the_engine_refuse_the_same_rates(fps, control_frequency):
+    """One rule, two surfaces: the verdict and the reason must not diverge.
+
+    The engine reports through a tool envelope and the runner raises, so only a
+    shared reason keeps a caller from being told two different things about the
+    same pair of rates.
+    """
+    recorder = _FakeRecorder(fps)
+    envelope = dataset_rate_mismatch_error("run_policy", recorder, control_frequency)
+    reason = dataset_rate_mismatch_reason("run_policy", recorder, control_frequency)
+    assert (envelope is None) == (reason is None), (
+        f"the two surfaces disagree for fps={fps!r} control_frequency={control_frequency!r}"
+    )
+    if envelope is not None and reason is not None:
+        assert envelope["content"][0]["text"] == reason
+
+
+def test_the_reason_names_the_method_the_caller_actually_called():
+    """The remedy must advise changing ``PolicyRunner.run``, not ``run_policy``."""
+    reason = dataset_rate_mismatch_reason("PolicyRunner.run", _FakeRecorder(30), 50.0)
+    assert reason is not None
+    assert reason.startswith("PolicyRunner.run: ")
+    assert "pass control_frequency=30 to PolicyRunner.run()" in reason
+    assert "run_policy" not in reason
+
+
 class _Dataset:
     def __init__(self, fps, meta: object | None = None) -> None:  # noqa: ANN001
         self.fps = fps
@@ -244,6 +365,24 @@ _ENTRY_POINTS = {
     "strands_robots/simulation/mujoco/simulation.py": ("start_policy", "run_multi_policy"),
 }
 
+# ``PolicyRunner`` is driven directly too, so it repeats the check under its own
+# name. Kept as a separate table because the guard it calls differs: the engine
+# returns a tool envelope, the runner raises for a caller that has no envelope.
+_RUNNER_ENTRY_POINTS = {
+    "strands_robots/simulation/policy_runner.py": ("run", "evaluate"),
+}
+
+
+def _self_calls(module: str, method: str) -> set[str]:
+    """Names of the ``self.x(...)`` calls made anywhere inside ``module::method``."""
+    tree = ast.parse(Path(module).read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == method:
+            return {
+                n.func.attr for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
+            }
+    pytest.fail(f"{method} not found in {module}")
+
 
 @pytest.mark.parametrize(
     ("module", "method"),
@@ -257,12 +396,17 @@ def test_every_rollout_entry_point_checks_the_recording_rate(module, method):
     is still covered - and so a newly added driver cannot quietly skip the
     guard the way ``run_multi_policy`` once skipped ``_validate_action_horizon``.
     """
-    tree = ast.parse(Path(module).read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == method:
-            calls = {
-                n.func.attr for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)
-            }
-            assert "_validate_recording_rate" in calls, f"{module}::{method} does not check the recording rate"
-            return
-    pytest.fail(f"{method} not found in {module}")
+    assert "_validate_recording_rate" in _self_calls(module, method), (
+        f"{module}::{method} does not check the recording rate"
+    )
+
+
+@pytest.mark.parametrize(
+    ("module", "method"),
+    [(m, f) for m, fns in _RUNNER_ENTRY_POINTS.items() for f in fns],
+)
+def test_every_directly_drivable_runner_method_checks_the_recording_rate(module, method):
+    """The runner cannot rely on a guard that is not on a direct caller's path."""
+    assert "_reject_recording_rate_mismatch" in _self_calls(module, method), (
+        f"{module}::{method} does not check the recording rate"
+    )

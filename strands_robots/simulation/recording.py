@@ -104,8 +104,8 @@ def recorder_dataset_fps(recorder: Any) -> int | None:
     return None
 
 
-def dataset_rate_mismatch_error(method: str, recorder: Any, control_frequency: float) -> dict[str, Any] | None:
-    """Reject a rollout whose capture rate the active dataset cannot describe.
+def dataset_rate_mismatch_reason(method: str, recorder: Any, control_frequency: float) -> str | None:
+    """Explain why the active dataset cannot describe a rollout's capture rate.
 
     ``start_recording(fps=...)`` fixes the frame rate written into the dataset
     metadata, and LeRobot derives every frame's timestamp from it positionally
@@ -143,9 +143,11 @@ def dataset_rate_mismatch_error(method: str, recorder: Any, control_frequency: f
             ``control_frequency`` guard.
 
     Returns:
-        A structured ``{"status": "error", ...}`` dict naming both rates and the
-        remedies, or ``None`` when the rates agree (or the dataset does not
-        report a usable whole rate, which must not block a valid rollout).
+        The reason text naming both rates and the remedies, or ``None`` when the
+        rates agree (or the dataset does not report a usable whole rate, which
+        must not block a valid rollout). Callers reporting through a tool
+        envelope want :func:`dataset_rate_mismatch_error`; a caller that must
+        raise - a directly driven ``PolicyRunner`` - uses this text verbatim.
     """
     fps = recorder_dataset_fps(recorder)
     if fps is None:
@@ -170,7 +172,27 @@ def dataset_rate_mismatch_error(method: str, recorder: Any, control_frequency: f
         f"episode duration, which a policy trains on as its control period and which "
         f"replay_episode reproduces at the wrong speed. Align the two rates: {remedy}."
     )
-    return {"status": "error", "content": [{"text": text}]}
+    return text
+
+
+def dataset_rate_mismatch_error(method: str, recorder: Any, control_frequency: float) -> dict[str, Any] | None:
+    """Envelope form of :func:`dataset_rate_mismatch_reason` for tool callers.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        recorder: The active ``DatasetRecorder``.
+        control_frequency: Rate the rollout will capture frames at.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict carrying the reason text,
+        or ``None`` when there is nothing to refuse. See
+        :func:`dataset_rate_mismatch_reason` for the contract and why a mismatch
+        is refused rather than warned.
+    """
+    reason = dataset_rate_mismatch_reason(method, recorder, control_frequency)
+    if reason is None:
+        return None
+    return {"status": "error", "content": [{"text": reason}]}
 
 
 def _resume_schema_error(diffs: list[str]) -> str:

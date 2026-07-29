@@ -41,6 +41,19 @@ from the dataset rate, so a mislabelled episode also replays at the wrong speed.
 To record at a lower rate than you control at, run the rollout at that rate -
 there is no decimating recorder.
 
+`PolicyRunner` is drivable directly, and the engine's check is not on that path,
+so `PolicyRunner.run` / `PolicyRunner.evaluate` apply the same rule themselves.
+They raise `ValueError` rather than returning an error dict, because a direct
+caller has no tool envelope to read:
+
+```python
+runner = PolicyRunner(sim)
+runner.run("so100", policy, control_frequency=50.0, on_frame=hook)
+# -> ValueError: PolicyRunner.run: the active recording declares 30 fps but this
+#    rollout captures at control_frequency=50 Hz. [...] pass control_frequency=30
+#    to PolicyRunner.run()
+```
+
 ## Selecting which cameras to record
 
 By default every camera in the scene is recorded into the dataset - including

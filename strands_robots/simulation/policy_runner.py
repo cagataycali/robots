@@ -812,6 +812,53 @@ class PolicyRunner:
             return max(1, round((1.0 / control_frequency) / dt))
         return 1
 
+    def _reject_recording_rate_mismatch(self, control_frequency: float, method: str) -> None:
+        """Refuse a rollout the engine's open dataset recording cannot describe.
+
+        The dataset recorder is driven once per control step with no
+        decimation, and LeRobot timestamps each frame positionally from the
+        rate ``start_recording(fps=...)`` wrote into the metadata. A rollout
+        capturing at a different ``control_frequency`` therefore cannot be
+        labelled correctly, only mislabelled - the episode declares a
+        duration it was not captured over, which is the control period a
+        policy trains on and the budget ``replay_episode`` replays it at.
+
+        The engine's rollout entry points already refuse this before a frame
+        is written. ``run`` and ``evaluate`` are also driven directly, with
+        the engine's guard off the path, so the check is repeated here for
+        the same reason :meth:`_control_substeps` raises for a bad
+        ``control_substeps``: this layer owes a direct caller its own
+        guarantee. A backend that cannot record has no ``_is_recording``, and
+        a duck-typed test double may have neither hook, so both are probed
+        rather than assumed.
+
+        Args:
+            control_frequency: Rate this rollout captures frames at.
+            method: Public method name, used to prefix the message.
+
+        Raises:
+            ValueError: If a recording is open at a rate other than
+                ``control_frequency``. Raised rather than returned as an error
+                dict so it cannot be absorbed, and reported before any frame
+                is written so the caller loses nothing.
+        """
+        is_recording = getattr(self.sim, "_is_recording", None)
+        if not callable(is_recording) or not is_recording():
+            return
+        active_recorder = getattr(self.sim, "_active_recorder", None)
+        if not callable(active_recorder):
+            return
+        recorder = active_recorder()
+        if recorder is None:
+            return
+        # Imported here, like the engine's own call site, so the recording
+        # module stays out of this module's import graph.
+        from strands_robots.simulation.recording import dataset_rate_mismatch_reason
+
+        reason = dataset_rate_mismatch_reason(method, recorder, control_frequency)
+        if reason is not None:
+            raise ValueError(reason)
+
     # ------------------------------------------------------------------
     # Recorder per-episode boundary (issue #708)
     # ------------------------------------------------------------------
@@ -1049,6 +1096,8 @@ class PolicyRunner:
         # seed is given, reseed the client RNGs once and forward it to the policy
         # (mirrors the per-episode reseed in evaluate()). Default None leaves RNG
         # state untouched, preserving historical behaviour.
+        # Refuse before any frame reaches the engine's open recording.
+        self._reject_recording_rate_mismatch(control_frequency, "PolicyRunner.run")
         if seed is not None:
             set_eval_seed(seed)
             try:
@@ -2132,6 +2181,8 @@ class PolicyRunner:
             metrics are computed over ``episodes_completed`` (which may be less
             than the requested ``n_episodes``).
         """
+        # Refuse before any frame reaches the engine's open recording.
+        self._reject_recording_rate_mismatch(control_frequency, "PolicyRunner.evaluate")
         if spec is not None and success_fn is not None:
             return {
                 "status": "error",
