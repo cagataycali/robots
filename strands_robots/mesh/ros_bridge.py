@@ -8,7 +8,10 @@ hardware robots. All ROS 2 I/O is forwarded through the
 inherits ``use_ros``'s in-process ``rclpy`` backend and its topic/type
 validation. The parameters ``use_ros`` never sees are validated here: a
 :meth:`RosBridgedRobot.drive` command whose velocity, hold duration or message
-count cannot be honored is refused without publishing anything.
+count cannot be honored is refused without publishing anything, and a
+:meth:`RosBridgedRobot.navigate_to` goal whose pose cannot be honored is refused
+without sending anything - the goal coordinates travel inside the request body,
+which ``use_ros`` forwards verbatim.
 
 Typical usage::
 
@@ -264,21 +267,45 @@ class RosBridgedRobot:
         cancels the goal so the robot does not keep navigating unattended.
 
         Args:
-            x: Goal position x in ``frame_id`` (meters).
-            y: Goal position y in ``frame_id`` (meters).
-            yaw: Goal heading in radians, encoded as a planar quaternion.
+            x: Goal position x in ``frame_id`` (meters). Must be a finite
+                number; both signs are valid.
+            y: Goal position y in ``frame_id`` (meters). Must be a finite
+                number; both signs are valid.
+            yaw: Goal heading in radians, encoded as a planar quaternion. Must
+                be a finite number; both signs are valid (negative turns the
+                other way).
             frame_id: Frame the goal pose is expressed in (default ``map``).
             timeout: End-to-end budget in seconds for the navigation goal.
+                Forwarded to ``use_ros``, which refuses a non-positive or
+                non-finite budget.
 
         Returns:
             The ``use_ros`` action result dict (goal status, result, feedback
-            samples), or an error result when no ``nav_action`` was configured.
+            samples), or an ``{"status": "error"}`` result when no
+            ``nav_action`` was configured or when a pose component cannot be
+            honored - in which case no goal is sent.
         """
         if not self.nav_action:
             return {
                 "status": "error",
                 "content": [{"text": "navigate_to: no nav_action configured for this robot"}],
             }
+        # The goal pose is the part of this call ``use_ros`` never validates: it
+        # checks the action name and interface type, but the coordinates travel
+        # inside ``fields`` and are serialized into the request verbatim. A
+        # non-finite coordinate is a valid IEEE-754 float64 on the wire, so the
+        # goal is accepted and handed to a planner that cannot resolve it, and
+        # ``yaw`` additionally reaches ``math.sin``/``math.cos``, which raise a
+        # bare ``ValueError`` for an infinite angle - out of a method whose
+        # contract is a result dict, and out of the bound ``navigate_*`` tool.
+        # ``timeout`` does reach ``use_ros`` and is guarded there.
+        pose_err = (
+            finite_number_error(x, "x", "navigate_to")
+            or finite_number_error(y, "y", "navigate_to")
+            or finite_number_error(yaw, "yaw", "navigate_to")
+        )
+        if pose_err:
+            return {"status": "error", "content": [{"text": pose_err}]}
         half = 0.5 * float(yaw)
         fields = {
             "pose": {
