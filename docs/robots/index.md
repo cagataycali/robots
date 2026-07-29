@@ -1,10 +1,10 @@
 ---
-description: 68 robots across 8 categories. Every name addressable from Robot('name').
+description: 72 robots across 8 categories. Every name addressable from Robot('name').
 ---
 
 # Robot catalog
 
-`strands-robots` ships with a registry of **68 robots** across 8 categories. Every robot
+`strands-robots` ships with a registry of **72 robots** across 8 categories. Every robot
 is addressable by name through the factory:
 
 ```python
@@ -18,7 +18,7 @@ sim = Robot("aloha")
 
 <div class="grid cards" markdown>
 
--   :material-arm-flex:{ .lg .middle } **Arms** · 22
+-   :material-arm-flex:{ .lg .middle } **Arms** · 23
 
     ---
 
@@ -26,7 +26,7 @@ sim = Robot("aloha")
 
     [:octicons-arrow-right-24: Arms catalog](arms.md)
 
--   :material-arrow-left-right:{ .lg .middle } **Bimanual** · 3
+-   :material-arrow-left-right:{ .lg .middle } **Bimanual** · 4
 
     ---
 
@@ -42,7 +42,7 @@ sim = Robot("aloha")
 
     [:octicons-arrow-right-24: Humanoids catalog](humanoids.md)
 
--   :material-hand-back-right:{ .lg .middle } **Hands** · 8
+-   :material-hand-back-right:{ .lg .middle } **Hands** · 9
 
     ---
 
@@ -58,7 +58,7 @@ sim = Robot("aloha")
 
     [:octicons-arrow-right-24: Mobile catalog](mobile.md)
 
--   :material-truck:{ .lg .middle } **Mobile manip** · 4
+-   :material-truck:{ .lg .middle } **Mobile manip** · 5
 
     ---
 

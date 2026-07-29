@@ -1,11 +1,11 @@
 ---
-description: 22 single-arm manipulators - from a 2-DOF educational toy to industrial UR10e.
+description: 23 single-arm manipulators - from a 2-DOF educational toy to industrial UR10e.
 ---
 
 # Arms
 
 Single-arm manipulators: industrial robots, research arms, educational kits.
-**22 robots in this category.**
+**23 robots in this category.**
 
 ```python
 from strands_robots import Robot

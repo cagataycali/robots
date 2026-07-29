@@ -106,7 +106,7 @@ sim.step(100)   # publishes /so101/joint_states + camera image_raw on the ROS 2 
 
 - **Sim-first, safe by default.** `Robot("so100")` spins up a MuJoCo world. You
   never accidentally drive real servos - `mode="real"` is an explicit opt-in.
-- **50+ robots, 8 categories.** Arms, humanoids, quadrupeds, hands, drones,
+- **70+ robots, 8 categories.** Arms, humanoids, quadrupeds, hands, drones,
   bimanual rigs - resolved from a single registry with auto-download of assets.
 - **Any policy.** VLA models (NVIDIA GR00T, LeRobot ACT/Pi0/SmolVLA/Diffusion),
   plus classical motion planners, MPC, and scripted controllers behind one ABC.
@@ -439,7 +439,7 @@ Safety/validation rules:
 
 ## Supported robots
 
-50+ robots across 8 categories, resolved from
+70+ robots across 8 categories, resolved from
 [`registry/robots.json`](strands_robots/registry/robots.json). Assets
 (MJCF + meshes) auto-download from
 [robot_descriptions](https://github.com/robot-descriptions/robot_descriptions.py)
@@ -1175,7 +1175,7 @@ strands_robots/
 │   ├── mock.py            # MockPolicy (non-VLA reference)
 │   ├── groot/             # NVIDIA GR00T (ZMQ/HTTP client + data configs)
 │   └── lerobot_local/     # Direct HuggingFace inference (RTC, processors)
-├── registry/              # robots.json (50+) + policies.json + loaders
+├── registry/              # robots.json (70+) + policies.json + loaders
 ├── simulation/
 │   ├── base.py            # SimEngine ABC
 │   ├── factory.py         # create_simulation() + backend registry
