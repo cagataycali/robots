@@ -1096,7 +1096,10 @@ class Robot(TeleopMixin, AgentTool):
         ``policy_object`` (when given) is driven as-is and the provider/port
         arguments are ignored - the ``run_policy`` path. ``n_steps`` caps the
         number of applied actions; the loop stops at whichever of
-        ``duration`` / ``n_steps`` comes first.
+        ``duration`` / ``n_steps`` comes first. The two conditions are ANDed,
+        so ``duration`` bounds the rollout even with a step cap - it is
+        validated at every public entry point rather than only when it is the
+        sole horizon.
 
         Either way the policy's per-episode state is reset before the rollout,
         so a task never begins from the state the previous task left behind.
@@ -1232,6 +1235,47 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.status = TaskStatus.ERROR
             self._task_state.error_message = str(e)
 
+    @staticmethod
+    def _duration_error(duration: Any, method: str) -> dict[str, Any] | None:
+        """Reject a task ``duration`` the control loop cannot honor.
+
+        ``duration`` is the wall-clock budget the loop compares against
+        (``time.time() - start_time < duration``), and on hardware it bounds
+        every rollout: unlike the simulation's ``run_policy`` - where an
+        ``n_steps`` recomputes ``duration`` and supersedes it - the two
+        conditions are ANDed here, so ``duration`` is the effective horizon
+        even when a step cap is given.
+
+        Only a positive finite value can be honored. A value ``<= 0`` (and
+        ``nan``, which is never ``<= 0`` but fails every comparison it reaches)
+        makes the loop condition false on its first evaluation: the task used
+        to report ``status="success"`` for a rollout that never queried the
+        policy and never commanded the arm. ``inf`` is worse than a fast
+        budget - it never becomes false, so the loop commands the servo bus
+        indefinitely and the blocking entry point never returns. A
+        non-numeric value reached the comparison intact and surfaced a bare
+        ``TypeError`` naming a comparison internal ("'<' not supported between
+        instances of 'float' and 'str'") rather than the parameter.
+
+        The accepted domain is
+        :func:`~strands_robots.utils.positive_finite_number_error`, shared with
+        the loop's ``control_frequency`` guard and with the simulation's
+        :meth:`~strands_robots.simulation.base.SimEngine._validate_duration`,
+        so the same budget cannot be refused for a digital twin and accepted
+        for the arm it mirrors.
+
+        Args:
+            duration: The caller-supplied value to validate.
+            method: Public entry point name, used to prefix the message.
+
+        Returns:
+            A tool-shaped error dict naming ``duration``, or ``None`` when the
+            value can be honored.
+        """
+        if error := positive_finite_number_error(duration, "duration", method):
+            return {"status": "error", "content": [{"text": error}]}
+        return None
+
     def _execute_task_sync(
         self,
         instruction: str,
@@ -1243,6 +1287,12 @@ class Robot(TeleopMixin, AgentTool):
         n_steps: int | None = None,
     ) -> dict[str, Any]:
         """Execute task synchronously in thread - no new event loop."""
+        # Validated here as well as at the public methods below: this is the
+        # chokepoint the agent-tool "execute" action and the mesh "execute"
+        # dispatch reach directly, so a peer-supplied budget is refused before
+        # the arm is commanded rather than after.
+        if err := self._duration_error(duration, "execute_task"):
+            return err
 
         # Import here to avoid conflicts
         import asyncio
@@ -1301,7 +1351,27 @@ class Robot(TeleopMixin, AgentTool):
         policy_provider: str = "groot",
         duration: float = 30.0,
     ) -> dict[str, Any]:
-        """Start robot task asynchronously and return immediately."""
+        """Start robot task asynchronously and return immediately.
+
+        Args:
+            instruction: Natural-language instruction passed to the policy.
+            policy_port: Port of the policy server to query.
+            policy_host: Host of the policy server.
+            policy_provider: Provider name used to build the policy.
+            duration: Wall-clock budget in seconds. Must be positive and
+                finite; it is validated before the task is submitted, so a
+                budget the loop cannot honor is reported here instead of as a
+                started task that commands nothing (or never ends).
+
+        Returns:
+            Tool-shaped result confirming the task started, or an error naming
+            the offending parameter.
+        """
+        # Before the submit: the work happens on a background thread, so a
+        # budget checked inside it would still report "Task started" to the
+        # caller for a task that commands nothing (or never ends).
+        if err := self._duration_error(duration, "start_task"):
+            return err
 
         # Check if task is already running
         if self._task_state.status == TaskStatus.RUNNING:
@@ -1361,7 +1431,10 @@ class Robot(TeleopMixin, AgentTool):
             instruction: Natural-language instruction passed to the policy on
                 every ``get_actions`` call.
             duration: Wall-clock budget in seconds (same default as
-                ``start_task``).
+                ``start_task``). Must be positive and finite; the loop bounds
+                the rollout by it even when ``n_steps`` is given, so a value it
+                cannot honor is refused rather than reported as a rollout that
+                commanded nothing.
             n_steps: Optional cap on applied actions (mirrors the sim
                 ``run_policy`` parameter); the loop stops at whichever of
                 ``duration`` / ``n_steps`` comes first.
@@ -1381,6 +1454,8 @@ class Robot(TeleopMixin, AgentTool):
                 "status": "error",
                 "content": [{"text": f"Task already running: {self._task_state.instruction}"}],
             }
+        if err := self._duration_error(duration, "run_policy"):
+            return err
 
         self._execute_task_sync(instruction, duration=duration, policy_object=policy_object, n_steps=n_steps)
 
@@ -1510,7 +1585,11 @@ class Robot(TeleopMixin, AgentTool):
                         },
                         "duration": {
                             "type": "number",
-                            "description": "Maximum execution time in seconds",
+                            "description": (
+                                "Maximum execution time in seconds. Must be a positive finite "
+                                "number: the loop compares elapsed time against it, so 0 or a "
+                                "negative value commands nothing and infinity never ends."
+                            ),
                             "default": 30.0,
                         },
                     },
