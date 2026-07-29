@@ -1423,14 +1423,32 @@ class Robot(TeleopMixin, AgentTool):
             self._task_state.duration = elapsed
 
             if self._task_state.status == TaskStatus.RUNNING:
+                # Both latches in the loop condition above are consulted here.
                 # A stop can land in the gap between the check above and the
                 # ``RUNNING`` write, which overwrites the ``STOPPED`` status
-                # ``stop_task`` recorded. The latch survives that write, so it
-                # is what decides here - otherwise an interrupted task reports
+                # ``stop_task`` recorded; a shutdown is never recorded on the
+                # status at all. The latches survive that write, so they are
+                # what decide here - otherwise an interrupted task reports
                 # itself completed.
+                #
+                # Shutdown is checked as well as stop because ``cleanup`` sets
+                # ``_shutdown_event`` FIRST and only then calls ``stop_task``
+                # for a rollout it finds ``RUNNING``. A loop that has already
+                # exited on the shutdown latch by that point is no longer
+                # ``RUNNING``, so ``stop_task`` is never called and the stop
+                # latch stays clear - the rollout was truncated with nothing
+                # recording it.
                 if self._stop_requested.is_set():
                     self._task_state.status = TaskStatus.STOPPED
                     logger.info(f"Task stopped: '{instruction}' after {self._task_state.step_count} steps")
+                elif self._shutdown_event.is_set():
+                    self._task_state.status = TaskStatus.STOPPED
+                    logger.info(
+                        "%s: task interrupted by shutdown: '%s' after %d steps",
+                        self.tool_name_str,
+                        instruction,
+                        self._task_state.step_count,
+                    )
                 else:
                     self._task_state.status = TaskStatus.COMPLETED
                     logger.info(
@@ -1441,6 +1459,44 @@ class Robot(TeleopMixin, AgentTool):
             logger.error(f"Task execution failed: {e}")
             self._task_state.status = TaskStatus.ERROR
             self._task_state.error_message = str(e)
+
+    def _shutdown_error(self, method: str) -> dict[str, Any] | None:
+        """Refuse task work on a Robot that has already been shut down.
+
+        ``cleanup`` (and ``stop``, which calls it) sets ``_shutdown_event`` and
+        never clears it, then shuts the task executor down and tears down the
+        mesh and ROS bridges. The control loop's condition honors that latch,
+        so a rollout started afterwards exits before its first iteration - but
+        nothing refused the call, so it took the motors-bus claim, commanded
+        the arm zero times and reported a terminal status for a rollout that
+        never ran. ``start_task`` was worse: its submit hits the dead executor
+        and used to surface a bare ``RuntimeError`` past a method whose
+        contract is a tool-shaped result.
+
+        A shut-down Robot cannot be revived - there is no ``restart`` - so this
+        is a permanent refusal by design and names ``cleanup`` as the cause.
+
+        Args:
+            method: Public entry point being refused, named in the message so
+                the caller can see which call was rejected.
+
+        Returns:
+            ``None`` when the Robot is live, or a tool-shaped error when it has
+            been shut down.
+        """
+        if not self._shutdown_event.is_set():
+            return None
+        return {
+            "status": "error",
+            "content": [
+                {
+                    "text": f"{self.tool_name_str}: {method} refused - this robot has been shut down.\n"
+                    f"cleanup() (or stop()) has already released the executor, mesh and ROS bridges, so a "
+                    f"rollout started now would command the arm zero times. Construct a new Robot to run "
+                    f"another task."
+                }
+            ],
+        }
 
     @staticmethod
     def _duration_error(duration: Any, method: str) -> dict[str, Any] | None:
@@ -1553,6 +1609,8 @@ class Robot(TeleopMixin, AgentTool):
         # check is stateless, so it runs before the claim - a rejected budget
         # must not take the bus away from a rollout that could still start.
         if err := self._duration_error(duration, "execute_task"):
+            return err
+        if err := self._shutdown_error("execute_task"):
             return err
         if err := self._claim_task(instruction):
             return err
@@ -1684,12 +1742,23 @@ class Robot(TeleopMixin, AgentTool):
             Tool-shaped result confirming the task started, or an error naming
             the offending parameter. A second task is refused while another
             rollout is in flight - including during its connect/policy-build
-            bring-up - because the arm has a single command bus.
+            bring-up - because the arm has a single command bus. A robot that
+            has been shut down by ``cleanup`` / ``stop`` is refused
+            permanently: its executor and bridges are gone, so a rollout
+            started now would command the arm zero times.
         """
         # Before the submit: the work happens on a background thread, so a
         # budget checked inside it would still report "Task started" to the
         # caller for a task that commands nothing (or never ends).
         if err := self._duration_error(duration, "start_task"):
+            return err
+
+        # Also before the submit, and before the claim: the executor is already
+        # shut down on a cleaned-up robot, so the submit below would raise a
+        # bare ``RuntimeError`` out of a method that reports through a result
+        # dict - and a refused call must not take the bus claim it would then
+        # have to hand back.
+        if err := self._shutdown_error("start_task"):
             return err
 
         # Claim the bus here, not on the executor thread: this method returns
@@ -1751,6 +1820,13 @@ class Robot(TeleopMixin, AgentTool):
         Two rollouts admitted at once would interleave ``send_action`` writes
         on one half-duplex bus and share the single task-state slot.
 
+        Terminal after shutdown: ``cleanup`` / ``stop`` release the executor,
+        mesh and ROS bridges and cannot be undone, so a rollout requested
+        afterwards is refused rather than admitted to command the arm zero
+        times. A rollout already running when the shutdown lands is reported
+        ``STOPPED`` - a shutdown truncates a task exactly as ``stop_task``
+        does, so its step count is a partial one.
+
         Args:
             policy_object: A constructed ``Policy`` instance. The object's
                 own device / embodiment / chunking configuration is honored;
@@ -1782,6 +1858,8 @@ class Robot(TeleopMixin, AgentTool):
                 "content": [{"text": "policy_object is required (for the provider+port path use start_task)"}],
             }
         if err := self._duration_error(duration, "run_policy"):
+            return err
+        if err := self._shutdown_error("run_policy"):
             return err
         if err := self._claim_task(instruction):
             return err
