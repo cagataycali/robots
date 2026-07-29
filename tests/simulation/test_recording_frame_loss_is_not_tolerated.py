@@ -18,15 +18,15 @@ failure keeps its tolerance.
 from __future__ import annotations
 
 import ast
+import inspect
 import logging
-from pathlib import Path
+import sys
 from typing import Any
 
 import pytest
 
 pytest.importorskip("mujoco")
 
-import strands_robots.simulation.policy_runner as policy_runner_module
 from strands_robots.dataset_recorder import DatasetRecorder, RecordingFrameError
 from strands_robots.policies.mock import MockPolicy
 from strands_robots.simulation.mujoco.simulation import Simulation
@@ -244,7 +244,7 @@ def test_every_on_frame_call_site_excludes_a_lost_recording_frame() -> None:
     benchmark-spec eval loop, which needs a registered benchmark to reach
     behaviourally - and requires each to handle ``RecordingFrameError``.
     """
-    source = Path(policy_runner_module.__file__).read_text(encoding="utf-8")
+    source = inspect.getsource(sys.modules[PolicyRunner.__module__])
     tree = ast.parse(source)
 
     def calls_on_frame(node: ast.Try) -> bool:
