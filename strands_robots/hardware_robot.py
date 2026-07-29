@@ -204,6 +204,88 @@ def _build_camera_config(camera_name: str, config: Any) -> Any:
         ) from exc
 
 
+def _normalize_max_relative_target(value: Any, robot_type: str) -> float | dict[str, float] | None:
+    """Validate and normalize the ``max_relative_target`` servo safety clamp.
+
+    ``max_relative_target`` caps how far each commanded goal position may move
+    from the joint's present position. It is the only per-command travel limit
+    on the hardware path, so a value the driver cannot honor is a safety defect
+    rather than a cosmetic one - and lerobot's own consumer,
+    ``lerobot.robots.utils.ensure_safe_goal_position``, honors a narrower set of
+    values than the config dataclass accepts:
+
+    - a non-finite limit disables the clamp with no signal. ``min(diff, nan)``
+      and ``max(diff, -nan)`` both return ``diff`` unchanged, so the caller
+      believes travel is limited while every goal is applied in full.
+    - a negative limit inverts it. ``min(diff, -c)`` then ``max(..., c)``
+      resolves to ``present + c`` for any requested goal, turning the clamp
+      into a fixed-magnitude step generator that ignores the policy.
+    - a zero limit discards every commanded motion, so the rollout is a no-op
+      reported as success - the same outcome the rollout horizon guards refuse
+      for ``duration`` and ``control_substeps``.
+    - an ``int`` limit is refused outright at the first servo command, with a
+      bare ``TypeError(10)`` naming neither the parameter nor the reason: that
+      consumer dispatches on ``isinstance(value, float)``, while both the
+      dataclass field (annotated ``float | dict[str, float] | None``) and PEP
+      484's numeric tower accept an ``int``. So the one spelling a type checker
+      is happiest with is the one that cannot reach the motors.
+
+    Normalizing to ``float`` is therefore load-bearing, not cosmetic: it is what
+    lets a type-correct ``max_relative_target=10`` reach the bus at all.
+
+    Per-motor mapping values are held to the same domain. Their KEYS are not
+    checked here - the motor names are known only once the bus is connected, so
+    a mismatch is left to the driver's own ``keys must match`` refusal.
+
+    Args:
+        value: The caller-supplied limit: ``None`` to leave the clamp disabled,
+            a positive finite number, or a mapping of motor name to one.
+        robot_type: The lerobot robot type, named in the error so a fleet
+            reports which arm was misconfigured.
+
+    Returns:
+        ``None`` unchanged, or the limit with every magnitude coerced to
+        ``float``.
+
+    Raises:
+        ValueError: If the limit is not one the driver can honor.
+    """
+    param = "max_relative_target"
+    context = f"Robot(robot_type={robot_type!r})"
+    advice = (
+        f"{param} caps how far each commanded goal position may move from the present "
+        f"position, so only a finite positive limit can be honored. Omit it (or pass "
+        f"None) to leave the clamp disabled."
+    )
+
+    if value is None:
+        return None
+
+    if isinstance(value, Mapping):
+        if not value:
+            raise ValueError(
+                f"{context}: {param} must not be an empty mapping. A per-motor mapping has to name "
+                f"every motor the driver reads, so an empty one is refused at the first servo "
+                f"command. {advice}"
+            )
+        normalized: dict[str, float] = {}
+        for key, limit in value.items():
+            if not isinstance(key, str):
+                raise ValueError(
+                    f"{context}: {param} keys must be motor names (str), got "
+                    f"{type(key).__name__}: {key!r}. A non-name key can never match a motor, so "
+                    f"the mapping is refused at the first servo command."
+                )
+            if err := positive_finite_number_error(limit, f"{param}[{key!r}]", context):
+                raise ValueError(f"{err} {advice}")
+            normalized[key] = float(limit)
+        return normalized
+
+    if err := positive_finite_number_error(value, param, context):
+        raise ValueError(f"{err} {advice}")
+    return float(value)
+
+
 @functools.cache
 def _ensure_lerobot_robots_registered() -> None:
     """Import every robot driver subpackage so RobotConfig is populated.
@@ -848,6 +930,20 @@ class Robot(TeleopMixin, AgentTool):
         Each entry of ``cameras`` follows the same contract, resolved against
         the fields of lerobot's ``OpenCVCameraConfig`` -- see
         :func:`_build_camera_config`.
+
+        Forwarded values are otherwise passed through as given, because their
+        accepted domains are robot-specific. ``max_relative_target`` is the
+        exception: it is the per-command servo travel limit, and the driver
+        honors a narrower domain than the dataclass accepts, so it is validated
+        and normalized here -- see :func:`_normalize_max_relative_target`.
+
+        Raises:
+            ValueError: If a kwarg is unknown to both the cross-robot allowlist
+                and the resolved dataclass, if a ``cameras`` entry is malformed,
+                if ``max_relative_target`` is not a limit the driver can honor,
+                or if the resolved config class refuses the assembled values.
+            TypeError: If lerobot resolves ``robot_type`` to a non-dataclass
+                config class, which would make kwarg filtering unsafe.
         """
         # ``lerobot`` is already a hard dep at this point (``_initialize_robot``
         # imports it eagerly). Importing the camera + config modules here is
@@ -990,6 +1086,18 @@ class Robot(TeleopMixin, AgentTool):
                 f"{sorted(valid_fields)}. The cross-robot allowlist is: "
                 f"{sorted(set(forwardable) | always_allowed)}. "
                 f"(If this is a typo, fix it.)"
+            )
+
+        # ``max_relative_target`` is the per-command servo travel limit, and the
+        # driver honors a narrower domain than this dataclass accepts - see
+        # ``_normalize_max_relative_target``. Validated after both forwarding
+        # loops and the kwarg-name gate, so it is checked exactly when it is the
+        # effective knob: a robot whose config does not declare the field never
+        # reads it, and refusing a value that robot would drop anyway would
+        # report an error for a parameter it has no opinion about.
+        if "max_relative_target" in config_data:
+            config_data["max_relative_target"] = _normalize_max_relative_target(
+                config_data["max_relative_target"], robot_type
             )
 
         try:

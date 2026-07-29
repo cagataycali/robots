@@ -64,6 +64,16 @@ Forwardable kwargs: `port`, `robot_ip`, `kp`, `kd`, `default_positions`, `contro
 `is_simulation`, `gravity_compensation`, `controller`, `calibration_dir`, `mock`,
 `use_degrees`, `max_relative_target`, `disable_torque_on_disconnect`.
 
+Forwardable values are passed to the driver as given, because their accepted domains are
+robot-specific. `max_relative_target` is the exception: it caps how far each commanded goal
+position may move from the joint's present position, so it must be a positive finite number
+(or a mapping of motor name to one). `0`, a negative limit, `nan`, `inf`, a bool or a
+non-numeric value raises `ValueError` when the config is built, before the serial port is
+opened - a non-finite limit would otherwise disable the clamp with no signal, and a negative
+one inverts it into a fixed-magnitude step that ignores the policy. An `int` limit is
+normalized to `float` so it reaches the motors. Omit the parameter (or pass `None`) to leave
+the clamp disabled.
+
 ## Mesh
 
 ```python
