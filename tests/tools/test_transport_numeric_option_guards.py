@@ -80,7 +80,7 @@ def published_at(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 
     monkeypatch.setattr(ros_mod._backend, "_ensure_node", lambda: FakeNode())
     monkeypatch.setattr(ros_mod._backend, "spin_for", lambda predicate, timeout: None)
-    monkeypatch.setattr(ros_mod, "_get_message", lambda msg_type: lambda: object())
+    monkeypatch.setattr(ros_mod, "_get_message", lambda msg_type: object)
     return stamps
 
 
