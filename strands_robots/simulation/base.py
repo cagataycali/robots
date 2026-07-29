@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 # signature as a *string* annotation; ``from __future__ import
 # annotations`` (already in effect) makes that a no-op at runtime.
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
-from strands_robots.utils import positive_finite_number_error
+from strands_robots.utils import positive_count_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -1033,8 +1033,14 @@ class SimEngine(ABC):
         and would otherwise be silently clamped to 1 by
         :func:`~strands_robots.policies.base.resolve_chunk_length`, hiding the
         caller's mistake behind a rollout that does not run the requested
-        horizon. Returns a structured ``{"status": "error", ...}`` dict to
-        surface, or ``None`` when the value is valid.
+        horizon. ``True`` is rejected for the same reason: it would act as a
+        silent horizon of 1. Returns a structured ``{"status": "error", ...}``
+        dict to surface, or ``None`` when the value is valid.
+
+        The domain is delegated to :meth:`_validate_positive_int`, which the
+        hardware control loop's ``action_horizon`` guard shares through
+        :func:`~strands_robots.utils.positive_count_error`, so a horizon refused
+        for a simulated rollout cannot be accepted for the real arm.
 
         Args:
             action_horizon: The caller-supplied value to validate.
@@ -1047,12 +1053,7 @@ class SimEngine(ABC):
         Returns:
             An error dict naming the offending parameter, or ``None``.
         """
-        if not isinstance(action_horizon, int) or action_horizon < 1:
-            return {
-                "status": "error",
-                "content": [{"text": f"{method}: {param} must be a positive integer, got {action_horizon!r}."}],
-            }
-        return None
+        return SimEngine._validate_positive_int(action_horizon, param, method)
 
     @staticmethod
     def _validate_per_robot_mapping(
@@ -1101,14 +1102,26 @@ class SimEngine(ABC):
         """Reject a non-positive-integer count at the public API.
 
         Shared guard for the rollout count knobs that must be ``>= 1`` -
-        ``n_episodes`` (how many reset->rollout episodes to run) and
-        ``max_steps`` (the per-episode step cap). A zero/negative/non-int
-        value would otherwise flow into the rollout loop and produce a
-        degenerate result that still reports ``status="success"``: an eval
-        over zero episodes, or episodes of zero length, that fabricate a 0%
-        success rate (``Episodes: -2 | Success: 0/-2``) instead of surfacing
-        the caller's mistake. Returns a structured ``{"status": "error", ...}``
-        dict to surface, or ``None`` when the value is valid.
+        ``n_episodes`` (how many reset->rollout episodes to run), ``max_steps``
+        (the per-episode step cap), ``control_substeps`` and
+        ``action_horizon``. A zero/negative/non-int value would otherwise flow
+        into the rollout loop and produce a degenerate result that still reports
+        ``status="success"``: an eval over zero episodes, or episodes of zero
+        length, that fabricate a 0% success rate (``Episodes: -2 | Success:
+        0/-2``) instead of surfacing the caller's mistake. Returns a structured
+        ``{"status": "error", ...}`` dict to surface, or ``None`` when the value
+        is valid.
+
+        Thin binding of the shared count domain
+        (:func:`~strands_robots.utils.positive_count_error`) to this class's
+        tool-error envelope. The domain lives in :mod:`strands_robots.utils`
+        because the hardware control loop's ``action_horizon`` must enforce the
+        identical rule and :mod:`strands_robots.hardware_robot` cannot import
+        :mod:`strands_robots.simulation`; sharing one implementation is what
+        stops the same count being refused for a digital twin and accepted for
+        the arm it mirrors. ``bool`` is part of that shared domain rather than
+        each caller's business: a bare ``value < 1`` test lets ``True`` through
+        as a silent count of 1 while rejecting ``False``.
 
         Args:
             value: The caller-supplied value to validate.
@@ -1118,11 +1131,8 @@ class SimEngine(ABC):
         Returns:
             An error dict naming the offending parameter, or ``None``.
         """
-        if not isinstance(value, int) or value < 1:
-            return {
-                "status": "error",
-                "content": [{"text": f"{method}: {name} must be a positive integer, got {value!r}."}],
-            }
+        if error := positive_count_error(value, name, method):
+            return {"status": "error", "content": [{"text": error}]}
         return None
 
     @staticmethod
@@ -1140,13 +1150,13 @@ class SimEngine(ABC):
         exists to avoid - the arm integrates ~2 ms of a 20 ms control period, so
         the rollout reports ``status="success"`` while the policy looks like a
         no-op. A float (``2.7``) was silently truncated, ``True`` acted as a
-        silent 1 substep (``bool`` is an ``int`` subclass, so it is rejected
-        explicitly as in :meth:`_validate_positive_frequency`), and ``nan`` /
-        ``inf`` reached ``int()`` deep inside the runner and surfaced as a bare
+        silent 1 substep (``bool`` is an ``int`` subclass), and ``nan`` / ``inf``
+        reached ``int()`` deep inside the runner and surfaced as a bare
         ``ValueError``/``OverflowError`` instead of the structured tool-error
         dict the public API contracts.
 
-        The positive-integer domain itself is delegated to
+        The positive-integer domain itself - including the ``bool`` rejection,
+        which this guard used to repeat locally - is delegated to
         :meth:`_validate_positive_int` so this guard and the rollout count knobs
         cannot drift apart.
 
@@ -1160,13 +1170,6 @@ class SimEngine(ABC):
         """
         if control_substeps is None:
             return None
-        if isinstance(control_substeps, bool):
-            return {
-                "status": "error",
-                "content": [
-                    {"text": f"{method}: control_substeps must be a positive integer, got {control_substeps!r}."}
-                ],
-            }
         return SimEngine._validate_positive_int(control_substeps, "control_substeps", method)
 
     @staticmethod

@@ -381,6 +381,47 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     return None
 
 
+def positive_count_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable positive integer count.
+
+    Shared domain for the discrete knobs that count iterations of a control or
+    rollout loop - the simulation's ``n_episodes`` / ``max_steps`` /
+    ``control_substeps`` / ``action_horizon`` and the hardware control loop's
+    ``action_horizon``. It lives here rather than beside one of its callers
+    because those callers sit in different layers
+    (:mod:`strands_robots.hardware_robot` must not depend on
+    :mod:`strands_robots.simulation`), and the accepted domain must not diverge
+    between them: the same count cannot be refused for a digital twin and
+    accepted for the arm it mirrors.
+
+    Distinct from :func:`positive_whole_number_error`, which accepts any real
+    scalar with an integral value so a ``30.0`` read from a config or an
+    ``np.int64`` probed from a camera can be honored. The counts guarded here are
+    consumed directly as ``range()`` bounds and slice indices, where an integral
+    float raises ``TypeError`` ("``'float' object cannot be interpreted as an
+    integer``") rather than being coerced, so only a true ``int`` can be honored.
+
+    ``bool`` is rejected explicitly. It is an ``int`` subclass, so a bare
+    ``value < 1`` test lets ``True`` through as a silent count of 1 while
+    rejecting ``False`` - a value the caller never meant either way.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter name it came from, used in the message. Callers that
+            accept a ``{robot_name: count}`` mapping pass a subscripted label
+            (``"action_horizon['alice']"``) so the message names the entry the
+            caller got wrong rather than the whole mapping.
+        context: Message prefix identifying the surface that received it - the
+            public method name, or the class name for a constructor parameter.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return f"{context}: {param} must be a positive integer, got {value!r}."
+    return None
+
+
 def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
     """Return an error message if any element of ``vec`` is not a finite number.
 

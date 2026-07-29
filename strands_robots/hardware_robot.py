@@ -37,7 +37,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 from strands_robots.teleop_mixin import TeleopMixin
-from strands_robots.utils import positive_finite_number_error, require_optional
+from strands_robots.utils import positive_count_error, positive_finite_number_error, require_optional
 
 if TYPE_CHECKING:
     from lerobot.robots.config import RobotConfig
@@ -343,7 +343,15 @@ class Robot(TeleopMixin, AgentTool):
             robot: LeRobot Robot instance, RobotConfig, or robot type string
             cameras: Camera configuration dict:
                 {"wrist": {"type": "opencv", "index_or_path": "/dev/video0", "fps": 30}}
-            action_horizon: Actions per inference step
+            action_horizon: Actions consumed from each inferred policy chunk
+                before re-querying. Must be a positive integer - it is a lower
+                bound on the chunk slice the task loop applies
+                (``resolve_chunk_length`` returns
+                ``max(action_horizon, policy.execution_horizon)``), and a
+                ``0``/negative/float/``bool``/non-numeric value raises
+                ``ValueError`` here rather than being silently clamped to a
+                horizon the caller never asked for, or aborting the task mid-run
+                once the arm is already connected.
             data_config: Data configuration (for GR00T compatibility)
             control_frequency: Control loop frequency in Hz (default: 50Hz).
                 Must be a positive finite number - it is the divisor of the
@@ -392,6 +400,25 @@ class Robot(TeleopMixin, AgentTool):
         super().__init__()
 
         self.tool_name_str = tool_name
+        # ``action_horizon`` is how many actions of each inferred chunk the task
+        # loop applies to the servo bus before re-querying the policy: it is the
+        # value ``_execute_task_async`` hands to ``resolve_chunk_length``. That
+        # helper coerces it with ``max(int(action_horizon), 1, ...)``, so a
+        # ``0``/negative horizon was silently clamped to a single action per
+        # inference - re-querying an open-loop chunked checkpoint every step
+        # instead of replaying the chunk it was trained to emit, which is exactly
+        # the out-of-distribution operation ``resolve_chunk_length`` documents as
+        # the reason not to shrink the interval - while ``2.7`` was truncated,
+        # ``"4"`` string-coerced and ``True`` acted as a silent 1. A value
+        # ``int()`` cannot convert (``None``/``nan``/``inf``/a list) instead
+        # reached that coercion only once the arm was already connected and the
+        # first observation inferred on, aborting the task with a bare
+        # ``TypeError``/``ValueError``. The identical domain is enforced on the
+        # simulation's rollout counts (``SimEngine._validate_positive_int``);
+        # validated BEFORE ``_initialize_robot`` opens the serial port, so a
+        # rejected horizon never touches the arm.
+        if horizon_error := positive_count_error(action_horizon, "action_horizon", "Robot"):
+            raise ValueError(horizon_error)
         self.action_horizon = action_horizon
         self.data_config = data_config
         # ``action_sleep_time`` is ``1 / control_frequency`` and is the ONLY
