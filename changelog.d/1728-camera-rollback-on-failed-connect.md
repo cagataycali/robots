@@ -2,8 +2,8 @@
 
 A robot's `connect()` opens its devices in sequence - the motors bus, then each
 camera in turn - and nothing in that loop closes the cameras opened before one
-that fails. `Robot._rollback_half_open_connect` closed only the serial port, so
-a camera set was left half-open, and lerobot gates both recovery paths on
+that fails. The connect-failure rollback closed only the serial port, so a
+camera set was left half-open, and lerobot gates both recovery paths on
 `is_connected`: the retry raised `DeviceAlreadyConnectedError` on a camera that
 was healthy, masking the camera that actually failed, and `disconnect()` refused
 to run at all while one camera was still shut. A second attempt therefore
