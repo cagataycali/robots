@@ -303,6 +303,30 @@ producing off-policy / micro-motion trajectories. An explicit
 `processor_overrides={"device_processor": {"device": ...}}` is still honored
 as-is and takes precedence over the automatic reconciliation.
 
+## State routing
+
+`observation.state` is composed from `robot_state_keys` (set explicitly with
+`set_robot_state_keys([...])`, or by an `embodiment`). That ordering is used
+verbatim whenever at least one of its keys is present in the observation; a
+configured key the observation does not carry is zero-filled IN PLACE so the
+present joints keep their index.
+
+When NONE of the configured keys match - typically generic auto-generated names
+(`joint_0..joint_N`) paired with a sim that reports named joints - the policy
+warns (or raises under `strict_keys=True`), sets `generic_state_keys_used`, and
+falls back to the observation's own scalar keys so the state is populated rather
+than silently dropped.
+
+That fallback ordering is **position-only**: a `<joint>.vel` entry is dropped
+when the observation also carries its `<joint>` position companion. The MuJoCo
+backend emits a velocity sibling beside every joint position, so taking its keys
+in observation order would otherwise interleave velocities into the state vector
+and push the trailing joints past the model's declared state dim. A `.vel` key
+with no position companion is kept, because some embodiments legitimately declare
+velocity state (LeKiwi's body-frame base velocities `x.vel` / `y.vel` /
+`theta.vel`). Explicit `robot_state_keys` are never filtered - naming `elbow.vel`
+there states the model's input.
+
 ## Camera routing
 
 Robot/sim observations use bare camera names (`top`, `wrist`, `side`); the policy
