@@ -52,6 +52,12 @@ robot.cleanup()
 | `get_task_status()` | Returns `RobotTaskState` (status, step count, error). |
 | `cleanup()` | Stop tasks, close cameras, stop mesh. |
 
+One rollout at a time: the arm has a single command bus, so `start_task` /
+`run_policy` / the `execute` action refuse while another task is in flight and
+name it in the error. That includes the `CONNECTING` bring-up window - a motors
+bus handshake plus per-camera warmup, seconds on a real arm - not just
+`RUNNING`. Call `stop_task()` to hand the bus over early.
+
 ## AgentTool actions
 
 | Action | Blocking? | Needs |

@@ -450,6 +450,17 @@ class Robot(TeleopMixin, AgentTool):
         # whatever the status held once the bring-up finishes, so a stop
         # recorded only as a status is lost.
         self._stop_requested = threading.Event()
+        # Admission control for the motors bus. The arm has one command bus and
+        # this class already models one rollout at a time (a single-slot
+        # ``_task_state``, ``max_workers=1``), but ``_task_state.status`` cannot
+        # decide admission: ``_execute_task_async`` only reaches ``RUNNING``
+        # after ``_connect_robot`` and the policy build, so for the whole
+        # bring-up window a second task would read a non-running status. The
+        # claim is taken before that window opens and released when the rollout
+        # ends, and the lock makes the check-and-claim atomic so two callers
+        # racing at the same instant cannot both be admitted.
+        self._task_admission = threading.Lock()
+        self._task_claimed = False
 
         # Mesh attributes - populated by the Robot() factory after init.
         # Plain attributes (not properties) so test code can swap a fake mesh
@@ -1364,6 +1375,54 @@ class Robot(TeleopMixin, AgentTool):
             return {"status": "error", "content": [{"text": error}]}
         return None
 
+    def _claim_task(self, instruction: str) -> dict[str, Any] | None:
+        """Claim the motors bus for one rollout, or refuse a concurrent one.
+
+        Admission has to be decided here rather than from
+        ``_task_state.status``: that status only becomes ``RUNNING`` once
+        ``_execute_task_async`` has finished connecting and building the
+        policy, so a status-based check admits every caller that arrives during
+        bring-up - a motors-bus handshake plus per-camera warmup, seconds on a
+        real arm. Two admitted rollouts then interleave ``send_action`` writes
+        on one half-duplex bus, and because they share the single
+        ``_task_state`` slot they also overwrite each other's step count and
+        terminal status, so both report success while only one of them was
+        actually driving the arm.
+
+        The claimed instruction is recorded on the task state immediately, so a
+        refusal names the rollout that actually holds the bus instead of
+        whichever task ran last.
+
+        Args:
+            instruction: Instruction of the rollout being admitted, used for
+                the refusal text shown to a second caller.
+
+        Returns:
+            ``None`` when the caller now owns the bus and must eventually call
+            :meth:`_release_task`, or a tool-shaped error naming the rollout
+            already in flight.
+        """
+        with self._task_admission:
+            if self._task_claimed:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": f"Task already running: {self._task_state.instruction}\n"
+                            f"{self.tool_name_str} drives one rollout at a time - the arm has a single "
+                            f"command bus. Wait for it to finish or call action='stop' first."
+                        }
+                    ],
+                }
+            self._task_claimed = True
+            self._task_state.instruction = instruction
+        return None
+
+    def _release_task(self) -> None:
+        """Release the motors-bus claim taken by :meth:`_claim_task`."""
+        with self._task_admission:
+            self._task_claimed = False
+
     def _execute_task_sync(
         self,
         instruction: str,
@@ -1374,14 +1433,76 @@ class Robot(TeleopMixin, AgentTool):
         policy_object: Policy | None = None,
         n_steps: int | None = None,
     ) -> dict[str, Any]:
-        """Execute task synchronously in thread - no new event loop."""
-        # Validated here as well as at the public methods below: this is the
-        # chokepoint the agent-tool "execute" action and the mesh "execute"
-        # dispatch reach directly, so a peer-supplied budget is refused before
-        # the arm is commanded rather than after.
+        """Execute task synchronously in thread - no new event loop.
+
+        This is the chokepoint the agent-tool ``execute`` action and the mesh
+        ``execute`` dispatch reach directly, so it both validates the
+        peer-supplied budget and claims the motors bus before the arm is
+        commanded.
+        """
+        # Validated here as well as at the public methods below: a peer-supplied
+        # budget is refused before the arm is commanded rather than after. The
+        # check is stateless, so it runs before the claim - a rejected budget
+        # must not take the bus away from a rollout that could still start.
         if err := self._duration_error(duration, "execute_task"):
             return err
+        if err := self._claim_task(instruction):
+            return err
 
+        return self._drive_claimed_task(
+            instruction,
+            policy_port,
+            policy_host,
+            policy_provider,
+            duration,
+            policy_object=policy_object,
+            n_steps=n_steps,
+        )
+
+    def _drive_claimed_task(
+        self,
+        instruction: str,
+        policy_port: int | None = None,
+        policy_host: str = "localhost",
+        policy_provider: str = "groot",
+        duration: float = 30.0,
+        policy_object: Policy | None = None,
+        n_steps: int | None = None,
+    ) -> dict[str, Any]:
+        """Run the control loop for an already-admitted task and report it.
+
+        The caller must already hold the claim from :meth:`_claim_task`; this
+        method always releases it, including when the rollout raises, so a
+        failed task never leaves the robot permanently refusing new ones. The
+        claim is taken by the callers rather than here because ``start_task``
+        returns before its executor job begins: it has to be able to refuse a
+        second caller synchronously instead of reporting a task as started and
+        only then turning that caller away on the background thread.
+        """
+        try:
+            return self._run_control_loop(
+                instruction,
+                policy_port,
+                policy_host,
+                policy_provider,
+                duration,
+                policy_object=policy_object,
+                n_steps=n_steps,
+            )
+        finally:
+            self._release_task()
+
+    def _run_control_loop(
+        self,
+        instruction: str,
+        policy_port: int | None = None,
+        policy_host: str = "localhost",
+        policy_provider: str = "groot",
+        duration: float = 30.0,
+        policy_object: Policy | None = None,
+        n_steps: int | None = None,
+    ) -> dict[str, Any]:
+        """Drive the rollout on its own event loop and report the outcome."""
         # Import here to avoid conflicts
         import asyncio
 
@@ -1453,7 +1574,9 @@ class Robot(TeleopMixin, AgentTool):
 
         Returns:
             Tool-shaped result confirming the task started, or an error naming
-            the offending parameter.
+            the offending parameter. A second task is refused while another
+            rollout is in flight - including during its connect/policy-build
+            bring-up - because the arm has a single command bus.
         """
         # Before the submit: the work happens on a background thread, so a
         # budget checked inside it would still report "Task started" to the
@@ -1461,17 +1584,23 @@ class Robot(TeleopMixin, AgentTool):
         if err := self._duration_error(duration, "start_task"):
             return err
 
-        # Check if task is already running
-        if self._task_state.status == TaskStatus.RUNNING:
-            return {
-                "status": "error",
-                "content": [{"text": f"Task already running: {self._task_state.instruction}"}],
-            }
+        # Claim the bus here, not on the executor thread: this method returns
+        # before its job begins, so a claim taken inside the job would report
+        # "Task started" to a second caller and only then turn it away, with
+        # nobody left to tell.
+        if err := self._claim_task(instruction):
+            return err
 
-        # Start task in background
-        self._task_state.task_future = self._executor.submit(
-            self._execute_task_sync, instruction, policy_port, policy_host, policy_provider, duration
-        )
+        # Start task in background. The claim is released by
+        # ``_drive_claimed_task`` when the rollout ends; if the submit itself
+        # fails (a shut-down executor) nothing would ever run to release it.
+        try:
+            self._task_state.task_future = self._executor.submit(
+                self._drive_claimed_task, instruction, policy_port, policy_host, policy_provider, duration
+            )
+        except BaseException:
+            self._release_task()
+            raise
 
         return {
             "status": "success",
@@ -1508,6 +1637,12 @@ class Robot(TeleopMixin, AgentTool):
         thread. For the server-backed provider path (and for fire-and-forget
         execution) use ``start_task``.
 
+        Exclusive: the arm has a single command bus, so this is refused while
+        another rollout is in flight - including while that rollout is still
+        connecting or building its policy, before it reports ``RUNNING``.
+        Two rollouts admitted at once would interleave ``send_action`` writes
+        on one half-duplex bus and share the single task-state slot.
+
         Args:
             policy_object: A constructed ``Policy`` instance. The object's
                 own device / embodiment / chunking configuration is honored;
@@ -1530,22 +1665,20 @@ class Robot(TeleopMixin, AgentTool):
         Returns:
             Tool-shaped result: a text summary plus a ``{"json": ...}`` block
             carrying ``status`` / ``steps`` / ``duration_s`` / ``instruction``
-            / ``policy`` (and ``error`` when one occurred).
+            / ``policy`` (and ``error`` when one occurred), or an error naming
+            the rollout already in flight.
         """
         if policy_object is None:
             return {
                 "status": "error",
                 "content": [{"text": "policy_object is required (for the provider+port path use start_task)"}],
             }
-        if self._task_state.status == TaskStatus.RUNNING:
-            return {
-                "status": "error",
-                "content": [{"text": f"Task already running: {self._task_state.instruction}"}],
-            }
         if err := self._duration_error(duration, "run_policy"):
             return err
+        if err := self._claim_task(instruction):
+            return err
 
-        self._execute_task_sync(instruction, duration=duration, policy_object=policy_object, n_steps=n_steps)
+        self._drive_claimed_task(instruction, duration=duration, policy_object=policy_object, n_steps=n_steps)
 
         succeeded = self._task_state.status == TaskStatus.COMPLETED
         summary = (

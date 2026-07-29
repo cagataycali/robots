@@ -48,6 +48,8 @@ def _make_robot() -> HwRobot:
     hw.tool_name_str = "test_arm"
     hw._shutdown_event = threading.Event()
     hw._stop_requested = threading.Event()
+    hw._task_admission = threading.Lock()
+    hw._task_claimed = False
     hw._task_state = RobotTaskState()
     hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
     hw.mesh = None

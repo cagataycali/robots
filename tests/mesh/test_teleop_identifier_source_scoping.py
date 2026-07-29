@@ -181,6 +181,8 @@ def hardware_robot() -> Any:
     hw._task_state = RobotTaskState()
     hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="teleop_guard")
     hw._shutdown_event = threading.Event()
+    hw._task_admission = threading.Lock()
+    hw._task_claimed = False
     return hw
 
 
