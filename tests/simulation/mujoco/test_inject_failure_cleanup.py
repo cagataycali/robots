@@ -138,6 +138,23 @@ def _spec_body_names(sim) -> list[str]:
     return [b.name for b in sim._world._backend_state["spec"].bodies]
 
 
+def _spec_body_pos(sim, name: str) -> list[float]:
+    """The position an authored body carries on the live spec."""
+    body = next(b for b in sim._world._backend_state["spec"].bodies if b.name == name)
+    return [float(v) for v in body.pos]
+
+
+def _text(result) -> str:
+    return " ".join(c["text"] for c in result.get("content", []) if "text" in c)
+
+
+# The pose the patched-in body is authored at. Deliberately not the origin:
+# every ``patch_scene_mjcf`` op field is read with a fallback default, so a key
+# outside an op's vocabulary leaves the body at the origin. Asserting a non-zero
+# pose is what distinguishes "the op was honored" from "the op ran on defaults".
+RIG_POS = [0.0, 0.3, 0.5]
+
+
 class TestAddRobotInjectionRollback:
     """A robot whose attach compiles into a model MuJoCo refuses is rolled back."""
 
@@ -253,18 +270,23 @@ class TestRollbackKeepsSpecOnlyState:
         assert sim.detach_bodies(parent="so100/Moving_Jaw", child="cube")["status"] == "success"
 
     def test_an_agent_authored_body_survives_a_refused_robot_add(self, sim, tmp_path):
-        assert (
-            sim.patch_scene_mjcf(ops=[{"op": "add_body", "name": "rig", "position": [0.0, 0.3, 0.5]}])["status"]
-            == "success"
-        )
+        assert sim.patch_scene_mjcf(ops=[{"op": "add_body", "name": "rig", "pos": RIG_POS}])["status"] == "success"
+        # Assert the authored pose, not just the name. A body present at the
+        # origin and a body honored at the requested pose are indistinguishable
+        # by name, so a name-only assertion cannot tell whether the op was
+        # applied or merely ran on its defaults.
+        assert _spec_body_pos(sim, "rig") == pytest.approx(RIG_POS)
 
         bad = tmp_path / "badbot.xml"
         bad.write_text(_UNLOADABLE_MESH_MJCF)
         assert sim.add_robot(name="badbot", urdf_path=str(bad))["status"] == "error"
 
         # "rig" exists only on the spec - SpecBuilder.build has no idea it was
-        # ever authored - so a registry rebuild is where it disappeared.
+        # ever authored - so a registry rebuild is where it disappeared. The
+        # pose has to survive too: restoring the body at the origin would leave
+        # the name intact while silently relocating it.
         assert "rig" in _spec_body_names(sim)
+        assert _spec_body_pos(sim, "rig") == pytest.approx(RIG_POS)
         assert sim.add_object(name="marker", shape="box", position=[0.3, 0.0, 0.1])["status"] == "success"
 
     def test_a_refused_patch_batch_leaves_the_scene_mutable(self, sim):
@@ -274,11 +296,16 @@ class TestRollbackKeepsSpecOnlyState:
         # that had nothing to do with it.
         result = sim.patch_scene_mjcf(
             ops=[
-                {"op": "add_body", "name": "rig", "position": [0.0, 0.3, 0.5]},
-                {"op": "add_geom", "body": "no_such_body", "shape": "box"},
+                {"op": "add_body", "name": "rig", "pos": RIG_POS},
+                {"op": "add_geom", "body": "no_such_body", "type": "box"},
             ]
         )
         assert result["status"] == "error"
+        # The failure must come from op #2. A batch refused on op #1 applies
+        # nothing, so there is no half-applied scene to roll back and every
+        # assertion below holds trivially - the message naming op #2 is the
+        # observable proof that op #1 was applied and then undone.
+        assert "op #2" in _text(result)
 
         assert "rig" not in _spec_body_names(sim)
         assert sim.add_object(name="marker", shape="box", position=[0.3, 0.0, 0.1])["status"] == "success"
