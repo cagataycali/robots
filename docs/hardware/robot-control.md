@@ -50,7 +50,7 @@ robot.cleanup()
 | `start_task(instruction, policy_port, policy_host, policy_provider, duration)` | Async; returns immediately. |
 | `stop_task()` | Halt the current task. Covers a task still in `CONNECTING` (bring-up): the rollout is abandoned before the arm is commanded. |
 | `get_task_status()` | Returns `RobotTaskState` (status, step count, error). |
-| `cleanup()` | Stop tasks, close cameras, stop mesh. Terminal - see below. |
+| `cleanup()` | Stop tasks, disconnect the robot (motors bus + every camera), stop mesh. Terminal - see below. |
 
 One rollout at a time: the arm has a single command bus, so `start_task` /
 `run_policy` / the `execute` action refuse while another task is in flight and
@@ -59,7 +59,13 @@ bus handshake plus per-camera warmup, seconds on a real arm - not just
 `RUNNING`. Call `stop_task()` to hand the bus over early.
 
 `cleanup()` (and `stop()`, which calls it) is terminal: it latches a shutdown,
-releases the task executor, and tears down the mesh and ROS bridges. There is no
+releases the task executor, tears down the mesh and ROS bridges, and disconnects
+the robot. The disconnect goes through the driver's own `disconnect()` while the
+robot is connected - that is where torque disable and gripper release live - and
+closes each device individually otherwise, so a half-open device set still ends
+with the serial port released and every camera node closed. A serial port is
+exclusive, so this is what makes the recovery for a wedged arm - tear down,
+construct a new `Robot` - work without exiting the process. There is no
 `restart`, so those same three entry points refuse permanently afterwards and
 name the shutdown, rather than admitting a rollout that would command the arm
 zero times. A rollout already in flight when the shutdown lands is reported

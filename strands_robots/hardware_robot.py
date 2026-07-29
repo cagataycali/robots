@@ -1134,39 +1134,46 @@ class Robot(TeleopMixin, AgentTool):
 
         return create_policy(policy_provider, **policy_config)
 
-    def _rollback_half_open_connect(self) -> None:
-        """Close every device a failed connect can leave half-open.
+    def _close_open_devices(self) -> None:
+        """Close every device that is open, one at a time and best-effort.
 
-        lerobot's ``MotorsBus.connect()`` opens the serial port *before* the
-        motor handshake, so a failed handshake (e.g. an unpowered bus) leaves
-        ``is_connected`` True while fire-and-forget writes to the dead bus
-        keep "succeeding". A robot's ``connect()`` then opens its cameras one
-        at a time (``for cam in self.cameras.values(): cam.connect()``) with
-        no cleanup of its own, so a camera that fails to open leaves every
-        camera ahead of it in the set still streaming.
+        Two callers need exactly this, both for a device set that is only
+        *partly* open -- the state lerobot's own ``Robot.disconnect()`` cannot
+        recover, because it is gated on ``is_connected``
+        (``bus.is_connected and all(cam.is_connected ...)``):
 
-        Either leak makes the *next* attempt unrecoverable rather than merely
-        failing. The retry raises ``DeviceAlreadyConnectedError`` on a device
-        that is perfectly healthy, which masks the device that actually
-        failed, and ``Robot.disconnect()`` cannot recover the state because it
-        is gated on ``is_connected`` -- false while any one device is still
-        shut. Closing every device that is open is what makes the next attempt
-        retry the connect and keep surfacing the real failure.
+        - **A failed connect.** lerobot's ``MotorsBus.connect()`` opens the
+          serial port *before* the motor handshake, so a failed handshake
+          (e.g. an unpowered bus) leaves ``is_connected`` True while
+          fire-and-forget writes to the dead bus keep "succeeding". A robot's
+          ``connect()`` then opens its cameras one at a time
+          (``for cam in self.cameras.values(): cam.connect()``) with no
+          cleanup of its own, so a camera that fails to open leaves every
+          camera ahead of it in the set still streaming. Either leak makes the
+          *next* attempt unrecoverable rather than merely failing: the retry
+          raises ``DeviceAlreadyConnectedError`` on a device that is perfectly
+          healthy, which masks the device that actually failed.
+        - **Teardown.** ``cleanup()`` prefers the driver's own ``disconnect()``
+          while the robot is fully connected, and falls back here when it is
+          not -- or when that disconnect raised partway and abandoned the
+          devices behind it.
 
-        Each device is closed independently and best-effort: a rollback runs
-        from an ``except`` handler, so one close that raises must neither mask
-        the original connect error nor stop the remaining devices from being
-        closed.
+        Each device is closed independently: one close that raises must
+        neither mask the caller's original error nor stop the remaining
+        devices from being closed, which is the failure mode lerobot's single
+        unguarded disconnect loop has.
         """
         bus = getattr(self.robot, "bus", None)
         try:
             if bus is not None and getattr(bus, "is_connected", False):
-                # disable_torque=False: the handshake already failed, so the
-                # default disconnect's torque write would only raise again
-                # (before ``closePort``) and leave the port open.
+                # disable_torque=False: this runs only where the driver's own
+                # disconnect is unavailable, would be refused, or has already
+                # raised, so a torque write here would most likely raise again
+                # -- before ``closePort``, leaving the port open, which is the
+                # one outcome this method exists to prevent.
                 bus.disconnect(disable_torque=False)
         except Exception:  # noqa: BLE001 - best-effort cleanup
-            logger.debug("%s post-connect-failure port close failed", self.tool_name_str)
+            logger.debug("%s port close failed", self.tool_name_str)
 
         # lerobot builds ``cameras`` with ``make_cameras_from_configs``, whose
         # contract is ``dict[str, Camera]``; anything else is not a camera set
@@ -1182,10 +1189,48 @@ class Robot(TeleopMixin, AgentTool):
             except Exception:  # noqa: BLE001 - best-effort, and per camera so
                 # one stuck camera cannot keep the rest of the set open.
                 logger.debug(
-                    "%s post-connect-failure camera %s close failed",
+                    "%s camera %s close failed",
                     self.tool_name_str,
                     name,
                 )
+
+    def _disconnect_devices(self) -> None:
+        """Close the physical devices this robot holds: motors bus and cameras.
+
+        Every other teardown branch in ``cleanup()`` releases a resource the
+        *library* owns -- the teleop loop, the task executor, the mesh client,
+        the ROS bridge. The devices are the only resources that are physical,
+        and they were the only ones left open: a serial port is exclusive on
+        Linux and macOS, so a second process (or a re-constructed ``Robot`` in
+        this one) could not open the same ``/dev/tty*``, which made the
+        documented recovery for a wedged arm -- tear down and reconnect --
+        unavailable without exiting the process. Each camera also holds a
+        ``/dev/video*`` node and a read thread.
+
+        The driver's own ``disconnect()`` is preferred while it is callable,
+        because that is where a follower disables torque and releases the
+        gripper; closing the port underneath it skips both and leaves the arm
+        energised at its last commanded position.
+        """
+        disconnect = getattr(self.robot, "disconnect", None)
+        if callable(disconnect) and getattr(self.robot, "is_connected", False):
+            try:
+                disconnect()
+                return
+            except Exception as exc:  # noqa: BLE001 - teardown is best-effort
+                logger.warning(
+                    "%s: robot.disconnect() raised during cleanup: %s",
+                    self.tool_name_str,
+                    exc,
+                )
+
+        # Reached when the driver exposes no ``disconnect``, when it would
+        # refuse (lerobot gates it on ``is_connected``, false in every
+        # half-open state), or when it raised partway through its own single
+        # unguarded loop and so abandoned every device after the one that
+        # failed. Closing each device independently is what still gets the
+        # port and the surviving cameras shut.
+        self._close_open_devices()
 
     async def _connect_robot(self) -> tuple[bool, str]:
         """Connect to robot hardware with proper error handling.
@@ -1246,7 +1291,7 @@ class Robot(TeleopMixin, AgentTool):
             # Same rollback as the lazy teleop connect: without it a half-open
             # port makes the NEXT _connect_robot short-circuit on
             # "already connected" and report success against a dead bus.
-            self._rollback_half_open_connect()
+            self._close_open_devices()
             return False, error_msg
 
     async def _initialize_policy(self, policy: Policy) -> bool:
@@ -2185,8 +2230,10 @@ class Robot(TeleopMixin, AgentTool):
     def cleanup(self) -> None:
         """Cleanup resources and stop any running tasks.
 
-        Terminal: this latches a shutdown, releases the task executor, and
-        tears down the mesh and ROS bridges. There is no ``restart``, so
+        Terminal: this latches a shutdown, releases the task executor, tears
+        down the mesh and ROS bridges, and disconnects the robot -- the motors
+        bus and every camera -- so no device node stays held. There is no
+        ``restart``, so
         ``run_policy`` / ``start_task`` / the ``execute`` action refuse
         permanently afterwards rather than admit a rollout that would command
         the arm zero times, and a rollout still in flight when this runs is
@@ -2234,6 +2281,14 @@ class Robot(TeleopMixin, AgentTool):
 
             # Tear down the ROS 2 telemetry bridge if one was created.
             self._shutdown_ros_bridge()
+
+            # Close the devices last, once every source of commands is down.
+            # ``send_action`` re-opens the robot lazily on a command that finds
+            # it disconnected, so a port closed before the teleop loop, the
+            # task executor, the mesh and the ROS bridge have stopped can be
+            # re-opened behind this teardown -- and would then stay open for
+            # the life of the process, since nothing runs after ``cleanup()``.
+            self._disconnect_devices()
 
             logger.info(f"{self.tool_name_str} cleanup completed")
 
@@ -2323,7 +2378,7 @@ class Robot(TeleopMixin, AgentTool):
                 try:
                     self.robot.connect(False)
                 except Exception:
-                    self._rollback_half_open_connect()
+                    self._close_open_devices()
                     raise
             self.robot.send_action(action)
             return {"status": "success", "content": [{"text": "ok"}]}
