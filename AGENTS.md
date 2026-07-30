@@ -92,6 +92,28 @@ hatch run format            # ruff check --fix, ruff format
 5. Open PR from your fork, address all review comments
 6. Track follow-up items as issues on the [project board](https://github.com/orgs/strands-labs/projects/2)
 7. Squash merge into `main`
+8. **Verify a PR's state by reading it back - before and after you change it.**
+   Neither direction can be inferred:
+   - *Before.* Query `timelineItems(itemTypes: [CLOSED_EVENT, REOPENED_EVENT])`
+     before closing or reopening. A lone `CLOSED_EVENT` is safe to re-apply; an
+     alternating run means something is undoing you, and a further flip only
+     lengthens it. #1667 - the retired `pr/consolidated-local-work` staging PR -
+     was closed and reopened **ten times in under fourteen hours**, each reopen 2-22
+     minutes after the preceding close, because independent contributors read
+     the same PR and reached opposite conclusions. Its extraction plan and
+     terminal state live in #1723; do not flip #1667 again.
+   - *After.* A `mergePullRequest` mutation can report `Pull Request is not
+     mergeable` on a merge that in fact landed - observed on #1756, where the
+     mutation returned that error and the squash was already on `main`. Confirm
+     with `state`/`merged`, or `git log origin/main`, before concluding a merge
+     failed and redoing the work.
+   And before merging, `reviewDecision: APPROVED` alone is not the gate: poll
+   `statusCheckRollup.state == SUCCESS` and `mergeStateStatus == CLEAN`
+   together, since `reviewDecision` flips before the checks finish.
+
+   The general rule behind all three: **a decision recorded only in a PR or
+   issue comment is not durable** - the next contributor will not read the same
+   comment. If a decision must survive, it belongs in this file.
 
 
 ## Registry conventions (strands_robots/registry/robots.json)
