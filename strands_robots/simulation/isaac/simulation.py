@@ -36,7 +36,7 @@ import numpy as np
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
-from strands_robots.utils import positive_whole_number_error
+from strands_robots.utils import camera_fov_error, coerce_pose_vector, positive_whole_number_error
 
 if TYPE_CHECKING:
     from strands_robots.rendering import CameraParams
@@ -2979,6 +2979,25 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             relation ``focal_length = horizontal_aperture / (2 * tan(fov/2))``
             with the USD-default 24 mm horizontal aperture.
 
+        Validation
+        ----------
+        ``position`` and ``target`` must each be 3 finite numbers (a list,
+        tuple or NumPy array; NumPy scalar elements accepted, ``bool``
+        refused), and must not be identical - a camera whose eye is its own
+        look-at point has no look direction. Omit a vector to take its
+        default; an empty vector is a wrong-length request and is rejected
+        rather than silently placing the camera at the default pose. ``fov``
+        must be a finite angle in the open interval ``(0, 180)`` degrees.
+        These are the same bounds the MuJoCo and Newton backends' ``add_camera``
+        enforces, on the shared
+        :func:`~strands_robots.utils.coerce_pose_vector` /
+        :func:`~strands_robots.utils.camera_fov_error` domains, so a camera
+        configuration one backend refuses is refused by all three. Invalid
+        values are rejected here, before the stage is touched, rather than
+        deferring an uncaught exception (non-numeric ``fov``, ``fov=0``) or a
+        silently degenerate camera (a ``nan`` in the USD pose or in the derived
+        focal length) to the first render.
+
         Returns
         -------
         dict
@@ -2992,6 +3011,49 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}
 
+            # Validate the pose and the field of view on the shared domains the
+            # MuJoCo and Newton backends' ``add_camera`` already applies, before
+            # anything touches the stage. ``coerce_pose_vector``'s contract is
+            # that a pose either backend entry point refuses must be refused by
+            # the other, and this was the entry point that refused nothing: the
+            # ``list(position)`` below copied the caller's vector element-wise
+            # without reading it, so a ``nan``/``inf`` component, a non-numeric
+            # element, a ``bool`` (the coordinate 1.0) and a wrong-length vector
+            # all reached ``_create_camera_prim`` under ``status="success"``, and
+            # a NumPy pose leaked ``np.float64`` into the status text and the
+            # json payload. ``float(fov)`` accepted ``nan``/``inf``/``0``/
+            # ``>= 180`` and raised a bare ``ValueError`` on a non-numeric value
+            # - from outside the try block below, so it escaped the structured
+            # ``{"status": "error"}`` contract entirely. Coercion is validation
+            # only when the coercion rejects; these did not.
+            position, pos_err = coerce_pose_vector("add_camera", "position", position, 3)
+            if pos_err is not None:
+                return {"status": "error", "content": [{"text": pos_err}]}
+            target, tgt_err = coerce_pose_vector("add_camera", "target", target, 3)
+            if tgt_err is not None:
+                return {"status": "error", "content": [{"text": tgt_err}]}
+            pos = [2.0, 2.0, 2.0] if position is None else position
+            tgt = target
+            if tgt is not None and all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": f"add_camera: 'position' and 'target' are identical ({pos}); camera has no look direction."
+                        }
+                    ],
+                }
+            # An fov outside (0, 180) is not merely mis-framed here: the pinhole
+            # relation ``focal_length = horizontal_aperture / (2 * tan(fov / 2))``
+            # in :meth:`_create_camera_prim` raises ``ZeroDivisionError`` for
+            # ``0`` - which is NOT in the except tuple below, so it propagates
+            # out of this method - and yields a ``nan`` focal length for a
+            # ``nan`` fov and 7.3e-16 mm for ``180``, both of which
+            # ``set_focal_length`` accepts, giving a camera that renders nothing
+            # usable under a success result.
+            if (fov_err := camera_fov_error("add_camera", "fov", fov)) is not None:
+                return {"status": "error", "content": [{"text": fov_err}]}
+
             if name in self._cameras:
                 return {
                     "status": "error",
@@ -3000,8 +3062,6 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
 
             w = int(width or self._config.camera_width)
             h = int(height or self._config.camera_height)
-            pos = list(position) if position is not None else [2.0, 2.0, 2.0]
-            tgt = list(target) if target is not None else None
             fov_deg = float(fov)
 
             # RTX cameras: render at a higher NATIVE resolution if the
