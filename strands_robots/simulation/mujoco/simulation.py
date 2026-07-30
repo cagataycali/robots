@@ -147,6 +147,22 @@ def _jnt_qpos_width(mj: Any, jnt_type: int) -> int:
     return 1
 
 
+def _jnt_dof_width(mj: Any, jnt_type: int) -> int:
+    """qvel/dof slice width for a MuJoCo joint type (free=6, ball=3, slide/hinge=1).
+
+    The velocity counterpart of :func:`_jnt_qpos_width`: a free joint spends 7
+    ``qpos`` entries (3 translation + a wxyz quaternion) but only 6 ``qvel``
+    entries (3 linear + 3 angular), and a ball joint 4 against 3. Reading a
+    velocity slice at the ``qpos`` width would run past the joint and into its
+    neighbour's.
+    """
+    if jnt_type == int(mj.mjtJoint.mjJNT_FREE):
+        return 6
+    if jnt_type == int(mj.mjtJoint.mjJNT_BALL):
+        return 3
+    return 1
+
+
 def _validated_mesh_handle(mesh: Any) -> Any:
     """Normalize the constructor ``mesh`` argument to a stoppable client or None.
 
@@ -1101,6 +1117,15 @@ class MuJoCoSimEngine(
         XML.  This preserves previously-created world state (gravity, objects,
         cameras, other robots).
 
+        That preservation covers the scene's DYNAMIC state, not just its
+        contents: an arm already in the world keeps the pose it is in and the
+        actuator setpoints holding it there, an object stays where it settled or
+        was carried to, a latched ``apply_force`` wrench persists, and the clock
+        keeps counting. Only the robot being added is placed at a defined
+        configuration - its ``keyframe`` pose, or the zero configuration - so
+        composing a scene incrementally cannot undo what has already happened in
+        it. Use :meth:`reset` to return the whole world to its initial state.
+
         ``name`` is the instance label used to address this robot later
         (``run_policy(robot_name=...)``, ``get_robot_state``, etc.). It is
         OPTIONAL: when omitted it is auto-derived from ``data_config`` (or the
@@ -1310,22 +1335,26 @@ class MuJoCoSimEngine(
 
             # Leave the freshly-added robot in a clean, deterministic state:
             # the zero configuration by default, or -- when a spawn keyframe was
-            # requested -- that keyframe's canonical home pose. Either way t=0 is
-            # a well-defined start for learning/eval pipelines (no silent settle
-            # under gravity). Callers that want a pre-settled pose call step().
-            mj.mj_resetData(self._world._model, self._world._data)
-            self._world.sim_time = 0.0
-            self._world.step_count = 0
+            # requested -- that keyframe's canonical home pose. Callers that want
+            # a pre-settled pose call step().
+            #
+            # Scoped to THIS robot. ``mj_resetData`` would supply the same clean
+            # state, but for the whole world: the arm a caller just parked with
+            # send_action goes limp and collapses, an object that has settled or
+            # been carried somewhere teleports back to its declared spawn, a
+            # latched apply_force wrench is dropped, and the clock rewinds - all
+            # reported as a successful "add a robot". That contradicts this
+            # method's own contract ("preserves previously-created world state
+            # (gravity, objects, cameras, other robots)"), and the world-wide
+            # reset is what forced the home-pose re-apply that used to follow it:
+            # a partial repair that only covered robots spawned with a keyframe.
+            self._reset_robot_to_reference(robot)
             if home_by_short:
                 self._apply_home_qpos_to_robot(robot, home_by_short)
-            # ``mj_resetData`` above zeroed the entire model, which also drops
-            # any robot added earlier back to the zero configuration. Re-apply
-            # every robot's captured home pose (a no-op for robots spawned
-            # without a keyframe) so incrementally building a multi-robot scene
-            # keeps each arm at its canonical home pose instead of silently
-            # collapsing all but the most recently added robot.
-            self._restore_home_poses()
-            self._seat_floating_bases_on_terrain()
+            # Seat only the new base: the others are wherever the scene left
+            # them, and re-seating a base that is not at its reference height
+            # would stack the terrain offset onto it again.
+            self._seat_floating_bases_on_terrain(only=robot)
             mj.mj_forward(self._world._model, self._world._data)
 
             # Attach the robot to the mesh as its own peer so the agent can
@@ -1459,6 +1488,56 @@ class MuJoCoSimEngine(
             stored[jn] = vals
         robot.home_qpos = stored
 
+    def _reset_robot_to_reference(self, robot: SimRobot) -> None:
+        """Put one robot's joints, velocities and setpoints at the model's
+        reference configuration, leaving the rest of the world untouched.
+
+        A freshly added robot needs a defined starting configuration - the
+        recompile that merged it in leaves its new joints at whatever the
+        compiler initialized them to. ``mj_resetData`` supplies one, but it
+        supplies it for the WHOLE world: every other robot's pose and actuator
+        setpoints, every settled object's position, latched wrenches and the
+        clock all go back to their reference values too. On a scene that is
+        being built up incrementally - the documented way to compose one - that
+        turns "add a robot" into "rewind the scene", which is the opposite of
+        what :meth:`add_robot` promises its caller.
+
+        Scoping the reset to the robot being added keeps both halves true: the
+        new arm starts from a known configuration and nothing else in the world
+        moves.
+
+        Args:
+            robot: The robot to reset. Its ``joint_ids`` / ``actuator_ids`` are
+                the post-recompile ids resolved by
+                :func:`~strands_robots.simulation.mujoco.scene_ops._recompile_preserving_state`.
+
+        Notes:
+            The caller holds the model lock and runs ``mj_forward`` afterwards.
+        """
+        mj = self._mj
+        assert self._world is not None and self._world._model is not None and self._world._data is not None
+        model = self._world._model
+        data = self._world._data
+        for jid in robot.joint_ids:
+            jnt_type = int(model.jnt_type[jid])
+            adr = int(model.jnt_qposadr[jid])
+            width = _jnt_qpos_width(mj, jnt_type)
+            # ``qpos0`` is the reference configuration ``mj_resetData`` writes,
+            # so reading it per joint reproduces that value without touching a
+            # joint this robot does not own.
+            data.qpos[adr : adr + width] = model.qpos0[adr : adr + width]
+            dadr = int(model.jnt_dofadr[jid])
+            data.qvel[dadr : dadr + _jnt_dof_width(mj, jnt_type)] = 0.0
+        for aid in robot.actuator_ids:
+            data.ctrl[aid] = 0.0
+            # A filtered/muscle actuator carries activation state of its own;
+            # leaving it behind would let the new robot inherit a setpoint the
+            # zeroed ``ctrl`` no longer explains.
+            actnum = int(model.actuator_actnum[aid])
+            if actnum > 0:
+                aadr = int(model.actuator_actadr[aid])
+                data.act[aadr : aadr + actnum] = 0.0
+
     def _restore_home_poses(self) -> None:
         """Re-apply every robot's captured keyframe home pose onto the live
         ``qpos`` (a no-op for robots spawned without a keyframe). The caller
@@ -1479,7 +1558,7 @@ class MuJoCoSimEngine(
                 adr = int(model.jnt_qposadr[jid])
                 data.qpos[adr : adr + len(vals)] = vals
 
-    def _seat_floating_bases_on_terrain(self) -> None:
+    def _seat_floating_bases_on_terrain(self, only: SimRobot | None = None) -> None:
         """Raise each floating-base robot onto the local terrain surface.
 
         ``create_world(terrain=...)`` lays a heightfield whose surface rises up
@@ -1498,7 +1577,11 @@ class MuJoCoSimEngine(
         so non-terrain worlds are byte-for-byte unchanged; a fixed-base arm (no
         free joint) is skipped. Called once per spawn / reset cycle right after
         the home-pose restore (which returns each base to its flat keyframe z),
-        so it starts from a known base height and is idempotent. Handles both a
+        so it starts from a known base height and is idempotent. ``only``
+        restricts the pass to a single robot, which is what ``add_robot`` needs:
+        seating is only idempotent for a base that is at its reference height,
+        and a robot that has already walked somewhere is not - re-seating it
+        would add the terrain offset to its current z a second time. Handles both a
         NAMED floating base (a humanoid's ``floating_base_joint``) and an
         UNNAMED ``<freejoint>`` (a mobile base) via
         :meth:`_robot_free_base_joint_id`. The caller holds the model lock and
@@ -1511,7 +1594,8 @@ class MuJoCoSimEngine(
         data = world._data
         if model.nhfield == 0:  # flat ground plane -- nothing to seat onto
             return
-        for robot in world.robots.values():
+        targets = [only] if only is not None else list(world.robots.values())
+        for robot in targets:
             jid = self._robot_free_base_joint_id(model, robot)
             if jid < 0:  # fixed-base arm: no floating base to seat
                 continue

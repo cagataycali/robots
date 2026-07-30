@@ -52,13 +52,32 @@ sim.add_robot(name="panda", data_config="panda", keyframe="home")  # or keyframe
 ```
 
 The pose is applied to the robot's joints by name and is restored by `reset()`,
-so a keyframe spawn is sticky across episodes. It also survives later
-`add_robot` calls, so incrementally building a multi-robot scene keeps every
-already-spawned arm at its home pose rather than collapsing it to zero. An
+so a keyframe spawn is sticky across episodes. An
 unknown keyframe name/index
 is an error that lists the model's available keyframes. `keyframe=None` (the
 default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
 `keyframe=` as not-yet-supported.)
+
+### Adding a robot does not disturb the scene it joins
+
+Only the robot being added is placed at a defined configuration - its keyframe,
+or the zero pose. Everything already in the world is left exactly as it was: an
+arm keeps the pose it is in (whether that is its keyframe pose or wherever a
+policy or `send_action` has driven it) *and* the actuator setpoints holding it
+there, objects stay where they settled or were carried to, latched `apply_force`
+wrenches persist, and the clock keeps counting.
+
+So a scene can be composed in any order, and a robot can be added mid-session
+without invalidating what has already happened in it:
+
+```python
+sim.run_policy(robot_name="panda", ...)   # arm ends up somewhere useful
+sim.add_robot(name="helper", data_config="so101", position=[0.0, -0.6, 0.0])
+# 'panda' is still where the rollout left it; 'helper' starts at its zero pose
+```
+
+To return the *whole* world to its initial state - every robot, every object and
+the clock - call `reset()`, which is what that method is for.
 
 ## Declared physics options
 
