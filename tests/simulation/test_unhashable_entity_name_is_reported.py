@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import inspect
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -97,21 +98,97 @@ def _mujoco_lookups(s: Simulation) -> dict[str, Any]:
     }
 
 
+def _envelope_miss(call: Callable[[Any], Any], name: Any) -> str | None:
+    """Describe how ``call`` failed to report ``name``, or ``None`` if it reported.
+
+    An exception is reported rather than propagated, so one run names every
+    method that escaped instead of stopping at the first. That reporting is
+    sound only for an exception the method leaked, which is where the caught set
+    stops: the escape under test is a ``TypeError`` out of a partial lookup, and
+    every type these methods can leak is an ``Exception``.
+
+    It deliberately does not sit at ``BaseException``. A pytest outcome
+    (``Skipped`` / ``Failed``) or an operator interrupt (``KeyboardInterrupt`` /
+    ``SystemExit``) derives from ``BaseException`` without deriving from
+    ``Exception``, and none of them is the API's to leak - absorbing them would
+    turn an interrupted run into a verdict string and report a skipped
+    dependency as an envelope escape. :class:`TestTheEnvelopeProbe` pins the
+    boundary in both directions.
+    """
+    try:
+        result = call(name)
+    except Exception as exc:  # noqa: BLE001 - the escape is what is under test
+        return f"raised {type(exc).__name__}: {exc}"
+    if not isinstance(result, dict) or result.get("status") != "error":
+        return f"expected an error envelope, got {result!r}"
+    return None
+
+
 @pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
 def test_an_unhashable_name_is_reported_as_absent(sim, label, name):
     """Each name-taking method returns its error envelope, not a TypeError."""
-    failures = {}
-    for method, call in _mujoco_lookups(sim).items():
-        try:
-            result = call(name)
-        except BaseException as exc:  # noqa: BLE001 - the escape is what is under test
-            failures[method] = f"raised {type(exc).__name__}: {exc}"
-            continue
-        if not isinstance(result, dict) or result.get("status") != "error":
-            failures[method] = f"expected an error envelope, got {result!r}"
+    failures = {
+        method: miss
+        for method, call in _mujoco_lookups(sim).items()
+        if (miss := _envelope_miss(call, name)) is not None
+    }
     assert not failures, f"a {label} name escaped or was accepted:\n" + "\n".join(
         f"  {k}: {v}" for k, v in sorted(failures.items())
     )
+
+
+class TestTheEnvelopeProbe:
+    """The probe the sweep above shares must not absorb control flow.
+
+    :func:`_envelope_miss` turns one call into a miss description or ``None`` so
+    that a single assertion can name every method that escaped. Reporting an
+    exception is what makes that message useful, and it has to stay bounded to
+    exceptions the API leaked: a probe that also caught pytest's own outcomes
+    would report a skipped optional dependency as an envelope escape, and an
+    interrupted run as an answer.
+    """
+
+    def test_an_error_envelope_is_what_the_probe_asks_for(self):
+        assert _envelope_miss(lambda n: {"status": "error"}, ["crate"]) is None
+
+    @pytest.mark.parametrize("accepted", [{"status": "success"}, None, "ok"])
+    def test_anything_other_than_an_error_envelope_is_a_miss(self, accepted):
+        """A name that cannot address an entity must not be reported as resolved."""
+        miss = _envelope_miss(lambda n: accepted, ["crate"])
+        assert miss is not None and "expected an error envelope" in miss
+
+    @pytest.mark.parametrize("leaked", [TypeError, ValueError, KeyError])
+    def test_an_exception_the_method_leaked_is_reported(self, leaked):
+        """The escape under test is a leaked ``TypeError``; it must stay reported.
+
+        Reporting rather than propagating is what lets one run list every method
+        that escaped, so it has to survive the narrowing of the caught set.
+        """
+
+        def leak(name: Any) -> dict[str, Any]:
+            raise leaked("unhashable type: 'list'")
+
+        miss = _envelope_miss(leak, ["crate"])
+        assert miss is not None and miss.startswith(f"raised {leaked.__name__}")
+
+    @pytest.mark.parametrize(
+        "control_flow",
+        [pytest.skip.Exception, pytest.fail.Exception, KeyboardInterrupt, SystemExit],
+    )
+    def test_control_flow_is_not_absorbed(self, control_flow):
+        """A pytest outcome or an operator interrupt passes straight through.
+
+        All four derive from ``BaseException`` without deriving from
+        ``Exception``, and none is something a lookup leaked. Absorbing them
+        would turn a ``Ctrl-C`` into ``"raised KeyboardInterrupt"`` and then
+        assert on it as though the lookup had answered.
+        """
+
+        def interrupt(name: Any) -> dict[str, Any]:
+            raise control_flow("not the API's to leak")
+
+        with pytest.raises(control_flow):
+            _envelope_miss(interrupt, ["crate"])
 
 
 @pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
