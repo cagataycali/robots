@@ -44,7 +44,6 @@ So: the split is honest about being for file-size, not for decoupling.
 import inspect
 import json
 import logging
-import math
 import numbers
 import os
 import re
@@ -101,6 +100,7 @@ from strands_robots.simulation.policy_runner import CooperativeStop
 from strands_robots.simulation.terrain import SUPPORTED_TERRAINS, validate_difficulty, validate_terrain
 from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
+    camera_fov_error,
     coerce_pose_vector,
     finite_vector_error,
     pose_vector_error,
@@ -2958,21 +2958,11 @@ class MuJoCoSimEngine(
         # finite angle in the open interval (0, 180) degrees; otherwise the
         # spec recompile aborts deep inside ``inject_camera_into_scene`` with a
         # cryptic "spec recompile refused", or - for fov <= 0 - silently
-        # registers a degenerate camera that renders nothing useful. Reject it
-        # here with an actionable message, mirroring the position/target checks.
-        # Accept any real number (``numbers.Real``) so a NumPy scalar fov
-        # (e.g. ``np.float32(58.0)`` from a config array) is not rejected as
-        # "not a finite number"; only ``bool`` and non-finite values are refused.
-        if isinstance(fov, bool) or not isinstance(fov, numbers.Real) or not math.isfinite(float(fov)):
-            return {
-                "status": "error",
-                "content": [{"text": f"add_camera: 'fov' must be a finite number in degrees, got {fov!r}."}],
-            }
-        if not (0.0 < float(fov) < 180.0):
-            return {
-                "status": "error",
-                "content": [{"text": f"add_camera: 'fov' must be in the open interval (0, 180) degrees, got {fov}."}],
-            }
+        # registers a degenerate camera that renders nothing useful. The domain
+        # lives in the shared ``camera_fov_error`` so the Newton backend's
+        # ``add_camera`` cannot drift from this one.
+        if (e := camera_fov_error("add_camera", "fov", fov)) is not None:
+            return {"status": "error", "content": [{"text": e}]}
 
         # Validate the render resolution baked into this camera the same way
         # ``render`` validates its dims, so a bad size fails at config time with

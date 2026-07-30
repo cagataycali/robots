@@ -657,3 +657,35 @@ def coerce_pose_vector(
     if (err := pose_vector_error(method, param_name, vec, expected_len)) is not None:
         return None, err
     return [float(v) for v in vec], None
+
+
+def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
+    """Return an error message if ``value`` is not a usable camera field of view.
+
+    A camera's vertical field of view must be a finite angle in the open
+    interval ``(0, 180)`` degrees. This lives here, beside
+    :func:`pose_vector_error`, for the same reason that one does: the MuJoCo and
+    Newton backends both expose ``add_camera(fov=...)`` and their accepted
+    domain must not diverge - an fov either backend refuses must be refused by
+    the other, and a second copy of the interval would drift from the first.
+
+    Outside that interval a camera is not merely mis-posed but unusable, and
+    each backend fails differently and late rather than at config time:
+
+    * MuJoCo bakes the value into the MJCF ``fovy`` attribute, so the spec
+      recompile aborts inside ``inject_camera_into_scene`` with a cryptic "spec
+      recompile refused".
+    * Newton stores it and derives the pinhole intrinsics
+      ``0.5 * height / tan(radians(fov) / 2)`` at render time, which is ``nan``
+      for a ``nan`` fov and raises ``ZeroDivisionError`` for ``0``.
+
+    A NumPy real scalar is accepted (``np.float32(58.0)`` read out of a config
+    array is a legitimate fov); a ``bool`` is refused because ``float(True)``
+    would silently mean a 1-degree lens. Returns ``None`` when ``value`` is a
+    usable field of view.
+    """
+    if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(float(value)):
+        return f"{method}: '{param_name}' must be a finite number in degrees, got {value!r}."
+    if not (0.0 < float(value) < 180.0):
+        return f"{method}: '{param_name}' must be in the open interval (0, 180) degrees, got {value}."
+    return None

@@ -49,7 +49,7 @@ from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, Sim
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
 from strands_robots.simulation.newton.randomization import DomainRandomizationMixin
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
-from strands_robots.utils import require_optional
+from strands_robots.utils import camera_fov_error, coerce_pose_vector, require_optional
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -959,13 +959,31 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         body transform. Empty/``None`` = a world-fixed camera. Call
         :meth:`list_bodies` to discover valid mount points.
 
+        Validation: ``position`` and ``target`` must each be 3 finite numbers
+        (a list, tuple or NumPy array; NumPy scalar elements accepted, ``bool``
+        refused). Omit a vector to take its default - an empty vector is a
+        wrong-length request and is rejected rather than silently placing the
+        camera at the default pose. ``fov`` must be a finite angle in ``(0,
+        180)`` degrees. These are the same bounds the MuJoCo backend's
+        ``add_camera`` enforces, on the shared
+        :func:`~strands_robots.utils.pose_vector_error` /
+        :func:`~strands_robots.utils.camera_fov_error` domains, so a camera
+        configuration one backend refuses is refused by both. Invalid values are
+        rejected here at config time rather than deferring an uncaught
+        ``ValueError`` (non-numeric) or a silently degenerate camera
+        (``nan``/``inf`` in the look-at basis or the derived intrinsics) to the
+        first render.
+
         Args:
             name: Unique camera name. Duplicate names are rejected; remove the
                 existing camera with :meth:`remove_camera` first.
             position: Camera eye ``[x, y, z]`` (world frame, or the parent
-                body's local frame when ``parent_body`` is set).
+                body's local frame when ``parent_body`` is set). 3 finite
+                numbers.
             target: Look-at point ``[x, y, z]`` (same frame as ``position``).
-            fov: Vertical field of view in degrees.
+                3 finite numbers.
+            fov: Vertical field of view in degrees; a finite angle in the open
+                interval ``(0, 180)``.
             width: Render width in pixels for this camera.
             height: Render height in pixels for this camera.
             parent_body: Optional body label to mount the camera on. ``None``
@@ -973,27 +991,32 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
         Returns:
             Status dict confirming the registration, or an error dict when no
-            world exists, the pose is invalid, the name is taken, or the mount
-            body is unknown.
+            world exists, the pose or ``fov`` is invalid, the name is taken, or
+            the mount body is unknown. Never raises.
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
 
-        pos = list(position) if position is not None else [1.0, 1.0, 1.0]
-        tgt = list(target) if target is not None else [0.0, 0.0, 0.0]
-        for _lbl, _vec in (("position", pos), ("target", tgt)):
-            try:
-                if len(_vec) != 3:
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"add_camera: '{_lbl}' must be 3 elements [x,y,z], got {len(_vec)}"}],
-                    }
-                _vec[:] = [float(v) for v in _vec]
-            except (TypeError, ValueError):
-                return {
-                    "status": "error",
-                    "content": [{"text": f"add_camera: '{_lbl}' must be a list of 3 numbers"}],
-                }
+        # Validate shape, element type AND finiteness with the shared helpers the
+        # MuJoCo backend uses, so a camera pose one backend refuses is refused by
+        # both - the invariant ``pose_vector_error`` documents. The local
+        # coercion this replaces only applied ``float(v)``: that caught a
+        # non-numeric element but passed a ``nan``/``inf`` component (and a
+        # ``bool``, silently reading ``True`` as the coordinate 1.0) straight
+        # through to the registry. Nothing downstream catches it either - the
+        # degenerate-orientation check below compares
+        # ``abs(pos[i] - tgt[i]) < 1e-9``, which is False for a ``nan``, and
+        # ``_look_at_quat`` then divides the view vector by a ``nan`` norm, so
+        # ``render``/``get_frame`` return a frame from an all-NaN camera
+        # quaternion under a success result.
+        position, _perr = coerce_pose_vector("add_camera", "position", position, 3)
+        if _perr is not None:
+            return {"status": "error", "content": [{"text": _perr}]}
+        target, _terr = coerce_pose_vector("add_camera", "target", target, 3)
+        if _terr is not None:
+            return {"status": "error", "content": [{"text": _terr}]}
+        pos = [1.0, 1.0, 1.0] if position is None else position
+        tgt = [0.0, 0.0, 0.0] if target is None else target
         if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
             return {
                 "status": "error",
@@ -1003,6 +1026,16 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     }
                 ],
             }
+        # Validate the field of view at config time, on the same shared domain
+        # the MuJoCo backend uses. It was previously coerced by a bare
+        # ``float(fov)`` inside the lock below, so a non-numeric value raised a
+        # ``ValueError`` straight through the structured tool-result contract,
+        # and ``nan``/``inf``/``0``/``>=180`` registered a degenerate camera
+        # under a success result: :meth:`get_camera_params` derives the pinhole
+        # intrinsics ``0.5 * h / tan(radians(fov) / 2)``, which is ``nan`` for a
+        # ``nan`` fov and raises ``ZeroDivisionError`` for ``0``.
+        if (e := camera_fov_error("add_camera", "fov", fov)) is not None:
+            return {"status": "error", "content": [{"text": e}]}
         if name in (None, "", "default", "free"):
             return {
                 "status": "error",
