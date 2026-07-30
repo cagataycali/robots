@@ -111,6 +111,29 @@ hatch run format            # ruff check --fix, ruff format
    `statusCheckRollup.state == SUCCESS` and `mergeStateStatus == CLEAN`
    together, since `reviewDecision` flips before the checks finish.
 
+   Those three together are still not sufficient. They are all evaluated against
+   the base the branch was tested on, so none of them can see a **semantic**
+   conflict with a PR that landed on `main` after those checks ran. #1766 and
+   #1763 both edited `_recompile_preserving_state` for unrelated reasons: the
+   text merged with no conflict, #1763 stayed `MERGEABLE`/`CLEAN` with
+   `SUCCESS` checks after #1766 landed, and the squash still broke `main`,
+   because #1763 carried a *premise* test asserting the very defect #1766 had
+   just fixed. Neither PR's CI ever compiled the two together.
+
+   So when a second approved PR touches a file - especially a function - that a
+   just-merged PR also touched, do not merge on the green alone. Merge `main`
+   into the branch (or check out the merge locally) and run the affected tests
+   before issuing the mutation. A `CLEAN` status is a statement about text, not
+   about meaning. This is cheap: the check that would have caught the above was
+   one `pytest` invocation on two files.
+
+   Fixing forward beats reverting here - the two production changes were both
+   correct, and only an assertion and its justification were stale. Prefer a
+   narrow follow-up that re-pins the invalidated premise over reverting a
+   reviewed change. If a premise test is invalidated by a fix landing, replace it
+   rather than deleting it: the conclusion it supported usually still holds for a
+   different reason, and that reason is what the next reader needs.
+
    The general rule behind all three: **a decision recorded only in a PR or
    issue comment is not durable** - the next contributor will not read the same
    comment. If a decision must survive, it belongs in this file.
