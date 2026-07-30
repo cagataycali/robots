@@ -1511,12 +1511,18 @@ class MuJoCoSimEngine(
         new entry is the recompile's job -- ``_recompile_preserving_state``
         zeroes the tail its positional state transfer leaves undefined, before
         anything reads it. Repeating that here by iterating ``actuator_ids``
-        would be both narrower and less safe: those ids are discovered by
-        matching ``actuator_trnid`` against the robot's joint ids, so an
-        actuator whose transmission is not a joint -- the fixed tendon that
-        couples a gripper's fingers, say -- is missing from the robot that owns
-        it and, because tendon and joint ids are separate id spaces that
-        collide, claimed by whichever robot owns the joint of the same number.
+        would be both narrower and less safe, because the two answer different
+        questions: ``actuator_ids`` is ownership -- which robot may command an
+        actuator -- whereas the tail is a memory fact about which entries the
+        positional transfer never wrote. ``mj_checkCtrl`` reads the whole buffer,
+        so the obligation is positional and unconditional, while ownership is
+        derived and not guaranteed to cover the tail:
+        :func:`~strands_robots.simulation.mujoco.scene_ops.robot_owned_actuator_ids`
+        returns an empty list for an actuator that is neither namespace-prefixed
+        nor joint-driven -- the fixed tendon that couples a gripper's fingers,
+        say, whose transmission is gated out of the driven-joint match by design.
+        Sourcing initialization from it would make this method silently wrong
+        wherever ownership is not a complete cover.
 
         Args:
             robot: The robot to reset. Its ``joint_ids`` are the post-recompile

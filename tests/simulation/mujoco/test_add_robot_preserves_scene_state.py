@@ -20,14 +20,17 @@ The clean state the new robot is owed includes its actuator setpoints, and the
 world-wide reset used to supply those as collateral. ``spec.recompile`` transfers
 state POSITIONALLY and leaves ``ctrl`` past the old ``nu`` uninitialized, so with
 the world-wide reset gone the new entries have to be defined deliberately -- and
-scoping that to the robot's ``actuator_ids`` is not enough, because those are
-matched through ``actuator_trnid`` against joint ids and miss every actuator
-driven through a tendon, site or body. A single undefined entry is not a harmless
+the robot's ``actuator_ids`` are not the basis for that, because ownership and
+initialization are different questions. Ownership says which robot may command an
+actuator; the tail says which entries the positional transfer never wrote, and
+``mj_checkCtrl`` reads the whole buffer rather than any robot's subset. A single
+undefined entry is not a harmless
 nonsense number: ``mj_checkCtrl`` disables actuation for the whole model on any
 step where one ``ctrl`` value is non-finite, so every held pose in the scene
 collapses on the runs where the leftover memory happens to be NaN.
 """
 
+import dataclasses
 import math
 import pathlib
 import re
@@ -37,6 +40,7 @@ import pytest
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation import Simulation  # noqa: E402
+from strands_robots.simulation.mujoco import scene_ops  # noqa: E402
 
 # Two-link arm with position servos. Damped and limited so a commanded setpoint
 # settles instead of oscillating, and declared in radians (MuJoCo's compiler
@@ -75,8 +79,9 @@ _BASE_XML = """<mujoco model="probe_base">
 </mujoco>"""
 
 # Gripper driven through a FIXED TENDON: the standard MJCF idiom for coupled
-# fingers, and a transmission that ``actuator_trnid``-vs-joint-id matching cannot
-# see. Its ``ctrl`` entry is therefore the one a robot-scoped reset would miss.
+# fingers, and a transmission the driven-joint rule cannot address at all. Its
+# ``ctrl`` entry is therefore the one a robot-scoped reset would miss wherever the
+# attach namespace that does reach it is absent.
 _GRIPPER_XML = """<mujoco model="probe_gripper">
   <compiler angle="radian"/>
   <worldbody>
@@ -262,13 +267,19 @@ def test_a_keyframe_spawned_arm_is_not_snapped_back_to_its_home_pose(sim, models
     assert _joints(sim, "a") == pytest.approx(parked, abs=1e-6)
 
 
-def test_a_tendon_driven_actuator_is_outside_the_joint_matched_id_scope(sim, models):
-    """Premise: per-robot ``actuator_ids`` cannot see a non-joint transmission.
+def test_a_tendon_driven_actuator_is_owned_only_through_its_namespace(sim, models):
+    """Premise: ownership reaches a non-joint transmission by namespace or not at all.
 
     This is the reason the new robot's setpoints are defined by the recompile
-    rather than by iterating the robot's own actuator ids, so it is pinned
-    independently: it holds before and after that change, and if it ever stops
-    holding, the narrower scope becomes viable and this file should say so.
+    rather than by iterating the robot's own actuator ids, so it is pinned here
+    independently of the code that consumes it.
+
+    A fixed tendon is not addressable by the driven-joint rule: the transmission
+    gate returns -1 for it deliberately, because tendon and joint ids are separate
+    spaces that collide. Here the attach prefix settles ownership, so the gripper
+    belongs to the robot carrying it. Strip that prefix and ownership is empty --
+    which is why it is not a safe basis for deciding which ``ctrl`` entries the
+    recompile must define.
     """
     assert sim.add_robot(name="a", urdf_path=models["arm"])["status"] == "success"
     assert sim.add_robot(name="g", urdf_path=models["gripper"])["status"] == "success"
@@ -279,10 +290,22 @@ def test_a_tendon_driven_actuator_is_outside_the_joint_matched_id_scope(sim, mod
     assert int(model.actuator_trntype[grip_id]) == int(mj.mjtTrn.mjTRN_TENDON)
 
     robots = sim._world.robots
-    # Absent from the robot that owns it ...
-    assert grip_id not in robots["g"].actuator_ids
-    # ... and claimed by the arm, because the tendon's id collides with a joint id.
-    assert grip_id in robots["a"].actuator_ids
+    # The collision is live: the tendon's own id equals one of the arm's joint ids,
+    # which is what the transmission gate exists to stop being read as one.
+    assert int(model.actuator_trnid[grip_id, 0]) in set(robots["a"].joint_ids)
+    assert scene_ops.actuator_joint_id(model, grip_id, mj) == -1
+
+    # Owned by the robot that carries it, through the attach prefix ...
+    assert grip_id in robots["g"].actuator_ids
+    # ... and not claimed by the arm whose joint id the tendon's id equals.
+    assert grip_id not in robots["a"].actuator_ids
+
+    # Without that prefix neither rule reaches it, even though this robot lists the
+    # very finger joints the tendon couples. Initialization cannot be sourced from a
+    # set that can legitimately be empty.
+    bare = dataclasses.replace(robots["g"], namespace="")
+    assert bare.joint_ids == robots["g"].joint_ids != []
+    assert scene_ops.robot_owned_actuator_ids(model, bare, mj) == []
 
 
 def test_the_added_robots_actuator_setpoints_are_defined(sim, models):
@@ -338,9 +361,10 @@ def hostile_leftovers(monkeypatch):
 def test_an_undefined_control_entry_does_not_survive_the_recompile(sim, models, hostile_leftovers):
     """A new setpoint is defined even when the memory behind it was not.
 
-    Definition happens as part of the recompile, so it covers the tendon-driven
-    actuator that no per-robot id scope can reach, and it happens before the
-    forward pass at the end of the recompile reads ``ctrl``.
+    Definition happens as part of the recompile, so it covers every entry the
+    positional transfer left untouched -- including the tendon-driven actuator the
+    driven-joint rule cannot address -- and it happens before the forward pass at
+    the end of the recompile reads ``ctrl``.
 
     Both halves are asserted, so neither can be satisfied by the other: the new
     entries are defined, AND the setpoints already in the scene are left alone.
