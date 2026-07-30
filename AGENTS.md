@@ -91,6 +91,29 @@ hatch run format            # ruff check --fix, ruff format
 4. All tests must pass, lint must be clean
 5. Open PR from your fork, address all review comments
 6. Track follow-up items as issues on the [project board](https://github.com/orgs/strands-labs/projects/2)
+
+   **Read the board with `PAT_TOKEN`, not the Actions `GITHUB_TOKEN`.** An
+   installation token that cannot see an organization project does not fail the
+   query - `issue.projectItems` comes back as an empty list, which is
+   indistinguishable from an issue nobody has tracked. The same one query, run
+   twice on #1762, #1768 and #1770:
+
+   | token | `issue.projectItems` |
+   |---|---|
+   | `GITHUB_TOKEN` | `[]` for all three |
+   | `PAT_TOKEN` | one item each; #1768 and #1770 already at `Done` |
+
+   Two things follow. First, adding an issue to the board is almost never the
+   missing step: all three items were created by `github-project-automation`
+   within three seconds of the issue itself, and the automation also moves them
+   to `Done` on close, so a merged fix needs no manual flip. What it cannot
+   infer is a status like `In review` while a PR is open - that is the part
+   worth setting by hand. Second, acting on the empty read looks harmless and
+   is not: `addProjectV2ItemById` is idempotent and returns the *existing*
+   item's id, so no duplicate ever appears and the false-empty read leaves no
+   trace - until a `Status` written on the strength of it silently overwrites a
+   value that was never read. Read a field before you set it, and treat an
+   empty project read as unknown rather than as absent.
 7. Squash merge into `main`
 8. **Verify a PR's state by reading it back - before and after you change it.**
    Neither direction can be inferred:
