@@ -111,6 +111,7 @@ from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
+    entity_name_error,
     finite_vector_error,
     pose_vector_error,
 )
@@ -1140,7 +1141,9 @@ class MuJoCoSimEngine(
         OPTIONAL: when omitted it is auto-derived from ``data_config`` (or the
         URDF filename), with a numeric suffix appended if that label is already
         taken -- so ``add_robot(data_config="so101")`` twice yields ``so101``
-        and ``so101_2`` instead of erroring.
+        and ``so101_2`` instead of erroring. A name that IS supplied must be a
+        non-empty string with no NUL, so that the label can address the robot it
+        was given to; omitting it keeps the auto-derived label above.
 
         ``keyframe`` (name ``str`` or index ``int``) spawns the robot in a
         canonical pose declared by a ``<keyframe>`` in its source model
@@ -1188,6 +1191,14 @@ class MuJoCoSimEngine(
         # label): an explicit name that resolves to no model is a
         # mistyped/unknown robot, not a 'you forgot a model source' case.
         explicit_name = name
+        # Validate a name the caller SUPPLIED. An omitted one is derived just
+        # below, which is this method's documented behaviour, so the guard is
+        # gated on the same truthiness test that branch already uses: every
+        # value that derives today still derives, and only a supplied name is
+        # held to the shared domain.
+        if name and (name_err := entity_name_error(name, "name", "add_robot")) is not None:
+            return {"status": "error", "content": [{"text": name_err}]}
+
         # Auto-derive an instance label when the caller didn't supply one.
         # Friction fix: ``name`` used to be required, so a natural
         # ``add_robot(data_config="so101")`` failed with "requires parameter
@@ -2551,6 +2562,12 @@ class MuJoCoSimEngine(
 
         Args:
             name: Unique object name. Its geom is injected as ``"<name>_geom"``.
+                Must be a non-empty string with no NUL: the name is both the
+                registry key and the MJCF body name, and a value that cannot
+                serve as both leaves the object unaddressable (an empty name
+                is MuJoCo's unnamed sentinel) or addressable under a
+                different name than was asked for (MuJoCo compares only up
+                to a NUL). ``/``, spaces and ``-`` are fine.
             shape: ``"box"``, ``"sphere"``, ``"cylinder"``, ``"capsule"``,
                 ``"ellipsoid"``, ``"plane"``, or ``"mesh"``.
             position: World position ``[x, y, z]`` of the body origin (default
@@ -2614,6 +2631,8 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_object"):
             return err
+        if (name_err := entity_name_error(name, "name", "add_object")) is not None:
+            return {"status": "error", "content": [{"text": name_err}]}
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
 
@@ -3017,7 +3036,11 @@ class MuJoCoSimEngine(
         values are rejected here at config time with an actionable error rather
         than deferring an uncaught ``TypeError`` (non-numeric), a silently
         degenerate camera (``nan``/``inf`` baked into ``xyaxes``), or a cryptic
-        spec-recompile / GL failure to the first render.
+        spec-recompile / GL failure to the first render. ``name`` is held to the
+        same standard, and for the same reason: an empty name is the explicit
+        free-camera token in ``render``, so a camera stored under it could never
+        be the one rendered from, and it is dropped from a recording schema
+        rather than declared as an empty feature key.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -3074,6 +3097,9 @@ class MuJoCoSimEngine(
         if dim_err := self._validate_render_dims(width, height):
             text = dim_err["content"][0]["text"].replace("render:", "add_camera:", 1)
             return {"status": "error", "content": [{"text": text}]}
+
+        if (name_err := entity_name_error(name, "name", "add_camera")) is not None:
+            return {"status": "error", "content": [{"text": name_err}]}
 
         # reject duplicate camera names.  Previously a second
         # add_camera(name=existing) silently overwrote the registry entry but

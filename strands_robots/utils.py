@@ -700,3 +700,70 @@ def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
     if not (0.0 < float(value) < 180.0):
         return f"{method}: '{param_name}' must be in the open interval (0, 180) degrees, got {value}."
     return None
+
+
+def entity_name_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` cannot address the entity it would name.
+
+    Shared domain for the ``name`` a scene-construction call CLAIMS for the
+    object, camera or robot it creates. It lives here, beside the numeric
+    domains, for the reason those do: three entry points take this parameter and
+    their accepted domain must not diverge - a name one creator refuses must be
+    refused by the others.
+
+    The invariant is addressability: a name a creation call accepts must address
+    the entity it created. Three values break it, each silently and in a
+    different layer:
+
+    * A non-``str`` is hashable often enough to be registered - an ``int`` and a
+      ``bool`` both are - and only then reaches the MJCF spec build, which
+      raises ``TypeError: add_body(): incompatible function arguments`` from
+      pybind11. That escapes the result dict these methods document, and it
+      lands after the registry entry is written, so the world is left holding an
+      entry for an entity that does not exist.
+    * An empty name is MuJoCo's own sentinel for an UNNAMED element, so the
+      entity compiles anonymously and ``mj_name2id`` answers ``-1`` for it.
+      Nothing can then address it: ``get_body_state(body_name="")`` reports the
+      body as missing while it is simulating, an empty camera name is the
+      explicit free-camera token in ``render``, so a camera created under it is
+      never the one rendered from, and the recording schema drops an anonymous
+      camera outright rather than declare an empty feature key.
+    * A name containing a NUL makes the two layers disagree about which entity
+      they hold. MuJoCo compares names only up to the NUL, so ``"a\x00b"``
+      compiles as ``"a"`` and answers to that name, while the Python registry
+      keeps the full string. One entity, two names, neither layer aware of the
+      other's.
+
+    Nothing further is constrained, because nothing further is broken. ``"a/b"``,
+    ``"a b"`` and ``"a-b"`` each compile under the name given and are addressable
+    by it, so a character allowlist would refuse names that work.
+
+    Args:
+        value: The caller-supplied name.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it - the
+            public method name.
+
+    Returns:
+        An error message, or ``None`` when the name can address its entity.
+    """
+    if not isinstance(value, str):
+        return (
+            f"{context}: {param} must be a string naming the entity, got {value!r} "
+            f"({type(value).__name__}). The name is used both as the registry key and as "
+            f"the MJCF element name, and MJCF names are strings - pass {str(value)!r} if "
+            f"that is the name you want."
+        )
+    if not value:
+        return (
+            f"{context}: {param} must be a non-empty string, got {value!r}. An empty name is "
+            f"MuJoCo's sentinel for an unnamed element, so the entity would be created but "
+            f"nothing could address it afterwards."
+        )
+    if "\x00" in value:
+        return (
+            f"{context}: {param} must not contain a NUL character, got {value!r}. MuJoCo "
+            f"compares names only up to the NUL, so the entity would answer to "
+            f"{value.split(chr(0))[0]!r} while the registry kept the full string."
+        )
+    return None
