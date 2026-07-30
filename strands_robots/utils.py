@@ -700,3 +700,87 @@ def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
     if not (0.0 < float(value) < 180.0):
         return f"{method}: '{param_name}' must be in the open interval (0, 180) degrees, got {value}."
     return None
+
+
+def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
+    """Return an error message if ``name`` cannot address the entity it names.
+
+    The creation-site counterpart to the total lookups in
+    :mod:`strands_robots.simulation.models`. A lookup asks whether a name
+    addresses something, so a name that cannot be a registry key is honestly
+    "absent"; a creation site *claims* a name, so the same value has to be
+    refused instead - an entity registered under a name that nothing can
+    resolve is unreachable through the very API that created it.
+
+    It lives here, beside :func:`camera_fov_error`, for the same reason that one
+    does: ``add_object`` / ``add_camera`` / ``add_robot`` exist on more than one
+    backend and their accepted domain must not diverge - a name one backend
+    refuses must be refused by the others, and a second copy of the rule would
+    drift from the first.
+
+    Three values are refused, each because it produces an entity that some part
+    of this API cannot address (measured on MuJoCo 3.11.0, one ``create_world``
+    then ``add_object``):
+
+    * **Not a ``str``.** ``add_object(7, ...)`` registered the key ``7`` and
+      only then raised ``TypeError`` out of MuJoCo's ``add_body``, leaving the
+      world holding an entry for a body that does not exist; a name that is not
+      hashable at all (``["x"]``) raised out of the duplicate-name test.
+      ``add_robot(7, ...)`` did compile, under the int registry key ``7`` -
+      which the tool surface, where every name arrives as a JSON string, can
+      never address. A falsy non-``str`` was worse than either: ``add_robot(0)``
+      silently derived the label ``"arm"`` from the model and reported success
+      under a name the caller never asked for.
+    * **The empty string.** ``""`` is MuJoCo's own sentinel for an unnamed
+      entity, so ``mj_name2id(model, BODY, "")`` returns ``-1``:
+      ``add_object("")`` succeeded and ``get_body_state(body_name="")`` then
+      reported ``Body '' not found``. For a camera it also collides with a
+      routing token - ``render(camera_name="")`` selects the free camera - so a
+      camera created as ``""`` can never be rendered from.
+    * **A ``str`` containing a NUL.** The compiled model compares names only up
+      to the first NUL, so ``add_object("a\\x00b")`` registered ``'a\\x00b'``
+      while the body compiled as ``'a'``, and ``mj_name2id(..., "a\\x00b")``
+      returned the id of ``'a'``. Two names, one entity, each layer believing a
+      different one. Through ``add_robot`` the NUL took the namespace separator
+      with it: the bodies compiled as ``'abase'`` / ``'alink'`` rather than
+      under the ``'a\\x00b/'`` prefix ``list_bodies`` looks for.
+
+    Nothing else is refused. In particular this is NOT the MJCF-interpolation
+    allowlist (``^[a-zA-Z0-9_-]+$``): a namespaced body label (``so101/gripper``)
+    and a dotted or unicode object name are all addressable, and narrowing the
+    domain to an allowlist is a separate decision from refusing a name that
+    demonstrably cannot address its entity.
+
+    A ``str`` subclass is accepted - it is a string by every operation here and
+    by the registry. Callers with a documented "derive the name" input (the
+    MuJoCo ``add_robot(name=None)`` / ``add_robot(name="")`` short form) must
+    check for that input before calling this, since ``""`` is refused here.
+
+    Args:
+        method: Calling method name, used in error text.
+        param_name: Parameter name, used in error text.
+        name: The caller's value.
+
+    Returns:
+        ``None`` when ``name`` can address the entity it creates, otherwise the
+        error message to report through the structured tool-result dict.
+    """
+    if not isinstance(name, str):
+        return (
+            f"{method}: '{param_name}' must be a non-empty string, got {name!r} "
+            f"({type(name).__name__}); an entity is addressed by name and every "
+            "agent-tool call carries that name as a string."
+        )
+    if not name:
+        return (
+            f"{method}: '{param_name}' must be a non-empty string, got ''; an empty "
+            "name is the backend's own sentinel for an unnamed entity, so the entity "
+            "created under it could not be addressed afterwards."
+        )
+    if "\x00" in name:
+        return (
+            f"{method}: '{param_name}' must not contain a NUL character, got {name!r}; "
+            "the compiled model reads a name only up to the first NUL, so the registry "
+            "and the model would disagree about the entity's name."
+        )
+    return None

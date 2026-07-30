@@ -111,6 +111,7 @@ from strands_robots.teleop_mixin import TeleopMixin
 from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
+    entity_name_error,
     finite_vector_error,
     pose_vector_error,
 )
@@ -1137,10 +1138,16 @@ class MuJoCoSimEngine(
 
         ``name`` is the instance label used to address this robot later
         (``run_policy(robot_name=...)``, ``get_robot_state``, etc.). It is
-        OPTIONAL: when omitted it is auto-derived from ``data_config`` (or the
-        URDF filename), with a numeric suffix appended if that label is already
-        taken -- so ``add_robot(data_config="so101")`` twice yields ``so101``
-        and ``so101_2`` instead of erroring.
+        OPTIONAL: when omitted (``None``, or ``""``) it is auto-derived from
+        ``data_config`` (or the URDF filename), with a numeric suffix appended
+        if that label is already taken -- so ``add_robot(data_config="so101")``
+        twice yields ``so101`` and ``so101_2`` instead of erroring. Any other
+        value must be a ``str`` containing no NUL: those two are the documented
+        derive-a-label short form, while another falsy value (``0``, ``[]``)
+        would take the same branch and report success under a label that was
+        never asked for, and a non-string label keys the registry with a value
+        the agent-tool surface - where a name arrives as JSON - cannot
+        address.
 
         ``keyframe`` (name ``str`` or index ``int``) spawns the robot in a
         canonical pose declared by a ``<keyframe>`` in its source model
@@ -1165,6 +1172,19 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_robot"):
             return err
+
+        # Refuse a name that cannot address the robot this call creates. ``None``
+        # and ``""`` are the documented "derive a label from the model" short
+        # form and are passed through to the derivation below; every other value
+        # goes through the shared domain. That closes two gaps at once: an int
+        # name compiled its bodies under the ``7/`` namespace but keyed the
+        # registry with the int ``7``, which the tool surface - where a name
+        # always arrives as a JSON string - can never address, and ANY other
+        # falsy value (``0``, ``[]``, ``{}``) fell into the derive branch below
+        # and reported success under a label the caller never asked for.
+        if not (name is None or (isinstance(name, str) and name == "")):
+            if (name_err := entity_name_error("add_robot", "name", name)) is not None:
+                return {"status": "error", "content": [{"text": name_err}]}
 
         # Validate the caller-supplied base pose before it is baked into the
         # robot's frame pos/quat. Without this, `add_robot` shares the numeric
@@ -2551,6 +2571,12 @@ class MuJoCoSimEngine(
 
         Args:
             name: Unique object name. Its geom is injected as ``"<name>_geom"``.
+                Must be a non-empty ``str`` that contains no NUL: an empty name
+                is MuJoCo's own sentinel for an unnamed body (so
+                ``get_body_state`` could not find the object afterwards), a NUL
+                truncates the name the model compiles under while the registry
+                keeps the full string, and a non-string name is not addressable
+                through the agent-tool surface, where a name arrives as JSON.
             shape: ``"box"``, ``"sphere"``, ``"cylinder"``, ``"capsule"``,
                 ``"ellipsoid"``, ``"plane"``, or ``"mesh"``.
             position: World position ``[x, y, z]`` of the body origin (default
@@ -2584,7 +2610,8 @@ class MuJoCoSimEngine(
         Returns:
             Agent-tool status dict. ``{"status": "success", ...}`` on success;
             ``{"status": "error", ...}`` when no world exists, a policy is
-            running, the name is taken, ``position``/``orientation``/``color``/
+            running, ``name`` is not a usable entity name (see above), the name
+            is taken, ``position``/``orientation``/``color``/
             ``size`` contains a non-finite (``nan``/``inf``) or non-numeric
             element or ``position``/``orientation``/``color`` is the wrong length
             (3 / 4 / 3-or-4), ``size`` has a non-positive extent or a component
@@ -2614,6 +2641,20 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_object"):
             return err
+
+        # Refuse a name that cannot address the object this call creates, before
+        # anything is registered under it. Previously ``add_object("")``
+        # succeeded and ``get_body_state(body_name="")`` then reported the body
+        # absent (MuJoCo reads "" as unnamed), a NUL name registered one string
+        # while the body compiled under another, and a non-string name was
+        # entered in the registry and only then raised out of MuJoCo's
+        # ``add_body`` - leaving the world holding an entry for a body that does
+        # not exist, through a raise the tool-result contract does not allow.
+        # The duplicate-name test below is itself partial for an unhashable
+        # name, so this has to come first.
+        if (name_err := entity_name_error("add_object", "name", name)) is not None:
+            return {"status": "error", "content": [{"text": name_err}]}
+
         if name in self._world.objects:
             return {"status": "error", "content": [{"text": f"Object '{name}' exists."}]}
 
@@ -3007,11 +3048,15 @@ class MuJoCoSimEngine(
         mount points before placing a camera; robot bodies are namespaced
         ``<robot>/<body>`` (e.g. ``so101/gripper`` is the SO101 wrist mount).
 
-        Validation: ``position`` and ``target`` must each be 3 finite numbers
-        (a list, tuple or NumPy array; NumPy scalar elements accepted). Omit a
-        vector to take its default - an empty vector is a wrong-length request
-        and is rejected rather than silently placing the camera at the default
-        pose. ``fov`` must be a finite angle in ``(0, 180)``
+        Validation: ``name`` must be a non-empty ``str`` containing no NUL -
+        ``render``/``get_frame`` route ``camera_name`` in ``(None, "",
+        "default", "free")`` to the free camera, so a camera registered under
+        ``""`` could never be rendered from, and a non-string name is not
+        addressable through the agent-tool surface. ``position`` and ``target``
+        must each be 3 finite numbers (a list, tuple or NumPy array; NumPy
+        scalar elements accepted). Omit a vector to take its default - an empty
+        vector is a wrong-length request and is rejected rather than silently
+        placing the camera at the default pose. ``fov`` must be a finite angle in ``(0, 180)``
         degrees; and ``width``/``height`` must be positive ints within the
         offscreen framebuffer cap (same bounds ``render`` enforces). Invalid
         values are rejected here at config time with an actionable error rather
@@ -3023,6 +3068,16 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("add_camera"):
             return err
+
+        # Refuse a name that cannot address the camera this call creates, on the
+        # shared ``entity_name_error`` domain. An empty name is worse here than
+        # for an object: ``render``/``get_frame`` route ``camera_name in (None,
+        # "", "default", "free")`` to the FREE camera by an explicit token
+        # check, so a camera registered as "" could never be rendered from. It
+        # precedes the duplicate-name test for the same reason it does in
+        # ``add_object`` - that test is partial for an unhashable name.
+        if (name_err := entity_name_error("add_camera", "name", name)) is not None:
+            return {"status": "error", "content": [{"text": name_err}]}
 
         # Validate position / target shape before we bake them into XML.
         # Membership, not truthiness: ``position or <default>`` raised a bare

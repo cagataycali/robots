@@ -56,7 +56,13 @@ from strands_robots.simulation.models import (
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
 from strands_robots.simulation.newton.randomization import DomainRandomizationMixin
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
-from strands_robots.utils import camera_fov_error, coerce_pose_vector, positive_count_error, require_optional
+from strands_robots.utils import (
+    camera_fov_error,
+    coerce_pose_vector,
+    entity_name_error,
+    positive_count_error,
+    require_optional,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -437,7 +443,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         Args:
             name: Robot name in the registry / ``robot_descriptions``, or an
                 arbitrary instance name when ``urdf_path`` points at an explicit
-                MJCF/URDF file.
+                MJCF/URDF file. Required, and a non-empty ``str`` containing no
+                NUL (:func:`~strands_robots.utils.entity_name_error`); this
+                backend has no derive-a-label short form.
             urdf_path: Optional explicit MJCF/URDF path. When given it wins
                 outright and ``source`` is ignored.
             data_config: Accepted for ABC parity; unused by Newton.
@@ -460,6 +468,15 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+
+        # Refuse a name that cannot address the robot this call creates, on the
+        # shared ``entity_name_error`` domain. Unlike the MuJoCo backend this
+        # method documents no "derive a label" short form - ``name`` is required
+        # and doubles as the registry/robot_descriptions key - so there is no
+        # value to pass through here.
+        if (name_err := entity_name_error("add_robot", "name", name)) is not None:
+            return {"status": "error", "content": [{"text": name_err}]}
+
         if name in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{name}' already exists."}]}
         if source not in _ROBOT_SOURCES:
@@ -555,7 +572,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """Add a primitive or mesh object to the scene.
 
         Args:
-            name: Unique object name.
+            name: Unique object name; a non-empty ``str`` containing no NUL, the
+                same domain the MuJoCo backend's ``add_object`` accepts
+                (:func:`~strands_robots.utils.entity_name_error`).
             shape: One of ``"box"``, ``"sphere"``, ``"capsule"``,
                 ``"cylinder"``, or ``"mesh"``. ``"mesh"`` requires
                 ``mesh_path``.
@@ -581,6 +600,16 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+
+        # Refuse a name that cannot address the object this call creates, on the
+        # same shared domain the MuJoCo backend's ``add_object`` uses, so a name
+        # one backend refuses is refused by both. It precedes the duplicate-name
+        # test below, which is itself partial: ``name in self._world.objects``
+        # raises ``TypeError: unhashable type`` for a list/dict/set name rather
+        # than reaching the error path it guards.
+        if (name_err := entity_name_error("add_object", "name", name)) is not None:
+            return {"status": "error", "content": [{"text": name_err}]}
+
         if material is not None:
             return {
                 "status": "error",
@@ -988,8 +1017,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         there is no upper cap.
 
         Args:
-            name: Unique camera name. Duplicate names are rejected; remove the
-                existing camera with :meth:`remove_camera` first.
+            name: Unique camera name; a non-empty ``str`` containing no NUL, the
+                same domain the MuJoCo backend's ``add_camera`` accepts
+                (:func:`~strands_robots.utils.entity_name_error`). Duplicate
+                names are rejected; remove the existing camera with
+                :meth:`remove_camera` first.
             position: Camera eye ``[x, y, z]`` (world frame, or the parent
                 body's local frame when ``parent_body`` is set). 3 finite
                 numbers.
@@ -1009,6 +1041,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+
+        # Refuse a name that cannot address the camera this call creates, on the
+        # shared ``entity_name_error`` domain the MuJoCo backend's ``add_camera``
+        # uses, so a camera name one backend refuses is refused by both.
+        if (name_err := entity_name_error("add_camera", "name", name)) is not None:
+            return {"status": "error", "content": [{"text": name_err}]}
 
         # Validate shape, element type AND finiteness with the shared helpers the
         # MuJoCo backend uses, so a camera pose one backend refuses is refused by
