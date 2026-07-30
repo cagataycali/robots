@@ -100,7 +100,7 @@ ALL_NUMERIC_FIELDS = sorted((kind, field) for kind, fields in _PATCH_OP_VECTOR_F
 class TestNonFiniteComponentsAreRefused:
     """A non-finite component is refused on every numeric field of every op."""
 
-    @pytest.mark.parametrize(("kind", "field"), ALL_NUMERIC_FIELDS, ids=lambda v: str(v))
+    @pytest.mark.parametrize(("kind", "field"), ALL_NUMERIC_FIELDS)
     @pytest.mark.parametrize("bad", NON_FINITE, ids=["nan", "inf", "-inf"])
     def test_every_numeric_op_field_refuses_a_non_finite_component(
         self, sim, kind: str, field: str, bad: float
