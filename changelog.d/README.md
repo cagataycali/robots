@@ -16,6 +16,14 @@ reconcile.
 release bookkeeping (collapsing `[Unreleased]` into a dated section). It is
 fragments, not the log, that behavioural PRs write to.
 
+This rule is enforced by `.github/workflows/changelog-fragment.yml`, which names
+any `### ` entry a branch adds to `[Unreleased]` that no fragment accounts for.
+It is a base diff rather than a test because `[Unreleased]` already carries
+entries from before this convention, so no static assertion about that section
+can hold. Release bookkeeping is unaffected: `--apply` deletes each fragment it
+folds in, so an assembled entry is matched to the fragment it came from, and
+editing or reordering an entry already in the log adds no heading.
+
 ## Adding a fragment
 
 Create `changelog.d/<number>-<slug>.md`, where `<number>` is your PR (or issue)

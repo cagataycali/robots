@@ -88,6 +88,9 @@ hatch run format            # ruff check --fix, ruff format
    round that reviews no changed behaviour. A fragment is its own file, so there
    is nothing to conflict on. `CHANGELOG.md` is assembled from the accumulated
    fragments when a tag is cut (`python scripts/assemble_changelog.py --apply`).
+   This is enforced by `.github/workflows/changelog-fragment.yml`: the rule was
+   documented in two places and enforced by nothing until #1784, and a pull
+   request reached `APPROVED` / `SUCCESS` / `CLEAN` having appended to the log.
 4. All tests must pass, lint must be clean
 5. Open PR from your fork, address all review comments
 6. Track follow-up items as issues on the [project board](https://github.com/orgs/strands-labs/projects/2)
