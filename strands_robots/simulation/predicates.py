@@ -67,6 +67,8 @@ import math
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.utils import finite_number_error, finite_vector_error
+
 if TYPE_CHECKING:
     from strands_robots.simulation.base import SimEngine
 
@@ -1501,7 +1503,8 @@ def _staged_reward(stages: list[Any]) -> RewardTerm:
 
     Raises:
         ValueError: stages is not a non-empty list, a stage is malformed, a
-            non-final stage omits ``advance_when``, or ``bonus`` is non-numeric.
+            non-final stage omits ``advance_when``, or ``bonus`` is not a
+            finite number.
         TypeError: surfaced from :func:`make_predicate` for bad sub-kwargs.
     """
     if not isinstance(stages, list) or not stages:
@@ -1554,8 +1557,10 @@ def _staged_reward(stages: list[Any]) -> RewardTerm:
             advance_fn = make_predicate(advance_name, **advance_kwargs)
 
         bonus_raw = stage.get("bonus", 0.0)
-        if isinstance(bonus_raw, bool) or not isinstance(bonus_raw, (int, float)):
-            raise ValueError(f"staged_reward: stage[{i}].bonus must be a number, got {bonus_raw!r}")
+        # Not a registry factory param, so make_predicate's kwarg-domain check
+        # does not see it - the same domain is applied here directly.
+        if (err := finite_number_error(bonus_raw, "bonus", f"staged_reward: stage[{i}]")) is not None:
+            raise ValueError(err)
 
         compiled.append((reward_fn, advance_fn, float(bonus_raw)))
 
@@ -1623,6 +1628,61 @@ def register_predicate(name: str, factory: PredicateFactory) -> None:
     PREDICATE_REGISTRY[name] = factory
 
 
+# Parameter annotations that carry a numeric domain. Read as the strings the
+# module's ``from __future__ import annotations`` leaves in ``__annotations__``,
+# which is the same mechanism :func:`predicate_kind` uses on the return
+# annotation - so a new predicate is covered by declaring its params, with no
+# separate per-predicate table to drift out of step with the registry.
+_SCALAR_NUMBER_ANNOTATIONS = frozenset({"float", "int"})
+_NUMBER_SEQUENCE_ANNOTATIONS = frozenset({"list[float]", "list[int]", "tuple[float, ...]"})
+
+
+def _kwarg_domain_error(name: str, factory: PredicateFactory, kwargs: dict[str, Any]) -> str | None:
+    """Return an error message if a numeric kwarg for *name* is not a finite number.
+
+    A spec kwarg is coerced with a bare ``float(...)`` inside the factory and
+    then closed over, so a ``nan``/``inf`` threshold or weight compiles clean
+    and only shows up in the evaluated result:
+
+    * In a ``dense_reward`` term it makes the episode's ``cumulative_reward``
+      and the eval's ``avg_reward`` ``nan``/``inf``, reported under
+      ``status="success"`` - the score silently poisons whatever consumes it.
+    * In a ``success`` / ``failure`` / ``stop_when`` clause every comparison
+      against ``nan`` is ``False``, so the clause is unsatisfiable and the
+      rollout burns its whole step budget reporting an honest miss. That is the
+      exact failure mode a typo'd body name is probed against the live sim to
+      prevent (see :func:`can_resolve_body`); a non-finite threshold reaches it
+      by a different route and was not checked.
+    * A non-numeric value (``"abc"``) otherwise escapes as a bare
+      ``ValueError: could not convert string to float: 'abc'`` naming neither
+      the predicate nor the clause it came from.
+
+    Only params the factory annotates as numeric are constrained, so a ``str``
+    body name, a ``bool`` flag and a ``str | None`` robot selector are untouched,
+    and a predicate registered via :func:`register_predicate` without
+    annotations is exempt (the caller opted in by registering it).
+
+    Args:
+        name: Predicate name, used in the message.
+        factory: The registered factory whose annotations declare the domain.
+        kwargs: The spec-supplied kwargs, checked by name.
+
+    Returns:
+        An error message, or ``None`` when every numeric kwarg is usable.
+    """
+    annotations = getattr(factory, "__annotations__", {})
+    context = f"predicate '{name}'"
+    for param, value in kwargs.items():
+        annotation = str(annotations.get(param, ""))
+        if annotation in _SCALAR_NUMBER_ANNOTATIONS:
+            if (err := finite_number_error(value, param, context)) is not None:
+                return err
+        elif annotation in _NUMBER_SEQUENCE_ANNOTATIONS:
+            if (err := finite_vector_error(context, param, value)) is not None:
+                return err
+    return None
+
+
 def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
     """Instantiate a predicate from its name + kwargs.
 
@@ -1630,6 +1690,14 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
     ``eval`` or ``exec``. Unknown names produce a ``ValueError`` listing
     the valid set; bad kwargs surface as whatever ``TypeError`` the factory
     raises.
+
+    Every numeric kwarg is held to a finite domain here rather than in the
+    spec compiler, because this is the only choke point every predicate call
+    passes through: ``staged_reward`` builds its per-stage ``reward`` /
+    ``advance_when`` calls by calling back into this function, so a guard in
+    :func:`~strands_robots.simulation.benchmark_spec._compile_call` would
+    leave nested stage calls unchecked. See :func:`_kwarg_domain_error` for
+    what a non-finite threshold or weight does when it compiles.
 
     Args:
         name: Predicate name. Must be registered in :data:`PREDICATE_REGISTRY`.
@@ -1640,13 +1708,16 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
         predicate.
 
     Raises:
-        ValueError: If ``name`` is unknown.
+        ValueError: If ``name`` is unknown, or a kwarg the factory annotates
+            as numeric is not a finite number.
         TypeError: If required factory kwargs are missing.
     """
     factory = PREDICATE_REGISTRY.get(name)
     if factory is None:
         valid = sorted(PREDICATE_REGISTRY.keys())
         raise ValueError(f"Unknown predicate '{name}'. Valid: {valid}")
+    if (err := _kwarg_domain_error(name, factory, kwargs)) is not None:
+        raise ValueError(err)
     return factory(**kwargs)
 
 

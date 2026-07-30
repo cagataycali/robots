@@ -1048,5 +1048,5 @@ class TestStagedReward:
         }
         for bad_bonus in ("lots", True):
             spec = [{**base, "bonus": bad_bonus}, {"reward": {"predicate": "constant", "value": 2.0}}]
-            with pytest.raises(ValueError, match="bonus must be a number"):
+            with pytest.raises(ValueError, match="bonus must be a finite number"):
                 make_predicate("staged_reward", stages=spec)

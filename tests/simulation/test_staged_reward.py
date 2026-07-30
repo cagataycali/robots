@@ -207,7 +207,7 @@ def test_rejects_non_numeric_bonus() -> None:
         },
         {"reward": {"predicate": "constant", "value": 1.0}},
     ]
-    with pytest.raises(ValueError, match="bonus must be a number"):
+    with pytest.raises(ValueError, match="bonus must be a finite number"):
         make_predicate("staged_reward", stages=bad)
 
 
