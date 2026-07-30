@@ -29,7 +29,10 @@ every held pose in the scene, on the runs where the leftover memory happened to
 be NaN. Those entries are now defined as zero as part of the recompile, before
 anything reads them, which also removes the intermittent
 `Nan, Inf or huge value in CTRL` instability warning that scene mutations could
-already emit. This is done for every actuator rather than per robot, because a
-robot's actuator ids are matched through `actuator_trnid` against its joint ids
-and so exclude any actuator driven through a tendon, site or body - the fixed
-tendon that couples a gripper's fingers, for instance.
+already emit. Those entries are defined positionally - every index the transfer
+left untouched - rather than per robot, because the two answer different
+questions: a robot's actuator ids say *which robot may command an actuator*,
+while the tail says *which entries were never written*, and MuJoCo's check reads
+the whole buffer. Ownership is also not guaranteed to cover the tail: it is empty
+for an actuator that is neither namespace-prefixed nor joint-driven, such as the
+fixed tendon that couples a gripper's fingers.
