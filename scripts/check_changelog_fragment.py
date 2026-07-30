@@ -286,8 +286,8 @@ def render_report(
             f"would have gone into `{CHANGELOG_PATH}` -- see `{FRAGMENT_DIR}/README.md`.",
             "",
             "Every branch appends at the same anchor, so two doing it at once conflict on ordering alone, "
-            "and clearing that conflict costs a re-approval round because a push dismisses a stale approval. "
-            "A fragment is its own file, so there is nothing to reconcile.",
+            + "and clearing that conflict costs a re-approval round because a push dismisses a stale approval. "
+            + "A fragment is its own file, so there is nothing to reconcile.",
             "",
             f"`{CHANGELOG_PATH}` is assembled from the accumulated fragments when a tag is cut: "
             "`python scripts/assemble_changelog.py --apply`.",

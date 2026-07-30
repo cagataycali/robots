@@ -524,6 +524,39 @@ def test_the_report_names_the_entry_and_the_remedy() -> None:
     assert "re-approval round" in report
 
 
+def test_a_report_paragraph_written_as_several_literals_stays_one_line() -> None:
+    """Each paragraph is one report line, so a sentence is never split mid-clause.
+
+    ``render_report`` builds the report as a list of lines and joins it with
+    newlines, so one element is one line. Three of its paragraphs are written as
+    several adjacent literals for source width, and each is a single element --
+    the explicit ``+`` between the parts says so rather than leaving it to be
+    read as a missing comma.
+
+    Adding the commas instead splits those paragraphs across lines, breaking a
+    sentence in the middle of a clause. Every substring assertion above still
+    passes when that happens, since each fragment survives on a line of its own,
+    which is why the shape is pinned here rather than left to the wording checks.
+    """
+    report = check.render_report(
+        base_ref="main",
+        merge_base_sha="0123456789abcdef",
+        added=("### Fixed: an entry",),
+        accounted=(),
+        unaccounted=("### Fixed: an entry",),
+    )
+    lines = report.splitlines()
+    paragraphs = (
+        ("Every branch appends at the same anchor", "so there is nothing to reconcile."),
+        ("Record each one as", "/README.md`."),
+        ("is assembled from the accumulated fragments", "--apply`."),
+    )
+    for opening, ending in paragraphs:
+        holding = [line for line in lines if opening in line]
+        assert len(holding) == 1, f"{opening!r} appears on {len(holding)} lines, expected 1"
+        assert holding[0].endswith(ending), f"paragraph starting {opening!r} does not end with {ending!r}"
+
+
 def test_the_report_says_so_when_nothing_was_added() -> None:
     report = check.render_report(
         base_ref="main",
