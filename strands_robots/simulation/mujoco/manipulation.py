@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.mujoco.scene_ops import (
     actuate_robot_in_scene,
     actuator_joint_id,
@@ -223,8 +223,8 @@ class ManipulationMixin:
         mj = _ensure_mujoco()
         with self._lock:
             model, data = self._world._model, self._world._data
-            parent_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, parent)
-            child_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, child)
+            parent_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, parent)
+            child_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, child)
             for label, body_id in (("parent", parent_id), ("child", child_id)):
                 if body_id < 0:
                     name = parent if label == "parent" else child
@@ -381,8 +381,8 @@ class ManipulationMixin:
         model, data = world._model, world._data
         stale: list[str] = []
         for child, record in attachments.items():
-            parent_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, str(record["parent"]))
-            child_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, child)
+            parent_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, str(record["parent"]))
+            child_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, child)
             free_jid = _find_free_joint(mj, model, child_id) if child_id >= 0 else -1
             if parent_id < 0 or child_id < 0 or free_jid < 0:
                 stale.append(child)

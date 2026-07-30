@@ -37,10 +37,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
-from strands_robots.simulation.mujoco.backend import (
-    _ensure_mujoco,
-    filter_mujoco_attach_noise,
-)
+from strands_robots.simulation.mujoco.backend import _ensure_mujoco, filter_mujoco_attach_noise, mj_name_to_id
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
 from strands_robots.utils import finite_vector_error
 
@@ -295,9 +292,9 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
         for jnt_name in robot.joint_names:
             jid = -1
             if pfx:
-                jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
+                jid = mj_name_to_id(new_model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
             if jid < 0:
-                jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jid = mj_name_to_id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jid >= 0:
                 robot.joint_ids.append(jid)
         robot.actuator_ids = robot_owned_actuator_ids(new_model, robot, mj)
@@ -891,7 +888,7 @@ def _restore_joint_state(
     data = world._data
     restored = 0
     for name, (qpos_vals, qvel_vals) in snapshot.items():
-        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, name)
+        jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, name)
         if jid < 0:
             continue  # joint no longer exists (expected for ejected robot)
         qpos_adr = int(model.jnt_qposadr[jid])
@@ -1026,9 +1023,9 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
         for jnt_name in robot.joint_names:
             jid = -1
             if pfx:
-                jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
+                jid = mj_name_to_id(new_model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
             if jid < 0:
-                jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jid = mj_name_to_id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jid >= 0:
                 robot.joint_ids.append(jid)
         robot.actuator_ids = robot_owned_actuator_ids(new_model, robot, mj)

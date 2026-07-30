@@ -11,7 +11,7 @@ resume-schema guard.
 import logging
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     dataset_recording_option_error,
@@ -228,9 +228,9 @@ class RecordingMixin(DatasetRecordingMixin):
                 pfx = robot.namespace or ""
                 scalar_joint_names: list[str] = []
                 for jn in robot.joint_names:
-                    jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, (pfx + jn) if pfx else jn)
+                    jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, (pfx + jn) if pfx else jn)
                     if jid < 0 and pfx:
-                        jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jn)
+                        jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jn)
                     if jid >= 0 and model.jnt_type[jid] == mj.mjtJoint.mjJNT_FREE:
                         continue
                     scalar_joint_names.append(jn)

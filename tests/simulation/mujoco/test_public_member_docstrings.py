@@ -61,6 +61,7 @@ _EXPECTED_CLASSES = {
 _EXPECTED_FUNCTIONS = {
     "backend.py::capture_stderr_fd",
     "backend.py::filter_mujoco_attach_noise",
+    "backend.py::mj_name_to_id",
     "scene_ops.py::actuate_robot_in_scene",
     "scene_ops.py::actuator_joint_id",
     "scene_ops.py::add_weld_constraint",

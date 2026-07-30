@@ -72,6 +72,7 @@ from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _ensure_mujoco,
     filter_mujoco_attach_noise,
+    mj_name_to_id,
 )
 from strands_robots.simulation.mujoco.manipulation import ManipulationMixin
 from strands_robots.simulation.mujoco.motion_primitives import MotionPrimitivesMixin
@@ -1050,7 +1051,7 @@ class MuJoCoSimEngine(
         than a dead-end "Object 'X' not found."."""
         known = list(self._world.objects.keys()) if self._world is not None else []
         msg = f"Object '{requested}' not found."
-        if known:
+        if known and isinstance(requested, str):
             import difflib
 
             matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
@@ -1073,7 +1074,7 @@ class MuJoCoSimEngine(
         teaches, mirroring the ``list_objects`` hint in ``_unknown_object_msg``."""
         known = self._list_camera_names()
         msg = f"Camera '{requested}' not found."
-        if known:
+        if known and isinstance(requested, str):
             import difflib
 
             matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
@@ -1090,7 +1091,7 @@ class MuJoCoSimEngine(
         into a discovery round-trip on every typo."""
         known = list(self._world.robots.keys()) if self._world is not None else []
         msg = f"Robot '{requested}' not found."
-        if known:
+        if known and isinstance(requested, str):
             import difflib
 
             matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
@@ -1562,7 +1563,7 @@ class MuJoCoSimEngine(
             if not hq:
                 continue
             for jn, vals in hq.items():
-                jid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jn)
+                jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jn)
                 if jid < 0:
                     continue
                 adr = int(model.jnt_qposadr[jid])
@@ -2362,9 +2363,9 @@ class MuJoCoSimEngine(
         for jnt_name in robot.joint_names:
             jnt_id = -1
             if pfx:
-                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
+                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, pfx + jnt_name)
             if jnt_id < 0:
-                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id < 0:
                 continue
             # A FREE joint (6-DoF floating base, e.g. a humanoid's named
@@ -2879,7 +2880,7 @@ class MuJoCoSimEngine(
         # lock additionally excludes the render/recorder daemon.
         with self._lock:
             model, data = self._world._model, self._world._data
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, f"{name}_joint")
+            jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, f"{name}_joint")
             if jnt_id >= 0:
                 # Dynamic object: a freejoint carries its pose, so move it cheaply
                 # through data.qpos + a forward pass (no recompile).
@@ -3083,7 +3084,7 @@ class MuJoCoSimEngine(
         if parent_body:
             mj = self._mj
             model = self._world._model
-            if mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, parent_body) < 0:
+            if mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, parent_body) < 0:
                 available = [
                     mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, i)
                     for i in range(model.nbody)

@@ -26,6 +26,7 @@ from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _ensure_mujoco,
     filter_mujoco_attach_noise,
+    mj_name_to_id,
 )
 from strands_robots.simulation.mujoco.scene_ops import (
     persist_body_mass,
@@ -822,18 +823,21 @@ class PhysicsMixin:
         which is non-deterministic - this is a deliberate
         "unambiguous or explicit" contract.
         """
-        import mujoco as _mj
 
         assert self._world is not None and self._world._model is not None
         model = self._world._model
-        mid = _mj.mj_name2id(model, obj_type, name)
+        mid = mj_name_to_id(model, obj_type, name)
         if mid >= 0:
             return int(mid)
+        if not isinstance(name, str):
+            # mj_name_to_id already refused it; the namespace retry below
+            # would only reach `in` / `+` on a value that supports neither.
+            return -1
         if "/" in name:  # already namespaced, no point retrying
             return -1
         for robot in self._world.robots.values():
             if robot.namespace:
-                mid = _mj.mj_name2id(model, obj_type, robot.namespace + name)
+                mid = mj_name_to_id(model, obj_type, robot.namespace + name)
                 if mid >= 0:
                     return int(mid)
         return -1
@@ -868,7 +872,7 @@ class PhysicsMixin:
             "Joint": (_mj.mjtObj.mjOBJ_JOINT, model.njnt),
         }[kind]
         known = [nm for i in range(int(count)) if (nm := _mj.mj_id2name(model, obj_type, i)) and nm != "world"]
-        if known:
+        if known and isinstance(requested, str):
             import difflib
 
             matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
@@ -2188,7 +2192,7 @@ class PhysicsMixin:
             mj.mj_camlight(model, data)
 
             if body_name is not None:
-                bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+                bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, body_name)
                 if bid < 0:
                     return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
                 body_payload = {

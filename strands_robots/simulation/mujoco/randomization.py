@@ -11,7 +11,7 @@ from strands_robots.simulation.base import (
     randomization_seed_error,
     unknown_kwargs_error,
 )
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
+from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
 
 logger = logging.getLogger(__name__)
 
@@ -234,7 +234,7 @@ class RandomizationMixin:
                 for obj_name, obj in self._world.objects.items():
                     if not obj.is_static:
                         jnt_name = f"{obj_name}_joint"
-                        jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                        jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
                         if jnt_id >= 0:
                             qpos_addr = model.jnt_qposadr[jnt_id]
                             noise = rng.uniform(-position_noise, position_noise, size=3)

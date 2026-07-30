@@ -425,7 +425,7 @@ class SimEngine(ABC):
         """
         known = self.list_robots()
         msg = f"Robot '{requested}' not found."
-        if known:
+        if known and isinstance(requested, str):
             matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
             if matches:
                 msg += " Did you mean: " + ", ".join(matches) + "?"

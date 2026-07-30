@@ -55,7 +55,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.registry.robots import get_robot
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG
+from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, mj_name_to_id
 from strands_robots.utils import coerce_pose_vector
 
 logger = logging.getLogger(__name__)
@@ -357,12 +357,12 @@ class MotionPrimitivesMixin:
         """
         mj = self._mj
         if frame_type == "site":
-            sid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, frame_name)
+            sid = mj_name_to_id(model, mj.mjtObj.mjOBJ_SITE, frame_name)
             pos = np.array(data.site_xpos[sid], dtype=np.float64)
             quat = np.zeros(4, dtype=np.float64)
             mj.mju_mat2Quat(quat, np.asarray(data.site_xmat[sid], dtype=np.float64).reshape(9))
             return pos, quat
-        bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, frame_name)
+        bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, frame_name)
         return np.array(data.xpos[bid], dtype=np.float64), np.array(data.xquat[bid], dtype=np.float64)
 
     # -- primitives ----------------------------------------------------------

@@ -16,6 +16,7 @@ from strands_robots.simulation.mujoco.backend import (
     _can_render,
     _ensure_mujoco,
     capture_stderr_fd,
+    mj_name_to_id,
 )
 from strands_robots.simulation.safe_output import (
     atomic_write_bytes,
@@ -346,9 +347,9 @@ class RenderingMixin:
         mj = _ensure_mujoco()
         for jnt_name in robot.joint_names:
             lookup = pfx + jnt_name if pfx else jnt_name
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
+            jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
             if jnt_id < 0 and pfx:
-                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id < 0:
                 continue
             body = int(model.jnt_bodyid[jnt_id])
@@ -375,9 +376,9 @@ class RenderingMixin:
         pfx = robot.namespace or ""
         for jnt_name in robot.joint_names:
             lookup = pfx + jnt_name if pfx else jnt_name
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
+            jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
             if jnt_id < 0 and pfx:
-                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0 and model.jnt_type[jnt_id] == mj.mjtJoint.mjJNT_FREE:
                 return int(jnt_id)
         return self._robot_base_free_joint(model, robot, pfx)
@@ -404,9 +405,9 @@ class RenderingMixin:
         for jnt_name in robot.joint_names:
             # Try namespaced name first (multi-robot), fall back to raw.
             lookup = pfx + jnt_name if pfx else jnt_name
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
+            jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
             if jnt_id < 0 and pfx:
-                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0:
                 # A FREE joint (6-DoF floating base) has no single hinge/slide
                 # position: its qpos is [xyz(3) + quat(4)] and qvel is
@@ -474,7 +475,7 @@ class RenderingMixin:
         for cname in cameras_to_render:
             if not cname:
                 continue
-            cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
+            cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
             cam_info = self._world.cameras.get(cname)
             h = cam_info.height if cam_info else self.default_height
             w = cam_info.width if cam_info else self.default_width
@@ -635,10 +636,10 @@ class RenderingMixin:
         def _lookup(obj_type: Any, name: str) -> int:
             """Try namespaced lookup first, fall back to raw."""
             if pfx:
-                i = mj.mj_name2id(model, obj_type, pfx + name)
+                i = mj_name_to_id(model, obj_type, pfx + name)
                 if i >= 0:
                     return i
-            return int(mj.mj_name2id(model, obj_type, name))
+            return int(mj_name_to_id(model, obj_type, name))
 
         unresolved: list[str] = []
         for key, value in action_dict.items():
@@ -980,7 +981,7 @@ class RenderingMixin:
                 cam_id = -1
                 label = "free (default)"
             else:
-                cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
                 if cam_id < 0:
                     return {
                         "status": "error",
@@ -1100,7 +1101,7 @@ class RenderingMixin:
                 cam_id = -1
                 label = "free (default)"
             else:
-                cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
                 if cam_id < 0:
                     return {
                         "status": "error",
@@ -1303,7 +1304,7 @@ class RenderingMixin:
             if camera_name in (None, "", "default", "free"):
                 cam_id = -1
             else:
-                cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
                 if cam_id < 0:
                     raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
 
@@ -1420,7 +1421,7 @@ class RenderingMixin:
                 K_explicit = None
             else:
                 R, t, fovy_deg = self._named_camera_pose(mj, model, self._world._data, camera_name)
-                cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
                 K_explicit = self._explicit_intrinsics_K(_np, model, cam_id, w, h)
 
         if K_explicit is not None:
@@ -1522,7 +1523,7 @@ class RenderingMixin:
         Raises:
             KeyError: no camera of that name exists in the model.
         """
-        cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+        cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
         if cam_id < 0:
             raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
         mj.mj_forward(model, data)

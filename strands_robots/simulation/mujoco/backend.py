@@ -233,6 +233,40 @@ def _ensure_mujoco() -> "Any":
 
 _rendering_available: bool | None = None
 
+
+def mj_name_to_id(model: Any, obj_type: int, name: Any) -> int:
+    """Resolve a MuJoCo entity name to its id, refusing a name that is not a string.
+
+    ``mujoco.mj_name2id`` declares its third parameter as ``const char *``, and the
+    pybind11 binding maps Python ``None`` onto a NULL pointer instead of rejecting
+    it. MuJoCo then dereferences that pointer while comparing names, so the call
+    does not raise - it terminates the interpreter with SIGSEGV. Nothing above it
+    can recover: the agent-tool envelope, the caller's ``except`` clauses and any
+    open recording all die with the process.
+
+    A value that is not a string cannot name an entity, so it resolves to "not
+    found" (``-1``) and the caller's existing unknown-entity message reports it -
+    naming the value and listing what the model does contain. Routing every
+    lookup through here, rather than adding a type check at each public entry
+    point, means a lookup added later is safe by construction.
+
+    Args:
+        model: The compiled ``MjModel`` to search.
+        obj_type: A ``mujoco.mjtObj`` enum member (``mjOBJ_BODY``, ``mjOBJ_JOINT``, ...).
+        name: The entity name to resolve. Anything that is not a ``str``
+            resolves to ``-1`` without reaching the binding.
+
+    Returns:
+        The entity id, or ``-1`` when *name* is not a string or names nothing
+        of *obj_type* in *model*.
+    """
+    if not isinstance(name, str):
+        return -1
+    import mujoco as _mj
+
+    return int(_mj.mj_name2id(model, obj_type, name))
+
+
 # One-shot guard so the software-rendering warning fires at most once per
 # process. A set (mutated via .add, never reassigned) avoids a `global`
 # rebind so static analysis sees it as used.
