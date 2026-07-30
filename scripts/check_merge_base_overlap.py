@@ -182,48 +182,63 @@ def render_report(
     prose: Sequence[str],
     base_change_count: int,
 ) -> str:
-    """Render the Markdown report written to stdout and the CI job summary."""
+    """Render the Markdown report written to stdout and the CI job summary.
+
+    Every multi-line paragraph below is built as a named local with explicit
+    ``+`` rather than from adjacent literals inside the ``lines`` list. Implicit
+    concatenation there is indistinguishable from a forgotten comma: a paragraph
+    split across two elements silently becomes two report lines, and two
+    paragraphs missing their separator silently become one. The join that
+    produces the report cannot tell the difference, and neither can a reader.
+    """
     lines = ["## Merge-base overlap check", ""]
 
     if not blocking and not prose:
-        lines += [
+        no_overlap = (
             f"No overlap. This branch edits nothing that `{base_ref}` has changed since "
-            f"the two diverged at `{merge_base_sha[:8]}` "
-            f"({base_change_count} path(s) changed on `{base_ref}` in that span).",
-            "",
-            "The checks on this branch were computed against a base that cannot have invalidated them.",
-        ]
+            + f"the two diverged at `{merge_base_sha[:8]}` "
+            + f"({base_change_count} path(s) changed on `{base_ref}` in that span)."
+        )
+        lines.append(no_overlap)
+        lines.append("")
+        lines.append("The checks on this branch were computed against a base that cannot have invalidated them.")
         return "\n".join(lines) + "\n"
 
     if blocking:
-        lines += [
+        heading = (
             f"This branch and `{base_ref}` have both changed **{len(blocking)}** "
-            f"behaviour-bearing path(s) since they diverged at `{merge_base_sha[:8]}`:",
-            "",
-        ]
-        lines += [f"- `{path}`" for path in blocking]
-        lines += [
-            "",
+            + f"behaviour-bearing path(s) since they diverged at `{merge_base_sha[:8]}`:"
+        )
+        why = (
             "Every check on this branch ran against a base that predates those commits, "
-            "so the combination has not been compiled. A green result here is evidence "
-            "about a different tree than the one that would be merged.",
-            "",
+            + "so the combination has not been compiled. A green result here is evidence "
+            + "about a different tree than the one that would be merged."
+        )
+        remedy = (
             "**To clear this:** merge "
-            f"`{base_ref}` into this branch and push. That advances the merge base, "
-            "re-runs the checks against a base containing the landed commits, and makes "
-            "this check pass. Run the tests covering the paths above first - that is "
-            "the cheap part, and it is what the check exists to prompt.",
-        ]
+            + f"`{base_ref}` into this branch and push. That advances the merge base, "
+            + "re-runs the checks against a base containing the landed commits, and makes "
+            + "this check pass. Run the tests covering the paths above first - that is "
+            + "the cheap part, and it is what the check exists to prompt."
+        )
+        lines.append(heading)
+        lines.append("")
+        lines += [f"- `{path}`" for path in blocking]
+        lines.append("")
+        lines.append(why)
+        lines.append("")
+        lines.append(remedy)
 
     if prose:
         if blocking:
-            lines += [""]
-        lines += [
+            lines.append("")
+        prose_heading = (
             f"Also overlapping, not blocking ({len(prose)} documentation path(s)) - "
-            "prose cannot change what the suite or the package does, and a genuine "
-            "collision inside one would surface as a merge conflict:",
-            "",
-        ]
+            + "prose cannot change what the suite or the package does, and a genuine "
+            + "collision inside one would surface as a merge conflict:"
+        )
+        lines.append(prose_heading)
+        lines.append("")
         lines += [f"- `{path}`" for path in prose]
 
     return "\n".join(lines) + "\n"
@@ -270,10 +285,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             handle.write(report)
 
     for path in blocking:
-        print(
+        annotation = (
             f"::error file={path}::{path} was also changed on {args.base_ref} after this "
-            f"branch diverged; the checks on this branch never compiled the two together.",
+            + "branch diverged; the checks on this branch never compiled the two together."
         )
+        print(annotation)
 
     return 1 if blocking else 0
 
