@@ -125,6 +125,14 @@ def _cameras_recording_option_error(
     for every frame, and a non-positive ``width``/``height`` failed every render
     call - all reported as success by both ``start`` and ``stop``.
 
+    The accepted domain admits any real scalar with an integral value, so
+    passing this guard is a promise the value *can* be honored, not that it is
+    already in the form its consumer needs. Callers must therefore normalize
+    the pixel counts to plain ``int`` before handing them to ``render``, which
+    requires a true ``int``: accepting ``640.0`` here and forwarding it
+    verbatim reproduced the very empty-recording-reported-as-success failure
+    this guard exists to prevent.
+
     Args:
         method: Public method name, used to prefix the error message.
         fps: Capture/encode frame rate.
@@ -1827,7 +1835,8 @@ class RenderingMixin:
                 ``status="success"`` return.
             width/height: per-frame size. ``None`` uses the camera's configured
                 resolution (else the renderer default); an explicit value must
-                be a positive whole number.
+                be a positive whole number, and an integral ``float`` or
+                ``np.int64`` is normalized to ``int`` rather than refused.
             name: filename tag (auto if None). Validated as a single path
                 component - separators / traversal / metacharacters rejected.
             max_frames_per_camera: safety cap on in-memory buffers. Must be a
@@ -1849,6 +1858,20 @@ class RenderingMixin:
             "start_cameras_recording", fps, width, height, max_frames_per_camera
         ):
             return error
+
+        # The guard above accepts any real scalar with an integral value, so a
+        # ``640.0`` read from a config float and an ``np.int64`` probed from a
+        # camera are both usable pixel counts - honor that by normalizing them
+        # to plain ``int`` here. The capture loop hands these straight to
+        # ``render``, whose ``_validate_render_dims`` requires a true ``int``,
+        # so without this every frame was refused and the recording wrote no
+        # MP4 at all while both ``start`` and ``stop`` reported success. This is
+        # the same normalization every other pixel-count surface in the library
+        # already performs (``VideoConfig.from_dict``, ``HybridCompositor``,
+        # ``mjpeg_frames``). ``None`` keeps its "use the camera's own
+        # resolution" meaning and is passed through untouched.
+        width = None if width is None else int(width)
+        height = None if height is None else int(height)
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]
@@ -2280,6 +2303,20 @@ class RenderingMixin:
             "start_cameras_recording_synchronous", fps, width, height, max_frames_per_camera
         ):
             return error
+
+        # The guard above accepts any real scalar with an integral value, so a
+        # ``640.0`` read from a config float and an ``np.int64`` probed from a
+        # camera are both usable pixel counts - honor that by normalizing them
+        # to plain ``int`` here. The capture loop hands these straight to
+        # ``render``, whose ``_validate_render_dims`` requires a true ``int``,
+        # so without this every frame was refused and the recording wrote no
+        # MP4 at all while both ``start`` and ``stop`` reported success. This is
+        # the same normalization every other pixel-count surface in the library
+        # already performs (``VideoConfig.from_dict``, ``HybridCompositor``,
+        # ``mjpeg_frames``). ``None`` keeps its "use the camera's own
+        # resolution" meaning and is passed through untouched.
+        width = None if width is None else int(width)
+        height = None if height is None else int(height)
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]
