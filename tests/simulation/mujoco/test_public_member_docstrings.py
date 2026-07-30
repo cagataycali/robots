@@ -62,6 +62,7 @@ _EXPECTED_FUNCTIONS = {
     "backend.py::capture_stderr_fd",
     "backend.py::filter_mujoco_attach_noise",
     "scene_ops.py::actuate_robot_in_scene",
+    "scene_ops.py::actuator_joint_id",
     "scene_ops.py::add_weld_constraint",
     "scene_ops.py::eject_body_from_scene",
     "scene_ops.py::eject_robot_from_scene",
@@ -77,6 +78,7 @@ _EXPECTED_FUNCTIONS = {
     "scene_ops.py::remove_equality_constraint",
     "scene_ops.py::replace_scene_mjcf",
     "scene_ops.py::reposition_body_in_scene",
+    "scene_ops.py::robot_owned_actuator_ids",
     "spec_builder.py::material_spec_error",
 }
 

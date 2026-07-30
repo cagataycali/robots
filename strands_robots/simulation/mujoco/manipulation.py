@@ -37,6 +37,7 @@ import numpy as np
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
 from strands_robots.simulation.mujoco.scene_ops import (
     actuate_robot_in_scene,
+    actuator_joint_id,
     add_weld_constraint,
     remove_equality_constraint,
 )
@@ -488,7 +489,10 @@ class ManipulationMixin:
 
             robot_joint_ids = set(robot.joint_ids)
             for act_id in range(model.nu):
-                if int(model.actuator_trnid[act_id, 0]) in robot_joint_ids:
+                # Gate on the transmission: an actuator driving a tendon, site or
+                # body carries an id from a different space, so comparing it raw
+                # refuses a robot whose joint merely shares a number with one.
+                if actuator_joint_id(model, act_id, mj) in robot_joint_ids:
                     return {
                         "status": "error",
                         "content": [
@@ -573,8 +577,11 @@ class ManipulationMixin:
             # robot.actuator_ids.
             model, data = self._world._model, self._world._data
             for act_id in robot.actuator_ids:
-                jnt_id = int(model.actuator_trnid[act_id, 0])
-                if 0 <= jnt_id < model.njnt:
+                # A non-joint transmission has no joint position to hold, and its
+                # trnid indexes another entity table - seeding ctrl from it would
+                # command a gripper from an unrelated joint's angle.
+                jnt_id = actuator_joint_id(model, act_id, mj)
+                if jnt_id >= 0:
                     data.ctrl[act_id] = data.qpos[int(model.jnt_qposadr[jnt_id])]
             mj.mj_forward(model, data)
             n_added = len(kp_by_joint)
