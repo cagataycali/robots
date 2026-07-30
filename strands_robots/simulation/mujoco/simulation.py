@@ -771,11 +771,25 @@ class MuJoCoSimEngine(
         error names the op, the unrecognised key, a close match where one
         exists, and the keys that op accepts.
 
+        Every numeric field an op writes - ``pos``, ``quat``, ``size``,
+        ``rgba`` - must hold finite numbers. MuJoCo bakes a ``nan``/``inf``
+        component into the model without complaint, so an unchecked one is
+        accepted and only surfaces as a poisoned physics state several
+        successful calls later::
+
+            sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate",
+                                   "pos": [float("nan"), 0, 0.3]}])
+            # status=error: set_body_pos: 'pos' must contain finite numbers
+            #               (no nan/inf), got [nan, 0, 0.3]
+
+        This is the same domain ``add_object``, ``add_camera`` and
+        ``move_object`` apply to those fields.
+
         The whole batch is applied, then the spec is recompiled once. If any
         op fails, the batch is rejected and the world is rolled back to its
-        pre-patch state (from an XML snapshot). Use this for fast iterative
-        edits; use ``replace_scene_mjcf`` when you need to express MJCF
-        elements not covered by the supported op vocabulary.
+        pre-patch state (from a deep copy of the spec). Use this for fast
+        iterative edits; use ``replace_scene_mjcf`` when you need to express
+        MJCF elements not covered by the supported op vocabulary.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}

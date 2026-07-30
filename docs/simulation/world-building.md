@@ -319,8 +319,21 @@ sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "position": [0.4, 
 #               Accepted keys: name, op, pos.
 ```
 
+Every numeric field an op writes - `pos`, `quat`, `size`, `rgba` - must hold
+finite numbers, the same domain `add_object` / `add_camera` / `move_object` apply.
+MuJoCo bakes a `nan`/`inf` component into the model without complaint, so an
+unchecked one reports success and only surfaces later as a poisoned physics
+state:
+
+```python
+sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "pos": [float("nan"), 0, 0.3]}])
+# status=error: set_body_pos: 'pos' must contain finite numbers (no nan/inf),
+#               got [nan, 0, 0.3]
+```
+
 The batch is atomic: if any op is rejected the world is rolled back to its
-pre-patch state, so a bad key never leaves a half-applied scene. Use
+pre-patch state, so a bad key or a non-finite component never leaves a
+half-applied scene. Use
 `replace_scene_mjcf(xml)` for MJCF elements this vocabulary does not cover.
 
 ## Cameras

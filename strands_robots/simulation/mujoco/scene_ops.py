@@ -38,6 +38,7 @@ from strands_robots.simulation.mujoco.backend import (
     filter_mujoco_attach_noise,
 )
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
+from strands_robots.utils import finite_vector_error
 
 logger = logging.getLogger(__name__)
 
@@ -1082,6 +1083,55 @@ def _unknown_op_keys_error(kind: str, op: Mapping[str, Any]) -> str | None:
     return f"{kind}: unknown op key(s): {', '.join(described)}. Accepted keys: {', '.join(known)}."
 
 
+# The numeric vector fields each op writes into the compiled MJCF. Every name
+# here is also an accepted key of the same op in :data:`_PATCH_OP_KEYS`; a
+# parity test pins that, so the two tables cannot drift into disagreement about
+# which fields an op reads.
+_PATCH_OP_VECTOR_FIELDS: dict[str, frozenset[str]] = {
+    "add_body": frozenset({"pos", "quat"}),
+    "add_geom": frozenset({"pos", "quat", "size", "rgba"}),
+    "add_site": frozenset({"pos", "size", "rgba"}),
+    "set_body_pos": frozenset({"pos"}),
+    "set_body_quat": frozenset({"quat"}),
+    "delete_body": frozenset(),
+}
+
+
+def _non_finite_op_field_error(kind: str, op: Mapping[str, Any]) -> str | None:
+    """Reject a numeric op field that is not finite numbers, before the spec is touched.
+
+    MuJoCo's compiler does not reject a ``nan``/``inf`` pose, extent or colour
+    (its one exception is a ``nan`` geom size), so an unchecked component is
+    written verbatim into the model and the patch reports success. A non-finite
+    ``pos`` on a body that owns a freejoint then poisons ``qpos``/``qvel`` on the
+    next step, and every call in that chain - the patch, the step, the
+    observation read - keeps reporting success, so a caller has no way to learn
+    the scene is dead.
+
+    Delegates to :func:`~strands_robots.utils.finite_vector_error`, which is the
+    same guard ``add_object``, ``add_camera`` and ``move_object`` already apply to
+    the very same fields: without it ``set_body_pos`` accepted a pose
+    ``move_object`` refuses, for one identical write to ``body_pos``.
+
+    Length is deliberately not checked here. A wrong component count is already
+    refused - by ``_validate_size`` for a geom size, and by the MuJoCo binding
+    for a pose - so this guard adds only the finiteness and numeric-type axis
+    that nothing downstream covers.
+
+    Args:
+        kind: The op name, already known to be in :data:`_PATCH_OP_KEYS`.
+        op: The caller-supplied op dict.
+
+    Returns:
+        An error message naming the op, the field and the offending value, or
+        ``None`` when every numeric field present holds finite numbers.
+    """
+    for field in sorted(_PATCH_OP_VECTOR_FIELDS[kind]):
+        if field in op and (msg := finite_vector_error(kind, field, op[field])) is not None:
+            return msg
+    return None
+
+
 def _find_body(spec: Any, name: str, new_bodies: dict[str, Any]) -> Any:
     """Locate a body by name in a live spec, checking batch-local additions.
 
@@ -1122,6 +1172,8 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
     if kind not in _PATCH_OP_KEYS:
         raise ValueError(f"unknown op '{kind}'. Supported: {sorted(_PATCH_OP_KEYS)}")
     if err := _unknown_op_keys_error(str(kind), op):
+        raise ValueError(err)
+    if err := _non_finite_op_field_error(str(kind), op):
         raise ValueError(err)
 
     if kind == "add_body":
@@ -1229,7 +1281,11 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
 
     Each op accepts exactly the keys listed for it in :data:`_PATCH_OP_KEYS`;
     anything else is rejected, because an unread key would leave the op running
-    on its fallback default (see :func:`_unknown_op_keys_error`).
+    on its fallback default (see :func:`_unknown_op_keys_error`). Every numeric
+    field an op writes must hold finite numbers (see
+    :func:`_non_finite_op_field_error`) - MuJoCo bakes a ``nan``/``inf``
+    component into the model without complaint, so it would be accepted here and
+    surface as a dead scene several successful calls later.
 
     The list is applied atomically: if any op raises, the whole patch is
     rejected and the world is left in its original state. After all ops
