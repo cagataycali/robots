@@ -422,22 +422,33 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
 def positive_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive integer count.
 
-    Shared domain for the discrete knobs that count iterations of a control or
-    rollout loop - the simulation's ``n_episodes`` / ``max_steps`` /
-    ``control_substeps`` / ``action_horizon`` and the hardware control loop's
-    ``action_horizon``. It lives here rather than beside one of its callers
-    because those callers sit in different layers
-    (:mod:`strands_robots.hardware_robot` must not depend on
-    :mod:`strands_robots.simulation`), and the accepted domain must not diverge
-    between them: the same count cannot be refused for a digital twin and
-    accepted for the arm it mirrors.
+    Shared domain for two families of discrete quantity:
+
+    * The knobs that count iterations of a control or rollout loop - the
+      simulation's ``n_episodes`` / ``max_steps`` / ``control_substeps`` /
+      ``action_horizon`` and the hardware control loop's ``action_horizon``.
+    * A camera's pixel dimensions - the ``width`` / ``height`` of
+      ``add_camera`` and of the render family (``render``, ``get_frame``,
+      ``get_camera_params``) on every simulation backend. A backend may add
+      an upper bound of its own on top of this floor (MuJoCo caps at the
+      offscreen framebuffer size; the ray-traced backends have no such
+      buffer), but the floor itself must not differ between them: the same
+      camera configuration cannot be refused on one backend and accepted on
+      another.
+
+    It lives here rather than beside one of its callers because those callers
+    sit in different layers (:mod:`strands_robots.hardware_robot` must not
+    depend on :mod:`strands_robots.simulation`), and the accepted domain must
+    not diverge between them: the same count cannot be refused for a digital
+    twin and accepted for the arm it mirrors.
 
     Distinct from :func:`positive_whole_number_error`, which accepts any real
     scalar with an integral value so a ``30.0`` read from a config or an
-    ``np.int64`` probed from a camera can be honored. The counts guarded here are
-    consumed directly as ``range()`` bounds and slice indices, where an integral
-    float raises ``TypeError`` ("``'float' object cannot be interpreted as an
-    integer``") rather than being coerced, so only a true ``int`` can be honored.
+    ``np.int64`` probed from a camera can be honored. The values guarded here
+    are consumed directly as ``range()`` bounds, slice indices, or an array /
+    framebuffer dimension, where an integral float raises ``TypeError``
+    ("``'float' object cannot be interpreted as an integer``") rather than being
+    coerced, so only a true ``int`` can be honored.
 
     ``bool`` is rejected explicitly. It is an ``int`` subclass, so a bare
     ``value < 1`` test lets ``True`` through as a silent count of 1 while

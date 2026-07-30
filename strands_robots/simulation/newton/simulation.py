@@ -49,7 +49,7 @@ from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, Sim
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
 from strands_robots.simulation.newton.randomization import DomainRandomizationMixin
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
-from strands_robots.utils import camera_fov_error, coerce_pose_vector, require_optional
+from strands_robots.utils import camera_fov_error, coerce_pose_vector, positive_count_error, require_optional
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -974,6 +974,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         (``nan``/``inf`` in the look-at basis or the derived intrinsics) to the
         first render.
 
+        ``width`` and ``height`` must each be a positive integer, the same
+        floor :meth:`render` and the MuJoCo backend's ``add_camera`` enforce
+        (:func:`~strands_robots.utils.positive_count_error`). Newton ray-traces
+        each frame on demand and has no offscreen framebuffer, so unlike MuJoCo
+        there is no upper cap.
+
         Args:
             name: Unique camera name. Duplicate names are rejected; remove the
                 existing camera with :meth:`remove_camera` first.
@@ -984,15 +990,15 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 3 finite numbers.
             fov: Vertical field of view in degrees; a finite angle in the open
                 interval ``(0, 180)``.
-            width: Render width in pixels for this camera.
-            height: Render height in pixels for this camera.
+            width: Render width in pixels for this camera; a positive integer.
+            height: Render height in pixels for this camera; a positive integer.
             parent_body: Optional body label to mount the camera on. ``None``
                 or empty leaves the camera world-fixed.
 
         Returns:
             Status dict confirming the registration, or an error dict when no
-            world exists, the pose or ``fov`` is invalid, the name is taken, or
-            the mount body is unknown. Never raises.
+            world exists, the pose, ``fov`` or a pixel dimension is invalid, the
+            name is taken, or the mount body is unknown. Never raises.
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
@@ -1036,6 +1042,22 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # ``nan`` fov and raises ``ZeroDivisionError`` for ``0``.
         if (e := camera_fov_error("add_camera", "fov", fov)) is not None:
             return {"status": "error", "content": [{"text": e}]}
+        # Validate the pixel dimensions on the shared floor the MuJoCo backend's
+        # ``_validate_render_dims`` already applies, so a resolution one backend
+        # refuses is refused by all of them. They were previously coerced by a
+        # bare ``int(width)`` inside the lock below, which validated nothing: a
+        # non-numeric value raised ``ValueError`` straight through the structured
+        # tool-result contract (``None`` a ``TypeError``, ``nan`` a
+        # ``ValueError``, ``inf`` an ``OverflowError``), and ``0`` / a negative
+        # registered a camera that cannot produce a frame under a success
+        # result - deferring the failure to the first render, far from the call
+        # that caused it. A fractional or ``bool`` value was silently truncated
+        # (``2.7`` stored as 2, ``True`` as 1) while the success text below
+        # echoed the value the caller passed, reporting a resolution that was
+        # never registered.
+        for _param, _value in (("width", width), ("height", height)):
+            if (e := positive_count_error(_value, _param, "add_camera")) is not None:
+                return {"status": "error", "content": [{"text": e}]}
         if name in (None, "", "default", "free"):
             return {
                 "status": "error",
@@ -1069,8 +1091,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 position=pos,
                 target=tgt,
                 fov=float(fov),
-                width=int(width),
-                height=int(height),
+                width=width,
+                height=height,
                 parent_body=mount,
             )
         where = f" mounted on '{mount}'" if mount else ""
@@ -1355,24 +1377,42 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         :meth:`get_camera_params` so all three agree on the built-in default
         view and per-camera config fallbacks.
 
+        A supplied ``width`` / ``height`` is validated on the same shared floor
+        (:func:`~strands_robots.utils.positive_count_error`) that
+        ``add_camera`` applies, so the config-time and call-time domains agree
+        and every render entry point reports the same refusal. ``None`` means
+        "take the camera's configured size"; membership decides that, not
+        truthiness - reading ``0`` as omitted would render at the default
+        resolution and report it as the requested one.
+
         Raises:
             KeyError: unknown camera name.
-            ValueError: the camera's mount body is no longer in the model.
+            ValueError: ``width`` / ``height`` is not a positive integer, or
+                the camera's mount body is no longer in the model.
         """
+        for param, value in (("width", width), ("height", height)):
+            if value is not None and (text := positive_count_error(value, param, "render")) is not None:
+                raise ValueError(text)
         if camera_name in (None, "", "default", "free"):
             return (
                 (0.6, 0.6, 0.5),
                 (0.0, 0.0, 0.15),
                 50.0,
-                int(width or self.default_width),
-                int(height or self.default_height),
+                self.default_width if width is None else width,
+                self.default_height if height is None else height,
             )
         assert camera_name is not None  # the free-camera tokens were handled above
         cam = self._world.cameras.get(camera_name) if self._world is not None else None
         if cam is None:
             raise KeyError(f"Camera '{camera_name}' not found. Available: {self.list_cameras()}")
         eye, target = self._resolve_camera_pose(cam)
-        return eye, target, float(cam.fov), int(width or cam.width), int(height or cam.height)
+        return (
+            eye,
+            target,
+            float(cam.fov),
+            cam.width if width is None else width,
+            cam.height if height is None else height,
+        )
 
     # Interactive viewer
 

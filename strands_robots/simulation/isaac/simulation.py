@@ -36,7 +36,12 @@ import numpy as np
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
-from strands_robots.utils import camera_fov_error, coerce_pose_vector, positive_whole_number_error
+from strands_robots.utils import (
+    camera_fov_error,
+    coerce_pose_vector,
+    positive_count_error,
+    positive_whole_number_error,
+)
 
 if TYPE_CHECKING:
     from strands_robots.rendering import CameraParams
@@ -2626,8 +2631,21 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             if not self._world_created:
                 return None, None, {"error": "No world created."}
 
-            w = width or self._config.camera_width
-            h = height or self._config.camera_height
+            # Same shared pixel floor ``add_camera`` applies, so the
+            # config-time and call-time domains agree. These sized the
+            # blank-frame fallbacks below with no validation at all: a negative
+            # width reached ``np.zeros`` as ``ValueError: negative dimensions
+            # are not allowed`` and a fractional or non-numeric one as
+            # ``TypeError: 'float' object cannot be interpreted as an
+            # integer``, both escaping this method's ``(rgb, depth, meta)``
+            # contract. ``None`` still means "take the config default";
+            # membership decides that, not truthiness.
+            for param, value in (("width", width), ("height", height)):
+                if value is not None and (dim_err := positive_count_error(value, param, "render")) is not None:
+                    return None, None, {"error": dim_err}
+
+            w = self._config.camera_width if width is None else width
+            h = self._config.camera_height if height is None else height
 
             if self._config.render_mode == "headless":
                 # Return blank frames in headless mode. Most CI flows
@@ -2796,6 +2814,13 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             if cam.handle is None:
                 raise RuntimeError(f"Camera '{camera_name}' has no live RTX handle; re-add it via add_camera().")
             for arg_name, arg, native in (("width", width, cam.width), ("height", height, cam.height)):
+                # Shared pixel floor first: the comparison below coerces
+                # with ``int(arg)``, which raises an uninformative
+                # ``ValueError`` for a non-numeric value instead of naming
+                # the parameter that was wrong.
+                if arg is not None:
+                    if (dim_err := positive_count_error(arg, arg_name, "get_frame")) is not None:
+                        raise ValueError(dim_err)
                 if arg is not None and int(arg) != int(native):
                     raise ValueError(
                         f"Isaac cameras render at the resolution fixed at add_camera time; "
@@ -2827,14 +2852,15 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         Args:
             camera_name: a camera previously added via ``add_camera``.
             width: must be ``None`` or the camera's native render width (the
-                handle's intrinsics are only valid at native resolution).
+                handle's intrinsics are only valid at native resolution), and
+                a positive integer when supplied.
             height: same contract as ``width``.
 
         Raises:
             RuntimeError: no world, or the camera has no live RTX handle.
             KeyError: unknown camera name.
-            ValueError: ``width``/``height`` differ from the native render
-                resolution.
+            ValueError: ``width``/``height`` is not a positive integer, or
+                differs from the native render resolution.
         """
         from strands_robots.rendering import CameraParams
 
@@ -2850,6 +2876,13 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     "read off a registration-only camera. Re-add it via add_camera()."
                 )
             for arg_name, arg, native in (("width", width, cam.width), ("height", height, cam.height)):
+                # Shared pixel floor first: the comparison below coerces
+                # with ``int(arg)``, which raises an uninformative
+                # ``ValueError`` for a non-numeric value instead of naming
+                # the parameter that was wrong.
+                if arg is not None:
+                    if (dim_err := positive_count_error(arg, arg_name, "get_camera_params")) is not None:
+                        raise ValueError(dim_err)
                 if arg is not None and int(arg) != int(native):
                     raise ValueError(
                         f"Isaac camera intrinsics are only valid at the native render resolution; "
@@ -2970,9 +3003,11 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             If ``None``, the camera keeps its constructed orientation
             (identity).
         width : int, optional
-            Image width in pixels. Defaults to ``IsaacConfig.camera_width``.
+            Image width in pixels; a positive integer. ``None`` (omitted)
+            takes ``IsaacConfig.camera_width``.
         height : int, optional
-            Image height in pixels. Defaults to ``IsaacConfig.camera_height``.
+            Image height in pixels; a positive integer. ``None`` (omitted)
+            takes ``IsaacConfig.camera_height``.
         fov : float
             Horizontal field of view in degrees. Default 60.0. Mapped
             onto ``Camera.set_focal_length`` using the standard pinhole
@@ -2987,16 +3022,25 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         look-at point has no look direction. Omit a vector to take its
         default; an empty vector is a wrong-length request and is rejected
         rather than silently placing the camera at the default pose. ``fov``
-        must be a finite angle in the open interval ``(0, 180)`` degrees.
-        These are the same bounds the MuJoCo and Newton backends' ``add_camera``
-        enforces, on the shared
+        must be a finite angle in the open interval ``(0, 180)`` degrees, and
+        ``width`` / ``height`` must each be a positive integer (omit one to take
+        the ``IsaacConfig`` default - ``0`` is a request for an impossible
+        resolution, not an omission). These are the same bounds the MuJoCo and
+        Newton backends' ``add_camera`` enforces, on the shared
         :func:`~strands_robots.utils.coerce_pose_vector` /
-        :func:`~strands_robots.utils.camera_fov_error` domains, so a camera
+        :func:`~strands_robots.utils.camera_fov_error` /
+        :func:`~strands_robots.utils.positive_count_error` domains, so a camera
         configuration one backend refuses is refused by all three. Invalid
         values are rejected here, before the stage is touched, rather than
         deferring an uncaught exception (non-numeric ``fov``, ``fov=0``) or a
         silently degenerate camera (a ``nan`` in the USD pose or in the derived
         focal length) to the first render.
+
+        A non-positive ``width`` is especially costly here because the DLSS
+        upscale below multiplies it back out: ``scale = _MIN_RENDER_PX / w`` for
+        ``w = -4`` gave a native render size of ``640 x -76800``, and every
+        later render of that camera then failed on the negative dimension - one
+        bad configuration call disabled the camera for the rest of the session.
 
         Returns
         -------
@@ -3053,6 +3097,21 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             # usable under a success result.
             if (fov_err := camera_fov_error("add_camera", "fov", fov)) is not None:
                 return {"status": "error", "content": [{"text": fov_err}]}
+            # Pixel dimensions on the shared floor
+            # (:func:`~strands_robots.utils.positive_count_error`) the MuJoCo
+            # backend's ``_validate_render_dims`` already applies, so a
+            # resolution one backend refuses is refused by all of them. The
+            # ``int(width or ...)`` this replaces validated nothing and read a
+            # falsy value as *omitted*: ``width=0`` silently substituted the
+            # config default and reported it as the resolution, so the caller
+            # was told a size it never asked for. A negative was stored
+            # verbatim, a fractional or ``bool`` value was truncated, and a
+            # non-numeric / ``nan`` / ``inf`` value raised ``ValueError`` /
+            # ``OverflowError`` from ``int()`` - outside the try block below, so
+            # it escaped the structured ``{"status": "error"}`` contract.
+            for param, value in (("width", width), ("height", height)):
+                if value is not None and (dim_err := positive_count_error(value, param, "add_camera")) is not None:
+                    return {"status": "error", "content": [{"text": dim_err}]}
 
             if name in self._cameras:
                 return {
@@ -3060,8 +3119,8 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     "content": [{"text": f"Camera '{name}' already exists."}],
                 }
 
-            w = int(width or self._config.camera_width)
-            h = int(height or self._config.camera_height)
+            w = self._config.camera_width if width is None else width
+            h = self._config.camera_height if height is None else height
             fov_deg = float(fov)
 
             # RTX cameras: render at a higher NATIVE resolution if the
