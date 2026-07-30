@@ -67,7 +67,15 @@ from strands_robots.simulation.model_registry import (
 from strands_robots.simulation.model_registry import (
     register_urdf as _register_urdf,
 )
-from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimStatus, SimWorld
+from strands_robots.simulation.models import (
+    SimCamera,
+    SimObject,
+    SimRobot,
+    SimStatus,
+    SimWorld,
+    registered,
+    registry_entry,
+)
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _ensure_mujoco,
@@ -400,7 +408,7 @@ class MuJoCoSimEngine(
             if not self._world.robots:
                 return {}
             robot_name = next(iter(self._world.robots))
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return {}
         if skip_images and self._world is not None and self._world._backend_state.get("recording"):
             # T26: dataset recording needs every frame's image obs. Override
@@ -448,7 +456,7 @@ class MuJoCoSimEngine(
             if not self._world.robots:
                 return {"status": "error", "content": [{"text": "No robots in the world."}]}
             robot_name = next(iter(self._world.robots))
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         action_map, coerce_error = self._coerce_action(action, robot_name)
         if coerce_error is not None:
@@ -1325,7 +1333,7 @@ class MuJoCoSimEngine(
                 # registry is keyed on the short name and we re-attach the
                 # namespace when passing to the renderer.
                 short = cam_name[len(pfx) :] if cam_name.startswith(pfx) else cam_name
-                if short not in self._world.cameras:
+                if not registered(self._world.cameras, short):
                     self._world.cameras[short] = SimCamera(
                         name=cam_name,
                         camera_id=i,
@@ -1630,13 +1638,13 @@ class MuJoCoSimEngine(
         target robot's own policy first (cooperatively), then require no
         OTHER robot is running a policy.
         """
-        if self._world is None or name not in self._world.robots:
+        if self._world is None or not registered(self._world.robots, name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(name)}]}
 
         # Step 1: cooperatively stop THIS robot's policy if running.
         # Has to happen before the global check so remove_robot works even
         # when the target robot has an active policy (the common case).
-        if name in self._policy_threads:
+        if registered(self._policy_threads, name):
             self._world.robots[name].policy_running = False
             try:
                 self._policy_threads[name].result(timeout=5.0)
@@ -1708,7 +1716,7 @@ class MuJoCoSimEngine(
 
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Ordered joint names for ``robot_name`` (SimEngine ABC)."""
-        if self._world is None or robot_name not in self._world.robots:
+        if self._world is None or not registered(self._world.robots, robot_name):
             return []
         return list(self._world.robots[robot_name].joint_names)
 
@@ -1729,7 +1737,7 @@ class MuJoCoSimEngine(
         :meth:`_get_valid_action_keys`, which strips the trailing-slash
         namespace prefix (e.g. ``"xarm7/"``).
         """
-        if self._world is None or robot_name not in self._world.robots:
+        if self._world is None or not registered(self._world.robots, robot_name):
             return []
         namespace = self._world.robots[robot_name].namespace or ""
         return self._get_valid_action_keys(namespace)
@@ -1747,7 +1755,7 @@ class MuJoCoSimEngine(
             return
         if self._world is None or self._world._model is None:
             return
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return
         namespace = self._world.robots[robot_name].namespace or ""
         try:
@@ -2349,7 +2357,7 @@ class MuJoCoSimEngine(
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
 
         mj = self._mj
@@ -2453,7 +2461,7 @@ class MuJoCoSimEngine(
 
         prefix = ""
         if robot_name is not None:
-            if robot_name not in self._world.robots:
+            if not registered(self._world.robots, robot_name):
                 return {
                     "status": "error",
                     "content": [
@@ -2788,7 +2796,7 @@ class MuJoCoSimEngine(
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
-        if name not in self._world.objects:
+        if not registered(self._world.objects, name):
             return {"status": "error", "content": [{"text": self._unknown_object_msg(name)}]}
         if err := self._require_no_running_policy("remove_object"):
             return err
@@ -2851,7 +2859,7 @@ class MuJoCoSimEngine(
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
-        if name not in self._world.objects:
+        if not registered(self._world.objects, name):
             return {"status": "error", "content": [{"text": self._unknown_object_msg(name)}]}
         # Guard: move_object writes qpos + calls mj_forward, racing a running policy.
         if err := self._require_no_running_policy("move_object"):
@@ -3142,7 +3150,7 @@ class MuJoCoSimEngine(
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
-        if name not in self._world.cameras:
+        if not registered(self._world.cameras, name):
             return {"status": "error", "content": [{"text": self._unknown_camera_msg(name)}]}
         if err := self._require_no_running_policy("remove_camera"):
             return err
@@ -3595,7 +3603,7 @@ class MuJoCoSimEngine(
         all_camera_names = [n for n in all_camera_names if n]
 
         if robot_name is not None:
-            if robot_name not in self._world.robots:
+            if not registered(self._world.robots, robot_name):
                 return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
             robot = self._world.robots[robot_name]
             ns = (getattr(robot, "namespace", "") or "").rstrip("/")
@@ -3746,7 +3754,7 @@ class MuJoCoSimEngine(
         # while the rollout's Future is tracked, so it follows _policy_threads
         # here rather than at each of that dict's own removal sites
         # (remove_robot deletes an entry, cleanup clears them all).
-        for stale in [k for k in self._policy_rates if k not in self._policy_threads]:
+        for stale in [k for k in self._policy_rates if not registered(self._policy_threads, k)]:
             self._policy_rates.pop(stale, None)
 
     def _active_policy_robots(self) -> list[str]:
@@ -3793,7 +3801,7 @@ class MuJoCoSimEngine(
         """
         self._prune_done_futures()
         if robot_name is not None:
-            fut = self._policy_threads.get(robot_name)
+            fut = registry_entry(self._policy_threads, robot_name)
             if fut is not None and not fut.done():
                 return {
                     "status": "error",
@@ -3937,7 +3945,7 @@ class MuJoCoSimEngine(
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError as e:
             return {"status": "error", "content": [{"text": str(e)}]}
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
 
         # Per-robot gate: another policy running on a DIFFERENT robot is fine.
@@ -4029,7 +4037,7 @@ class MuJoCoSimEngine(
         from strands_robots.simulation.models import TrajectoryStep
 
         world = self._world
-        if world is None or robot_name not in world.robots:
+        if world is None or not registered(world.robots, robot_name):
             return None
 
         robot = world.robots[robot_name]
@@ -4201,7 +4209,7 @@ class MuJoCoSimEngine(
                 stop_when=stop_when,
             )
         finally:
-            if self._world is not None and robot_name in self._world.robots:
+            if self._world is not None and registered(self._world.robots, robot_name):
                 self._world.robots[robot_name].policy_running = False
 
     def run_multi_policy(
@@ -4288,13 +4296,13 @@ class MuJoCoSimEngine(
 
         # Validate every robot exists.
         for rname in policies:
-            if rname not in self._world.robots:
+            if not registered(self._world.robots, rname):
                 return {"status": "error", "content": [{"text": self._unknown_robot_msg(rname)}]}
 
         # Reject if any of these robots already has a running async policy
         # (would double-step physics on that robot).
         self._prune_done_futures()
-        busy = [r for r in policies if (f := self._policy_threads.get(r)) is not None and not f.done()]
+        busy = [r for r in policies if (f := registry_entry(self._policy_threads, r)) is not None and not f.done()]
         if busy:
             names = ", ".join(f"'{n}'" for n in busy)
             return {
@@ -4557,7 +4565,7 @@ class MuJoCoSimEngine(
             completed_cleanly = True
         finally:
             for rname in policies:
-                if rname in self._world.robots:
+                if registered(self._world.robots, rname):
                     self._world.robots[rname].policy_running = False
             # Bailed mid-episode on an unexpected error (e.g. empty action
             # chunk): drop the partially-recorded frames so the next episode
@@ -4831,7 +4839,7 @@ class MuJoCoSimEngine(
                 "status": "error",
                 "content": [{"text": "stop_policy requires 'robot_name'."}],
             }
-        if self._world is None or robot_name not in self._world.robots:
+        if self._world is None or not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         robot = self._world.robots[robot_name]
         was_running = robot.policy_running

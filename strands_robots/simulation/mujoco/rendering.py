@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 
     from strands_robots.rendering import CameraParams
 
+from strands_robots.simulation.models import registry_entry
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _can_render,
@@ -476,7 +477,7 @@ class RenderingMixin:
             if not cname:
                 continue
             cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
-            cam_info = self._world.cameras.get(cname)
+            cam_info = registry_entry(self._world.cameras, cname)
             h = cam_info.height if cam_info else self.default_height
             w = cam_info.width if cam_info else self.default_width
             try:
@@ -535,7 +536,7 @@ class RenderingMixin:
         mj = _ensure_mujoco()
         assert self._world is not None  # callers must check
         model, data = self._world._model, self._world._data
-        robot = self._world.robots.get(robot_name)
+        robot = registry_entry(self._world.robots, robot_name)
         pfx = robot.namespace if robot else ""
 
         # Action-controller fast path: adapter-installed transform
@@ -952,7 +953,11 @@ class RenderingMixin:
         # with get_observation, which already keys off the per-camera config.
         # The free camera ("default"/"free") and model-only cameras that have no
         # SimCamera entry fall back to the engine default.
-        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        cam_cfg = (
+            registry_entry(self._world.cameras, camera_name)
+            if camera_name not in (None, "", "default", "free")
+            else None
+        )
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
@@ -1089,7 +1094,11 @@ class RenderingMixin:
         # frame render() produces for the same camera (and with get_observation).
         # The free camera and model-only cameras with no SimCamera entry fall
         # back to the engine default.
-        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        cam_cfg = (
+            registry_entry(self._world.cameras, camera_name)
+            if camera_name not in (None, "", "default", "free")
+            else None
+        )
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
@@ -1286,7 +1295,11 @@ class RenderingMixin:
             raise RuntimeError(_NO_WORLD_MSG)
 
         mj = _ensure_mujoco()
-        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        cam_cfg = (
+            registry_entry(self._world.cameras, camera_name)
+            if camera_name not in (None, "", "default", "free")
+            else None
+        )
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
@@ -1399,7 +1412,7 @@ class RenderingMixin:
         # The free camera is not a model camera: it has no name to resolve and
         # no SimCamera entry, so its resolution and default size differ.
         free_camera = camera_name in (None, "", "default", "free")
-        cam_cfg = None if free_camera else self._world.cameras.get(camera_name)
+        cam_cfg = None if free_camera else registry_entry(self._world.cameras, camera_name)
 
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height

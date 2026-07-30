@@ -45,7 +45,14 @@ from strands_robots.simulation.model_registry import (
 from strands_robots.simulation.model_registry import (
     register_urdf as _register_urdf,
 )
-from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
+from strands_robots.simulation.models import (
+    SimCamera,
+    SimObject,
+    SimRobot,
+    SimWorld,
+    registered,
+    registry_entry,
+)
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
 from strands_robots.simulation.newton.randomization import DomainRandomizationMixin
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
@@ -511,7 +518,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
     def remove_robot(self, name: str) -> dict[str, Any]:
         """Remove a robot and rebuild the world."""
-        if self._world is None or name not in self._world.robots:
+        if self._world is None or not registered(self._world.robots, name):
             return {"status": "error", "content": [{"text": f"Robot '{name}' not found."}]}
         with self._lock:
             del self._world.robots[name]
@@ -526,7 +533,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
     def robot_joint_names(self, robot_name: str) -> list[str]:
         """Return ordered short joint names for ``robot_name``."""
-        if self._world is None or robot_name not in self._world.robots:
+        if self._world is None or not registered(self._world.robots, robot_name):
             return []
         return list(self._world.robots[robot_name].joint_names)
 
@@ -632,7 +639,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
     def remove_object(self, name: str) -> dict[str, Any]:
         """Remove an object and rebuild the world."""
-        if self._world is None or name not in self._world.objects:
+        if self._world is None or not registered(self._world.objects, name):
             return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
         with self._lock:
             del self._world.objects[name]
@@ -662,7 +669,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
-        if name not in self._world.objects:
+        if not registered(self._world.objects, name):
             return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
         with self._lock:
             obj = self._world.objects[name]
@@ -726,7 +733,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError:
             return {}
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return {}
         if skip_images and self._world._backend_state.get("recording"):
             # T26: dataset recording needs every frame's image obs. Override
@@ -811,7 +818,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError as exc:
             return {"status": "error", "content": [{"text": str(exc)}]}
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
         action_map, coerce_error = self._coerce_action(action, robot_name)
@@ -1091,7 +1098,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
-        if name not in self._world.cameras:
+        if not registered(self._world.cameras, name):
             return {
                 "status": "error",
                 "content": [{"text": f"Camera '{name}' not found. Registered: {list(self._world.cameras)}"}],
@@ -1368,7 +1375,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 int(height or self.default_height),
             )
         assert camera_name is not None  # the free-camera tokens were handled above
-        cam = self._world.cameras.get(camera_name) if self._world is not None else None
+        cam = registry_entry(self._world.cameras, camera_name) if self._world is not None else None
         if cam is None:
             raise KeyError(f"Camera '{camera_name}' not found. Available: {self.list_cameras()}")
         eye, target = self._resolve_camera_pose(cam)
@@ -1607,7 +1614,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError as exc:
             return {"status": "error", "content": [{"text": str(exc)}]}
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
         with self._lock:
@@ -1695,7 +1702,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
 
         if robot_name is not None:
-            if robot_name not in self._world.robots:
+            if not registered(self._world.robots, robot_name):
                 return {
                     "status": "error",
                     "content": [
@@ -1745,7 +1752,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
         m = self._model
         if robot_name is not None:
-            if robot_name not in self._world.robots:
+            if not registered(self._world.robots, robot_name):
                 return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
             joint_names = list(self._world.robots[robot_name].joint_names)
             scoped = {robot_name: self._world.robots[robot_name]}

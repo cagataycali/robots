@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from strands_robots.simulation.models import registry_entry
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.mujoco.scene_ops import (
     actuate_robot_in_scene,
@@ -469,7 +470,7 @@ class ManipulationMixin:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("actuate_robot", robot_name):
             return err
-        robot = self._world.robots.get(robot_name)
+        robot = registry_entry(self._world.robots, robot_name)
         if robot is None:
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         if not _finite_non_negative(damping):
@@ -637,7 +638,7 @@ class ManipulationMixin:
                 data.qacc_warmstart[:] = 0.0
                 scope = f"all {int(model.nv)} DOFs"
             else:
-                robot = self._world.robots.get(robot_name)
+                robot = registry_entry(self._world.robots, robot_name)
                 if robot is None:
                     return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
                 n_zeroed = 0

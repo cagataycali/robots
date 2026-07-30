@@ -11,6 +11,7 @@ resume-schema guard.
 import logging
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.simulation.models import registry_entry
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
@@ -289,7 +290,9 @@ class RecordingMixin(DatasetRecordingMixin):
                 safe_name = cam_name.replace("/", "__")
                 raw_to_safe[cam_name] = safe_name
                 camera_keys.append(safe_name)
-                cam_info = self._world.cameras.get(cam_name) or self._world.cameras.get(safe_name)
+                cam_info = registry_entry(self._world.cameras, cam_name) or registry_entry(
+                    self._world.cameras, safe_name
+                )
                 if cam_info is not None:
                     camera_dims[safe_name] = (int(cam_info.height), int(cam_info.width))
                 else:

@@ -15,6 +15,7 @@ signatures reference them (e.g. ``create_world() → SimWorld``).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -199,3 +200,50 @@ class SimWorld:
     # distinguish - a same-shape recompile (remove one free-jointed object, add
     # another), or a whole scene replaced by one with the same counts.
     _recompile_generation: int = 0
+
+
+def registered(registry: Mapping[str, object], name: object) -> bool:
+    """Whether ``name`` is an entity registered in ``registry``.
+
+    A simulation entity is addressed by a ``str`` name, and the registries that
+    hold entities are keyed by one - the :class:`SimWorld` ``robots``,
+    ``objects`` and ``cameras`` maps, and the engine's own per-robot maps such
+    as its policy threads. A name of any other type cannot be one of their
+    keys, so the honest answer is that no such entity exists.
+
+    A bare ``name in registry`` cannot say that: the membership test itself
+    raises ``TypeError: unhashable type`` for a name that is not hashable (a
+    list, a dict, a set), so the unknown-entity error path the test guards is
+    never reached and the exception escapes the agent-tool dict that the
+    surrounding method documents as its only failure channel. This test is
+    total instead: every name resolves to a verdict, and a name that cannot be
+    a key resolves to ``False``, which lets the caller report it with the
+    message it already has.
+
+    Args:
+        registry: A name-keyed registry of simulation entities.
+        name: A caller-supplied entity name, of any type.
+
+    Returns:
+        ``True`` only when ``name`` is a string that keys ``registry``.
+    """
+    return isinstance(name, str) and name in registry
+
+
+def registry_entry[V](registry: Mapping[str, V], name: object) -> V | None:
+    """The entry ``name`` refers to in ``registry``, or ``None`` if there is none.
+
+    The fetching counterpart to :func:`registered`, for the lookups that need
+    the entry rather than only its existence, and total for the same reason:
+    ``registry.get(name)`` raises ``TypeError`` for an unhashable name, so the
+    absent case cannot be reported by the code that handles it.
+
+    Args:
+        registry: A name-keyed registry of simulation entities.
+        name: A caller-supplied entity name, of any type.
+
+    Returns:
+        The registered entry, or ``None`` when ``name`` is not a string or
+        names nothing in ``registry``.
+    """
+    return registry.get(name) if isinstance(name, str) else None

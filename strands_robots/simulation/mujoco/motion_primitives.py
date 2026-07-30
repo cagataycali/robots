@@ -55,6 +55,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.registry.robots import get_robot
+from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, mj_name_to_id
 from strands_robots.utils import coerce_pose_vector
 
@@ -161,7 +162,7 @@ class MotionPrimitivesMixin:
                 robot_name = self._resolve_single_robot(None)
             except ValueError as e:
                 return None, _err(str(e))
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return None, _err(self._unknown_robot_msg(robot_name))
         guard = self._require_no_running_policy(action, robot_name=robot_name)
         if guard is not None:
@@ -179,7 +180,7 @@ class MotionPrimitivesMixin:
         world = self._world
         if world is None or world._model is not model or world._data is None:
             return _err(f"{action}: world was destroyed or the model was recompiled mid-run; aborting.")
-        robot = world.robots.get(robot_name)
+        robot = registry_entry(world.robots, robot_name)
         if robot is None:
             return _err(f"{action}: robot '{robot_name}' was removed mid-run; aborting.")
         if robot.policy_running:

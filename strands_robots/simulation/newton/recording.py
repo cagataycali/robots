@@ -27,6 +27,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     dataset_recording_option_error,
@@ -363,7 +364,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         from strands_robots.simulation.policy_runner import _extract_frame_ndarray
 
         world = self._world
-        if world is None or robot_name not in world.robots:
+        if world is None or not registered(world.robots, robot_name):
             return None
 
         robot = world.robots[robot_name]
