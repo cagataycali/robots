@@ -112,6 +112,83 @@ def _snapshot_spec(spec: Any, *, context: str) -> Any | None:
         return None
 
 
+def actuator_joint_id(model: Any, act_id: int, mj: Any) -> int:
+    """Return the joint id actuator ``act_id`` drives, or ``-1`` if it drives none.
+
+    ``actuator_trnid[act_id, 0]`` holds a JOINT id only when the actuator's
+    transmission is ``mjTRN_JOINT`` or ``mjTRN_JOINTINPARENT``. For the other
+    transmissions it holds a tendon, site, slider-crank or body id instead --
+    separate id spaces that each start at 0, so a raw comparison against joint
+    ids matches an unrelated entity that merely shares a number. A fixed tendon
+    coupling a gripper's fingers is the standard MJCF idiom for that (the
+    Menagerie Panda hand and the Robotiq 2F-85 both use one), so the collision
+    is reachable with stock assets rather than only with exotic models.
+
+    Reading the transmission through this function is what keeps "which joint
+    does this actuator drive" a single rule, rather than one that each call site
+    re-derives and can omit.
+
+    Args:
+        model: The compiled ``MjModel``.
+        act_id: Actuator index in ``range(model.nu)``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        The driven joint id, or ``-1`` when the transmission is not a joint.
+    """
+    joint_trn = {int(mj.mjtTrn.mjTRN_JOINT)}
+    if hasattr(mj.mjtTrn, "mjTRN_JOINTINPARENT"):
+        joint_trn.add(int(mj.mjtTrn.mjTRN_JOINTINPARENT))
+    if int(model.actuator_trntype[act_id]) not in joint_trn:
+        return -1
+    return int(model.actuator_trnid[act_id, 0])
+
+
+def robot_owned_actuator_ids(model: Any, robot: SimRobot, mj: Any) -> list[int]:
+    """Return the actuator ids ``robot`` owns, in model order.
+
+    Ownership is the union of two rules, because neither alone covers every
+    actuator a robot can carry:
+
+    * **Namespace.** ``spec.attach(other, prefix=...)`` prefixes every actuator
+      name it merges in, so a prefixed name settles ownership whatever the
+      transmission drives -- the only rule that reaches a tendon, site or body
+      transmission.
+    * **Driven joint.** :func:`actuate_robot_in_scene` names the position
+      actuators it injects ``"<robot>_act_<joint>"``, which carries no namespace
+      prefix, so those are recognized by the joint they drive.
+
+    The second rule resolves the joint through :func:`actuator_joint_id`, so an
+    actuator whose transmission is not a joint is never assigned by an id-space
+    collision. Ungated, a tendon-driven gripper is claimed by whichever robot
+    owns the joint whose id equals the tendon's and is missing from the robot
+    that actually carries it -- the gripper then has no owner to operate it, and
+    the other robot advertises an actuator that moves a different machine.
+
+    Args:
+        model: The compiled ``MjModel``.
+        robot: The robot to scope. Reads its ``namespace`` and its already
+            resolved ``joint_ids``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        Owned actuator ids, ascending. Ascending model order is the contract:
+        :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.robot_action_keys`
+        and the recorded dataset action columns are ordered by actuator index,
+        so the sequence is stable and only membership is corrected here.
+    """
+    pfx = robot.namespace or ""
+    joint_ids = set(robot.joint_ids)
+    owned: list[int] = []
+    for act_id in range(int(model.nu)):
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id) or ""
+        if pfx and name.startswith(pfx):
+            owned.append(act_id)
+        elif actuator_joint_id(model, act_id, mj) in joint_ids:
+            owned.append(act_id)
+    return owned
+
+
 def install_compiled_model(world: SimWorld, model: Any, data: Any) -> None:
     """Install a compiled ``model``/``data`` pair as ``world``'s live scene state.
 
@@ -215,7 +292,6 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     for robot in world.robots.values():
         pfx = robot.namespace or ""
         robot.joint_ids = []
-        robot.actuator_ids = []
         for jnt_name in robot.joint_names:
             jid = -1
             if pfx:
@@ -224,12 +300,12 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
                 jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jid >= 0:
                 robot.joint_ids.append(jid)
-        for i in range(new_model.nu):
-            jnt_id = new_model.actuator_trnid[i, 0]
-            if jnt_id in robot.joint_ids:
-                robot.actuator_ids.append(i)
-        # Single-robot fallback: if no actuators matched by joint, assume
-        # all actuators belong to this robot. Matches the legacy behaviour.
+        robot.actuator_ids = robot_owned_actuator_ids(new_model, robot, mj)
+        # Single-robot fallback. Ownership above is settled by namespace or by
+        # driven joint; a lone robot whose actuators are neither prefixed nor
+        # joint-driven (a tendon or site transmission in a scene loaded whole,
+        # so no attach prefix) matches on neither, and in a one-robot scene
+        # every actuator is unambiguously that robot's.
         if not robot.actuator_ids and len(world.robots) == 1:
             robot.actuator_ids = list(range(new_model.nu))
 
@@ -947,7 +1023,6 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     for robot in world.robots.values():
         pfx = robot.namespace or ""
         robot.joint_ids = []
-        robot.actuator_ids = []
         for jnt_name in robot.joint_names:
             jid = -1
             if pfx:
@@ -956,10 +1031,8 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
                 jid = mj.mj_name2id(new_model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jid >= 0:
                 robot.joint_ids.append(jid)
-        for i in range(new_model.nu):
-            jnt_id = new_model.actuator_trnid[i, 0]
-            if jnt_id in robot.joint_ids:
-                robot.actuator_ids.append(i)
+        robot.actuator_ids = robot_owned_actuator_ids(new_model, robot, mj)
+        # See _recompile_preserving_state for why the lone-robot case falls back.
         if not robot.actuator_ids and len(world.robots) == 1:
             robot.actuator_ids = list(range(new_model.nu))
 
