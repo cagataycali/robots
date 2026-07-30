@@ -15,14 +15,28 @@ settled objects back to their declared spawn, and rewound the clock -- all
 reported as a successful add. These tests pin both halves, so neither can be
 restored by weakening the other: the scene is untouched, AND the new robot starts
 from the reference configuration.
+
+The clean state the new robot is owed includes its actuator setpoints, and the
+world-wide reset used to supply those as collateral. ``spec.recompile`` transfers
+state POSITIONALLY and leaves ``ctrl`` past the old ``nu`` uninitialized, so with
+the world-wide reset gone the new entries have to be defined deliberately -- and
+scoping that to the robot's ``actuator_ids`` is not enough, because those are
+matched through ``actuator_trnid`` against joint ids and miss every actuator
+driven through a tendon, site or body. A single undefined entry is not a harmless
+nonsense number: ``mj_checkCtrl`` disables actuation for the whole model on any
+step where one ``ctrl`` value is non-finite, so every held pose in the scene
+collapses on the runs where the leftover memory happens to be NaN.
 """
 
+import math
 import pathlib
 import re
 
 import pytest
 
-from strands_robots.simulation import Simulation
+mj = pytest.importorskip("mujoco")
+
+from strands_robots.simulation import Simulation  # noqa: E402
 
 # Two-link arm with position servos. Damped and limited so a commanded setpoint
 # settles instead of oscillating, and declared in radians (MuJoCo's compiler
@@ -60,6 +74,35 @@ _BASE_XML = """<mujoco model="probe_base">
   </worldbody>
 </mujoco>"""
 
+# Gripper driven through a FIXED TENDON: the standard MJCF idiom for coupled
+# fingers, and a transmission that ``actuator_trnid``-vs-joint-id matching cannot
+# see. Its ``ctrl`` entry is therefore the one a robot-scoped reset would miss.
+_GRIPPER_XML = """<mujoco model="probe_gripper">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="palm" pos="0.6 0 0.15">
+      <geom type="box" size="0.05 0.03 0.02"/>
+      <body name="left" pos="0 0.03 0.03">
+        <joint name="lfinger" type="slide" axis="0 1 0" range="0 0.04" limited="true" damping="1"/>
+        <geom type="box" size="0.01 0.005 0.02"/>
+      </body>
+      <body name="right" pos="0 -0.03 0.03">
+        <joint name="rfinger" type="slide" axis="0 -1 0" range="0 0.04" limited="true" damping="1"/>
+        <geom type="box" size="0.01 0.005 0.02"/>
+      </body>
+    </body>
+  </worldbody>
+  <tendon>
+    <fixed name="split">
+      <joint joint="lfinger" coef="0.5"/>
+      <joint joint="rfinger" coef="0.5"/>
+    </fixed>
+  </tendon>
+  <actuator>
+    <position name="grip_act" tendon="split" kp="100" ctrlrange="0 0.04"/>
+  </actuator>
+</mujoco>"""
+
 _PARKED = {"pan": 0.9, "lift": -0.7}
 
 
@@ -70,7 +113,9 @@ def models(tmp_path: pathlib.Path) -> dict[str, str]:
     arm.write_text(_ARM_XML)
     base = tmp_path / "base.xml"
     base.write_text(_BASE_XML)
-    return {"arm": str(arm), "base": str(base)}
+    gripper = tmp_path / "gripper.xml"
+    gripper.write_text(_GRIPPER_XML)
+    return {"arm": str(arm), "base": str(base), "gripper": str(gripper)}
 
 
 @pytest.fixture
@@ -215,3 +260,121 @@ def test_a_keyframe_spawned_arm_is_not_snapped_back_to_its_home_pose(sim, models
     assert sim.add_robot(name="b", urdf_path=models["arm"])["status"] == "success"
 
     assert _joints(sim, "a") == pytest.approx(parked, abs=1e-6)
+
+
+def test_a_tendon_driven_actuator_is_outside_the_joint_matched_id_scope(sim, models):
+    """Premise: per-robot ``actuator_ids`` cannot see a non-joint transmission.
+
+    This is the reason the new robot's setpoints are defined by the recompile
+    rather than by iterating the robot's own actuator ids, so it is pinned
+    independently: it holds before and after that change, and if it ever stops
+    holding, the narrower scope becomes viable and this file should say so.
+    """
+    assert sim.add_robot(name="a", urdf_path=models["arm"])["status"] == "success"
+    assert sim.add_robot(name="g", urdf_path=models["gripper"])["status"] == "success"
+
+    model = sim._world._model
+    grip_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, "g/grip_act")
+    assert grip_id >= 0
+    assert int(model.actuator_trntype[grip_id]) == int(mj.mjtTrn.mjTRN_TENDON)
+
+    robots = sim._world.robots
+    # Absent from the robot that owns it ...
+    assert grip_id not in robots["g"].actuator_ids
+    # ... and claimed by the arm, because the tendon's id collides with a joint id.
+    assert grip_id in robots["a"].actuator_ids
+
+
+def test_the_added_robots_actuator_setpoints_are_defined(sim, models):
+    """Every ``ctrl`` entry holds a value after an add, and the new ones are zero.
+
+    ``spec.recompile``'s positional transfer carries the commanded entries over
+    and leaves the entries past the old ``nu`` as whatever the fresh allocation
+    contained -- observed across repeated runs as denormals through ``2.6e+161``.
+    Zero is what a reset writes and the only setpoint a caller who has not
+    commanded the new actuators can mean.
+    """
+    assert sim.add_robot(name="a", urdf_path=models["arm"])["status"] == "success"
+    _park(sim, "a")
+    commanded = sim._world._data.ctrl.copy()
+    old_nu = int(sim._world._model.nu)
+
+    assert sim.add_robot(name="g", urdf_path=models["gripper"])["status"] == "success"
+
+    model, data = sim._world._model, sim._world._data
+    assert model.nu > old_nu
+    ctrl = data.ctrl.copy()
+    assert all(math.isfinite(v) for v in ctrl), list(ctrl)
+    # The new tail is defined ...
+    assert list(ctrl[old_nu:]) == [0.0] * (model.nu - old_nu)
+    # ... and defining it did not disturb what was already commanded.
+    assert list(ctrl[:old_nu]) == pytest.approx(list(commanded), abs=1e-12)
+
+
+@pytest.fixture
+def hostile_leftovers(monkeypatch):
+    """Make the recompile's undefined control entries deterministically NaN.
+
+    What the entries past the old ``nu`` actually contain is whatever the fresh
+    allocation was handed, so a test that reads them is a test of the host's heap:
+    ten consecutive runs produced denormals, one value of ``6.8e+199``, and twice
+    exactly ``0.0``. NaN is inside that range of possibilities -- it is what makes
+    MuJoCo stop actuating the model, and the warning it raises has been observed
+    from scene mutations -- but it cannot be waited for. Writing it deliberately
+    turns "the entries are undefined" into a repeatable condition, so the two
+    tests below pin the guarantee rather than the luck of an allocation.
+    """
+    real_recompile = mj.MjSpec.recompile
+
+    def poisoning_recompile(self, model, data):
+        new_model, new_data = real_recompile(self, model, data)
+        if new_model.nu > model.nu:
+            new_data.ctrl[model.nu :] = float("nan")
+        return new_model, new_data
+
+    monkeypatch.setattr(mj.MjSpec, "recompile", poisoning_recompile)
+
+
+def test_an_undefined_control_entry_does_not_survive_the_recompile(sim, models, hostile_leftovers):
+    """A new setpoint is defined even when the memory behind it was not.
+
+    Definition happens as part of the recompile, so it covers the tendon-driven
+    actuator that no per-robot id scope can reach, and it happens before the
+    forward pass at the end of the recompile reads ``ctrl``.
+
+    Both halves are asserted, so neither can be satisfied by the other: the new
+    entries are defined, AND the setpoints already in the scene are left alone.
+    Reinstating a world-wide reset would satisfy the first and fail the second.
+    """
+    assert sim.add_robot(name="a", urdf_path=models["arm"])["status"] == "success"
+    _park(sim, "a")
+    commanded = list(sim._world._data.ctrl)
+    old_nu = int(sim._world._model.nu)
+    # Non-vacuity: zeroed setpoints would make the second half unfalsifiable.
+    assert min(abs(v) for v in commanded) > 0.1, commanded
+
+    assert sim.add_robot(name="g", urdf_path=models["gripper"])["status"] == "success"
+
+    model, data = sim._world._model, sim._world._data
+    assert model.nu > old_nu
+    assert all(math.isfinite(v) for v in data.ctrl), list(data.ctrl)
+    assert list(data.ctrl[old_nu:]) == [0.0] * (model.nu - old_nu)
+    assert list(data.ctrl[:old_nu]) == pytest.approx(commanded, abs=1e-12)
+
+
+def test_a_parked_arm_survives_the_steps_after_a_tendon_gripper_is_added(sim, models, hostile_leftovers):
+    """The consequence: the scene keeps actuating once the new robot is in it.
+
+    One non-finite ``ctrl`` entry stops MuJoCo actuating the WHOLE model, so an
+    undefined setpoint belonging to the robot just added releases the pose of an
+    arm parked long before it -- a few steps after an ``add_robot`` that reported
+    success. Pinning the pose over the steps that follow the add is what makes
+    that observable; asserting it at the instant of the add would not.
+    """
+    assert sim.add_robot(name="a", urdf_path=models["arm"])["status"] == "success"
+    parked = _park(sim, "a")
+
+    assert sim.add_robot(name="g", urdf_path=models["gripper"])["status"] == "success"
+    sim.step(800)
+
+    assert _joints(sim, "a") == pytest.approx(parked, abs=1e-3)

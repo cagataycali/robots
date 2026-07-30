@@ -1489,8 +1489,8 @@ class MuJoCoSimEngine(
         robot.home_qpos = stored
 
     def _reset_robot_to_reference(self, robot: SimRobot) -> None:
-        """Put one robot's joints, velocities and setpoints at the model's
-        reference configuration, leaving the rest of the world untouched.
+        """Put one robot's joints and velocities at the model's reference
+        configuration, leaving the rest of the world untouched.
 
         A freshly added robot needs a defined starting configuration - the
         recompile that merged it in leaves its new joints at whatever the
@@ -1506,10 +1506,23 @@ class MuJoCoSimEngine(
         new arm starts from a known configuration and nothing else in the world
         moves.
 
+        Actuator setpoints are deliberately NOT this function's business. A
+        freshly added robot's ``ctrl``/``act`` entries are new, and defining a
+        new entry is the recompile's job -- ``_recompile_preserving_state``
+        zeroes the tail its positional state transfer leaves undefined, before
+        anything reads it. Repeating that here by iterating ``actuator_ids``
+        would be both narrower and less safe: those ids are discovered by
+        matching ``actuator_trnid`` against the robot's joint ids, so an
+        actuator whose transmission is not a joint -- the fixed tendon that
+        couples a gripper's fingers, say -- is missing from the robot that owns
+        it and, because tendon and joint ids are separate id spaces that
+        collide, claimed by whichever robot owns the joint of the same number.
+
         Args:
-            robot: The robot to reset. Its ``joint_ids`` / ``actuator_ids`` are
-                the post-recompile ids resolved by
-                :func:`~strands_robots.simulation.mujoco.scene_ops._recompile_preserving_state`.
+            robot: The robot to reset. Its ``joint_ids`` are the post-recompile
+                ids resolved by
+                :func:`~strands_robots.simulation.mujoco.scene_ops._recompile_preserving_state`,
+                which looks joints up by name and so needs no id-space caveat.
 
         Notes:
             The caller holds the model lock and runs ``mj_forward`` afterwards.
@@ -1528,15 +1541,6 @@ class MuJoCoSimEngine(
             data.qpos[adr : adr + width] = model.qpos0[adr : adr + width]
             dadr = int(model.jnt_dofadr[jid])
             data.qvel[dadr : dadr + _jnt_dof_width(mj, jnt_type)] = 0.0
-        for aid in robot.actuator_ids:
-            data.ctrl[aid] = 0.0
-            # A filtered/muscle actuator carries activation state of its own;
-            # leaving it behind would let the new robot inherit a setpoint the
-            # zeroed ``ctrl`` no longer explains.
-            actnum = int(model.actuator_actnum[aid])
-            if actnum > 0:
-                aadr = int(model.actuator_actadr[aid])
-                data.act[aadr : aadr + actnum] = 0.0
 
     def _restore_home_poses(self) -> None:
         """Re-apply every robot's captured keyframe home pose onto the live

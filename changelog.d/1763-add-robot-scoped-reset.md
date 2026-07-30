@@ -14,6 +14,22 @@ robots spawned with a `keyframe=` and overwrote wherever such a robot had since
 been driven.
 
 The reset is now scoped to the robot being added: its joints go to the model's
-reference configuration, its velocities and actuator setpoints to zero, and
-nothing else in the world moves. `reset()`, whose contract *is* a world-wide
-reset, is unchanged.
+reference configuration, its velocities to zero, and nothing else in the world
+moves. `reset()`, whose contract *is* a world-wide reset, is unchanged.
+
+Removing the world-wide reset also exposed something it had been hiding.
+`spec.recompile` transfers simulation state POSITIONALLY, and while it defines
+the new `qpos` (from `qpos0`), `qvel` and `act` entries, it leaves the new `ctrl`
+entries uninitialized - so any recompile that adds actuators produced setpoints
+whose value was whatever the fresh allocation happened to contain (observed
+across runs as denormals through `4.6e+228`). That is not a harmless nonsense
+number: MuJoCo stops actuating the *entire* model on any step where a single
+`ctrl` value is non-finite, so one uninitialized entry could silently release
+every held pose in the scene, on the runs where the leftover memory happened to
+be NaN. Those entries are now defined as zero as part of the recompile, before
+anything reads them, which also removes the intermittent
+`Nan, Inf or huge value in CTRL` instability warning that scene mutations could
+already emit. This is done for every actuator rather than per robot, because a
+robot's actuator ids are matched through `actuator_trnid` against its joint ids
+and so exclude any actuator driven through a tendon, site or body - the fixed
+tendon that couples a gripper's fingers, for instance.

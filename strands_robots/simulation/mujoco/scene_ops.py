@@ -148,6 +148,20 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     existing joints and initializes new joints to their body's pos/quat. No
     manual state-copy loop is required.
 
+    That transfer is POSITIONAL, not by name: the new buffers receive the old
+    values for the indices both models share, and the entries past the old size
+    are whatever the fresh allocation happened to contain. For ``qpos`` (filled
+    from ``qpos0``), ``qvel`` and ``act`` the compiler defines them; for
+    ``ctrl`` it does not, so a recompile that grows ``nu`` -- adding a robot,
+    adding actuators to one -- leaves the new setpoints undefined. That is not
+    a harmless nonsense number: MuJoCo's ``mj_checkCtrl`` disables actuation for
+    the WHOLE model on any step where a single ``ctrl`` entry is non-finite, so
+    one uninitialized entry can silently release every held pose in the scene,
+    only on the runs where the leftover memory happens to be NaN. This function
+    therefore defines the new tail as zero -- the value a reset writes, and the
+    only setpoint a caller who has not commanded the new actuators can mean --
+    before the forward pass below reads it.
+
     Also re-discovers per-robot joint and actuator IDs (they may have shifted
     as new bodies were inserted earlier in the body tree). Returns True on
     success, False on compile failure (logged).
@@ -163,6 +177,10 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
             the ``bool`` contract.
     """
     mj = _ensure_mujoco()
+    # Sizes of the buffers being handed to the compiler: everything at or past
+    # these indices in the new data is an entry the old model had no value for.
+    old_nu = int(world._model.nu) if world._model is not None else 0
+    old_na = int(world._model.na) if world._model is not None else 0
     try:
         with filter_mujoco_attach_noise():
             new_model, new_data = spec.recompile(world._model, world._data)
@@ -173,6 +191,14 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
         return False
 
     install_compiled_model(world, new_model, new_data)
+    # Define the control entries the positional transfer left untouched (see the
+    # docstring). ``act`` is measurably zero-filled today, but it comes out of
+    # the same allocation as ``ctrl`` and carries an actuator's activation -- its
+    # effective command -- so it is defined here too rather than by luck.
+    if new_model.nu > old_nu:
+        new_data.ctrl[old_nu:] = 0.0
+    if new_model.na > old_na:
+        new_data.act[old_na:] = 0.0
     # Forward pass so newly-injected bodies have valid xpos/xquat and any
     # camera xforms are populated. Without this, the next render() call
     # after add_object / add_robot / add_camera returns a 100% black frame
