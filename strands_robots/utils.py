@@ -5,6 +5,7 @@ import logging
 import math
 import numbers
 import os
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -456,6 +457,92 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         return f"{context}: {param} must be a positive integer, got {value!r}."
+    return None
+
+
+def name_list_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable list of distinct key names.
+
+    Shared domain for the parameters that carry an ordered list of KEY NAMES
+    into a policy: the LeRobot ``image_keys`` (model VISUAL feature keys to
+    declare on the config) and the VERA ``image_keys`` (observation camera keys
+    to width-concat into one frame). The two name different vocabularies, but
+    the shape contract is identical - several distinct non-blank names, in the
+    order the caller wants them - and both consumers reach the same failure when
+    it is not met, so the rule lives here rather than beside either of them.
+
+    The mistake this exists for is a single name passed as a bare string.
+    ``str`` is iterable, so ``list("wrist")`` yields ``['w', 'r', 'i', 's', 't']``
+    - five names the caller never wrote, one per character. Nothing downstream
+    can tell that apart from a deliberate five-entry list, so it is accepted and
+    the consequence surfaces far from the call: a model built declaring
+    per-character features, or a ``KeyError: 'w'`` raised mid-rollout when the
+    frame for a one-letter camera is looked up.
+
+    A ``Mapping`` is refused for the same reason in the other direction: it is
+    iterable over its keys, so its values would be silently discarded.
+
+    A repeated name is refused because it cannot be honored as written - the
+    LeRobot side builds a feature dict, where a duplicate collapses and declares
+    fewer features than asked for, and the VERA side concatenates one panel per
+    entry, where a duplicate doubles the width of the frame the model sees.
+
+    Only a :class:`~collections.abc.Sequence` is accepted, which excludes
+    one-shot iterators. That matters on the LeRobot path, where the value is
+    read twice - once by the pre-flight check and again at load - so a generator
+    exhausted by the first read would present as empty to the second.
+
+    Callers gate this check on a truthy value, because in both consumers a falsy
+    ``image_keys`` (``None``, or an empty list) already means "not supplied" and
+    the list is derived instead. So an empty sequence is not rejected here, and
+    ``None`` is the caller's to skip rather than this function's to accept - a
+    surface where an absent value IS an error keeps that verdict its own.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it - the
+            public method name, or the class name for a constructor parameter.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if isinstance(value, str | bytes):
+        shown = value.decode(errors="replace") if isinstance(value, bytes) else value
+        return (
+            f"{context}: {param} must be a list of names, not a single string, got {value!r}. "
+            f"A string is iterable per character, so this would be read as "
+            f"{[c for c in shown][:6]}{' ...' if len(shown) > 6 else ''} "
+            f"({len(shown)} name(s)). Wrap it in a list: [{shown!r}]."
+        )
+    if isinstance(value, Mapping):
+        return (
+            f"{context}: {param} must be a list of names, not a mapping, got {value!r}. "
+            f"A mapping is iterable over its keys, so its values would be discarded - "
+            f"pass the names as a list: {list(value)!r}."
+        )
+    if not isinstance(value, Sequence):
+        return (
+            f"{context}: {param} must be a list of names, got {type(value).__name__} "
+            f"({value!r}). Pass a list or tuple; a one-shot iterator cannot be used "
+            f"because the value is read more than once."
+        )
+    for i, entry in enumerate(value):
+        if not isinstance(entry, str):
+            return f"{context}: {param}[{i}] must be a name (str), got {type(entry).__name__} ({entry!r})."
+        if not entry.strip():
+            return f"{context}: {param}[{i}] must be a non-blank name, got {entry!r}."
+    seen: set[str] = set()
+    repeated: set[str] = set()
+    for entry in value:
+        if entry in seen:
+            repeated.add(entry)
+        seen.add(entry)
+    if repeated:
+        return (
+            f"{context}: {param} must not repeat a name, got {list(value)!r} "
+            f"({sorted(repeated)!r} appears more than once)."
+        )
     return None
 
 

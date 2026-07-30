@@ -473,6 +473,28 @@ you declared with `obs_rename_override` so each declared feature is a rename
 target. `image_keys` is a MolmoAct2 knob and is inert for other policy types, so
 this check applies to the MolmoAct2 load path only.
 
+#### `image_keys` is a list of names, not a name
+
+A single key still has to be a one-element list. `str` is iterable, so a bare
+string is read one name per character - `image_keys="wrist"` would declare five
+features named `w`, `r`, `i`, `s` and `t` - and nothing downstream can tell that
+apart from a deliberate five-entry list. Passing one is refused, with the reading
+it would have produced and the list to pass instead:
+
+```
+LerobotLocalPolicy: image_keys must be a list of names, not a single string, got
+'wrist'. A string is iterable per character, so this would be read as
+['w', 'r', 'i', 's', 't'] (5 name(s)). Wrap it in a list: ['wrist'].
+```
+
+A mapping is refused for the mirror-image reason (it iterates over its keys, so
+its values would be dropped), as is a non-string entry, a blank entry, and a
+repeated one - a duplicate collapses in the feature dict, declaring fewer
+features than asked for. `None` and `[]` keep their meaning of "not supplied",
+so the list is derived from the embodiment as usual. The same rule applies to the
+VERA provider's `image_keys`, which names observation cameras rather than model
+features, and the refusal happens before the weight download or server handshake.
+
 ### Single camera with no embodiment
 
 You do not need an embodiment at all for a single-camera checkpoint. Declare the

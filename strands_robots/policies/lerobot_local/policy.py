@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import torch
 
+from ...utils import name_list_error
 from .. import Policy, align_action_values, chunk_count_error
 from .embodiment import ZeroActionMonitor, diagnose_action_dim, hardware_pos_keys, state_key_remedy
 from .processor import ProcessorBridge
@@ -207,7 +208,10 @@ def _undeclared_image_feature_error(
     ):
         return None
 
-    declared = _molmoact2.derive_image_keys(list(image_keys), policy_config.get("embodiment"))
+    # Forwarded verbatim rather than through list(): derive_image_keys owns the
+    # shape contract, and coercing here first would split a bare string into
+    # per-character names before it can be reported as one.
+    declared = _molmoact2.derive_image_keys(image_keys, policy_config.get("embodiment"))
     undeclared = [t for t in targets if t not in set(declared)]
     if not undeclared:
         return None
@@ -527,6 +531,11 @@ class LerobotLocalPolicy(Policy):
         # dedicated load path (see lerobot_local.molmoact2). These are inert
         # for every other policy type.
         self._molmoact2_norm_tag = norm_tag
+        # Refused here rather than at first use so a shape mistake is reported
+        # before the multi-minute weight download below, and before a bare
+        # string is read one feature per character.
+        if image_keys and (err := name_list_error(image_keys, "image_keys", "LerobotLocalPolicy")):
+            raise ValueError(err)
         self._molmoact2_image_keys = image_keys
         self._molmoact2_inference_action_mode = inference_action_mode
 
@@ -1404,15 +1413,21 @@ class LerobotLocalPolicy(Policy):
         or when the embodiment name/spec cannot be resolved (``create_policy``
         surfaces that error authoritatively).
 
+        The parameter-shape guards below (``actions_per_step``, ``image_keys``)
+        run before that early-return, because both are honored whether or not an
+        embodiment is configured.
+
         Args:
             observation_keys: Runtime observation keys (joint + camera names).
             **policy_config: Provider kwargs (``embodiment``,
                 ``obs_rename_override``, ...).
 
         Raises:
-            ValueError: When a model image feature has no satisfiable source
-                camera key in ``observation_keys``, or when an explicit
-                ``image_keys`` withholds a feature the embodiment feeds.
+            ValueError: When ``actions_per_step`` is not a positive whole number,
+                when ``image_keys`` is not a list of distinct non-blank names,
+                when a model image feature has no satisfiable source camera key
+                in ``observation_keys``, or when an explicit ``image_keys``
+                withholds a feature the embodiment feeds.
         """
         # Checked before the embodiment early-return below, so a chunk count
         # the consumer cannot execute is refused for every configuration rather
@@ -1424,6 +1439,14 @@ class LerobotLocalPolicy(Policy):
             error = chunk_count_error(policy_config["actions_per_step"], "actions_per_step", "lerobot_local")
             if error:
                 raise ValueError(error)
+
+        # Same reasoning for the image_keys shape: it is honored whether or not
+        # an embodiment is configured, so a shape mistake must be refused on
+        # both paths. Ordered after the chunk-count guard so the parameter error
+        # that landed first keeps its existing precedence.
+        supplied_image_keys = policy_config.get("image_keys")
+        if supplied_image_keys and (err := name_list_error(supplied_image_keys, "image_keys", "preflight")):
+            raise ValueError(err)
 
         spec = policy_config.get("embodiment")
         if spec is None:

@@ -43,7 +43,7 @@ import json
 import logging
 from typing import Any
 
-from ...utils import require_optionals
+from ...utils import name_list_error, require_optionals
 
 logger = logging.getLogger(__name__)
 
@@ -239,8 +239,20 @@ def derive_image_keys(image_keys: list[str] | None, embodiment_spec: Any | None)
 
     Returns:
         Non-empty list of ``observation.images.*`` feature keys.
+
+    Raises:
+        ValueError: When ``image_keys`` is supplied but is not a list of
+            distinct non-blank names - most often a single key passed as a bare
+            string, which is iterable per character.
     """
     if image_keys:
+        # The single funnel for the model feature list: build_policy and the
+        # pre-flight converse check (_undeclared_image_feature_error) both route
+        # here, so validating the shape once covers the load path and the check
+        # that reports on it. Without this a bare string reaches list() and is
+        # read one feature per character.
+        if err := name_list_error(image_keys, "image_keys", "molmoact2"):
+            raise ValueError(err)
         return list(image_keys)
 
     targets = _embodiment_image_targets(embodiment_spec)
