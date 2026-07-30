@@ -232,6 +232,46 @@ def randomization_seed_error(value: Any, context: str) -> str | None:
     return None
 
 
+_NON_FINITE_ACTION_REASON = (
+    "A non-finite value is not clamped into the actuator's control range - the "
+    "integrator has no usable target for it. On MuJoCo the physics step is "
+    "discarded and every robot in the scene is reset to its initial pose, so no "
+    "robot follows the command and the reset is not scoped to the commanded "
+    "actuator or robot."
+)
+
+
+def _non_finite_action_error(label: str, value: Any) -> dict[str, Any] | None:
+    """Structured error when an already-coerced action value is not finite.
+
+    ``nan``/``inf`` are valid ``float`` objects, so a scalar-coercion check
+    admits them and they reach the actuator command unexamined. The sibling
+    state writers (``set_joint_positions`` / ``set_joint_velocities``) already
+    refuse a non-finite value; this is the same rule for the actuator-command
+    path, applied to both accepted action shapes so a mapping value and a vector
+    entry cannot diverge.
+
+    Args:
+        label: How to name the offending element in the message - the caller
+            supplies it because a mapping names a key while a vector names a
+            position and the actuator key it binds to.
+        value: The value, already confirmed to coerce to a scalar ``float`` by
+            the caller (so the coercion here cannot raise).
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict, or ``None`` when the
+        value is finite and therefore usable.
+    """
+    if math.isfinite(float(value)):
+        return None
+    return {
+        "status": "error",
+        "content": [
+            {"text": (f"send_action: {label} must be finite (no nan/inf), got {value!r}. {_NON_FINITE_ACTION_REASON}")}
+        ],
+    }
+
+
 class SimEngine(ABC):
     """Abstract base class for simulation engines.
 
@@ -810,6 +850,22 @@ class SimEngine(ABC):
         error rather than raised as an unhandled ``TypeError`` deep in the
         actuator-application loop.
 
+        Every value must additionally be **finite**. ``nan``/``inf`` are valid
+        ``float`` objects, so the scalar-coercion check above admits them and they
+        reach the actuator command unexamined. A non-finite command is not clamped
+        into the actuator's range: MuJoCo finds the resulting non-finite ``qacc``,
+        discards the step and resets the world to its initial pose - on every
+        substep, and for *every* robot in the scene rather than only the commanded
+        one - while ``send_action`` still reports success, so a rollout recording
+        such a step writes a trajectory no robot followed. An ``inf`` is instead
+        clamped into ``ctrlrange``, i.e. silently rewritten into a full-travel
+        command. The sibling state writers (:meth:`set_joint_positions` /
+        :meth:`set_joint_velocities`) already refuse a non-finite value, so this
+        holds the actuator-command path to the same rule. The domain is finiteness
+        alone: a numeric string is an accepted spelling of a scalar here, and a
+        finite magnitude outside ``ctrlrange`` is a units question already
+        surfaced by the clamp warning.
+
         Args:
             action: A ``{name: value}`` mapping, or an ordered numeric vector
                 whose entries correspond to ``robot_action_keys(robot_name)``.
@@ -866,6 +922,8 @@ class SimEngine(ABC):
                             }
                         ],
                     }
+                if error := _non_finite_action_error(f"action value for key '{key}'", value):
+                    return None, error
                 normalized[key] = value
             return normalized, None
 
@@ -909,7 +967,12 @@ class SimEngine(ABC):
                     }
                 ],
             }
-        return {name: value for name, value in zip(action_keys, values)}, None
+        bound: dict[str, Any] = {}
+        for idx, (name, value) in enumerate(zip(action_keys, values)):
+            if error := _non_finite_action_error(f"action vector entry {idx} ('{name}')", value):
+                return None, error
+            bound[name] = value
+        return bound, None
 
     @abstractmethod
     def send_action(
