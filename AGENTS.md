@@ -175,6 +175,29 @@ hatch run format            # ruff check --fix, ruff format
    about meaning. This is cheap: the check that would have caught the above was
    one `pytest` invocation on two files.
 
+   Read that run as a **delta, not an absolute**. The environment you verify in
+   is almost never the one CI uses, and a partial one fails tests for reasons
+   that have nothing to do with the merge. Composing #1786 and #1804 - both
+   approved, both `CLEAN`, both editing `simulation/predicates.py`, neither ever
+   compiled with the other - the affected suite reported **376 failed, 34
+   errors** on the composition, which on its own reads as a broken merge and a
+   reason to stop. The same command on the unmerged base reported the same
+   **376 failed, 34 errors**, and 4185 passed against the composition's 4229:
+   every failure pre-existed (a hosted runner has no GPU and only software
+   OSMesa, so the rendering tests fail there whatever the diff), and the whole
+   effect of the merge was **+44 passes** - exactly the 24 + 20 tests the two
+   branches add. The reading matters in both directions: an absolute count can
+   invent a regression and cost a good merge, and it can equally hide a real one
+   inside the noise. Run the same command on the base *before* you read the
+   number, and compare the two.
+
+   Then confirm the tree you verified is the tree that landed -
+   `git diff --name-only <local-composition> origin/main -- strands_robots/ tests/`
+   should be empty. Squash rewrites the commits, so nothing but that equivalence
+   ties your local run to `main`; and on a batch, where only the tip's
+   `call-test-lint` survives the concurrency group above, it is the sole evidence
+   the intermediate commits were ever compiled together.
+
    Fixing forward beats reverting here - the two production changes were both
    correct, and only an assertion and its justification were stale. Prefer a
    narrow follow-up that re-pins the invalidated premise over reverting a
