@@ -327,6 +327,38 @@ def process_rss_mb() -> float | None:
         return None
 
 
+def is_boolean(value: Any) -> bool:
+    """Return True when ``value`` is a python or a numpy boolean.
+
+    The single boolean predicate behind every numeric domain in this module and
+    the runtime writers that reuse them. Two properties make a boolean worth its
+    own check rather than letting the numeric coercion decide:
+
+    * ``bool`` is an ``int`` subclass, so ``float(True)`` is ``1.0`` and a
+      boolean survives every ``float()`` / ``numbers.Real`` gate as a silent
+      ``1.0`` - one radian, one metre, one Newton, depending on where it landed.
+    * ``numpy.bool_`` is *not* a ``bool`` subclass, so ``isinstance(value, bool)``
+      alone misses the boolean a policy or a comparison produces
+      (``gripper > 0.5``). It is also not registered as ``numbers.Real``, which
+      is why the vector domains here reject it through their ``numbers.Real``
+      check; a writer that coerces with a bare ``float()`` has no such backstop
+      and needs this predicate.
+
+    The ``.item()`` unwrap covers a numpy boolean scalar and a 0-d boolean array
+    while leaving every numeric scalar - and every multi-element array, which
+    has no single item - reported as non-boolean.
+    """
+    if isinstance(value, bool):
+        return True
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return isinstance(item(), bool)
+        except (TypeError, ValueError):  # a multi-element array has no single item
+            return False
+    return False
+
+
 def positive_finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive finite number.
 

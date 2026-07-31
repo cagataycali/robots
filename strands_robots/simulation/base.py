@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 # signature as a *string* annotation; ``from __future__ import
 # annotations`` (already in effect) makes that a no-op at runtime.
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
-from strands_robots.utils import positive_count_error, positive_finite_number_error
+from strands_robots.utils import is_boolean, positive_count_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -311,27 +311,6 @@ def _unwrap_single_element_action_value(value: Any) -> Any:
     return value[0] if length == 1 else value
 
 
-def _is_boolean(value: Any) -> bool:
-    """Return True when ``value`` is a python or a numpy boolean.
-
-    ``numpy.bool_`` is not a ``bool`` subclass, so ``isinstance(value, bool)``
-    alone misses the boolean a policy produces from a comparison
-    (``gripper > 0.5``). Unwrapping through ``.item()`` first - the mechanism
-    :func:`strands_robots.mesh.security.validate_input_frame` already uses for
-    the same gate - yields a python ``bool`` for a numpy boolean scalar or 0-d
-    array while leaving every numeric scalar reported as non-boolean.
-    """
-    if isinstance(value, bool):
-        return True
-    item = getattr(value, "item", None)
-    if callable(item):
-        try:
-            return isinstance(item(), bool)
-        except (TypeError, ValueError):  # a multi-element array has no single item
-            return False
-    return False
-
-
 def _boolean_action_error(label: str, value: Any) -> dict[str, Any] | None:
     """Structured error when an action value is a python or numpy boolean.
 
@@ -356,7 +335,7 @@ def _boolean_action_error(label: str, value: Any) -> dict[str, Any] | None:
         A structured ``{"status": "error", ...}`` dict, or ``None`` when the
         value is not a boolean and is therefore usable as a command.
     """
-    if not _is_boolean(value):
+    if not is_boolean(value):
         return None
     return {
         "status": "error",

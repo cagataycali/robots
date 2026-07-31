@@ -108,6 +108,18 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `get_energy` | - |
 | `get_sensor_data` | `sensor_name` (optional) |
 
+!!! note "Numeric domain of the state writers"
+    `set_joint_positions`, `set_joint_velocities` and the `apply_force`
+    vectors take finite real numbers - a python or NumPy scalar - and refuse a
+    boolean. `float(True)` is `1.0`, so a `True` would be written as 1 radian,
+    1 rad/s or 1 N and the call would report success; `nan` / `inf` are refused
+    because `mj_forward` propagates a `nan` across the whole kinematic state
+    and an `inf` velocity blows up the integrator. Each write is
+    all-or-nothing, so a refused value leaves `qpos` / `qvel` and every latched
+    wrench untouched. This is the same domain the scene-construction vectors
+    (`add_object`, `add_camera`) and [`send_action`](#actions) enforce - one
+    library, one answer to "is this a usable number".
+
 !!! tip "Discover the sim-state surface"
     `get_state` plus the checkpoint (`save_state` / `load_state`) and
     direct pose-setting (`set_joint_positions` / `set_joint_velocities`)
