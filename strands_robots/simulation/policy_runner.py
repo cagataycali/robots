@@ -55,7 +55,6 @@ if TYPE_CHECKING:
     from strands_robots.simulation.benchmark import BenchmarkProtocol
 
 from strands_robots.simulation.models import TrajectoryStep
-from strands_robots.simulation.predicates import make_predicate
 from strands_robots.simulation.safe_output import validate_output_path, video_sandbox_args
 
 logger = logging.getLogger(__name__)
@@ -2973,6 +2972,17 @@ class PolicyRunner:
             # were the payload, so it never saw a real backend's envelope and
             # scored every episode a failure - while still working against a
             # test double that returns the bare mapping.
+            #
+            # Imported inside the method, not at module level: base.py imports
+            # this module at import time and predicates.py imports base under
+            # TYPE_CHECKING, so a module-level edge from here to predicates
+            # closes a loop that CodeQL's py/unsafe-cyclic-import walks - it
+            # does not honour the guard (see the #191 note on base.py's import
+            # of this module). No runtime cycle exists either way, and base.py
+            # reaches into predicates the same way from
+            # ``_stop_when_unresolved_error``.
+            from strands_robots.simulation.predicates import make_predicate
+
             contact_any = make_predicate("contact_any")
 
             def _contact_check(_obs: dict[str, Any]) -> bool:
