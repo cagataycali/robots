@@ -50,6 +50,8 @@ from typing import Any
 
 from strands import tool
 
+from strands_robots.tools._numeric_options import numeric_option_error
+
 logger = logging.getLogger(__name__)
 
 # Graph names: same allowlist posture as use_ros. Types are ROS1 two-segment.
@@ -64,6 +66,21 @@ _INSTALL_HINT = (
 )
 
 _ACTIONS = frozenset({"status", "list_topics", "list_services", "echo", "publish", "service_call"})
+
+# Which numeric options each action actually consumes. Unlike the rclpy
+# transport, whose graph introspection reads no caller budget, EVERY action here
+# begins with a timeout-bounded WebSocket dial, so every action reads
+# ``timeout``. The guard below is driven by this table rather than validating
+# the whole signature unconditionally, so a caller is never refused for a value
+# the requested action never looks at.
+_ACTION_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
+    "status": ("timeout",),
+    "list_topics": ("timeout",),
+    "list_services": ("timeout",),
+    "echo": ("timeout", "count"),
+    "service_call": ("timeout",),
+    "publish": ("timeout", "count", "rate"),
+}
 
 
 class _RosbridgeBackend:
@@ -229,9 +246,15 @@ def use_rosbridge(
         type: ROS1 two-segment interface type, e.g. ``geometry_msgs/Twist``.
             Auto-resolved for ``echo`` when omitted.
         fields: JSON field dict (``publish`` message / ``service_call`` request).
-        timeout: Seconds for connection, sample collection, or a service call.
-        count: Messages to echo or publish.
-        rate: Publish rate in Hz.
+        timeout: Seconds for the WebSocket dial, sample collection, or a
+            service call. A positive finite number of seconds; every action
+            dials the bridge, so every action reads it.
+        count: Messages to echo or publish. A positive integer; it is consumed
+            as a ``range()`` bound, so ``0`` publishes nothing and a float or a
+            numeric string cannot be honored.
+        rate: Publish rate in Hz. A positive finite number - the inter-message
+            period is ``1 / rate``, so ``0``, a negative value, ``nan`` and
+            ``inf`` all leave the burst unthrottled rather than paced.
 
     Returns:
         A Strands tool result dict ``{"status": ..., "content": [{"text": ...}]}``.
@@ -251,6 +274,14 @@ def use_rosbridge(
 
     if action not in _ACTIONS:
         return _err(f"unknown action: {action}")
+
+    # Numeric options are checked here, alongside the names and ahead of the
+    # backend probe, so the same caller mistake is reported identically whether
+    # or not roslibpy is installed - and so a refusal happens before the
+    # WebSocket is dialed and before a publisher is advertised.
+    numeric_error = numeric_option_error(action, _ACTION_NUMERIC_OPTIONS, timeout=timeout, count=count, rate=rate)
+    if numeric_error:
+        return _err(numeric_error)
 
     if action == "status":
         if not _backend.available():
@@ -278,8 +309,6 @@ def use_rosbridge(
             if action == "echo":
                 if not topic:
                     return _err("echo requires topic")
-                if count < 1:
-                    return _err("echo requires count >= 1")
                 msg_type = type or _resolve_topic_type(ros, topic, timeout)
                 if not msg_type:
                     return _err(f"cannot resolve type for {topic}; pass type=pkg/Name")
@@ -303,8 +332,6 @@ def use_rosbridge(
             if action == "publish":
                 if not topic or not type:
                     return _err("publish requires topic and type")
-                if count < 1:
-                    return _err("publish requires count >= 1")
                 _publish(ros, topic, type, fields, count, rate)
                 return _ok(f"published {count} message(s) to {topic}")
 
