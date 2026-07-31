@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from strands_robots.simulation.benchmark import BenchmarkProtocol
 
 from strands_robots.simulation.models import TrajectoryStep
+from strands_robots.simulation.predicates import make_predicate
 from strands_robots.simulation.safe_output import validate_output_path, video_sandbox_args
 
 logger = logging.getLogger(__name__)
@@ -2967,25 +2968,15 @@ class PolicyRunner:
             return success_fn
         if success_fn == "contact":
             sim = self.sim
+            # Share the DSL's reader instead of keeping a second one. The
+            # inline copy this replaces indexed the engine result as if it
+            # were the payload, so it never saw a real backend's envelope and
+            # scored every episode a failure - while still working against a
+            # test double that returns the bare mapping.
+            contact_any = make_predicate("contact_any")
 
             def _contact_check(_obs: dict[str, Any]) -> bool:
-                get_contacts = getattr(sim, "get_contacts", None)
-                if get_contacts is None:
-                    return False
-                try:
-                    result = get_contacts()
-                except NotImplementedError:
-                    return False
-                except Exception:
-                    return False
-                # Accept either {"contacts": [...]} or {"n_contacts": int}
-                if isinstance(result, dict):
-                    if result.get("n_contacts", 0) > 0:
-                        return True
-                    contacts = result.get("contacts")
-                    if isinstance(contacts, list) and contacts:
-                        return True
-                return False
+                return bool(contact_any(sim))
 
             return _contact_check
         raise ValueError(f"Unknown success_fn string: {success_fn!r}")

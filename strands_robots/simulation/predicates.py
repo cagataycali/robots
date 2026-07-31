@@ -124,9 +124,21 @@ def _reset_resolution_warnings() -> None:
 
 
 def _extract_json(result: dict[str, Any] | None) -> dict[str, Any]:
-    """Return the ``json`` content block payload, or ``{}`` if absent."""
+    """Return a backend result's payload mapping, or ``{}`` if there is none.
+
+    Every in-tree backend returns the agent-tool envelope, so the payload is
+    the ``json`` content block -- see
+    :meth:`strands_robots.simulation.base.SimEngine.get_contacts` for the
+    shape. A result that carries no ``content`` at all is not an envelope, so
+    the mapping itself is the payload: a minimal engine can return a plain
+    reading without wrapping it, and every predicate reads both shapes the
+    same way instead of each one guessing.
+    """
     if not isinstance(result, dict):
         return {}
+    if "content" not in result:
+        # Not an envelope - the mapping is the payload.
+        return dict(result)
     for block in result.get("content", []) or []:
         if isinstance(block, dict):
             payload = block.get("json")
