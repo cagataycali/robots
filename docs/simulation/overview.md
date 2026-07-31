@@ -108,6 +108,8 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `get_energy` | - |
 | `get_sensor_data` | `sensor_name` (optional) |
 
+Every numeric argument these writers take must be a finite number, and must not be a boolean. `nan` / `inf` are refused because they reach a MuJoCo buffer verbatim and poison the solver (a `nan` in `qpos` propagates across the whole kinematic state on the next `mj_forward`) while the call still reports success. A `bool` (or `numpy.bool_`) is refused because `float(True)` is `1.0`: a 1-radian joint target, a 1 N force component, a fully saturated colour channel, a 1 m/s^2 gravity axis - a quantity nobody asked for, reported as applied. This is the same domain the scene-construction vectors (`add_object`, `move_object`, `add_camera`) and the agent-tool router already enforce, so a value is accepted or refused identically whichever entry point it arrives through. A refusal is all-or-nothing: the model is left exactly as it was.
+
 !!! tip "Discover the sim-state surface"
     `get_state` plus the checkpoint (`save_state` / `load_state`) and
     direct pose-setting (`set_joint_positions` / `set_joint_velocities`)

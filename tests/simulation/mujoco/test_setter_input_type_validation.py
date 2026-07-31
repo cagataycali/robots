@@ -93,14 +93,25 @@ class TestSetGravityNumpyScalar:
         assert res["status"] == "success"
         assert list(sim_with_world._world._model.opt.gravity) == [0.0, 0.0, -3.7]
 
-    def test_numpy_bool_scalar_still_rejected(self, sim_with_world):
-        """``np.bool_`` is not ``numbers.Real`` and has no ``len()`` -- it stays
-        refused with a structured error rather than becoming a 1.0 z-gravity."""
+    def test_a_boolean_scalar_is_rejected_in_either_spelling(self, sim_with_world):
+        """A boolean never becomes a 1.0 z-gravity, whichever spelling it arrives as.
+
+        ``np.bool_`` used to be refused only by accident: it is not
+        ``numbers.Real``, so it missed the scalar branch and then failed on
+        ``len()`` with a message about a 3-element list. That accident covered
+        one spelling and not the other -- a Python ``bool`` *is* an ``int``
+        subclass, so it satisfied ``numbers.Real`` and was installed as a
+        1.0 m/s^2 z-gravity under a success result. Both are now refused for the
+        stated reason, so the message names the value rather than an incidental
+        missing ``len()``.
+        """
         import numpy as np
 
-        res = sim_with_world.set_gravity(np.bool_(True))
-        assert res["status"] == "error"
-        assert "numbers" in res["content"][0]["text"]
+        for value in (np.bool_(True), True, np.True_, np.array(True)):
+            res = sim_with_world.set_gravity(value)
+            assert res["status"] == "error", f"{value!r} was accepted"
+            assert "must be a number" in res["content"][0]["text"]
+            assert list(sim_with_world._world._model.opt.gravity) != [0.0, 0.0, 1.0]
 
 
 class TestSetGeomPropertiesRejectsInvalid:

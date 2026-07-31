@@ -327,6 +327,42 @@ def process_rss_mb() -> float | None:
         return None
 
 
+def is_boolean(value: Any) -> bool:
+    """Return True when ``value`` is a python or a numpy boolean.
+
+    Shared predicate for the one rule every numeric surface in this package
+    enforces: a boolean is not a number. ``bool`` is an ``int`` subclass and
+    ``numpy.bool_`` coerces identically, so ``float(value)`` and a
+    :class:`numbers.Real` check each admit one of the two spellings - which is
+    how a ``True`` reaches a physics buffer as a silent ``1.0``. Deciding the
+    question once means the scalar domains below, the simulation writers and the
+    teleop wire validator cannot disagree about what counts as a boolean.
+
+    ``numpy.bool_`` is not a ``bool`` subclass, so ``isinstance(value, bool)``
+    alone misses the boolean a policy produces from a comparison
+    (``gripper > 0.5``). Unwrapping through ``.item()`` first - the mechanism
+    :func:`strands_robots.mesh.security.validate_input_frame` already uses for
+    the same gate - yields a python ``bool`` for a numpy boolean scalar or 0-d
+    array while leaving every numeric scalar reported as non-boolean.
+
+    Args:
+        value: Any caller-supplied value.
+
+    Returns:
+        ``True`` for ``bool``, ``numpy.bool_`` and a 0-d boolean array;
+        ``False`` for every real number and for non-numeric junk.
+    """
+    if isinstance(value, bool):
+        return True
+    item = getattr(value, "item", None)
+    if callable(item):
+        try:
+            return isinstance(item(), bool)
+        except (TypeError, ValueError):  # a multi-element array has no single item
+            return False
+    return False
+
+
 def positive_finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive finite number.
 

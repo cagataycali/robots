@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 # signature as a *string* annotation; ``from __future__ import
 # annotations`` (already in effect) makes that a no-op at runtime.
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
-from strands_robots.utils import positive_count_error, positive_finite_number_error
+from strands_robots.utils import is_boolean, positive_count_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -311,27 +311,6 @@ def _unwrap_single_element_action_value(value: Any) -> Any:
     return value[0] if length == 1 else value
 
 
-def _is_boolean(value: Any) -> bool:
-    """Return True when ``value`` is a python or a numpy boolean.
-
-    ``numpy.bool_`` is not a ``bool`` subclass, so ``isinstance(value, bool)``
-    alone misses the boolean a policy produces from a comparison
-    (``gripper > 0.5``). Unwrapping through ``.item()`` first - the mechanism
-    :func:`strands_robots.mesh.security.validate_input_frame` already uses for
-    the same gate - yields a python ``bool`` for a numpy boolean scalar or 0-d
-    array while leaving every numeric scalar reported as non-boolean.
-    """
-    if isinstance(value, bool):
-        return True
-    item = getattr(value, "item", None)
-    if callable(item):
-        try:
-            return isinstance(item(), bool)
-        except (TypeError, ValueError):  # a multi-element array has no single item
-            return False
-    return False
-
-
 def _boolean_action_error(label: str, value: Any) -> dict[str, Any] | None:
     """Structured error when an action value is a python or numpy boolean.
 
@@ -356,7 +335,7 @@ def _boolean_action_error(label: str, value: Any) -> dict[str, Any] | None:
         A structured ``{"status": "error", ...}`` dict, or ``None`` when the
         value is not a boolean and is therefore usable as a command.
     """
-    if not _is_boolean(value):
+    if not is_boolean(value):
         return None
     return {
         "status": "error",
@@ -1507,6 +1486,9 @@ class SimEngine(ABC):
             gravity: A 3-element ``[x, y, z]`` sequence, or a real scalar taken
                 as the z-component (``[0, 0, z]``, matching
                 :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.set_gravity`).
+                A boolean is refused in either form: it is an ``int`` subclass, so
+                it would otherwise be installed as a 1.0/0.0 m/s^2 acceleration
+                under a success result.
             method: Public method name, used to prefix the error message.
             param: Parameter name to quote in the message.
 
@@ -1518,6 +1500,16 @@ class SimEngine(ABC):
         # computed as a NumPy scalar (np.float32 / np.int64) is treated like a
         # plain float. A NumPy array is not numbers.Real, so it still takes the
         # vector path below.
+        # A boolean is an ``int`` subclass, so it satisfies ``numbers.Real``
+        # and would be installed as a 1.0/0.0 m/s^2 acceleration. Refused for
+        # the reason :func:`strands_robots.utils.is_boolean` records: no
+        # numeric surface in this package treats a boolean as a number, and
+        # the scene-construction vectors already refuse one.
+        if is_boolean(gravity):
+            return None, {
+                "status": "error",
+                "content": [{"text": f"{method}: '{param}' must be a number, got {gravity!r}"}],
+            }
         if isinstance(gravity, numbers.Real):
             components = [0.0, 0.0, float(gravity)]
         else:
@@ -1529,6 +1521,11 @@ class SimEngine(ABC):
                         "content": [
                             {"text": f"{method}: '{param}' must be a 3-element list [x,y,z], got {len(vector)}"}
                         ],
+                    }
+                if any(is_boolean(g) for g in vector):
+                    return None, {
+                        "status": "error",
+                        "content": [{"text": f"{method}: '{param}' elements must be numbers, got {list(vector)!r}"}],
                     }
                 components = [float(g) for g in vector]
             except (TypeError, ValueError) as e:

@@ -28,9 +28,9 @@ import pytest
 
 from strands_robots.simulation.base import (
     SimEngine,
-    _is_boolean,
     _unwrap_single_element_action_value,
 )
+from strands_robots.utils import is_boolean
 
 pytest.importorskip("mujoco")
 
@@ -246,7 +246,7 @@ class TestBooleanPredicate:
         "value", [True, False, np.True_, np.bool_(False), np.array(True)], ids=["True", "False", "np", "np2", "0d"]
     )
     def test_boolean_values_are_reported_as_boolean(self, value: Any) -> None:
-        assert _is_boolean(value) is True
+        assert is_boolean(value) is True
 
     @pytest.mark.parametrize(
         "value",
@@ -254,7 +254,7 @@ class TestBooleanPredicate:
         ids=["0", "1", "0.0", "1.0", "npf", "npi", "npu", "str", "list", "arr", "None"],
     )
     def test_non_boolean_values_are_not_reported_as_boolean(self, value: Any) -> None:
-        assert _is_boolean(value) is False
+        assert is_boolean(value) is False
 
 
 class TestWireAndLocalDomainsAgreeOnBooleans:
