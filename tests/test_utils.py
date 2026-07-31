@@ -420,3 +420,40 @@ class TestLerobotVersion:
         monkeypatch.setattr(md, "version", lambda _name: "0.6.1")
 
         assert lerobot_version() == "0.6.1"
+
+    def test_an_unimportable_metadata_module_reads_as_unknown(self, monkeypatch):
+        """The other documented failure - the import itself - must also degrade.
+
+        ``importlib.metadata`` is stdlib, so this handler is the defensive half.
+        A handler that cannot run is not a defence though: naming
+        ``PackageNotFoundError`` beside ``ImportError`` bound it as a local the
+        failing import never reaches, so evaluating the handler raised
+        ``UnboundLocalError`` - from a function documented never to raise, and
+        exactly on the branch the second name appeared to cover.
+        """
+        import builtins
+
+        from strands_robots.utils import lerobot_version
+
+        real_import = builtins.__import__
+
+        def _no_metadata(name, *args, **kwargs):
+            if name == "importlib.metadata":
+                raise ImportError(f"No module named {name!r}")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", _no_metadata)
+
+        assert lerobot_version() == "unknown"
+
+    def test_an_unresolvable_distribution_is_already_an_import_error(self):
+        """The single handler rests on a stdlib hierarchy, so assert it.
+
+        ``version`` raises ``PackageNotFoundError`` and the one-name handler
+        catches it as an ``ImportError``. Were a future CPython to stop deriving
+        it from ``ModuleNotFoundError``, that handler would silently stop
+        catching it, so the premise is pinned here rather than left to prose.
+        """
+        import importlib.metadata as md
+
+        assert issubclass(md.PackageNotFoundError, ImportError)

@@ -120,12 +120,20 @@ def lerobot_version() -> str:
     (:mod:`strands_robots.dataset_recorder` and
     :mod:`strands_robots.streaming_dataset`) and must not report the version
     differently.
+
+    ``except ImportError`` is deliberately the whole handler. ``version`` signals
+    an unresolvable distribution with ``PackageNotFoundError``, which subclasses
+    ``ModuleNotFoundError`` and so already *is* an ``ImportError``. Naming it in
+    the handler as well would bind it as a local that the ``import`` above may
+    never reach, and evaluating the handler would then raise
+    ``UnboundLocalError`` out of a function documented never to raise - on
+    precisely the failure the second name looked like it was covering.
     """
     try:
-        from importlib.metadata import PackageNotFoundError, version
+        from importlib.metadata import version
 
         return version("lerobot")
-    except (ImportError, PackageNotFoundError):
+    except ImportError:
         return "unknown"
 
 

@@ -26,6 +26,14 @@ pandas/numpy binary conflict (no install fixes it). The same distinction was
 already drawn for the policy-factory import by
 `strands_robots.policies.lerobot_local.molmoact2._factory_import_error`.
 
+The version string those messages quote comes from a new public
+`utils.lerobot_version()`, promoted out of the streaming-dataset reader so the
+two modules that name it cannot report it differently. Its handler catches
+`ImportError` alone: `PackageNotFoundError` subclasses `ModuleNotFoundError` and
+so is already one, and naming it as well bound it as a local the failing import
+never reaches - which raised `UnboundLocalError` out of a best-effort helper if
+`importlib.metadata` could not be imported.
+
 The three backends each keep their own plain-MP4 fallback advice and report the
 reason verbatim. A successful probe is still cached and a failed one still
 re-attempted, and a healthy install records exactly as before.
