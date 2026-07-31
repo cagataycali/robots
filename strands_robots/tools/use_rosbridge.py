@@ -123,6 +123,25 @@ class _RosbridgeBackend:
         """
         import roslibpy
 
+        # The client builds its WebSocket URL before it dials, and that builder
+        # gates the port on type IDENTITY rather than isinstance:
+        #
+        #     assert port is None or (type(port) == int and port in range(0, 65535))
+        #         - autobahn/websocket/util.py:85 (autobahn 26.7.1)
+        #
+        # So every int SUBCLASS is refused at every value, including the default
+        # 9090 - an IntEnum read from a settings module is the realistic case -
+        # and the refusal is a bare AssertionError with an empty message, raised
+        # from the constructor below and therefore outside the try that converts
+        # a failed dial. The value is legal and dials exactly as the equal plain
+        # int does, so it is normalized here rather than refused: carrying it is
+        # a capability this tool already advertises through its ``port: int``.
+        # Ahead of the cache read on purpose - the key is then a plain int
+        # whatever flavour arrived, so one (host, port) is one connection
+        # regardless of which type reached it first, and the annotation on
+        # ``_connections`` is true rather than aspirational.
+        port = int(port)
+
         ros = self._connections.get((host, port))
         if ros is None:
             ros = roslibpy.Ros(host=host, port=port)
