@@ -120,12 +120,43 @@ class _RosbridgeBackend:
         Calling ros.terminate() is never an option: it stops the process-wide,
         non-restartable Twisted reactor and would break every connection in
         this process.
+
+        Raises:
+            TimeoutError: When the bridge does not answer within ``timeout``.
+            ValueError: When the WebSocket transport cannot address ``port``.
+                The port domain this tool accepts is the OS one (1-65535); the
+                transport underneath addresses a narrower range, and the value
+                it cannot carry is reported here rather than escaping as the
+                transport's own assertion.
         """
         import roslibpy
 
+        # The WebSocket URL builder underneath roslibpy gates the port with
+        # ``type(port) == int and port in range(0, 65535)``. Two values this
+        # tool accepts fail that gate. An ``int`` subclass - an ``IntEnum``
+        # read from a config, say - fails the identity check at *any* value,
+        # including 9090; normalising to a plain ``int`` is what lets it reach
+        # the wire, and the port then dials exactly as the equal plain int
+        # does. 65535 falls outside the exclusive range and is reported below.
+        port = int(port)
+
         ros = self._connections.get((host, port))
         if ros is None:
-            ros = roslibpy.Ros(host=host, port=port)
+            try:
+                ros = roslibpy.Ros(host=host, port=port)
+            except AssertionError as exc:
+                # The transport asserts its own port bound instead of raising,
+                # so the failure is translated here rather than escaping this
+                # tool's result contract. Keying off the transport's verdict
+                # rather than a hardcoded bound means a client that widens its
+                # range starts working with no change here - and it already
+                # dials this port when assertions are disabled.
+                raise ValueError(
+                    f"port {port} cannot be dialed by the rosbridge WebSocket transport: "
+                    f"its URL builder rejects the top of the 16-bit range. Use a port in "
+                    f"1-65534 ({port} is a legal TCP port that other surfaces accept, so "
+                    f"this limit is the transport's own)."
+                ) from exc
             self._connections[(host, port)] = ros
             try:
                 ros.run(timeout=timeout)
@@ -292,6 +323,11 @@ def use_rosbridge(
                 _backend.connect(host, port, timeout)
         except TimeoutError as exc:
             return _ok(f"backend: roslibpy; not connected - {exc}")
+        except ValueError as exc:
+            # An unusable port is the caller's mistake, not a bridge that is
+            # down, so it is reported as an error like every other rejected
+            # argument rather than as a reachability observation.
+            return _err(str(exc))
         return _ok(f"backend: roslibpy; connected to ws://{host}:{port}")
 
     if not _backend.available():

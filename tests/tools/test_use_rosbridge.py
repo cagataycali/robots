@@ -4,11 +4,14 @@ rosbridge is a WebSocket JSON transport (roslibpy) - pure pip, no sourced ROS
 environment. These tests run roslibpy-free: a fake ``roslibpy`` module is
 injected via ``sys.modules`` (fake Ros/Topic/Service record all traffic), so
 connection caching, every action dispatch, the validation layer, and the
-structured error contract are exercised with nothing installed.
+structured error contract are exercised with nothing installed. The single
+exception is the premise test for the double's port gate, which runs against
+real roslibpy when it happens to be installed and skips otherwise.
 """
 
 from __future__ import annotations
 
+import enum
 import sys
 import types as _types
 from typing import Any
@@ -69,6 +72,14 @@ class _FakeRos:
     scripted_messages: dict[str, list[dict[str, Any]]] = {}
 
     def __init__(self, host: str | None = None, port: int | None = None) -> None:
+        # The real client gates the port in its WebSocket URL builder with this
+        # expression (spelled with ``==`` there; ``is`` is the same test for
+        # int and equivalent under ruff's E721). Reproduced so this double is
+        # not more permissive than what it stands in for: without it, a port
+        # the transport cannot address looks perfectly usable in every test
+        # that runs through the fake, which is why nothing here noticed that
+        # 65535 and any int subclass escaped as a bare AssertionError.
+        assert port is None or (type(port) is int and port in range(0, 65535))
         self.host, self.port = host, port
         self.is_connected = False
         self.terminated = False
@@ -356,3 +367,120 @@ def test_publish_rejects_nonpositive_count(fake_roslibpy: _types.ModuleType) -> 
     result = use_rosbridge(action="publish", topic="/cmd_vel", type="geometry_msgs/Twist", count=0)
     assert result["status"] == "error"
     assert "count" in _texts(result)
+
+
+# Transport port domain -------------------------------------------------------
+
+
+class _PortEnum(enum.IntEnum):
+    """An ``int`` subclass port, as a settings module would export one."""
+
+    ROSBRIDGE = 9090
+
+
+# Every action, with the arguments it needs to reach the connect step.
+_ACTION_ARGS: dict[str, dict[str, Any]] = {
+    "status": {},
+    "list_topics": {},
+    "list_services": {},
+    "echo": {"topic": "/odom", "type": "nav_msgs/Odometry"},
+    "publish": {"topic": "/cmd_vel", "type": "geometry_msgs/Twist"},
+    "service_call": {"service": "/reset", "type": "std_srvs/Empty"},
+}
+
+
+def test_every_action_is_covered_by_the_port_domain_cases() -> None:
+    # So a seventh action cannot be added without deciding how it reports a
+    # port the transport cannot address.
+    assert set(_ACTION_ARGS) == set(rb_mod._ACTIONS)
+
+
+@pytest.mark.skipif(not __debug__, reason="the transport gates its port with an assert, which -O strips")
+def test_the_doubles_port_gate_is_the_real_transports() -> None:
+    """Pin that the gate reproduced in ``_FakeRos`` is the client's own.
+
+    Without this the behavior tests below would be asserting against invented
+    limits: the point of the two refusals is that the shipped transport really
+    cannot carry those ports.
+    """
+    roslibpy = pytest.importorskip("roslibpy", reason="the rosbridge client is an optional dependency")
+
+    # Constructing a client does not dial - that is ros.run() - so this is a
+    # pure check of the URL the transport is willing to build.
+    roslibpy.Ros(host="127.0.0.1", port=65534)
+    roslibpy.Ros(host="127.0.0.1", port=int(_PortEnum.ROSBRIDGE))
+    with pytest.raises(AssertionError):
+        roslibpy.Ros(host="127.0.0.1", port=65535)
+    with pytest.raises(AssertionError):
+        roslibpy.Ros(host="127.0.0.1", port=_PortEnum.ROSBRIDGE)
+
+
+@pytest.mark.parametrize("action", sorted(_ACTION_ARGS))
+def test_unaddressable_port_reported_through_the_envelope(action: str, fake_roslibpy: _types.ModuleType) -> None:
+    # 65535 is inside this tool's accepted domain but outside the exclusive
+    # range the transport's URL builder allows, and it used to leave every one
+    # of these actions as a bare AssertionError.
+    result = use_rosbridge(action=action, host="127.0.0.1", port=65535, timeout=0.05, **_ACTION_ARGS[action])
+    assert result["status"] == "error"
+    text = _texts(result)
+    assert "65535" in text
+    assert "cannot be dialed" in text
+    assert "1-65534" in text
+
+
+def test_refusal_names_the_transport_not_a_narrowed_domain(fake_roslibpy: _types.ModuleType) -> None:
+    # The accepted port domain is deliberately still the OS one, shared with
+    # RosbridgeRobot, the inference server CLI and the mesh session checks. So
+    # the refusal must come from the transport, not from narrowing this tool's
+    # own range to 1-65534 and disagreeing with all of them.
+    text = _texts(use_rosbridge(action="status", host="127.0.0.1", port=65535, timeout=0.05))
+    assert "invalid port" not in text
+    assert "transport" in text
+
+
+def test_unaddressable_port_caches_no_connection(fake_roslibpy: _types.ModuleType) -> None:
+    # The cache is populated after the client is built, so a refused port must
+    # leave nothing behind for a later call to find.
+    assert use_rosbridge(action="status", host="127.0.0.1", port=65535, timeout=0.05)["status"] == "error"
+    assert rb_mod._backend._connections == {}
+    assert _FakeRos.instances == []
+
+    assert use_rosbridge(action="status", host="127.0.0.1", port=9090, timeout=0.05)["status"] == "success"
+
+
+def test_int_subclass_port_reaches_the_wire_as_a_plain_int(fake_roslibpy: _types.ModuleType) -> None:
+    # The transport's gate is an identity check, so an IntEnum failed it at any
+    # value - including 9090, the default rosbridge port. It is a legal port,
+    # so it is normalized and dialed rather than refused.
+    result = use_rosbridge(action="status", host="127.0.0.1", port=_PortEnum.ROSBRIDGE, timeout=0.05)
+    assert result["status"] == "success"
+    assert "connected to ws://127.0.0.1:9090" in _texts(result)
+
+    (ros,) = _FakeRos.instances
+    assert type(ros.port) is int  # equality with 9090 held before the fix too
+    assert ros.port == 9090
+
+
+def test_highest_addressable_port_still_connects(fake_roslibpy: _types.ModuleType) -> None:
+    result = use_rosbridge(action="status", host="127.0.0.1", port=65534, timeout=0.05)
+    assert result["status"] == "success"
+    assert "connected to ws://127.0.0.1:65534" in _texts(result)
+
+
+def test_mesh_bridge_inherits_the_transport_verdict(fake_roslibpy: _types.ModuleType) -> None:
+    """RosbridgeRobot dials through this tool, so it inherits the contract.
+
+    Asserted here rather than beside the bridge because the fix is this tool's
+    and this is where the transport double lives: the mesh module's own tests
+    replace ``use_rosbridge`` with a recorder, so nothing there ever reaches a
+    client at all.
+    """
+    from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
+
+    refused = RosbridgeRobot("rover", "/cmd_vel", "/odom", host="127.0.0.1", port=65535)
+    result = refused.drive(linear=0.1, count=1)
+    assert result["status"] == "error"
+    assert "cannot be dialed" in _texts(result)
+
+    dialed = RosbridgeRobot("rover", "/cmd_vel", "/odom", host="127.0.0.1", port=_PortEnum.ROSBRIDGE)
+    assert dialed.drive(linear=0.1, count=1)["status"] == "success"

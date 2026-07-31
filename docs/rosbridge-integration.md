@@ -119,6 +119,13 @@ robot = RosbridgeRobot(
 
 All parameters are optional except `node_name`, `cmd_vel_topic`, and `odom_topic`.
 
+`port` accepts the OS range `1-65535`, the same domain as `use_rosbridge` and
+every other port check in this package. The WebSocket client underneath
+addresses `1-65534` - its URL builder rejects the top of the 16-bit range - so a
+call on port `65535` is refused with an error naming the transport instead of
+dialing. An `int` subclass, such as an `IntEnum` from a settings module, is
+accepted and dials exactly as the equal plain `int` does.
+
 ### Fleet drive contract
 
 The `drive()` method follows the strands fleet-standard contract:
