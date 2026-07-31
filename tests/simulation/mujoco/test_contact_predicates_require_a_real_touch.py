@@ -20,6 +20,10 @@ Two fixture requirements, both load-bearing for these tests: the moving body
 needs a freejoint (a static/static pair is dropped at collision time, leaving
 ``ncon == 0`` and nothing to assert), and gravity must be off, or the cube
 simply falls into real contact.
+
+The engine-backed tests additionally require the ``margin``/``gap`` semantics
+MuJoCo 3.9.0 introduced; see :data:`_GAP_SEMANTICS_MUJOCO`. The tests that only
+read the flag need no engine and run on every version the project supports.
 """
 
 from __future__ import annotations
@@ -29,7 +33,7 @@ from typing import Any
 
 import pytest
 
-pytest.importorskip("mujoco")
+mujoco = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 from strands_robots.simulation.predicates import (  # noqa: E402
@@ -58,6 +62,35 @@ _SCENE = """
 </mujoco>
 """
 
+_GAP_SEMANTICS_MUJOCO = (3, 9)
+"""First MuJoCo release whose ``margin``/``gap`` semantics this scene assumes.
+
+3.9.0 (upstream commit ``a4e49f2d``) redesigned both attributes: detection moved
+from ``dist < margin`` to ``dist < margin + gap``, and force generation from
+``dist < margin - gap`` to ``dist < margin``. A pair that is *reported yet
+carries no force* is therefore spelled differently on either side of that
+release - upstream's own migration transform is ``margin_new = margin_old -
+gap_old`` - so no single scene expresses it on both and rewriting the fixture
+cannot make it portable.
+
+Measured with the scene above:
+
+===========  =========================  =========================
+mujoco       clear (``z=0.065``)        touching (``z=0.0399``)
+===========  =========================  =========================
+3.8.1        ``ncon=0`` - no pair       ``exclude=1``, zero force
+3.9 - 3.11   ``exclude=1``, zero force  ``exclude=0``, force > 0
+===========  =========================  =========================
+
+Under the old semantics the clear scene reports nothing at all, so the premise
+"a pair is reported yet carries no force" is unreachable and the
+predicate-is-False cases would pass *vacuously*, while the touching scene is
+rejected by the solver so every predicate-is-True case fails. The project's
+bound (``mujoco>=3.2.0,<4.0.0``) still admits those releases, so these fixtures
+skip there rather than fail a suite the production code handles correctly: the
+``active`` flag agrees with zero normal force on 3.8.1 too.
+"""
+
 # 25 mm of clear air: inside the detection range, outside ``margin``.
 _CLEAR_Z = 0.065
 # 0.1 mm of penetration: the solver takes the pair and pushes back.
@@ -81,7 +114,26 @@ _PREDICATES: list[tuple[str, str, dict[str, Any]]] = [
 ]
 
 
+def _require_gap_semantics() -> None:
+    """Skip when the running engine predates the ``margin``/``gap`` redesign.
+
+    ``pytest.importorskip(..., minversion=...)`` also skips, but it reports only
+    the two version numbers - it honours ``reason`` solely when the *import*
+    fails - so the log would not say why an older engine cannot run these
+    scenes.
+    """
+    running = tuple(int(part) for part in mujoco.__version__.split(".")[:2])
+    if running < _GAP_SEMANTICS_MUJOCO:
+        wanted = ".".join(str(part) for part in _GAP_SEMANTICS_MUJOCO)
+        pytest.skip(
+            f"mujoco {mujoco.__version__} predates the margin/gap redesign of "
+            f"{wanted}: this scene's clear case reports no pair at all there, so "
+            "the premise these tests assert on is unreachable"
+        )
+
+
 def _build(tmp_path: Path, cube_z: float, name: str) -> Any:
+    _require_gap_semantics()
     scene = tmp_path / f"{name}.xml"
     scene.write_text(_SCENE.format(cube_z=cube_z))
     sim = Simulation()
