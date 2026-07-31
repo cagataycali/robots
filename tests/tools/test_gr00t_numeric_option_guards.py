@@ -44,8 +44,12 @@ UNUSABLE_PORTS: list[Any] = [0, -1, 70000, 2.7, True, "5555", None, float("nan")
 # so only a true positive ``int`` can be honored.
 # Ports every surface must accept. ``65535`` is a legal TCP port and the shared
 # owner accepts it, but autobahn's URL builder asserts ``port in range(0, 65535)``
-# before ``use_rosbridge`` can connect - a pre-existing quirk of that transport,
-# not of this domain - so the cross-surface list stops at 65534.
+# before ``use_rosbridge`` can connect - a quirk of that transport, not of this
+# domain - so the cross-surface list stops at 65534. The rosbridge surfaces now
+# refuse 65535 up front for that reason, which is a deliberate divergence from
+# the shared owner rather than a drift: it is pinned, with the transport premise
+# it rests on, in ``test_rosbridge_transport_port_limit.py``. Adding 65535 here
+# would assert the opposite of that file and fail.
 USABLE_PORTS: list[Any] = [1, 5555, 65534]
 
 UNUSABLE_STEPS: list[Any] = [0, -1, 2.7, True, "4", None, float("nan"), float("inf")]

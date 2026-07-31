@@ -35,7 +35,7 @@ from strands import tool
 from strands.types.tools import AgentTool
 
 from strands_robots.mesh.ros_bridge import _check_topic
-from strands_robots.tools.use_rosbridge import _HOST_RE, use_rosbridge
+from strands_robots.tools.use_rosbridge import _HOST_RE, _transport_port_error, use_rosbridge
 from strands_robots.utils import (
     finite_number_error,
     positive_finite_number_error,
@@ -98,6 +98,12 @@ class RosbridgeRobot:
             raise ValueError(f"invalid host: {host!r}")
         if (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
             raise ValueError(port_error)
+        # Refused at construction rather than at first use: this bridge forwards
+        # every call through use_rosbridge, so a port the transport cannot carry
+        # is a dead bridge, and the point the port is named is the only place a
+        # caller can act on that.
+        if (transport_error := _transport_port_error(port, "port", type(self).__name__)) is not None:
+            raise ValueError(transport_error)
         self.host = host
         self.port = port
         self.cmd_vel_type = cmd_vel_type
