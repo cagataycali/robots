@@ -205,6 +205,50 @@ hatch run format            # ruff check --fix, ruff format
    rather than deleting it: the conclusion it supported usually still holds for a
    different reason, and that reason is what the next reader needs.
 
+   The converse happens too: every signal above satisfied, and the PR still
+   refuses to merge with no field naming the reason. #1722 carried one current
+   `APPROVED` review that post-dated its head commit, all four review threads
+   resolved, `call-test-lint` `SUCCESS` - and `reviewDecision`
+   `REVIEW_REQUIRED`. The `default` branch ruleset sets
+   `require_last_push_approval: true`, so the most recent push must be approved
+   by **someone other than whoever pushed it**, and the agent had pushed that
+   head commit with `PAT_TOKEN`. GitHub attributes a push to the token's
+   *owner*, which was the same account that then approved. No number of further
+   approvals from that account can clear it.
+
+   What makes this worth writing down is that the commit metadata asserts the
+   opposite. `d938686`'s author *and* committer are `strands-robots`, an
+   identity distinct from the approver, so reading the commit list says the rule
+   is satisfied. The pusher is in none of the fields you would check:
+   `reviewDecision` is `REVIEW_REQUIRED` and `mergeStateStatus` is `BLOCKED`,
+   which is also exactly what a PR with no approval at all looks like. The one
+   place it is legible:
+
+   ```
+   GET /repos/{owner}/{repo}/actions/runs?head_sha=<head>  ->  triggering_actor
+   ```
+
+   #1035 is the control - same author, same fork, same `strands_robots/mesh/`
+   files, one approval from the same account post-dating its head commit,
+   threads clear, checks green, and no CODEOWNERS file in the tree to make
+   `require_code_owner_review` bite. It differs in exactly one input, and reads
+   `APPROVED`:
+
+   | PR | commit author | `triggering_actor` | approver | `reviewDecision` |
+   |---|---|---|---|---|
+   | #1035 | the contributor | the contributor | the maintainer | `APPROVED` |
+   | #1722 | `strands-robots` | the maintainer | the maintainer | `REVIEW_REQUIRED` |
+
+   So **pushing a fix to a contributor's branch consumes the approval of
+   whoever owns the token you push with**, turning a PR one maintainer could
+   merge into one that needs a second. It compounds with
+   `dismiss_stale_reviews_on_push`, which drops the existing approval in the
+   same motion that disqualifies that account from re-supplying it. Prefer
+   leaving the change for the contributor to push, so they stay the last
+   pusher; when the agent must push, that PR now requires a second approver,
+   and saying so is the difference between a one-line request and a branch that
+   never merges.
+
    The general rule behind all three: **a decision recorded only in a PR or
    issue comment is not durable** - the next contributor will not read the same
    comment. If a decision must survive, it belongs in this file.
