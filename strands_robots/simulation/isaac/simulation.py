@@ -727,6 +727,10 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             config.headless,
         )
 
+        # Construction complete - the finalizer may now release what we hold.
+        # See SimEngine._init_complete: this must be the final statement.
+        self._init_complete = True
+
     def _on_main_thread(self) -> bool:
         return threading.get_ident() == self._main_tid
 
@@ -5403,13 +5407,14 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         """Release all resources.
 
         Callers must invoke this explicitly (or use the class as a context
-        manager). There is intentionally no ``__del__`` finalizer: at
-        interpreter shutdown the ``threading`` / ``logger`` / ``omni``
-        modules can already be partially torn down, and acquiring
-        ``self._lock`` from a finalizer is unsafe. Relying on GC for
-        Isaac Sim cleanup also leaks the ``World``/USD stage on the
-        common case where the GC scheduler defers the finalizer past
-        the SimulationApp shutdown.
+        manager). Do not rely on garbage collection: at interpreter shutdown
+        the ``threading`` / ``logger`` / ``omni`` modules can already be
+        partially torn down, acquiring ``self._lock`` from a finalizer is
+        unsafe, and a GC scheduler that defers the finalizer past the
+        ``SimulationApp`` shutdown leaks the ``World``/USD stage. The
+        inherited :meth:`~strands_robots.simulation.base.SimEngine.__del__`
+        is a best-effort last resort for a fully-constructed engine, not the
+        intended path.
         """
         if self._world_created:
             self.destroy()
@@ -5421,10 +5426,23 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         self.cleanup()
 
     def __repr__(self) -> str:
-        return (
-            f"IsaacSimulation("
-            f"num_envs={self._config.num_envs}, "
-            f"device={self._config.device!r}, "
-            f"headless={self._config.headless}, "
-            f"world={'created' if self._world_created else 'none'})"
-        )
+        """Describe this engine, without ever raising.
+
+        ``repr`` is what a traceback or a failing assertion renders, so it must
+        not be the thing that hides a failure. On an instance whose ``__init__``
+        never finished, reading ``self._config`` raises and the reader is shown
+        ``[AttributeError ... raised in repr()]`` naming an attribute that has
+        nothing to do with the failure under investigation. Report the
+        lifecycle fact that *is* relevant instead, and name no attribute so
+        nobody is sent chasing one.
+        """
+        try:
+            return (
+                f"IsaacSimulation("
+                f"num_envs={self._config.num_envs}, "
+                f"device={self._config.device!r}, "
+                f"headless={self._config.headless}, "
+                f"world={'created' if self._world_created else 'none'})"
+            )
+        except AttributeError:
+            return f"IsaacSimulation(partially constructed, id=0x{id(self):x})"

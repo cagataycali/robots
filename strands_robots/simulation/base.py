@@ -313,7 +313,24 @@ class SimEngine(ABC):
 
         # Cleanup
         sim.destroy()
+
+    Concrete engines must set ``self._init_complete = True`` as the final
+    statement of their ``__init__``. :meth:`__del__` consults it and skips an
+    instance that never finished construction, so a half-built engine is never
+    reported as a cleanup failure.
     """
+
+    # Whether ``__init__`` ran to completion, i.e. whether this instance holds
+    # engine resources that need releasing. :meth:`__del__` reads it to tell
+    # "never acquired anything" from "failed to release something": on a
+    # ``__new__`` skeleton, or an ``__init__`` that raised part-way, the class
+    # attribute below answers False and the finalizer skips ``cleanup()``
+    # instead of reporting whichever attribute ``__init__`` had not reached yet
+    # as a cleanup failure. Declared on the class rather than assigned in an
+    # ABC ``__init__`` so the read itself can never raise, and so lightweight
+    # subclasses and test doubles need not thread ``super().__init__()``
+    # through (the same constraint :meth:`_init_ros_bridge` documents).
+    _init_complete: bool = False
 
     def _init_ros_bridge(self, *, ros2_bridge: bool = False, ros2_domain: int = 0) -> None:
         """Initialize the optional ROS 2 telemetry bridge state.
@@ -3719,7 +3736,14 @@ class SimEngine(ABC):
         }
 
     def cleanup(self) -> None:
-        """Release all resources. Called on __del__ / context exit."""
+        """Release all resources.
+
+        Called on context exit, and best-effort from :meth:`__del__` for an
+        engine whose ``__init__`` ran to completion. Implementations are
+        written against a fully-constructed instance: a caller whose
+        ``__init__`` raised part-way must release whatever it acquired itself
+        rather than relying on the finalizer.
+        """
         pass
 
     def __enter__(self) -> SimEngine:
@@ -3729,6 +3753,13 @@ class SimEngine(ABC):
         self.cleanup()
 
     def __del__(self) -> None:
+        if not self._init_complete:
+            # ``__init__`` never finished, so this instance holds no engine
+            # resources. Calling cleanup() here would raise on whichever
+            # attribute ``__init__`` had not reached yet and report that name
+            # as a cleanup failure - noise indistinguishable from a real leak,
+            # and a red herring for whoever reads it.
+            return
         try:
             self.cleanup()
         except Exception as e:
