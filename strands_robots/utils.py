@@ -566,7 +566,6 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
         return f"{context}: {param} must be a non-negative integer, got {value!r}."
     return None
-    return None
 
 
 def name_list_error(value: Any, param: str, context: str) -> str | None:

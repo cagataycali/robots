@@ -26,9 +26,12 @@ from typing import Any
 
 import pytest
 
+# The module object rather than its members: the tests below reach
+# ``gi.subprocess`` to make a side effect fatal and ``gi.__file__`` to scan the
+# shipped source, so the tool's own symbols are qualified through this alias
+# instead of being imported a second time by name.
 import strands_robots.tools.gr00t_inference as gi
 from strands_robots.mesh.rosbridge_robot import RosbridgeRobot
-from strands_robots.tools.gr00t_inference import _ACTION_NUMERIC_OPTIONS, gr00t_inference
 from strands_robots.tools.use_rosbridge import use_rosbridge
 from strands_robots.utils import tcp_port_error
 
@@ -59,7 +62,7 @@ def _call(**kwargs: Any) -> dict[str, Any]:
     signature's annotations forbid on purpose - that is the input class under
     test - and mypy does not narrow a splatted ``dict[str, Any]``.
     """
-    return gr00t_inference(**kwargs)
+    return gi.gr00t_inference(**kwargs)
 
 
 def _message(result: dict[str, Any]) -> str:
@@ -205,7 +208,7 @@ class TestEffectiveOptionsOnly:
     def test_the_table_only_names_actions_the_tool_dispatches(self) -> None:
         """Every key is a real action (or ``lifecycle:<phase>``), so nothing is dead."""
         source = Path(gi.__file__).read_text(encoding="utf-8")
-        for key in _ACTION_NUMERIC_OPTIONS:
+        for key in gi._ACTION_NUMERIC_OPTIONS:
             action = key.split(":", 1)[0]
             assert f'action == "{action}"' in source, f"{key} names no dispatched action"
 
