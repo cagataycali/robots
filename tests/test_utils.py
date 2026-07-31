@@ -387,3 +387,36 @@ class TestPoseVectorDomain:
         values, error = coerce_pose_vector("m", "position", bad, 3)
         assert values is None
         assert error and error.startswith("m: 'position'")
+
+
+class TestLerobotVersion:
+    """``lerobot_version`` degrades instead of raising.
+
+    Promoted out of the streaming-dataset reader so it and
+    :mod:`strands_robots.dataset_recorder` - which both name the installed
+    version in an error message - cannot report it differently.
+    """
+
+    def test_an_unresolvable_distribution_reads_as_unknown(self, monkeypatch):
+        # A source checkout without dist-info cannot resolve the version. The
+        # value only ever enriches an error message, so a PackageNotFoundError
+        # must not escape and mask the failure being reported.
+        import importlib.metadata as md
+
+        from strands_robots.utils import lerobot_version
+
+        def _raise(_name):
+            raise md.PackageNotFoundError("lerobot")
+
+        monkeypatch.setattr(md, "version", _raise)
+
+        assert lerobot_version() == "unknown"
+
+    def test_a_resolvable_distribution_reads_as_its_version(self, monkeypatch):
+        import importlib.metadata as md
+
+        from strands_robots.utils import lerobot_version
+
+        monkeypatch.setattr(md, "version", lambda _name: "0.6.1")
+
+        assert lerobot_version() == "0.6.1"

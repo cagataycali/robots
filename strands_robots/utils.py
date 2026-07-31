@@ -110,6 +110,25 @@ def require_optionals(
     raise ImportError("\n".join(parts)) from None
 
 
+def lerobot_version() -> str:
+    """Return the installed lerobot version, or ``"unknown"`` if undeterminable.
+
+    Best-effort and never raises: it exists for error messages, where naming the
+    installed version is what distinguishes "lerobot is missing" from "lerobot
+    is present but something it needs is not". Lives here rather than beside one
+    of its callers because those callers sit in different modules
+    (:mod:`strands_robots.dataset_recorder` and
+    :mod:`strands_robots.streaming_dataset`) and must not report the version
+    differently.
+    """
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        return version("lerobot")
+    except (ImportError, PackageNotFoundError):
+        return "unknown"
+
+
 #
 # Path resolution - single source of truth for all strands-robots paths
 #
