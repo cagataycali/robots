@@ -42,12 +42,16 @@ UNADDRESSABLE_PORT = 65535
 # with this control so a blanket refusal cannot pass as a targeted one.
 ADDRESSABLE_PORT = 65534
 
-_ROBOT_KWARGS = {
-    "node_name": "probe",
-    "cmd_vel_topic": "/cmd_vel",
-    "odom_topic": "/odom",
-    "host": "127.0.0.1",
-}
+
+def _robot(port: int) -> RosbridgeRobot:
+    """A bridge that differs from a usable one only in its port."""
+    return RosbridgeRobot(
+        node_name="probe",
+        cmd_vel_topic="/cmd_vel",
+        odom_topic="/odom",
+        host="127.0.0.1",
+        port=port,
+    )
 
 
 def _texts(result: dict) -> str:
@@ -118,14 +122,14 @@ class TestTheRobotRefusesItAtConstruction:
 
     def test_the_constructor_raises_value_error(self) -> None:
         with pytest.raises(ValueError, match="cannot address"):
-            RosbridgeRobot(**_ROBOT_KWARGS, port=UNADDRESSABLE_PORT)
+            _robot(UNADDRESSABLE_PORT)
 
     def test_the_message_names_the_class(self) -> None:
         with pytest.raises(ValueError, match="RosbridgeRobot"):
-            RosbridgeRobot(**_ROBOT_KWARGS, port=UNADDRESSABLE_PORT)
+            _robot(UNADDRESSABLE_PORT)
 
     def test_the_neighbour_below_constructs(self) -> None:
-        robot = RosbridgeRobot(**_ROBOT_KWARGS, port=ADDRESSABLE_PORT)
+        robot = _robot(ADDRESSABLE_PORT)
 
         assert robot.port == ADDRESSABLE_PORT
 
