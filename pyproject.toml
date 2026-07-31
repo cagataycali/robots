@@ -220,11 +220,18 @@ sim-mujoco = [
     # primitive in this backend's agent-callable action enum, solves IK on the
     # same mujoco.MjModel via strands_robots.simulation.ik.MinkIKBridge, so the
     # solver is part of what this extra ships rather than an add-on the caller
-    # has to name themselves. `mink` pulls a QP backend of its own
-    # (qpsolvers[daqp], the bridge's first preference); `qpsolvers` is declared
-    # here too because simulation/ik.py imports it directly.
+    # has to name themselves. `qpsolvers` is declared here because
+    # simulation/ik.py imports it directly, and the `[daqp]` backend extra
+    # because qpsolvers on its own solves nothing: with no backend installed
+    # `mink.solve_ik` cannot run and `move_to` returns "IK bridge unavailable:
+    # No qpsolvers backend is installed", whose remedy names THIS extra. daqp is
+    # both the bridge's first preference (ik._PREFERRED_QP_SOLVERS) and the
+    # backend `mink` pulls for itself, so this changes nothing about what
+    # resolves - it stops the guarantee resting on a transitive of `mink` that
+    # this extra does not control. `[cosmos3-sim]`, which drives the same
+    # mink + qpsolvers stack, declares its backend the same way.
     "mink>=0.0.4",
-    "qpsolvers>=4.0.0",
+    "qpsolvers[daqp]>=4.0.0",
 ]
 # Newton GPU-native backend (newton-physics/newton on NVIDIA Warp +
 # MuJoCo-Warp). GPU-batched parallel envs, headless ray-traced rendering, and
