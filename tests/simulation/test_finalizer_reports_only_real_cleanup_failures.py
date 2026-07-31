@@ -53,14 +53,25 @@ def _cleanup_warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
 class _Engine(SimEngine):
     """Minimal concrete engine that records whether ``cleanup`` was reached.
 
-    Mirrors a real backend's lifecycle: ``_init_complete`` is the final
-    statement of ``__init__``, so the finalizer treats it as owning resources.
+    Mirrors a real backend's lifecycle: ``_init_complete`` is assigned as the
+    final statement of ``__init__``, so the finalizer treats a fully
+    constructed instance as owning resources.
+
+    Args:
+        cleanup_raises: Make ``cleanup`` fail, standing in for an engine that
+            acquired something and could not release it.
+        declare_complete: Assign the sentinel. ``False`` leaves it unassigned,
+            which is what a real backend looks like when ``__init__`` raises
+            before reaching its final statement: every earlier field is set and
+            the sentinel never is, so the class-level floor is what the
+            finalizer reads.
     """
 
-    def __init__(self, *, cleanup_raises: bool = False) -> None:
+    def __init__(self, *, cleanup_raises: bool = False, declare_complete: bool = True) -> None:
         self.cleanup_calls = 0
         self._cleanup_raises = cleanup_raises
-        self._init_complete = True
+        if declare_complete:
+            self._init_complete = True
 
     def cleanup(self) -> None:
         self.cleanup_calls += 1
@@ -151,21 +162,21 @@ class TestNothingIsReportedForAnEngineThatNeverAcquiredAnything:
     def test_an_engine_that_never_declares_construction_complete_is_not_finalized(self) -> None:
         """The flag is the contract, and it is opt-in.
 
-        A subclass that never sets it is treated as never having acquired
-        anything. The parity check below is what holds this package's own
-        engines to declaring it.
+        An engine that never sets it is treated as never having acquired
+        anything, however far its ``__init__`` otherwise got. The parity check
+        below is what holds this package's own engines to declaring it.
         """
         calls: list[int] = []
 
-        class _NeverComplete(_Engine):
-            def __init__(self) -> None:
-                self._cleanup_raises = False
-                self.cleanup_calls = 0
-
+        class _Recording(_Engine):
             def cleanup(self) -> None:
                 calls.append(1)
 
-        engine = _NeverComplete()
+        engine = _Recording(declare_complete=False)
+        # Never assigned, rather than assigned False: the read resolves to the
+        # class-level floor, which is the state a backend is left in when
+        # ``__init__`` raises before its final statement.
+        assert "_init_complete" not in vars(engine)
         del engine
         gc.collect()
         assert calls == []
