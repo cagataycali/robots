@@ -133,6 +133,45 @@ def unknown_kwargs_error(method: str, kwargs: Mapping[str, Any], accepted: Seque
     }
 
 
+_BOOLEAN_WORLD_REASON = (
+    "float(True) is 1.0, so a boolean survives a numeric coercion as the "
+    "quantity 1 in whatever unit the parameter carries - a 1 m/s^2 "
+    "acceleration, a 1-second integration step, a 1 kg body, a noise standard "
+    "deviation of 1, a randomization scale of 1. Each is a usable number on "
+    "its own terms, so the call reports success and the world is configured "
+    "with a value the caller never chose. Pass the quantity in the "
+    "parameter's own units."
+)
+
+
+def _boolean_world_error(method: str, param: str, value: Any) -> dict[str, Any]:
+    """Structured error for a boolean supplied as a world-physics quantity.
+
+    The world-parameter counterpart to :func:`_boolean_action_error`, sharing
+    the one predicate in :func:`strands_robots.utils.is_boolean` rather than
+    re-deciding what a boolean is. It carries its own reason because
+    :data:`_BOOLEAN_ACTION_REASON` argues from the *ambiguity* of ``1.0`` across
+    actuator drives, which does not apply here: gravity, a timestep and a mass
+    each read ``1.0`` as one unambiguous quantity, so a boolean is not ambiguous
+    but simply a value nobody asked for, applied under ``status="success"``.
+
+    Args:
+        method: Public method name, used to prefix the message.
+        param: Parameter name to quote.
+        value: The raw value, reported before coercion - ``float(True)`` is
+            ``1.0``, so the boolean is unrecoverable once coerced.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict to surface.
+    """
+    return {
+        "status": "error",
+        "content": [
+            {"text": (f"{method}: '{param}' must be a number, not a bool (got {value!r}). {_BOOLEAN_WORLD_REASON}")}
+        ],
+    }
+
+
 def randomization_range_error(value: Any, param: str, *, allow_zero: bool = True) -> str | None:
     """Return why a ``(lo, hi)`` randomization range cannot be applied.
 
@@ -157,11 +196,22 @@ def randomization_range_error(value: Any, param: str, *, allow_zero: bool = True
     Returns:
         ``None`` when the range is usable, otherwise the reason as a string.
     """
+    # The unpack and the coercion are separate steps so the boolean check can sit
+    # between them; both report the same thing to the caller.
+    not_a_pair = f"{param} must be a (lo, hi) pair of numbers, got {value!r}"
     try:
         lo, hi = value
+    except (TypeError, ValueError):
+        return not_a_pair
+    # Before float(): a boolean bound is a scale factor of 1 (identity) or 0
+    # (erases the quantity it multiplies), and the sampler cannot tell either
+    # from a deliberate one once coerced.
+    if is_boolean(lo) or is_boolean(hi):
+        return f"{param} bounds must be numbers, not bools (got {value!r}). {_BOOLEAN_WORLD_REASON}"
+    try:
         lo, hi = float(lo), float(hi)
     except (TypeError, ValueError):
-        return f"{param} must be a (lo, hi) pair of numbers, got {value!r}"
+        return not_a_pair
     if not (math.isfinite(lo) and math.isfinite(hi)):
         return f"{param} bounds must be finite, got {value!r}"
     if lo > hi:
@@ -189,7 +239,10 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
     on the next step, and a negative half-width inverts the sampling bounds.
 
     Args:
-        value: The candidate magnitude.
+        value: The candidate magnitude. A boolean is refused: these are
+            standard deviations and half-widths, so ``True`` describes a
+            distribution of width 1 rather than the "noise off" a caller
+            passing a flag would have meant (``0`` is how noise is disabled).
         param: Parameter name to quote in the message.
         context: Method name to prefix the message with.
 
@@ -197,6 +250,12 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
         ``None`` when the value is a finite non-negative number, otherwise the
         reason as a string.
     """
+    # Before float(): these are standard deviations and half-widths, so a
+    # boolean reads as a distribution of width 1 in the sensor's own units -
+    # not a flag disabling the noise, which is what a caller passing True
+    # would most plausibly have meant.
+    if is_boolean(value):
+        return f"{context}: {param} must be a number, not a bool (got {value!r}). {_BOOLEAN_WORLD_REASON}"
     try:
         fvalue = float(value)
     except (TypeError, ValueError):
@@ -1408,8 +1467,11 @@ class SimEngine(ABC):
             ``None`` when the value is usable.
         """
         message = f"{method}: {param} must be a finite positive number, got {timestep!r}."
-        if isinstance(timestep, bool):
-            return {"status": "error", "content": [{"text": message}]}
+        # is_boolean, not isinstance(timestep, bool): numpy.bool_ is not a bool
+        # subclass, so the narrower check refused a hand-typed True and admitted
+        # the np.True_ a comparison produces - a 1-second dt under success.
+        if is_boolean(timestep):
+            return _boolean_world_error(method, param, timestep)
         try:
             value = float(timestep)
         except (TypeError, ValueError):
@@ -1446,11 +1508,11 @@ class SimEngine(ABC):
             A structured ``{"status": "error", ...}`` dict to surface, or
             ``None`` when the value is usable.
         """
-        if isinstance(mass, bool):
-            return {
-                "status": "error",
-                "content": [{"text": f"{method}: '{param}' must be a positive number, got {mass!r}"}],
-            }
+        # is_boolean, not isinstance(mass, bool): numpy.bool_ is not a bool
+        # subclass, so the narrower check refused a hand-typed True and admitted
+        # the np.True_ a comparison produces - a 1 kg body under success.
+        if is_boolean(mass):
+            return _boolean_world_error(method, param, mass)
         try:
             value = float(mass)
         except (TypeError, ValueError):
@@ -1484,7 +1546,10 @@ class SimEngine(ABC):
 
         Args:
             gravity: A 3-element ``[x, y, z]`` sequence, or a real scalar taken
-                as the z-component (``[0, 0, z]``, matching
+                as the z-component. A boolean is refused in either form -
+                ``float(True)`` is ``1.0``, so ``True`` configured a +1 m/s^2
+                gravity pointing *up* and reported success (``[0, 0, z]``,
+                matching
                 :meth:`~strands_robots.simulation.mujoco.simulation.MuJoCoSimEngine.set_gravity`).
             method: Public method name, used to prefix the error message.
             param: Parameter name to quote in the message.
@@ -1493,6 +1558,15 @@ class SimEngine(ABC):
             ``(components, None)`` with three finite floats, or
             ``(None, error_dict)`` describing what is wrong with the value.
         """
+        # Refuse a boolean before either path coerces it. bool is an int
+        # subclass, so it satisfies numbers.Real and float(True) is 1.0 - a
+        # scalar True became a +1 m/s^2 gravity pointing *up*, reported as
+        # success. numpy.bool_ is not numbers.Real, so it missed the scalar
+        # branch and fell through to len(), which raised "len() of unsized
+        # object" and surfaced as a component-count complaint that described
+        # neither the value nor the reason.
+        if is_boolean(gravity):
+            return None, _boolean_world_error(method, param, gravity)
         # Accept any real scalar (numbers.Real) as a z-only gravity so a value
         # computed as a NumPy scalar (np.float32 / np.int64) is treated like a
         # plain float. A NumPy array is not numbers.Real, so it still takes the
@@ -1509,6 +1583,11 @@ class SimEngine(ABC):
                             {"text": f"{method}: '{param}' must be a 3-element list [x,y,z], got {len(vector)}"}
                         ],
                     }
+                # Per component too: the vector path coerces with float(), so a
+                # single True among three reals is otherwise a 1 m/s^2 axis.
+                for component in vector:
+                    if is_boolean(component):
+                        return None, _boolean_world_error(method, param, gravity)
                 components = [float(g) for g in vector]
             except (TypeError, ValueError) as e:
                 return None, {

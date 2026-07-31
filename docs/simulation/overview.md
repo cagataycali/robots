@@ -120,6 +120,25 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     (`add_object`, `add_camera`) and [`send_action`](#actions) enforce - one
     library, one answer to "is this a usable number".
 
+!!! note "The same domain applies to the world-configuration parameters"
+    `set_gravity` / `create_world(gravity=...)`, `set_timestep` /
+    `create_world(timestep=...)`, the `mass` on `set_body_properties` and
+    `add_object`, the `randomize` ranges and the `set_obs_noise` magnitudes all
+    refuse a boolean for the same reason, as do the vectors `raycast`,
+    `multi_raycast` and `set_geom_properties` take (a ray origin and direction, a
+    geom size and friction, an rgba colour).
+
+    Passing one is not a near miss. `set_gravity(True)` would have configured a
+    gravity of **+1 m/s^2, pointing up**, and `set_timestep(True)` a 1-second
+    integration step - each reported as `status="success"`. The check is on the
+    type, not the value: `1`, `1.0` and `numpy` scalars remain accepted
+    everywhere, so `set_timestep(1.0)` is still a legal (if unusual) request.
+
+    Both spellings are refused - a python `bool` and a `numpy.bool_`. The second
+    matters more in practice, because it is what a comparison such as
+    `gripper > 0.5` produces, and because `numpy.bool_` is not a `bool` subclass
+    an `isinstance(x, bool)` guard silently misses it.
+
 !!! tip "Discover the sim-state surface"
     `get_state` plus the checkpoint (`save_state` / `load_state`) and
     direct pose-setting (`set_joint_positions` / `set_joint_velocities`)

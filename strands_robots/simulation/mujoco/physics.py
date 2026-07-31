@@ -61,6 +61,20 @@ _BOOLEAN_STATE_REASON = (
     "quantity in the surface's own units."
 )
 
+# The vector counterpart to _BOOLEAN_STATE_REASON. It is worded separately
+# because that one names radians, rad/s and newtons, which are the wrong units
+# for what _coerce_finite_vector guards: a coordinate, a geom extent, a friction
+# coefficient or a colour channel. The wording here is the one already recorded
+# in utils.finite_vector_error, which refuses a bool component for this reason
+# on the scene-construction side - and whose docstring then defers a colour to
+# "the rgba coercion in strands_robots.simulation.mujoco.physics", i.e. to this
+# helper. Same library, same quantity, so the same answer.
+_BOOLEAN_VECTOR_REASON = (
+    "float(True) is 1.0, so a boolean would silently write 1.0 where a "
+    "coordinate, extent or colour channel belongs, and the call would report "
+    "success. Pass the component as a number."
+)
+
 
 def _coerce_finite_vector(
     values: Any,
@@ -112,6 +126,22 @@ def _coerce_finite_vector(
         }
     out: list[float] = []
     for elem in seq:
+        # Before float(), which cannot tell a boolean apart afterwards: bool is
+        # an int subclass and numpy.bool_ coerces the same way, so both arrived
+        # as a silent 1.0/0.0 component under status="success". This is the one
+        # chokepoint for every vector the runtime writers take - a raycast
+        # origin and direction, a geom size and friction, an rgba colour, and
+        # each ray of a multi_raycast batch - so the gate belongs here rather
+        # than at the seven call sites.
+        if is_boolean(elem):
+            return None, {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {values!r}). {_BOOLEAN_VECTOR_REASON}"
+                    }
+                ],
+            }
         try:
             f = float(elem)
         except (TypeError, ValueError):

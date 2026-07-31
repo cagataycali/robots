@@ -94,13 +94,39 @@ class TestSetGravityNumpyScalar:
         assert list(sim_with_world._world._model.opt.gravity) == [0.0, 0.0, -3.7]
 
     def test_numpy_bool_scalar_still_rejected(self, sim_with_world):
-        """``np.bool_`` is not ``numbers.Real`` and has no ``len()`` -- it stays
-        refused with a structured error rather than becoming a 1.0 z-gravity."""
+        """``np.bool_`` stays refused rather than becoming a 1.0 z-gravity.
+
+        The conclusion is unchanged; the *reason* is not. This previously passed
+        by accident: ``np.bool_`` is not ``numbers.Real``, so it missed the
+        scalar branch, fell through to ``len()`` and surfaced the very
+        "must be a 3-element list of numbers" message this class exists to
+        complain about for numeric scalars -- a component-count error for a value
+        that has no components. A plain ``True`` *was* accepted on that same
+        code, as a +1 m/s^2 gravity pointing up, so the guard this asserted was
+        never really there (#1842).
+
+        The refusal is now explicit and on boolean grounds, which is why the
+        assertion moved off the word "numbers" and onto the bool wording.
+        """
         import numpy as np
 
         res = sim_with_world.set_gravity(np.bool_(True))
         assert res["status"] == "error"
-        assert "numbers" in res["content"][0]["text"]
+        text = res["content"][0]["text"]
+        assert "not a bool" in text, text
+        # The misleading component-count phrasing must not come back for a scalar.
+        assert "3-element" not in text, text
+
+    def test_python_bool_scalar_rejected(self, sim_with_world):
+        """The sibling case that was accepted outright before #1842.
+
+        ``bool`` *is* ``numbers.Real``, so ``True`` took the scalar branch and
+        set gravity to ``[0, 0, +1.0]`` -- reported as success, and pointing up.
+        """
+        res = sim_with_world.set_gravity(True)
+        assert res["status"] == "error"
+        assert "not a bool" in res["content"][0]["text"]
+        assert list(sim_with_world._world._model.opt.gravity) != [0.0, 0.0, 1.0]
 
 
 class TestSetGeomPropertiesRejectsInvalid:
