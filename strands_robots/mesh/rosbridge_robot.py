@@ -29,7 +29,6 @@ Typical usage::
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from strands import tool
@@ -37,6 +36,11 @@ from strands.types.tools import AgentTool
 
 from strands_robots.mesh.ros_bridge import _check_topic
 from strands_robots.tools.use_rosbridge import _HOST_RE, use_rosbridge
+from strands_robots.utils import (
+    finite_number_error,
+    positive_finite_number_error,
+    positive_whole_number_error,
+)
 
 _TWIST_TYPE = "geometry_msgs/Twist"
 
@@ -59,6 +63,13 @@ class RosbridgeRobot:
         max_duration: Longest accepted :meth:`drive` hold; longer requests are
             rejected loudly rather than silently truncated.
         publish_rate: Command publish rate (Hz) for held :meth:`drive` calls.
+
+    Raises:
+        ValueError: When a graph name, the host or the port is malformed, or
+            when any of ``max_linear``, ``max_angular``, ``max_duration`` and
+            ``publish_rate`` is not a finite number greater than zero. Each
+            bounds every later command, so an unusable one is refused at
+            construction instead of silently reshaping the robot's limits.
     """
 
     def __init__(
@@ -91,14 +102,22 @@ class RosbridgeRobot:
         self.cmd_vel_type = cmd_vel_type
         self.odom_type = odom_type
         self.scan_type = scan_type
+        # These four values bound every command this bridge will ever send, so
+        # one that cannot be honored is refused here rather than coerced. The
+        # domain is the shared one the sibling bridges use, so the three cannot
+        # diverge on what counts as a usable limit: a non-real value (a numeric
+        # string, ``None``, a list) is reported as this documented
+        # ``ValueError`` rather than escaping as a coercion error, and ``bool``
+        # is rejected because ``True`` would otherwise install a silent 1.0 m/s
+        # clamp or a 1 Hz publish rate.
         for label, value in (
             ("max_linear", max_linear),
             ("max_angular", max_angular),
             ("max_duration", max_duration),
             ("publish_rate", publish_rate),
         ):
-            if not math.isfinite(value) or value <= 0:
-                raise ValueError(f"{label} must be a positive finite number, got {value!r}")
+            if limit_err := positive_finite_number_error(value, label, type(self).__name__):
+                raise ValueError(limit_err)
         self.max_linear = float(max_linear)
         self.max_angular = float(max_angular)
         self.max_duration = float(max_duration)
@@ -157,28 +176,70 @@ class RosbridgeRobot:
     ) -> dict[str, Any]:
         """Publish a velocity command over rosbridge.
 
-        Fleet-standard contract: ``linear`` (m/s) and ``angular`` (rad/s),
-        optional ``duration`` hold (``round(duration * publish_rate)``
-        messages, precedence over ``count``). Inputs are validated before any
-        side effect; velocities are clamped to the constructor limits. Every
-        timed or multi-message non-zero command is followed by a single zero
-        Twist - even if the main publish failed - so a timed drive cannot
-        leave the robot with a live velocity. A bare single-shot command
-        latches until :meth:`stop`, like any raw cmd_vel publish.
+        Fleet-standard contract, shared with :meth:`RosBridgedRobot.drive` and
+        :meth:`RtpsRobot.drive`. Inputs are validated before any side effect;
+        velocities are then clamped to the constructor limits. Every timed or
+        multi-message non-zero command is followed by a single zero Twist -
+        even if the main publish failed - so a timed drive cannot leave the
+        robot with a live velocity. A bare single-shot command latches until
+        :meth:`stop`, like any raw cmd_vel publish.
+
+        Args:
+            linear: Forward linear velocity (m/s), mapped to ``linear.x``. Must
+                be a finite number; both signs are valid (negative reverses).
+            angular: Yaw angular velocity (rad/s), mapped to ``angular.z``. Must
+                be a finite number; both signs are valid (negative turns the
+                other way).
+            duration: When given, hold the command for this many seconds by
+                publishing ``round(duration * publish_rate)`` messages (at
+                least one). Takes precedence over ``count``, must be > 0 and
+                finite - a zero or negative hold has no message count that
+                expresses it, and publishing a single velocity command anyway
+                would start the robot moving - and may not exceed
+                ``max_duration``.
+            count: Number of messages to publish when ``duration`` is omitted.
+                Must be a positive whole number; ``0`` or a negative count
+                publishes nothing, so reporting a successful drive for it hides
+                a command that never left the process.
+
+        Returns:
+            The ``use_rosbridge`` publish result dict, or an
+            ``{"status": "error"}`` result naming the parameter when a value
+            cannot be honored - in which case nothing is published.
         """
-        for label, value in (("linear", linear), ("angular", angular)):
-            if not math.isfinite(value):
-                return self._error(f"drive: {label} must be a finite number, got {value!r}")
-        if duration is not None:
-            if not math.isfinite(duration) or duration <= 0:
-                return self._error(f"drive: duration must be a positive finite number of seconds, got {duration!r}")
-            if duration > self.max_duration:
-                return self._error(
-                    f"drive: duration {duration}s exceeds max_duration {self.max_duration}s "
-                    "- issue shorter commands instead of one long hold"
-                )
+        # A velocity command is the one call on this bridge that physically
+        # moves the robot, so every knob it carries is checked before anything
+        # reaches the wire, through the same shared domains the sibling bridges
+        # use. ``use_rosbridge`` validates the topic and interface type but
+        # never sees ``duration`` at all (it receives only the derived message
+        # count), and the ``count`` values it does refuse are reported against
+        # a transport this caller never invoked.
+        cmd_err = (
+            finite_number_error(linear, "linear", "drive")
+            or finite_number_error(angular, "angular", "drive")
+            or (
+                positive_finite_number_error(duration, "duration", "drive")
+                if duration is not None
+                # ``duration`` supersedes ``count``, so ``count`` is only the
+                # effective horizon when no duration was given; refusing a
+                # ``count`` this call never reads would reject a valid command.
+                else positive_whole_number_error(count, "count", "drive")
+            )
+        )
+        if cmd_err:
+            return self._error(cmd_err)
+        # Ordered after the finiteness guard on purpose: every comparison
+        # against ``nan`` is false, so a ceiling test cannot stand in for one.
+        if duration is not None and duration > self.max_duration:
+            return self._error(
+                f"drive: duration {duration}s exceeds max_duration {self.max_duration}s "
+                "- issue shorter commands instead of one long hold"
+            )
         v = max(-self.max_linear, min(self.max_linear, float(linear)))
         w = max(-self.max_angular, min(self.max_angular, float(angular)))
+        # ``duration`` is positive and finite here, so this floor is a rounding
+        # rule and not a substitute for validation: a hold shorter than one
+        # publish period still means "send the command once".
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
         try:
             return self._publish_twist(v, w, count=n)
