@@ -236,10 +236,16 @@ class TestTransportDoesNotRefuseItself:
 
 
 def _policy_module_paths() -> list[Path]:
-    """Every provider ``policy.py`` under the policies package."""
-    import strands_robots.policies as policies_pkg
+    """Every provider ``policy.py`` under the policies package.
 
-    root = Path(inspect.getfile(policies_pkg)).parent
+    The scan root is derived from ``create_policy`` -- the package's own factory,
+    so its defining module is inside the package by construction -- rather than
+    from a path literal or a second import of the package itself. A root that
+    resolved elsewhere would make the scan below silently empty, which is what
+    the "these four classes were seen" assertion in
+    :class:`TestNoProviderShipsAnUnguardedPort` exists to catch.
+    """
+    root = Path(inspect.getfile(create_policy)).parent
     return sorted(root.glob("*/policy.py"))
 
 
