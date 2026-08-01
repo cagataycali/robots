@@ -3080,7 +3080,13 @@ class SimEngine(ABC):
         Benchmark-agnostic evaluation entry point. Looks up ``benchmark_name``
         in the global benchmark registry, validates robot compatibility, and
         forwards to :meth:`PolicyRunner.evaluate` with the spec.
-        ``max_steps`` comes from the benchmark (not a parameter here).
+        ``max_steps`` comes from the benchmark (not a parameter here), so it
+        is validated where it is read rather than at this signature: a
+        benchmark declaring a horizon that is not a positive integer is
+        rejected with a structured error, for the same reason ``n_episodes``
+        is. Both are bounds of the same nested loop, and a non-positive one
+        runs episodes of zero length and then reports a 0% success rate over
+        them.
 
         Args:
             benchmark_name: Key from :func:`register_benchmark` /

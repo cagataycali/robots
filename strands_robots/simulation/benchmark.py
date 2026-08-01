@@ -88,9 +88,16 @@ class BenchmarkProtocol(ABC):
     1 and returns a structured error on mismatch.
 
     Attributes:
-        max_steps: Per-episode horizon. Instance attribute (not abstract
-            property) so subclasses can set it in ``__init__`` or as a class
-            attribute. Defaults to ``300``.
+        max_steps: Per-episode horizon, a positive integer. Instance
+            attribute (not abstract property) so subclasses can set it in
+            ``__init__`` or as a class attribute. Defaults to ``300``.
+            Because it is an attribute rather than a validated parameter,
+            the evaluation loop checks it when it reads it: a subclass that
+            sets a zero, negative or non-integer horizon gets a structured
+            error from
+            :meth:`~strands_robots.simulation.base.SimEngine.evaluate_benchmark`
+            rather than an evaluation over episodes of zero length that
+            still reports a 0% success rate.
     """
 
     max_steps: int = 300

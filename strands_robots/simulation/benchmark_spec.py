@@ -68,7 +68,7 @@ from strands_robots.simulation.benchmark import (
     register_benchmark,
 )
 from strands_robots.simulation.predicates import PREDICATE_REGISTRY, make_predicate, predicate_kind
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_count_error, require_optional
 
 if TYPE_CHECKING:
     import random
@@ -335,7 +335,13 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         self._name = name
         self._supported_robots = list(supported_robots)
         self._default_robot = default_robot
-        self.max_steps = int(max_steps)
+        # Mirrors the check ``from_dict`` runs on the raw spec value, so a
+        # directly constructed benchmark cannot carry a horizon the
+        # evaluation loop has to refuse later. ``int()`` alone silently
+        # truncated ``2.7`` to 2 and read ``True`` as 1.
+        if error := positive_count_error(max_steps, "max_steps", type(self).__name__):
+            raise ValueError(error)
+        self.max_steps = max_steps
         self._success_fn = success_fn
         self._failure_fn = failure_fn
         self._reward_terms = list(reward_terms)
@@ -477,8 +483,10 @@ class DeclarativeBenchmark(BenchmarkProtocol):
             )
 
         max_steps_raw = spec.get("max_steps", 300)
-        if not isinstance(max_steps_raw, int) or isinstance(max_steps_raw, bool) or max_steps_raw <= 0:
-            raise ValueError(f"spec.max_steps: must be a positive int, got {max_steps_raw!r}")
+        # Shared count domain, so the key a spec file sets and the keyword a
+        # direct construction passes cannot drift apart on what they accept.
+        if error := positive_count_error(max_steps_raw, "max_steps", "spec"):
+            raise ValueError(error)
 
         scene = spec.get("scene")
         if scene is not None and not isinstance(scene, str):

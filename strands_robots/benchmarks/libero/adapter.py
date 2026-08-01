@@ -55,7 +55,7 @@ from strands_robots.benchmarks.libero.bddl_parser import (
 from strands_robots.simulation.benchmark import BenchmarkProtocol, StepInfo
 from strands_robots.simulation.isaac.delta_eef import IsaacDeltaEEFController
 from strands_robots.simulation.models import SimCamera, SimRobot
-from strands_robots.utils import get_base_dir, require_optional
+from strands_robots.utils import get_base_dir, positive_count_error, require_optional
 
 if TYPE_CHECKING:
     from strands_robots.simulation.base import SimEngine
@@ -183,7 +183,8 @@ class LiberoAdapter(BenchmarkProtocol):
             scene_path: Optional MJCF to ``sim.load_scene()`` on each
                 episode start. ``None`` triggers ``auto_generate_scene``
                 if enabled (see below).
-            max_steps: Override the class-level 300.
+            max_steps: Override the class-level default (720). Must be a
+                positive integer - it is the per-episode step cap.
             init_jitter: Per-episode ±jitter (metres) applied to xy of every
                 object referenced by ``(:init (on A B))`` clauses. Default
                 ``0.0`` matches LIBERO's deterministic-reset convention -
@@ -436,7 +437,15 @@ class LiberoAdapter(BenchmarkProtocol):
         if self._init_jitter < 0:
             raise ValueError(f"init_jitter must be >= 0, got {init_jitter}")
         if max_steps is not None:
-            self.max_steps = int(max_steps)
+            # Same shared count domain as ``init_jitter`` above and as the
+            # declarative spec path: the value becomes this benchmark's
+            # per-episode ``range(max_steps)`` bound, so ``int()`` alone
+            # silently truncated ``2.7`` to 2, read ``True`` as 1, and let a
+            # zero or negative horizon through to run episodes of zero
+            # length that still report a 0% success rate.
+            if error := positive_count_error(max_steps, "max_steps", type(self).__name__):
+                raise ValueError(error)
+            self.max_steps = max_steps
         self._install_cameras = bool(install_cameras)
         # Snapshot the camera config at construction time so subsequent
         # mutations to LIBERO_CAMERAS don't leak across instances.

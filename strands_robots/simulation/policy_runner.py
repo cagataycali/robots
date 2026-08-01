@@ -47,7 +47,12 @@ import numpy as np
 from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.dataset_recorder import RecordingFrameError
 from strands_robots.policies.base import resolve_chunk_length
-from strands_robots.utils import positive_whole_number_error, process_rss_mb, require_optional
+from strands_robots.utils import (
+    positive_count_error,
+    positive_whole_number_error,
+    process_rss_mb,
+    require_optional,
+)
 
 if TYPE_CHECKING:
     from strands_robots.policies.base import Policy
@@ -2563,6 +2568,31 @@ class PolicyRunner:
         # Lazy import to avoid circular reference (benchmark module imports
         # `SimEngine` from base which imports this module under TYPE_CHECKING).
         from strands_robots.simulation.benchmark import BenchmarkCompatibilityError
+
+        # The per-episode horizon is read off the benchmark, so it is the one
+        # rollout count with no parameter of its own to validate: every other
+        # bound of this nested loop (``n_episodes``, ``action_horizon``,
+        # ``control_substeps``) is checked by the public entry point before it
+        # gets here. Check it at the read instead. That covers every way a
+        # benchmark can come by its horizon - ``DeclarativeBenchmark.from_dict``,
+        # direct construction, a plain ``BenchmarkProtocol`` subclass setting the
+        # documented ``max_steps`` attribute, or an assignment to it after
+        # construction - none of which this method can see. Refuse before
+        # ``set_control_frequency`` and ``set_eval_seed``: the latter reseeds the
+        # process-global RNG, so a rejected eval must not reach it.
+        if error := positive_count_error(spec.max_steps, "max_steps", "evaluate_benchmark"):
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"{error} Benchmark {type(spec).__name__!r} declares that horizon; a "
+                            "non-positive one runs episodes of zero length and reports a 0% success "
+                            "rate over them instead of surfacing the mistake."
+                        )
+                    }
+                ],
+            }
 
         # T26: skip camera rendering when the policy does not need images.
         _skip_images = not getattr(policy, "requires_images", True)
