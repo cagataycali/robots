@@ -32,8 +32,20 @@ one ``create_world`` then ``add_object(<name>, shape="box", size=[0.06]*3)``):
 The lookup half of this was closed separately (#1774/#1776: a name that cannot
 be a registry key resolves to "absent"). A creation site cannot reuse that
 answer - it has to refuse - so the domain lives in one shared
-:func:`~strands_robots.utils.entity_name_error` and both backends' three methods
-route through it, keeping them from drifting.
+:func:`~strands_robots.utils.entity_name_error` and all three backends' three
+methods route through it, keeping them from drifting.
+
+On the Isaac backend the same three values were accepted, and there the name is
+also interpolated into the USD prim path (``{stage_path}/Robots/{name}``), which
+turns an unaddressable name into cross-entity corruption. Measured with three
+procedural robots and no Isaac Sim installed: ``add_robot("")`` reported
+``status="success"`` at the prim path ``/World/Robots/`` - the *container* scope
+for every robot rather than a child prim - so ``remove_robot("")``, which prunes
+the cleanup registry with ``p.startswith(prim_path)``, pruned EVERY robot's prim,
+leaving two live robots with zero tracked prims to release at teardown.
+``add_robot(7)`` / ``add_object(7)`` succeeded under the int registry key ``7``,
+and an unhashable name raised ``TypeError`` out of the duplicate-name test
+instead of returning the structured envelope those methods document.
 
 What is deliberately NOT refused is pinned too (``TestTheDomainIsNotAnAllowlist``):
 this is not the MJCF-interpolation allowlist ``^[a-zA-Z0-9_-]+$``. A namespaced,
@@ -57,6 +69,7 @@ import types
 
 import pytest
 
+from strands_robots.simulation.isaac.simulation import IsaacConfig, IsaacSimulation
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import entity_name_error
 
@@ -367,8 +380,121 @@ class TestNewtonRefusesTheSameNames:
         assert "'name'" not in result["content"][0]["text"]
 
 
-class TestSameVerdictAsTheMujocoSibling:
-    """Both backends refuse the same name with the same message."""
+# --------------------------------------------------------------------------- #
+# Isaac (no Isaac Sim / GPU needed - the guard runs before the stage is touched) #
+# --------------------------------------------------------------------------- #
+def _isaac_stub() -> types.SimpleNamespace:
+    """A stand-in for ``self`` carrying only what the three guards read."""
+    return types.SimpleNamespace(
+        _lock=threading.RLock(),
+        _world_created=True,
+        _config=IsaacConfig(),
+        _robots={},
+        _objects={},
+        _cameras={},
+        _replicated=False,
+        _prim_registry=[],
+    )
+
+
+class TestIsaacRefusesTheSameNames:
+    """The Isaac backend's three creation sites share the domain, so it cannot drift.
+
+    ``entity_name_error`` documents the invariant: a name one backend refuses
+    must be refused by the others. Isaac's ``add_camera`` docstring already made
+    the same promise for ``position`` / ``target`` / ``fov`` / ``width`` /
+    ``height`` ("a camera configuration one backend refuses is refused by all
+    three") while the name - the thing that identifies the entity - went
+    unchecked.
+    """
+
+    @pytest.mark.parametrize("name", (*_NON_STRING_NAMES, "", *_NUL_NAMES))
+    def test_add_object(self, name):
+        stub = _isaac_stub()
+        result = IsaacSimulation.add_object(stub, name)  # type: ignore[arg-type]
+        assert result["status"] == "error", (name, result)
+        assert "'name'" in result["content"][0]["text"]
+        assert stub._objects == {}
+
+    @pytest.mark.parametrize("name", (*_NON_STRING_NAMES, "", *_NUL_NAMES))
+    def test_add_camera(self, name):
+        stub = _isaac_stub()
+        result = IsaacSimulation.add_camera(stub, name)  # type: ignore[arg-type]
+        assert result["status"] == "error", (name, result)
+        assert "'name'" in result["content"][0]["text"]
+        assert stub._cameras == {}
+
+    @pytest.mark.parametrize("name", (*_NON_STRING_NAMES, "", *_NUL_NAMES))
+    def test_add_robot(self, name):
+        stub = _isaac_stub()
+        result = IsaacSimulation.add_robot(stub, name)  # type: ignore[arg-type]
+        assert result["status"] == "error", (name, result)
+        assert "'name'" in result["content"][0]["text"]
+        assert stub._robots == {}
+
+    @pytest.mark.parametrize("name", (*_NON_STRING_NAMES, "", *_NUL_NAMES))
+    def test_a_refused_name_reserves_no_prim_path(self, name):
+        """The refusal precedes the stage: nothing is queued for cleanup.
+
+        The prim path is interpolated from the name, so a refusal that landed
+        after the append would leave a path in the teardown registry for a prim
+        that was never created.
+        """
+        stub = _isaac_stub()
+        IsaacSimulation.add_robot(stub, name)  # type: ignore[arg-type]
+        assert stub._prim_registry == []
+
+    def test_an_addressable_name_gets_past_the_guard(self):
+        """The guard is not a blanket refusal: a usable name reaches the next check.
+
+        ``add_object("cube", shape="not_a_shape")`` still fails, but on the shape
+        path - not on the name - which pins that the guard did not simply swallow
+        every call.
+        """
+        stub = _isaac_stub()
+        result = IsaacSimulation.add_object(stub, "cube", shape="not_a_shape")  # type: ignore[arg-type]
+        assert result["status"] == "error"
+        assert "'name'" not in result["content"][0]["text"]
+
+    def test_an_addressable_robot_name_reaches_the_procedural_lookup(self):
+        """An addressable name still resolves a procedural robot and registers it.
+
+        The procedural branch needs no Isaac Sim, so this is the positive half of
+        the contract: the guard rejects exactly the unaddressable names and
+        nothing else.
+        """
+        stub = _isaac_stub()
+        result = IsaacSimulation.add_robot(stub, "arm", data_config="panda")  # type: ignore[arg-type]
+        assert result["status"] == "success", result
+        assert list(stub._robots) == ["arm"]
+        assert stub._prim_registry == ["/World/Robots/arm"]
+
+    def test_removing_one_robot_keeps_every_other_robots_prim(self):
+        """Regression for the corruption an empty name used to cause.
+
+        ``/World/Robots/`` prefixes every robot's prim path, and
+        ``remove_robot`` prunes the cleanup registry by prefix - so removing the
+        empty-named robot used to drop EVERY robot's prim while leaving the
+        robots themselves registered. With the name refused at creation the
+        empty name never enters the registry, so the prune stays scoped.
+        """
+        stub = _isaac_stub()
+        for label in ("arm", "helper"):
+            assert (
+                IsaacSimulation.add_robot(stub, label, data_config="panda")["status"]  # type: ignore[arg-type]
+                == "success"
+            )
+        assert IsaacSimulation.add_robot(stub, "", data_config="panda")["status"] == "error"  # type: ignore[arg-type]
+
+        stub._action_controllers = {}
+        assert IsaacSimulation.remove_robot(stub, "")["status"] == "error"  # type: ignore[arg-type]
+
+        assert stub._prim_registry == ["/World/Robots/arm", "/World/Robots/helper"]
+        assert sorted(stub._robots) == ["arm", "helper"]
+
+
+class TestEveryBackendGivesTheSameVerdict:
+    """All three backends refuse the same name with the same message."""
 
     @pytest.fixture
     def mj_sim(self):
@@ -384,12 +510,14 @@ class TestSameVerdictAsTheMujocoSibling:
     def test_add_object_verdicts_match(self, mj_sim, name):
         mj = mj_sim.add_object(name, shape="box")
         nt = NewtonSimEngine.add_object(_newton_stub(), name)  # type: ignore[arg-type]
-        assert mj["status"] == nt["status"] == "error", (mj, nt)
-        assert mj["content"][0]["text"] == nt["content"][0]["text"]
+        ic = IsaacSimulation.add_object(_isaac_stub(), name)  # type: ignore[arg-type]
+        assert mj["status"] == nt["status"] == ic["status"] == "error", (mj, nt, ic)
+        assert mj["content"][0]["text"] == nt["content"][0]["text"] == ic["content"][0]["text"]
 
     @pytest.mark.parametrize("name", (7, ["x"], "", "a\x00b"))
     def test_add_camera_verdicts_match(self, mj_sim, name):
         mj = mj_sim.add_camera(name, position=[1.0, 1.0, 1.0])
         nt = NewtonSimEngine.add_camera(_newton_stub(), name)  # type: ignore[arg-type]
-        assert mj["status"] == nt["status"] == "error", (mj, nt)
-        assert mj["content"][0]["text"] == nt["content"][0]["text"]
+        ic = IsaacSimulation.add_camera(_isaac_stub(), name)  # type: ignore[arg-type]
+        assert mj["status"] == nt["status"] == ic["status"] == "error", (mj, nt, ic)
+        assert mj["content"][0]["text"] == nt["content"][0]["text"] == ic["content"][0]["text"]

@@ -39,6 +39,7 @@ from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
 from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
+    entity_name_error,
     positive_count_error,
     positive_whole_number_error,
 )
@@ -1319,7 +1320,13 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         Parameters
         ----------
         name : str
-            Robot identifier (also used for procedural lookup).
+            Robot identifier (also used for procedural lookup). Must be a
+            non-empty string with no NUL, on the shared
+            :func:`~strands_robots.utils.entity_name_error` domain the MuJoCo
+            and Newton backends' ``add_robot`` enforces, so a robot name one
+            backend refuses is refused by all three. This backend has no
+            "derive a label from the model" short form, so ``None`` / ``""``
+            are refused here rather than resolved to a generated label.
         urdf_path : str, optional
             Path to URDF file.
         mjcf_path : str, optional
@@ -1415,6 +1422,28 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     "status": "error",
                     "content": [{"text": "No world created. Call create_world() first."}],
                 }
+
+            # Refuse a name that cannot address the robot this call creates, on the
+            # shared ``entity_name_error`` domain the MuJoCo and Newton backends'
+            # ``add_robot`` already applies, so a name one backend refuses is
+            # refused by all three. Unlike the MuJoCo backend this one has no
+            # "derive a label from the model" short form - ``name`` IS the
+            # procedural lookup key - so every value goes through the domain.
+            #
+            # An unaddressable name is not merely cosmetic here, because the
+            # prim path is interpolated from it (``{stage}/Robots/{name}``) and
+            # ``remove_robot`` prunes the cleanup registry with
+            # ``p.startswith(prim_path)``: ``add_robot("")`` reported success at
+            # the path ``/World/Robots/``, which is the *container* scope for
+            # every robot, so a later ``remove_robot("")`` pruned EVERY robot's
+            # prim from ``_prim_registry`` - two live robots left with zero
+            # tracked prims to release at teardown. An int name registered the
+            # key ``7``, which the tool surface, where a name always arrives as a
+            # JSON string, can never address, and an unhashable name raised
+            # ``TypeError`` out of the duplicate-name test below, escaping the
+            # structured envelope this method documents as its failure channel.
+            if (name_err := entity_name_error("add_robot", "name", name)) is not None:
+                return {"status": "error", "content": [{"text": name_err}]}
 
             if name in self._robots:
                 return {
@@ -1644,9 +1673,15 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         Parameters
         ----------
         name : str
-            Object identifier. Must be unique across the simulation; a
-            duplicate is rejected with a structured error envelope rather
-            than silently overwriting the existing prim.
+            Object identifier. Must be a non-empty string with no NUL, on the
+            shared :func:`~strands_robots.utils.entity_name_error` domain the
+            MuJoCo and Newton backends' ``add_object`` enforces, so an object
+            name one backend refuses is refused by all three - the prim path is
+            interpolated from it, and an entity registered under a name nothing
+            can resolve is unreachable through the very API that created it.
+            Must also be unique across the simulation; a duplicate is rejected
+            with a structured error envelope rather than silently overwriting
+            the existing prim.
         shape : str
             Shape type: ``"box"`` (default), ``"sphere"``, ``"capsule"``,
             ``"cylinder"``. ``"cuboid"`` is accepted as an alias for
@@ -1737,6 +1772,19 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         with self._lock:
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}
+
+            # Refuse a name that cannot address the object this call creates, on
+            # the shared ``entity_name_error`` domain the MuJoCo and Newton
+            # backends' ``add_object`` already applies, so a name one backend
+            # refuses is refused by all three. The prim path is interpolated from
+            # the name (``{stage}/Objects/{name}``), so ``add_object("")``
+            # reported success at ``/World/Objects/`` - the container scope, not a
+            # child prim - and a non-string name keyed ``_objects`` with a value
+            # the tool surface can never send back. An unhashable name raised
+            # ``TypeError`` out of the duplicate-name test below rather than
+            # returning the structured error this method documents.
+            if (name_err := entity_name_error("add_object", "name", name)) is not None:
+                return {"status": "error", "content": [{"text": name_err}]}
 
             # Normalize shape aliases. ``"cuboid"`` is accepted as an
             # alias for ``"box"`` because it matches Isaac's underlying
@@ -3580,7 +3628,8 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         Parameters
         ----------
         name : str
-            Camera identifier. Default ``"default"``. Must be unique
+            Camera identifier. Default ``"default"``. Must be a non-empty
+            string with no NUL (see Validation below). Must also be unique
             across the simulation; a duplicate is rejected with a
             structured error envelope.
         position : list[float], optional
@@ -3607,6 +3656,12 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
 
         Validation
         ----------
+        ``name`` must be a non-empty string containing no NUL, on the shared
+        :func:`~strands_robots.utils.entity_name_error` domain - an empty name
+        is the routing token ``render`` maps to the free camera, so a camera
+        created under it could never be rendered from, and the camera's prim
+        path is interpolated from the name.
+
         ``position`` and ``target`` must each be 3 finite numbers (a list,
         tuple or NumPy array; NumPy scalar elements accepted, ``bool``
         refused), and must not be identical - a camera whose eye is its own
@@ -3620,6 +3675,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         Newton backends' ``add_camera`` enforces, on the shared
         :func:`~strands_robots.utils.coerce_pose_vector` /
         :func:`~strands_robots.utils.camera_fov_error` /
+        :func:`~strands_robots.utils.entity_name_error` /
         :func:`~strands_robots.utils.positive_count_error` domains, so a camera
         configuration one backend refuses is refused by all three. Invalid
         values are rejected here, before the stage is touched, rather than
@@ -3645,6 +3701,20 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         with self._lock:
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}
+
+            # Refuse a name that cannot address the camera this call creates, on
+            # the shared ``entity_name_error`` domain the MuJoCo and Newton
+            # backends' ``add_camera`` already applies, so a name one backend
+            # refuses is refused by all three - the same invariant this method
+            # already honours for ``position`` / ``target`` / ``fov`` / ``width``
+            # / ``height`` below. An empty name is worse than unaddressable for a
+            # camera: ``render`` routes ``camera_name in (None, "", "default",
+            # "free")`` to the free camera by an explicit token check, so a
+            # camera created as ``""`` could never be rendered from, while the
+            # prim landed at ``/World/Cameras/`` - the container scope shared by
+            # every camera on the stage.
+            if (name_err := entity_name_error("add_camera", "name", name)) is not None:
+                return {"status": "error", "content": [{"text": name_err}]}
 
             # Validate the pose and the field of view on the shared domains the
             # MuJoCo and Newton backends' ``add_camera`` already applies, before
