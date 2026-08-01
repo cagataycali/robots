@@ -182,6 +182,17 @@ no "derive a label from the model" short form: `name` is also the procedural
 lookup key, so `None` / `""` are refused rather than replaced with a generated
 label.
 
+Looking an entity *up* is the other half of that contract, and it answers rather
+than refuses: a name only *addresses* an entity here, so a name that cannot be a
+registry key is honestly absent. `remove_robot`, `remove_object`,
+`remove_camera`, `send_action`, `move_object`, `get_body_state` and the rest
+report it with the unknown-entity message they already had, `robot_joint_names`
+and `get_observation` keep answering empty, and `get_frame` /
+`get_camera_params` raise the `KeyError` their contract names. Previously the
+membership test itself raised `TypeError: unhashable type` for a list or dict
+name, so the miss escaped the envelope those methods document as their only
+failure channel - reachable with no entities registered at all.
+
 ## Fleet (IsaacLab-style) preview
 
 ```python

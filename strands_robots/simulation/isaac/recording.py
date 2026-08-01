@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     dataset_recording_option_error,
@@ -470,7 +471,7 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         from strands_robots.simulation.models import TrajectoryStep
 
         state = self._recording_state()
-        if state is None or robot_name not in self._robots:
+        if state is None or not registered(self._robots, robot_name):
             return None
 
         robot = self._robots[robot_name]

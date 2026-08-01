@@ -36,6 +36,7 @@ import numpy as np
 from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
+from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
@@ -2231,7 +2232,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             # reloads are idempotent (no duplicate prims / no "already exists").
             removed_any = False
             for prior_name in list(self._scene_objects):
-                if prior_name in self._objects:
+                if registered(self._objects, prior_name):
                     self.remove_object(prior_name)
                     removed_any = True
                 self._scene_objects.discard(prior_name)
@@ -2268,7 +2269,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             for obj in scene_objects:
                 # ``add_object`` rejects duplicate names; if a manually-added
                 # object shadows a scene object, skip it rather than abort.
-                if obj.name in self._objects:
+                if registered(self._objects, obj.name):
                     skipped.append({"name": obj.name, "reason": "name already in use"})
                     continue
                 result = self.add_object(
@@ -2471,7 +2472,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             convention used by :meth:`get_observation` for unknown robots).
         """
         with self._lock:
-            if robot_name not in self._robots:
+            if not registered(self._robots, robot_name):
                 return []
             return list(self._robots[robot_name].joint_names)
 
@@ -2495,7 +2496,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             shape used by mutating methods on this class.
         """
         with self._lock:
-            if name not in self._robots:
+            if not registered(self._robots, name):
                 return {
                     "status": "error",
                     "content": [{"text": f"Robot '{name}' not found."}],
@@ -2537,7 +2538,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             bookkeeping that does not distinguish robots from objects.
         """
         with self._lock:
-            if name not in self._objects:
+            if not registered(self._objects, name):
                 return {
                     "status": "error",
                     "content": [{"text": f"Object '{name}' not found."}],
@@ -2630,7 +2631,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     )
                     return {}
 
-            if robot_name not in self._robots:
+            if not registered(self._robots, robot_name):
                 logger.warning(
                     "get_observation(robot_name=%r): unknown robot. Known: %s. Returning empty observation.",
                     robot_name,
@@ -2742,7 +2743,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             Standard ``{"status", "content": [{"text"}]}`` envelope.
         """
         with self._lock:
-            if robot_name not in self._robots:
+            if not registered(self._robots, robot_name):
                 return {
                     "status": "error",
                     "content": [{"text": f"Robot '{robot_name}' not found. Available: {sorted(self._robots)}"}],
@@ -2837,7 +2838,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                         "status": "error",
                         "content": [{"text": f"Specify robot_name; available robots: {sorted(self._robots)}"}],
                     }
-            if robot_name not in self._robots:
+            if not registered(self._robots, robot_name):
                 return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
             try:
                 jac = self._link_jacobian(self._robots[robot_name], body_name)
@@ -2963,7 +2964,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                         ],
                     }
 
-            if robot_name not in self._robots:
+            if not registered(self._robots, robot_name):
                 return {"status": "error", "content": [{"text": f"Robot '{robot_name}' not found."}]}
 
             robot = self._robots[robot_name]
@@ -2976,7 +2977,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             # name-lookup path -- the raw path would drop every task-space
             # key and the robot would sit still while the eval reads green
             # (#1812).
-            controller = self._action_controllers.get(robot_name)
+            controller = registry_entry(self._action_controllers, robot_name)
             if controller is not None and isinstance(action, dict):
                 try:
                     action = controller.compute_joint_targets(action)
@@ -3224,7 +3225,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     {"text": f"Rendered (headless, no RTX): {w}x{h}"},
                 )
 
-            if camera_name not in self._cameras:
+            if not registered(self._cameras, camera_name):
                 # No camera configured - return blank. Caller probably
                 # forgot to call add_camera or typo'd the name.
                 return (
@@ -3376,7 +3377,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     "get_frame is unavailable in headless render mode (no RTX frames are produced); "
                     "use render_mode='rtx_realtime' or consume the envelope render() fallback."
                 )
-            if camera_name not in self._cameras:
+            if not registered(self._cameras, camera_name):
                 raise KeyError(f"Camera '{camera_name}' not found. Available: {sorted(self._cameras)}")
             cam = self._cameras[camera_name]
             if cam.handle is None:
@@ -3435,7 +3436,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         with self._lock:
             if not self._world_created:
                 raise RuntimeError("No world created. Call create_world first.")
-            if camera_name not in self._cameras:
+            if not registered(self._cameras, camera_name):
                 raise KeyError(f"Camera '{camera_name}' not found. Available: {sorted(self._cameras)}")
             cam = self._cameras[camera_name]
             if cam.handle is None:
@@ -3890,7 +3891,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             if the camera is unknown to ``_cameras``.
         """
         with self._lock:
-            if name not in self._cameras:
+            if not registered(self._cameras, name):
                 return {
                     "status": "error",
                     "content": [{"text": f"Camera '{name}' not found."}],
@@ -4033,7 +4034,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             if cameras is None:
                 names = list(self._cameras.keys())
             else:
-                unresolved = [c for c in cameras if c not in self._cameras]
+                unresolved = [c for c in cameras if not registered(self._cameras, c)]
                 if unresolved:
                     return {
                         "status": "error",
@@ -4893,7 +4894,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                 return {"status": "error", "content": [{"text": "'positions' is required."}]}
             if robot_name is None:
                 robot_name = next(iter(self._robots))
-            r = self._robots.get(robot_name)
+            r = registry_entry(self._robots, robot_name)
             if r is None or r.articulation is None:
                 return {"status": "error", "content": [{"text": f"Robot {robot_name!r} not initialized."}]}
 
@@ -4967,7 +4968,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                         ],
                     }
                 robot_name = next(iter(self._robots))
-            robot = self._robots.get(robot_name)
+            robot = registry_entry(self._robots, robot_name)
             if robot is None or robot.articulation is None:
                 return {"status": "error", "content": [{"text": f"Robot {robot_name!r} not initialized."}]}
             try:
@@ -4997,7 +4998,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         the closing gripper fingers every frame. Velocities are zeroed
         so a teleport doesn't fling a dynamic body.
         """
-        obj = self._objects.get(name)
+        obj = registry_entry(self._objects, name)
         if obj is None or obj.handle is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
         try:
@@ -5060,7 +5061,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         pose exactly. Restored to dynamic on release. Toggles
         ``UsdPhysics.RigidBodyAPI.kinematicEnabled`` on the prim; best-effort.
         """
-        obj = self._objects.get(name)
+        obj = registry_entry(self._objects, name)
         if obj is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
         # Prefer the wrapper's own setter if present.
@@ -5107,7 +5108,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         collider lets the gripper close cleanly around it; re-enabled
         on release.
         """
-        obj = self._objects.get(name)
+        obj = registry_entry(self._objects, name)
         if obj is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
         if obj.handle is not None:
@@ -5137,7 +5138,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
 
     def _object_position(self, name: str) -> list[float] | None:
         """Return the world-frame position of ``name`` (or ``None`` if missing)."""
-        obj = self._objects.get(name)
+        obj = registry_entry(self._objects, name)
         if obj is None or obj.handle is None:
             return None
         try:
@@ -5210,7 +5211,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
 
     def _get_body_state_impl(self, body_name: str) -> dict[str, Any]:
         """Resolve + read ``body_name``; runs on the main thread (or pump-less)."""
-        obj = self._objects.get(body_name)
+        obj = registry_entry(self._objects, body_name)
         if obj is not None and obj.handle is not None:
             state = self._object_body_state(obj)
             if state is not None:
@@ -5292,7 +5293,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     prim = p
             elif "/" in body_name:
                 robot_name, _, link_name = body_name.partition("/")
-                r = self._robots.get(robot_name)
+                r = registry_entry(self._robots, robot_name)
                 if r is not None and link_name:
                     prim = self._find_robot_link_prim(stage, r, link_name, Sdf, Usd, UsdGeom)
             else:
@@ -5374,7 +5375,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         """
         if robot_name is None:
             robot_name = next(iter(self._robots), None)
-        r = self._robots.get(robot_name) if robot_name else None
+        r = registry_entry(self._robots, robot_name)
         if r is None:
             return None
         try:
@@ -5509,7 +5510,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         if frame is None or not getattr(frame, "size", 0):
             return None
         img = np.asarray(frame)[:, :, :3].astype("uint8")
-        out = self._cam_out_size.get(cname)
+        out = registry_entry(self._cam_out_size, cname)
         if out is not None:
             ow, oh = out
             if img.shape[1] != ow or img.shape[0] != oh:

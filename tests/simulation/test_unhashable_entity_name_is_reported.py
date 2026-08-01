@@ -8,10 +8,10 @@ name that is not hashable (a list, a dict, a set) the lookup itself raises
 lookup guards is never reached and the exception escapes the agent-tool dict
 that the surrounding method documents as its only failure channel.
 
-These tests pin the lookup as total on both backends that keep such a registry:
-a name of any type resolves to a verdict, a name that cannot be a key resolves
-to "absent", and the message the method already had reports it. The AST check
-at the end is what keeps a lookup added later inside that rule.
+These tests pin the lookup as total on every backend that keeps such a
+registry: a name of any type resolves to a verdict, a name that cannot be a key
+resolves to "absent", and the message the method already had reports it. The AST
+check at the end is what keeps a lookup added later inside that rule.
 """
 
 from __future__ import annotations
@@ -291,13 +291,173 @@ def test_newton_still_resolves_a_registered_name():
 
 
 # --------------------------------------------------------------------------- #
+# Isaac keeps its registries on the engine, and answers the same way           #
+# --------------------------------------------------------------------------- #
+
+
+def _isaac_engine() -> Any:
+    """An Isaac engine holding one entity of each kind, without Isaac Sim.
+
+    Isaac does not mirror its entities onto :class:`SimWorld`; ``_robots``,
+    ``_objects`` and ``_cameras`` on the engine are the registries a name is
+    resolved against. Only that resolution is under test, so the simulator-backed
+    state each method goes on to read is left unbuilt - a call that gets past the
+    lookup fails on that state instead, which is how the tests below tell a name
+    that resolved from one that did not.
+    """
+    from strands_robots.simulation.isaac.config import IsaacConfig
+    from strands_robots.simulation.isaac.simulation import (
+        IsaacSimulation,
+        _CameraState,
+        _ObjectState,
+        _RobotState,
+    )
+
+    engine = IsaacSimulation.__new__(IsaacSimulation)
+    engine._lock = threading.RLock()
+    engine._world_created = True
+    engine._config = IsaacConfig()
+    engine._robots = {"arm": _RobotState(name="arm", prim_path="/World/Robots/arm", joint_names=["pan"])}
+    engine._objects = {
+        "crate": _ObjectState(name="crate", prim_path="/World/Objects/crate", shape="box", is_static=False)
+    }
+    engine._cameras = {"look": _CameraState(name="look", prim_path="/World/Cameras/look", width=64, height=48)}
+    engine._prim_registry = ["/World/Robots/arm", "/World/Objects/crate", "/World/Cameras/look"]
+    # No Isaac ``World``: the prim deletion each ``remove_*`` attempts is
+    # best-effort and reports through the same envelope, so its absence does
+    # not stand in the way of the name resolution under test.
+    engine._world = None
+    engine._action_controllers = {}
+    engine._cam_out_size = {}
+    engine._cams_rec_state = None
+    engine._main_tid = threading.get_ident()
+    return engine
+
+
+# Every Isaac entry point that resolves a caller-supplied name and reports
+# through the agent-tool envelope, with the kind of entity each one addresses.
+_ISAAC_ENVELOPE_LOOKUPS: dict[str, Callable[[Any, Any], Any]] = {
+    "remove_robot": lambda e, n: e.remove_robot(n),
+    "remove_object": lambda e, n: e.remove_object(n),
+    "remove_camera": lambda e, n: e.remove_camera(n),
+    "send_action": lambda e, n: e.send_action({"pan": 0.1}, robot_name=n),
+    "get_jacobian": lambda e, n: e.get_jacobian(robot_name=n),
+    "move_object": lambda e, n: e.move_object(name=n, position=[0.2, 0.0, 0.3]),
+    "set_object_kinematic": lambda e, n: e.set_object_kinematic(n, True),
+    "set_object_collision": lambda e, n: e.set_object_collision(n, True),
+    "set_robot_pose": lambda e, n: e.set_robot_pose(robot_name=n, position=[0.0, 0.0, 0.0]),
+    "set_joint_positions": lambda e, n: e.set_joint_positions({"pan": 0.1}, robot_name=n),
+    "install_action_controller": lambda e, n: e.install_action_controller(n, object()),
+    "start_cameras_recording": lambda e, n: e.start_cameras_recording(output_dir="/tmp/isaac-name", cameras=[n]),
+    "get_body_state": lambda e, n: e.get_body_state(body_name=n),
+}
+
+
+@pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
+def test_isaac_reports_an_unhashable_name_the_same_way(label, name):
+    """Each Isaac method returns its error envelope, not a TypeError."""
+    failures = {
+        method: miss
+        for method, call in _ISAAC_ENVELOPE_LOOKUPS.items()
+        if (miss := _envelope_miss(lambda n, _c=call: _c(_isaac_engine(), n), name)) is not None
+    }
+    assert not failures, f"a {label} name escaped or was accepted on Isaac:\n" + "\n".join(
+        f"  {k}: {v}" for k, v in sorted(failures.items())
+    )
+
+
+@pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
+def test_isaac_best_effort_lookups_report_nothing_rather_than_raising(label, name):
+    """The two Isaac lookups with no error channel keep answering empty."""
+    engine = _isaac_engine()
+    assert engine.robot_joint_names(name) == []
+    assert engine.get_observation(robot_name=name) == {}
+
+
+@pytest.mark.parametrize(("label", "name"), UNHASHABLE, ids=[lbl for lbl, _ in UNHASHABLE])
+def test_isaac_raises_the_documented_miss_for_an_unhashable_camera(label, name):
+    """``get_camera_params`` reports through an exception, so it must be the documented one.
+
+    Its contract names ``KeyError`` for an unknown camera. A partial lookup
+    replaced that with a ``TypeError`` out of the membership test itself, which
+    no caller handling the documented failure would catch.
+    """
+    with pytest.raises(KeyError, match="not found"):
+        _isaac_engine().get_camera_params(camera_name=name)
+
+
+def test_isaac_resolves_a_registered_name_against_the_registry_alone():
+    """A name that addresses an entity is answered from the registry, unchanged.
+
+    These four need nothing but the registry, so a registered name gets the
+    same answer it always did.
+    """
+    assert _isaac_engine().remove_robot("arm")["status"] == "success"
+    assert _isaac_engine().remove_object("crate")["status"] == "success"
+    assert _isaac_engine().remove_camera("look")["status"] == "success"
+    assert _isaac_engine().robot_joint_names("arm") == ["pan"]
+    assert (
+        _isaac_engine().start_cameras_recording(output_dir="/tmp/isaac-name", cameras=["look"])["status"] == "success"
+    )
+
+
+@pytest.mark.parametrize(
+    ("method", "call"),
+    [
+        ("send_action", lambda e: e.send_action({"pan": 0.1}, robot_name="arm")),
+        ("install_action_controller", lambda e: e.install_action_controller("arm", object())),
+        ("set_robot_pose", lambda e: e.set_robot_pose(robot_name="arm", position=[0.0, 0.0, 0.0])),
+        ("set_joint_positions", lambda e: e.set_joint_positions({"pan": 0.1}, robot_name="arm")),
+    ],
+)
+def test_isaac_carries_a_registered_name_past_the_lookup(method, call):
+    """A registered name reaches the work, and fails on state, not on the name.
+
+    Each of these goes on to read simulator state this skeleton does not build,
+    so it still reports an error - but the error must no longer be the
+    unknown-entity message. That distinction is what says the guard rejects only
+    the names it should: a name the lookup turned away would have been reported
+    as absent instead of getting this far.
+    """
+    result = call(_isaac_engine())
+    assert result["status"] == "error"
+    assert "not found" not in result["content"][0]["text"], (
+        f"{method} reported a registered name as absent: {result['content'][0]['text']}"
+    )
+
+
+def test_isaac_reports_an_unknown_string_name_the_way_it_always_did():
+    """A misspelled name keeps the message the method already had."""
+    text = _isaac_engine().remove_object("crat")["content"][0]["text"]
+    assert "Object 'crat' not found" in text
+
+
+# --------------------------------------------------------------------------- #
 # no backend may re-introduce a partial lookup                                #
 # --------------------------------------------------------------------------- #
 
-# Registries keyed by an entity name. ``_policy_threads`` is the engine's own
-# per-robot map, reached before the world registries by the guard that refuses a
-# mutation while a policy runs.
-_REGISTRY_ATTRS = frozenset({"objects", "cameras", "robots", "_policy_threads"})
+# Registries keyed by an entity name. A backend keeps them either on its
+# :class:`SimWorld` (``objects`` / ``cameras`` / ``robots``) or on the engine
+# itself, and the engine-level ones are just as reachable with a caller-supplied
+# name: ``_policy_threads`` is consulted before the world registries by the guard
+# that refuses a mutation while a policy runs, ``_action_controllers`` by
+# ``send_action`` on the way to a task-space controller, and Isaac keeps its
+# whole entity state in ``_robots`` / ``_objects`` / ``_cameras``. Listing only
+# the world attributes would leave a backend that owns its registries outside
+# the check while appearing to be inside it.
+_REGISTRY_ATTRS = frozenset(
+    {
+        "objects",
+        "cameras",
+        "robots",
+        "_robots",
+        "_objects",
+        "_cameras",
+        "_policy_threads",
+        "_action_controllers",
+        "_cam_out_size",
+    }
+)
 
 # Creating an entity is a different question from looking one up: there the name
 # is not resolved but claimed, and a name that cannot be a key has to be refused
@@ -310,7 +470,7 @@ _CREATION_FUNCTIONS = frozenset({"add_robot", "add_object", "add_camera"})
 def _backend_dirs() -> list[Path]:
     """The backend packages, located from a symbol rather than a path literal."""
     simulation_dir = Path(inspect.getfile(registered)).parent
-    return [simulation_dir / "mujoco", simulation_dir / "newton"]
+    return [simulation_dir / "mujoco", simulation_dir / "newton", simulation_dir / "isaac"]
 
 
 def _is_registry(node: ast.AST) -> bool:
