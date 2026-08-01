@@ -99,15 +99,32 @@ def _domain_refused(target: Any, **kwargs: Any) -> bool:
     let this value through", which is exactly the question being compared
     across backends. Raising is never a domain refusal: escaping the
     tool-result contract is the defect this file pins.
+
+    The handler catches ``Exception`` and stops there. A library failure is one
+    of the answers being collected, but an interrupt is not an answer about the
+    domain: swallowing ``BaseException`` would record an operator's Ctrl-C as
+    "this backend did not refuse the value", compare that against the other two
+    backends and carry on sweeping. ``pytest``'s own ``skip`` and ``fail``
+    outcomes derive from ``BaseException`` for the same reason, so they have to
+    reach the runner rather than becoming a verdict.
     """
     try:
         result = _create_world(target, **kwargs)
-    except BaseException:  # noqa: BLE001 - a raise is measured, not handled
+    except Exception:  # noqa: BLE001 - a library failure is a verdict, control flow is not
         return False
     if not isinstance(result, dict) or result.get("status") != "error":
         return False
     text = " ".join(block.get("text", "") for block in result.get("content", []))
     return _DOMAIN_MARKER in text
+
+
+def _raising_target(exc: BaseException) -> Any:
+    """A ``create_world`` stand-in that raises, so the handler's width is observable."""
+
+    def target(**_kwargs: Any) -> Any:
+        raise exc
+
+    return target
 
 
 def _newton_stub() -> Any:
@@ -193,6 +210,50 @@ class TestMuJoCoRefusesAScaleItCannotHonor:
             assert float(model.hfield_size[0][2]) == pytest.approx(terrain_elevation(float(value)), abs=1e-9)
         finally:
             sim.cleanup()
+
+
+class TestTheDomainClassifierCollectsFailuresWithoutSwallowingControlFlow:
+    """``_domain_refused`` must catch a library failure and only a library failure.
+
+    The classifier turns "what did this backend do with this value" into a bool
+    so the sweep below can compare the three implementations. A raise is one of
+    the answers it has to collect - the escaping ``TypeError`` is the defect
+    this file pins - so a library failure cannot be allowed to abort the sweep.
+    An interrupt is not an answer about the domain, though: recording one as
+    "this backend did not refuse the value" and then comparing it against the
+    other two backends turns an operator's Ctrl-C into a verdict. Both halves
+    are pinned here because the correct handler is the one that satisfies both.
+    """
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            TypeError("float() argument must be a string or a real number, not 'NoneType'"),
+            ValueError("could not convert string to float: 'abc'"),
+        ],
+        ids=["TypeError", "ValueError"],
+    )
+    def test_a_library_failure_is_collected_as_not_a_domain_refusal(self, exc: Exception) -> None:
+        """The two escapes this file exists to pin must reach the comparison, not the runner."""
+        assert _domain_refused(_raising_target(exc), difficulty=None) is False
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            KeyboardInterrupt(),
+            SystemExit(1),
+            pytest.skip.Exception("newton is not installed"),
+            pytest.fail.Exception("the backend stub is incomplete"),
+        ],
+        ids=["KeyboardInterrupt", "SystemExit", "pytest.skip", "pytest.fail"],
+    )
+    def test_control_flow_reaches_the_runner_instead_of_becoming_a_verdict(self, exc: BaseException) -> None:
+        # Executable premise: each of these derives from BaseException without
+        # deriving from Exception, which is the whole reason the handler width
+        # is observable at all.
+        assert not isinstance(exc, Exception), f"{type(exc).__name__} no longer tests the handler width"
+        with pytest.raises(type(exc)):
+            _domain_refused(_raising_target(exc), difficulty=None)
 
 
 class TestEveryBackendAgreesOnTheDomain:
