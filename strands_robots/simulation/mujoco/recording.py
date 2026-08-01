@@ -17,6 +17,7 @@ from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     dataset_recording_option_error,
 )
+from strands_robots.utils import name_list_error
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,14 @@ class RecordingMixin(DatasetRecordingMixin):
         # which optional extras this install has.
         if error := dataset_recording_option_error("start_recording", fps):
             return error
+        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
+        # refused on the shared name-list domain before any dataset is created. Neither
+        # mistake this catches could be honored as written: a single name passed
+        # as a bare string is iterable per character, so it was read as one
+        # camera per letter, and a repeated name collapsed in the feature dict, declaring
+        # fewer camera columns than the caller asked for.
+        if cameras and (text := name_list_error(cameras, "cameras", "start_recording")):
+            return {"status": "error", "content": [{"text": text}]}
 
         # Reject a rate a rollout already in flight is not capturing at. The
         # rollout entry points cover the record-then-rollout ordering; this is

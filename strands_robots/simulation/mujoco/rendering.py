@@ -27,6 +27,7 @@ from strands_robots.simulation.safe_output import (
     validate_output_path,
     video_sandbox_args,
 )
+from strands_robots.utils import name_list_error
 
 logger = logging.getLogger(__name__)
 
@@ -1795,6 +1796,13 @@ class RenderingMixin:
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
+        # refused on the shared name-list domain before any camera is resolved. Neither
+        # mistake this catches could be honored as written: a single name passed
+        # as a bare string is iterable per character, so it was read as one
+        # camera per letter, and a repeated name rendered the same view twice.
+        if cameras and (text := name_list_error(cameras, "cameras", "render_all")):
+            return {"status": "error", "content": [{"text": text}]}
         names, unresolved = self._active_camera_list(cameras)
         if cameras is not None and unresolved:
             return {
@@ -1896,6 +1904,14 @@ class RenderingMixin:
             "start_cameras_recording", fps, width, height, max_frames_per_camera
         ):
             return error
+        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
+        # refused on the shared name-list domain before any filesystem or capture-thread work. Neither
+        # mistake this catches could be honored as written: a single name passed
+        # as a bare string is iterable per character, so it was read as one
+        # camera per letter, and a repeated name opened a second encoder on the one output
+        # path, so the artifact ledger reported two files where one exists.
+        if cameras and (text := name_list_error(cameras, "cameras", "start_cameras_recording")):
+            return {"status": "error", "content": [{"text": text}]}
 
         # The guard above accepts any real scalar with an integral value, so a
         # ``640.0`` read from a config float and an ``np.int64`` probed from a
@@ -2341,6 +2357,14 @@ class RenderingMixin:
             "start_cameras_recording_synchronous", fps, width, height, max_frames_per_camera
         ):
             return error
+        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
+        # refused on the shared name-list domain before any filesystem or capture-thread work. Neither
+        # mistake this catches could be honored as written: a single name passed
+        # as a bare string is iterable per character, so it was read as one
+        # camera per letter, and a repeated name opened a second encoder on the one output
+        # path, so the artifact ledger reported two files where one exists.
+        if cameras and (text := name_list_error(cameras, "cameras", "start_cameras_recording_synchronous")):
+            return {"status": "error", "content": [{"text": text}]}
 
         # The guard above accepts any real scalar with an integral value, so a
         # ``640.0`` read from a config float and an ``np.int64`` probed from a

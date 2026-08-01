@@ -40,6 +40,7 @@ from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
     entity_name_error,
+    name_list_error,
     positive_count_error,
     positive_whole_number_error,
 )
@@ -4017,6 +4018,14 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         # drops every captured frame.
         if error := _cameras_recording_option_error("start_cameras_recording", fps, max_frames_per_camera):
             return error
+        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
+        # refused on the shared name-list domain before any filesystem or buffer work. Neither
+        # mistake this catches could be honored as written: a single name passed
+        # as a bare string is iterable per character, so it was read as one
+        # camera per letter, and a repeated name opened a second encoder on the one output
+        # path, so the artifact ledger reported two files where one exists.
+        if cameras and (text := name_list_error(cameras, "cameras", "start_cameras_recording")):
+            return {"status": "error", "content": [{"text": text}]}
 
         with self._lock:
             if not self._world_created:

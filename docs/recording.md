@@ -105,6 +105,27 @@ warning is logged when the implicit `default` overview camera is swept in
 alongside your real sensor cameras, so the stray view is never recorded
 silently.
 
+`cameras=` is a list of **distinct** camera names, and every surface that accepts
+one - `start_recording`, `render_all`, and the plain-MP4
+`start_cameras_recording` / `start_cameras_recording_synchronous` - enforces that
+shape up front. Two mistakes are refused rather than guessed at, because neither
+can be honored as written:
+
+- **A single name passed as a bare string.** `cameras="wrist"` is iterable per
+  character, so it would be read as five cameras, one per letter. Wrap it in a
+  list: `cameras=["wrist"]`.
+- **A repeated name.** `cameras=["wrist", "wrist"]` cannot mean one camera and
+  cannot mean two. In a dataset schema it collapses to a single column, so the
+  recording declares fewer views than were asked for; in `render_all` it renders
+  the same view twice; and in a plain-MP4 recording it opens a second encoder on
+  the one output path, so the camera is rendered and appended twice per capture
+  tick and the artifact ledger reports two files where one exists.
+
+A `Mapping` is refused for the same reason - it is iterable over its keys, so its
+values would be silently discarded. `cameras=None` keeps its "every camera"
+meaning.
+
+
 ### Where the dataset is written (`root` / `overwrite`)
 
 `root` is the on-disk directory for the dataset (defaults to the LeRobot cache

@@ -641,29 +641,37 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
 def name_list_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable list of distinct key names.
 
-    Shared domain for the parameters that carry an ordered list of KEY NAMES
-    into a policy: the LeRobot ``image_keys`` (model VISUAL feature keys to
-    declare on the config) and the VERA ``image_keys`` (observation camera keys
-    to width-concat into one frame). The two name different vocabularies, but
-    the shape contract is identical - several distinct non-blank names, in the
-    order the caller wants them - and both consumers reach the same failure when
-    it is not met, so the rule lives here rather than beside either of them.
+    Shared domain for every parameter that carries an ordered list of KEY
+    NAMES: the LeRobot ``image_keys`` (model VISUAL feature keys to declare on
+    the config), the VERA ``image_keys`` (observation camera keys to
+    width-concat into one frame), and the simulation ``cameras`` subset accepted
+    by ``render_all``, the two plain-MP4 recorders and every backend's
+    ``start_recording``. They name different vocabularies, but the shape
+    contract is identical - several distinct non-blank names, in the order the
+    caller wants them - and every consumer reaches the same failure when it is
+    not met, so the rule lives here rather than beside any one of them.
 
     The mistake this exists for is a single name passed as a bare string.
     ``str`` is iterable, so ``list("wrist")`` yields ``['w', 'r', 'i', 's', 't']``
     - five names the caller never wrote, one per character. Nothing downstream
     can tell that apart from a deliberate five-entry list, so it is accepted and
     the consequence surfaces far from the call: a model built declaring
-    per-character features, or a ``KeyError: 'w'`` raised mid-rollout when the
-    frame for a one-letter camera is looked up.
+    per-character features, a ``KeyError: 'w'`` raised mid-rollout when the
+    frame for a one-letter camera is looked up, or a recording refused as five
+    unknown cameras rather than as one mis-typed parameter.
 
     A ``Mapping`` is refused for the same reason in the other direction: it is
     iterable over its keys, so its values would be silently discarded.
 
-    A repeated name is refused because it cannot be honored as written - the
-    LeRobot side builds a feature dict, where a duplicate collapses and declares
-    fewer features than asked for, and the VERA side concatenates one panel per
-    entry, where a duplicate doubles the width of the frame the model sees.
+    A repeated name is refused because it cannot be honored as written, and the
+    consumers disagree on which way it fails. A duplicate collapses where the
+    name keys a dict - the LeRobot feature map, or a dataset schema, which then
+    declares fewer columns than asked for - and doubles where each entry drives
+    its own unit of work: VERA concatenates one panel per entry, so the frame
+    the model sees is twice as wide; ``render_all`` renders the same view twice;
+    and a plain-MP4 recorder opens a second encoder on the one output path, so
+    the same camera is rendered and appended twice per capture tick while the
+    artifact ledger reports two files where one exists.
 
     Only a :class:`~collections.abc.Sequence` is accepted, which excludes
     one-shot iterators. That matters on the LeRobot path, where the value is
