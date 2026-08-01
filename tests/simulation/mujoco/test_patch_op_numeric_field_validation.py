@@ -13,7 +13,10 @@ the physics state, with every call in the chain still reporting success::
 
 The same fields written through ``move_object``, ``add_object`` and
 ``add_camera`` were already refused, so one identical write to ``body_pos`` had
-two opposite verdicts depending on which method issued it. These tests pin the
+two opposite verdicts depending on which method issued it. The fixed-width fields
+reach that guard through the wrapper that also pins their component count, so a
+value with no length at all is reported as "must be a list/tuple of 3 numbers" -
+the count is pinned in the companion module for component counts. These tests pin the
 finiteness domain on every numeric field of every op, hold it to the same verdict
 as its ``move_object`` sibling, and pin that the values MuJoCo does define - an
 integer component, a NumPy real scalar, and the all-zero quaternion it reads as
@@ -160,7 +163,8 @@ class TestNonNumericComponentsAreRefused:
             ([None, 0.0, 0.3], "must be numbers"),
             ([[0.1], 0.0, 0.3], "must be numbers"),
             ([True, 0.0, 0.3], "must be numbers"),
-            (0.4, "must be a list/tuple of numbers"),
+            # A fixed-width field names the width it needs: "of 3 numbers".
+            (0.4, "must be a list/tuple of 3 numbers"),
         ],
         ids=["strings", "none", "nested", "bool", "scalar"],
     )

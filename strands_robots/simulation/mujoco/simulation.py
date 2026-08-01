@@ -802,19 +802,29 @@ class MuJoCoSimEngine(
         error names the op, the unrecognised key, a close match where one
         exists, and the keys that op accepts.
 
-        Every numeric field an op writes - ``pos``, ``quat``, ``size``,
-        ``rgba`` - must hold finite numbers. MuJoCo bakes a ``nan``/``inf``
-        component into the model without complaint, so an unchecked one is
-        accepted and only surfaces as a poisoned physics state several
-        successful calls later::
+        Every numeric field an op writes is held to the domain the
+        scene-construction calls apply to the same buffer: a ``pos`` of exactly
+        3 finite components, a ``quat`` of 4, a ``rgba`` of 3 (read as RGB and
+        completed with an opaque alpha, exactly as ``add_object(color=...)``
+        does) or 4, and a ``size`` of finite components in the count its shape
+        consumes. MuJoCo bakes a ``nan``/``inf`` component into the model
+        without complaint, so an unchecked one is accepted and only surfaces as
+        a poisoned physics state several successful calls later::
 
             sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate",
                                    "pos": [float("nan"), 0, 0.3]}])
             # status=error: set_body_pos: 'pos' must contain finite numbers
             #               (no nan/inf), got [nan, 0, 0.3]
 
-        This is the same domain ``add_object``, ``add_camera`` and
-        ``move_object`` apply to those fields.
+            sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate",
+                                   "pos": [0.4, 0.9]}])
+            # status=error: set_body_pos: 'pos' must be a 3-element vector,
+            #               got 2 ([0.4, 0.9])
+
+        The width matters as much as the components: these two ops assign the
+        field as a spec attribute rather than passing it as a constructor
+        keyword, and MuJoCo reports a mismatch there by dumping a C++ overload
+        table that names neither the op nor the field.
 
         The whole batch is applied, then the spec is recompiled once. If any
         op fails, the batch is rejected and the world is rolled back to its

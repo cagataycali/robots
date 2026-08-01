@@ -343,16 +343,38 @@ sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "position": [0.4, 
 #               Accepted keys: name, op, pos.
 ```
 
-Every numeric field an op writes - `pos`, `quat`, `size`, `rgba` - must hold
-finite numbers, the same domain `add_object` / `add_camera` / `move_object` apply.
+Every numeric field an op writes is held to the domain the scene-construction
+calls apply to the same buffer:
+
+| field | accepted |
+| --- | --- |
+| `pos` | exactly 3 finite components |
+| `quat` | exactly 4 finite components |
+| `rgba` | 3 (RGB, completed with an opaque alpha) or 4 finite components |
+| `size` | finite components, in the count the geom's shape consumes |
+
 MuJoCo bakes a `nan`/`inf` component into the model without complaint, so an
 unchecked one reports success and only surfaces later as a poisoned physics
-state:
+state. A wrong component count is reported by the library rather than left to
+MuJoCo, which for the two attribute-assigning ops (`set_body_pos`,
+`set_body_quat`) dumps a C++ overload table naming neither the op nor the field:
 
 ```python
 sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "pos": [float("nan"), 0, 0.3]}])
 # status=error: set_body_pos: 'pos' must contain finite numbers (no nan/inf),
 #               got [nan, 0, 0.3]
+
+sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "pos": [0.4, 0.9]}])
+# status=error: set_body_pos: 'pos' must be a 3-element vector, got 2 ([0.4, 0.9])
+```
+
+A three-component `rgba` is the same RGB `add_object(color=...)` accepts, so the
+two surfaces that write `geom_rgba` agree on what a colour is:
+
+```python
+sim.patch_scene_mjcf([{"op": "add_geom", "body": "rig", "type": "box",
+                       "size": [0.1, 0.1, 0.1], "rgba": [0.9, 0.3, 0.1]}])
+# status=success - stored as [0.9, 0.3, 0.1, 1.0]
 ```
 
 The batch is atomic: if any op is rejected the world is rolled back to its

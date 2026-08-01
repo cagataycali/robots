@@ -33,13 +33,13 @@ from __future__ import annotations
 
 import difflib
 import logging
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
 from strands_robots.simulation.mujoco.backend import _ensure_mujoco, filter_mujoco_attach_noise, mj_name_to_id
 from strands_robots.simulation.mujoco.spec_builder import SpecBuilder
-from strands_robots.utils import finite_vector_error
+from strands_robots.utils import coerce_rgba, finite_vector_error, pose_vector_error
 
 logger = logging.getLogger(__name__)
 
@@ -1318,8 +1318,52 @@ _PATCH_OP_VECTOR_FIELDS: dict[str, frozenset[str]] = {
 }
 
 
-def _non_finite_op_field_error(kind: str, op: Mapping[str, Any]) -> str | None:
-    """Reject a numeric op field that is not finite numbers, before the spec is touched.
+def _rgba_field_domain(kind: str, field: str, value: Any) -> tuple[Any, str | None]:
+    """Validate an op's colour and complete a 3-component RGB with opaque alpha.
+
+    Thin adapter so :func:`~strands_robots.utils.coerce_rgba` - the single
+    definition of the library's colour contract - can sit in
+    :data:`_OP_FIELD_DOMAINS` beside the other field domains.
+
+    It differs from that helper in one respect, because an op dict differs from a
+    keyword argument: a key that is PRESENT carries a supplied value, so ``None``
+    is a colour this op cannot apply rather than an omission asking for the
+    default. Reading it as omitted would paint the fallback grey under a success
+    result, which is the silent default the op-key check exists to prevent.
+
+    Args:
+        kind: The op name, for the message.
+        field: The field name, always ``"rgba"``.
+        value: The caller-supplied colour.
+
+    Returns:
+        ``(rgba, None)`` with exactly four components, or ``(None, message)``.
+    """
+    if value is None:
+        return None, f"{kind}: '{field}' must be a sequence of numbers, got None"
+    return coerce_rgba(kind, field, value)
+
+
+# The domain each numeric op field is held to, keyed by field name. Every field
+# any op declares in :data:`_PATCH_OP_VECTOR_FIELDS` has an entry here and a
+# parity test pins that, so a field added to an op cannot reach the compiled
+# model without a decided domain.
+#
+# The widths are the library's, not MuJoCo's: a ``pos`` is three components and a
+# ``quat`` four whichever op writes it, and a colour is the contract
+# :func:`~strands_robots.utils.coerce_rgba` defines for every backend. ``size``
+# is the one field whose count is shape-dependent, so only its components are
+# checked here and the count is left to ``_validate_size``, which knows the shape.
+_OP_FIELD_DOMAINS: dict[str, Callable[[str, str, Any], tuple[Any, str | None]]] = {
+    "pos": lambda kind, field, value: (value, pose_vector_error(kind, field, value, 3)),
+    "quat": lambda kind, field, value: (value, pose_vector_error(kind, field, value, 4)),
+    "rgba": _rgba_field_domain,
+    "size": lambda kind, field, value: (value, finite_vector_error(kind, field, value)),
+}
+
+
+def _normalized_op_vector_fields(kind: str, op: Mapping[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+    """Hold every numeric op field to its domain, before the spec is touched.
 
     MuJoCo's compiler does not reject a ``nan``/``inf`` pose, extent or colour
     (its one exception is a ``nan`` geom size), so an unchecked component is
@@ -1329,28 +1373,39 @@ def _non_finite_op_field_error(kind: str, op: Mapping[str, Any]) -> str | None:
     observation read - keeps reporting success, so a caller has no way to learn
     the scene is dead.
 
-    Delegates to :func:`~strands_robots.utils.finite_vector_error`, which is the
-    same guard ``add_object``, ``add_camera`` and ``move_object`` already apply to
-    the very same fields: without it ``set_body_pos`` accepted a pose
-    ``move_object`` refuses, for one identical write to ``body_pos``.
+    Component count is part of the same contract. These ops write the very
+    buffers ``add_object``, ``add_camera`` and ``move_object`` write, so a value
+    either surface refuses has to be refused by the other - and MuJoCo alone
+    cannot deliver that:
 
-    Length is deliberately not checked here. A wrong component count is already
-    refused - by ``_validate_size`` for a geom size, and by the MuJoCo binding
-    for a pose - so this guard adds only the finiteness and numeric-type axis
-    that nothing downstream covers.
+    * ``set_body_pos`` / ``set_body_quat`` assign the field as a spec ATTRIBUTE
+      (``body.pos = ...``) rather than passing it as a constructor keyword, and
+      pybind11 reports a width mismatch there by dumping its C++ overload table
+      and the receiving object's address. That message names neither the op nor
+      the field, so the one thing the caller needs is the one thing absent from
+      it, while the sibling ops writing the same two fields report cleanly.
+    * A three-component ``rgba`` is refused outright, though it is the RGB that
+      ``add_object(color=...)`` accepts and completes with an opaque alpha. One
+      backend, two surfaces, one ``geom_rgba`` buffer, opposite verdicts.
 
     Args:
         kind: The op name, already known to be in :data:`_PATCH_OP_KEYS`.
         op: The caller-supplied op dict.
 
     Returns:
-        An error message naming the op, the field and the offending value, or
-        ``None`` when every numeric field present holds finite numbers.
+        ``(op, None)`` with every numeric field present normalized to what the
+        spec write consumes, or ``(None, message)`` naming the op, the field and
+        the offending value.
     """
+    normalized = dict(op)
     for field in sorted(_PATCH_OP_VECTOR_FIELDS[kind]):
-        if field in op and (msg := finite_vector_error(kind, field, op[field])) is not None:
-            return msg
-    return None
+        if field not in op:
+            continue
+        value, msg = _OP_FIELD_DOMAINS[field](kind, field, op[field])
+        if msg is not None:
+            return None, msg
+        normalized[field] = value
+    return normalized, None
 
 
 def _find_body(spec: Any, name: str, new_bodies: dict[str, Any]) -> Any:
@@ -1394,8 +1449,12 @@ def _apply_patch_op(spec: Any, op: dict[str, Any], new_bodies: dict[str, Any]) -
         raise ValueError(f"unknown op '{kind}'. Supported: {sorted(_PATCH_OP_KEYS)}")
     if err := _unknown_op_keys_error(str(kind), op):
         raise ValueError(err)
-    if err := _non_finite_op_field_error(str(kind), op):
+    normalized, err = _normalized_op_vector_fields(str(kind), op)
+    if normalized is None:
         raise ValueError(err)
+    # Every numeric field below now holds the value the spec write consumes -
+    # notably a three-component 'rgba' completed to RGBA.
+    op = normalized
 
     if kind == "add_body":
         parent = op.get("parent", "world")
@@ -1503,10 +1562,12 @@ def patch_scene_mjcf(world: SimWorld, ops: list[dict[str, Any]]) -> int:
     Each op accepts exactly the keys listed for it in :data:`_PATCH_OP_KEYS`;
     anything else is rejected, because an unread key would leave the op running
     on its fallback default (see :func:`_unknown_op_keys_error`). Every numeric
-    field an op writes must hold finite numbers (see
-    :func:`_non_finite_op_field_error`) - MuJoCo bakes a ``nan``/``inf``
-    component into the model without complaint, so it would be accepted here and
-    surface as a dead scene several successful calls later.
+    field an op writes is held to its domain in :data:`_OP_FIELD_DOMAINS` - a
+    ``pos`` of exactly 3 finite components, a ``quat`` of 4, a ``rgba`` of 3
+    (RGB, completed with an opaque alpha) or 4 - because MuJoCo bakes a
+    ``nan``/``inf`` component into the model without complaint, and reports a
+    width mismatch on the attribute writes by dumping a C++ overload table that
+    names neither the op nor the field.
 
     The list is applied atomically: if any op raises, the whole patch is
     rejected and the world is left in its original state. After all ops
