@@ -33,7 +33,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
     persist_geom_properties,
     refresh_body_inertial_from_geometry,
 )
-from strands_robots.utils import is_boolean
+from strands_robots.utils import BOOLEAN_VECTOR_REASON, coerce_rgba, is_boolean
 
 logger = logging.getLogger(__name__)
 
@@ -59,20 +59,6 @@ _BOOLEAN_STATE_REASON = (
     "float(True) is 1.0, so a boolean would be written as 1 radian, 1 rad/s or "
     "1 N depending on the surface, and the call would report success. Pass the "
     "quantity in the surface's own units."
-)
-
-# The vector counterpart to _BOOLEAN_STATE_REASON. It is worded separately
-# because that one names radians, rad/s and newtons, which are the wrong units
-# for what _coerce_finite_vector guards: a coordinate, a geom extent, a friction
-# coefficient or a colour channel. The wording here is the one already recorded
-# in utils.finite_vector_error, which refuses a bool component for this reason
-# on the scene-construction side - and whose docstring then defers a colour to
-# "the rgba coercion in strands_robots.simulation.mujoco.physics", i.e. to this
-# helper. Same library, same quantity, so the same answer.
-_BOOLEAN_VECTOR_REASON = (
-    "float(True) is 1.0, so a boolean would silently write 1.0 where a "
-    "coordinate, extent or colour channel belongs, and the call would report "
-    "success. Pass the component as a number."
 )
 
 
@@ -138,7 +124,7 @@ def _coerce_finite_vector(
                 "status": "error",
                 "content": [
                     {
-                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {values!r}). {_BOOLEAN_VECTOR_REASON}"
+                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {values!r}). {BOOLEAN_VECTOR_REASON}"
                     }
                 ],
             }
@@ -180,24 +166,15 @@ def _coerce_finite_vector(
     return out, None
 
 
-# A MuJoCo geom stores its colour as a 4-component ``rgba`` row. Alpha is the
-# only component with a meaningful default (opaque), so an RGB triple can be
-# completed without inventing a colour, while any other count cannot.
-_RGBA_ACCEPTED_LENGTHS: tuple[int, ...] = (3, 4)
-_RGBA_LAYOUT = "RGB, or RGBA with alpha"
-
-
 def _coerce_rgba(color: Any, method: str, name: str = "color") -> tuple[list[float] | None, dict[str, Any] | None]:
     """Coerce a caller-supplied colour to the 4 components a geom's rgba stores.
 
-    Single source of the backend's colour contract, shared by the scene creator
-    (``add_object``) and the runtime mutator (``set_geom_properties``) so their
-    accepted domains cannot diverge: 3 components are read as RGB and completed
-    with an opaque alpha -- the one component MuJoCo defines a default for -- 4
-    are read as RGBA verbatim, and any other count is rejected because it can
-    only be applied by fabricating or discarding components the caller did not
-    ask about. An empty vector is rejected for the same reason: substituting the
-    backend default paints a colour nobody requested under a success result.
+    Envelope binding over :func:`strands_robots.utils.coerce_rgba`, which is the
+    single definition of the colour contract for every backend. This wrapper
+    exists only to report the shared reason in the structured-error shape the
+    MuJoCo scene creator (``add_object``) and runtime mutator
+    (``set_geom_properties``) return, so those two agreed domains stay in step
+    with Newton's and Isaac's rather than being a second copy of the rule.
 
     Args:
         color: The caller's colour sequence (list / tuple / NumPy array).
@@ -208,16 +185,10 @@ def _coerce_rgba(color: Any, method: str, name: str = "color") -> tuple[list[flo
         ``(rgba, None)`` with exactly 4 finite floats, or ``(None, error_dict)``
         matching the structured-error tool contract.
     """
-    floats, err = _coerce_finite_vector(
-        color,
-        name,
-        method,
-        accepted_lengths=_RGBA_ACCEPTED_LENGTHS,
-        layout=_RGBA_LAYOUT,
-    )
-    if floats is None:
-        return None, err
-    return (floats if len(floats) == 4 else [*floats, 1.0]), None
+    rgba, reason = coerce_rgba(method, name, color)
+    if reason is not None:
+        return None, {"status": "error", "content": [{"text": reason}]}
+    return rgba, None
 
 
 def _coerce_finite_joint_map(

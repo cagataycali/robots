@@ -40,6 +40,7 @@ from strands_robots.simulation.models import registered, registry_entry
 from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
+    coerce_rgba,
     entity_name_error,
     name_list_error,
     positive_count_error,
@@ -1734,9 +1735,12 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             Lists shorter than the convention fall back to defaults for
             the missing trailing components.
         color : list[float], optional
-            RGB color ``[r, g, b]`` in ``[0, 1]``. RGBA lists (length 4)
-            are accepted; alpha is dropped (Isaac's primitive constructors
-            take RGB only). ``None`` -> default white.
+            ``[r, g, b]`` or ``[r, g, b, a]`` in 0..1 (an RGB triple is
+            completed with an opaque alpha; the Isaac shape wrappers take
+            RGB only). Any other component count is refused rather than
+            truncated, since applying only the leading components would
+            paint a colour that was not asked for. NumPy arrays are
+            accepted. ``None`` -> default white.
         mass : float
             Mass in kg. Default 0.1. Ignored when ``is_static=True``.
         is_static : bool
@@ -1859,6 +1863,17 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             orientation, _oerr = coerce_pose_vector("add_object", "orientation", orientation, 4)
             if _oerr is not None:
                 return {"status": "error", "content": [{"text": _oerr}]}
+            # Same shared domain for the colour, whose accepted counts the
+            # 4-component rgba row it ends up in defines. Forwarding it raw
+            # validated nothing and then TRUNCATED: ``_construct_shape_prim``
+            # writes ``list(color)[:3]``, so a 5-component colour was applied as
+            # its first 3 under a success result, ``"abcd"`` was split per
+            # character into the colour ``['a', 'b', 'c']``, and a scalar reached
+            # ``np.asarray`` before failing. Normalizing to 4 components here
+            # makes that ``[:3]`` read well-defined by construction.
+            color, _cerr = coerce_rgba("add_object", "color", color)
+            if _cerr is not None:
+                return {"status": "error", "content": [{"text": _cerr}]}
             scale_alias = kwargs.pop("scale", None)
             if size is None and scale_alias is not None:
                 size = scale_alias

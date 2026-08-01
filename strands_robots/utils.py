@@ -748,6 +748,18 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     return None
 
 
+#: Why a boolean is refused as a vector component. Worded for what a vector
+#: actually carries - a coordinate, a geom extent, a friction coefficient, a
+#: colour channel - rather than the radians / rad/s / newtons of the joint
+#: writers, whose reason is stated separately beside them. Lives here because
+#: every surface that coerces a vector component shares this one answer.
+BOOLEAN_VECTOR_REASON = (
+    "float(True) is 1.0, so a boolean would silently write 1.0 where a "
+    "coordinate, extent or colour channel belongs, and the call would report "
+    "success. Pass the component as a number."
+)
+
+
 def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
     """Return an error message if any element of ``vec`` is not a finite number.
 
@@ -770,10 +782,9 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
     because ``float(True)`` would silently write ``1.0`` where a coordinate,
     extent or colour channel belongs. Length is NOT checked here (size is shape-dependent, so
     its count is checked against the shape afterwards); use
-    :func:`pose_vector_error` for a fixed length, or the rgba coercion in
-    :mod:`strands_robots.simulation.mujoco.physics` for a colour, whose count
-    the geom's rgba row defines. Returns ``None`` when every element is a finite
-    real number.
+    :func:`pose_vector_error` for a fixed length, or :func:`coerce_rgba` for a
+    colour, whose count the rgba row it is written into defines. Returns ``None``
+    when every element is a finite real number.
     """
     try:
         iter(vec)
@@ -786,7 +797,11 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
         # silent ``1.0`` - a ``True`` coordinate placing a body 1 m out. The
         # agent-tool router already refuses a bool component, so refusing it
         # here keeps the direct API and the tool surface in step.
-        if isinstance(_elem, bool) or not isinstance(_elem, numbers.Real):
+        if is_boolean(_elem):
+            return (
+                f"{method}: '{param_name}' elements must be numbers, not a bool (got {vec!r}). {BOOLEAN_VECTOR_REASON}"
+            )
+        if not isinstance(_elem, numbers.Real):
             return f"{method}: '{param_name}' elements must be numbers, got {vec!r}"
         if not math.isfinite(float(_elem)):
             return f"{method}: '{param_name}' must contain finite numbers (no nan/inf), got {vec!r}"
@@ -859,6 +874,71 @@ def coerce_pose_vector(
     if (err := pose_vector_error(method, param_name, vec, expected_len)) is not None:
         return None, err
     return [float(v) for v in vec], None
+
+
+#: The component counts a 4-component RGBA row can be built from. Alpha is the
+#: only component with a meaningful default (opaque), so an RGB triple can be
+#: completed without inventing a colour, while any other count cannot.
+RGBA_ACCEPTED_LENGTHS: tuple[int, ...] = (3, 4)
+
+#: What those components mean, quoted in the component-count refusal.
+RGBA_LAYOUT = "RGB, or RGBA with alpha"
+
+
+def coerce_rgba(method: str, param_name: str, color: Any) -> tuple[list[float] | None, str | None]:
+    """Validate an optional colour and normalize it to 4 RGBA components.
+
+    Single definition of the library's colour contract, shared by every backend
+    so their accepted domains cannot diverge - a colour one backend refuses is
+    refused by all of them. Three components are read as RGB and completed with
+    an opaque alpha, the one component a colour buffer defines a default for;
+    four are read as RGBA verbatim; any other count is refused, because it can
+    only be applied by fabricating the missing components or discarding the
+    extra ones - either way painting a colour the caller never asked for under a
+    success result.
+
+    Membership, not truthiness: a colour is "supplied" when it is not ``None``.
+    Testing the vector itself (``color or <default>``) is wrong twice over. A
+    NumPy array - what colour arithmetic and any palette lookup produce - raises
+    a bare ``ValueError: truth value of an array ... is ambiguous`` through the
+    structured tool-result contract, and an empty vector reads as *omitted*, so
+    the backend default is painted while the call reports success.
+
+    Normalizing to a ``list[float]`` of exactly 4 keeps the accepted NumPy input
+    from outliving this boundary - the colour is stored on :class:`SimObject`
+    (annotated ``list[float]``) and echoed in agent-visible status text, so a
+    surviving ``np.float64`` would leak ``np.float64(1.0)`` into it - and makes
+    the ``color[:3]`` reads the shape builders do well-defined by construction
+    rather than by the caller's discipline.
+
+    Args:
+        method: Calling method name, used in error text.
+        param_name: Parameter name, used in error text.
+        color: The caller's colour, or ``None`` when the parameter was omitted.
+
+    Returns:
+        ``(None, None)`` when ``color`` is ``None`` (omitted - the caller
+        applies its own documented default), ``(rgba, None)`` with exactly 4
+        finite floats, or ``(None, error_message)`` for an unusable component
+        count, a non-numeric or ``bool`` component, or a ``nan``/``inf`` one.
+    """
+    if color is None:
+        return None, None
+    length = sequence_length(color)
+    if length is None:
+        return None, f"{method}: '{param_name}' must be a sequence of numbers, got {color!r}"
+    if (err := finite_vector_error(method, param_name, color)) is not None:
+        return None, err
+    floats = [float(component) for component in color]
+    if length not in RGBA_ACCEPTED_LENGTHS:
+        expected = " or ".join(str(n) for n in RGBA_ACCEPTED_LENGTHS)
+        return None, (
+            f"{method}: '{param_name}' must have exactly {expected} "
+            f"component(s) ({RGBA_LAYOUT}), got {length}: {floats}. Pass every "
+            f"component - a partial '{param_name}' cannot be applied "
+            "without inventing the missing values."
+        )
+    return (floats if length == 4 else [*floats, 1.0]), None
 
 
 def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:

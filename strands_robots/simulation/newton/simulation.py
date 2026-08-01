@@ -59,6 +59,7 @@ from strands_robots.simulation.newton.recording import NewtonRecordingMixin
 from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
+    coerce_rgba,
     entity_name_error,
     positive_count_error,
     require_optional,
@@ -620,7 +621,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             size: Half-extents (box) or ``[radius, ...]`` (others). For
                 ``shape="mesh"`` this is the per-axis scale applied to the
                 loaded geometry (default ``[1, 1, 1]`` -- the mesh's own units).
-            color: RGBA in 0..1 (alpha currently ignored by Newton shapes).
+            color: ``[r, g, b]`` or ``[r, g, b, a]`` in 0..1 (default
+                mid-grey; alpha currently ignored by Newton shapes). Any
+                other component count is refused rather than padded or
+                truncated, since either would paint a colour that was not
+                asked for. NumPy arrays are accepted.
             mass: Object mass; ``0`` or ``is_static`` makes it static.
             is_static: When True the object is fixed in the world.
             mesh_path: Path to a mesh asset (``.obj`` / ``.stl`` / ``.glb`` /
@@ -665,6 +670,18 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         orientation, _oerr = coerce_pose_vector("add_object", "orientation", orientation, 4)
         if _oerr is not None:
             return {"status": "error", "content": [{"text": _oerr}]}
+        # Same shared domain for the colour, whose accepted counts the 4-component
+        # rgba row it ends up in defines. The ``color or <default>`` coalescing this
+        # replaces was wrong three ways: a NumPy colour raised
+        # ``ValueError: truth value of an array ... is ambiguous`` straight through
+        # this method's only documented failure channel, ``[]`` read as *omitted* so
+        # the default grey was painted under a success result, and a short colour was
+        # stored verbatim - ``_add_object_to_builder`` then handed
+        # ``tuple(obj.color[:3])`` a 1- or 2-component colour to the solver, at
+        # rebuild time rather than at the call the caller can attribute it to.
+        color, _cerr = coerce_rgba("add_object", "color", color)
+        if _cerr is not None:
+            return {"status": "error", "content": [{"text": _cerr}]}
         if material is not None:
             return {
                 "status": "error",
@@ -712,7 +729,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 position=[0.0, 0.0, 0.0] if position is None else position,
                 orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
                 size=size or default_size,
-                color=color or [0.5, 0.5, 0.5, 1.0],
+                color=[0.5, 0.5, 0.5, 1.0] if color is None else color,
                 mass=mass,
                 mesh_path=mesh_path,
                 is_static=is_static,

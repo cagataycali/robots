@@ -377,16 +377,14 @@ class TestTheVectorCoercionRefusesABooleanComponent:
         the units of the joint writers - not of a coordinate, an extent or a
         colour channel.
         """
-        from strands_robots.simulation.mujoco.physics import (
-            _BOOLEAN_STATE_REASON,
-            _BOOLEAN_VECTOR_REASON,
-        )
+        from strands_robots.simulation.mujoco.physics import _BOOLEAN_STATE_REASON
+        from strands_robots.utils import BOOLEAN_VECTOR_REASON
 
         _, err = self._coerce([True, 0.0, 0.0], "origin", "raycast")
         assert err is not None
         text = _text(err)
         assert "not a bool" in text
-        assert _BOOLEAN_VECTOR_REASON in text
+        assert BOOLEAN_VECTOR_REASON in text
         assert _BOOLEAN_STATE_REASON not in text
         assert "radian" not in text, "a raycast origin is not measured in radians"
 
