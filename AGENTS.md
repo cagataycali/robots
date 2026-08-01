@@ -270,12 +270,14 @@ hatch run format            # ruff check --fix, ruff format
    #1035 is the control - same author, same fork, same `strands_robots/mesh/`
    files, one approval from the same account post-dating its head commit,
    threads clear, checks green, and no CODEOWNERS file in the tree to make
-   `require_code_owner_review` bite. It differs in exactly one input, and reads
-   `APPROVED`:
+   `require_code_owner_review` bite. It differed in exactly one input, and read
+   `APPROVED` - until a later push moved that one input and took it into the
+   blocked row as well:
 
    | PR | commit author | `triggering_actor` | approver | `reviewDecision` |
    |---|---|---|---|---|
-   | #1035 | the contributor | the contributor | the maintainer | `APPROVED` |
+   | #1035 at `2be59dad` | the contributor | the contributor | the maintainer | `APPROVED` |
+   | #1035 at `8d6a4c42` | the maintainer | the maintainer | the maintainer | `REVIEW_REQUIRED` |
    | #1722 | `strands-robots` | the maintainer | the maintainer | `REVIEW_REQUIRED` |
 
    So **pushing a fix to a contributor's branch consumes the approval of
@@ -287,6 +289,41 @@ hatch run format            # ruff check --fix, ruff format
    pusher; when the agent must push, that PR now requires a second approver,
    and saying so is the difference between a one-line request and a branch that
    never merges.
+
+   **#1035 later crossed into the second row, which makes it the whole rule
+   observed twice on one pull request.** CI triage on it correctly diagnosed a
+   stale merge base and prescribed `git merge upstream/main`; the refresh was then
+   *executed with the maintainer's token* rather than requested from the
+   contributor, so `8d6a4c42` - `Merge branch 'main' into
+   feat/ackermann-ros-robot`, authored and committed by the maintainer - became
+   the head. The prescription was right; the hand that applied it was not.
+
+   That case also pulls apart the two costs a push can carry, which the
+   conflict-free result above makes easy to read as one. The merge was clean:
+   `git show --cc` is **0 lines**, and the PR's own diff is unchanged at
+   `7 files, +900/-26`. So by the #1821 table it cost no dismissal, and the
+   pre-existing review is indeed **still `APPROVED`**, not `DISMISSED`.
+   `reviewDecision` is nonetheless `REVIEW_REQUIRED`, and a second approval from
+   that same account - on that exact head, every check `SUCCESS` - does not move
+   it. Two rules, keyed on two different things:
+
+   - `dismiss_stale_reviews_on_push` keys on the **PR's own diff**: a clean base
+     merge is free.
+   - `require_last_push_approval` keys on the **pusher's identity**: a clean base
+     merge is not free, and re-approving from that identity cannot help.
+
+   So "refreshing an approved branch over a fixed `main` is cheap" is scoped to
+   dismissal alone. On your own branch it is cheap outright; on a contributor's
+   branch it converts a pull request one maintainer could merge into one that
+   needs a second, with nothing in the PR's own fields saying so. #1035 is in that
+   state now, and needs an approver who is not the account that pushed
+   `8d6a4c42`.
+
+   Do not try to settle this from the commit metadata, which misleads in both
+   directions. #1722's author and committer are `strands-robots`, an identity
+   distinct from the approver, which reads as the rule being satisfied when it is
+   not; #1035's head names the maintainer outright. Same `REVIEW_REQUIRED`,
+   opposite metadata. Only `triggering_actor` is load-bearing.
 
    The general rule behind all three: **a decision recorded only in a PR or
    issue comment is not durable** - the next contributor will not read the same
