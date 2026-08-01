@@ -220,6 +220,42 @@ sim.add_object("crate", shape="box", size=[0.5])
 sim.add_object("crate", shape="box", size=[0.5, 0.5, 0.5])   # 50 cm crate
 ```
 
+Every component must also be a finite number, and **that** part of the domain is
+shared with the Newton and Isaac backends' `add_object` - word for word, not just
+verdict for verdict - so an extent one backend refuses is refused by all three
+with the same message. A `nan`/`inf`, boolean, `None` or otherwise non-numeric
+component is rejected by name rather than reaching the solver, a NumPy array is
+accepted and normalized to plain floats, and a value that is not a vector at all
+is refused instead of raising from whatever first tries to iterate it:
+
+```python
+sim.add_object("crate", shape="box", size=[float("nan"), 0.1, 0.1])
+# status=error: add_object: 'size' must contain finite numbers (no nan/inf),
+#               got [nan, 0.1, 0.1]
+sim.add_object("crate", shape="box", size=0.5)
+# status=error: add_object: 'size' must be a list/tuple of numbers, got 0.5
+sim.add_object("crate", shape="box", size=np.array([0.5, 0.5, 0.5]))   # accepted
+```
+
+An **empty** `size` is a component count, not an omission, so it is rejected
+rather than quietly taking the default extent - omit `size` (or pass `None`) to
+ask for the default. Here the three backends agree on the verdict but not on the
+wording, because MuJoCo reaches an empty vector through the per-shape count above
+and so names the count the shape needs:
+
+```python
+sim.add_object("crate", shape="box", size=[])
+# status=error: box needs 3 'size' component(s) [x, y, z] full edge lengths,
+#               got 0 (size=[]). ...
+```
+
+The per-shape counts in the table above remain MuJoCo's alone. Newton and Isaac
+accept a short `size` (Isaac documents completing the missing trailing components
+from defaults), and neither bounds a component to be positive, so a vector this
+backend refuses on either of those axes may still be accepted there. Converging
+the three is tracked in
+[#1858](https://github.com/strands-labs/robots/issues/1858).
+
 ## Object mass
 
 `mass` (kg) applies to dynamic objects and must be a finite number greater than

@@ -62,6 +62,7 @@ from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
     coerce_rgba,
+    coerce_size_vector,
     entity_name_error,
     is_boolean,
     positive_count_error,
@@ -645,6 +646,15 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         :func:`~strands_robots.utils.coerce_pose_vector` domain, so a pose one
         backend refuses is refused by both.
 
+        ``size`` must be a non-empty vector of finite numbers, on the shared
+        :func:`~strands_robots.utils.coerce_size_vector` domain the MuJoCo
+        backend's ``add_object`` composes with its own per-shape table, so an
+        extent one backend refuses is refused by both. An empty vector is a
+        component count rather than an omission and is rejected instead of
+        silently applying the default extent. How many components each shape
+        needs, and whether a consumed extent must be positive, are shape-
+        dependent and not yet unified across backends (#1858).
+
         ``mass`` must be a finite number > 0 for a dynamic object, the domain
         :meth:`~strands_robots.simulation.base.SimEngine._validate_mass`
         defines and the MuJoCo backend's ``add_object`` already enforces, so a
@@ -665,6 +675,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             size: Half-extents (box) or ``[radius, ...]`` (others). For
                 ``shape="mesh"`` this is the per-axis scale applied to the
                 loaded geometry (default ``[1, 1, 1]`` -- the mesh's own units).
+                Must be a non-empty vector of finite numbers; a ``nan``/``inf``,
+                ``bool`` or non-numeric component is refused rather than handed
+                to the solver rebuild, and an empty vector is refused rather
+                than read as an omission. NumPy arrays are accepted.
             color: ``[r, g, b]`` or ``[r, g, b, a]`` in 0..1 (default
                 mid-grey; alpha currently ignored by Newton shapes). Any
                 other component count is refused rather than padded or
@@ -730,6 +744,28 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         color, _cerr = coerce_rgba("add_object", "color", color)
         if _cerr is not None:
             return {"status": "error", "content": [{"text": _cerr}]}
+        # The shape-independent half of the extent contract, on the shared
+        # ``coerce_size_vector`` domain the MuJoCo backend's ``add_object``
+        # composes with its own per-shape table. ``size or default_size`` below
+        # was the LAST surviving truthiness coalesce on this constructor - the
+        # other four vector parameters all test ``is None`` - and it carried the
+        # same two defects that spelling always carries: ``np.array([.1,.1,.1])``
+        # raised ``ValueError: truth value of an array ... is ambiguous`` through
+        # this method's only documented failure channel, and ``[]`` is falsy so it
+        # read as *omitted*, applying the default 5 cm extent under a success
+        # result. Everything else was stored verbatim and reached the solver at
+        # REBUILD time rather than at the call a caller can attribute it to:
+        # ``[nan, .1, .1]`` and ``[inf, .1, .1]`` became a box half-extent,
+        # ``[True, .1, .1]`` read ``True`` as an extent, ``[None, .1, .1]`` and
+        # ``[[0.1], .1, .1]`` handed the shape builder a ``None`` and a nested
+        # list, and the bare string ``"abc"`` was stored AS the size - raising
+        # ``TypeError: can only concatenate str (not "list") to str`` from the box
+        # branch, and silently building a sphere of ``radius='a'`` from the sphere
+        # one. The per-shape component count, the short-vector question and the
+        # positivity of a consumed extent are shape-dependent and stay with #1858.
+        size, _serr = coerce_size_vector("add_object", "size", size)
+        if _serr is not None:
+            return {"status": "error", "content": [{"text": _serr}]}
         # A dynamic body's mass is the divisor of every force applied to it and
         # reaches the solver as ``builder.add_body(mass=...)``, so it goes
         # through the same shared domain the MuJoCo backend's ``add_object``
@@ -791,7 +827,7 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 shape=shape,
                 position=[0.0, 0.0, 0.0] if position is None else position,
                 orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
-                size=size or default_size,
+                size=default_size if size is None else size,
                 color=[0.5, 0.5, 0.5, 1.0] if color is None else color,
                 mass=mass,
                 mesh_path=mesh_path,

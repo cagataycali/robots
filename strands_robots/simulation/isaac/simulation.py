@@ -42,6 +42,7 @@ from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
     coerce_rgba,
+    coerce_size_vector,
     entity_name_error,
     name_list_error,
     positive_count_error,
@@ -1744,7 +1745,21 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             * ``capsule``:  ``[radius, height]`` (default ``[0.05, 0.10]``).
 
             Lists shorter than the convention fall back to defaults for
-            the missing trailing components.
+            the missing trailing components. Whether that fallback should
+            survive is the open half of #1858 - MuJoCo refuses a short
+            ``size`` outright - so it is unchanged here.
+
+            Must be a non-empty vector of finite numbers, on the shared
+            :func:`~strands_robots.utils.coerce_size_vector` domain the
+            MuJoCo and Newton backends' ``add_object`` enforce, so an extent
+            one backend refuses is refused by all three. A ``nan``/``inf``,
+            ``bool`` or non-numeric component is refused rather than reaching
+            the prim constructor, an empty vector is a component count rather
+            than an omission, and a scalar is refused by name instead of
+            raising ``TypeError: 'float' object is not iterable`` out of the
+            ``list()`` that used to coerce it. NumPy arrays are accepted and
+            normalized to plain floats, so a ``np.float64`` extent no longer
+            reaches the result ``json``.
         color : list[float], optional
             ``[r, g, b]`` or ``[r, g, b, a]`` in 0..1 (an RGB triple is
             completed with an opaque alpha; the Isaac shape wrappers take
@@ -1916,10 +1931,30 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             scale_alias = kwargs.pop("scale", None)
             if size is None and scale_alias is not None:
                 size = scale_alias
+            # The shape-independent half of the extent contract, on the shared
+            # ``coerce_size_vector`` domain the MuJoCo backend's ``add_object``
+            # composes with its own per-shape table. It runs AFTER the ``scale``
+            # alias is resolved, because the two spellings name one parameter and
+            # a domain only one of them enforced would be no domain at all. The
+            # ``list(size)`` below coerced without validating, exactly as the pose
+            # did before #1853: ``[nan, .1, .1]`` and ``[inf, .1, .1]`` reached the
+            # prim constructor verbatim, ``[True, .1, .1]`` passed ``True`` as an
+            # extent, ``[None, .1, .1]`` and ``[[0.1], .1, .1]`` passed a ``None``
+            # and a nested list, the bare string ``"abc"`` was SPLIT per character
+            # into a 3-component extent ``['a', 'b', 'c']``, ``[]`` was forwarded
+            # as a sizeless size, and a scalar ``0.5`` raised
+            # ``TypeError: 'float' object is not iterable`` out of that very
+            # ``list()`` call - past the envelope this method documents as its only
+            # failure channel. The per-shape component count, the short-vector
+            # fallback this method's ``size`` docstring promises and the positivity
+            # of a consumed extent are shape-dependent and stay with #1858.
+            size, _serr = coerce_size_vector("add_object", "size", size)
+            if _serr is not None:
+                return {"status": "error", "content": [{"text": _serr}]}
 
             pos = [0.0, 0.0, 0.5] if position is None else position
             orient = [1.0, 0.0, 0.0, 0.0] if orientation is None else orientation
-            size_in = list(size) if size is not None else None
+            size_in = size
             prim_path = f"{self._config.stage_path}/Objects/{name}"
 
             try:

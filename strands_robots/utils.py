@@ -944,6 +944,80 @@ def coerce_rgba(method: str, param_name: str, color: Any) -> tuple[list[float] |
     return (floats if length == 4 else [*floats, 1.0]), None
 
 
+def coerce_size_vector(method: str, param_name: str, size: Any) -> tuple[list[float] | None, str | None]:
+    """Validate an optional object ``size`` and normalize it to plain floats.
+
+    The part of the library's extent contract that does not depend on the shape:
+    a ``size`` is a vector of finite real numbers, or it is omitted. The MuJoCo
+    backend's ``add_object`` has composed exactly this domain with its own
+    shape-aware table since its numeric inputs were hardened -
+    :func:`finite_vector_error` for the components, ``_validate_size`` for the
+    count and the consumed extents - and this is the half a backend with no such
+    table can still apply, so the same value cannot be usable on one backend and
+    unusable on another.
+
+    Membership, not truthiness: a ``size`` is "supplied" when it is not ``None``.
+    Testing the vector itself (``size or <default>``) is wrong twice over. A
+    NumPy array - what any extent arithmetic or a randomization draw produces -
+    raises a bare ``ValueError: truth value of an array ... is ambiguous``
+    through the structured tool-result contract, and an empty vector is falsy, so
+    it reads as *omitted* and the backend default extent is applied while the
+    call reports success.
+
+    An empty vector is therefore refused rather than read as an omission. That is
+    a statement about zero components only, not about how many a shape needs: no
+    shape can be built from no extents at all, so the refusal holds whatever the
+    per-shape count turns out to be.
+
+    Normalizing to a ``list[float]`` keeps the accepted NumPy input from
+    outliving this boundary - the extent is stored on :class:`SimObject`
+    (annotated ``list[float]``) and echoed in agent-visible status text, so a
+    surviving ``np.float64`` would leak ``np.float64(0.05)`` into it.
+
+    What this deliberately does NOT decide is every axis whose answer depends on
+    the shape: the component **count** each shape requires, whether a short
+    vector may be completed from defaults, and whether a component must be
+    positive (MuJoCo bounds only the components the shape actually consumes, so a
+    cylinder may legitimately pass ``size[1] == 0``). Those three differ per
+    backend today and need one contract decision rather than a helper default;
+    #1858 tracks them.
+
+    Args:
+        method: Calling method name, used in error text.
+        param_name: Parameter name, used in error text.
+        size: The caller's extent vector, or ``None`` when it was omitted.
+
+    Returns:
+        ``(None, None)`` when ``size`` is ``None`` (omitted - the caller applies
+        its own documented default), ``(floats, None)`` for an acceptable vector,
+        or ``(None, error_message)`` for a non-numeric, ``bool`` or
+        ``nan``/``inf`` component, a value that is not a vector at all, or an
+        empty vector.
+    """
+    if size is None:
+        return None, None
+    # Component classes first, so a value that is not a vector at all is refused
+    # in the SAME words the MuJoCo backend already uses for it - one verdict
+    # should not have two spellings across backends. The empty-vector refusal is
+    # this helper's own, because MuJoCo reaches that case through its per-shape
+    # count instead and so states a count the shape needs rather than the
+    # omission the caller probably meant.
+    if (err := finite_vector_error(method, param_name, size)) is not None:
+        return None, err
+    length = sequence_length(size)
+    if length is None:
+        # Reachable only for something iterable but unsized - a generator, which
+        # the check above has now consumed, so there is nothing left to store.
+        return None, f"{method}: '{param_name}' must be a list/tuple of numbers, got {size!r}"
+    if length == 0:
+        return None, (
+            f"{method}: '{param_name}' must have at least one component, got an empty "
+            f"vector ({size!r}). An empty '{param_name}' is a component count, not an "
+            f"omission - omit '{param_name}' to take the default extent."
+        )
+    return [float(component) for component in size], None
+
+
 def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
     """Return an error message if ``value`` is not a usable camera field of view.
 

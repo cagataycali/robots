@@ -39,15 +39,17 @@ class methods deliberately - ``scene_ops.reposition_body_in_scene`` is a
 module-level spec helper reached only from the already-validated
 ``move_object``, and it returns ``bool`` rather than the agent-tool envelope.
 
-What is NOT in scope, and is asserted to be unchanged: ``size``. Its component
-counts are shape-dependent and documented differently per backend (the Isaac
-``add_object`` docstring promises a trailing-component fallback for a short
-``size`` that neither other backend offers), so it needs its own domain decision
-rather than riding along here. ``color`` and ``mass`` were in that list until
-their domains were settled - on the shared ``coerce_rgba`` and
-``SimEngine._validate_mass`` respectively - and are now pinned in
-``tests/simulation/test_color_domain_across_backends.py`` and
-``tests/simulation/test_object_mass_domain_across_backends.py``.
+What is NOT in scope, and is asserted to be unchanged: the shape-dependent half
+of ``size`` - the per-shape component count, the short-vector fallback the Isaac
+``add_object`` docstring promises and neither other backend offers, and the
+positivity of a consumed extent. Those need one contract decision rather than a
+helper default, and #1858 tracks them. ``color``, ``mass`` and the
+shape-independent half of ``size`` were all in that list until their domains were
+settled - on the shared ``coerce_rgba``, ``SimEngine._validate_mass`` and
+``coerce_size_vector`` respectively - and are now pinned in
+``tests/simulation/test_color_domain_across_backends.py``,
+``tests/simulation/test_object_mass_domain_across_backends.py`` and
+``tests/simulation/test_object_size_domain_across_backends.py``.
 
 These tests are GL-free and need neither ``newton``/``warp`` nor ``isaacsim``
 nor a GPU: every guard runs before its method touches a solver or a stage, so
@@ -576,27 +578,37 @@ class TestEveryBackendGivesTheSameVerdict:
 # The out-of-scope parameters are pinned as unchanged                          #
 # --------------------------------------------------------------------------- #
 class TestSizeIsOutOfScope:
-    """This change is the pose axis only; ``size`` keeps its current contract.
+    """This change is the pose axis only; ``size`` keeps its own contract.
 
-    Its component counts are shape-dependent and documented differently per
-    backend - the Isaac ``add_object`` docstring promises a trailing-component
-    fallback for a short ``size`` that neither other backend offers - so it needs
-    that contract settled before it can share a domain. Pinning it here makes
-    that scope a stated property rather than an omission a later reader has to
-    infer.
-
-    Two axes have since left this list. ``color`` counts are settled on the
+    Three axes have since left this list. ``color`` counts are settled on the
     shared ``coerce_rgba`` domain, pinned in
     ``tests/simulation/test_color_domain_across_backends.py``; ``mass`` is
     settled on the shared ``SimEngine._validate_mass`` domain, pinned in
     ``tests/simulation/test_object_mass_domain_across_backends.py`` - including
     the ``mass=0`` "make it static" spelling Newton documents, which is the one
-    place the three backends' accepted masses legitimately differ.
+    place the three backends' accepted masses legitimately differ. The
+    shape-independent half of ``size`` is settled on the shared
+    ``coerce_size_vector`` domain, pinned in
+    ``tests/simulation/test_object_size_domain_across_backends.py``.
+
+    What remains out of scope for the pose axis is the part of ``size`` that
+    depends on the shape: the per-shape component count, whether a short vector
+    may be completed from trailing defaults, and whether a consumed extent must
+    be positive. #1858 tracks those three, and
+    ``test_object_size_domain_across_backends.py`` carries their boundary pins
+    beside the domain they bound - one class, not two.
+
+    The pin that used to live here asserted that Newton read ``size=[]`` as an
+    omission and applied its default extent. That was a correct statement of the
+    behaviour at the time and is now the defect the shared domain removes, so it
+    is replaced rather than deleted: the property worth keeping is that the pose
+    change did not quietly alter what an omitted ``size`` does.
     """
 
-    def test_a_short_size_still_takes_the_backend_default(self):
+    def test_an_omitted_size_still_takes_the_backend_default(self):
+        """Membership, not truthiness - and ``None`` still means omitted."""
         stub = _newton_stub()
-        assert NewtonSimEngine.add_object(stub, "crate", size=[])["status"] == "success"
+        assert NewtonSimEngine.add_object(stub, "crate", size=None)["status"] == "success"
         assert stub._world.objects["crate"].size == [0.05, 0.05, 0.05]
 
 
