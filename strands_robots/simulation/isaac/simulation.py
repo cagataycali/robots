@@ -1365,6 +1365,15 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             at a keyframe, or omit ``keyframe`` for the default zero-pose
             spawn.
 
+        Validation
+        ----------
+        ``position`` must be 3 finite numbers and ``orientation`` 4, on the
+        shared :func:`~strands_robots.utils.coerce_pose_vector` domain the
+        MuJoCo and Newton backends' ``add_robot`` enforce. The pose domain is
+        checked before the identity-only ``orientation`` reject, so a
+        wrong-length quaternion reports its real defect instead of being told
+        that base rotation is unsupported.
+
         Returns
         -------
         dict
@@ -1400,6 +1409,19 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     }
                 ],
             }
+        # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
+        # MuJoCo backend's ``add_robot`` and this backend's own ``add_camera`` already
+        # use, so a pose one backend refuses is refused by all of them - the
+        # invariant that helper documents. The ``position or [0.0, 0.0, 0.0]`` read
+        # this replaces tested the VECTOR: a NumPy array raised a bare
+        # ``ValueError: truth value of an array ... is ambiguous`` through the
+        # structured envelope, and an empty vector read as *omitted*.
+        position, _perr = coerce_pose_vector("add_robot", "position", position, 3)
+        if _perr is not None:
+            return {"status": "error", "content": [{"text": _perr}]}
+        orientation, _oerr = coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        if _oerr is not None:
+            return {"status": "error", "content": [{"text": _oerr}]}
         # The default None means identity; only a non-identity quaternion is
         # rejected (parity with the keyframe/terrain guards -- reject an
         # unsupported request rather than silently dropping the rotation).
@@ -1459,7 +1481,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     "content": [{"text": "Cannot add robots after replicate(). Call destroy() first."}],
                 }
 
-            pos = position or [0.0, 0.0, 0.0]
+            pos = [0.0, 0.0, 0.0] if position is None else position
             prim_path = f"{self._config.stage_path}/Robots/{name}"
 
             # Procedural lookup is a *fallback*: an explicit usd_path /
@@ -1734,6 +1756,16 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             yet; a non-``None`` value is rejected loudly rather than silently
             dropped (use the MuJoCo backend for matte/textured surfaces).
 
+        Validation
+        ----------
+        ``position`` must be 3 finite numbers and ``orientation`` 4 (a list,
+        tuple or NumPy array; NumPy scalar elements accepted, ``bool``
+        refused), on the shared
+        :func:`~strands_robots.utils.coerce_pose_vector` domain the MuJoCo and
+        Newton backends' ``add_object`` enforce, so a pose one backend refuses
+        is refused by all three. Omit a vector to take its default; an empty
+        vector is a wrong-length request rather than an omission.
+
         Returns
         -------
         dict
@@ -1814,12 +1846,25 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             # Isaac's ``DynamicCuboid(scale=...)`` convention and the docs
             # vocabulary -- see issue #88). An explicit ``size`` always
             # wins over ``scale`` if both are passed.
+            # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
+            # MuJoCo backend's ``add_object`` and this backend's own ``add_camera`` already
+            # use, so a pose one backend refuses is refused by all of them - the
+            # invariant that helper documents. The ``list(x)`` coercion this
+            # replaces validated nothing: a wrong-length, ``nan``/``inf``, ``bool`` or
+            # non-numeric component was passed straight to the prim constructor, and a
+            # bare string was split per character into a 3-component "position".
+            position, _perr = coerce_pose_vector("add_object", "position", position, 3)
+            if _perr is not None:
+                return {"status": "error", "content": [{"text": _perr}]}
+            orientation, _oerr = coerce_pose_vector("add_object", "orientation", orientation, 4)
+            if _oerr is not None:
+                return {"status": "error", "content": [{"text": _oerr}]}
             scale_alias = kwargs.pop("scale", None)
             if size is None and scale_alias is not None:
                 size = scale_alias
 
-            pos = list(position) if position is not None else [0.0, 0.0, 0.5]
-            orient = list(orientation) if orientation is not None else [1.0, 0.0, 0.0, 0.0]
+            pos = [0.0, 0.0, 0.5] if position is None else position
+            orient = [1.0, 0.0, 0.0, 0.0] if orientation is None else orientation
             size_in = list(size) if size is not None else None
             prim_path = f"{self._config.stage_path}/Objects/{name}"
 
@@ -4954,6 +4999,14 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             World orientation quaternion ``[w, x, y, z]``. ``None`` keeps
             the current one.
 
+        Validation
+        ----------
+        ``position`` must be 3 finite numbers and ``orientation`` 4, on the
+        shared :func:`~strands_robots.utils.coerce_pose_vector` domain. An
+        over-long vector is refused rather than truncated, and a ``nan`` /
+        ``inf`` component is refused rather than written into the articulation
+        transform.
+
         Returns
         -------
         dict
@@ -4980,9 +5033,25 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             robot = registry_entry(self._robots, robot_name)
             if robot is None or robot.articulation is None:
                 return {"status": "error", "content": [{"text": f"Robot {robot_name!r} not initialized."}]}
+            # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
+            # MuJoCo backend's ``set_robot_pose`` and this backend's own ``add_camera`` already
+            # use, so a pose one backend refuses is refused by all of them - the
+            # invariant that helper documents. The ``x[:3]`` / ``x[:4]`` slices this
+            # replace validated nothing and silently TRUNCATED an over-long vector, so a
+            # 5-component request was written as its first 3 under a success result. A
+            # short vector was passed through as-is, a ``nan``/``inf`` component wrote a
+            # degenerate transform, and testing the vector for truthiness read an empty
+            # one as *omitted* while raising on the NumPy array the Args advertise.
+            position, _perr = coerce_pose_vector("set_robot_pose", "position", position, 3)
+            if _perr is not None:
+                return {"status": "error", "content": [{"text": _perr}]}
+            orientation, _oerr = coerce_pose_vector("set_robot_pose", "orientation", orientation, 4)
+            if _oerr is not None:
+                return {"status": "error", "content": [{"text": _oerr}]}
+            moved_to = "same" if position is None else position
             try:
-                pos = np.asarray(position[:3], dtype=float) if position is not None else None
-                ori = np.asarray(orientation[:4], dtype=float) if orientation is not None else None
+                pos = np.asarray(position, dtype=float) if position is not None else None
+                ori = np.asarray(orientation, dtype=float) if orientation is not None else None
                 robot.articulation.set_world_pose(position=pos, orientation=ori)
             except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
                 return {
@@ -4991,7 +5060,7 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                 }
             return {
                 "status": "success",
-                "content": [{"text": f"Robot {robot_name!r} base moved to {position or 'same'}."}],
+                "content": [{"text": f"Robot {robot_name!r} base moved to {moved_to}."}],
             }
 
     def move_object(
@@ -5006,13 +5075,36 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         teleport-grasp: while the cube is carried it is teleported into
         the closing gripper fingers every frame. Velocities are zeroed
         so a teleport doesn't fling a dynamic body.
+
+        Validation
+        ----------
+        ``position`` must be 3 finite numbers and ``orientation`` 4, on the
+        shared :func:`~strands_robots.utils.coerce_pose_vector` domain the
+        MuJoCo and Newton backends' ``move_object`` enforce. An over-long
+        vector is refused rather than truncated to its leading components, and
+        an omitted one leaves that component alone.
         """
         obj = registry_entry(self._objects, name)
         if obj is None or obj.handle is None:
             return {"status": "error", "content": [{"text": f"Object {name!r} not found."}]}
+        # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
+        # MuJoCo backend's ``move_object`` and this backend's own ``add_camera`` already
+        # use, so a pose one backend refuses is refused by all of them - the
+        # invariant that helper documents. The ``x[:3]`` / ``x[:4]`` slices this
+        # replace validated nothing and silently TRUNCATED an over-long vector, so a
+        # 5-component request was written as its first 3 under a success result. A
+        # short vector was passed through as-is, a ``nan``/``inf`` component wrote a
+        # degenerate transform, and testing the vector for truthiness read an empty
+        # one as *omitted* while raising on the NumPy array the Args advertise.
+        position, _perr = coerce_pose_vector("move_object", "position", position, 3)
+        if _perr is not None:
+            return {"status": "error", "content": [{"text": _perr}]}
+        orientation, _oerr = coerce_pose_vector("move_object", "orientation", orientation, 4)
+        if _oerr is not None:
+            return {"status": "error", "content": [{"text": _oerr}]}
         try:
-            pos = np.array(position[:3], dtype=float) if position else None
-            ori = np.array(orientation[:4], dtype=float) if orientation else None
+            pos = np.array(position, dtype=float) if position is not None else None
+            ori = np.array(orientation, dtype=float) if orientation is not None else None
             obj.handle.set_world_pose(position=pos, orientation=ori)
             if hasattr(obj.handle, "set_linear_velocity"):
                 obj.handle.set_linear_velocity(np.zeros(3))
@@ -5051,7 +5143,8 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                     logger.debug("move_object USD xform write skipped", exc_info=True)
         except (RuntimeError, ValueError, AttributeError, TypeError) as exc:
             return {"status": "error", "content": [{"text": f"move_object failed: {type(exc).__name__}: {exc}"}]}
-        return {"status": "success", "content": [{"text": f"'{name}' moved to {position or 'same'}."}]}
+        moved_to = "same" if position is None else position
+        return {"status": "success", "content": [{"text": f"'{name}' moved to {moved_to}."}]}
 
     def set_object_kinematic(self, name: str, kinematic: bool = True) -> dict[str, Any]:
         """Toggle an object's rigid body between KINEMATIC and dynamic.

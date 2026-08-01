@@ -444,6 +444,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         the resolved path's extension - ``.urdf`` files load through Newton's
         URDF importer, everything else through the MJCF importer.
 
+        Validation: ``position`` must be 3 finite numbers and ``orientation``
+        4, on the shared :func:`~strands_robots.utils.coerce_pose_vector`
+        domain the MuJoCo backend's ``add_robot`` uses - a NumPy array is
+        accepted, a ``bool`` component and a ``nan``/``inf`` are not, and an
+        empty vector is a wrong-length request rather than an omission.
+
         Args:
             name: Robot name in the registry / ``robot_descriptions``, or an
                 arbitrary instance name when ``urdf_path`` points at an explicit
@@ -481,6 +487,24 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if (name_err := entity_name_error("add_robot", "name", name)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
 
+        # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
+        # MuJoCo backend's ``add_robot`` and this backend's own ``add_camera`` already
+        # use, so a pose one backend refuses is refused by all of them - the
+        # invariant that helper documents. The ``x or <default>`` reads this
+        # replaces tested the VECTOR, which is wrong twice over: a NumPy array
+        # (what pose arithmetic produces, and what the Args below advertise)
+        # raises a bare ``ValueError: truth value of an array ... is ambiguous``
+        # straight through the structured envelope, and an empty vector is falsy
+        # so it read as *omitted* - the default was substituted while the call
+        # reported success. Nothing downstream caught the rest either: a
+        # wrong-length, ``nan``/``inf``, ``bool`` or non-numeric component was
+        # stored verbatim on the registry entry and handed to the solver rebuild.
+        position, _perr = coerce_pose_vector("add_robot", "position", position, 3)
+        if _perr is not None:
+            return {"status": "error", "content": [{"text": _perr}]}
+        orientation, _oerr = coerce_pose_vector("add_robot", "orientation", orientation, 4)
+        if _oerr is not None:
+            return {"status": "error", "content": [{"text": _oerr}]}
         if name in self._world.robots:
             return {"status": "error", "content": [{"text": f"Robot '{name}' already exists."}]}
         if source not in _ROBOT_SOURCES:
@@ -520,8 +544,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             robot = SimRobot(
                 name=name,
                 urdf_path=model_path,
-                position=position or [0.0, 0.0, 0.0],
-                orientation=orientation or [1.0, 0.0, 0.0, 0.0],
+                position=[0.0, 0.0, 0.0] if position is None else position,
+                orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
                 data_config=data_config,
             )
             self._world.robots[name] = robot
@@ -575,6 +599,15 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
     ) -> dict[str, Any]:
         """Add a primitive or mesh object to the scene.
 
+        Validation: ``position`` must be 3 finite numbers and ``orientation``
+        4 (a list, tuple or NumPy array; NumPy scalar elements accepted,
+        ``bool`` refused). Omit a vector to take its default; an empty vector
+        is a wrong-length request and is rejected rather than silently placing
+        the object at the default pose. These are the same bounds the MuJoCo
+        backend's ``add_object`` enforces, on the shared
+        :func:`~strands_robots.utils.coerce_pose_vector` domain, so a pose one
+        backend refuses is refused by both.
+
         Args:
             name: Unique object name; a non-empty ``str`` containing no NUL, the
                 same domain the MuJoCo backend's ``add_object`` accepts
@@ -614,6 +647,24 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if (name_err := entity_name_error("add_object", "name", name)) is not None:
             return {"status": "error", "content": [{"text": name_err}]}
 
+        # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
+        # MuJoCo backend's ``add_object`` and this backend's own ``add_camera`` already
+        # use, so a pose one backend refuses is refused by all of them - the
+        # invariant that helper documents. The ``x or <default>`` reads this
+        # replaces tested the VECTOR, which is wrong twice over: a NumPy array
+        # (what pose arithmetic produces, and what the Args below advertise)
+        # raises a bare ``ValueError: truth value of an array ... is ambiguous``
+        # straight through the structured envelope, and an empty vector is falsy
+        # so it read as *omitted* - the default was substituted while the call
+        # reported success. Nothing downstream caught the rest either: a
+        # wrong-length, ``nan``/``inf``, ``bool`` or non-numeric component was
+        # stored verbatim on the registry entry and handed to the solver rebuild.
+        position, _perr = coerce_pose_vector("add_object", "position", position, 3)
+        if _perr is not None:
+            return {"status": "error", "content": [{"text": _perr}]}
+        orientation, _oerr = coerce_pose_vector("add_object", "orientation", orientation, 4)
+        if _oerr is not None:
+            return {"status": "error", "content": [{"text": _oerr}]}
         if material is not None:
             return {
                 "status": "error",
@@ -658,8 +709,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             obj = SimObject(
                 name=name,
                 shape=shape,
-                position=position or [0.0, 0.0, 0.0],
-                orientation=orientation or [1.0, 0.0, 0.0, 0.0],
+                position=[0.0, 0.0, 0.0] if position is None else position,
+                orientation=[1.0, 0.0, 0.0, 0.0] if orientation is None else orientation,
                 size=size or default_size,
                 color=color or [0.5, 0.5, 0.5, 1.0],
                 mass=mass,
@@ -689,6 +740,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         :class:`SimObject` and the model is rebuilt; live joint targets are
         preserved across the rebuild (see :meth:`_rebuild`).
 
+        Validation: ``position`` must be 3 finite numbers and ``orientation``
+        4, on the shared :func:`~strands_robots.utils.coerce_pose_vector`
+        domain the MuJoCo backend's ``move_object`` uses. An omitted vector
+        leaves that component alone; an empty one is refused rather than read
+        as an omission.
+
         Args:
             name: Name of an object previously added via :meth:`add_object`.
             position: New world position ``[x, y, z]``. ``None`` keeps the
@@ -704,6 +761,24 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
         if not registered(self._world.objects, name):
             return {"status": "error", "content": [{"text": f"Object '{name}' not found."}]}
+        # Validate the pose vectors on the shared ``coerce_pose_vector`` domain the
+        # MuJoCo backend's ``move_object`` and this backend's own ``add_camera`` already
+        # use, so a pose one backend refuses is refused by all of them - the
+        # invariant that helper documents. The ``x or <default>`` reads this
+        # replaces tested the VECTOR, which is wrong twice over: a NumPy array
+        # (what pose arithmetic produces, and what the Args below advertise)
+        # raises a bare ``ValueError: truth value of an array ... is ambiguous``
+        # straight through the structured envelope, and an empty vector is falsy
+        # so it read as *omitted* - the default was substituted while the call
+        # reported success. Nothing downstream caught the rest either: a
+        # wrong-length, ``nan``/``inf``, ``bool`` or non-numeric component was
+        # stored verbatim on the registry entry and handed to the solver rebuild.
+        position, _perr = coerce_pose_vector("move_object", "position", position, 3)
+        if _perr is not None:
+            return {"status": "error", "content": [{"text": _perr}]}
+        orientation, _oerr = coerce_pose_vector("move_object", "orientation", orientation, 4)
+        if _oerr is not None:
+            return {"status": "error", "content": [{"text": _oerr}]}
         with self._lock:
             obj = self._world.objects[name]
             if position is not None:
@@ -711,7 +786,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             if orientation is not None:
                 obj.orientation = orientation
             self._rebuild()
-        return {"status": "success", "content": [{"text": f"'{name}' moved to {position or 'same'}"}]}
+        moved_to = "same" if position is None else position
+        return {"status": "success", "content": [{"text": f"'{name}' moved to {moved_to}"}]}
 
     def list_objects(self) -> dict[str, Any]:
         """List objects in the world with their shape, pose, and mass.
