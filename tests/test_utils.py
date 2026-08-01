@@ -5,6 +5,7 @@ import pytest
 
 from strands_robots.utils import (
     coerce_pose_vector,
+    finite_vector_error,
     process_rss_mb,
     require_optional,
     require_optionals,
@@ -387,6 +388,45 @@ class TestPoseVectorDomain:
         values, error = coerce_pose_vector("m", "position", bad, 3)
         assert values is None
         assert error and error.startswith("m: 'position'")
+
+
+class TestFiniteVectorIterabilityGuard:
+    """A non-vector is refused through the return channel, not by raising.
+
+    ``finite_vector_error`` is the shared component check under every
+    cross-backend numeric domain (pose, colour, mass, size), and its whole
+    purpose is that an unusable value becomes a message rather than an exception
+    escaping the structured ``{"status": "error"}`` tool-result contract. The
+    guard is spelled ``tuple(vec)`` rather than ``iter(vec)`` so the loop's
+    operand is unconditionally a tuple; these pin that the rewrite did not move
+    the accepted domain in either direction.
+    """
+
+    @pytest.mark.parametrize("not_a_vector", [0.5, 5, None, np.float64(0.5), np.array(0.5), object()])
+    def test_a_non_iterable_returns_a_message_instead_of_raising(self, not_a_vector):
+        error = finite_vector_error("m", "size", not_a_vector)
+        assert error and error.startswith("m: 'size' must be a list/tuple of numbers")
+
+    def test_a_getitem_only_sequence_is_still_accepted(self):
+        """The reason the guard is not ``isinstance(vec, Iterable)``.
+
+        A class with only ``__getitem__`` is iterable by the legacy protocol but
+        is not a ``collections.abc.Iterable`` instance, so an ``isinstance`` test
+        would have started refusing a value both ``iter()`` and ``tuple()``
+        accept - a silent narrowing of the domain rather than a legibility fix.
+        """
+
+        class LegacySequence:
+            def __getitem__(self, index):
+                if index > 2:
+                    raise IndexError(index)
+                return 0.1
+
+        assert finite_vector_error("m", "size", LegacySequence()) is None
+
+    @pytest.mark.parametrize("vec", [[], (0.1, 0.2), [0.1, 0.2, 0.3], range(3), np.array([0.1, 0.2])])
+    def test_an_iterable_of_finite_numbers_is_accepted(self, vec):
+        assert finite_vector_error("m", "size", vec) is None
 
 
 class TestLerobotVersion:

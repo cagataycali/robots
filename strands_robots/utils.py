@@ -789,11 +789,17 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
     colour, whose count the rgba row it is written into defines. Returns ``None``
     when every element is a finite real number.
     """
+    # ``tuple()`` rather than ``iter()`` so the iterability guard is legible to a
+    # reader and to static analysis: iterating the materialized components makes
+    # the loop's operand unconditionally a tuple. ``tuple(vec)`` raises
+    # ``TypeError`` on exactly the values ``iter(vec)`` does, so the accepted
+    # domain is unchanged - a legacy ``__getitem__``-only sequence still passes,
+    # which an ``isinstance(vec, Iterable)`` test would have started refusing.
     try:
-        iter(vec)
+        _components = tuple(vec)
     except TypeError:
         return f"{method}: '{param_name}' must be a list/tuple of numbers, got {vec!r}"
-    for _elem in vec:
+    for _elem in _components:
         # ``numbers.Real`` accepts a numpy scalar (``np.float32`` / ``np.int64``
         # are registered) and rejects a string, ``None`` or a nested list.
         # ``bool`` is an ``int`` subclass, so it would otherwise pass as a
