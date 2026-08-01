@@ -648,7 +648,10 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     by ``render_all``, the two plain-MP4 recorders and every backend's
     ``start_recording``, and the ``robot_state_keys`` accepted by every
     provider's :meth:`~strands_robots.policies.base.Policy.set_robot_state_keys`
-    (the ordered joint/motor names a policy emits as its action-dict keys).
+    (the ordered joint/motor names a policy emits as its action-dict keys), and
+    the ``camera_keys`` / ``joint_names`` / ``action_names`` that
+    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.create` declares as
+    the recorded dataset's column names.
     They name different vocabularies, but the shape contract is identical -
     several distinct non-blank names, in the order the caller wants them - and
     every consumer reaches the same failure when it is not met, so the rule
@@ -678,7 +681,8 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     A repeated name is refused because it cannot be honored as written, and the
     consumers disagree on which way it fails. A duplicate collapses where the
     name keys a dict - the LeRobot feature map, or a dataset schema, which then
-    declares fewer columns than asked for - and doubles where each entry drives
+    declares fewer columns than asked for (two ``camera_keys`` entries naming one
+    camera declare a single camera column) - and doubles where each entry drives
     its own unit of work: VERA concatenates one panel per entry, so the frame
     the model sees is twice as wide; ``render_all`` renders the same view twice;
     and a plain-MP4 recorder opens a second encoder on the one output path, so

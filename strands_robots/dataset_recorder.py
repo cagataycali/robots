@@ -32,7 +32,7 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import lerobot_version
+from strands_robots.utils import lerobot_version, name_list_error
 
 logger = logging.getLogger(__name__)
 
@@ -767,8 +767,14 @@ class DatasetRecorder:
             robot_features: Dict of observation feature names → types
                 (from robot.observation_features or sim joint names)
             action_features: Dict of action feature names → types
-            camera_keys: List of camera names (images become video features)
-            joint_names: List of joint names (alternative to robot_features for sim)
+            camera_keys: List of DISTINCT camera names (images become video
+                features). One name per camera, in schema order; a single name
+                still has to be a one-element list.
+            joint_names: List of DISTINCT joint names (alternative to
+                robot_features for sim). These become the ``observation.state``
+                column names, and add_frame reads each one out of the
+                observation, so a name the observation does not carry records
+                0.0 for the whole episode.
             action_names: Explicit action-column names. Use when the action
                 space diverges from the joint names (e.g. actuator short-names
                 from SimEngine.robot_action_keys, where a tendon gripper is an
@@ -814,7 +820,44 @@ class DatasetRecorder:
                 cleared so ``create`` does not dead-end on its own existence
                 guard; a non-empty NON-dataset directory raises ``ValueError``
                 rather than clobbering unrelated files.
+
+        Raises:
+            ValueError: ``camera_keys``, ``joint_names`` or ``action_names`` is
+                not a list of distinct non-blank names (a bare string, a
+                mapping, or a repeated name). Refused before the on-disk target
+                is touched, so an ``overwrite=True`` call that is refused leaves
+                an existing dataset intact.
+            FileExistsError: The resolved dataset directory already holds a
+                dataset and ``overwrite`` is False.
         """
+        # ``camera_keys`` / ``joint_names`` / ``action_names`` each name an
+        # ordered list of DISTINCT schema column names, so each is refused on the
+        # shared name-list domain here - before the lerobot extra is probed, so
+        # the same caller mistake reports identically on every install, and
+        # before the on-disk target is touched, because ``overwrite=True``
+        # removes an existing dataset directory and a refusal arriving after that
+        # would already have destroyed it.
+        #
+        # Neither mistake this catches could be honored as written, and both used
+        # to be reported nowhere: the dataset was created, every frame was
+        # accepted and the episode saved. A single name passed as a bare string
+        # is iterable per character, so ``joint_names="gripper"`` declared seven
+        # columns (``g``, ``r``, ``i``, ``p``, ``p``, ``e``, ``r``) and every one
+        # recorded 0.0 - add_frame reads each declared name out of the
+        # observation, and none of those names is in it. A repeated name collapses
+        # where it keys a dict (two ``camera_keys`` entries with the same name
+        # declare ONE camera column, so the schema has fewer cameras than the
+        # caller asked for) and doubles where it indexes a position (a repeated
+        # joint name records that joint twice and the joint the caller meant not
+        # at all).
+        for value, param in (
+            (camera_keys, "camera_keys"),
+            (joint_names, "joint_names"),
+            (action_names, "action_names"),
+        ):
+            if value and (text := name_list_error(value, param, "DatasetRecorder.create")):
+                raise ValueError(text)
+
         # Lazy import - this is where we actually need lerobot
         LeRobotDatasetCls = _get_lerobot_dataset_class()
 

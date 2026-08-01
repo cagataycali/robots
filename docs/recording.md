@@ -436,6 +436,35 @@ recorder.save_episode()
 recorder.finalize()
 ```
 
+### Schema column names must be distinct
+
+`camera_keys`, `joint_names` and `action_names` each declare the recorded
+dataset's **column names**, so each must be a list of distinct, non-blank names.
+`create()` refuses anything else before it touches the on-disk target, so a
+refused `overwrite=True` call leaves an existing dataset intact:
+
+```python
+DatasetRecorder.create(repo_id="user/d", joint_names="gripper")     # ValueError
+DatasetRecorder.create(repo_id="user/d", camera_keys=["front", "front"])  # ValueError
+```
+
+Both mistakes used to be accepted and only surfaced in the recorded data:
+
+- A single name passed as a **bare string** is iterable per character, so
+  `joint_names="gripper"` declared seven columns (`g`, `r`, `i`, `p`, `p`, `e`,
+  `r`). `add_frame` reads each declared name out of the observation, and none of
+  those names is in it, so every column recorded `0.0` for the whole episode -
+  `create()`, `add_frame()`, `save_episode()` and `finalize()` all succeeded.
+  Wrap a single name in a list: `joint_names=["gripper"]`.
+- A **repeated** name collapses where it keys a dict and doubles where it indexes
+  a position. `camera_keys=["front", "front"]` declared one camera column for the
+  two the caller asked for; `joint_names=["j1", "j2", "j2"]` recorded `j2` twice
+  and the joint the caller meant not at all.
+
+`None` and `[]` still mean "not supplied" - the schema is then derived from
+`robot_features` / `action_features`, or from `joint_names` for the action
+columns.
+
 ### Re-recording into an existing `repo_id`
 
 `DatasetRecorder.create()` builds a **fresh** dataset. If the resolved dataset
