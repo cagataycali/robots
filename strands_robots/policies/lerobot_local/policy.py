@@ -750,8 +750,17 @@ class LerobotLocalPolicy(Policy):
 
         Raises:
             ValueError: If keys are empty and no model features available for
-                auto-detection.
+                auto-detection, or if ``robot_state_keys`` is not an ordered
+                list of distinct non-blank names, per
+                :func:`~strands_robots.utils.name_list_error`. A single name
+                passed as a bare string is the mistake the latter catches:
+                ``str`` is iterable per character, so it would bind one joint
+                per letter.
         """
+        if robot_state_keys and (
+            error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys")
+        ):
+            raise ValueError(error)
         if robot_state_keys:
             self.robot_state_keys = robot_state_keys
             logger.info(

@@ -221,8 +221,34 @@ class Policy(ABC):
 
     @abstractmethod
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
-        """Configure the policy with robot state keys."""
-        pass
+        """Configure the policy with robot state keys.
+
+        These are the ordered joint/motor names the policy emits as its
+        action-dict keys, so they decide which actuator each action value is
+        sent to. An implementation must refuse a malformed list rather than
+        bind it. Most do so through the shared domain
+        :func:`~strands_robots.utils.name_list_error`, gated on a truthy value
+        because an empty list already means "auto-detect" on the providers that
+        support it. :class:`~strands_robots.policies.wbc.policy.WBCPolicy` and
+        :class:`~strands_robots.policies.motionbricks.policy.MotionBricksPolicy`
+        are already total without it: they resolve every joint they drive BY
+        NAME inside the caller's list, so any malformed shape fails that
+        membership check instead - and they deliberately tolerate a repeated
+        name, which resolves to its first occurrence.
+
+        Unlike :meth:`set_control_frequency` and
+        :meth:`set_rtc_observed_delay`, this setter has no shared
+        implementation to carry the domain: each provider binds the names into
+        its own layout, so each refuses at its own entry. That parity is pinned
+        structurally by the policy state-key name-list contract tests.
+
+        Args:
+            robot_state_keys: Ordered list of distinct non-blank joint/motor
+                names.
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not such a list.
+        """
 
     def reset(self, seed: int | None = None) -> None:
         """Reset per-episode policy state.

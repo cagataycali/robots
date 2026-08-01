@@ -644,12 +644,24 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     Shared domain for every parameter that carries an ordered list of KEY
     NAMES: the LeRobot ``image_keys`` (model VISUAL feature keys to declare on
     the config), the VERA ``image_keys`` (observation camera keys to
-    width-concat into one frame), and the simulation ``cameras`` subset accepted
+    width-concat into one frame), the simulation ``cameras`` subset accepted
     by ``render_all``, the two plain-MP4 recorders and every backend's
-    ``start_recording``. They name different vocabularies, but the shape
-    contract is identical - several distinct non-blank names, in the order the
-    caller wants them - and every consumer reaches the same failure when it is
-    not met, so the rule lives here rather than beside any one of them.
+    ``start_recording``, and the ``robot_state_keys`` accepted by every
+    provider's :meth:`~strands_robots.policies.base.Policy.set_robot_state_keys`
+    (the ordered joint/motor names a policy emits as its action-dict keys).
+    They name different vocabularies, but the shape contract is identical -
+    several distinct non-blank names, in the order the caller wants them - and
+    every consumer reaches the same failure when it is not met, so the rule
+    lives here rather than beside any one of them.
+
+    On the ``robot_state_keys`` path the duplicate case is the dict collapse
+    above, reached twice over: the emitted action dict is keyed by these names,
+    so a three-entry list with one repeat emits two commands, and the
+    ``lerobot_async`` hardware-feature map declares fewer columns than the
+    action aligner is handed. Note that the two providers resolving these names
+    by membership rather than by position (WBC, MotionBricks) deliberately
+    tolerate a repeat - it resolves to its first occurrence - so they are not
+    callers of this function.
 
     The mistake this exists for is a single name passed as a bare string.
     ``str`` is iterable, so ``list("wrist")`` yields ``['w', 'r', 'i', 's', 't']``

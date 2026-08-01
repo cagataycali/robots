@@ -71,7 +71,7 @@ import re
 from typing import Any
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import require_optional
+from strands_robots.utils import name_list_error, require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -368,7 +368,18 @@ class CuroboPolicy(Policy):
         action dicts. When unset, ``get_actions`` falls back to
         ``observation.state`` length and emits ``"joint_<i>"`` keys
         (consistent with :class:`MockPolicy` / :class:`MoveIt2Policy`).
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not an ordered list of
+                distinct non-blank names, per
+                :func:`~strands_robots.utils.name_list_error`. A single name
+                passed as a bare string is the mistake this catches: ``str`` is
+                iterable per character, so it would bind one joint per letter.
         """
+        if robot_state_keys and (
+            error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys")
+        ):
+            raise ValueError(error)
         self._robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:

@@ -27,7 +27,7 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import tcp_port_error
+from strands_robots.utils import name_list_error, tcp_port_error
 
 from .client import Gr00tInferenceClient
 from .data_config import Gr00tDataConfig, load_data_config
@@ -666,7 +666,25 @@ class Gr00tPolicy(Policy):
         return "groot"
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
-        """No-op.  Mappings handle key translation."""
+        """Validate the joint-name list; the keys themselves are unused.
+
+        Gr00t translates keys through its own mappings, so nothing is stored.
+        The shape is still checked, because the same call must reach the same
+        verdict on every provider - an operator who mis-types this parameter
+        should be told so here rather than have it depend on which policy
+        happens to be loaded.
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not an ordered list of
+                distinct non-blank names, per
+                :func:`~strands_robots.utils.name_list_error`. A single name
+                passed as a bare string is the mistake this catches: ``str`` is
+                iterable per character, so it would bind one joint per letter.
+        """
+        if robot_state_keys and (
+            error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys")
+        ):
+            raise ValueError(error)
 
     def reset(self, seed: int | None = None) -> None:
         """Per-episode reset.

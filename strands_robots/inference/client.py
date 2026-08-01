@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
 from strands_robots.policies.base import Policy
+from strands_robots.utils import name_list_error
 
 if TYPE_CHECKING:
     from websockets.sync.client import ClientConnection
@@ -235,7 +236,23 @@ class RemotePolicy(Policy):
         server over the open connection so the server-side policy maps
         observations onto the same joints; when not yet connected, they are
         replayed on the next connect handshake.
+
+        Validated here rather than relying on the server: the ``list(...)``
+        below would otherwise flatten a bare string into one name per character
+        and put a well-formed - but wrong - list on the wire, where no
+        server-side check could recognise it as a mis-typed parameter.
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not an ordered list of
+                distinct non-blank names, per
+                :func:`~strands_robots.utils.name_list_error`. A single name
+                passed as a bare string is the mistake this catches: ``str`` is
+                iterable per character, so it would bind one joint per letter.
         """
+        if robot_state_keys and (
+            error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys")
+        ):
+            raise ValueError(error)
         self._robot_state_keys = list(robot_state_keys)
         with self._lock:
             if self._ws is not None:

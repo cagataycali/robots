@@ -151,7 +151,14 @@ class PolicyServer:
 
         if msg_type == protocol.MSG_SET_STATE_KEYS:
             with self._lock:
-                self.policy.set_robot_state_keys(list(message.get("keys", [])))
+                # Forwarded verbatim, for the same reason as ``hz`` below:
+                # coercing here (``list(...)``) lets the wire through a value
+                # the in-process API refuses. ``list("wrist")`` is
+                # ``['w', 'r', 'i', 's', 't']`` - five distinct, non-blank
+                # names that pass every shape check, so the coercion would
+                # launder a mis-typed parameter into a well-formed joint list
+                # naming one joint per letter. The policy owns the domain.
+                self.policy.set_robot_state_keys(message.get("keys", []))
             return {"type": protocol.MSG_OK}
 
         if msg_type == protocol.MSG_SET_CONTROL_FREQUENCY:

@@ -227,7 +227,19 @@ class VeraPolicy(Policy):
         return True
 
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
-        """Record the robot's ordered joint/state keys used to build the state vector."""
+        """Record the robot's ordered joint/state keys used to build the state vector.
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not an ordered list of
+                distinct non-blank names, per
+                :func:`~strands_robots.utils.name_list_error`. A single name
+                passed as a bare string is the mistake this catches: ``str`` is
+                iterable per character, so it would bind one joint per letter.
+        """
+        if robot_state_keys and (
+            error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys")
+        ):
+            raise ValueError(error)
         self._robot_state_keys = list(robot_state_keys)
 
     def set_ik_target(
