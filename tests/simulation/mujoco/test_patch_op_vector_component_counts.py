@@ -113,7 +113,7 @@ def _geom_rgba(sim, name: str) -> list[float]:
 class TestAnUnusableComponentCountIsRefused:
     """Every fixed-width field refuses a count it cannot consume, naming both."""
 
-    @pytest.mark.parametrize(("body", "field", "width"), FIXED_WIDTH_CASES, ids=lambda v: str(v))
+    @pytest.mark.parametrize(("body", "field", "width"), FIXED_WIDTH_CASES, ids=str)
     @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
     def test_the_message_names_the_op_and_the_field(self, sim, body, field, width, count) -> None:
         if field == "rgba" and count == 3:  # RGB is a usable colour, not a mismatch
@@ -126,7 +126,7 @@ class TestAnUnusableComponentCountIsRefused:
         assert f"'{field}'" in text, text
         assert PYBIND_DUMP not in text, text
 
-    @pytest.mark.parametrize(("body", "field", "width"), FIXED_WIDTH_CASES, ids=lambda v: str(v))
+    @pytest.mark.parametrize(("body", "field", "width"), FIXED_WIDTH_CASES, ids=str)
     def test_the_declared_width_is_accepted(self, sim, body, field, width) -> None:
         _seeded_world(sim)
         value = [1.0, 0.0, 0.0, 0.0] if field == "quat" else [0.3] * width
