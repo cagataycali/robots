@@ -406,3 +406,25 @@ class TestStartRecordingDocumentsWhereTheDatasetLands:
         assert "_prepare_dataset_target" in _docstring(module, "start_recording"), (
             f"{module}::start_recording restates the create-vs-resume outcomes instead of citing their owner"
         )
+
+    def test_no_doc_page_sends_a_reader_to_a_dataset_home_nothing_writes(self):
+        """``~/.strands_robots/datasets/`` is not where a recording lands.
+
+        ``~/.strands_robots`` is the renders / mesh-audit / scene-cache home; no
+        code writes a dataset under it. Three doc passages named it as the
+        default recording location anyway - the quick-start comment, the
+        ``DatasetRecorder`` snippet, and an annotation workflow that handed
+        ``lerobot-annotate --root`` a path the preceding ``start_recording``
+        never wrote to, so the documented sequence could not work as written.
+        The three were independent copies, which is why fixing one left two, so
+        the property is asserted over the whole doc tree rather than per page.
+        """
+        offenders = [
+            path.as_posix()
+            for path in sorted(Path("docs").rglob("*.md"))
+            if "strands_robots/datasets" in path.read_text()
+        ]
+        assert not offenders, (
+            f"{', '.join(offenders)} names ~/.strands_robots/datasets as a dataset location; "
+            "recordings land under $HF_LEROBOT_HOME (see resolve_dataset_dir)"
+        )

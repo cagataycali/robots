@@ -12,7 +12,7 @@ sim.start_recording(repo_id="user/my_dataset", task="pick up the cube", fps=50)
 sim.run_policy(robot_name="so100", instruction="pick up the cube",
                policy_provider="mock", duration=10.0)
 sim.stop_recording()
-# LeRobot v3 dataset written to ~/.strands_robots/datasets/
+# LeRobot v3 dataset written to $HF_LEROBOT_HOME/user/my_dataset
 ```
 
 `start_recording` requires `[lerobot]`. Without it, use `start_cameras_recording` for plain MP4.
