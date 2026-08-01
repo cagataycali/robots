@@ -113,7 +113,7 @@ class TestPackageLazyExport:
         import strands_robots.simulation.isaac as isaac_pkg
 
         with pytest.raises(AttributeError, match="no attribute 'NotAName'"):
-            isaac_pkg.NotAName
+            _ = isaac_pkg.NotAName
 
 
 class TestIsaacConfig:

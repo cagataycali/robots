@@ -526,6 +526,15 @@ select = [
     "F",     # pyflakes
     "I",     # isort
     "UP",    # pyupgrade
+    # Two flake8-bugbear codes, selected individually rather than as "B".
+    # They carry the no-op-statement capability that CodeQL's
+    # py/ineffectual-statement used to nominally provide before
+    # .github/codeql/codeql-config.yml filtered it (#1810): every one of that
+    # rule's 27 alerts was a `...` typing-construct body, which ruff exempts,
+    # so the rule reported only unavoidable idioms while the real bug class
+    # went unenforced by any merge-blocking check. Ruff is that check here.
+    "B015",  # useless comparison - `x == 1` as a statement, the real bug class
+    "B018",  # useless expression - a value computed and discarded
 ]
 ignore = [
     "E501",  # line too long - handled by formatter

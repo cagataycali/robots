@@ -49,4 +49,4 @@ class TestLazyResolution:
 class TestUnknownAttribute:
     def test_unknown_attribute_raises_standard_message(self):
         with pytest.raises(AttributeError, match="has no attribute 'does_not_exist'"):
-            newton_pkg.does_not_exist
+            _ = newton_pkg.does_not_exist
