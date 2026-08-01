@@ -69,6 +69,7 @@ import types
 
 import pytest
 
+from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.isaac.simulation import IsaacConfig, IsaacSimulation
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 from strands_robots.utils import entity_name_error
@@ -331,6 +332,8 @@ def _newton_stub() -> types.SimpleNamespace:
         _world=types.SimpleNamespace(objects={}, cameras={}, robots={}),
         _model=types.SimpleNamespace(body_label=["ground"]),
         _lock=threading.RLock(),
+        # Inherited from SimEngine, and read by ``add_object`` for its ``mass``.
+        _validate_mass=SimEngine._validate_mass,
     )
 
 

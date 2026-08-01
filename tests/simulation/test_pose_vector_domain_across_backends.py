@@ -39,14 +39,15 @@ class methods deliberately - ``scene_ops.reposition_body_in_scene`` is a
 module-level spec helper reached only from the already-validated
 ``move_object``, and it returns ``bool`` rather than the agent-tool envelope.
 
-What is NOT in scope, and is asserted to be unchanged: ``size`` and ``mass``.
-``size`` component counts are shape-dependent and documented differently per
-backend (the Isaac ``add_object`` docstring promises a trailing-component
-fallback for a short ``size`` that neither other backend offers), and ``mass=0``
-is documented on Newton as "make it static" - so those need their own domain
-decision rather than riding along here. ``color`` was in that list until its
-accepted counts were settled on the shared ``coerce_rgba`` domain; it is now
-pinned in ``tests/simulation/test_color_domain_across_backends.py``.
+What is NOT in scope, and is asserted to be unchanged: ``size``. Its component
+counts are shape-dependent and documented differently per backend (the Isaac
+``add_object`` docstring promises a trailing-component fallback for a short
+``size`` that neither other backend offers), so it needs its own domain decision
+rather than riding along here. ``color`` and ``mass`` were in that list until
+their domains were settled - on the shared ``coerce_rgba`` and
+``SimEngine._validate_mass`` respectively - and are now pinned in
+``tests/simulation/test_color_domain_across_backends.py`` and
+``tests/simulation/test_object_mass_domain_across_backends.py``.
 
 These tests are GL-free and need neither ``newton``/``warp`` nor ``isaacsim``
 nor a GPU: every guard runs before its method touches a solver or a stage, so
@@ -166,6 +167,10 @@ def _newton_stub() -> Any:
         _lock=threading.RLock(),
         _robot_joint_map={},
         _rebuild=lambda: None,
+        # Inherited from SimEngine, so a real engine always has it. add_object
+        # routes its ``mass`` through it, and a stand-in that omitted it would
+        # make that guard look absent rather than unexercised.
+        _validate_mass=SimEngine._validate_mass,
     )
     return stub
 
@@ -316,6 +321,7 @@ def _isaac_stub() -> Any:
         _prim_registry=[],
         _world=types.SimpleNamespace(scene=types.SimpleNamespace(add=lambda handle: None)),
         _construct_shape_prim=lambda **kwargs: (object(), kwargs.get("size")),
+        _validate_mass=SimEngine._validate_mass,
     )
 
 
@@ -569,27 +575,29 @@ class TestEveryBackendGivesTheSameVerdict:
 # --------------------------------------------------------------------------- #
 # The out-of-scope parameters are pinned as unchanged                          #
 # --------------------------------------------------------------------------- #
-class TestSizeAndMassAreOutOfScope:
-    """This change is the pose axis only; the rest keep their current contract.
+class TestSizeIsOutOfScope:
+    """This change is the pose axis only; ``size`` keeps its current contract.
 
-    ``size`` counts are shape-dependent and documented differently per backend,
-    and ``mass=0`` is documented on Newton as "make it static", so each needs
-    its own domain decision. Pinning them here makes that scope a stated
-    property rather than an omission a later reader has to infer. ``color`` is
-    no longer among them - its counts are settled on the shared ``coerce_rgba``
-    domain, pinned in ``tests/simulation/test_color_domain_across_backends.py``.
+    Its component counts are shape-dependent and documented differently per
+    backend - the Isaac ``add_object`` docstring promises a trailing-component
+    fallback for a short ``size`` that neither other backend offers - so it needs
+    that contract settled before it can share a domain. Pinning it here makes
+    that scope a stated property rather than an omission a later reader has to
+    infer.
+
+    Two axes have since left this list. ``color`` counts are settled on the
+    shared ``coerce_rgba`` domain, pinned in
+    ``tests/simulation/test_color_domain_across_backends.py``; ``mass`` is
+    settled on the shared ``SimEngine._validate_mass`` domain, pinned in
+    ``tests/simulation/test_object_mass_domain_across_backends.py`` - including
+    the ``mass=0`` "make it static" spelling Newton documents, which is the one
+    place the three backends' accepted masses legitimately differ.
     """
 
     def test_a_short_size_still_takes_the_backend_default(self):
         stub = _newton_stub()
         assert NewtonSimEngine.add_object(stub, "crate", size=[])["status"] == "success"
         assert stub._world.objects["crate"].size == [0.05, 0.05, 0.05]
-
-    def test_a_zero_mass_is_still_accepted_on_newton(self):
-        """Documented: "``0`` or ``is_static`` makes it static"."""
-        stub = _newton_stub()
-        assert NewtonSimEngine.add_object(stub, "crate", mass=0.0)["status"] == "success"
-        assert stub._world.objects["crate"].mass == 0.0
 
 
 # --------------------------------------------------------------------------- #

@@ -170,8 +170,9 @@ Because the joint-name and observation contract matches the MuJoCo backend,
 policies and observation mappings transfer unchanged between backends.
 
 The accepted *input* domain matches too, so a call one backend refuses is
-refused by all three. For the setup methods that means the pose vectors, the
-camera `fov` and the pixel dimensions - and the entity `name`: `add_robot`,
+refused by all three. For the setup methods that means the pose vectors, an
+object's `color` and `mass`, the camera `fov` and the pixel dimensions - and the
+entity `name`: `add_robot`,
 `add_object` and `add_camera` each require a non-empty string containing no NUL.
 That matters more here than on MuJoCo because the name is interpolated into the
 USD prim path (`{stage_path}/Robots/{name}`), so an unaddressable name does not
@@ -181,6 +182,13 @@ prunes its cleanup registry by that prefix. Unlike the MuJoCo backend there is
 no "derive a label from the model" short form: `name` is also the procedural
 lookup key, so `None` / `""` are refused rather than replaced with a generated
 label.
+
+The one deliberate difference in that list is `mass=0`. The Newton backend
+documents it as an alternative spelling of `is_static=True` and honours it, so it
+stays accepted there; this backend documents no such spelling, so a zero mass is
+refused with `is_static=True` named as the remedy - the MuJoCo contract these
+docs otherwise mirror. A static object's mass is read by nobody on any backend,
+so it is not validated there.
 
 Looking an entity *up* is the other half of that contract, and it answers rather
 than refuses: a name only *addresses* an entity here, so a name that cannot be a
