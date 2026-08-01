@@ -24,7 +24,6 @@ per-camera MP4).
 from __future__ import annotations
 
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.simulation.models import registered
@@ -183,13 +182,23 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         world._backend_state["trajectory"] = []
         world._backend_state["push_to_hub"] = push_to_hub
 
-        # Resolve the on-disk dataset dir (shared by overwrite + resume logic).
-        if root:
-            dataset_dir = Path(root)
-        elif "/" not in repo_id or repo_id.startswith("/") or repo_id.startswith("./"):
-            dataset_dir = Path(repo_id)
-        else:
-            dataset_dir = Path.home() / ".cache" / "huggingface" / "lerobot" / repo_id
+        # Resolve the on-disk dataset dir (shared by overwrite + resume logic)
+        # through the same resolver ``DatasetRecorder.create`` uses, as the MuJoCo
+        # and Isaac backends' ``start_recording`` already do. The three-branch
+        # copy this replaces matched it on the first two branches and hard-coded
+        # ``~/.cache/huggingface/lerobot`` on the third, so it ignored
+        # ``$HF_LEROBOT_HOME`` - the override LeRobot itself honours and the only
+        # way to move the dataset home. Every consumer of the value then read a
+        # directory this session never writes to: ``overwrite=True`` removed a
+        # dataset OUTSIDE the configured home while leaving the addressed one for
+        # ``create()`` to remove, the resume probe missed an existing dataset so
+        # appending dead-ended in ``FileExistsError`` advising the caller to
+        # bypass this method, and ``last_dataset_root`` - which
+        # ``stop_recording(bucket=...)`` syncs and ``verify_dataset_episodes``
+        # reads once the recorder is dropped - named the stale path.
+        from strands_robots.dataset_recorder import resolve_dataset_dir
+
+        dataset_dir = resolve_dataset_dir(repo_id, root)
         world._backend_state["last_dataset_root"] = str(dataset_dir)
 
         try:
