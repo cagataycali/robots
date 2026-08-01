@@ -39,12 +39,14 @@ class methods deliberately - ``scene_ops.reposition_body_in_scene`` is a
 module-level spec helper reached only from the already-validated
 ``move_object``, and it returns ``bool`` rather than the agent-tool envelope.
 
-What is NOT in scope, and is asserted to be unchanged: ``size``, ``color`` and
-``mass``. Their component counts are shape-dependent and documented differently
-per backend (the Isaac ``add_object`` docstring promises a trailing-component
+What is NOT in scope, and is asserted to be unchanged: ``size`` and ``mass``.
+``size`` component counts are shape-dependent and documented differently per
+backend (the Isaac ``add_object`` docstring promises a trailing-component
 fallback for a short ``size`` that neither other backend offers), and ``mass=0``
 is documented on Newton as "make it static" - so those need their own domain
-decision rather than riding along here.
+decision rather than riding along here. ``color`` was in that list until its
+accepted counts were settled on the shared ``coerce_rgba`` domain; it is now
+pinned in ``tests/simulation/test_color_domain_across_backends.py``.
 
 These tests are GL-free and need neither ``newton``/``warp`` nor ``isaacsim``
 nor a GPU: every guard runs before its method touches a solver or a stage, so
@@ -567,13 +569,15 @@ class TestEveryBackendGivesTheSameVerdict:
 # --------------------------------------------------------------------------- #
 # The out-of-scope parameters are pinned as unchanged                          #
 # --------------------------------------------------------------------------- #
-class TestSizeColorAndMassAreOutOfScope:
+class TestSizeAndMassAreOutOfScope:
     """This change is the pose axis only; the rest keep their current contract.
 
-    ``size`` / ``color`` counts are shape-dependent and documented differently
-    per backend, and ``mass=0`` is documented on Newton as "make it static", so
-    each needs its own domain decision. Pinning them here makes that scope a
-    stated property rather than an omission a later reader has to infer.
+    ``size`` counts are shape-dependent and documented differently per backend,
+    and ``mass=0`` is documented on Newton as "make it static", so each needs
+    its own domain decision. Pinning them here makes that scope a stated
+    property rather than an omission a later reader has to infer. ``color`` is
+    no longer among them - its counts are settled on the shared ``coerce_rgba``
+    domain, pinned in ``tests/simulation/test_color_domain_across_backends.py``.
     """
 
     def test_a_short_size_still_takes_the_backend_default(self):
@@ -586,11 +590,6 @@ class TestSizeColorAndMassAreOutOfScope:
         stub = _newton_stub()
         assert NewtonSimEngine.add_object(stub, "crate", mass=0.0)["status"] == "success"
         assert stub._world.objects["crate"].mass == 0.0
-
-    def test_an_omitted_color_still_takes_the_backend_default(self):
-        stub = _newton_stub()
-        assert NewtonSimEngine.add_object(stub, "crate")["status"] == "success"
-        assert stub._world.objects["crate"].color == [0.5, 0.5, 0.5, 1.0]
 
 
 # --------------------------------------------------------------------------- #
