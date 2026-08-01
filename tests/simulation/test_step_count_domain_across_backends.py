@@ -236,7 +236,7 @@ def _newton_stub() -> tuple[Any, SimWorld]:
     out would make that guard look absent rather than exercised.
     """
     world = SimWorld()
-    stub = types.SimpleNamespace(
+    stub: Any = types.SimpleNamespace(
         _world=world,
         _model=types.SimpleNamespace(body_label=["ground"]),
         _lock=threading.RLock(),
@@ -276,14 +276,16 @@ class TestMuJoCoStep:
     def test_an_infinite_count_is_refused_rather_than_raising_overflow(self) -> None:
         """``int(inf)`` raises ``OverflowError``, which the old guard let through."""
         stub, calls = _mujoco_stub()
-        result = MuJoCoSimEngine.step(stub, INF)
+        infinite: Any = INF
+        result = MuJoCoSimEngine.step(stub, infinite)
         assert result["status"] == "error"
         assert calls["n"] == 0
 
     def test_a_fractional_count_is_refused_rather_than_truncated(self) -> None:
         """``int(2.7)`` stepped twice and called it success."""
         stub, calls = _mujoco_stub()
-        assert MuJoCoSimEngine.step(stub, 2.7)["status"] == "error"
+        fractional: Any = 2.7
+        assert MuJoCoSimEngine.step(stub, fractional)["status"] == "error"
         assert calls["n"] == 0
 
     def test_the_documented_zero_no_op_still_holds(self) -> None:
@@ -339,7 +341,8 @@ class TestNewtonStep:
     def test_the_step_counter_stays_an_integer(self) -> None:
         """``step_count`` took the float ``2.7`` and the ``inf`` verbatim."""
         stub, world = _newton_stub()
-        for count in (2.7, INF, NAN):
+        non_integral: tuple[Any, ...] = (2.7, INF, NAN)
+        for count in non_integral:
             assert NewtonSimEngine.step(stub, count)["status"] == "error"
         assert type(world.step_count) is int
         assert world.step_count == 0
@@ -355,7 +358,7 @@ class TestNewtonStep:
 
     def test_a_no_world_engine_still_reports_that_first(self) -> None:
         """The world check precedes the domain, so the actionable error wins."""
-        stub = types.SimpleNamespace(_world=None, _model=None)
+        stub: Any = types.SimpleNamespace(_world=None, _model=None)
         result = NewtonSimEngine.step(stub, -5)
         assert result["status"] == "error"
         assert "create_world" in _text(result)
@@ -404,7 +407,8 @@ class TestIsaacStep:
 
     def test_a_non_integral_count_is_refused_rather_than_raising(self) -> None:
         """``range(2.7)`` raised ``TypeError`` past the structured envelope."""
-        for count in (2.7, "3", NAN, INF, None, [3]):
+        non_integral: tuple[Any, ...] = (2.7, "3", NAN, INF, None, [3])
+        for count in non_integral:
             stub, _calls = _isaac_stub()
             result = IsaacSimulation.step(stub, count)
             assert result["status"] == "error", count
