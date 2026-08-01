@@ -393,20 +393,23 @@ def sequence_length(value: Any) -> int | None:
 def positive_finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive finite number.
 
-    Shared domain for every CONTINUOUS knob that names a rate or a span of
-    time - a control-loop frequency in Hz, a rollout or teleop ``duration`` in
-    seconds. Unlike :func:`positive_whole_number_error` a fractional value is
-    perfectly usable here (``2.5`` seconds, ``62.5`` Hz), so only the sign and
-    the finiteness are constrained. It lives here rather than beside one of its
+    Shared domain for every CONTINUOUS knob a caller supplies as a positive
+    real: a rate or a span of time (a control-loop frequency in Hz, a rollout
+    or teleop ``duration`` in seconds), and a dimensionless multiplier (the
+    terrain curriculum ``difficulty`` that scales a heightfield's peak
+    elevation). Unlike :func:`positive_whole_number_error` a fractional value is
+    perfectly usable here (``2.5`` seconds, ``62.5`` Hz, a ``0.5`` scale), so
+    only the sign and the finiteness are constrained. It lives here rather than beside one of its
     callers because those callers sit in different layers
     (:mod:`strands_robots.teleop_mixin` must not depend on
     :mod:`strands_robots.simulation`), and the accepted domain must not diverge
     between them.
 
     Only a positive finite value can be honored. Such a knob is always a
-    divisor (the loop period is ``1 / hz``) or a horizon (``duration *
-    frequency`` steps), so ``0`` makes the period undefined or the horizon
-    empty, a negative value inverts it, ``nan`` poisons every comparison it
+    divisor (the loop period is ``1 / hz``), a horizon (``duration *
+    frequency`` steps) or a multiplier (``elevation * difficulty``), so ``0``
+    makes the period undefined, the horizon empty or the scaled quantity
+    degenerate, a negative value inverts it, ``nan`` poisons every comparison it
     reaches (``nan > 0`` and ``nan <= 0`` are both ``False``), and ``inf``
     collapses the period to ``0`` - an unthrottled loop, not a fast one.
     Accepts any real scalar (so a NumPy ``np.float32`` rate read from a config

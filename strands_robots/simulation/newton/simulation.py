@@ -56,6 +56,7 @@ from strands_robots.simulation.models import (
 from strands_robots.simulation.newton.backend import ensure_newton, resolve_solver_class, solver_registry
 from strands_robots.simulation.newton.randomization import DomainRandomizationMixin
 from strands_robots.simulation.newton.recording import NewtonRecordingMixin
+from strands_robots.simulation.terrain import validate_difficulty
 from strands_robots.utils import (
     camera_fov_error,
     coerce_pose_vector,
@@ -292,6 +293,16 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # doubly inert - there is no heightfield terrain for it to scale (a
         # non-None terrain is already rejected above) - so any != 1.0 value is
         # meaningless here; surface that instead of a status=success no-op.
+        # The ``difficulty`` domain is owned by ``validate_difficulty`` and shared
+        # with the MuJoCo backend, which honors the value: the same scale is
+        # refused identically on every backend rather than one accepting what
+        # another rejects. It runs before the ``float(difficulty)`` test below,
+        # which raises ``TypeError`` for ``None``/a list and ``ValueError`` for a
+        # non-numeric string - escaping this method's structured-error contract.
+        try:
+            validate_difficulty(difficulty)
+        except ValueError as exc:
+            return {"status": "error", "content": [{"text": str(exc)}]}
         if float(difficulty) != 1.0:
             return {
                 "status": "error",

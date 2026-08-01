@@ -160,10 +160,15 @@ sim.create_world(terrain="rough", difficulty=2.0)  # exaggerated ~16 cm bumps
 ```
 
 `difficulty=1.0` (the default) is the full-height terrain, byte-identical to
-omitting it; `<1` is gentler, `>1` harsher. It must be a finite value `> 0`,
-and it only applies with a `terrain` - setting `difficulty != 1.0` on a flat
-world (no `terrain`) is rejected with an error rather than silently having no
-effect. A locomotion curriculum ramps `difficulty` across resets to grow the
+omitting it; `<1` is gentler, `>1` harsher. It must be a finite *number*
+`> 0` - the same positive-real domain every other continuous knob accepts, so
+`0`, a negative value, `nan`/`inf`, a `bool` (`True` is not a scale, even
+though it is an `int` subclass) and a string (including a numeric one like
+`"0.5"`) are all refused with a structured error naming the parameter. Every
+backend reports through that one domain, so a scale one `create_world` refuses
+cannot be honored by another. It only applies with a `terrain` - setting
+`difficulty != 1.0` on a flat world (no `terrain`) is rejected with an error
+rather than silently having no effect. A locomotion curriculum ramps `difficulty` across resets to grow the
 terrain the policy must handle.
 
 A floating-base robot added to a terrain world (or reset in one) spawns
