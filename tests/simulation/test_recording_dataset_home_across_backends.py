@@ -31,6 +31,13 @@ The behavioural half drives the Newton engine through a hand-built ``SimWorld``
 neither Newton nor lerobot installed. The structural half pins the property for
 the two backends whose simulators cannot be driven here, and for any backend
 added later.
+
+A third half covers the same contract's *documentation*. Making the override
+load-bearing on all three backends left every ``start_recording`` docstring
+describing ``root`` as overriding "the repo_id cache-path resolution" without
+naming the cache or that it is configurable -- so the resolution had one owner in
+code and three partial restatements in prose, which is the arrangement that
+drifted in the first place.
 """
 
 from __future__ import annotations
@@ -321,4 +328,81 @@ class TestNoDatasetRootResolutionDrifts:
         literals = _string_constants(module, "start_recording")
         assert not literals & {".cache", "huggingface", "lerobot"}, (
             f"{module}::start_recording hard-codes the dataset home instead of resolving it"
+        )
+
+
+def _docstring(module: str, method: str) -> str:
+    """The docstring of ``module::method``, or fail if it has none.
+
+    Read separately from :func:`_string_constants` because that reader answers
+    "what does the code spell" while these assertions answer "what does the
+    caller get told" - a method whose docstring were removed entirely would
+    satisfy an emptied-set check silently.
+    """
+    doc = ast.get_docstring(_method_node(module, method))
+    if not doc:
+        pytest.fail(f"{method} in {module} has no docstring")
+    return doc
+
+
+class TestStartRecordingDocumentsWhereTheDatasetLands:
+    """The resolution has one owner in code; its documentation needs one too.
+
+    The scanners above hold every backend to the shared resolver, which settles
+    *behaviour*. They say nothing about what a caller reading ``start_recording``
+    is told, and the answer was nothing: all three docstrings described ``root``
+    as overriding "the repo_id cache-path resolution" without naming which cache
+    or that it is configurable, the MuJoCo one documented no ``repo_id`` at all,
+    and ``$HF_LEROBOT_HOME`` appeared only in inline code comments a caller never
+    reads. So the override that #1863 made load-bearing on all three backends was
+    undiscoverable from the API surface, and three partial restatements of one
+    contract were free to drift apart again.
+
+    Each assertion pins the cross-reference rather than the prose, so the rules
+    keep a single owner: restating them per backend is what drifted.
+    """
+
+    @pytest.mark.parametrize("module", _START_RECORDING_BACKENDS)
+    def test_every_backend_points_at_the_shared_resolver(self, module):
+        assert "resolve_dataset_dir" in _docstring(module, "start_recording"), (
+            f"{module}::start_recording does not tell the caller which resolver decides the dataset directory"
+        )
+
+    @pytest.mark.parametrize("module", _START_RECORDING_BACKENDS)
+    def test_every_backend_names_the_home_override(self, module):
+        """The one thing a caller cannot find out any other way.
+
+        ``resolve_dataset_dir`` reads the home from lerobot's own constant, so
+        the environment variable is the only way to move a recording - and a
+        cross-reference alone leaves the reader to go find that out.
+        """
+        assert "HF_LEROBOT_HOME" in _docstring(module, "start_recording"), (
+            f"{module}::start_recording never names HF_LEROBOT_HOME, so the dataset home reads as fixed"
+        )
+
+    @pytest.mark.parametrize("module", _START_RECORDING_BACKENDS)
+    def test_every_backend_documents_both_parameters_that_select_the_directory(self, module):
+        """``repo_id`` and ``root`` are the two inputs to the resolution.
+
+        MuJoCo's Args block documented ``fps`` / ``root`` / ``overwrite`` /
+        ``vcodec`` / ``cameras`` and omitted the parameter that names the
+        dataset, so a cross-reference on ``root`` alone would still leave the
+        default path unexplained on that backend.
+        """
+        doc = _docstring(module, "start_recording")
+        missing = [param for param in ("repo_id:", "root:") if param not in doc]
+        assert not missing, f"{module}::start_recording documents no {', '.join(missing)} entry"
+
+    @pytest.mark.parametrize("module", _START_RECORDING_BACKENDS)
+    def test_every_backend_points_at_the_shared_create_vs_resume_owner(self, module):
+        """The same one-owner rule for the other contract documented only on a helper.
+
+        ``_prepare_dataset_target`` decides four outcomes for an existing target
+        (resume, clear-empty, wipe-on-overwrite, refuse-non-dataset). Two
+        backends described it as "wipe and recreate ... instead of appending",
+        which names two of the four and reads as though an empty ``root`` were
+        an error.
+        """
+        assert "_prepare_dataset_target" in _docstring(module, "start_recording"), (
+            f"{module}::start_recording restates the create-vs-resume outcomes instead of citing their owner"
         )

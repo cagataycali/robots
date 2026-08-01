@@ -128,9 +128,17 @@ meaning.
 
 ### Where the dataset is written (`root` / `overwrite`)
 
-`root` is the on-disk directory for the dataset (defaults to the LeRobot cache
-under `repo_id` when omitted). Passing an existing **empty** directory - for
-example one returned by `tempfile.mkdtemp()` - is accepted and recorded into:
+`root` is the on-disk directory for the dataset, used verbatim. When omitted,
+the directory is derived from `repo_id`: an `owner/name` id records into
+`$HF_LEROBOT_HOME/{repo_id}` (default `~/.cache/huggingface/lerobot`), and a
+`repo_id` that is itself a path is taken as the directory. The home is read from
+LeRobot's own `HF_LEROBOT_HOME` constant, so exporting it moves both the
+recording and where `LeRobotDataset` later reads it back from -
+`resolve_dataset_dir` is the one owner of those rules and every backend's
+`start_recording` applies it.
+
+Passing an existing **empty** directory - for example one returned by
+`tempfile.mkdtemp()` - is accepted and recorded into:
 
 ```python
 import tempfile
@@ -416,7 +424,7 @@ recorder = DatasetRecorder.create(
     camera_keys=["default"],
     joint_names=["joint_1", "joint_2", "joint_3", "joint_4", "joint_5", "joint_6"],
     task="pick up the red cube",
-    # root=None → ~/.strands_robots/datasets/
+    # root=None → $HF_LEROBOT_HOME/user/my_dataset
     # vcodec="h264", streaming_encoding=True, image_writer_threads=4
 )
 

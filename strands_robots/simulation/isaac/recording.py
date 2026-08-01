@@ -151,23 +151,38 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         Requires the ``lerobot`` extra for the dataset schema.
 
         Args:
-            repo_id: HuggingFace dataset id (``owner/name``) or a local path.
+            repo_id: HuggingFace dataset id (``owner/name``) or a local path. The
+                directory it records into is resolved by
+                :func:`~strands_robots.dataset_recorder.resolve_dataset_dir` -
+                the same resolver ``DatasetRecorder.create`` uses - so an
+                ``owner/name`` id lands in ``$HF_LEROBOT_HOME/{repo_id}`` while a
+                value that is itself a path is taken as the directory. That home
+                is read from LeRobot's own ``HF_LEROBOT_HOME`` constant, so
+                relocating it moves both this recording and where
+                ``LeRobotDataset`` later reads the dataset back from.
             task: Default task description recorded with every frame.
             fps: Recording frame rate (metadata; see pacing note above).
                 Must be a positive whole number; a rate no dataset can be
                 written at is rejected up front. When an existing dataset is
                 RESUMED (``overwrite=False``) it must equal that dataset's
                 on-disk rate, which a resume cannot change.
-            root: Explicit on-disk dataset directory (overrides the repo_id
-                cache-path resolution).
+            root: Explicit on-disk dataset directory, used verbatim - it replaces
+                the ``repo_id`` resolution above rather than being joined to it.
+                See :func:`~strands_robots.dataset_recorder.resolve_dataset_dir`
+                for the full precedence.
             push_to_hub: Publish to the Hub at ``stop_recording``.
             vcodec: Video codec for the per-camera MP4 streams. Defaults to
                 "h264" (H.264), universally decodable including by OpenCV's
                 VideoCapture. Use "libsvtav1" (AV1) for smaller files;
                 LeRobot read-back handles AV1 but OpenCV wheels commonly
                 cannot decode it and silently yield 0 frames.
-            overwrite: Wipe and recreate an existing dataset dir instead of
-                appending to it.
+            overwrite: When True, wipe any existing dataset at the resolved
+                directory and record from scratch. When False (default) an
+                existing dataset is RESUMED (episodes appended), a pre-existing
+                EMPTY directory (e.g. from ``tempfile.mkdtemp()``) is cleared and
+                recorded into, and a non-empty non-dataset directory is reported
+                as an error rather than clobbered - the four outcomes of
+                :meth:`~strands_robots.simulation.recording.DatasetRecordingMixin._prepare_dataset_target`.
             cameras: Camera names to record into the dataset. When ``None``
                 (default) every registered RTX camera is recorded. Pass a
                 subset to scope the dataset to exactly those views - matching

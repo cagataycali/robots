@@ -81,6 +81,15 @@ class RecordingMixin(DatasetRecordingMixin):
         rather than freezing on the chunk-start observation.
 
         Args:
+            repo_id: HuggingFace dataset id (``owner/name``) or a local path. The
+                directory it records into is resolved by
+                :func:`~strands_robots.dataset_recorder.resolve_dataset_dir` -
+                the same resolver ``DatasetRecorder.create`` uses - so an
+                ``owner/name`` id lands in ``$HF_LEROBOT_HOME/{repo_id}`` while a
+                value that is itself a path is taken as the directory. That home
+                is read from LeRobot's own ``HF_LEROBOT_HOME`` constant, so
+                relocating it moves both this recording and where
+                ``LeRobotDataset`` later reads the dataset back from.
             fps: Dataset frame rate recorded in the LeRobot metadata. Must be a
                 positive whole number - a fractional or non-numeric rate cannot
                 be written and is rejected up front rather than aborting the
@@ -96,14 +105,17 @@ class RecordingMixin(DatasetRecordingMixin):
                 dataset's on-disk rate: a resumed dataset keeps the rate it was
                 created at, so a differing request is refused with the on-disk
                 value rather than silently appending frames on a wrong timebase.
-            root: On-disk dataset directory (defaults to the LeRobot cache under
-                ``repo_id``). An existing EMPTY directory (e.g. from
-                ``tempfile.mkdtemp()``) is accepted and recorded into; an
-                existing dataset is resumed/appended (see ``overwrite``).
-            overwrite: When True, wipe any existing dataset at ``root`` and
-                record from scratch. When False (default) an existing dataset is
-                appended to; a non-empty, non-dataset ``root`` is reported as an
-                error rather than clobbered.
+            root: Explicit on-disk dataset directory, used verbatim - it replaces
+                the ``repo_id`` resolution above rather than being joined to it.
+                See :func:`~strands_robots.dataset_recorder.resolve_dataset_dir`
+                for the full precedence.
+            overwrite: When True, wipe any existing dataset at the resolved
+                directory and record from scratch. When False (default) an
+                existing dataset is RESUMED (episodes appended), a pre-existing
+                EMPTY directory (e.g. from ``tempfile.mkdtemp()``) is cleared and
+                recorded into, and a non-empty non-dataset directory is reported
+                as an error rather than clobbered - the four outcomes of
+                :meth:`~strands_robots.simulation.recording.DatasetRecordingMixin._prepare_dataset_target`.
             vcodec: Video codec for the per-camera MP4 streams. Defaults to
                 "h264" (H.264), which decodes everywhere - including OpenCV's
                 VideoCapture, used by many downstream VLM video readers - so a
