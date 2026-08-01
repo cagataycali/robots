@@ -45,6 +45,7 @@ from strands_robots.utils import (
     coerce_size_vector,
     entity_name_error,
     name_list_error,
+    non_negative_whole_number_error,
     positive_count_error,
     positive_whole_number_error,
 )
@@ -1237,13 +1238,26 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         Parameters
         ----------
         n_steps : int
-            Number of steps to take. Default 1.
+            Non-negative whole number of steps to take, on the shared
+            :func:`~strands_robots.utils.non_negative_whole_number_error` domain
+            every backend applies. Default 1, and ``0`` is an accepted no-op. A
+            NumPy or float count with an integral value is honored and coerced.
 
         Returns
         -------
         dict
-            Status dict with timing info.
+            Status dict with timing info. ``status`` is ``"error"`` when no
+            world exists or ``n_steps`` is outside that domain.
         """
+        # Guarded before the lock is taken and before any world tick: a
+        # negative count made ``range()`` empty, so the call reported success
+        # having stepped nothing, and divided the elapsed wall time by that
+        # negative count to report a negative steps/sec rate. Every
+        # non-integral value reached ``range()`` and raised past this method's
+        # structured envelope.
+        if error := non_negative_whole_number_error(n_steps, "n_steps", "step"):
+            return {"status": "error", "content": [{"text": error}]}
+        n_steps = int(n_steps)
         with self._lock:
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}

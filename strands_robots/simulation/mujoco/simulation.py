@@ -113,6 +113,7 @@ from strands_robots.utils import (
     coerce_pose_vector,
     entity_name_error,
     finite_vector_error,
+    non_negative_whole_number_error,
     pose_vector_error,
     sequence_length,
 )
@@ -3255,26 +3256,29 @@ class MuJoCoSimEngine(
         """Advance the simulation by ``n_steps`` physics steps.
 
         Args:
-            n_steps: Non-negative step count (``0`` is an accepted no-op).
+            n_steps: Non-negative whole step count (``0`` is an accepted no-op),
+                on the shared
+                :func:`~strands_robots.utils.non_negative_whole_number_error`
+                domain every backend applies. A NumPy or float count with an
+                integral value is honored and coerced; a fractional, negative,
+                non-finite, boolean or non-numeric count is refused.
 
         Returns:
             A ``{status, content}`` tool result reporting the elapsed sim time
             and total step count. ``status`` is ``"error"`` when no world
-            exists or ``n_steps`` is negative / not an integer.
+            exists, ``n_steps`` is outside that domain, or the count exceeds
+            :attr:`_MAX_STEPS_PER_CALL`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
-        # reject negative, accept zero as no-op
-        if not isinstance(n_steps, int):
-            try:
-                n_steps = int(n_steps)
-            except (TypeError, ValueError):
-                return {
-                    "status": "error",
-                    "content": [{"text": f"step: n_steps must be an integer, got {type(n_steps).__name__}"}],
-                }
-        if n_steps < 0:
-            return {"status": "error", "content": [{"text": f"step: n_steps must be >= 0, got {n_steps}"}]}
+        # Refuse before coercing: ``int()`` alone truncates a fractional count
+        # to a different number of steps under a success result, reads a
+        # boolean as one step, and raises ``OverflowError`` on ``inf`` - which
+        # the previous ``except (TypeError, ValueError)`` did not catch, so an
+        # infinite count escaped this method's structured envelope entirely.
+        if error := non_negative_whole_number_error(n_steps, "n_steps", "step"):
+            return {"status": "error", "content": [{"text": error}]}
+        n_steps = int(n_steps)
         if n_steps == 0:
             return {
                 "status": "success",

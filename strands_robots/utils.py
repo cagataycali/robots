@@ -512,6 +512,55 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     return None
 
 
+def non_negative_whole_number_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable non-negative whole number.
+
+    Shared domain for the number of physics steps a caller asks a simulation to
+    advance - the ``n_steps`` of every backend's
+    :meth:`~strands_robots.simulation.base.SimEngine.step`.
+
+    It stands to :func:`positive_whole_number_error` exactly as
+    :func:`non_negative_count_error` stands to :func:`positive_count_error`: the
+    same scalar policy with the floor moved to ``0``, because ``0`` is a
+    first-class value here rather than a degenerate one. The MuJoCo backend has
+    documented ``step(0)`` as "an accepted no-op" since its numeric inputs were
+    hardened, and an agent loop that computes ``n_steps`` from a remaining
+    duration reaches ``0`` on the last iteration of a rollout that has run out
+    of time. Refusing it would reject that loop's final call, which is why this
+    is a separate domain rather than a caller of the positive one.
+
+    Accepts any real scalar with an integral value, so a step count that came
+    from arithmetic - ``int(duration / dt)`` promoted to ``np.int64`` by a NumPy
+    dt, or a ``30.0`` read from a config - is honored. The caller coerces the
+    accepted value with ``int()`` before using it as a ``range()`` bound; that
+    coercion is safe only *because* this guard has already established the value
+    is finite and integral, which is the whole reason the two steps are ordered
+    this way. ``bool`` is rejected explicitly: it is an ``int`` subclass, so a
+    bare ``value < 0`` test lets ``True`` through as a silent count of one
+    physics step, and ``numpy.bool_`` is not registered as ``numbers.Real`` so
+    it is refused by the scalar check.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it - the
+            public method name, or the class name for a constructor parameter.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    message = f"{context}: {param} must be a non-negative whole number, got {value!r}."
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return message
+    numeric = float(value)
+    # ``isfinite`` first: ``int(nan)`` raises ``ValueError`` and ``int(inf)``
+    # raises ``OverflowError``, and short-circuiting keeps both out of the
+    # integrality check below.
+    if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 0:
+        return message
+    return None
+
+
 def positive_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive integer count.
 

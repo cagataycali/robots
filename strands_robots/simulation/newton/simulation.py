@@ -65,6 +65,7 @@ from strands_robots.utils import (
     coerce_size_vector,
     entity_name_error,
     is_boolean,
+    non_negative_whole_number_error,
     positive_count_error,
     require_optional,
 )
@@ -397,9 +398,31 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         return {"status": "success", "content": [{"text": "Newton world reset."}]}
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
-        """Advance the simulation by ``n_steps`` control steps."""
+        """Advance the simulation by ``n_steps`` control steps.
+
+        Args:
+            n_steps: Non-negative whole control-step count, on the shared
+                :func:`~strands_robots.utils.non_negative_whole_number_error`
+                domain every backend applies. ``0`` is an accepted no-op, as it
+                is on MuJoCo. A NumPy or float count with an integral value is
+                honored and coerced.
+
+        Returns:
+            A ``{status, content}`` tool result. ``status`` is ``"error"`` when
+            no world exists or ``n_steps`` is outside that domain.
+        """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        if error := non_negative_whole_number_error(n_steps, "n_steps", "step"):
+            return {"status": "error", "content": [{"text": error}]}
+        n_steps = int(n_steps)
+        # ``_advance`` floors its count at 1 (``max(1, n_steps)``) because
+        # ``send_action`` shares it and reads that floor as its own contract, so
+        # a zero handed through would advance the world one step while this
+        # method reported stepping none. Answer it here instead of changing that
+        # floor, which would alter the ``send_action(n_substeps=0)`` path too.
+        if n_steps == 0:
+            return {"status": "success", "content": [{"text": "Stepped 0 step(s) (no-op)."}]}
         with self._lock:
             self._advance(n_steps)
         return {"status": "success", "content": [{"text": f"Stepped {n_steps} step(s)."}]}
