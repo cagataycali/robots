@@ -49,7 +49,12 @@ if TYPE_CHECKING:
 # signature as a *string* annotation; ``from __future__ import
 # annotations`` (already in effect) makes that a no-op at runtime.
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
-from strands_robots.utils import is_boolean, positive_count_error, positive_finite_number_error
+from strands_robots.utils import (
+    is_boolean,
+    positive_count_error,
+    positive_finite_number_error,
+    sequence_length,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -353,21 +358,17 @@ def _unwrap_single_element_action_value(value: Any) -> Any:
     is unwrapped rather than rejected.
 
     A 0-d numpy array (``np.array(True)``, ``np.mean(...)``) declares
-    ``__len__`` and ``__getitem__`` but raises ``TypeError`` from ``len()``, so
-    probing the length directly escapes ``send_action``'s structured-error
-    contract with a bare ``len() of unsized object``. It already holds exactly
-    one scalar, so there is nothing to unwrap and it is returned unchanged for
-    the value checks to read.
+    ``__len__`` and ``__getitem__`` but raises from ``len()``, which is why the
+    length is read through :func:`strands_robots.utils.sequence_length` rather
+    than probed here: it reports such a value as carrying no length, so the
+    value is returned unchanged for the value checks to read (it already holds
+    exactly one scalar, so there is nothing to unwrap).
     """
     if isinstance(value, (str, bytes, Mapping)):
         return value
-    if not hasattr(value, "__len__") or not hasattr(value, "__getitem__"):
+    if not hasattr(value, "__getitem__"):
         return value
-    try:
-        length = len(value)
-    except TypeError:
-        return value
-    return value[0] if length == 1 else value
+    return value[0] if sequence_length(value) == 1 else value
 
 
 def _boolean_action_error(label: str, value: Any) -> dict[str, Any] | None:
@@ -1092,7 +1093,7 @@ class SimEngine(ABC):
         # ``str``/``bytes`` are iterable but never a valid multi-joint action;
         # a scalar has no length. Reject both with an actionable message instead
         # of producing garbage character/positional keys downstream.
-        if isinstance(action, (str, bytes)) or not hasattr(action, "__len__"):
+        if isinstance(action, (str, bytes)) or sequence_length(action) is None:
             return None, {
                 "status": "error",
                 "content": [
@@ -3622,20 +3623,23 @@ class SimEngine(ABC):
                 f"{type(camera_name).__name__} ({camera_name!r}). Cameras are addressed by "
                 "name, not index; see add_camera / get_frame."
             )
-        if pixels is None or isinstance(pixels, (str, bytes)) or not hasattr(pixels, "__len__"):
+        n_pixels = None if pixels is None or isinstance(pixels, (str, bytes)) else sequence_length(pixels)
+        # ``pixels is None`` is retested rather than folded into ``n_pixels`` so
+        # the narrowing survives to the ``enumerate(pixels)`` walk below.
+        if pixels is None or n_pixels is None:
             return _err(
                 "get_world_point requires 'pixels': a non-empty list of [u, v] pixel coordinates, e.g. [[320, 240], [322, 238]]."
             )
-        if len(pixels) == 0:
+        if n_pixels == 0:
             return _err("get_world_point requires at least one [u, v] pixel; got an empty list.")
-        if len(pixels) > self._WORLD_POINT_MAX_PIXELS:
+        if n_pixels > self._WORLD_POINT_MAX_PIXELS:
             return _err(
                 f"get_world_point accepts at most {self._WORLD_POINT_MAX_PIXELS} pixels per call, "
-                f"got {len(pixels)}. Sample a handful of pixels on the target surface instead."
+                f"got {n_pixels}. Sample a handful of pixels on the target surface instead."
             )
         parsed: list[tuple[int, int]] = []
         for i, px in enumerate(pixels):
-            if isinstance(px, (str, bytes)) or not hasattr(px, "__len__") or len(px) != 2:
+            if isinstance(px, (str, bytes)) or sequence_length(px) != 2:
                 return _err(f"pixels[{i}] must be a [u, v] pair, got {px!r}.")
             coords: list[int] = []
             for axis, component in zip("uv", px, strict=True):

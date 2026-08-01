@@ -21,7 +21,7 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import positive_whole_number_error, require_optional
+from strands_robots.utils import positive_whole_number_error, require_optional, sequence_length
 
 logger = logging.getLogger(__name__)
 
@@ -194,9 +194,9 @@ def _frame_size_error(size: Any) -> str | None:
     if size is None:
         return None
     message = f"mjpeg_frames: size must be a (width, height) pair of positive whole numbers, got {size!r}."
-    if isinstance(size, str | bytes | Mapping) or not (hasattr(size, "__len__") and hasattr(size, "__getitem__")):
+    if isinstance(size, str | bytes | Mapping) or not hasattr(size, "__getitem__"):
         return message
-    if len(size) != 2:
+    if sequence_length(size) != 2:
         return message
     for index, label in ((0, "size width"), (1, "size height")):
         if text := positive_whole_number_error(size[index], label, "mjpeg_frames"):

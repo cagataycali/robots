@@ -139,6 +139,19 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     `gripper > 0.5` produces, and because `numpy.bool_` is not a `bool` subclass
     an `isinstance(x, bool)` guard silently misses it.
 
+!!! note "Component count of a vector parameter"
+    Every vector parameter (`position`, `target`, `origin`, `force`, `torque`,
+    `point`, `gravity`, `direction`, `orientation`, `color`, `get_world_point`'s
+    `pixels`, and `send_action`'s ordered-vector form) is checked for its
+    component count before it is read, and a value that carries no readable
+    count is refused with a structured error like any other. That includes a
+    0-d NumPy array or torch tensor - `np.mean(...)`, `np.array(0.5)`, a
+    squeezed observation slice - which *declares* `__len__` and then raises
+    from it, so it is reported as "not a vector of N numbers" rather than
+    escaping as a bare `len() of unsized object`. Correctly sized NumPy arrays
+    are accepted throughout, so an observation slice can be passed straight
+    through.
+
 !!! tip "Discover the sim-state surface"
     `get_state` plus the checkpoint (`save_state` / `load_state`) and
     direct pose-setting (`set_joint_positions` / `set_joint_velocities`)

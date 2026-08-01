@@ -114,6 +114,7 @@ from strands_robots.utils import (
     entity_name_error,
     finite_vector_error,
     pose_vector_error,
+    sequence_length,
 )
 
 if TYPE_CHECKING:
@@ -4749,16 +4750,21 @@ class MuJoCoSimEngine(
             if val is None:
                 continue
             expected_len = " or ".join(str(n) for n in accepted_lens)
-            if not hasattr(val, "__len__"):
+            n_components = sequence_length(val)
+            if n_components is None:
                 return None, {
                     "status": "error",
                     "content": [{"text": f"Parameter '{vparam}' must be a list of {expected_len} numbers."}],
                 }
-            if len(val) not in accepted_lens:
+            if n_components not in accepted_lens:
                 return None, {
                     "status": "error",
                     "content": [
-                        {"text": (f"Parameter '{vparam}' must be a list of {expected_len} numbers, got {len(val)}.")}
+                        {
+                            "text": (
+                                f"Parameter '{vparam}' must be a list of {expected_len} numbers, got {n_components}."
+                            )
+                        }
                     ],
                 }
             for i, component in enumerate(val):

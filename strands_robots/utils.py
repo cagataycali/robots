@@ -359,6 +359,37 @@ def is_boolean(value: Any) -> bool:
     return False
 
 
+def sequence_length(value: Any) -> int | None:
+    """Return the length of ``value``, or ``None`` when it does not carry one.
+
+    Every validator that accepts a vector first asks "how many components is
+    this?", and the obvious spelling - ``hasattr(value, "__len__")`` followed by
+    ``len(value)`` - is unsafe for the value class this library actually
+    receives. A 0-d numpy array (``np.array(0.5)``, or the result of a reduction
+    such as ``np.mean(...)``) and a 0-d torch tensor both *declare* ``__len__``
+    and then raise from it, so the ``hasattr`` probe passes and the ``len()``
+    call escapes with a bare ``len() of unsized object`` that names neither the
+    parameter nor the method - past agent-tool dispatch, which is documented
+    never to raise.
+
+    ``TypeError`` is the narrowest superset: CPython raises it both for a value
+    with no ``__len__`` at all (a plain ``float``, a ``numpy.float64``) and for
+    one whose ``__len__`` exists but refuses. Both answer the caller's question
+    the same way - this value does not carry a component count - so both report
+    as ``None`` and one branch covers them.
+
+    Args:
+        value: Any caller-supplied value a validator needs the length of.
+
+    Returns:
+        The component count, or ``None`` when the value has no readable length.
+    """
+    try:
+        return len(value)
+    except TypeError:
+        return None
+
+
 def positive_finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive finite number.
 
