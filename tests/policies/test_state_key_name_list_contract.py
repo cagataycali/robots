@@ -285,14 +285,14 @@ def test_a_one_shot_iterator_is_refused() -> None:
     """A generator would present as empty to the second read of the list."""
     policy = MockPolicy()
     with pytest.raises(ValueError, match="one-shot iterator"):
-        policy.set_robot_state_keys(iter(["elbow", "wrist"]))
+        policy.set_robot_state_keys(iter(["elbow", "wrist"]))  # type: ignore[arg-type]
 
 
 def test_the_bare_string_message_names_the_per_character_reading() -> None:
     """The message has to say what the string WOULD have bound, or it reads as pedantry."""
     policy = MockPolicy()
     with pytest.raises(ValueError) as excinfo:
-        policy.set_robot_state_keys("shoulder_pan.pos")
+        policy.set_robot_state_keys("shoulder_pan.pos")  # type: ignore[arg-type]
     message = str(excinfo.value)
     assert "not a single string" in message
     assert "16 name(s)" in message
@@ -304,7 +304,7 @@ def test_a_refused_list_binds_nothing() -> None:
     policy = MockPolicy()
     policy.set_robot_state_keys(["elbow", "wrist"])
     with pytest.raises(ValueError):
-        policy.set_robot_state_keys("gripper")
+        policy.set_robot_state_keys("gripper")  # type: ignore[arg-type]
     assert policy.robot_state_keys == ["elbow", "wrist"]
 
 
@@ -312,7 +312,7 @@ def test_a_refusal_is_raised_before_any_joint_is_bound_on_a_fresh_policy() -> No
     """A first call that is refused leaves the constructor default in place."""
     policy = MockPolicy()
     with pytest.raises(ValueError):
-        policy.set_robot_state_keys("gripper")
+        policy.set_robot_state_keys("gripper")  # type: ignore[arg-type]
     assert policy.robot_state_keys == []
 
 
@@ -358,7 +358,7 @@ def test_a_composite_refuses_through_its_children() -> None:
     lower, upper = MockPolicy(), MockPolicy()
     composite = CompositePolicy(lower, upper)
     with pytest.raises(ValueError, match="robot_state_keys"):
-        composite.set_robot_state_keys("wrist")
+        composite.set_robot_state_keys("wrist")  # type: ignore[arg-type]
     assert lower.robot_state_keys == []
     assert upper.robot_state_keys == []
 
@@ -367,7 +367,7 @@ def test_the_remote_client_refuses_before_anything_reaches_the_wire() -> None:
     """Validated on the outbound side, ahead of its own ``list(...)`` flattening."""
     client = RemotePolicy(host="127.0.0.1", port=1)
     with pytest.raises(ValueError, match="robot_state_keys"):
-        client.set_robot_state_keys("wrist")
+        client.set_robot_state_keys("wrist")  # type: ignore[arg-type]
     assert client._robot_state_keys == []
 
 
@@ -389,11 +389,11 @@ def test_the_three_configuration_setters_now_agree() -> None:
     with pytest.raises(ValueError):
         policy.set_control_frequency(True)
     with pytest.raises(ValueError):
-        policy.set_rtc_observed_delay(1.5)
+        policy.set_rtc_observed_delay(1.5)  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        policy.set_robot_state_keys("wrist")
+        policy.set_robot_state_keys("wrist")  # type: ignore[arg-type]
     with pytest.raises(ValueError):
-        policy.set_robot_state_keys([1])
+        policy.set_robot_state_keys([1])  # type: ignore[list-item]
 
 
 # --------------------------------------------------------------------------
@@ -437,7 +437,7 @@ def test_wbc_refuses_a_malformed_list_through_its_by_name_check(label: str, valu
 def test_wbc_refuses_a_one_shot_iterator_too() -> None:
     """The iterator is consumed by the ``list(...)``, then fails membership."""
     with pytest.raises(ValueError, match="missing expected G1"):
-        _wbc_policy().set_robot_state_keys(iter(["left_hip_pitch_joint"]))
+        _wbc_policy().set_robot_state_keys(iter(["left_hip_pitch_joint"]))  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
