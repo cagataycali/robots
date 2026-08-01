@@ -265,22 +265,33 @@ _START_RECORDING_BACKENDS = (
 )
 
 
+def _method_node(module: str, method: str) -> ast.FunctionDef:
+    """The ``def method`` node in ``module``, or fail naming what was not found.
+
+    Both readers below need the same lookup, and a scanner that silently found
+    no method would assert nothing at all - so a missing name fails the test
+    rather than yielding an empty set.
+    """
+    tree = ast.parse(Path(module).read_text())
+    found = next(
+        (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name == method),
+        None,
+    )
+    if found is None:
+        pytest.fail(f"{method} not found in {module}")
+    return found
+
+
 def _called_names(module: str, method: str) -> set[str]:
     """Names of every plain ``f(...)`` call made inside ``module::method``."""
-    tree = ast.parse(Path(module).read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == method:
-            return {n.func.id for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
-    pytest.fail(f"{method} not found in {module}")
+    node = _method_node(module, method)
+    return {n.func.id for n in ast.walk(node) if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)}
 
 
 def _string_constants(module: str, method: str) -> set[str]:
     """Every string literal appearing inside ``module::method``."""
-    tree = ast.parse(Path(module).read_text())
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == method:
-            return {n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
-    pytest.fail(f"{method} not found in {module}")
+    node = _method_node(module, method)
+    return {n.value for n in ast.walk(node) if isinstance(n, ast.Constant) and isinstance(n.value, str)}
 
 
 class TestNoDatasetRootResolutionDrifts:
