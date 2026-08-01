@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import math
+import numbers
 import os
 import sys
 import threading
@@ -62,6 +63,7 @@ from strands_robots.utils import (
     coerce_pose_vector,
     coerce_rgba,
     entity_name_error,
+    is_boolean,
     positive_count_error,
     require_optional,
 )
@@ -126,6 +128,29 @@ def _quat_rotate_inverse_wxyz(quat_wxyz: list[float], vec: list[float]) -> list[
     b = np.cross(q_vec, v) * (w * 2.0)
     c = q_vec * (float(np.dot(q_vec, v)) * 2.0)
     return [float(t) for t in (a - b + c)]
+
+
+def _is_zero_mass_sentinel(mass: Any) -> bool:
+    """Whether ``mass`` is Newton's documented "make it static" spelling.
+
+    ``add_object`` documents ``mass=0`` as an alternative spelling of
+    ``is_static=True``, and :meth:`NewtonSimEngine._add_object_to_builder`
+    honours it by taking the static path. A zero mass is therefore a *mode*
+    rather than a small mass, so it is not validated as a dynamic one - which is
+    the single place this backend's accepted mass domain differs from the
+    MuJoCo backend's.
+
+    ``bool`` is excluded even though ``False == 0`` is true: a boolean is
+    refused on every backend rather than being read as a spelling of the
+    sentinel, since ``float(True)`` would otherwise mean a silent 1 kg body.
+
+    Args:
+        mass: The caller-supplied value.
+
+    Returns:
+        ``True`` only for a real, non-``bool`` number equal to zero.
+    """
+    return isinstance(mass, numbers.Real) and not is_boolean(mass) and float(mass) == 0.0
 
 
 class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine):
@@ -620,6 +645,14 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         :func:`~strands_robots.utils.coerce_pose_vector` domain, so a pose one
         backend refuses is refused by both.
 
+        ``mass`` must be a finite number > 0 for a dynamic object, the domain
+        :meth:`~strands_robots.simulation.base.SimEngine._validate_mass`
+        defines and the MuJoCo backend's ``add_object`` already enforces, so a
+        mass one backend refuses is refused by both. ``mass=0`` is the one
+        documented exception: it is this backend's alternative spelling of
+        ``is_static=True`` and stays accepted. A static object's mass is never
+        read, so it is not validated - the same scope MuJoCo uses.
+
         Args:
             name: Unique object name; a non-empty ``str`` containing no NUL, the
                 same domain the MuJoCo backend's ``add_object`` accepts
@@ -637,7 +670,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 other component count is refused rather than padded or
                 truncated, since either would paint a colour that was not
                 asked for. NumPy arrays are accepted.
-            mass: Object mass; ``0`` or ``is_static`` makes it static.
+            mass: Object mass in kg; a finite number > 0 for a dynamic
+                object. ``0`` or ``is_static`` makes it static instead, and
+                a static object's mass is not read. Any other value -
+                negative, ``nan``, ``inf``, a ``bool`` or a non-number - is
+                refused rather than handed to the solver rebuild.
             is_static: When True the object is fixed in the world.
             mesh_path: Path to a mesh asset (``.obj`` / ``.stl`` / ``.glb`` /
                 ``.usd`` -- anything ``trimesh.load`` accepts). Required and
@@ -693,6 +730,21 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         color, _cerr = coerce_rgba("add_object", "color", color)
         if _cerr is not None:
             return {"status": "error", "content": [{"text": _cerr}]}
+        # A dynamic body's mass is the divisor of every force applied to it and
+        # reaches the solver as ``builder.add_body(mass=...)``, so it goes
+        # through the same shared domain the MuJoCo backend's ``add_object``
+        # applies to the same quantity. Storing it raw was wrong in three ways.
+        # ``nan``/``inf``/``True`` reached that call verbatim. A negative mass
+        # silently took the ``obj.mass <= 0`` static path, making the body
+        # immovable on a value only ``0`` is documented to mean. And a
+        # non-number was stored, then raised
+        # ``TypeError: '<=' not supported between instances of 'str' and 'int'``
+        # out of BOTH consumers of that comparison - the rebuild and
+        # ``list_objects`` - so one bad add left an already-registered object
+        # that made a later, unrelated scene query raise.
+        if not is_static and not _is_zero_mass_sentinel(mass):
+            if (mass_err := self._validate_mass(mass, "add_object")) is not None:
+                return mass_err
         if material is not None:
             return {
                 "status": "error",

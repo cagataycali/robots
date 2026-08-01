@@ -1753,7 +1753,12 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             paint a colour that was not asked for. NumPy arrays are
             accepted. ``None`` -> default white.
         mass : float
-            Mass in kg. Default 0.1. Ignored when ``is_static=True``.
+            Mass in kg for a dynamic object; a finite number > 0. Default
+            0.1. Ignored when ``is_static=True``, and not validated there
+            since nothing reads it. Unlike the Newton backend there is no
+            ``mass=0`` "make it static" spelling - ``0`` is refused with
+            ``is_static=True`` named as the remedy, which is the MuJoCo
+            contract this backend's docs otherwise mirror.
         is_static : bool
             If ``True``, the prim is constructed via ``Fixed{Cuboid,
             Sphere, Cylinder, Capsule}`` and stays pinned in space. If
@@ -1780,6 +1785,16 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         Newton backends' ``add_object`` enforce, so a pose one backend refuses
         is refused by all three. Omit a vector to take its default; an empty
         vector is a wrong-length request rather than an omission.
+
+        ``mass`` must be a finite number > 0 for a dynamic object, on the shared
+        :meth:`~strands_robots.simulation.base.SimEngine._validate_mass` domain
+        the MuJoCo backend's ``add_object`` and ``set_body_properties`` enforce,
+        so a mass one backend refuses is refused by all three. It is checked
+        before the prim is constructed, because it used to be read *after* the
+        object was registered: ``float(mass)`` while assembling the result
+        raised for a non-number once the prim was already on the stage and in
+        ``_objects``, leaving the name permanently taken. A static object's mass
+        is never read, so it is not validated - the same scope MuJoCo uses.
 
         Returns
         -------
@@ -1885,6 +1900,19 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             color, _cerr = coerce_rgba("add_object", "color", color)
             if _cerr is not None:
                 return {"status": "error", "content": [{"text": _cerr}]}
+            # Same idea for the mass, on the shared ``_validate_mass`` domain the
+            # MuJoCo backend applies to the same quantity. Position matters as
+            # much as the check: the only place the raw value was read was
+            # ``float(mass)`` while assembling the result, which is AFTER
+            # ``_construct_shape_prim``, ``scene.add``, the ``_prim_registry``
+            # append and the ``_objects`` entry. A non-number therefore raised
+            # past the envelope this method documents as its only failure
+            # channel with the prim already on the stage and the name already
+            # taken - so the obvious recovery, retrying under the same name with
+            # a usable mass, was refused as a duplicate. Checked here, a refused
+            # mass constructs nothing and leaves the name reusable.
+            if not is_static and (mass_err := self._validate_mass(mass, "add_object")) is not None:
+                return mass_err
             scale_alias = kwargs.pop("scale", None)
             if size is None and scale_alias is not None:
                 size = scale_alias
@@ -1965,12 +1993,18 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                 "mass": float(mass) if not is_static else 0.0,
                 "is_static": bool(is_static),
             }
+            # ``obj_info["mass"]``, not the caller's ``mass``: for a static object
+            # the raw value is documented as ignored and is never coerced, so
+            # formatting it with ``%.3f`` raised ``TypeError: must be real number``
+            # inside the logging call - only when INFO was enabled, which is why it
+            # sat latent. The resolved value is always a float and is the number
+            # this result reports, so the log and the payload cannot disagree.
             logger.info(
                 "Added object '%s' (shape=%s, pos=%s, mass=%.3f, static=%s)",
                 name,
                 shape,
                 pos,
-                mass,
+                obj_info["mass"],
                 is_static,
             )
             return {

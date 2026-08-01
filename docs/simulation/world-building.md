@@ -224,8 +224,10 @@ sim.add_object("crate", shape="box", size=[0.5, 0.5, 0.5])   # 50 cm crate
 
 `mass` (kg) applies to dynamic objects and must be a finite number greater than
 zero - the same domain `set_body_properties(mass=...)` enforces when it writes
-the same body. A mass outside it is rejected up front, naming the parameter,
-instead of surfacing as a recompile failure:
+the same body, and the same one the Newton and Isaac backends' `add_object`
+applies, so a mass one backend refuses is refused by all three. A mass outside it
+is rejected up front, naming the parameter, instead of surfacing as a recompile
+failure:
 
 ```python
 sim.add_object("crate", shape="box", mass=0)
@@ -238,7 +240,10 @@ This matters beyond the one object: a body's mass divides every force acting on
 it, and the solver keeps a single state vector, so an infinite mass turns the
 whole world's `qpos`/`qvel` to `nan` on the next step - every other body
 included. `is_static=True` needs no mass (MuJoCo derives it from the geom's
-density), so `mass` is ignored there.
+density), so `mass` is ignored there - and not validated, on any backend, since
+nothing reads it. The Newton backend additionally documents `mass=0` as an
+alternative spelling of `is_static=True` and keeps accepting it; MuJoCo and Isaac
+refuse a zero mass and name that flag as the remedy.
 
 Whatever the reason for a rejection - mass, `size`, an unsupported `shape`, an
 unloadable mesh - the scene is rolled back to its previous compilable state and

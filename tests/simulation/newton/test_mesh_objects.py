@@ -20,6 +20,7 @@ import types
 import numpy as np
 import pytest
 
+from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.models import SimObject
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 
@@ -42,7 +43,12 @@ class TestAddObjectValidation:
     """Error paths return before the model rebuild, so a stub engine suffices."""
 
     def _stub(self):
-        return types.SimpleNamespace(_world=types.SimpleNamespace(objects={}))
+        # ``_validate_mass`` is inherited from SimEngine, so a real engine
+        # always has it; ``add_object`` routes its ``mass`` through it.
+        return types.SimpleNamespace(
+            _world=types.SimpleNamespace(objects={}),
+            _validate_mass=SimEngine._validate_mass,
+        )
 
     def test_mesh_without_mesh_path_is_rejected(self):
         result = NewtonSimEngine.add_object(self._stub(), name="tool", shape="mesh")
