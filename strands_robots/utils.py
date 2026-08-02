@@ -390,6 +390,96 @@ def sequence_length(value: Any) -> int | None:
         return None
 
 
+def _refusal_repr(value: Any) -> str:
+    """``repr(value)`` for a refusal message, or a description when it cannot be built.
+
+    Every scalar guard below renders the value it refuses through this, and none
+    of them renders one any other way. Rendering a rejected value must not be
+    able to raise: it runs only on the path whose entire purpose is to answer an
+    unusable input with a structured message instead of an exception, and every
+    caller of every one of those guards documents that ``{status, content}``
+    result as the only channel a bad value is reported on. A guard that raises
+    while building a refusal fails on exactly the path that exists so it does
+    not.
+
+    Two cases reach it, and neither is hypothetical. ``repr`` of an ``int`` wider
+    than :func:`sys.get_int_max_str_digits` (4300 digits by default) raises
+    ``ValueError``, and ``device_connect``'s ``@rpc()`` surfaces forward a remote
+    caller's number unchanged while Python integers are arbitrary-precision. And
+    a third-party type may raise anything at all from its own ``__repr__`` -
+    :class:`numbers.Real` is a registration rather than an inheritance, so a
+    scalar that satisfies a guard's type test owes it nothing else - which is why
+    the guarantee here is unconditional rather than a list of the exceptions
+    known today.
+
+    ``int.bit_length`` needs no decimal conversion, so the value most likely to
+    arrive unprintable is still described by its magnitude rather than reported
+    as an opaque type name.
+
+    Args:
+        value: The rejected value.
+
+    Returns:
+        Its ``repr``, or a bracketed description when that cannot be produced.
+    """
+    try:
+        return repr(value)
+    except Exception:
+        return _describe_unrenderable(value)
+
+
+def _refusal_str(value: Any) -> str:
+    """``str(value)`` for a refusal message, or a description when it cannot be built.
+
+    The :func:`_refusal_repr` counterpart for the two messages that report a
+    value plainly rather than quoted, where ``repr`` is not interchangeable:
+    NumPy 2 reprs a scalar with its type, so rendering an ``np.float32`` fov
+    through ``repr`` would silently turn ``got 200.0`` into
+    ``got np.float32(200.0)`` in text an agent reads.
+
+    ``str`` is exactly as able to raise as ``repr`` and for the same two reasons:
+    it falls back to ``__repr__`` when a type defines no ``__str__``, and
+    ``str`` of an ``int`` wider than :func:`sys.get_int_max_str_digits` performs
+    the same decimal conversion. So a plainly-rendered value needs the same
+    guarantee rather than a weaker one.
+
+    Args:
+        value: The rejected value.
+
+    Returns:
+        Its ``str``, or a bracketed description when that cannot be produced.
+    """
+    try:
+        return str(value)
+    except Exception:
+        return _describe_unrenderable(value)
+
+
+def _describe_unrenderable(value: Any) -> str:
+    """Describe a value whose own rendering raised.
+
+    Shared by :func:`_refusal_repr` and :func:`_refusal_str` so the two render
+    forms cannot describe the same unrenderable value differently.
+
+    ``int.bit_length`` needs no decimal conversion, so the value most likely to
+    arrive unrenderable - an ``int`` past the interpreter's digit limit - is
+    still described by its magnitude rather than reported as an opaque type
+    name. The sign is not recoverable from a bit length, which is acceptable
+    because every guard's own text states the domain the value was refused
+    against.
+
+    Args:
+        value: The value whose rendering raised.
+
+    Returns:
+        A bracketed description, which is built from the type and (for an
+        integer) a bit count, so it cannot itself raise.
+    """
+    if isinstance(value, int):
+        return f"<int of {value.bit_length()} bits>"
+    return f"<unrepresentable {type(value).__name__}>"
+
+
 def positive_finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive finite number.
 
@@ -433,7 +523,7 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
         or not math.isfinite(float(value))
         or float(value) <= 0
     ):
-        return f"{context}: {param} must be > 0, got {value!r}."
+        return f"{context}: {param} must be > 0, got {_refusal_repr(value)}."
     return None
 
 
@@ -470,7 +560,7 @@ def finite_number_error(value: Any, param: str, context: str) -> str | None:
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(float(value)):
-        return f"{context}: {param} must be a finite number, got {value!r}."
+        return f"{context}: {param} must be a finite number, got {_refusal_repr(value)}."
     return None
 
 
@@ -501,44 +591,23 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    message = f"{context}: {param} must be a positive whole number, got {value!r}."
+
+    def message() -> str:
+        # Rendered on demand, not up front. The text used to be built on this
+        # function's first line, before the value had been classified at all, so
+        # ``repr`` raised on an outsized ``int`` ahead of every verdict - the
+        # guard failing while preparing a refusal it had not decided to return,
+        # and doing it on the accept path too.
+        return f"{context}: {param} must be a positive whole number, got {_refusal_repr(value)}."
+
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        return message
+        return message()
     numeric = float(value)
     # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it
     # out of the integrality check below.
     if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
-        return message
+        return message()
     return None
-
-
-def _refusal_repr(value: Any) -> str:
-    """``repr(value)`` for a refusal message, or a description when it cannot be built.
-
-    Rendering a rejected value must not be able to raise: it runs only on the
-    path whose entire purpose is to answer an unusable input with a structured
-    message instead of an exception. Two cases reach it. ``repr`` of an ``int``
-    wider than :func:`sys.get_int_max_str_digits` (4300 digits by default)
-    raises ``ValueError``, and a caller can send one - ``sim_driver``'s
-    ``@rpc()`` ``step`` forwards a remote integer unchanged and Python integers
-    are arbitrary-precision. And a third-party :class:`numbers.Real`
-    implementation may raise anything at all from its own ``__repr__``, so the
-    guarantee here has to be unconditional rather than a list of the exceptions
-    known today. ``int.bit_length`` needs no decimal conversion, so the integer
-    that could not be printed can still be described.
-
-    Args:
-        value: The rejected value.
-
-    Returns:
-        Its ``repr``, or a bracketed description when that cannot be produced.
-    """
-    try:
-        return repr(value)
-    except Exception:
-        if isinstance(value, int):
-            return f"<int of {value.bit_length()} bits>"
-        return f"<unrepresentable {type(value).__name__}>"
 
 
 def non_negative_whole_number_error(value: Any, param: str, context: str) -> str | None:
@@ -682,7 +751,7 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        return f"{context}: {param} must be a positive integer, got {value!r}."
+        return f"{context}: {param} must be a positive integer, got {_refusal_repr(value)}."
     return None
 
 
@@ -726,7 +795,7 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
-        return f"{context}: invalid {param}: {value!r} (expected 1-65535)"
+        return f"{context}: invalid {param}: {_refusal_repr(value)} (expected 1-65535)"
     return None
 
 
@@ -759,7 +828,7 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return f"{context}: {param} must be a non-negative integer, got {value!r}."
+        return f"{context}: {param} must be a non-negative integer, got {_refusal_repr(value)}."
     return None
 
 
@@ -1166,9 +1235,9 @@ def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
     usable field of view.
     """
     if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(float(value)):
-        return f"{method}: '{param_name}' must be a finite number in degrees, got {value!r}."
+        return f"{method}: '{param_name}' must be a finite number in degrees, got {_refusal_repr(value)}."
     if not (0.0 < float(value) < 180.0):
-        return f"{method}: '{param_name}' must be in the open interval (0, 180) degrees, got {value}."
+        return f"{method}: '{param_name}' must be in the open interval (0, 180) degrees, got {_refusal_str(value)}."
     return None
 
 
@@ -1237,7 +1306,7 @@ def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
     """
     if not isinstance(name, str):
         return (
-            f"{method}: '{param_name}' must be a non-empty string, got {name!r} "
+            f"{method}: '{param_name}' must be a non-empty string, got {_refusal_repr(name)} "
             f"({type(name).__name__}); an entity is addressed by name and every "
             "agent-tool call carries that name as a string."
         )
@@ -1249,7 +1318,7 @@ def entity_name_error(method: str, param_name: str, name: Any) -> str | None:
         )
     if "\x00" in name:
         return (
-            f"{method}: '{param_name}' must not contain a NUL character, got {name!r}; "
+            f"{method}: '{param_name}' must not contain a NUL character, got {_refusal_repr(name)}; "
             "the compiled model reads a name only up to the first NUL, so the registry "
             "and the model would disagree about the entity's name."
         )
@@ -1307,7 +1376,7 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str) ->
         return None
     return (
         f"{context}: val_episodes={val_episodes} cannot be reserved exactly on a "
-        f"dataset with {total_tasks} tasks. A validation split is a per-task "
+        f"dataset with {_refusal_str(total_tasks)} tasks. A validation split is a per-task "
         "fraction in lerobot (it holds out ceil(episodes_in_task * eval_split) "
         "from every task), so a single global count is not expressible: the "
         "ceiling would be applied once per task. Pass the fraction directly, "
