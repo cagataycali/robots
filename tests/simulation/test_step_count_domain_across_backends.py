@@ -120,6 +120,7 @@ UNUSABLE_COUNTS: tuple[Any, ...] = (
     None,
     [3],
     np.array([3]),
+    10**400,  # OverflowError from float() on a Python int too large for IEEE 754
 )
 
 #: Counts every backend must honor, paired with the number of steps each must
