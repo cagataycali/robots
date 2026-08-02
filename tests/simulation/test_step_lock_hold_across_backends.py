@@ -293,6 +293,33 @@ class TestAConcurrentCallerInterleaves:
     the behaviour: the stepper pauses after releasing until the contender has
     had the lock, so a pass means the lock was actually free, not that the test
     won a coin flip.
+
+    Two things the seam does *not* license, both learned the hard way:
+
+    **Do not read thread state to decide whether work remained.** An earlier
+    revision asserted ``not step_done.is_set()`` once ``acquired`` fired. That
+    samples on the wrong thread: setting ``acquired`` short-circuits the hook,
+    so the stepper dashes through its remaining stub batches in ~50-90 us while
+    the main thread is still waking from ``acquired.wait`` - whichever landed
+    first decided the test, failing ~40% of runs here. Sampling ``step_done``
+    on the contender instead is deterministic but not strict: the stepper parks
+    in ``_on_release`` on its *final* release too, so a wholly unbatched
+    ``step`` - the regression this test exists for - hands the contender the
+    lock with ``step_done`` still clear and passes. Measured: that variant
+    passes on all three backends against a planted single-batch ``step``.
+
+    So the assertion counts **releases** against an uncontended reference run of
+    the same shape. Being handed the lock on a release that is not the last one
+    is precisely "free between batches while work remained", it needs no
+    thread-state read, and the lock being held is what orders the contender's
+    read against the stepper's writes.
+
+    **Do not park on a release the contender cannot answer.** Isaac reads its
+    precondition under a separate acquire before the loop, so that release
+    arrives before any tick, while the contender is still waiting on
+    ``underway``. Parking there cannot be answered and merely burns the hook's
+    timeout - 5 s of the suite's runtime, every run. The hook therefore stays
+    out of the way until the first tick has run.
     """
 
     @pytest.mark.parametrize(
@@ -304,25 +331,48 @@ class TestAConcurrentCallerInterleaves:
         ],
     )
     def test_the_lock_is_free_between_batches_while_step_runs(self, backend: str, build: Any, run: Any) -> None:
+        total_steps = PROBE_BATCH * 3
+
+        # What the whole call costs in releases, uncontended and single-threaded.
+        # Measured rather than assumed because it is backend-specific - Isaac
+        # reads its precondition under a separate acquire - and this doubles as
+        # the check that the uncontended path still works.
+        reference = CountingLock()
+        assert run(build(reference, batch=PROBE_BATCH)[0], total_steps)["status"] == "success", (
+            f"{backend}: the uncontended path still works"
+        )
+        total_releases = reference.releases
+        assert total_releases > 1, (
+            f"{backend}: {total_steps} steps at batch {PROBE_BATCH} cost {total_releases} hold(s); "
+            f"the lock was never released mid-call"
+        )
+
         underway = threading.Event()
         acquired = threading.Event()
         step_done = threading.Event()
+        #: The stepper's release count when the contender held the lock. Written
+        #: by the contender under that lock, read by the main thread only after
+        #: both threads have joined.
+        released_when_served = [-1]
 
         lock = CountingLock()
         # Hold the gap open until the contender has been served, so the
-        # unfair-lock barging described above cannot decide the outcome.
-        lock._on_release = lambda: None if acquired.is_set() else acquired.wait(5.0)
+        # unfair-lock barging described above cannot decide the outcome - but
+        # only from the first tick on, since a release preceding every tick
+        # leaves the contender, still waiting on ``underway``, no way to answer.
+        lock._on_release = lambda: None if acquired.is_set() or not underway.is_set() else acquired.wait(5.0)
         stub = build(lock, tick=underway.set, batch=PROBE_BATCH)[0]
 
         def _step() -> None:
             try:
-                run(stub, PROBE_BATCH * 3)
+                run(stub, total_steps)
             finally:
                 step_done.set()
 
         def _contend() -> None:
             underway.wait(10.0)
             with lock:
+                released_when_served[0] = lock.releases
                 acquired.set()
 
         stepper = threading.Thread(target=_step)
@@ -331,15 +381,15 @@ class TestAConcurrentCallerInterleaves:
         contender.start()
         try:
             assert acquired.wait(20.0), f"{backend}: the lock never became free between batches"
-            assert not step_done.is_set(), f"{backend}: the lock was only free after step returned"
         finally:
             acquired.set()  # never leave the stepper parked if we failed above
             step_done.wait(30.0)
             stepper.join(timeout=30.0)
             contender.join(timeout=30.0)
 
-        assert run(build(CountingLock(), batch=PROBE_BATCH)[0], PROBE_BATCH)["status"] == "success", (
-            f"{backend}: the uncontended path still works"
+        assert 0 < released_when_served[0] < total_releases, (
+            f"{backend}: the lock was first free on release {released_when_served[0]} of {total_releases}; "
+            f"expected one before the last, i.e. while work remained"
         )
 
 
