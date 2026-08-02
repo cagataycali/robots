@@ -156,17 +156,17 @@ numbers.Real.register(UnprintableReal)
 class RealNoFloat:
     """A registered :class:`numbers.Real` from which no float can be read.
 
-    The conversion's *second* exception class. Unlike an outsized magnitude this
-    is not a range complaint - no number can be read from the value at all - so it
-    must not be told about the float64 range. Its ``repr`` works, which isolates
-    the conversion from the rendering defect.
+    Registered with ``numbers.Real.register`` rather than subclassed, so a value
+    can satisfy a guard's ``isinstance`` check while owing it nothing else.
+    With no ``__float__`` at all, ``float()`` raises ``TypeError`` of its own
+    accord. That is the conversion's second exception class: unlike an outsized
+    magnitude it is not a range complaint - no number can be read from this value,
+    so it must not be told about the float64 range. Its ``repr`` works, which
+    isolates the conversion from the rendering defect.
     """
 
     def __repr__(self) -> str:
         return "RealNoFloat()"
-
-    def __float__(self) -> float:
-        raise TypeError("no float can be read from this")
 
 
 numbers.Real.register(RealNoFloat)
