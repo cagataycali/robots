@@ -480,6 +480,35 @@ def _describe_unrenderable(value: Any) -> str:
     return f"<unrepresentable {type(value).__name__}>"
 
 
+def _beyond_float_range(value: Any) -> bool:
+    """Whether ``float(value)`` overflows, i.e. no float64 stands for ``value``.
+
+    Not a domain in its own right - a helper that names, in one place, the
+    condition the three numeric guards below need a *reason* for rather than a
+    crash. ``float()`` raises ``OverflowError`` for a real whose magnitude
+    exceeds :data:`sys.float_info.max`, and Python integers are
+    arbitrary-precision while ``device_connect``'s ``@rpc()`` surfaces forward a
+    remote caller's number unchanged, so one is a request away.
+
+    The condition is *not* limited to ``int``: ``Fraction(10**400, 3)`` is a
+    registered :class:`numbers.Real` that overflows identically, which is why
+    the guards ask this question of the conversion rather than of the type.
+
+    Returns:
+        ``True`` when the conversion overflows. ``False`` when it succeeds *or*
+        fails any other way - a :class:`numbers.Real` registration guarantees no
+        working ``__float__``, and a value no number can be read from at all is
+        not a magnitude complaint and must not be reported as one.
+    """
+    try:
+        float(value)
+    except OverflowError:
+        return True
+    except Exception:
+        return False
+    return False
+
+
 def positive_finite_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive finite number.
 
@@ -506,6 +535,16 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
     array passes) and rejects ``bool`` explicitly - an ``int`` subclass whose
     ``True`` would act as a silent ``1``.
 
+    **A value past the float64 range is refused with a reason of its own.**
+    ``10**400`` is positive and finite, so ``must be > 0`` would be a false
+    statement about it, and it used to raise ``OverflowError`` out of the
+    ``float()`` this guard converts with - failing on the path that exists so it
+    does not. It is not a new boundary: this guard already accepts up to
+    ``sys.float_info.max`` (``1e300`` and ``10**308`` both pass) and stopped
+    dead one step past it, so the range is the edge the domain always had and
+    all that changes is that the guard now names it. Nothing raises out of here
+    for any real scalar; see :func:`_beyond_float_range`.
+
     Args:
         value: The caller-supplied value.
         param: The parameter it came from, used in the message.
@@ -515,14 +554,24 @@ def positive_finite_number_error(value: Any, param: str, context: str) -> str | 
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, numbers.Real)
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return f"{context}: {param} must be > 0, got {_refusal_repr(value)}."
+    if _beyond_float_range(value):
+        # A real past the float64 range is positive-or-negative and finite, so
+        # neither of this guard's own reasons is true of it - hence its own text.
+        # Refusing stays right: the value is a divisor (``1 / hz``) or a
+        # multiplier evaluated in float64, and no float64 stands for it.
+        return f"{context}: {param} must be within the range of a 64-bit float, got {_refusal_repr(value)}."
+    try:
         # ``isfinite`` before the sign test: ``nan`` is never ``<= 0``, so
         # ordering these the other way lets it through.
-        or not math.isfinite(float(value))
-        or float(value) <= 0
-    ):
+        unusable = not math.isfinite(float(value)) or float(value) <= 0
+    except Exception:
+        # A ``numbers.Real`` registration owes this guard no working
+        # ``__float__``, and a value no number can be read from is refused for
+        # the same reason a non-real one is - the message it already had.
+        unusable = True
+    if unusable:
         return f"{context}: {param} must be > 0, got {_refusal_repr(value)}."
     return None
 
@@ -550,6 +599,14 @@ def finite_number_error(value: Any, param: str, context: str) -> str | None:
     velocity read from a policy action passes) and rejects ``bool`` explicitly -
     an ``int`` subclass whose ``True`` would act as a silent ``1``.
 
+    **A value past the float64 range is refused with a reason of its own.**
+    The paragraph above is the argument for it: an accepted value goes onto the
+    wire as an IEEE-754 float64, and ``10**400`` has no float64 form to put
+    there. Its own reason is needed because ``10**400`` *is* a finite number, so
+    ``must be a finite number`` would be false of the one value class most in
+    need of an honest refusal - and before that reason existed the guard raised
+    ``OverflowError`` here instead of answering.
+
     Args:
         value: The caller-supplied value.
         param: The parameter it came from, used in the message.
@@ -559,7 +616,19 @@ def finite_number_error(value: Any, param: str, context: str) -> str | None:
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(float(value)):
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return f"{context}: {param} must be a finite number, got {_refusal_repr(value)}."
+    if _beyond_float_range(value):
+        # ``10**400`` *is* a finite number, so this guard's own reason would be
+        # a false statement about it. Refusing stays right: the docstring above
+        # is explicit that an accepted value is serialized onto the wire as an
+        # IEEE-754 float64, and this one has no float64 form to serialize.
+        return f"{context}: {param} must be within the range of a 64-bit float, got {_refusal_repr(value)}."
+    try:
+        unusable = not math.isfinite(float(value))
+    except Exception:
+        unusable = True
+    if unusable:
         return f"{context}: {param} must be a finite number, got {_refusal_repr(value)}."
     return None
 
@@ -580,6 +649,25 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     integral value (so a NumPy ``np.int64`` height or a ``30.0`` computed from a
     config float passes) and rejects ``bool`` explicitly - an ``int`` subclass
     whose ``True`` would act as a silent 1.
+
+    **Magnitude is part of this domain, unlike its ``non_negative`` sibling.**
+    :func:`non_negative_whole_number_error` accepts ``10**400`` as a matter of
+    documented policy, on the grounds that a per-call ceiling belongs to the
+    consumer - and for its one caller that holds, because MuJoCo's
+    ``_MAX_STEPS_PER_CALL`` is exactly such a ceiling and refuses an outsized
+    step count with a reason of its own. No consumer of *this* domain owns one.
+    Its callers are ``fps``, ``width``, ``height``, ``max_frames`` and the mesh
+    robots' ``drive(count=...)``, and that last one repeats an actuation command,
+    so an unbounded count is an unbounded actuation loop against a physical
+    robot rather than a slow call. So the two guards are the same scalar policy
+    with the floor moved *and* one deliberate difference, which is recorded here
+    rather than left for a reader to find by measuring.
+
+    Refusing is therefore the verdict, and it needs a reason of its own:
+    ``10**400`` *is* a positive whole number. As above, the float64 range is not
+    a new boundary - ``1e300`` is accepted by this guard today - it is the edge
+    the domain already had, at which the guard used to raise ``OverflowError``
+    rather than answer.
 
     Args:
         value: The caller-supplied value.
@@ -602,7 +690,16 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
 
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return message()
-    numeric = float(value)
+    if _beyond_float_range(value):
+        # ``10**400`` is a positive whole number, so ``message()`` would state
+        # something false about it. It is refused rather than accepted, and
+        # deliberately unlike its ``non_negative`` sibling - see the docstring.
+        return f"{context}: {param} must be within the range of a 64-bit float, got {_refusal_repr(value)}."
+    try:
+        numeric = float(value)
+    except Exception:
+        # No number can be read from it at all; refused, never raised.
+        return message()
     # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it
     # out of the integrality check below.
     if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
@@ -653,6 +750,13 @@ def non_negative_whole_number_error(value: Any, param: str, context: str) -> str
     ``_MAX_STEPS_PER_CALL``, which refuses it with a reason of its own - and a
     domain guard that quietly stopped at the float range would be exactly the
     kind of boundary-by-implementation-accident this family exists to remove.
+
+    **This is the one place the two guards differ**, and the ceiling above is
+    the whole reason: :func:`positive_whole_number_error` refuses an outsized
+    value because none of its consumers owns such a ceiling and one of them
+    repeats a command to a robot. So "the same policy with the floor moved" is
+    true of every other input and not of this one. The asymmetry is deliberate;
+    if a ceiling ever appears on that side, this is the paragraph to revisit.
 
     Args:
         value: The caller-supplied value.
@@ -1233,11 +1337,40 @@ def camera_fov_error(method: str, param_name: str, value: Any) -> str | None:
     array is a legitimate fov); a ``bool`` is refused because ``float(True)``
     would silently mean a 1-degree lens. Returns ``None`` when ``value`` is a
     usable field of view.
+
+    Nothing raises out of here. This guard is the one member of the scalar
+    numeric family that needed no new text to make that true: a magnitude past
+    the float64 range - which used to raise ``OverflowError`` out of the
+    ``float()`` below - exceeds 180 degrees by three hundred orders of
+    magnitude, so the interval message it already had is a true statement about
+    such a value. Having a bounded interval to appeal to is what distinguishes
+    it from :func:`positive_finite_number_error` and :func:`finite_number_error`,
+    whose domains are unbounded above and so have no such reason available.
     """
-    if isinstance(value, bool) or not isinstance(value, numbers.Real) or not math.isfinite(float(value)):
+
+    def not_a_number() -> str:
         return f"{method}: '{param_name}' must be a finite number in degrees, got {_refusal_repr(value)}."
-    if not (0.0 < float(value) < 180.0):
+
+    def outside_interval() -> str:
         return f"{method}: '{param_name}' must be in the open interval (0, 180) degrees, got {_refusal_str(value)}."
+
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return not_a_number()
+    if _beyond_float_range(value):
+        # This guard is the one member of the family that needs no new text. A
+        # magnitude past the float64 range exceeds 180 by three hundred orders
+        # of magnitude, so "outside the open interval" is already a true
+        # statement about it - and no comparison is needed to establish that,
+        # which is why the overflow itself is the whole test.
+        return outside_interval()
+    try:
+        numeric = float(value)
+    except Exception:
+        return not_a_number()
+    if not math.isfinite(numeric):
+        return not_a_number()
+    if not (0.0 < numeric < 180.0):
+        return outside_interval()
     return None
 
 

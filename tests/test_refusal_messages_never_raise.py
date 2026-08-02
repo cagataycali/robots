@@ -65,8 +65,11 @@ agent-visible text changes, which is what
 :class:`TestTheTextIsUnchangedForAValueThatCanBeRendered` pins.
 
 The ``R:Overflow`` cells are a *different* escape - the ``float()`` conversion,
-which happens before any message is rendered - and survive this change untouched.
-They are #1874, pinned by :class:`TestTheConversionEscapeStaysOutOfScope`. The
+which happens before any message is rendered - and survived this change
+untouched. They were #1874 and are now closed, so what was a pin of deliberate
+scope has become :class:`TestTheConversionEscapeIsClosed`: the class is replaced
+rather than deleted, because the boundary it drew is still the useful statement
+and simply moved. The
 container guards have the same rendering defect but need a rendering rather than
 a fallback, since ``<unrepresentable list>`` erases the elements that print fine;
 they are #1875, pinned by :class:`TestTheContainerGuardsStayOutOfScope`.
@@ -291,10 +294,12 @@ ANSWERS_AN_OUTSIZED_INT = frozenset(
     }
 )
 
-#: The guards whose ``float()`` conversion raises before any rendering (#1874).
-#: ``positive_whole_number_error`` joins the set with this change: its eager
-#: ``repr`` used to raise first, so the conversion was never reached.
-HAS_A_CONVERSION_ESCAPE = frozenset(
+#: The guards that establish their domain by converting with ``float()``. That
+#: conversion used to raise ``OverflowError`` before any rendering (#1874); it is
+#: now guarded, so this is a statement about *how* they classify a value rather
+#: than about an escape. The name changed with the fact: membership is still the
+#: line that divides the family, which is why the set outlived the defect.
+CONVERTS_THROUGH_FLOAT = frozenset(
     {
         "positive_finite_number_error",
         "finite_number_error",
@@ -305,7 +310,7 @@ HAS_A_CONVERSION_ESCAPE = frozenset(
 
 OUTSIZED_GUARDS = tuple(g for g in SCALAR_GUARDS if g.name in ANSWERS_AN_OUTSIZED_INT)
 OUTSIZED_IDS = tuple(g.name for g in OUTSIZED_GUARDS)
-CONVERTING_GUARDS = tuple(g for g in SCALAR_GUARDS if g.name in HAS_A_CONVERSION_ESCAPE)
+CONVERTING_GUARDS = tuple(g for g in SCALAR_GUARDS if g.name in CONVERTS_THROUGH_FLOAT)
 CONVERTING_IDS = tuple(g.name for g in CONVERTING_GUARDS)
 
 
@@ -584,41 +589,51 @@ class TestTheTextIsUnchangedForAValueThatCanBeRendered:
 # --------------------------------------------------------------------------- #
 # Boundary: the escapes this change does not close                            #
 # --------------------------------------------------------------------------- #
-class TestTheConversionEscapeStaysOutOfScope:
-    """Pins of behaviour left unchanged, so the boundary is stated not omitted (#1874).
+class TestTheConversionEscapeIsClosed:
+    """The replacement for this file's #1874 scope pin, now that #1874 has landed.
 
-    Replace these when the surfaces they describe are settled rather than deleting
-    them: the scope statement stays useful and simply narrows.
+    It is a replacement rather than a deletion, per the premise-test guidance in
+    ``AGENTS.md``: the conclusion the old pin supported - that the family divides
+    into guards that convert with ``float()`` and guards that do not - still
+    holds, and is still the line worth drawing. What changed is that converting no
+    longer means raising.
 
-    These four establish finiteness with ``math.isfinite(float(value))``, and
-    ``float()`` raises ``OverflowError`` for an ``int`` wider than a float - before
-    any message is rendered, so this change cannot reach it. Closing it needs a
-    decision this one does not: ``10**400`` *is* a finite real number, so "must be
-    a finite number" is the wrong reason to refuse it even though refusing is the
-    right verdict.
+    Where the old class asserted ``pytest.raises(OverflowError)`` for these four,
+    each assertion below is the same probe with the opposite expectation, so the
+    two classes read against each other. The detailed closure - the reason each
+    guard gives, and the fact that none of the existing reasons changed - is
+    :mod:`tests.test_conversion_escape_is_closed`; what is pinned here is only
+    that this file's stated boundary moved.
     """
 
     @pytest.mark.parametrize("guard", CONVERTING_GUARDS, ids=CONVERTING_IDS)
-    def test_an_integer_wider_than_a_float_still_raises(self, guard: Guard) -> None:
-        with pytest.raises(OverflowError):
-            guard.call(BEYOND_FLOAT_RANGE)
+    def test_an_integer_wider_than_a_float_is_answered(self, guard: Guard) -> None:
+        assert isinstance(guard.call(BEYOND_FLOAT_RANGE), str)
 
-    def test_positive_whole_number_error_now_raises_only_at_the_conversion(self) -> None:
-        """This change narrowed it to one escape, which is what #1872 asks for.
+    def test_positive_whole_number_error_has_no_escape_left(self) -> None:
+        """Both outsized spellings are answered, which is what #1872 asked for.
 
-        Before, the eager rendering raised ``ValueError`` on a value past the digit
-        limit *ahead of* the conversion - so the guard had two escapes and closing
-        only the conversion would have left the class open one digit-count higher.
-        Now both outsized spellings fail in the same single place.
+        This guard is where the two escapes met: its eager rendering raised
+        ``ValueError`` on a value past the digit limit *ahead of* the conversion,
+        so closing only one of them would have left the class open. #1873 closed
+        the rendering and #1874 the conversion, and this is the assertion that
+        neither left a residue at the other's boundary.
         """
         for probe in (BEYOND_FLOAT_RANGE, BEYOND_INT_STR_LIMIT):
-            with pytest.raises(OverflowError):
-                positive_whole_number_error(probe, "fps", "video")
+            assert isinstance(positive_whole_number_error(probe, "fps", "video"), str)
 
-    def test_the_two_escapes_partition_the_family(self) -> None:
-        """No guard has both open, which is why they can be settled separately."""
-        assert HAS_A_CONVERSION_ESCAPE.isdisjoint(ANSWERS_AN_OUTSIZED_INT)
-        assert HAS_A_CONVERSION_ESCAPE | ANSWERS_AN_OUTSIZED_INT == set(GUARD_IDS)
+    def test_the_two_halves_of_the_family_have_merged(self) -> None:
+        """The partition survives as a description; the escape it described does not.
+
+        The sets are still disjoint and still cover the family - that is a fact
+        about how each guard classifies a value, and it is why the two escapes
+        could be settled separately at all. What no longer holds is that
+        membership predicts a raise: every guard now answers.
+        """
+        assert CONVERTS_THROUGH_FLOAT.isdisjoint(ANSWERS_AN_OUTSIZED_INT)
+        assert CONVERTS_THROUGH_FLOAT | ANSWERS_AN_OUTSIZED_INT == set(GUARD_IDS)
+        for guard in SCALAR_GUARDS:
+            assert isinstance(guard.call(BEYOND_FLOAT_RANGE), str) or guard.call(BEYOND_FLOAT_RANGE) is None
 
 
 class TestTheContainerGuardsStayOutOfScope:
