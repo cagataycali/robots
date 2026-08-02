@@ -111,92 +111,28 @@ NAN = float("nan")
 INF = float("inf")
 
 
-class RealNoFloat(numbers.Real):
-    """A registered :class:`numbers.Real` with no usable ``__float__``.
+class RealNoFloat:
+    """A registered :class:`numbers.Real` from which no float can be read.
 
-    ``numbers.Real`` is a registration rather than an inheritance, so a value can
-    satisfy a guard's type test and still refuse to become a float. It is the
-    second exception class the conversion can raise, and unlike an outsized
-    magnitude it is not a range complaint: no number can be read from it at all.
-    Its ``repr`` works, so it isolates the conversion from #1873's defect.
+    Registered with ``numbers.Real.register`` rather than subclassed, which is
+    not a shortcut - it is the property under test. ``numbers.Real`` is a
+    registration rather than an inheritance, so a value can satisfy a guard's
+    ``isinstance`` check while owing it nothing else, and subclassing the ABC
+    would have forced this double to implement two dozen operators it never uses
+    and to supply the very ``__float__`` whose absence is the point.
+
+    With no ``__float__`` at all, ``float()`` raises ``TypeError`` of its own
+    accord. That is the conversion's second exception class, and unlike an
+    outsized magnitude it is not a range complaint: no number can be read from
+    this value, so it must not be told about the float64 range. Its ``repr``
+    works, which isolates the conversion from #1873's rendering defect.
     """
-
-    def __float__(self) -> float:
-        raise TypeError("this value cannot become a float")
 
     def __repr__(self) -> str:
         return "RealNoFloat()"
 
-    # The remaining abstract methods are never reached by a guard; they exist so
-    # the class is instantiable at all.
-    def __abs__(self) -> Any:
-        return self
 
-    def __add__(self, other: Any) -> Any:
-        return self
-
-    def __ceil__(self) -> Any:
-        return self
-
-    def __eq__(self, other: object) -> bool:
-        return self is other
-
-    def __floor__(self) -> Any:
-        return self
-
-    def __floordiv__(self, other: Any) -> Any:
-        return self
-
-    def __hash__(self) -> int:
-        return 0
-
-    def __le__(self, other: Any) -> bool:
-        return False
-
-    def __lt__(self, other: Any) -> bool:
-        return False
-
-    def __mod__(self, other: Any) -> Any:
-        return self
-
-    def __mul__(self, other: Any) -> Any:
-        return self
-
-    def __neg__(self) -> Any:
-        return self
-
-    def __pos__(self) -> Any:
-        return self
-
-    def __pow__(self, other: Any) -> Any:
-        return self
-
-    def __radd__(self, other: Any) -> Any:
-        return self
-
-    def __rfloordiv__(self, other: Any) -> Any:
-        return self
-
-    def __rmod__(self, other: Any) -> Any:
-        return self
-
-    def __rmul__(self, other: Any) -> Any:
-        return self
-
-    def __round__(self, ndigits: Any = None) -> Any:
-        return self
-
-    def __rpow__(self, other: Any) -> Any:
-        return self
-
-    def __rtruediv__(self, other: Any) -> Any:
-        return self
-
-    def __truediv__(self, other: Any) -> Any:
-        return self
-
-    def __trunc__(self) -> Any:
-        return self
+numbers.Real.register(RealNoFloat)
 
 
 #: Every value that used to raise out of a converting guard. The ``Fraction`` and
@@ -369,78 +305,13 @@ class TestTheSharedPredicate:
         failure than the one being reported.
         """
 
-        class Interrupting(numbers.Real):  # pragma: no cover - only __float__ runs
+        class Interrupting:
+            """Registered below, for the reason given on :class:`RealNoFloat`."""
+
             def __float__(self) -> float:
                 raise KeyboardInterrupt
 
-            def __abs__(self) -> Any:
-                return self
-
-            def __add__(self, other: Any) -> Any:
-                return self
-
-            def __ceil__(self) -> Any:
-                return self
-
-            def __eq__(self, other: object) -> bool:
-                return self is other
-
-            def __floor__(self) -> Any:
-                return self
-
-            def __floordiv__(self, other: Any) -> Any:
-                return self
-
-            def __hash__(self) -> int:
-                return 0
-
-            def __le__(self, other: Any) -> bool:
-                return False
-
-            def __lt__(self, other: Any) -> bool:
-                return False
-
-            def __mod__(self, other: Any) -> Any:
-                return self
-
-            def __mul__(self, other: Any) -> Any:
-                return self
-
-            def __neg__(self) -> Any:
-                return self
-
-            def __pos__(self) -> Any:
-                return self
-
-            def __pow__(self, other: Any) -> Any:
-                return self
-
-            def __radd__(self, other: Any) -> Any:
-                return self
-
-            def __rfloordiv__(self, other: Any) -> Any:
-                return self
-
-            def __rmod__(self, other: Any) -> Any:
-                return self
-
-            def __rmul__(self, other: Any) -> Any:
-                return self
-
-            def __round__(self, ndigits: Any = None) -> Any:
-                return self
-
-            def __rpow__(self, other: Any) -> Any:
-                return self
-
-            def __rtruediv__(self, other: Any) -> Any:
-                return self
-
-            def __truediv__(self, other: Any) -> Any:
-                return self
-
-            def __trunc__(self) -> Any:
-                return self
+        numbers.Real.register(Interrupting)
 
         with pytest.raises(KeyboardInterrupt):
             _beyond_float_range(Interrupting())
