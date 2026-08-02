@@ -47,9 +47,23 @@ true `int`, so it would have refused the `3.0` and `np.int64(3)` MuJoCo honors
 today (the first is pinned by an existing test), and `positive_whole_number_error`
 has the right scalar policy but would have refused the documented `0`. All three
 backends now apply it before any lock, solver or stage work and then coerce once
-with `int()`, which is safe only because the guard has established the value is
-finite and integral. The refusal is identical word for word across the three, not
-merely identical in verdict.
+with `int()`, which is safe because the guard has already performed that same
+conversion and compared the result back. The refusal is identical word for word
+across the three, not merely identical in verdict.
+
+Every real scalar gets a verdict from that guard; nothing raises out of it. That
+is the contract rather than a detail, because these methods document their
+structured result as the only channel a bad count is reported through and one of
+them takes its count from a remote process, where Python integers are
+arbitrary-precision. So the integrality test is an `int()` in a `try` rather than
+a `float()` round-trip - `float(10**400)` raises `OverflowError`, which would turn
+a refusal into a crash for the values most in need of one - and the refusal text
+is rendered only when a refusal is actually returned, since `repr` of an `int`
+past `sys.get_int_max_str_digits()` (4300 digits) raises `ValueError` and such a
+count is *accepted*. Magnitude is not part of this domain: `10**400` is a
+non-negative whole number and is accepted as one, and whether a count is too
+large to advance in a single call stays the per-call ceiling's question rather
+than becoming a silent boundary at the float range.
 
 Two neighbours are deliberately left alone and pinned as out of scope:
 `send_action(n_substeps=)`, which has the same gap on a second public surface,

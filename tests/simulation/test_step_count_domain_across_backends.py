@@ -54,8 +54,22 @@ Five findings, in the order they cost something:
   ``step_count``, and with a solver it raised out of ``range()``.
 
 The fix is the shared :func:`~strands_robots.utils.non_negative_whole_number_error`
-domain applied by all three, then a single ``int()`` coercion that is safe only
-because the guard has already established the value is finite and integral.
+domain applied by all three, then a single ``int()`` coercion that is safe
+because the guard has already performed that same conversion and compared the
+result back.
+
+That guard returns a verdict for every real scalar and raises for none, which is
+the contract rather than a detail: all three ``step`` docstrings name the
+structured result as the only channel an out-of-domain count is reported on, and
+one caller takes its count from a remote process. Two values are the reason the
+implementation looks the way it does, and both are pinned by
+``TestEveryRealGetsAVerdictAndNothingRaises``. ``float(10**400)`` raises
+``OverflowError``, so integrality is tested with an ``int()`` in a ``try`` rather
+than a ``float()`` round-trip. And ``repr`` of an ``int`` past
+:func:`sys.get_int_max_str_digits` raises ``ValueError`` while that same count is
+*accepted*, so the refusal text is rendered only when a refusal is returned -
+work on the accept path that only the refuse path needs is the same shape as the
+defects above.
 That helper is the missing cell of an existing 2x2 - the same scalar policy as
 :func:`~strands_robots.utils.positive_whole_number_error` with the floor at
 ``0``, standing to it exactly as
@@ -73,6 +87,12 @@ What is NOT in scope, and is asserted to be unchanged by
   read here - which is why ``step`` answers its own zero rather than changing
   that floor. It is a second public surface with its own contract, so it is a
   separate change.
+* The magnitude of a count, which belongs to that ceiling and not to this
+  domain. ``10**400`` is a non-negative whole number, so the domain accepts it
+  and MuJoCo refuses it with its own ceiling error - exactly as it did before
+  this change, where a true ``int`` skipped its ``int()`` coercion. Refusing it
+  in the guard would have put a silent boundary at the float range while still
+  accepting ``10**300``, which no backend can advance either.
 * The per-call ceiling. MuJoCo refuses ``n_steps > _MAX_STEPS_PER_CALL``
   (100_000) with a stated reason - an unbounded lock hold - and batches its
   loop to release the lock every 1000 steps so ``stop_policy`` can interleave.
@@ -86,6 +106,8 @@ from __future__ import annotations
 
 import ast
 import inspect
+import math
+import numbers
 import pathlib
 import textwrap
 import threading
@@ -105,6 +127,15 @@ from strands_robots.utils import non_negative_whole_number_error
 NAN = float("nan")
 INF = float("inf")
 
+#: An ``int`` wider than the float range: ``float(10**400)`` raises
+#: ``OverflowError``, which is how the guard's own integrality test used to
+#: crash on it.
+BEYOND_FLOAT_RANGE = 10**400
+#: An ``int`` whose own ``repr`` raises: wider than
+#: :func:`sys.get_int_max_str_digits` (4300 digits by default), so *rendering*
+#: the refusal crashed before the value was even classified.
+BEYOND_INT_STR_LIMIT = 10**5000
+
 #: Every count no backend can advance by. Each row is a measured pre-fix
 #: acceptance or a bare raise on at least one backend (see the module docstring).
 UNUSABLE_COUNTS: tuple[Any, ...] = (
@@ -120,8 +151,30 @@ UNUSABLE_COUNTS: tuple[Any, ...] = (
     None,
     [3],
     np.array([3]),
-    10**400,  # OverflowError from float() on a Python int too large for IEEE 754
+    -BEYOND_FLOAT_RANGE,
+    -BEYOND_INT_STR_LIMIT,
 )
+
+
+def _count_id(value: Any) -> str | None:
+    """Test ID for a probe count, or ``None`` to let pytest name it.
+
+    Only the outsized integers need naming, and they need it to keep the module
+    runnable: pytest derives an ID for an ``int`` parameter with ``str()``, which
+    raises for one wider than :func:`sys.get_int_max_str_digits`. That is a
+    collection error, not a test failure - it takes down every class in this
+    file, the parity matrix included, and reports as an error rather than as
+    coverage silently lost. The defect this module documents on the guard
+    (rendering a value it was only asked to classify) has the same shape in the
+    harness.
+    """
+    if isinstance(value, int) and not isinstance(value, bool):
+        if value == -BEYOND_FLOAT_RANGE:
+            return "negative_beyond_float_range"
+        if value == -BEYOND_INT_STR_LIMIT:
+            return "negative_beyond_int_str_limit"
+    return None
+
 
 #: Counts every backend must honor, paired with the number of steps each must
 #: advance. ``3.0`` and ``np.int64(3)`` are the load-bearing rows: MuJoCo
@@ -150,7 +203,7 @@ def _text(result: dict[str, Any]) -> str:
 class TestTheSharedDomain:
     """``non_negative_whole_number_error`` is the single definition all three share."""
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_an_unusable_count_is_refused(self, count: Any) -> None:
         error = non_negative_whole_number_error(count, "n_steps", "step")
         assert error is not None, count
@@ -185,6 +238,116 @@ class TestTheSharedDomain:
             error = non_negative_whole_number_error(count, "n_steps", "step")
             assert error is not None
             error.encode("ascii")
+
+
+# --------------------------------------------------------------------------- #
+# The shared domain: every real scalar gets a verdict, nothing raises         #
+# --------------------------------------------------------------------------- #
+@numbers.Real.register
+class _RealWithoutAnInt:
+    """A registered ``numbers.Real`` that cannot be converted to an ``int``.
+
+    Registration makes ``isinstance(x, numbers.Real)`` true without inheriting
+    the ABC's implementations, so this is what reaches the guard's ``TypeError``
+    branch: ``int()`` has nothing to call. It is the one probe in this module
+    with no real-world counterpart, and it is here so that branch is a covered
+    decision rather than an unreachable line a later reader deletes.
+    """
+
+
+@numbers.Real.register
+class _RealWithAnUnprintableRepr:
+    """A registered ``numbers.Real`` whose ``repr`` raises.
+
+    ``int()`` yields a negative count, so it is refused - and rendering that
+    refusal has to survive its ``__repr__``. The real case is an outsized
+    ``int``, whose ``repr`` raises ``ValueError``; a third-party scalar can
+    raise anything, which is why the renderer's guarantee is unconditional
+    rather than a list of the exceptions known today.
+    """
+
+    def __int__(self) -> int:
+        return -1
+
+    def __repr__(self) -> str:
+        raise RuntimeError("this type cannot render itself")
+
+
+#: Every probe in this module, plus the two synthetic scalars above.
+ALL_PROBES: tuple[Any, ...] = (
+    *UNUSABLE_COUNTS,
+    *(count for count, _expected in USABLE_COUNTS),
+    _RealWithoutAnInt(),
+    _RealWithAnUnprintableRepr(),
+)
+
+
+class TestEveryRealGetsAVerdictAndNothingRaises:
+    """The guard reports through its return value, never through an exception.
+
+    All three ``step`` docstrings name the structured ``{status, content}``
+    result as the only channel an out-of-domain count is reported on, and
+    ``device_connect/sim_driver.py``'s ``@rpc()`` ``step`` forwards a remote
+    caller's count unchanged - Python integers are arbitrary-precision, so an
+    ``int`` of any width is one request away and has to be answered rather than
+    raised on.
+    """
+
+    def test_a_count_wider_than_a_float_is_answered(self) -> None:
+        """``float(10**400)`` raises ``OverflowError``, so the guard cannot use it.
+
+        Accepted, because it *is* a non-negative whole number - magnitude is the
+        per-call ceiling's question, pinned in
+        ``TestNeighbouringStepSurfacesStayOutOfScope``.
+        """
+        assert non_negative_whole_number_error(BEYOND_FLOAT_RANGE, "n_steps", "step") is None
+        error = non_negative_whole_number_error(-BEYOND_FLOAT_RANGE, "n_steps", "step")
+        assert error is not None
+        assert "n_steps" in error
+
+    def test_a_count_whose_repr_raises_is_still_refusable(self) -> None:
+        """Rendering happens on demand, so an accepted count is never rendered.
+
+        ``repr`` of an ``int`` past ``sys.get_int_max_str_digits()`` raises
+        ``ValueError``, and the message used to be built before the value was
+        classified - so the guard failed on the accept path, doing work only the
+        refuse path needs.
+        """
+        assert non_negative_whole_number_error(BEYOND_INT_STR_LIMIT, "n_steps", "step") is None
+        error = non_negative_whole_number_error(-BEYOND_INT_STR_LIMIT, "n_steps", "step")
+        assert error is not None
+        assert f"<int of {BEYOND_INT_STR_LIMIT.bit_length()} bits>" in error
+        assert "n_steps" in error
+        error.encode("ascii")
+
+    def test_a_real_that_cannot_be_converted_is_refused_rather_than_raising(self) -> None:
+        assert non_negative_whole_number_error(_RealWithoutAnInt(), "n_steps", "step") is not None
+
+    def test_a_real_that_cannot_render_itself_is_refused_rather_than_raising(self) -> None:
+        error = non_negative_whole_number_error(_RealWithAnUnprintableRepr(), "n_steps", "step")
+        assert error is not None
+        assert "_RealWithAnUnprintableRepr" in error
+
+    @pytest.mark.parametrize("count", ALL_PROBES, ids=_count_id)
+    def test_the_verdict_is_a_string_or_none_for_every_probe(self, count: Any) -> None:
+        """The contract as one assertion, over every value this module names."""
+        verdict = non_negative_whole_number_error(count, "n_steps", "step")
+        assert verdict is None or isinstance(verdict, str)
+
+    def test_the_count_is_coerced_with_int_because_numpy_has_no_trunc(self) -> None:
+        """``math.trunc`` is the conversion the ABC guarantees and is unusable here.
+
+        Measured, so that a later "use the abstract method" refactor fails here
+        rather than in the field: ``np.int64`` and ``np.uint8`` are load-bearing
+        rows of ``USABLE_COUNTS`` - MuJoCo honors both today - and they implement
+        ``__int__`` but not ``__trunc__``.
+        """
+        numpy_rows: tuple[tuple[Any, int], ...] = ((np.int64(3), 3), (np.uint8(2), 2))
+        for count, expected in numpy_rows:
+            with pytest.raises(TypeError):
+                math.trunc(count)
+            assert int(count) == expected
+            assert non_negative_whole_number_error(count, "n_steps", "step") is None
 
 
 # --------------------------------------------------------------------------- #
@@ -253,14 +416,14 @@ def _newton_stub() -> tuple[Any, SimWorld]:
 # MuJoCo                                                                      #
 # --------------------------------------------------------------------------- #
 class TestMuJoCoStep:
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_an_unusable_count_is_refused(self, count: Any) -> None:
         stub, _calls = _mujoco_stub()
         result = MuJoCoSimEngine.step(stub, count)
         assert result["status"] == "error", (count, result)
         assert "n_steps" in _text(result)
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_a_refused_count_advances_nothing(self, count: Any) -> None:
         stub, calls = _mujoco_stub()
         assert MuJoCoSimEngine.step(stub, count)["status"] == "error"
@@ -309,14 +472,14 @@ class TestMuJoCoStep:
 # Newton                                                                      #
 # --------------------------------------------------------------------------- #
 class TestNewtonStep:
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_an_unusable_count_is_refused(self, count: Any) -> None:
         stub, _world = _newton_stub()
         result = NewtonSimEngine.step(stub, count)
         assert result["status"] == "error", (count, result)
         assert "n_steps" in _text(result)
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_a_refused_count_advances_nothing(self, count: Any) -> None:
         """Pre-fix, ``-5`` / ``nan`` / ``True`` each advanced one step."""
         stub, world = _newton_stub()
@@ -369,14 +532,14 @@ class TestNewtonStep:
 # Isaac                                                                       #
 # --------------------------------------------------------------------------- #
 class TestIsaacStep:
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_an_unusable_count_is_refused(self, count: Any) -> None:
         stub, _calls = _isaac_stub()
         result = IsaacSimulation.step(stub, count)
         assert result["status"] == "error", (count, result)
         assert "n_steps" in _text(result)
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_a_refused_count_advances_nothing(self, count: Any) -> None:
         stub, calls = _isaac_stub()
         assert IsaacSimulation.step(stub, count)["status"] == "error"
@@ -436,12 +599,12 @@ class TestEveryBackendGivesTheSameVerdict:
             IsaacSimulation.step(_isaac_stub()[0], count),
         )
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_an_unusable_count_is_refused_everywhere(self, count: Any) -> None:
         mj, nt, ic = self._all_three(count)
         assert mj["status"] == nt["status"] == ic["status"] == "error", (count, mj, nt, ic)
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_the_shared_refusal_has_one_wording(self, count: Any) -> None:
         """Two spellings of one verdict is how backend domains start to drift."""
         mj, nt, ic = self._all_three(count)
@@ -491,7 +654,7 @@ class TestTheParityHoldsOnACompiledModel:
         yield sim
         sim.cleanup()
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_an_unusable_count_is_refused_on_a_real_world(self, mj_sim: Any, count: Any) -> None:
         result = mj_sim.step(count)
         assert result["status"] == "error", (count, result)
@@ -505,7 +668,7 @@ class TestTheParityHoldsOnACompiledModel:
         assert mj_sim.step(count)["status"] == "success", count
         assert mj_sim._world.step_count - before == expected
 
-    @pytest.mark.parametrize("count", UNUSABLE_COUNTS)
+    @pytest.mark.parametrize("count", UNUSABLE_COUNTS, ids=_count_id)
     def test_a_refused_count_leaves_a_real_clock_untouched(self, mj_sim: Any, count: Any) -> None:
         """The ``inf`` row left Newton's clock at ``inf`` for the world's lifetime."""
         assert mj_sim.step(2)["status"] == "success"
@@ -660,6 +823,25 @@ class TestNeighbouringStepSurfacesStayOutOfScope:
         isaac_stub, isaac_calls = _isaac_stub()
         assert IsaacSimulation.step(isaac_stub, over)["status"] == "success"
         assert isaac_calls["n"] == over
+
+    def test_an_outsized_positive_count_is_left_to_the_per_call_ceiling(self) -> None:
+        """Magnitude is the ceiling's question, not this domain's.
+
+        ``10**400`` is a non-negative whole number, so the domain accepts it and
+        says so. MuJoCo then refuses it with its own ``_MAX_STEPS_PER_CALL``
+        error - exactly as it did before this change, where a true ``int``
+        skipped its ``int()`` coercion and reached the ceiling. Newton and Isaac
+        have no ceiling, so they would attempt it: unbounded work under a held
+        lock, which is #1871 and is not pinned here because pinning it means
+        running it. Refusing the value in the guard instead would have put a
+        silent boundary at the float range - accepting ``10**300``, which no
+        backend can advance either - which is the boundary-by-accident this
+        change exists to remove.
+        """
+        assert non_negative_whole_number_error(BEYOND_FLOAT_RANGE, "n_steps", "step") is None
+        result = MuJoCoSimEngine.step(_mujoco_stub()[0], BEYOND_FLOAT_RANGE)
+        assert result["status"] == "error"
+        assert "exceeds max" in _text(result)
 
     def test_a_boolean_is_refused_by_the_count_domain_not_the_shared_predicate(self) -> None:
         """``is_boolean`` covers the float writers; this domain has its own check.

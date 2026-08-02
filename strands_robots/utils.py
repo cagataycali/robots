@@ -515,6 +515,35 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     return None
 
 
+def _refusal_repr(value: Any) -> str:
+    """``repr(value)`` for a refusal message, or a description when it cannot be built.
+
+    Rendering a rejected value must not be able to raise: it runs only on the
+    path whose entire purpose is to answer an unusable input with a structured
+    message instead of an exception. Two cases reach it. ``repr`` of an ``int``
+    wider than :func:`sys.get_int_max_str_digits` (4300 digits by default)
+    raises ``ValueError``, and a caller can send one - ``sim_driver``'s
+    ``@rpc()`` ``step`` forwards a remote integer unchanged and Python integers
+    are arbitrary-precision. And a third-party :class:`numbers.Real`
+    implementation may raise anything at all from its own ``__repr__``, so the
+    guarantee here has to be unconditional rather than a list of the exceptions
+    known today. ``int.bit_length`` needs no decimal conversion, so the integer
+    that could not be printed can still be described.
+
+    Args:
+        value: The rejected value.
+
+    Returns:
+        Its ``repr``, or a bracketed description when that cannot be produced.
+    """
+    try:
+        return repr(value)
+    except Exception:
+        if isinstance(value, int):
+            return f"<int of {value.bit_length()} bits>"
+        return f"<unrepresentable {type(value).__name__}>"
+
+
 def non_negative_whole_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable non-negative whole number.
 
@@ -536,12 +565,28 @@ def non_negative_whole_number_error(value: Any, param: str, context: str) -> str
     from arithmetic - ``int(duration / dt)`` promoted to ``np.int64`` by a NumPy
     dt, or a ``30.0`` read from a config - is honored. The caller coerces the
     accepted value with ``int()`` before using it as a ``range()`` bound; that
-    coercion is safe only *because* this guard has already established the value
-    is finite and integral, which is the whole reason the two steps are ordered
-    this way. ``bool`` is rejected explicitly: it is an ``int`` subclass, so a
-    bare ``value < 0`` test lets ``True`` through as a silent count of one
-    physics step, and ``numpy.bool_`` is not registered as ``numbers.Real`` so
-    it is refused by the scalar check.
+    coercion is safe *because* this guard has already performed it and compared
+    the result back, which is the whole reason the two steps are ordered this
+    way. ``bool`` is rejected explicitly: it is an ``int`` subclass, so a bare
+    ``value < 0`` test lets ``True`` through as a silent count of one physics
+    step, and ``numpy.bool_`` is not registered as ``numbers.Real`` so it is
+    refused by the scalar check.
+
+    Every real scalar gets a verdict; nothing raises out of here. That is the
+    contract, not a detail, because the callers document their structured
+    ``{status, content}`` result as the only channel a bad count is reported
+    through, and one of them takes its count from a remote process. It is why
+    the integrality test is an ``int()`` in a ``try`` rather than a ``float()``
+    round-trip: ``float`` raises ``OverflowError`` for an ``int`` wider than a
+    float, which turned a refusal into a crash for the very values most in need
+    of one.
+
+    **Magnitude is not part of this domain.** ``10**400`` is a non-negative
+    whole number and is accepted as one. Whether a count is too large to advance
+    in a single call is a per-call resource policy - MuJoCo's
+    ``_MAX_STEPS_PER_CALL``, which refuses it with a reason of its own - and a
+    domain guard that quietly stopped at the float range would be exactly the
+    kind of boundary-by-implementation-accident this family exists to remove.
 
     Args:
         value: The caller-supplied value.
@@ -552,18 +597,43 @@ def non_negative_whole_number_error(value: Any, param: str, context: str) -> str
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    message = f"{context}: {param} must be a non-negative whole number, got {value!r}."
+
+    def message() -> str:
+        # Rendered on demand, not up front: an accepted count must neither pay
+        # for nor be refused by a message it never receives. A count wider than
+        # ``sys.get_int_max_str_digits()`` is accepted here, and building the
+        # text eagerly made ``repr`` raise on it - the guard failing on the
+        # accept path, doing work only the refuse path needs.
+        return f"{context}: {param} must be a non-negative whole number, got {_refusal_repr(value)}."
+
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        return message
+        return message()
     try:
-        numeric = float(value)
-    except (OverflowError, ValueError):
-        return message
-    # ``isfinite`` first: ``int(nan)`` raises ``ValueError`` and ``int(inf)``
-    # raises ``OverflowError``, and short-circuiting keeps both out of the
-    # integrality check below.
-    if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 0:
-        return message
+        integral = int(value)
+    except (OverflowError, TypeError, ValueError):
+        # The one conversion answers every value no count can be read from:
+        # ``int(nan)`` raises ``ValueError`` and ``int(+-inf)``
+        # ``OverflowError``, so no separate ``isfinite`` check is needed - and
+        # none is possible, because ``isfinite`` needs a ``float()`` whose own
+        # ``OverflowError`` on an ``int`` wider than a float is the escape this
+        # form exists to remove. ``TypeError`` covers a ``numbers.Real``
+        # registered without an ``__int__``: refused, never raised.
+        return message()
+
+    # ``int`` rather than ``math.trunc``, which looks like the conversion the
+    # ABC guarantees and is not usable here: NumPy scalars implement
+    # ``__int__`` but not ``__trunc__``, so ``math.trunc(np.int64(3))`` raises
+    # ``TypeError`` and the NumPy rows this domain must honor would be refused.
+    #
+    # The sign is read off the coerced ``int`` rather than the original: an
+    # ``int``-to-``int`` comparison is total, where ``value < 0`` would defer to
+    # a ``__lt__`` a ``numbers.Real`` registration does not actually guarantee.
+    # ``integral != value`` is what establishes integrality - exactly, and with
+    # no float round-trip, so a large-but-usable count is neither rounded nor
+    # refused - and it falls back to Python's default inequality rather than
+    # raising when a type supplies no ``__eq__``.
+    if integral < 0 or integral != value:
+        return message()
     return None
 
 
