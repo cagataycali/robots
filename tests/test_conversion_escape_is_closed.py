@@ -483,13 +483,21 @@ class TestTheAsymmetryWithTheSiblingIsDeliberate:
         assert non_negative_whole_number_error(BEYOND_FLOAT_RANGE, "n_steps", "step") is None
 
     def test_they_agree_on_every_other_probe(self) -> None:
-        """The asymmetry is exactly one input class wide, not a general drift."""
-        for value in (0.0, 1, 2.5, 30.0, NAN, INF, -1, True, "x", np.int64(7)):
+        """The asymmetry is exactly one input class wide, not a general drift.
+
+        The floor is excluded because it is the *other*, already-documented
+        difference between the two guards - ``0`` is accepted by the
+        ``non_negative`` one by definition. Everything else must match.
+        """
+        for value in (1, 2.5, 30.0, NAN, INF, -1, True, "x", np.int64(7)):
             positive = positive_whole_number_error(value, "n", "ctx") is None
             non_negative = non_negative_whole_number_error(value, "n", "ctx") is None
-            if value == 0.0 or value == 0:
-                continue  # the floor itself, which is the documented difference
             assert positive == non_negative, f"the two guards disagree on {value!r}"
+
+    def test_the_floor_is_the_other_difference_and_is_excluded_deliberately(self) -> None:
+        """So the exclusion above is a stated decision, not a probe quietly dropped."""
+        assert positive_whole_number_error(0, "n", "ctx") is not None
+        assert non_negative_whole_number_error(0, "n", "ctx") is None
 
     def test_the_reason_for_the_asymmetry_is_recorded_where_a_reader_will_look(self) -> None:
         """Both docstrings must carry it, since either is the one being read."""
