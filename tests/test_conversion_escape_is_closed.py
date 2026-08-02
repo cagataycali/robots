@@ -728,9 +728,8 @@ class TestTheModuleHasExactlyOneRemainingConversionSurface:
     The answer is the four **container** guards, and they are #1875. That issue
     describes the *rendering* defect - ``repr`` of a list recursing into an
     element that cannot render itself - and this scan shows the containers carry
-    the conversion escape as well:
-    ``finite_vector_error("raycast", "origin", [10**400])`` raises
-    ``OverflowError``, as does ``pose_vector_error`` with an outsized component.
+    the conversion escape as well, uniformly: all four raise ``OverflowError`` on
+    an element past the float64 range.
 
     So both halves of the sweep stop at the same boundary for the same reason: an
     elementwise message format has to be decided before either can be closed
@@ -765,32 +764,45 @@ class TestTheModuleHasExactlyOneRemainingConversionSurface:
         """This change's claim, stated over the module rather than over a list."""
         assert self._converting_unprotected().isdisjoint({guard.name for guard in CONVERTING})
 
-    @pytest.mark.parametrize(
-        ("call", "exc"),
-        [
-            (lambda: utils.finite_vector_error("raycast", "origin", [BEYOND_FLOAT_RANGE]), OverflowError),
-            (lambda: utils.pose_vector_error("add_object", "position", [BEYOND_FLOAT_RANGE] * 3, 3), OverflowError),
-        ],
-        ids=["finite_vector_error", "pose_vector_error"],
+    #: Each container guard called with an outsized element, through the public
+    #: entry point a caller actually reaches: ``coerce_pose_vector`` is reached
+    #: via ``pose_vector_error``. Every one of them takes the value *last*, after
+    #: the method and parameter labels.
+    CONTAINER_PROBES: tuple[tuple[str, Callable[[], Any]], ...] = (
+        ("finite_vector_error", lambda: utils.finite_vector_error("raycast", "origin", [BEYOND_FLOAT_RANGE])),
+        ("pose_vector_error", lambda: utils.pose_vector_error("add_object", "position", [BEYOND_FLOAT_RANGE] * 3, 3)),
+        ("coerce_rgba", lambda: utils.coerce_rgba("add_object", "colour", [BEYOND_FLOAT_RANGE] * 4)),
+        ("coerce_size_vector", lambda: utils.coerce_size_vector("add_object", "size", [BEYOND_FLOAT_RANGE] * 3)),
     )
-    def test_a_container_guard_does_still_raise_on_an_outsized_element(
-        self, call: Callable[[], Any], exc: type[BaseException]
-    ) -> None:
+
+    @pytest.mark.parametrize(
+        "call",
+        [probe for _, probe in CONTAINER_PROBES],
+        ids=[name for name, _ in CONTAINER_PROBES],
+    )
+    def test_every_container_guard_still_raises_on_an_outsized_element(self, call: Callable[[], Any]) -> None:
         """Pinned so #1875's widened scope is a measurement, not a remark.
 
-        Replace this when #1875 is settled rather than deleting it, per the
-        premise-test guidance in ``AGENTS.md``.
+        The escape is uniform across the four: every one of them raises
+        ``OverflowError``, so a fix there can treat them as one class. Replace
+        this when #1875 is settled rather than deleting it, per the premise-test
+        guidance in ``AGENTS.md``.
         """
-        with pytest.raises(exc):
+        with pytest.raises(OverflowError):
             call()
 
-    def test_two_of_the_container_guards_already_answer_it(self) -> None:
-        """So #1875 is not uniform, and its fix cannot assume that it is.
+    def test_the_probes_reach_the_conversion_rather_than_a_label_check(self) -> None:
+        """Control: each probe must fail *on its element*, not on its own shape.
 
-        ``coerce_rgba`` and ``coerce_size_vector`` range-check each component
-        before converting it, so an outsized element is refused rather than
-        converted. Their unprotected ``float()`` is on the *accepted* path, which
-        is why the scan lists them and a probe does not.
+        These guards take the value in their last position, after two ``str``
+        labels. A probe that passed the container in a label position would be
+        refused for having the wrong type there - which looks like evidence about
+        the element and is not. So the same guards are called with a
+        well-formed container and must return an accepted result, proving the
+        argument order is right and the outsized element is what the row above
+        measures.
         """
-        assert utils.coerce_rgba([BEYOND_FLOAT_RANGE] * 4, "colour", "add_object")[1] is not None
-        assert utils.coerce_size_vector([BEYOND_FLOAT_RANGE] * 3, "size", "add_object")[1] is not None
+        assert utils.finite_vector_error("raycast", "origin", [0.0, 0.0, 1.0]) is None
+        assert utils.pose_vector_error("add_object", "position", [0.0, 0.0, 1.0], 3) is None
+        assert utils.coerce_rgba("add_object", "colour", [0.5, 0.5, 0.5, 1.0])[1] is None
+        assert utils.coerce_size_vector("add_object", "size", [1.0, 1.0, 1.0])[1] is None
