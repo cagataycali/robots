@@ -63,7 +63,7 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import require_optional
+from strands_robots.utils import require_optional, sequence_length
 
 from .config import WBCConfig
 from .control import compute_targets, pd_control, projected_gravity
@@ -620,7 +620,12 @@ class WBCPolicy(Policy):
         # Flat-vector form: index into the flat array by each joint's position.
         flat_key = "observation.state" if kind == "position" else "observation.velocity"
         flat = obs.get(flat_key)
-        if flat is not None and hasattr(flat, "__len__"):
+        # The flat/per-joint discriminator asks for a component count, so it
+        # asks ``sequence_length``. A 0-d array is a scalar that declares
+        # ``__len__``, and a ``hasattr`` probe sent it down the flat branch
+        # while a plain float went down the per-joint one - two spellings of
+        # one scalar answering differently for the same observation (#1883).
+        if flat is not None and sequence_length(flat) is not None:
             arr = np.asarray(flat if not hasattr(flat, "tolist") else flat.tolist(), dtype=np.float64).ravel()
             if self._robot_state_keys:
                 # Name-resolved indexing: map each observed joint to its slot in
@@ -664,7 +669,12 @@ class WBCPolicy(Policy):
     def _read_vec(obs: dict[str, Any], keys: tuple[str, ...], n: int) -> np.ndarray | None:
         for k in keys:
             v = obs.get(k)
-            if v is not None and hasattr(v, "__len__") and len(v) == n:
+            # ``sequence_length`` answers ``None`` for a value with no
+            # readable length, which is never ``n``, so the width test and
+            # the has-a-width test are one expression. The ``hasattr`` +
+            # ``len()`` spelling raised on a 0-d entry instead of returning
+            # the ``None`` every caller of this method is written against.
+            if v is not None and sequence_length(v) == n:
                 return np.asarray(v if not hasattr(v, "tolist") else v.tolist(), dtype=np.float64).ravel()
         return None
 

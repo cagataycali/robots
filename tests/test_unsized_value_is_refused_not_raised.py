@@ -15,6 +15,13 @@ structural checks as being there "to keep the never-raises envelope", and
 :func:`strands_robots.rendering.video.mjpeg_frames` documents ``ValueError`` with
 an actionable message as its only failure mode for a malformed ``size``.
 
+Not every affected surface publishes an envelope, though, and the ``policies/``
+sites added here fail a second way: they contradict *themselves*. ``MockPolicy``
+already documents ``else 6`` for a state that carries no width, and
+``WBCPolicy._read_vec`` already returns ``None`` for every value it cannot use -
+a 0-d array is exactly that value, and it was the one spelling that never
+reached the branch written for it.
+
 :func:`strands_robots.utils.sequence_length` is the single owner of the rule -
 it answers "no readable length" for a 0-d array and for a plain scalar alike -
 and these tests pin every surface that reads a caller-supplied length through
@@ -24,13 +31,17 @@ it, plus the accepted values that must keep working.
 from __future__ import annotations
 
 import ast
+import asyncio
 import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
 import pytest
 
+from strands_robots.policies.mock import MockPolicy
+from strands_robots.policies.wbc.policy import WBCPolicy
 from strands_robots.rendering.video import mjpeg_frames
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 from strands_robots.utils import sequence_length
@@ -277,9 +288,81 @@ class TestMjpegFrameSize:
 
 
 # --------------------------------------------------------------------------- #
-# Structural: no envelope module may probe a caller length with hasattr again.
+# policies/: the sites #1844's scan root could not see (#1883).
 # --------------------------------------------------------------------------- #
-_ENVELOPE_PACKAGES = ("simulation", "rendering")
+class TestMockPolicyStateWidth:
+    """``MockPolicy`` derives its joint count without raising on a 0-d state.
+
+    The canonical reference implementation every provider is pointed at, so the
+    idiom surviving here is also the one most likely to be copied.
+    """
+
+    def _dim(self, state: Any) -> int:
+        actions = asyncio.run(MockPolicy().get_actions({"observation.state": state}, "go"))
+        return len(actions[0])
+
+    def test_an_unsized_state_takes_the_documented_fallback(self) -> None:
+        """A 0-d state carries no width, so the ``else 6`` branch applies to it.
+
+        It used to raise ``TypeError: len() of unsized object`` instead - past the
+        branch written for a state that does not declare a width.
+        """
+        assert self._dim(UNSIZED) == 6
+
+    def test_a_scalar_state_answers_the_same_either_way(self) -> None:
+        """A plain float and a 0-d array are both scalars; both mean "no width"."""
+        assert self._dim(0.5) == self._dim(UNSIZED) == 6
+
+    def test_a_sized_state_still_sets_the_width(self) -> None:
+        """Over-reach control: a real state vector keeps deriving its own width."""
+        assert self._dim(np.zeros(4)) == 4
+        assert self._dim([0.0, 0.0, 0.0]) == 3
+
+
+class TestWBCObservationVectors:
+    """``WBCPolicy``'s two observation readers answer, rather than raise, for a 0-d entry."""
+
+    def _flat(self, state: Any, names: list[str]) -> np.ndarray:
+        """``_read_joint_vector`` over a stub carrying only the attribute it reads."""
+        stub = SimpleNamespace(_robot_state_keys=[])
+        return WBCPolicy._read_joint_vector(stub, {"observation.state": state}, "position", names)
+
+    def test_read_vec_reports_an_unsized_entry_as_absent(self) -> None:
+        """``_read_vec`` returns ``None`` for every value it cannot use, 0-d included.
+
+        Both callers (``base_ang_vel``, ``base_quat``) are written against that
+        ``None``; a 0-d entry used to raise out of ``get_actions`` mid-rollout.
+        """
+        assert WBCPolicy._read_vec({"k": UNSIZED}, ("k",), 3) is None
+
+    def test_read_vec_still_returns_a_correctly_sized_vector(self) -> None:
+        """Over-reach control: the accepted width is unchanged, and so is a wrong one."""
+        got = WBCPolicy._read_vec({"k": [1.0, 2.0, 3.0]}, ("k",), 3)
+        assert got is not None and np.allclose(got, [1.0, 2.0, 3.0])
+        assert WBCPolicy._read_vec({"k": [1.0, 2.0]}, ("k",), 3) is None
+
+    def test_a_scalar_state_reads_the_same_either_spelling(self) -> None:
+        """The flat/per-joint discriminator no longer splits the two scalars.
+
+        A ``hasattr`` probe sent a 0-d array down the flat branch and a plain
+        float down the per-joint one, so one observation produced two different
+        joint vectors depending on how the scalar was spelled. Neither carries a
+        component per joint, so both read as the per-joint form.
+        """
+        names = ["a", "b", "c"]
+        assert np.allclose(self._flat(UNSIZED, names), self._flat(0.5, names))
+        assert np.allclose(self._flat(UNSIZED, names), np.zeros(3))
+
+    def test_a_flat_state_vector_is_still_consumed_positionally(self) -> None:
+        """Over-reach control: the flat form the discriminator exists for is unchanged."""
+        names = ["a", "b", "c"]
+        assert np.allclose(self._flat([0.1, 0.2, 0.3], names), [0.1, 0.2, 0.3])
+        assert np.allclose(self._flat(np.array([0.1, 0.2, 0.3]), names), [0.1, 0.2, 0.3])
+
+
+# --------------------------------------------------------------------------- #
+# Structural: no module may probe a caller length with hasattr again.
+# --------------------------------------------------------------------------- #
 
 
 def _hasattr_len_probes(tree: ast.AST) -> list[int]:
@@ -295,13 +378,18 @@ def _hasattr_len_probes(tree: ast.AST) -> list[int]:
     return lines
 
 
-def _envelope_modules() -> list[Path]:
-    """Every module of the packages that publish a no-raise envelope."""
-    package_dir = Path(inspect.getfile(sequence_length)).parent
-    modules: list[Path] = []
-    for name in _ENVELOPE_PACKAGES:
-        modules.extend(sorted((package_dir / name).rglob("*.py")))
-    return modules
+def _package_modules() -> list[Path]:
+    """Every module of ``strands_robots``.
+
+    The scan was ``("simulation", "rendering")`` when #1844 introduced it, and
+    the sweep was therefore exactly as wide as the scan: three call sites in
+    ``policies/`` were never converted and went on raising for two more months
+    (#1883). Naming packages is what allowed that, so the root is the package -
+    a value whose length cannot be read is not a simulation concern, and a
+    module added under a new subpackage is covered on the day it lands rather
+    than when someone remembers to extend a tuple.
+    """
+    return sorted(Path(inspect.getfile(sequence_length)).parent.rglob("*.py"))
 
 
 class TestNoDirectLengthProbe:
@@ -309,11 +397,27 @@ class TestNoDirectLengthProbe:
 
     def test_the_scan_root_resolves_to_real_modules(self) -> None:
         """Non-vacuity: a mislocated root would make the scan below pass trivially."""
-        modules = _envelope_modules()
+        modules = _package_modules()
         assert len(modules) > 20, modules
         assert any(path.name == "base.py" for path in modules)
 
-    def test_no_envelope_module_probes_a_length_with_hasattr(self) -> None:
+    def test_the_scan_reaches_every_subpackage_not_a_named_few(self) -> None:
+        """The root covers the packages a named tuple left out, ``policies/`` included.
+
+        #1883's three unconverted sites were all in ``policies/``, which the
+        original ``("simulation", "rendering")`` root could not see. Asserting on
+        the subpackages present keeps a future narrowing of the root from
+        silently reopening that gap.
+        """
+        package_dir = Path(inspect.getfile(sequence_length)).parent
+        reached = {
+            path.relative_to(package_dir).parts[0]
+            for path in _package_modules()
+            if len(path.relative_to(package_dir).parts) > 1
+        }
+        assert {"policies", "simulation", "rendering"} <= reached, sorted(reached)
+
+    def test_no_module_probes_a_length_with_hasattr(self) -> None:
         """``hasattr(x, "__len__")`` is never a safe stand-in for a length probe.
 
         A 0-d array passes it and then raises from ``len()``. Ask
@@ -322,7 +426,7 @@ class TestNoDirectLengthProbe:
         """
         offenders = {
             f"{path.name}:{line}"
-            for path in _envelope_modules()
+            for path in _package_modules()
             for line in _hasattr_len_probes(ast.parse(path.read_text()))
         }
         assert not offenders, f"use sequence_length() instead of a hasattr length probe: {sorted(offenders)}"

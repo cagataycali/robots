@@ -5,7 +5,7 @@ import math
 from typing import Any
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error
+from strands_robots.utils import name_list_error, sequence_length
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,13 @@ class MockPolicy(Policy):
         if not self.robot_state_keys:
             if "observation.state" in observation_dict:
                 state = observation_dict["observation.state"]
-                dim = len(state) if hasattr(state, "__len__") else 6
+                # ``sequence_length`` rather than a ``hasattr(state,
+                # "__len__")`` probe: a 0-d array declares ``__len__`` and
+                # raises from it, so the probe passes and ``len()`` escapes
+                # past the ``else`` written for exactly this value - a state
+                # that does not carry a width (#1883, the rule from #1844).
+                n_components = sequence_length(state)
+                dim = 6 if n_components is None else n_components
             else:
                 dim = 6
             self.robot_state_keys = [f"joint_{i}" for i in range(dim)]
