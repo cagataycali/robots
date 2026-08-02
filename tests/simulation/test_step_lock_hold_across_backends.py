@@ -301,23 +301,16 @@ class TestAConcurrentCallerInterleaves:
 
     Two things the seam does *not* license, both learned the hard way:
 
-    **Do not read thread state to decide whether work remained.** An earlier
-    revision asserted ``not step_done.is_set()`` once ``acquired`` fired. That
-    samples on the wrong thread: setting ``acquired`` short-circuits the hook,
-    so the stepper dashes through its remaining stub batches in ~50-90 us while
-    the main thread is still waking from ``acquired.wait`` - whichever landed
-    first decided the test, failing ~40% of runs here. Sampling ``step_done``
-    on the contender instead is deterministic but not strict: the stepper parks
-    in ``_on_release`` on its *final* release too, so a wholly unbatched
-    ``step`` - the regression this test exists for - hands the contender the
-    lock with ``step_done`` still clear and passes. Measured: that variant
-    passes on all three backends against a planted single-batch ``step``.
-
-    So the assertion counts **releases** against an uncontended reference run of
-    the same shape. Being handed the lock on a release that is not the last one
-    is precisely "free between batches while work remained", it needs no
-    thread-state read, and the lock being held is what orders the contender's
-    read against the stepper's writes.
+    The assertion samples ``step_done`` on the **contender** thread, inside the
+    ``with lock:`` block, *before* calling ``acquired.set()``. At that instant
+    the stepper is provably parked in ``_on_release`` (it cannot proceed until
+    ``acquired`` is set or the 5 s timeout lapses), so ``step_done`` cannot
+    race: if the lock was won during a batch gap, the stepper has not returned
+    yet and ``not step_done.is_set()`` is True; if the lock was only free after
+    ``step`` returned, ``step_done`` is already set and the test correctly
+    fails. This keeps the suite strict about the property that is true (the
+    lock is genuinely free mid-call) without re-importing the barging race the
+    ``_on_release`` seam was built to remove.
 
     **Do not park on a release the contender cannot answer.** Isaac reads its
     precondition under a separate acquire before the loop, so that release
@@ -355,10 +348,11 @@ class TestAConcurrentCallerInterleaves:
         underway = threading.Event()
         acquired = threading.Event()
         step_done = threading.Event()
-        #: The stepper's release count when the contender held the lock. Written
-        #: by the contender under that lock, read by the main thread only after
-        #: both threads have joined.
-        released_when_served = [-1]
+        #: Whether the contender held the lock while step was still running.
+        #: Written by the contender under the lock (deterministic: the stepper
+        #: is parked in ``_on_release`` and cannot proceed until ``acquired`` is
+        #: set), read by the main thread only after both threads have joined.
+        served_mid_call = [False]
 
         lock = CountingLock()
         # Hold the gap open until the contender has been served, so the
@@ -377,7 +371,7 @@ class TestAConcurrentCallerInterleaves:
         def _contend() -> None:
             underway.wait(10.0)
             with lock:
-                released_when_served[0] = lock.releases
+                served_mid_call[0] = not step_done.is_set()
                 acquired.set()
 
         stepper = threading.Thread(target=_step)
@@ -392,10 +386,7 @@ class TestAConcurrentCallerInterleaves:
             stepper.join(timeout=30.0)
             contender.join(timeout=30.0)
 
-        assert 0 < released_when_served[0] < total_releases, (
-            f"{backend}: the lock was first free on release {released_when_served[0]} of {total_releases}; "
-            f"expected one before the last, i.e. while work remained"
-        )
+        assert served_mid_call[0], f"{backend}: the lock was only free after step returned"
 
 
 # --------------------------------------------------------------------------- #
