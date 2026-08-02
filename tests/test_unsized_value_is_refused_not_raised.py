@@ -34,7 +34,6 @@ import ast
 import asyncio
 import inspect
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -323,9 +322,17 @@ class TestWBCObservationVectors:
     """``WBCPolicy``'s two observation readers answer, rather than raise, for a 0-d entry."""
 
     def _flat(self, state: Any, names: list[str]) -> np.ndarray:
-        """``_read_joint_vector`` over a stub carrying only the attribute it reads."""
-        stub = SimpleNamespace(_robot_state_keys=[])
-        return WBCPolicy._read_joint_vector(stub, {"observation.state": state}, "position", names)
+        """``_read_joint_vector`` on an instance carrying only the attribute it reads.
+
+        ``__new__`` rather than ``__init__``: the reader needs one attribute and
+        the constructor needs an ONNX runtime and a checkpoint, so building a
+        real policy here would make an observation-parsing test depend on
+        ``onnxruntime`` being installed. It is a genuine ``WBCPolicy``, so the
+        call is type-checked like any other caller's would be.
+        """
+        policy = WBCPolicy.__new__(WBCPolicy)
+        policy._robot_state_keys = []
+        return policy._read_joint_vector({"observation.state": state}, "position", names)
 
     def test_read_vec_reports_an_unsized_entry_as_absent(self) -> None:
         """``_read_vec`` returns ``None`` for every value it cannot use, 0-d included.
