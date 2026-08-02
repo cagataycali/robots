@@ -120,14 +120,19 @@ class CountingLock:
         self.acquires += 1
         return self._lock.__enter__()
 
-    def __exit__(self, *exc: Any) -> Any:
-        result = self._lock.__exit__(*exc)
+    def __exit__(self, *exc: Any) -> None:
+        # Returns ``None``, i.e. never suppresses. Forwarding
+        # ``RLock.__exit__``'s result would have read as passing a suppression
+        # decision through, but that method returns ``None`` unconditionally, so
+        # the only thing forwarding could do here is mislead - and a lock that
+        # swallowed the exception a batch raised is the last thing these tests
+        # want.
+        self._lock.__exit__(*exc)
         self.releases += 1
         if self._teardown_after is not None and self.releases == self._teardown_after:
             self._hook()
         if self._on_release is not None:
             self._on_release()
-        return result
 
     # ``cleanup`` uses a bounded ``acquire(timeout=...)`` rather than ``with``.
     def acquire(self, timeout: float = -1) -> bool:
