@@ -117,6 +117,7 @@ from strands_robots.utils import (
     pose_vector_error,
     positive_whole_number_error,
     sequence_length,
+    step_aborted_msg,
 )
 
 if TYPE_CHECKING:
@@ -3279,8 +3280,12 @@ class MuJoCoSimEngine(
 
     # Simulation Control
 
-    _MAX_STEPS_PER_CALL = 100_000  # Hard ceiling to prevent unbounded lock hold.
-    _STEPS_PER_BATCH = 1000  # Release lock every N steps for cancellation.
+    # Ceiling on the total steps one call may request. Distinct from the
+    # inherited ``SimEngine._STEPS_PER_BATCH`` granularity, which bounds how
+    # long the lock is held: this bounds how much work is accepted at all, and
+    # its value is MuJoCo's own because a per-step cost is. Isaac and Newton
+    # have no equivalent - see #1871 and the note on ``_STEPS_PER_BATCH``.
+    _MAX_STEPS_PER_CALL = 100_000
 
     def step(self, n_steps: int = 1) -> dict[str, Any]:
         """Advance the simulation by ``n_steps`` physics steps.
@@ -3296,8 +3301,10 @@ class MuJoCoSimEngine(
         Returns:
             A ``{status, content}`` tool result reporting the elapsed sim time
             and total step count. ``status`` is ``"error"`` when no world
-            exists, ``n_steps`` is outside that domain, or the count exceeds
-            :attr:`_MAX_STEPS_PER_CALL`.
+            exists, ``n_steps`` is outside that domain, the count exceeds
+            :attr:`_MAX_STEPS_PER_CALL`, or the world was destroyed on a batch
+            boundary mid-run - in which case the error names the steps
+            completed, since some were.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -3336,6 +3343,19 @@ class MuJoCoSimEngine(
         while remaining > 0:
             batch = min(remaining, self._STEPS_PER_BATCH)
             with self._lock:
+                # Re-checked per batch, not once before the loop: releasing the
+                # lock is exactly what lets ``cleanup`` win its bounded
+                # world-handoff acquire (GH #116) in the gap between two
+                # batches, after which ``self._world._model`` raised
+                # ``AttributeError`` past this method's structured envelope
+                # having already advanced part of the count. Same pairing as
+                # ``_primitive_abort_reason``, whose loops release the lock on
+                # this schedule for the same reason.
+                if self._world is None or self._world._model is None or self._world._data is None:
+                    return {
+                        "status": "error",
+                        "content": [{"text": step_aborted_msg(n_steps - remaining, n_steps)}],
+                    }
                 for _ in range(batch):
                     mj.mj_step(self._world._model, self._world._data)
                     if has_kinematic_attachments:
@@ -4987,7 +5007,9 @@ class MuJoCoSimEngine(
 
     # Bounded wait for the world-handoff lock (seconds). A motion primitive
     # holds ``self._lock`` only for one control tick (a few physics substeps,
-    # sub-millisecond), so this ceiling is generous; it exists so cleanup can
+    # sub-millisecond); the longest holder is ``step``, bounded by
+    # ``_STEPS_PER_BATCH`` ``mj_step`` calls per acquisition rather than by the
+    # whole requested count. So this ceiling is generous; it exists so cleanup can
     # never hang the host process on a wedged lock holder - the same tradeoff
     # ``_DEFAULT_POLICY_STOP_TIMEOUT`` makes for a wedged policy worker.
     _WORLD_HANDOFF_LOCK_TIMEOUT = 5.0

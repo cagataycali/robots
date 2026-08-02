@@ -68,8 +68,8 @@ than becoming a silent boundary at the float range.
 Two neighbours are deliberately left alone and pinned as out of scope:
 `send_action(n_substeps=)`, which has the same gap on a second public surface,
 and the per-call ceiling - MuJoCo refuses a count above `_MAX_STEPS_PER_CALL`
-(100_000) and releases its lock every 1000 steps so `stop_policy` can interleave,
-while Isaac accepted `100_001` and called `world.step` that many times inside one
-lock hold. That is a resource policy rather than an input domain, and choosing
-one ceiling for three backends with different per-step costs is a decision rather
-than a defect.
+(100_000) while Isaac and Newton have no equivalent. That is a resource policy
+rather than an input domain, and choosing one ceiling for three backends with
+different per-step costs is a decision rather than a defect. (The batched lock
+release that was MuJoCo-only at the time of this change is no longer part of that
+asymmetry; it was made shared separately.)

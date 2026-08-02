@@ -48,6 +48,7 @@ from strands_robots.utils import (
     non_negative_whole_number_error,
     positive_count_error,
     positive_whole_number_error,
+    step_aborted_msg,
 )
 
 if TYPE_CHECKING:
@@ -1247,7 +1248,9 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         -------
         dict
             Status dict with timing info. ``status`` is ``"error"`` when no
-            world exists or ``n_steps`` is outside that domain.
+            world exists, ``n_steps`` is outside that domain, or the world was
+            destroyed on a batch boundary mid-run - in which case the error
+            names the steps completed, since some were.
         """
         # Guarded before the lock is taken and before any world tick: a
         # negative count made ``range()`` empty, so the call reported success
@@ -1265,29 +1268,51 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             if self._world is None:
                 return {"status": "error", "content": [{"text": "World not initialized."}]}
 
-            t0 = time.perf_counter()
-
-            for _ in range(n_steps):
-                self._world.step(render=self._config.render_mode != "headless")
-                self._sim_time += self._config.physics_dt
-                self._step_count += 1
-
-            elapsed = time.perf_counter() - t0
-            steps_per_sec = n_steps / elapsed if elapsed > 0 else float("inf")
-
-            return {
-                "status": "success",
-                "content": [
-                    {
-                        "text": (
-                            f"Stepped {n_steps}x. "
-                            f"sim_time={self._sim_time:.4f}s, "
-                            f"wall={elapsed * 1000:.1f}ms, "
-                            f"{steps_per_sec:.0f} steps/sec"
-                        )
+        t0 = time.perf_counter()
+        # Batched so the lock is released every ``_STEPS_PER_BATCH`` ticks.
+        # Previously the whole count ran under one acquisition, so a worker
+        # thread's ``get_state`` / ``get_observation`` - and the pump's own
+        # queue drain - blocked for the duration: measured, ``step(100_001)``
+        # called ``world.step`` 100_001 times inside a single hold, which at a
+        # ~2 ms tick is over three minutes with nothing able to interleave.
+        #
+        # The per-batch re-check is the other half of that release, not a
+        # separate concern: with the lock dropped between batches a concurrent
+        # ``destroy`` / ``cleanup`` becomes reachable mid-call, so each batch confirms
+        # the world it is about to advance still exists and aborts naming the
+        # steps completed rather than stepping a torn-down stage.
+        remaining = n_steps
+        while remaining > 0:
+            batch = min(remaining, self._STEPS_PER_BATCH)
+            with self._lock:
+                if not self._world_created or self._world is None:
+                    return {
+                        "status": "error",
+                        "content": [{"text": step_aborted_msg(n_steps - remaining, n_steps)}],
                     }
-                ],
-            }
+                render = self._config.render_mode != "headless"
+                for _ in range(batch):
+                    self._world.step(render=render)
+                    self._sim_time += self._config.physics_dt
+                    self._step_count += 1
+            remaining -= batch
+
+        elapsed = time.perf_counter() - t0
+        steps_per_sec = n_steps / elapsed if elapsed > 0 else float("inf")
+
+        return {
+            "status": "success",
+            "content": [
+                {
+                    "text": (
+                        f"Stepped {n_steps}x. "
+                        f"sim_time={self._sim_time:.4f}s, "
+                        f"wall={elapsed * 1000:.1f}ms, "
+                        f"{steps_per_sec:.0f} steps/sec"
+                    )
+                }
+            ],
+        }
 
     def get_state(self) -> dict[str, Any]:
         """Get full simulation state summary.

@@ -656,9 +656,39 @@ class SimEngine(ABC):
         """
         ...
 
+    # Steps a ``step`` implementation may advance per lock acquisition. This
+    # bounds the window in which every OTHER locked method on the engine - a
+    # concurrent ``get_state``, ``get_observation``, ``stop_policy`` or the
+    # ``cleanup`` world handoff - is blocked, so a long run is slow rather than
+    # unresponsive.
+    #
+    # It is deliberately not a limit on the total work one call may request.
+    # That is a per-backend resource policy (MuJoCo's ``_MAX_STEPS_PER_CALL``)
+    # whose value cannot be shared: 100_000 MuJoCo ``mj_step`` calls on a small
+    # arm and 100_000 RTX-rendered Isaac ``world.step`` calls are not the same
+    # amount of wall time, and a Newton step is a control step of ``substeps``
+    # solver steps, so one number does not express one policy. What IS shared is
+    # the reason above, which is why the granularity is one constant here and
+    # the ceiling is not. See #1871.
+    _STEPS_PER_BATCH = 1000
+
     @abstractmethod
     def step(self, n_steps: int = 1) -> dict[str, Any]:
-        """Advance simulation by n physics steps."""
+        """Advance simulation by n physics steps.
+
+        When the backend exposes an engine lock (``self._lock``, all in-tree
+        backends), implementations must not hold it for the whole count: they
+        release it at least every :attr:`_STEPS_PER_BATCH` steps, and re-check
+        that the world still exists on each batch boundary before advancing it,
+        aborting with a structured error naming the steps completed if it does
+        not. Releasing the lock is what makes a concurrent teardown reachable
+        mid-call, so the two halves are one contract rather than two - the same
+        pairing ``_primitive_abort_reason`` already makes for the motion-primitive
+        loops, which release the lock on the same schedule.
+
+        Pinned for every backend by
+        ``tests/simulation/test_step_lock_hold_across_backends.py``.
+        """
         ...
 
     @abstractmethod

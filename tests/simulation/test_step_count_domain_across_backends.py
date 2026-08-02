@@ -97,12 +97,20 @@ What is NOT in scope, and is asserted to be unchanged by
   in the guard would have put a silent boundary at the float range while still
   accepting ``10**300``, which no backend can advance either.
 * The per-call ceiling. MuJoCo refuses ``n_steps > _MAX_STEPS_PER_CALL``
-  (100_000) with a stated reason - an unbounded lock hold - and batches its
-  loop to release the lock every 1000 steps so ``stop_policy`` can interleave.
-  Isaac and Newton have neither: measured, Isaac accepted ``100_001`` and called
-  ``world.step`` that many times inside one ``self._lock`` hold. That is a
-  resource policy rather than an input domain, and picking one ceiling for three
-  backends with different per-step costs is a decision rather than a defect.
+  (100_000); Isaac and Newton have no equivalent. That is a resource policy
+  rather than an input domain, and picking one ceiling for three backends with
+  different per-step costs is a decision rather than a defect, so #1871 stays
+  open on it.
+
+  The *lock hold* that ceiling was partly justified by is no longer part of the
+  asymmetry: all three backends now batch their loop on the shared
+  ``SimEngine._STEPS_PER_BATCH`` and re-check the world on each boundary. Before
+  that, Isaac accepted ``100_001`` and called ``world.step`` that many times
+  inside one ``self._lock`` hold. See
+  ``test_step_lock_hold_across_backends.py``, which also records that the
+  batching MuJoCo already had was itself unsafe at the boundaries: a concurrent
+  ``cleanup`` world handoff between two batches made ``step`` raise
+  ``AttributeError`` past its structured envelope.
 """
 
 from __future__ import annotations
@@ -387,6 +395,7 @@ def _isaac_stub() -> tuple[Any, dict[str, int]]:
     stub = types.SimpleNamespace(
         _lock=threading.RLock(),
         _world_created=True,
+        _STEPS_PER_BATCH=IsaacSimulation._STEPS_PER_BATCH,
         _config=IsaacConfig(),
         _sim_time=0.0,
         _step_count=0,
@@ -413,6 +422,7 @@ def _newton_stub() -> tuple[Any, SimWorld]:
         _lock=threading.RLock(),
         _solver=None,
         _sync_viewer=lambda: None,
+        _STEPS_PER_BATCH=NewtonSimEngine._STEPS_PER_BATCH,
         substeps=1,
     )
     stub._advance = lambda n_steps: NewtonSimEngine._advance(stub, n_steps)
@@ -826,13 +836,24 @@ class TestNeighbouringStepSurfacesStayOutOfScope:
         assert positive_whole_number_error(0, "n_substeps", "send_action") is not None
 
     def test_the_per_call_ceiling_is_still_mujoco_only(self) -> None:
-        """Isaac and Newton have no ceiling and no batched lock release.
+        """The ceiling stays MuJoCo's; only the lock hold became shared.
 
-        MuJoCo refuses a count above ``_MAX_STEPS_PER_CALL`` with a stated
-        reason - an unbounded lock hold - and releases its lock every
-        ``_STEPS_PER_BATCH`` steps so ``stop_policy`` can interleave. Choosing
-        one ceiling for three backends with different per-step costs is a
-        decision rather than a defect, so it is not smuggled in here.
+        Replaces the pin that Isaac and Newton had *neither* a ceiling nor a
+        batched lock release. The batching half is settled - all three now
+        release the lock every ``SimEngine._STEPS_PER_BATCH`` steps and re-check
+        the world on each boundary, pinned by
+        ``test_step_lock_hold_across_backends.py`` - so the boundary this class
+        draws has narrowed rather than gone.
+
+        Still out of scope is the *ceiling*, which is a different quantity: the
+        batching bounds how long the lock is held, the ceiling bounds how much
+        work is accepted at all. A count above ``_MAX_STEPS_PER_CALL`` is
+        refused by MuJoCo and accepted by the other two, because one number
+        cannot express one resource policy across backends whose per-step cost
+        differs by an order of magnitude - and because a Newton step is a
+        control step of ``substeps`` solver steps, so the same number is not
+        even the same quantity. Asserting the acceptance rather than merely
+        omitting it is the point: #1871 stays open on exactly this row.
         """
         over = MuJoCoSimEngine._MAX_STEPS_PER_CALL + 1
         assert MuJoCoSimEngine.step(_mujoco_stub()[0], over)["status"] == "error"
@@ -848,9 +869,11 @@ class TestNeighbouringStepSurfacesStayOutOfScope:
         says so. MuJoCo then refuses it with its own ``_MAX_STEPS_PER_CALL``
         error - exactly as it did before this change, where a true ``int``
         skipped its ``int()`` coercion and reached the ceiling. Newton and Isaac
-        have no ceiling, so they would attempt it: unbounded work under a held
-        lock, which is #1871 and is not pinned here because pinning it means
-        running it. Refusing the value in the guard instead would have put a
+        have no ceiling, so they would attempt it - unbounded *work*, which is
+        #1871 and is not pinned here because pinning it means running it. The
+        unbounded *lock hold* it used to imply is gone: all three now batch on
+        ``SimEngine._STEPS_PER_BATCH``, so an outsized count is a long run rather
+        than a wedged engine. Refusing the value in the guard instead would have put a
         silent boundary at the float range - accepting ``10**300``, which no
         backend can advance either - which is the boundary-by-accident this
         change exists to remove.

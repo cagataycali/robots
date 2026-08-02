@@ -69,6 +69,7 @@ from strands_robots.utils import (
     positive_count_error,
     positive_whole_number_error,
     require_optional,
+    step_aborted_msg,
 )
 
 if TYPE_CHECKING:
@@ -410,7 +411,9 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
         Returns:
             A ``{status, content}`` tool result. ``status`` is ``"error"`` when
-            no world exists or ``n_steps`` is outside that domain.
+            no world exists, ``n_steps`` is outside that domain, or the world was
+            destroyed on a batch boundary mid-run - in which case the error names
+            the steps completed, since some were.
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
@@ -427,8 +430,29 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # than as a contract anything reads.
         if n_steps == 0:
             return {"status": "success", "content": [{"text": "Stepped 0 step(s) (no-op)."}]}
-        with self._lock:
-            self._advance(n_steps)
+        # Batched so the lock is released every ``_STEPS_PER_BATCH`` control
+        # steps. Previously the whole count ran under one acquisition: measured,
+        # ``step(100_001)`` advanced 100_001 control steps - 100_001 *
+        # ``substeps`` solver steps - inside a single hold, blocking every other
+        # locked method on the engine for the duration.
+        #
+        # The per-batch re-check is the other half of that release, not a
+        # separate concern: with the lock dropped between batches a concurrent
+        # ``destroy`` (which nulls ``_world`` and ``_model`` under this same
+        # lock) becomes reachable mid-call, so each batch confirms the world it is about to
+        # advance still exists and aborts naming the steps completed rather than
+        # handing a finalized-then-freed model to the solver.
+        remaining = n_steps
+        while remaining > 0:
+            batch = min(remaining, self._STEPS_PER_BATCH)
+            with self._lock:
+                if self._world is None or self._model is None:
+                    return {
+                        "status": "error",
+                        "content": [{"text": step_aborted_msg(n_steps - remaining, n_steps)}],
+                    }
+                self._advance(batch)
+            remaining -= batch
         return {"status": "success", "content": [{"text": f"Stepped {n_steps} step(s)."}]}
 
     def get_state(self) -> dict[str, Any]:

@@ -93,7 +93,7 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 
 | Action | Key params |
 |--------|-----------|
-| `step` | `n_steps=1` (max 100 000/call). Non-negative whole number; `0` is an accepted no-op |
+| `step` | `n_steps=1` (MuJoCo: max 100 000/call; Isaac and Newton have no ceiling). Non-negative whole number; `0` is an accepted no-op. Errors if the world is destroyed mid-run, naming the steps completed |
 | `send_action` | `n_substeps=1` - **positive** whole number, no per-call ceiling (see Actions) |
 | `set_gravity` | `gravity=[x,y,z]` or a scalar z-component |
 | `set_timestep` | `timestep` |

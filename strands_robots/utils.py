@@ -907,6 +907,37 @@ def non_negative_whole_number_error(value: Any, param: str, context: str) -> str
     return None
 
 
+def step_aborted_msg(completed: int, requested: int, *, context: str = "step") -> str:
+    """Refusal text when a batched step loop loses its world mid-run.
+
+    Pairs with :func:`non_negative_whole_number_error`, which settles the step
+    *count*; this settles what a backend says when a count it accepted becomes
+    unfinishable partway through. Every backend's ``step`` releases
+    ``SimEngine._STEPS_PER_BATCH`` steps' worth of lock so concurrent actions can
+    interleave, and releasing the lock is what lets a concurrent teardown - the
+    ``cleanup`` world handoff of GH #116 - land between two batches.
+
+    The count is in the text because some of it happened: a bare "no world"
+    would read as the call having done nothing, which is the same
+    report-disagrees-with-the-world defect the step-count domain removed. It is
+    one shared helper rather than three literals so the three backends refuse
+    identically in wording and not merely in verdict, as the pose, colour and
+    size domains do.
+
+    Args:
+        completed: Steps actually advanced before the world went away.
+        requested: The count the caller asked for.
+        context: Calling method name, for the message prefix.
+
+    Returns:
+        Human-readable refusal text.
+    """
+    return (
+        f"{context}: world was destroyed mid-run after {completed} of {requested} steps; aborting. "
+        "The steps already advanced are not rolled back."
+    )
+
+
 def positive_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive integer count.
 
