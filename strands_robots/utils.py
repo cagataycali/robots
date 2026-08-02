@@ -636,19 +636,30 @@ def finite_number_error(value: Any, param: str, context: str) -> str | None:
 def positive_whole_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive whole number.
 
-    Shared domain for every media knob that counts frames or pixels - the
-    recorders' ``fps``, ``width``, ``height`` and in-memory frame cap, the
-    ``run_policy(video=...)`` dict fields, and the
-    :func:`~strands_robots.rendering.encode_clip` playback rate. It lives here
-    rather than beside one of its callers because those callers sit in different
-    layers (:mod:`strands_robots.rendering` must not depend on
+    Shared domain for two families of positive discrete quantity:
+
+    * The media knobs that count frames or pixels - the recorders' ``fps``,
+      ``width``, ``height`` and in-memory frame cap, the
+      ``run_policy(video=...)`` dict fields, and the
+      :func:`~strands_robots.rendering.encode_clip` playback rate.
+    * The physics steps one applied action is held for - the ``n_substeps`` of
+      every backend's
+      :meth:`~strands_robots.simulation.base.SimEngine.send_action`.
+
+    It lives here rather than beside one of its callers because those callers sit
+    in different layers (:mod:`strands_robots.rendering` must not depend on
     :mod:`strands_robots.simulation`), and the accepted domain must not diverge
-    between them. Only a positive whole number can be honored: ``0`` makes the capture loop's ``1 / fps``
-    period undefined, a negative rate is rejected by the ffmpeg writer, and a
-    zero/negative frame cap drops every frame. Accepts any real scalar with an
-    integral value (so a NumPy ``np.int64`` height or a ``30.0`` computed from a
-    config float passes) and rejects ``bool`` explicitly - an ``int`` subclass
-    whose ``True`` would act as a silent 1.
+    between them. Only a positive whole number can be honored: ``0`` makes the
+    capture loop's ``1 / fps`` period undefined, a negative rate is rejected by
+    the ffmpeg writer, a zero/negative frame cap drops every frame, and a
+    ``send_action`` advancing no physics leaves a target written that the world
+    never integrates - which is why ``0`` is refused there rather than honored
+    as "write but do not advance", with
+    :meth:`~strands_robots.simulation.base.SimEngine.step` named as the surface
+    that advances a count of its own. Accepts any real scalar with an integral
+    value (so a NumPy ``np.int64`` height or a ``30.0`` computed from a config
+    float passes) and rejects ``bool`` explicitly - an ``int`` subclass whose
+    ``True`` would act as a silent 1.
 
     **Magnitude is part of this domain, unlike its ``non_negative`` sibling.**
     :func:`non_negative_whole_number_error` accepts ``10**400`` as a matter of
@@ -656,12 +667,21 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     consumer - and for its one caller that holds, because MuJoCo's
     ``_MAX_STEPS_PER_CALL`` is exactly such a ceiling and refuses an outsized
     step count with a reason of its own. No consumer of *this* domain owns one.
-    Its callers are ``fps``, ``width``, ``height``, ``max_frames`` and the mesh
-    robots' ``drive(count=...)``, and that last one repeats an actuation command,
-    so an unbounded count is an unbounded actuation loop against a physical
-    robot rather than a slow call. So the two guards are the same scalar policy
-    with the floor moved *and* one deliberate difference, which is recorded here
-    rather than left for a reader to find by measuring.
+    Its callers are ``fps``, ``width``, ``height``, ``max_frames``, the mesh
+    robots' ``drive(count=...)`` and ``send_action(n_substeps=)``. Two of those
+    repeat work that nothing bounds: ``drive`` repeats an actuation command, so
+    an unbounded count is an unbounded actuation loop against a physical robot
+    rather than a slow call, and ``n_substeps`` is a physics-step count that
+    ``_MAX_STEPS_PER_CALL`` does *not* reach - that ceiling is applied by
+    ``step`` alone, so a count ``step`` refuses is still accepted through
+    ``send_action`` on every backend. So the two guards are the same scalar
+    policy with the floor moved *and* one deliberate difference, which is
+    recorded here rather than left for a reader to find by measuring.
+
+    That last point is a boundary, not a claim to have closed it: refusing
+    ``10**400`` here is the float64 edge the domain already had, and choosing a
+    *resource* ceiling for a substep count is the same per-backend decision
+    tracked for ``step`` in #1871.
 
     Refusing is therefore the verdict, and it needs a reason of its own:
     ``10**400`` *is* a positive whole number. As above, the float64 range is not
@@ -713,6 +733,15 @@ def non_negative_whole_number_error(value: Any, param: str, context: str) -> str
     Shared domain for the number of physics steps a caller asks a simulation to
     advance - the ``n_steps`` of every backend's
     :meth:`~strands_robots.simulation.base.SimEngine.step`.
+
+    Not the only physics-step count in the tree, and the difference is the
+    floor rather than the scalar policy: the ``n_substeps`` of
+    :meth:`~strands_robots.simulation.base.SimEngine.send_action` is guarded by
+    :func:`positive_whole_number_error`, because that surface writes an actuator
+    target before it advances and a ``0`` there leaves the target written and
+    never integrated. ``step`` owns the honored zero; ``send_action`` refuses
+    its own and names ``step``. A reader arriving here from ``send_action``
+    would otherwise take this floor for that surface's.
 
     It stands to :func:`positive_whole_number_error` exactly as
     :func:`non_negative_count_error` stands to :func:`positive_count_error`: the

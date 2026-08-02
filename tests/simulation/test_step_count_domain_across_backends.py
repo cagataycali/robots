@@ -82,11 +82,14 @@ non-negative or whole-number helper would have regressed the reference backend:
 What is NOT in scope, and is asserted to be unchanged by
 ``TestNeighbouringStepSurfacesStayOutOfScope``:
 
-* ``send_action(n_substeps=)`` on all three backends, which has the same
-  unvalidated domain and on Newton shares the very ``max(1, n_steps)`` floor
-  read here - which is why ``step`` answers its own zero rather than changing
-  that floor. It is a second public surface with its own contract, so it is a
-  separate change.
+* The magnitude of a count on ``step`` (below). ``send_action(n_substeps=)`` is
+  no longer listed here: it was settled separately as #1870, on
+  ``positive_whole_number_error`` - the same scalar policy with the floor at
+  ``1``, because that surface writes an actuator target before it advances and a
+  ``0`` there leaves the target written and never integrated. ``step`` still
+  owns the honored zero, which is why it answers its own rather than moving
+  Newton's ``_advance`` floor; that floor is now unreachable from either public
+  surface. See ``test_send_action_substep_domain_across_backends.py``.
 * The magnitude of a count, which belongs to that ceiling and not to this
   domain. ``10**400`` is a non-negative whole number, so the domain accepts it
   and MuJoCo refuses it with its own ceiling error - exactly as it did before
@@ -122,7 +125,7 @@ from strands_robots.simulation.isaac.simulation import IsaacSimulation
 from strands_robots.simulation.models import SimWorld
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
-from strands_robots.utils import non_negative_whole_number_error
+from strands_robots.utils import non_negative_whole_number_error, positive_whole_number_error
 
 NAN = float("nan")
 INF = float("inf")
@@ -397,7 +400,11 @@ def _newton_stub() -> tuple[Any, SimWorld]:
 
     ``_advance`` is bound genuinely rather than replaced: its ``max(1, n_steps)``
     floor is the thing ``step`` has to answer for, so a stand-in that stubbed it
-    out would make that guard look absent rather than exercised.
+    out would make that guard look absent rather than exercised. Since #1870 the
+    floor is unreachable from either public surface - ``step`` answers ``0``
+    before calling it and ``send_action`` refuses a non-positive count - so it is
+    retained as a defensive no-op rather than as a contract, and this stub still
+    binds the real method so that stays a measurement.
     """
     world = SimWorld()
     stub: Any = types.SimpleNamespace(
@@ -795,18 +802,28 @@ class TestNeighbouringStepSurfacesStayOutOfScope:
     deleting them: the scope statement stays useful and simply narrows.
     """
 
-    def test_send_action_substeps_are_still_unvalidated(self) -> None:
-        """The same domain gap on a second surface, tracked separately.
+    def test_the_advance_floor_survives_but_no_public_surface_can_reach_it(self) -> None:
+        """Replaces the pin that ``send_action(n_substeps=)`` was unvalidated.
 
-        ``send_action(n_substeps=)`` reaches Newton's ``_advance`` floor exactly
-        as ``step`` did, so a ``0`` still advances one substep here. ``step``
-        answers its own zero rather than changing that floor, because the floor
-        is this surface's documented contract and moving it is that surface's
-        change.
+        That surface was settled as #1870 on ``positive_whole_number_error``, so
+        the boundary this class draws has moved rather than gone: the
+        ``max(1, n_steps)`` floor is still in ``_advance`` and still turns a
+        ``0`` into one control step when called directly, which is why ``step``
+        answers its own zero above instead of moving it. What changed is that
+        neither public caller can hand it a non-positive count any more -
+        ``step`` returns before calling it and ``send_action`` refuses - so the
+        floor is a defensive no-op rather than a contract either surface reads.
+
+        Both halves are asserted, because only the pair is the statement: drop
+        the first and a later reader deletes a floor believing nothing depends on
+        it; drop the second and the floor still reads as reachable behaviour.
         """
         stub, world = _newton_stub()
         stub._advance(0)
-        assert world.step_count == 1
+        assert world.step_count == 1, "the floor itself is unchanged"
+
+        assert non_negative_whole_number_error(0, "n_steps", "step") is None
+        assert positive_whole_number_error(0, "n_substeps", "send_action") is not None
 
     def test_the_per_call_ceiling_is_still_mujoco_only(self) -> None:
         """Isaac and Newton have no ceiling and no batched lock release.

@@ -115,6 +115,7 @@ from strands_robots.utils import (
     finite_vector_error,
     non_negative_whole_number_error,
     pose_vector_error,
+    positive_whole_number_error,
     sequence_length,
 )
 
@@ -450,15 +451,44 @@ class MuJoCoSimEngine(
         from the agent's dispatch thread and a PolicyRunner worker are
         serialized here.
 
+        Args:
+            action: Actuator command, as a mapping or an ordered vector.
+            robot_name: Robot to actuate. ``None`` resolves to the single robot
+                when exactly one exists.
+            n_substeps: Positive whole number of physics steps to advance after
+                writing the targets, on the shared
+                :func:`~strands_robots.utils.positive_whole_number_error` domain
+                every backend applies. A NumPy or float count with an integral
+                value is honored and coerced; a fractional, zero, negative,
+                non-finite, boolean or non-numeric count is refused. ``0`` is
+                refused rather than honored as "write but do not advance" -
+                :meth:`step` is the surface that advances a count of its own,
+                and it accepts ``0`` as a documented no-op.
+
         Returns:
             Dict with ``status`` ("success" or "error") and ``content``.
             When some action keys could not be resolved to actuators/joints,
             the ``content`` list includes a ``json`` block with an
             ``unresolved_keys`` list (and ``applied``) so callers can
-            self-correct instead of silently losing commands.
+            self-correct instead of silently losing commands. ``status`` is
+            ``"error"`` when ``n_substeps`` is outside that domain, and nothing
+            is written when it is.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+        # Refused before a single ctrl value is written, because a refusal that
+        # arrived after the write would leave the robot commanded and the world
+        # un-advanced - the one state this surface must never report an error
+        # from. ``_apply_sim_action`` floors its loop at ``max(1, n_substeps)``
+        # but adds the raw count to ``step_count``, so pre-fix a ``0`` ran one
+        # ``mj_step`` and recorded none, a ``-5`` ran one and moved the counter
+        # *backwards*, and a ``nan`` ran one and made ``step_count`` ``nan`` for
+        # the rest of the world's life. A fractional or non-numeric count
+        # reached ``range()`` and raised ``TypeError`` straight past this
+        # method's structured envelope, after the write.
+        if error := positive_whole_number_error(n_substeps, "n_substeps", "send_action"):
+            return {"status": "error", "content": [{"text": error}]}
+        n_substeps = int(n_substeps)
         if robot_name is None:
             if not self._world.robots:
                 return {"status": "error", "content": [{"text": "No robots in the world."}]}

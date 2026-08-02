@@ -67,6 +67,7 @@ from strands_robots.utils import (
     is_boolean,
     non_negative_whole_number_error,
     positive_count_error,
+    positive_whole_number_error,
     require_optional,
 )
 
@@ -416,11 +417,14 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if error := non_negative_whole_number_error(n_steps, "n_steps", "step"):
             return {"status": "error", "content": [{"text": error}]}
         n_steps = int(n_steps)
-        # ``_advance`` floors its count at 1 (``max(1, n_steps)``) because
-        # ``send_action`` shares it and reads that floor as its own contract, so
-        # a zero handed through would advance the world one step while this
-        # method reported stepping none. Answer it here instead of changing that
-        # floor, which would alter the ``send_action(n_substeps=0)`` path too.
+        # ``_advance`` floors its count at 1 (``max(1, n_steps)``), so a zero
+        # handed through would advance the world one step while this method
+        # reported stepping none. Answered here rather than by moving the floor.
+        # Both callers of ``_advance`` now guarantee a positive count - this
+        # branch, and ``send_action`` on the shared
+        # ``positive_whole_number_error`` domain - so the floor is unreachable
+        # from either public surface and is retained as a defensive no-op rather
+        # than as a contract anything reads.
         if n_steps == 0:
             return {"status": "success", "content": [{"text": "Stepped 0 step(s) (no-op)."}]}
         with self._lock:
@@ -1052,16 +1056,35 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
             action: Mapping of short joint name to target position (radians).
             robot_name: Robot to actuate. ``None`` resolves to the single
                 robot when exactly one exists.
-            n_substeps: Number of control steps to advance after writing
-                targets.
+            n_substeps: Positive whole number of control steps to advance after
+                writing targets, on the shared
+                :func:`~strands_robots.utils.positive_whole_number_error` domain
+                every backend applies. A NumPy or float count with an integral
+                value is honored and coerced; a fractional, zero, negative,
+                non-finite, boolean or non-numeric count is refused. ``0`` is
+                refused rather than honored as "write but do not advance" -
+                :meth:`step` is the surface that advances a count of its own,
+                and it accepts ``0`` as a documented no-op.
 
         Returns:
             Status dict. When some keys cannot be resolved to joints, the
             ``content`` carries a ``json`` block with ``unresolved_keys`` and
-            ``applied`` so callers can self-correct.
+            ``applied`` so callers can self-correct. ``status`` is ``"error"``
+            when ``n_substeps`` is outside that domain, and no target is
+            written when it is.
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
+        # Refused before ``_write_targets``, because a refusal after the write
+        # would leave the robot commanded and the world un-advanced. Pre-fix
+        # this count reached ``_advance``'s ``max(1, n_steps)`` floor, so a
+        # ``0`` or a ``-5`` advanced one control step under a success result;
+        # on the solver-free path the same floor added a ``2.7`` or an ``inf``
+        # straight into ``step_count``, and a non-numeric count raised
+        # ``TypeError`` past this method's structured envelope.
+        if error := positive_whole_number_error(n_substeps, "n_substeps", "send_action"):
+            return {"status": "error", "content": [{"text": error}]}
+        n_substeps = int(n_substeps)
         try:
             robot_name = self._resolve_single_robot(robot_name)
         except ValueError as exc:
@@ -2195,7 +2218,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     "robot / object / camera / body / joint / actuator counts)"
                 ),
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
-                "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
+                "send_action": (
+                    "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict"
+                    "  # n_substeps must be a positive whole number; use step() to advance without commanding"
+                ),
                 "run_policy": "(robot_name: str, policy_provider='mock', n_episodes=1, ...) -> dict",
                 "evaluate_benchmark": (
                     "(benchmark_name: str, robot_name=None, policy_provider='mock', "
@@ -2370,6 +2396,14 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """Run ``n_steps`` control steps (each ``substeps`` solver steps).
 
         Must be called with ``self._lock`` held.
+
+        The ``max(1, n_steps)`` floor is defensive only: both public callers -
+        :meth:`step` and :meth:`send_action` - refuse or answer a non-positive
+        count before reaching here, so the floor cannot be observed through
+        either. It is kept rather than removed so a future internal caller
+        cannot advance a negative count, and it is not a contract: a caller
+        wanting "advance nothing" gets it from ``step(0)``, which returns
+        without calling this method at all.
         """
         assert self._world is not None
         if self._solver is None:

@@ -3083,7 +3083,18 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         robot_name : str, optional
             Robot to control.
         n_substeps : int
-            Physics sub-steps after applying action. Default 1.
+            Physics sub-steps after applying action. Default 1. A positive whole
+            number, on the shared
+            :func:`~strands_robots.utils.positive_whole_number_error` domain
+            every backend applies: a NumPy or float count with an integral value
+            is honored and coerced, and a fractional, zero, negative,
+            non-finite, boolean or non-numeric count is refused. ``0`` is
+            refused rather than honored as "write but do not advance" -
+            :meth:`step` is the surface that advances a count of its own, and it
+            accepts ``0`` as a documented no-op. Note this backend's loop had no
+            floor at all, so pre-fix a ``0`` or a negative count applied the
+            targets and advanced nothing while reporting success - the opposite
+            of what MuJoCo and Newton did with the same call.
 
         Returns
         -------
@@ -3096,7 +3107,19 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             some keys don't name a joint on ``robot_name``, the ``content`` list
             carries a ``json`` block with ``unresolved_keys`` / ``applied`` so
             callers can self-correct -- mirroring the MuJoCo backend.
+            ``status`` is ``"error"`` when ``n_substeps`` is outside its domain,
+            and no joint target is applied when it is.
         """
+        # Guarded before the lock is taken and before any target is applied,
+        # mirroring this backend's ``step``: a refusal arriving after the write
+        # would leave the robot commanded and the world un-advanced. This
+        # backend's substep loop is a bare ``range(n_substeps)`` with no floor,
+        # so a fractional or non-numeric count raised ``TypeError`` past the
+        # structured envelope, and a zero or negative count reported success
+        # having advanced nothing.
+        if error := positive_whole_number_error(n_substeps, "n_substeps", "send_action"):
+            return {"status": "error", "content": [{"text": error}]}
+        n_substeps = int(n_substeps)
         with self._lock:
             if not self._world_created or self._world is None:
                 return {"status": "error", "content": [{"text": "No world created."}]}

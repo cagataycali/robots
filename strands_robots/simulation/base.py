@@ -1157,6 +1157,23 @@ class SimEngine(ABC):
         relies on this - it calls send_action once per control step and
         does NOT call sim.step() separately.
 
+        ``n_substeps`` is a **positive** whole number, on the shared
+        :func:`~strands_robots.utils.positive_whole_number_error` domain every
+        backend applies. A NumPy or float count with an integral value is
+        honored and coerced; a fractional, zero, negative, non-finite, boolean
+        or non-numeric count is refused as a structured error, and nothing is
+        written when it is - a refusal arriving after the write would leave the
+        robot commanded and the world un-advanced, which is the one state this
+        surface must never report an error from. The floor is ``1`` rather than
+        :meth:`step`'s ``0`` precisely because of the write: "advance nothing"
+        is ``step(0)``, an accepted no-op that commands nothing, while a
+        ``send_action`` advancing nothing leaves a target the world never
+        integrates. It is also the floor both producers of this count already
+        enforce - ``PolicyRunner._control_substeps`` returns ``>= 1`` and
+        raises otherwise, and ``training.rl.env.SimEnv`` refuses an
+        ``n_substeps`` below 1 - so this surface was the only member of that
+        chain without the guarantee.
+
         Backends are responsible for internal thread-safety (e.g.
         MuJoCo acquires self._lock here). PolicyRunner does not manage
         locks.
@@ -1164,7 +1181,8 @@ class SimEngine(ABC):
         Returns:
             Dict with ``status`` and ``content``. When action keys cannot
             be resolved, the ``content`` list includes a ``json`` block with
-            ``unresolved_keys`` so callers can self-correct.
+            ``unresolved_keys`` so callers can self-correct. ``status`` is
+            ``"error"`` when ``n_substeps`` is outside its domain.
         """
         ...
 
@@ -3778,7 +3796,10 @@ class SimEngine(ABC):
             "methods": {
                 "get_robot_state": "(robot_name: str) -> dict",
                 "get_observation": "(robot_name: str | None = None, *, skip_images: bool = False) -> dict",
-                "send_action": "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict",
+                "send_action": (
+                    "(action: dict, robot_name: str | None = None, n_substeps: int = 1) -> dict"
+                    "  # n_substeps must be a positive whole number; use step() to advance without commanding"
+                ),
                 "add_robot": (
                     "(name: str, urdf_path=None, data_config=None, position=None, "
                     "orientation=None) -> dict  # add a robot to the scene by "
