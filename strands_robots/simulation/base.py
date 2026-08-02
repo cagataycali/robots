@@ -685,9 +685,6 @@ class SimEngine(ABC):
         mid-call, so the two halves are one contract rather than two - the same
         pairing ``_primitive_abort_reason`` already makes for the motion-primitive
         loops, which release the lock on the same schedule.
-
-        Pinned for every backend by
-        ``tests/simulation/test_step_lock_hold_across_backends.py``.
         """
         ...
 
