@@ -195,8 +195,51 @@ hatch run format            # ruff check --fix, ruff format
      merge was clean. Ask the contributor to absorb `main` so they stay the last
      pusher; #1827 was left alone for that reason.
    And before merging, `reviewDecision: APPROVED` alone is not the gate: poll
-   `statusCheckRollup.state == SUCCESS` and `mergeStateStatus == CLEAN`
+   the **required** contexts' own conclusions and `mergeStateStatus == CLEAN`
    together, since `reviewDecision` flips before the checks finish.
+
+   Read the required set rather than the rollup, because they are not the same
+   question and the rollup is the stricter one. `statusCheckRollup.state ==
+   SUCCESS` is *not* a merge requirement: the `default` ruleset lists exactly one
+   required check,
+
+   ```
+   GET /repos/{owner}/{repo}/rulesets/{id}  ->  required_status_checks
+                                                = ["call-test-lint / Test and Lint"]
+   ```
+
+   so every other context - `CodeQL`, `dependency-review`, `Detect Breaking
+   Changes` - is advisory, and any one of them non-`SUCCESS` drags the rollup to
+   `FAILURE` or `NEUTRAL` while the PR remains perfectly mergeable. #1879, #1880
+   and #1881 were each merged at rollup `FAILURE`/`NEUTRAL` with
+   `mergeStateStatus` `CLEAN`. `mergeStateStatus` is the field that already
+   accounts for the required set, which is why it is the one to trust:
+   `BLOCKED` while the required check runs, then `UNSTABLE` - mergeable, with an
+   advisory context red - or `CLEAN`.
+
+   This is worth the words because the failure mode is silent and expensive in the
+   opposite direction from the usual one. Treating an advisory red as a merge
+   blocker does not look like a mistake; it looks like diligence, and it costs a
+   round of real changes to a PR that was ready. #1879 spent a round removing a
+   `__float__` from a test fixture to clear a `CodeQL` finding that never gated
+   anything. Worse, the finding was not even attributable to that PR: alert #846
+   (`py/non-iterable-in-for-loop`) had been open on `main` since the day before and
+   was reported as "new in code changed by this pull request" only because the
+   branch added lines above it and CodeQL's baseline matching is positional. When
+   an advisory finding appears, check its `created_at` and whether it is open on
+   `refs/heads/main` before assuming the branch introduced it:
+
+   ```
+   GET /repos/{owner}/{repo}/code-scanning/alerts?ref=refs/heads/main&state=open
+   ```
+
+   That endpoint needs `PAT_TOKEN` - the Actions `GITHUB_TOKEN` gets `403 Resource
+   not accessible by integration` - and the annotation on the failing check run
+   (`GET /check-runs/{id}/annotations`) reports the line as it falls in the
+   *branch*, so the number will not match `main`. A genuine pre-existing alert is
+   still worth fixing, but as its own tracked change on `main` rather than as an
+   unplanned round on whatever PR happened to shift its line: #846 was closed that
+   way by #1881, which was also the fix for #1878.
 
    Those three together are still not sufficient. They are all evaluated against
    the base the branch was tested on, so none of them can see a **semantic**
