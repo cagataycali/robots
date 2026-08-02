@@ -193,9 +193,9 @@ class UniterableContainer:
 
     ``__iter__`` raises ``TypeError``, which is what "not iterable" means in
     Python and what every guard here already routes to a refusal. A ``__iter__``
-    raising something *else* is a third escape mechanism, neither rendering nor
-    conversion, and is out of this change's scope - see
-    :class:`TestTheIterationEscapeStaysOutOfScope`.
+    raising something *else* was a third escape mechanism, neither rendering nor
+    conversion; it is closed by #1878 and gets its own verdict, which is what
+    :class:`TestTheIterationIsAnsweredNotEscaped` measures against this probe.
     """
 
     def __repr__(self) -> str:
@@ -208,9 +208,10 @@ class UniterableContainer:
 class HostileIteration:
     """A value whose ``repr`` fails and whose ``__iter__`` raises a non-``TypeError``.
 
-    Used only against the renderer, which recovers any ``Exception``. The guards
-    reach their own ``iter()`` before the renderer, so this does not describe what
-    they do with it; :class:`TestTheIterationEscapeStaysOutOfScope` does.
+    Used against the renderer, which recovers any ``Exception``, and against
+    ``finite_vector_error``, whose own ``iter()`` is reached before the renderer
+    and answers this value with its own refusal since #1878;
+    :class:`TestTheIterationIsAnsweredNotEscaped` states what that answer is.
     """
 
     def __repr__(self) -> str:
@@ -218,6 +219,29 @@ class HostileIteration:
 
     def __iter__(self) -> Iterator[Any]:
         raise RuntimeError("no iteration for you")
+
+
+class UnprintableFailureError(Exception):
+    """An exception whose own ``str`` raises.
+
+    The fix for #1878 reports the exception that stopped the iteration, so the
+    message now interpolates a value supplied by the same hostile type. Without
+    this probe that interpolation is the #1873 rendering escape again, one level
+    inside the fix for the iteration escape, and nothing would measure it.
+    """
+
+    def __str__(self) -> str:
+        raise RuntimeError("no str for you")
+
+
+class UnprintableFailure:
+    """A value whose ``__iter__`` raises an exception that cannot be rendered."""
+
+    def __repr__(self) -> str:
+        raise RuntimeError("no repr for you")
+
+    def __iter__(self) -> Iterator[Any]:
+        raise UnprintableFailureError
 
 
 class UnprintableName(str):
@@ -843,46 +867,90 @@ class TestEveryContainerGuardRoutesThroughTheRenderer:
 # --------------------------------------------------------------------------- #
 # The boundary of this change, stated rather than omitted                      #
 # --------------------------------------------------------------------------- #
-class TestTheIterationEscapeStaysOutOfScope:
-    """A pin of behaviour left unchanged, so the boundary is stated (#1878).
+class TestTheIterationIsAnsweredNotEscaped:
+    """``finite_vector_error`` answers a hostile iteration instead of raising (#1878).
 
-    Replace this when the surface it describes is settled rather than deleting it,
-    per the premise-test guidance in ``AGENTS.md``.
+    Replaces ``TestTheIterationEscapeStaysOutOfScope``, which pinned the opposite
+    for as long as the escape was a stated boundary rather than a fixed defect.
+    The conclusion that class supported still holds and is still measured here -
+    only one guard ever reached an iteration, so the surface this closes is one
+    ``iter()`` call - but the verdict on that call is now a message.
 
-    ``finite_vector_error`` asks ``iter(vec)`` inside ``except TypeError`` - which
-    is the exception "not iterable" means, and the only one a well-behaved type
-    raises. A ``__iter__`` that raises anything else escapes the guard, before
-    either the conversion or the rendering this change fixed is reached. That is a
-    **third** mechanism, and closing it here would be a different change:
-
-    * It needs its own message decision. A value whose iteration failed is not
-      "not a list/tuple of numbers" - the guard cannot tell whether it was one -
-      so reusing that text would state something unmeasured.
-    * Its reachability is weaker than #1874's and #1875's by a wide margin. Those
-      arrive as a JSON number through a ``device_connect`` ``@rpc()`` payload,
-      where an arbitrary-precision integer is one request away. A type whose
-      ``__iter__`` raises ``RuntimeError`` cannot be expressed in JSON at all and
-      has to be hand-written by a direct API caller.
-
-    So it is recorded and pinned rather than folded in, which keeps this change one
-    concern and keeps the remaining escape a measurement instead of a remark.
+    This is the fourth and last escape in the family: rendering (#1873), scalar
+    conversion (#1874), container conversion and rendering (#1875), and iteration
+    here. All four are the same defect - a guard whose entire purpose is to answer
+    an unusable input with a structured refusal, raising instead.
     """
 
-    def test_a_hostile_iteration_still_escapes_the_vector_guard(self) -> None:
-        with pytest.raises(RuntimeError):
-            finite_vector_error("raycast", "origin", HostileIteration())
+    def test_a_hostile_iteration_is_refused_rather_than_raised(self) -> None:
+        message = finite_vector_error("raycast", "origin", HostileIteration())
+        assert message is not None
+        assert "raycast: 'origin' could not be iterated" in message
 
-    def test_the_other_guards_answer_it_because_they_ask_for_a_length_first(self) -> None:
-        """Only one guard is exposed, which is what makes the boundary small.
+    def test_the_refusal_names_the_exception_that_stopped_the_iteration(self) -> None:
+        """The type and text are what make the message actionable.
+
+        Without them the caller learns only that *something* went wrong inside a
+        value they own, which is the diagnostic content of the traceback this
+        replaces minus the traceback.
+        """
+        message = finite_vector_error("raycast", "origin", HostileIteration())
+        assert message is not None
+        assert "RuntimeError" in message
+        assert "no iteration for you" in message
+
+    def test_it_does_not_claim_the_value_was_not_a_list_of_numbers(self) -> None:
+        """The two verdicts are different measurements and must not share text.
+
+        A value whose ``__iter__`` raised may well have held numbers; this guard
+        never found out. Reusing the ``TypeError`` text would report a domain
+        check that never ran - which is why #1878 was not folded into #1875.
+        """
+        hostile = finite_vector_error("raycast", "origin", HostileIteration())
+        not_iterable = finite_vector_error("raycast", "origin", UniterableContainer())
+        assert hostile is not None and not_iterable is not None
+        assert "must be a list/tuple of numbers" in not_iterable
+        assert "must be a list/tuple of numbers" not in hostile
+        assert hostile != not_iterable
+
+    def test_a_plain_non_iterable_still_gets_the_type_error_text(self) -> None:
+        """The ``TypeError`` branch is the common case and is unchanged."""
+        message = finite_vector_error("raycast", "origin", 1.0)
+        assert message is not None
+        assert "must be a list/tuple of numbers" in message
+
+    def test_coerce_size_vector_inherits_the_answer_it_inherited_the_raise_from(self) -> None:
+        """``coerce_size_vector`` reaches this guard, so the fix reaches it too.
+
+        It was the only other exposed surface, by inheritance rather than by its
+        own ``iter()`` call, so it is the one place a fix could have been missed.
+        """
+        _value, error = coerce_size_vector("add_object", "size", HostileIteration())
+        assert error is not None
+        assert "could not be iterated" in error
+
+    def test_an_exception_whose_own_str_raises_does_not_reescape(self) -> None:
+        """The fix must not reintroduce #1873 inside its own message.
+
+        A value hostile enough to raise a non-``TypeError`` from ``__iter__`` is
+        not one whose exception is assumed to render, so the exception text goes
+        through the same safe renderer every other refusal uses.
+        """
+        message = finite_vector_error("raycast", "origin", UnprintableFailure())
+        assert message is not None
+        assert "could not be iterated" in message
+        assert "UnprintableFailureError" in message
+
+    def test_the_other_guards_still_answer_because_they_ask_for_a_length_first(self) -> None:
+        """Unchanged, and still the reason the closed surface is one call.
 
         ``pose_vector_error`` takes ``len()`` before iterating and
-        ``name_list_error`` tests ``isinstance(value, Sequence)``, so both refuse
-        this value on its shape and never reach an iteration. Stated here so the
-        pin above is known to cover one guard rather than assumed to.
+        ``name_list_error`` tests ``isinstance(value, Sequence)``, so neither ever
+        reached an iteration to escape from.
         """
         assert pose_vector_error("add_object", "position", HostileIteration(), 3) is not None
         assert name_list_error(HostileIteration(), "cameras", "render_all") is not None
 
-    def test_the_rendering_half_is_closed_even_there(self) -> None:
-        """The renderer itself is total, so it is not what leaves the escape open."""
+    def test_the_rendering_half_was_already_closed(self) -> None:
+        """The renderer was never what left this open, and still is not."""
         assert _refusal_container_repr(HostileIteration()) == "<unrepresentable HostileIteration>"

@@ -1146,6 +1146,11 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
       either poisons the physics state on the next ``mj_forward`` or aborts the
       spec recompile with a cryptic "spec recompile refused", reporting a
       success/garbage result instead of an actionable error.
+    * A value whose ``__iter__`` raises something other than ``TypeError``
+      otherwise propagates that exception out of the guard, which is the same
+      contract break by a different route - the caller asked for a verdict and
+      got a traceback. Reported as its own "could not be iterated" refusal,
+      because whether it held numbers is precisely what could not be determined.
 
     A numpy real scalar per element is accepted (``np.float64`` and friends are
     registered as ``numbers.Real``), matching the "accept NumPy scalar
@@ -1157,11 +1162,38 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
     colour, whose count the rgba row it is written into defines. Returns ``None``
     when every element is a finite real number.
     """
+    # ``TypeError`` is what "not iterable" means in Python and the only exception
+    # a well-behaved ``__iter__`` raises, but a guard whose whole purpose is to
+    # answer an unusable input with a message cannot assume good behaviour of the
+    # value it was handed: any other exception escaping here would be the same
+    # defect as the rendering (#1873), scalar-conversion (#1874) and
+    # container-conversion (#1875) escapes, on the one path that must not raise.
+    # It gets its own text because the two verdicts are not the same measurement -
+    # a value whose iteration raised may well have been a list/tuple of numbers,
+    # and this guard never found out, so reporting it as "must be a list/tuple of
+    # numbers" would state something unmeasured (#1878).
+    #
+    # The iterator is bound and then iterated, rather than ``iter(vec)`` being
+    # called for its exception and ``vec`` iterated again: one ``__iter__`` call
+    # is what the probe is asking about, and a second one is free to answer
+    # differently than the one that was checked. It stays lazy - a materialising
+    # ``list(vec)`` would answer for ``__next__`` too, but at the cost of holding
+    # a whole vector that the element loop below only ever needs one at a time.
+    # ``exc`` is rendered through ``_refusal_str`` rather than interpolated: a
+    # value hostile enough to raise a non-``TypeError`` from ``__iter__`` is not
+    # a value whose exception is assumed to have a working ``__str__``, and that
+    # is the #1873 escape reintroduced inside the fix for this one.
     try:
-        iter(vec)
+        elements = iter(vec)
     except TypeError:
         return f"{method}: '{param_name}' must be a list/tuple of numbers, got {_refusal_container_repr(vec)}"
-    for _elem in vec:
+    except Exception as exc:
+        return (
+            f"{method}: '{param_name}' could not be iterated: "
+            f"{type(exc).__name__}: {_refusal_str(exc)} (got {_refusal_container_repr(vec)}). "
+            f"Pass a list or tuple of numbers."
+        )
+    for _elem in elements:
         # ``numbers.Real`` accepts a numpy scalar (``np.float32`` / ``np.int64``
         # are registered) and rejects a string, ``None`` or a nested list.
         # ``bool`` is an ``int`` subclass, so it would otherwise pass as a
