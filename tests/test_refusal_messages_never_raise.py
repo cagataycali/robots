@@ -70,9 +70,11 @@ untouched. They were #1874 and are now closed, so what was a pin of deliberate
 scope has become :class:`TestTheConversionEscapeIsClosed`: the class is replaced
 rather than deleted, because the boundary it drew is still the useful statement
 and simply moved. The
-container guards have the same rendering defect but need a rendering rather than
-a fallback, since ``<unrepresentable list>`` erases the elements that print fine;
-they are #1875, pinned by :class:`TestTheContainerGuardsStayOutOfScope`.
+container guards had the same rendering defect but needed a rendering rather than
+a fallback, since ``<unrepresentable list>`` erases the elements that print fine.
+That was #1875 and is now closed too, so the scope pin here is likewise replaced
+by its inverse, :class:`TestTheContainerGuardsAnswerAnUnrenderableElement`; the
+rendering itself lives in ``tests/test_container_refusals_render_elementwise.py``.
 
 :class:`TestNoGuardRendersACallerValueDirectly` is what makes this the last pass
 over the question rather than a first. It keys on the parameter annotated
@@ -636,29 +638,40 @@ class TestTheConversionEscapeIsClosed:
             assert isinstance(guard.call(BEYOND_FLOAT_RANGE), str) or guard.call(BEYOND_FLOAT_RANGE) is None
 
 
-class TestTheContainerGuardsStayOutOfScope:
-    """Pins of behaviour left unchanged, so the boundary is stated not omitted (#1875).
+class TestTheContainerGuardsAnswerAnUnrenderableElement:
+    """The inverse of the scope pin this class replaces (#1875).
 
-    Replace these when the surfaces they describe are settled rather than deleting
-    them.
+    ``repr`` of a container recurses into its elements, so a container was
+    unrenderable whenever any one element was, and these guards raised out of a
+    refusal they had already decided. They now answer, through
+    ``_refusal_container_repr``: the container is rendered elementwise and only
+    the components that cannot print are substituted, so the shape and the
+    element count - often the refusal's entire reason - survive.
 
-    The vector and list guards render the whole container, so ``repr``'s recursion
-    into one unrenderable element takes down a refusal already decided. The fix is
-    not this change's fallback: ``<unrepresentable list>`` erases every element
-    that rendered fine and the element count with them, and the count is often the
-    refusal's whole reason. That needs an elementwise rendering and a message
-    format decision on each surface.
+    Kept here, in the class the scope pin occupied, so the boundary this module
+    drew is visibly *moved* rather than dropped. The rendering's own contract is
+    pinned in ``tests/test_container_refusals_render_elementwise.py``.
     """
 
-    def test_a_vector_with_an_unrenderable_element_still_raises(self) -> None:
-        with pytest.raises(OverflowError):
-            finite_vector_error("raycast", "origin", [BEYOND_INT_STR_LIMIT])
-        with pytest.raises(ValueError):
-            pose_vector_error("add_object", "position", [BEYOND_INT_STR_LIMIT], 3)
+    def test_a_vector_with_an_unrenderable_element_answers(self) -> None:
+        for message in (
+            finite_vector_error("raycast", "origin", [BEYOND_INT_STR_LIMIT]),
+            pose_vector_error("add_object", "position", [BEYOND_INT_STR_LIMIT], 3),
+        ):
+            assert message is not None
+            assert f"<int of {BEYOND_INT_STR_LIMIT.bit_length()} bits>" in message
 
-    def test_a_name_list_with_an_unrenderable_entry_still_raises(self) -> None:
-        with pytest.raises(ValueError):
-            name_list_error([BEYOND_INT_STR_LIMIT], "cameras", "render_all")
+    def test_a_name_list_with_an_unrenderable_entry_answers(self) -> None:
+        message = name_list_error([BEYOND_INT_STR_LIMIT], "cameras", "render_all")
+        assert message is not None
+        assert f"<int of {BEYOND_INT_STR_LIMIT.bit_length()} bits>" in message
+
+    def test_the_elements_that_render_are_not_erased_with_the_one_that_cannot(self) -> None:
+        """The whole reason a container needed a rendering and not a fallback."""
+        message = finite_vector_error("raycast", "origin", [1.0, BEYOND_INT_STR_LIMIT, 3.0])
+        assert message is not None
+        assert f"[1.0, <int of {BEYOND_INT_STR_LIMIT.bit_length()} bits>, 3.0]" in message
+        assert "<unrepresentable list>" not in message
 
 
 # --------------------------------------------------------------------------- #
@@ -708,16 +721,26 @@ def _scan_direct_renders(source: str) -> dict[str, tuple[tuple[str, str], ...]]:
     return found
 
 
-#: The only functions in ``utils.py`` still rendering a caller value directly, all
-#: of them container guards tracked in #1875. Every scalar guard is absent, which
-#: is this change. A new entry is a new guard that skipped the shared renderers.
-KNOWN_DIRECT_RENDERS: dict[str, tuple[tuple[str, str], ...]] = {
-    "coerce_rgba": (("color", "!r"),),
-    "coerce_size_vector": (("size", "!r"),),
-    "finite_vector_error": (("vec", "!r"),),
-    "name_list_error": (("value", "!r"),),
-    "pose_vector_error": (("vec", "!r"),),
-}
+#: Empty, and that is the assertion: **no** function in ``utils.py`` renders a
+#: caller value directly any more. The five container guards that used to be
+#: listed here were #1875 and now route through ``_refusal_container_repr``, so
+#: the table has nothing left to hold. Any entry appearing here is a new guard
+#: that skipped the shared renderers.
+KNOWN_DIRECT_RENDERS: dict[str, tuple[tuple[str, str], ...]] = {}
+
+#: The guards that render a *container*, which need the elementwise renderer
+#: rather than the whole-value one. Named so the scan below is shown to reach
+#: them: an empty ``KNOWN_DIRECT_RENDERS`` would otherwise be satisfied just as
+#: well by a scanner that had stopped looking at them.
+CONTAINER_GUARDS = frozenset(
+    {
+        "coerce_rgba",
+        "coerce_size_vector",
+        "finite_vector_error",
+        "name_list_error",
+        "pose_vector_error",
+    }
+)
 
 
 class TestNoGuardRendersACallerValueDirectly:
@@ -746,22 +769,25 @@ class TestNoGuardRendersACallerValueDirectly:
             if any(a.annotation is not None and ast.unparse(a.annotation) == "Any" for a in args):
                 scanned.add(fn.name)
         assert set(GUARD_IDS) <= scanned, f"guards invisible to the scan: {set(GUARD_IDS) - scanned}"
-        assert set(KNOWN_DIRECT_RENDERS) <= scanned
+        assert CONTAINER_GUARDS <= scanned, f"container guards invisible to the scan: {CONTAINER_GUARDS - scanned}"
         assert "validation_split_error" in scanned
 
-    def test_every_scalar_guard_calls_a_shared_renderer(self) -> None:
+    def test_every_guard_calls_a_shared_renderer(self) -> None:
         """The positive form: absence from the table is not enough on its own.
 
         A guard that stopped naming the refused value at all would also be absent,
-        and would return a message that no longer says what was refused.
+        and would return a message that no longer says what was refused. Now that
+        the table is empty this is the whole of the load-bearing half, and it
+        covers the container guards as well as the scalar ones.
         """
         tree = ast.parse(self._source())
-        owned = set(GUARD_IDS) | {"validation_split_error"}
+        owned = set(GUARD_IDS) | CONTAINER_GUARDS | {"validation_split_error"}
+        renderers = {"_refusal_repr", "_refusal_str", "_refusal_container_repr"}
         for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name in owned]:
             called = {
                 node.func.id for node in ast.walk(fn) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
             }
-            assert called & {"_refusal_repr", "_refusal_str"}, f"{fn.name} renders no value through a shared renderer"
+            assert called & renderers, f"{fn.name} renders no value through a shared renderer"
 
     def test_the_scanner_reports_a_planted_repr_omission(self) -> None:
         """Without this, an empty result could mean a scanner matching nothing."""

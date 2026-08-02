@@ -595,37 +595,48 @@ class TestNoConvertingGuardConvertsUnprotected:
         assert _unguarded_float_calls(planted) == []
 
 
-class TestTheModuleHasExactlyOneRemainingConversionSurface:
-    """The scan run over the whole module, not over a list of four names.
+class TestTheRemainingConversionsRunOnlyOnTheAcceptedPath:
+    """The scan run over the whole module, not over a list of names.
 
-    A test parametrised on ``CONVERTING`` cannot fail for a guard nobody thought
-    to add to it, so the useful assertion is the complement: which functions in
-    :mod:`strands_robots.utils` still convert unprotected. The set is asserted
-    exactly, which is what makes the remaining entries a stated boundary rather
-    than an omission, and what makes a fifth converting scalar guard fail here.
+    Replaces ``TestTheModuleHasExactlyOneRemainingConversionSurface`` rather than
+    deleting it: the boundary that class drew is still the useful statement and
+    has simply moved. It reported the four **container** guards as the remaining
+    unprotected conversions and pinned them raising, tracked as #1875. #1875 is
+    now closed, and ``finite_vector_error`` - the one of the four that converts a
+    value it has not yet accepted - has left the set, because it asks
+    :func:`_beyond_float_range` first and then converts inside a ``try``, exactly
+    as the scalar guards do.
 
-    The answer is the four **container** guards, and they are #1875. That issue
-    describes the *rendering* defect - ``repr`` of a list recursing into an
-    element that cannot render itself - and this scan shows the containers carry
-    the conversion escape as well, uniformly: all four raise ``OverflowError`` on
-    an element past the float64 range.
+    Three names remain, and they are a different statement from the one this
+    class used to make. ``coerce_pose_vector``, ``coerce_rgba`` and
+    ``coerce_size_vector`` convert only **after** ``finite_vector_error`` has
+    accepted every element - which is to say after that guard has already
+    converted each one successfully - so their ``float()`` provably cannot raise.
+    That is a real guarantee, but it is an upstream one rather than a local
+    ``try``, so the lexical scan cannot see it and reports them.
 
-    So both halves of the sweep stop at the same boundary for the same reason: an
-    elementwise message format has to be decided before either can be closed
-    there, since a whole-container fallback erases the element count that is
-    often the refusal's entire reason. Recorded on #1875.
+    Wrapping those three in a ``try`` to empty the scan would be worse: the
+    ``except`` clause could never run, so it would be untestable dead code
+    asserting a danger that does not exist. Stating the invariant and pinning it -
+    structurally, that the validating call precedes the conversion, and
+    behaviourally, that all four guards now answer an outsized element - is the
+    honest form.
     """
 
     #: Not names this change chose to skip - this is the scan's output, asserted
     #: so it can neither grow nor be quietly narrowed.
     EXPECTED_REMAINING = frozenset(
         {
-            "finite_vector_error",
             "coerce_pose_vector",
             "coerce_rgba",
             "coerce_size_vector",
         }
     )
+
+    #: The guard whose acceptance makes the three conversions above safe. Two
+    #: spellings, because ``coerce_pose_vector`` reaches it through the
+    #: fixed-length wrapper.
+    VALIDATORS = frozenset({"finite_vector_error", "pose_vector_error"})
 
     @staticmethod
     def _converting_unprotected() -> set[str]:
@@ -636,12 +647,41 @@ class TestTheModuleHasExactlyOneRemainingConversionSurface:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and _unguarded_float_calls_in(node)
         }
 
-    def test_the_remaining_surface_is_exactly_the_container_guards(self) -> None:
+    def test_the_remaining_surface_is_exactly_the_post_validation_conversions(self) -> None:
         assert self._converting_unprotected() == set(self.EXPECTED_REMAINING)
 
     def test_no_scalar_guard_is_among_them(self) -> None:
-        """This change's claim, stated over the module rather than over a list."""
+        """#1874's claim, stated over the module rather than over a list."""
         assert self._converting_unprotected().isdisjoint({guard.name for guard in CONVERTING})
+
+    def test_the_vector_guard_no_longer_converts_unprotected(self) -> None:
+        """#1875's half of the claim: the one guard that converts a *new* value."""
+        assert "finite_vector_error" not in self._converting_unprotected()
+
+    @pytest.mark.parametrize("name", sorted(EXPECTED_REMAINING))
+    def test_each_remaining_conversion_is_preceded_by_the_validating_call(self, name: str) -> None:
+        """The structural half of the invariant the docstring above claims.
+
+        A conversion that is safe *because* something upstream already made it
+        safe is only safe while that call is still there, and still first. So the
+        validating call is asserted to appear in the function, and to appear on an
+        earlier line than any conversion the scan flagged. Reordering the two, or
+        dropping the guard, fails here rather than at a caller.
+        """
+        fn = ast.parse(inspect.getsource(getattr(utils, name)).lstrip())
+        validated = [
+            node.lineno
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in self.VALIDATORS
+        ]
+        converted = [
+            node.lineno
+            for node in ast.walk(fn)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "float"
+        ]
+        assert validated, f"{name} converts without calling any of {sorted(self.VALIDATORS)}"
+        assert converted, f"{name} was flagged as converting but no float() call was found"
+        assert min(validated) < min(converted), f"{name} converts before it validates"
 
     #: Each container guard called with an outsized element, through the public
     #: entry point a caller actually reaches: ``coerce_pose_vector`` is reached
@@ -659,16 +699,17 @@ class TestTheModuleHasExactlyOneRemainingConversionSurface:
         [probe for _, probe in CONTAINER_PROBES],
         ids=[name for name, _ in CONTAINER_PROBES],
     )
-    def test_every_container_guard_still_raises_on_an_outsized_element(self, call: Callable[[], Any]) -> None:
-        """Pinned so #1875's widened scope is a measurement, not a remark.
+    def test_every_container_guard_now_answers_an_outsized_element(self, call: Callable[[], Any]) -> None:
+        """The inverse of the row this replaces, which pinned all four raising.
 
-        The escape is uniform across the four: every one of them raises
-        ``OverflowError``, so a fix there can treat them as one class. Replace
-        this when #1875 is settled rather than deleting it, per the premise-test
-        guidance in ``AGENTS.md``.
+        Behaviour is what the invariant is ultimately about, so it is asserted
+        directly rather than inferred from the scan: whether a guard's conversion
+        is protected locally or upstream, no caller may see an ``OverflowError``.
         """
-        with pytest.raises(OverflowError):
-            call()
+        result = call()
+        message = result if isinstance(result, str) else result[1]
+        assert message is not None
+        assert "within the range of a 64-bit float" in message
 
     def test_the_probes_reach_the_conversion_rather_than_a_label_check(self) -> None:
         """Control: each probe must fail *on its element*, not on its own shape.

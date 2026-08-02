@@ -480,6 +480,77 @@ def _describe_unrenderable(value: Any) -> str:
     return f"<unrepresentable {type(value).__name__}>"
 
 
+def _refusal_container_repr(value: Any) -> str:
+    """``repr(value)`` for a refusal that reports a whole container, elementwise if it must.
+
+    The container counterpart to :func:`_refusal_repr`, and the reason the two
+    cannot be one function. ``repr`` of a list recurses into its elements, so a
+    container is unrenderable whenever any *one* of its elements is, and
+    :func:`_refusal_repr`'s whole-value fallback would answer that with
+    ``<unrepresentable list>`` - erasing every element that rendered perfectly
+    well, and the element count with them. That count is frequently the entire
+    reason for the refusal (``must be a 3-element vector, got 4``), so a
+    container needs a *rendering* rather than a fallback.
+
+    ``repr`` is tried on the whole container first, so a container that can
+    render itself is reported in exactly the text it was before this existed -
+    including a ``tuple``, a ``dict`` and a NumPy array, whose own reprs
+    (``(1.0, 2.0)``, ``{'a': 1}``, ``array([1., 2.])``) no elementwise form
+    reproduces. Only when that raises is the container described component by
+    component, substituting just the components that cannot print::
+
+        [1.0, <int of 16610 bits>, 3.0]
+
+    The offending component is located by its **position**, not by an inserted
+    index, so the fallback keeps the shape of the ``repr`` it stands in for.
+    Every guard that names an index does so in its own text (``{param}[{i}]``),
+    which is unchanged; an index inserted here too would state it twice, in two
+    forms that could disagree.
+
+    Nothing is elided. Truncating would erase elements that rendered fine, which
+    is the exact failure of the whole-value fallback this exists to avoid, and
+    ``repr`` of a long container - the text this stands in for - is not
+    truncated either.
+
+    A :class:`~collections.abc.Mapping` is rendered as a mapping rather than as
+    the list of its keys, because :func:`name_list_error` refuses one *for*
+    discarding its values: a message showing only the keys would perform the
+    discarding it is complaining about.
+
+    The rendering is one level deep. These containers carry scalars by contract -
+    a nested list is itself a refusal reason, reported as ``elements must be
+    numbers`` - so an inner container's contents are never what the message is
+    about, and recursing would additionally have to track what it had already
+    visited to terminate on a self-referential value, which the interpreter's own
+    ``repr`` does for the fast path above and a hand-written walk would not.
+
+    Args:
+        value: The rejected container.
+
+    Returns:
+        Its ``repr``; an elementwise rendering when that raises; or a bracketed
+        description when ``value`` cannot be iterated either, which is
+        :func:`_refusal_repr`'s answer for a value that is not a container at
+        all - every one of these guards accepts ``Any``, so a scalar reaches
+        them too.
+    """
+    try:
+        return repr(value)
+    except Exception:
+        pass
+    if isinstance(value, Mapping):
+        try:
+            items = list(value.items())
+        except Exception:
+            return _describe_unrenderable(value)
+        return "{" + ", ".join(f"{_refusal_repr(key)}: {_refusal_repr(val)}" for key, val in items) + "}"
+    try:
+        elements = list(value)
+    except Exception:
+        return _describe_unrenderable(value)
+    return "[" + ", ".join(_refusal_repr(element) for element in elements) + "]"
+
+
 def _beyond_float_range(value: Any) -> bool:
     """Whether ``float(value)`` overflows, i.e. no float64 stands for ``value``.
 
@@ -1010,28 +1081,30 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     if isinstance(value, str | bytes):
         shown = value.decode(errors="replace") if isinstance(value, bytes) else value
         return (
-            f"{context}: {param} must be a list of names, not a single string, got {value!r}. "
+            f"{context}: {param} must be a list of names, not a single string, "
+            f"got {_refusal_container_repr(value)}. "
             f"A string is iterable per character, so this would be read as "
             f"{[c for c in shown][:6]}{' ...' if len(shown) > 6 else ''} "
-            f"({len(shown)} name(s)). Wrap it in a list: [{shown!r}]."
+            f"({len(shown)} name(s)). Wrap it in a list: [{_refusal_repr(shown)}]."
         )
     if isinstance(value, Mapping):
         return (
-            f"{context}: {param} must be a list of names, not a mapping, got {value!r}. "
+            f"{context}: {param} must be a list of names, not a mapping, "
+            f"got {_refusal_container_repr(value)}. "
             f"A mapping is iterable over its keys, so its values would be discarded - "
-            f"pass the names as a list: {list(value)!r}."
+            f"pass the names as a list: {_refusal_container_repr(list(value))}."
         )
     if not isinstance(value, Sequence):
         return (
             f"{context}: {param} must be a list of names, got {type(value).__name__} "
-            f"({value!r}). Pass a list or tuple; a one-shot iterator cannot be used "
+            f"({_refusal_container_repr(value)}). Pass a list or tuple; a one-shot iterator cannot be used "
             f"because the value is read more than once."
         )
     for i, entry in enumerate(value):
         if not isinstance(entry, str):
-            return f"{context}: {param}[{i}] must be a name (str), got {type(entry).__name__} ({entry!r})."
+            return f"{context}: {param}[{i}] must be a name (str), got {type(entry).__name__} ({_refusal_repr(entry)})."
         if not entry.strip():
-            return f"{context}: {param}[{i}] must be a non-blank name, got {entry!r}."
+            return f"{context}: {param}[{i}] must be a non-blank name, got {_refusal_repr(entry)}."
     seen: set[str] = set()
     repeated: set[str] = set()
     for entry in value:
@@ -1040,8 +1113,8 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
         seen.add(entry)
     if repeated:
         return (
-            f"{context}: {param} must not repeat a name, got {list(value)!r} "
-            f"({sorted(repeated)!r} appears more than once)."
+            f"{context}: {param} must not repeat a name, got {_refusal_container_repr(list(value))} "
+            f"({_refusal_container_repr(sorted(repeated))} appears more than once)."
         )
     return None
 
@@ -1087,7 +1160,7 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
     try:
         iter(vec)
     except TypeError:
-        return f"{method}: '{param_name}' must be a list/tuple of numbers, got {vec!r}"
+        return f"{method}: '{param_name}' must be a list/tuple of numbers, got {_refusal_container_repr(vec)}"
     for _elem in vec:
         # ``numbers.Real`` accepts a numpy scalar (``np.float32`` / ``np.int64``
         # are registered) and rejects a string, ``None`` or a nested list.
@@ -1097,12 +1170,30 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
         # here keeps the direct API and the tool surface in step.
         if is_boolean(_elem):
             return (
-                f"{method}: '{param_name}' elements must be numbers, not a bool (got {vec!r}). {BOOLEAN_VECTOR_REASON}"
+                f"{method}: '{param_name}' elements must be numbers, not a bool "
+                f"(got {_refusal_container_repr(vec)}). {BOOLEAN_VECTOR_REASON}"
             )
         if not isinstance(_elem, numbers.Real):
-            return f"{method}: '{param_name}' elements must be numbers, got {vec!r}"
-        if not math.isfinite(float(_elem)):
-            return f"{method}: '{param_name}' must contain finite numbers (no nan/inf), got {vec!r}"
+            return f"{method}: '{param_name}' elements must be numbers, got {_refusal_container_repr(vec)}"
+        # An element past the float64 range is a *magnitude* complaint and gets
+        # its own reason, exactly as the scalar guards give one (#1874). The
+        # order matters: ``_beyond_float_range`` answers only ``OverflowError``,
+        # so a registered ``numbers.Real`` with no working ``__float__`` falls
+        # through to the not-a-number text below rather than being mis-reported
+        # as out of range.
+        if _beyond_float_range(_elem):
+            return (
+                f"{method}: '{param_name}' must contain numbers within the range of a 64-bit float, "
+                f"got {_refusal_container_repr(vec)}"
+            )
+        try:
+            numeric = float(_elem)
+        except Exception:
+            return f"{method}: '{param_name}' elements must be numbers, got {_refusal_container_repr(vec)}"
+        if not math.isfinite(numeric):
+            return (
+                f"{method}: '{param_name}' must contain finite numbers (no nan/inf), got {_refusal_container_repr(vec)}"
+            )
     return None
 
 
@@ -1128,9 +1219,15 @@ def pose_vector_error(method: str, param_name: str, vec: Any, expected_len: int)
     try:
         length = len(vec)
     except TypeError:
-        return f"{method}: '{param_name}' must be a list/tuple of {expected_len} numbers, got {vec!r}"
+        return (
+            f"{method}: '{param_name}' must be a list/tuple of {expected_len} numbers, "
+            f"got {_refusal_container_repr(vec)}"
+        )
     if length != expected_len:
-        return f"{method}: '{param_name}' must be a {expected_len}-element vector, got {length} ({vec!r})"
+        return (
+            f"{method}: '{param_name}' must be a {expected_len}-element vector, "
+            f"got {length} ({_refusal_container_repr(vec)})"
+        )
     return finite_vector_error(method, param_name, vec)
 
 
@@ -1224,7 +1321,7 @@ def coerce_rgba(method: str, param_name: str, color: Any) -> tuple[list[float] |
         return None, None
     length = sequence_length(color)
     if length is None:
-        return None, f"{method}: '{param_name}' must be a sequence of numbers, got {color!r}"
+        return None, f"{method}: '{param_name}' must be a sequence of numbers, got {_refusal_container_repr(color)}"
     if (err := finite_vector_error(method, param_name, color)) is not None:
         return None, err
     floats = [float(component) for component in color]
@@ -1303,11 +1400,11 @@ def coerce_size_vector(method: str, param_name: str, size: Any) -> tuple[list[fl
     if length is None:
         # Reachable only for something iterable but unsized - a generator, which
         # the check above has now consumed, so there is nothing left to store.
-        return None, f"{method}: '{param_name}' must be a list/tuple of numbers, got {size!r}"
+        return None, f"{method}: '{param_name}' must be a list/tuple of numbers, got {_refusal_container_repr(size)}"
     if length == 0:
         return None, (
             f"{method}: '{param_name}' must have at least one component, got an empty "
-            f"vector ({size!r}). An empty '{param_name}' is a component count, not an "
+            f"vector ({_refusal_container_repr(size)}). An empty '{param_name}' is a component count, not an "
             f"omission - omit '{param_name}' to take the default extent."
         )
     return [float(component) for component in size], None
