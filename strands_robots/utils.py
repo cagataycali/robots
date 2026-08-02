@@ -504,10 +504,7 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     message = f"{context}: {param} must be a positive whole number, got {value!r}."
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return message
-    try:
-        numeric = float(value)
-    except (OverflowError, ValueError):
-        return message
+    numeric = float(value)
     # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it
     # out of the integrality check below.
     if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 1:
