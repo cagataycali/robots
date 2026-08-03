@@ -217,6 +217,47 @@ hatch run format            # ruff check --fix, ruff format
    `BLOCKED` while the required check runs, then `UNSTABLE` - mergeable, with an
    advisory context red - or `CLEAN`.
 
+   That trust has a reader attached to it, which the sentence above does not say.
+   `mergeStateStatus` answers *can the viewer merge this pull request*, so it is
+   scoped to the token that asks - and on a pull request editing
+   `.github/workflows/**` the Actions `GITHUB_TOKEN` can never read anything but
+   `BLOCKED`, because an installation token is refused writes to workflow files
+   and therefore genuinely cannot perform that merge. **Read the gate with
+   `PAT_TOKEN`.** A control pair, both approved with no unresolved thread and
+   `call-test-lint` `SUCCESS`, read minutes apart:
+
+   | PR | edits `.github/workflows/**` | `GITHUB_TOKEN` | `PAT_TOKEN` | truth |
+   |---|---|---|---|---|
+   | #1915 | yes (`pr-and-push.yml`) | `BLOCKED` | `CLEAN` | merged clean, `f4dfde6` |
+   | #1902 | no | `CLEAN` | `CLEAN` | merged clean, `6cf0470` |
+
+   The mechanism isolates to one variable - same token, same scratch branch, same
+   instant, via `PUT /repos/{owner}/{repo}/contents/{path}`:
+
+   ```
+   zz_probe.txt                    GITHUB_TOKEN -> created
+   .github/workflows/zz_probe.yml  GITHUB_TOKEN -> Resource not accessible by integration
+   .github/workflows/zz_probe.yml  PAT_TOKEN    -> created
+   ```
+
+   So a `BLOCKED` read that way is neither a bug nor staleness; it is the honest
+   answer to the question the field asks. Staleness is separately ruled out:
+   `mergeable_state` on #1899 and #1035 reads `unknown` first and the settled
+   value second **for both tokens identically**, so the lazy first read is
+   per-PR, not per-viewer. `mergeable` agrees across tokens throughout - a text
+   conflict is viewer-independent, and only mergeability-*by-you* is not.
+
+   What makes this expensive is that the wrong answer is indistinguishable from a
+   right one. On a genuinely blocked PR both tokens read `blocked`, so their
+   agreement proves nothing, and the Actions token's answer on a
+   workflow-touching PR is always blocked-or-unknown. No reading of the field
+   separates the two cases. The agent then polls the gate exactly as documented,
+   correctly declines to merge, and reports the PR as waiting on a reviewer -
+   which is the presentation #1905 records for a different cause, and which had
+   stood in eight consecutive scheduled scan summaries as "reviewer bandwidth is
+   the sole constraint". It bites CI and process pull requests specifically,
+   because those are the ones carrying workflow edits. See #1917.
+
    This is worth the words because the failure mode is silent and expensive in the
    opposite direction from the usual one. Treating an advisory red as a merge
    blocker does not look like a mistake; it looks like diligence, and it costs a
