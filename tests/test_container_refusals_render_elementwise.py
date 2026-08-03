@@ -794,14 +794,21 @@ class TestEveryContainerGuardRoutesThroughTheRenderer:
 
     #: The guards this module owns. ``coerce_pose_vector`` renders nothing itself
     #: (every message it returns comes from ``pose_vector_error``), so it is
-    #: absent here and covered by the behavioural rows instead.
+    #: absent here and covered by the behavioural rows instead. The two read
+    #: helpers are here because since #1906 they are where the rendering happens:
+    #: they hold the element read the two vector guards return a verdict from.
     RENDERING_GUARDS = (
+        "_read_finite_vector",
+        "_read_pose_vector",
         "coerce_rgba",
         "coerce_size_vector",
         "finite_vector_error",
         "name_list_error",
         "pose_vector_error",
     )
+
+    #: The helpers a guard may compute its verdict from, whose own body renders.
+    READ_HELPERS = frozenset({"_read_finite_vector", "_read_pose_vector"})
 
     @staticmethod
     def _function(name: str) -> ast.FunctionDef:
@@ -811,13 +818,27 @@ class TestEveryContainerGuardRoutesThroughTheRenderer:
                 return node
         raise AssertionError(f"{name} not found in utils.py")
 
-    @pytest.mark.parametrize("name", RENDERING_GUARDS)
-    def test_the_guard_calls_the_elementwise_renderer(self, name: str) -> None:
-        called = {
+    @classmethod
+    def _calls(cls, name: str) -> set[str]:
+        return {
             node.func.id
-            for node in ast.walk(self._function(name))
+            for node in ast.walk(cls._function(name))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
         }
+
+    @pytest.mark.parametrize("name", RENDERING_GUARDS)
+    def test_the_guard_calls_the_elementwise_renderer(self, name: str) -> None:
+        """Followed one hop into the read helper a guard delegates its verdict to.
+
+        Since #1906 ``finite_vector_error`` and ``pose_vector_error`` return the
+        message ``_read_finite_vector`` / ``_read_pose_vector`` built, so scanning
+        the guard's own body alone would read that delegation as a guard that names
+        nothing it refused. One hop is enough because the helpers are rows here in
+        their own right, so nothing is taken on trust from the hop.
+        """
+        called = self._calls(name)
+        for helper in called & self.READ_HELPERS:
+            called |= self._calls(helper)
         assert "_refusal_container_repr" in called
 
     @pytest.mark.parametrize("name", RENDERING_GUARDS)

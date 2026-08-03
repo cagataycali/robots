@@ -779,7 +779,9 @@ GUARDED_READERS = frozenset(
     {
         "_describe_failed_read",
         "_describe_unrenderable",
+        "_read_finite_vector",
         "_read_name_list",
+        "_read_pose_vector",
         "_read_to_quote",
         "_refusal_container_repr",
         "_refusal_repr",
@@ -890,21 +892,20 @@ def _scan_unguarded_message_reads(source: str) -> dict[str, tuple[tuple[str, str
 
 
 #: The reads still outstanding, which is what this scan was written to surface.
-#: ``name_list_error`` came off the table with #1903 - five reads across two
-#: branches, one of them filed and four of them not - and the three the scan found
-#: beside it are #1906: each coercion validates its value with a guard that reads
-#: it and then reads it again to build the floats, so a value that answers one
-#: read and refuses the next escapes. Two of the three are on the *accepted* path
-#: rather than in a message, which is why they are a tracked boundary here rather
-#: than absorbed into #1903 - and why ``coerce_rgba`` is the one that breaks a
-#: stated contract, its second read being quoted by the wrong-length refusal.
-#: :class:`TestTheCoercionsSecondReadIsAStatedBoundary` measures the escape, so
-#: emptying this table and replacing that pin are one change.
-KNOWN_MESSAGE_READS: dict[str, tuple[tuple[str, str], ...]] = {
-    "coerce_pose_vector": (("vec", "comprehension"),),
-    "coerce_rgba": (("color", "comprehension"),),
-    "coerce_size_vector": (("size", "comprehension"),),
-}
+#: Empty, and both entries came off it the same way. ``name_list_error`` went with
+#: #1903 - five reads across two branches, one of them filed and four of them not -
+#: and the three coercions the scan found beside it went with #1906: each validated
+#: its value with a guard that reads it and then read it again, unguarded, to build
+#: the floats. That read now lives in ``_read_finite_vector`` / ``_read_pose_vector``,
+#: which return the floats they read, so a coercion's result and the components its
+#: refusal quotes are one list rather than two independent reads of the same value.
+#:
+#: An empty table is the load-bearing state here rather than a satisfied one: a new
+#: guard that reads a caller value outside a ``try`` shows up as an entry nobody
+#: wrote, which is why the assertion is stated over the module instead of over a
+#: list of guards. :class:`TestTheCoercionsReadTheirValueOnce` holds the behaviour
+#: this emptiness is the scan-level statement of.
+KNOWN_MESSAGE_READS: dict[str, tuple[tuple[str, str], ...]] = {}
 
 
 class TestNoGuardRendersACallerValueDirectly:
@@ -943,15 +944,36 @@ class TestNoGuardRendersACallerValueDirectly:
         and would return a message that no longer says what was refused. Now that
         the table is empty this is the whole of the load-bearing half, and it
         covers the container guards as well as the scalar ones.
+
+        Followed through the module's own calls rather than stopping at the guard's
+        body, because a guard may compute its verdict from a read helper that does
+        the rendering: since #1906 ``finite_vector_error`` and ``pose_vector_error``
+        return the message ``_read_finite_vector`` / ``_read_pose_vector`` built, and
+        a body-only reading calls that a guard naming nothing. Transitive is the
+        weaker statement of the two, so the reachable set is what the assertion is
+        over - a guard whose whole call graph renders nothing still fails.
         """
         tree = ast.parse(self._source())
+        defined = {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
         owned = set(GUARD_IDS) | CONTAINER_GUARDS | {"validation_split_error"}
         renderers = {"_refusal_repr", "_refusal_str", "_refusal_container_repr"}
-        for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name in owned]:
-            called = {
-                node.func.id for node in ast.walk(fn) if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-            }
-            assert called & renderers, f"{fn.name} renders no value through a shared renderer"
+        for name in sorted(owned & set(defined)):
+            reached: set[str] = set()
+            pending = [name]
+            while pending:
+                current = pending.pop()
+                if current in reached:
+                    continue
+                reached.add(current)
+                body = defined.get(current)
+                if body is None:
+                    continue
+                pending += [
+                    node.func.id
+                    for node in ast.walk(body)
+                    if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                ]
+            assert reached & renderers, f"{name} renders no value through a shared renderer"
 
     def test_the_scanner_reports_a_planted_repr_omission(self) -> None:
         """Without this, an empty result could mean a scanner matching nothing."""
@@ -1184,60 +1206,87 @@ class FailsOnItsSecondNumericRead(Sequence[Any]):
         return self.values[index]
 
 
-class TestTheCoercionsSecondReadIsAStatedBoundary:
-    """Measured while closing #1903, out of scope there, and filed as #1906.
+class TestTheCoercionsReadTheirValueOnce:
+    """Each coercion's floats come from the read its guard already made (#1906).
 
-    The read-side scan's first find beyond the guard #1903 was about. Each
-    coercion validates its value with a guard that reads it - ``pose_vector_error``
-    or ``finite_vector_error``, both of which read element by element inside a
-    ``try`` since #1889 - and then reads it again, unguarded, to build the floats.
-    The reads are independent, so nothing obliges them to agree, which is #1897's
-    finding on three guards that fix could not reach.
+    Replaces ``TestTheCoercionsSecondReadIsAStatedBoundary`` rather than deleting
+    it, per the guidance that a premise test invalidated by a fix is re-pinned
+    instead of dropped: what it measured was a value read exactly once, asserted in
+    the raising direction because the second read escaped. The boundary is gone, so
+    the same probe is asserted in the accepting direction - the value it raised on
+    is the value it now returns floats for.
 
-    It is not absorbed into #1903 because two of the three reads are on the
-    **accepted** path and build the return value rather than a message, so "a
-    refusal must not raise" does not reach them and the family's usual argument
-    does not apply unchanged. ``coerce_rgba`` is the exception - its second read is
-    quoted by the wrong-length refusal - and it is why #1906 is a bug rather than a
-    hardening request. Fixing it properly means the shared numeric validators
-    return the list they read, which is a signature change on guards with many
-    callers and a decision of its own.
-
-    Pinned so the boundary is a measurement rather than a claim, and so that
-    closing #1906 has to replace this class and empty ``KNOWN_MESSAGE_READS`` in
-    one change rather than pass either silently.
+    Two of the three reads are on the **accepted** path and build the return value,
+    which is why two of these assertions are about a returned vector rather than a
+    refusal. ``coerce_rgba``'s is the one a refusal quotes, and it gets the
+    refusal-shaped assertion the contract asks for.
     """
 
-    def test_the_three_coercions_raise_on_a_value_that_refuses_a_second_read(self) -> None:
+    def test_the_three_coercions_accept_a_value_that_refuses_a_second_read(self) -> None:
         """Called one by one rather than looped over: the three signatures differ.
 
         ``coerce_pose_vector`` takes the component count the others infer, so a
         loop over ``(guard, args)`` pairs would hide that behind a ``*args`` splat
         no reader - and no static analysis - can check against either signature.
         """
-        with pytest.raises(RuntimeError, match="no second read for you"):
-            utils.coerce_pose_vector("add_object", "position", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3), 3)
-        with pytest.raises(RuntimeError, match="no second read for you"):
-            utils.coerce_rgba("add_object", "color", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3))
-        with pytest.raises(RuntimeError, match="no second read for you"):
-            utils.coerce_size_vector("add_object", "size", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3))
+        assert utils.coerce_pose_vector("add_object", "position", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3), 3) == (
+            [0.1, 0.2, 0.3],
+            None,
+        )
+        assert utils.coerce_rgba("add_object", "color", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3)) == (
+            [0.1, 0.2, 0.3, 1.0],
+            None,
+        )
+        assert utils.coerce_size_vector("add_object", "size", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3)) == (
+            [0.1, 0.2, 0.3],
+            None,
+        )
 
-    def test_coerce_rgba_escapes_on_the_path_that_exists_to_return_text(self) -> None:
-        """The one of the three that breaks a stated contract, which #1906 turns on.
+    def test_each_coercion_reads_the_value_exactly_once(self) -> None:
+        """The read count itself, which is the property rather than its symptom.
 
-        Two components is a refusal, and the value never reaches it: the second
-        read happens before the length is compared, so the guard raises on exactly
-        the path documented never to.
+        A coercion that read twice and tolerated a failing second read would
+        satisfy the assertions above while still computing its floats from a read
+        nothing obliged to agree with the checked one - the half of #1906 that is
+        about agreement rather than about the escape.
         """
+        position = FailsOnItsSecondNumericRead(0.1, 0.2, 0.3)
+        utils.coerce_pose_vector("add_object", "position", position, 3)
+        assert position.reads == 1
+        color = FailsOnItsSecondNumericRead(0.1, 0.2, 0.3)
+        utils.coerce_rgba("add_object", "color", color)
+        assert color.reads == 1
+        size = FailsOnItsSecondNumericRead(0.1, 0.2, 0.3)
+        utils.coerce_size_vector("add_object", "size", size)
+        assert size.reads == 1
+
+    def test_coerce_rgba_answers_on_the_path_that_exists_to_return_text(self) -> None:
+        """The one of the three that broke a stated contract, which #1906 turned on.
+
+        Two components is a refusal, and the value never reached it: the second read
+        happened before the length was compared, so the guard raised on exactly the
+        path documented never to. It now returns that refusal, and the components it
+        quotes are the ones the domain checks examined rather than a second read's.
+        """
+        floats, err = utils.coerce_rgba("add_object", "color", FailsOnItsSecondNumericRead(0.1, 0.2))
+        assert floats is None
+        assert err is not None
+        assert "must have exactly 3 or 4 component(s)" in err
+        assert "got 2: [0.1, 0.2]" in err
+
+    def test_the_probe_still_refuses_a_second_read(self) -> None:
+        """Non-vacuity: a probe that had stopped refusing would pass everything above.
+
+        It is the same fixture #1897 used, so this also states what the read count
+        above is counting - one full read, and the next one raising.
+        """
+        probe = FailsOnItsSecondNumericRead(0.1, 0.2, 0.3)
+        assert [float(component) for component in probe] == [0.1, 0.2, 0.3]
         with pytest.raises(RuntimeError, match="no second read for you"):
-            utils.coerce_rgba("add_object", "color", FailsOnItsSecondNumericRead(0.1, 0.2))
+            [float(component) for component in probe]  # noqa: B018
 
     def test_the_guard_read_once_does_not_escape(self) -> None:
-        """Non-vacuity: the probe is answerable, and #1897's guard answers it.
-
-        Without this the three failures above could be a probe no guard could ever
-        accept rather than a read count.
-        """
+        """The family control: #1897's guard on the same probe, unchanged."""
         assert utils.name_list_error(FailsOnItsSecondNumericRead("top", "wrist"), "cameras", "render_all") is None
 
 
