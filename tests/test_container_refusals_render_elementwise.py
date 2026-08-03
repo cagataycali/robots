@@ -72,7 +72,7 @@ import math
 import numbers
 import pathlib
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -1182,3 +1182,354 @@ class TestElementProductionIsAnsweredNotEscaped:
         vector = CountedRead(0.1, "not a number", 0.3)
         assert finite_vector_error("raycast", "origin", vector) is not None
         assert vector.produced == 2
+
+
+class HostileNameSeq(Sequence[Any]):
+    """A registered ``Sequence`` whose item access raises - #1897's own probe.
+
+    ``name_list_error`` tests ``isinstance(value, Sequence)`` and then walked the
+    value, so this cleared the type check and escaped from the walk.
+    ``collections.abc.Sequence`` is what a proxy or a lazily-backed name list
+    subclasses in order to be accepted here at all, which is why the type check
+    passing says nothing about the read succeeding.
+    """
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: Any) -> Any:
+        raise RuntimeError("seq item exploded")
+
+
+class NamesThenFailure(Sequence[Any]):
+    """Produces two usable names and then fails, so the index is a measurement."""
+
+    def __len__(self) -> int:
+        return 3
+
+    def __getitem__(self, index: Any) -> Any:
+        if index < 2:
+            return ("top", "wrist")[index]
+        raise RuntimeError("backing store unavailable")
+
+
+class HostileNameIteration(Sequence[Any]):
+    """A ``Sequence`` whose ``__iter__`` raises, so no entry is ever produced."""
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: Any) -> Any:
+        return "wrist"
+
+    def __iter__(self) -> Iterator[str]:
+        raise RuntimeError("no iteration for you")
+
+
+class UnprintableNameFailure(Sequence[Any]):
+    """Item access raises an exception that cannot itself be rendered.
+
+    The refusal for a failed read interpolates an exception supplied by the same
+    hostile value, so without this probe that interpolation is #1873's rendering
+    escape again, one level inside the fix for #1897.
+    """
+
+    def __repr__(self) -> str:
+        raise RuntimeError("no repr for you")
+
+    def __len__(self) -> int:
+        return 2
+
+    def __getitem__(self, index: Any) -> Any:
+        raise UnprintableFailureError
+
+
+class CountedNameSeq(Sequence[Any]):
+    """A ``Sequence`` recording how many times it was read from start to end.
+
+    The read count is the invariant #1897 turns on. It is a property of the
+    guard, not of any one message, so nothing in the refusal text would reveal a
+    regression to two reads.
+    """
+
+    def __init__(self, *names: Any) -> None:
+        self.names = names
+        self.reads = 0
+
+    def __len__(self) -> int:
+        return len(self.names)
+
+    def __iter__(self) -> Iterator[Any]:
+        self.reads += 1
+        return iter(self.names)
+
+    def __getitem__(self, index: Any) -> Any:
+        return self.names[index]
+
+
+class DifferentOnItsSecondRead(Sequence[Any]):
+    """Answers its first read with distinct names and its second with a repeat.
+
+    Nothing obliges a ``Sequence`` to answer two reads the same way, and the
+    guard used to run its per-entry checks against one read and its duplicate
+    check against another.
+    """
+
+    def __init__(self) -> None:
+        self.reads = 0
+
+    def __len__(self) -> int:
+        return 2
+
+    def __iter__(self) -> Iterator[str]:
+        self.reads += 1
+        return iter(("top", "wrist") if self.reads == 1 else ("top", "top"))
+
+    def __getitem__(self, index: Any) -> Any:
+        return ("top", "wrist")[index]
+
+
+class FailsOnItsSecondRead(Sequence[Any]):
+    """One clean read, then raises - so only the duplicate walk reached it."""
+
+    def __init__(self) -> None:
+        self.reads = 0
+
+    def __len__(self) -> int:
+        return 2
+
+    def __iter__(self) -> Iterator[str]:
+        self.reads += 1
+        if self.reads > 1:
+            raise RuntimeError("second read refused")
+        return iter(("top", "wrist"))
+
+    def __getitem__(self, index: Any) -> Any:
+        return ("top", "wrist")[index]
+
+
+class RepeatedThenFailsOnItsThirdRead(Sequence[Any]):
+    """Two clean reads naming a repeat, then raises - the refusal's own read."""
+
+    def __init__(self) -> None:
+        self.reads = 0
+
+    def __len__(self) -> int:
+        return 2
+
+    def __iter__(self) -> Iterator[str]:
+        self.reads += 1
+        if self.reads > 2:
+            raise RuntimeError("third read refused")
+        return iter(("top", "top"))
+
+    def __getitem__(self, index: Any) -> Any:
+        return "top"
+
+
+class HostileKeyMapping(Mapping[str, str]):
+    """A ``Mapping`` whose key iteration raises, reached by the remedy's read."""
+
+    def __len__(self) -> int:
+        return 1
+
+    def __getitem__(self, key: str) -> str:
+        return "camera"
+
+    def __iter__(self) -> Iterator[str]:
+        raise RuntimeError("no keys for you")
+
+
+class TestTheNameListIsReadOnceAndAnsweredNotEscaped:
+    """``name_list_error`` reads the caller's value once, and answers a read that fails (#1897).
+
+    The seventh escape in the family - rendering (#1873), scalar conversion
+    (#1874), container conversion (#1875), ``__iter__`` (#1878), the shared length
+    probe (#1888), element production (#1889) - and the one member
+    :class:`TestElementProductionIsAnsweredNotEscaped` could not reach, because
+    ``name_list_error`` refuses that class's probes on ``isinstance(value,
+    Sequence)`` before arriving at a walk.
+
+    The defect was wider than a walk. The guard read the caller's value on every
+    branch that needed it and guarded none of them: the per-entry walk, the
+    duplicate walk, and the duplicate refusal's own ``list(value)``. So an
+    acceptable value was read **twice** and a repeated one **three times**, and a
+    value that answers one read could break the guard on any of the others.
+
+    Reading once also settles a verdict that had nothing to do with an exception.
+    The reads were independent, so a value whose contents differ between two of
+    them was refused against a list no check had examined - measured by
+    :meth:`test_the_duplicate_verdict_is_about_the_entries_that_were_checked`.
+
+    The read is still entry by entry rather than ``list(value)``, so the refusal
+    can name where it stopped. That is the same reason #1889 declined to
+    materialise, reached from the opposite direction: this guard collects the
+    whole value either way, because a repeat cannot be ruled out without reading
+    every entry, so laziness buys it no earlier verdict - only the index.
+    """
+
+    def test_a_registered_sequence_whose_item_access_raises_is_refused(self) -> None:
+        """The escape #1897 filed, with the probe it filed it with."""
+        assert isinstance(HostileNameSeq(), Sequence)
+        message = name_list_error(HostileNameSeq(), "cameras", "render_all")
+        assert message is not None
+        assert "render_all: cameras[0] could not be read" in message
+
+    def test_the_refusal_names_the_exception_that_stopped_the_read(self) -> None:
+        """The type and text are the diagnostic content of the traceback it replaces."""
+        message = name_list_error(HostileNameSeq(), "cameras", "render_all")
+        assert message is not None
+        assert "RuntimeError" in message
+        assert "seq item exploded" in message
+
+    def test_a_read_that_fails_part_way_names_the_entry_it_stopped_at(self) -> None:
+        """Two names were read and found usable, which the index states."""
+        message = name_list_error(NamesThenFailure(), "cameras", "render_all")
+        assert message is not None
+        assert "cameras[2] could not be read" in message
+        assert "backing store unavailable" in message
+
+    def test_the_index_is_a_position_and_not_a_constant(self) -> None:
+        """Non-vacuity of the index: a hard-coded ``[0]`` would pass everything above."""
+
+        class FailsAt(Sequence[Any]):
+            def __init__(self, position: int) -> None:
+                self.position = position
+
+            def __len__(self) -> int:
+                return self.position + 1
+
+            def __getitem__(self, index: Any) -> Any:
+                if index < self.position:
+                    return f"cam{index}"
+                raise RuntimeError("halted")
+
+        for position in (0, 1, 2):
+            message = name_list_error(FailsAt(position), "cameras", "render_all")
+            assert message is not None
+            assert f"cameras[{position}] could not be read" in message
+
+    def test_a_read_that_never_began_is_reported_without_an_index(self) -> None:
+        """No entry was produced, so there is none to name - the index is the measurement.
+
+        The two stems are ``finite_vector_error``'s own, so this introduces no
+        vocabulary; what differs is the remedy, which is worded for names.
+        """
+        message = name_list_error(HostileNameIteration(), "cameras", "render_all")
+        assert message is not None
+        assert "render_all: cameras could not be iterated" in message
+        assert "no iteration for you" in message
+        assert "could not be read" not in message
+        assert "cameras[0]" not in message
+
+    def test_it_does_not_claim_the_entry_was_not_a_name(self) -> None:
+        """The domain check never ran on an entry that could not be produced.
+
+        Reusing the per-entry text would report a check that did not run, which
+        is #1878's lesson and the reason that fix was not folded into #1875.
+        """
+        unread = name_list_error(HostileNameSeq(), "cameras", "render_all")
+        not_a_name = name_list_error([1], "cameras", "render_all")
+        assert unread is not None and not_a_name is not None
+        assert "must be a name (str)" in not_a_name
+        assert "must be a name (str)" not in unread
+        assert "must be a list of names" not in unread
+
+    def test_an_exception_whose_own_str_raises_does_not_reescape(self) -> None:
+        """The fix must not reintroduce #1873 inside its own message."""
+        message = name_list_error(UnprintableNameFailure(), "cameras", "render_all")
+        assert message is not None
+        assert "could not be read" in message
+        assert "UnprintableFailureError" in message
+
+    def test_the_value_is_read_exactly_once(self) -> None:
+        """The invariant no message would reveal, on all three of its outcomes.
+
+        An accepted value was read twice before this and a repeated one three
+        times, so a count is the only assertion that can hold the guard to one.
+        """
+        accepted = CountedNameSeq("top", "wrist")
+        assert name_list_error(accepted, "cameras", "render_all") is None
+        assert accepted.reads == 1
+
+        per_entry = CountedNameSeq("top", 1)
+        assert name_list_error(per_entry, "cameras", "render_all") is not None
+        assert per_entry.reads == 1
+
+        repeated = CountedNameSeq("top", "top")
+        assert name_list_error(repeated, "cameras", "render_all") is not None
+        assert repeated.reads == 1
+
+    def test_the_duplicate_verdict_is_about_the_entries_that_were_checked(self) -> None:
+        """A refusal must not be computed from a read no check examined.
+
+        This value has no hostile behaviour and raises nothing. It was refused as
+        a repeat on the strength of its *second* read, having cleared the
+        per-entry checks against its first, in a message rendering a third - so
+        the verdict, the check behind it and the text quoting it described three
+        different lists. One read makes them the same list by construction.
+        """
+        changing = DifferentOnItsSecondRead()
+        assert name_list_error(changing, "cameras", "render_all") is None
+        assert changing.reads == 1
+
+    def test_a_value_that_refuses_its_second_read_is_never_asked_for_one(self) -> None:
+        """The duplicate walk was a second read and could fail on its own."""
+        value = FailsOnItsSecondRead()
+        assert name_list_error(value, "cameras", "render_all") is None
+        assert value.reads == 1
+
+    def test_the_duplicate_refusal_does_not_read_the_value_again_to_quote_it(self) -> None:
+        """``list(value)`` inside the message was a third read, and the last escape.
+
+        The repeat is still reported, and still quotes the entries - from the one
+        read, so a value that cannot answer a third is refused for the repeat it
+        has rather than for the read the message wanted.
+        """
+        value = RepeatedThenFailsOnItsThirdRead()
+        message = name_list_error(value, "cameras", "render_all")
+        assert message is not None
+        assert "must not repeat a name" in message
+        assert "['top', 'top']" in message
+        assert value.reads == 1
+
+    def test_acceptable_and_empty_name_lists_are_unchanged(self) -> None:
+        """The rewritten read must not refuse what the two walks accepted.
+
+        Emptiness means "not supplied" to every caller, so it is not this
+        function's to reject - the ``StopIteration`` that ends the read is the
+        read finishing, not a failure.
+        """
+        assert name_list_error(["top", "wrist"], "cameras", "render_all") is None
+        assert name_list_error(("top", "wrist"), "cameras", "render_all") is None
+        assert name_list_error([], "cameras", "render_all") is None
+        assert name_list_error((), "cameras", "render_all") is None
+
+    def test_the_sibling_guards_verdicts_are_untouched(self) -> None:
+        """Non-vacuity in the other direction: this fix is local to one guard.
+
+        ``finite_vector_error``'s two read verdicts are the text these reuse, so a
+        change made in the wrong place would show up as one of them moving.
+        """
+        assert "could not be read" in str(finite_vector_error("raycast", "origin", GetItemOnly()))
+        assert "could not be iterated" in str(finite_vector_error("raycast", "origin", HostileIteration()))
+
+    def test_a_mapping_whose_keys_cannot_be_read_is_a_stated_boundary(self) -> None:
+        """Measured, out of scope here, and filed as #1903 rather than absorbed.
+
+        The mapping refusal quotes the mapping's own keys as its remedy ("pass
+        the names as a list: [...]"), which is a read of the caller's value and
+        escapes like the others did. It is not fixed here because it is not the
+        same question: a mapping is refused whatever its keys say, so the verdict
+        is already known and only the *remedy* is unmeasurable, and how a refusal
+        should degrade when its remedy cannot be computed has no precedent in
+        this file to follow - #1903 lays out the three candidates. Deciding
+        that inside this change would settle a message-design question in a diff
+        whose subject is a read count.
+
+        Pinned so the boundary is a measurement rather than a claim, and so that
+        closing it has to replace this test rather than pass it silently.
+        """
+        assert isinstance(HostileKeyMapping(), Mapping)
+        with pytest.raises(RuntimeError, match="no keys for you"):
+            name_list_error(HostileKeyMapping(), "cameras", "render_all")

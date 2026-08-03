@@ -1084,6 +1084,81 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
     return None
 
 
+def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any], str | None]:
+    """Read ``value`` into a list once, or return why the read could not finish.
+
+    The single read every verdict in :func:`name_list_error` is then computed
+    from. It exists because that guard used to read the caller's value on each
+    branch that needed it - the entry walk, the duplicate walk, and the
+    duplicate message's own ``list(value)`` - and none of those reads was
+    guarded. An acceptable value was read twice and a repeated one three times,
+    so a value that answers a read at all could break the guard on any of them.
+
+    Reading once is not only about the escape. The reads were independent, so
+    nothing required them to agree, and a value whose contents differ between
+    two of them was refused on the strength of a list no check had examined: a
+    two-entry ``Sequence`` yielding ``["top", "wrist"]`` and then ``["top",
+    "top"]`` cleared the per-entry domain checks against the first and was
+    refused as a repeat against the second, in a message rendering a third. One
+    read makes the verdict and the text it quotes the same list by construction.
+
+    The read is still element by element rather than ``list(value)``, which
+    matters for the same reason it does in :func:`finite_vector_error`: a
+    materialising call raises before any element has been examined, so its
+    verdict could not name how far the read got. Here the whole value is
+    collected either way - a repeat cannot be ruled out without reading every
+    entry, so there is no verdict this guard could reach by stopping early -
+    but the *index* is what distinguishes a value that produced two good names
+    from one that produced none, and that is worth keeping.
+
+    Both stems are the ones :func:`finite_vector_error` already uses, with this
+    guard's own unquoted ``{param}[{i}]`` index style and a remedy worded for
+    names rather than numbers. A read that never began is reported without an
+    index, because there is no element to name; the index is the measurement.
+
+    ``exc`` goes through :func:`_refusal_str` rather than being interpolated: a
+    value hostile enough to raise from its own read is not one whose exception is
+    assumed to have a working ``__str__``, which would be the #1873 escape
+    reintroduced inside the fix for this one.
+
+    Args:
+        value: The caller-supplied value, already known to be a
+            :class:`~collections.abc.Sequence` by the check above the call.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        The entries read and ``None``, or the entries read so far and the
+        message naming why the read stopped.
+    """
+    try:
+        elements = iter(value)  # type: ignore[call-overload]
+    except Exception as exc:
+        return [], (
+            f"{context}: {param} could not be iterated: "
+            f"{type(exc).__name__}: {_refusal_str(exc)} (got {_refusal_container_repr(value)}). "
+            f"Pass a list or tuple of names."
+        )
+    entries: list[Any] = []
+    while True:
+        # ``next()`` is called explicitly because a ``for`` cannot guard the call
+        # it makes, so an exception raised while *producing* an entry would escape
+        # this guard exactly as one from ``__iter__`` would. ``StopIteration`` is
+        # the read finishing normally; an empty value is accepted as before,
+        # emptiness meaning "not supplied" to every caller of this function.
+        try:
+            entry = next(elements)
+        except StopIteration:
+            return entries, None
+        except Exception as exc:
+            return entries, (
+                f"{context}: {param}[{len(entries)}] could not be read: "
+                f"{type(exc).__name__}: {_refusal_str(exc)} (got {_refusal_container_repr(value)}). "
+                f"Pass a list or tuple of names."
+            )
+        entries.append(entry)
+
+
 def name_list_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable list of distinct key names.
 
@@ -1138,7 +1213,10 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
     Only a :class:`~collections.abc.Sequence` is accepted, which excludes
     one-shot iterators. That matters on the LeRobot path, where the value is
     read twice - once by the pre-flight check and again at load - so a generator
-    exhausted by the first read would present as empty to the second.
+    exhausted by the first read would present as empty to the second. That is a
+    statement about the *consumers*: this function itself reads the value once,
+    through :func:`_read_name_list`, and a read that cannot finish is answered
+    with a message rather than raising out of the guard.
 
     Callers gate this check on a truthy value, because in both consumers a falsy
     ``image_keys`` (``None``, or an empty list) already means "not supplied" and
@@ -1177,20 +1255,27 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
             f"({_refusal_container_repr(value)}). Pass a list or tuple; a one-shot iterator cannot be used "
             f"because the value is read more than once."
         )
-    for i, entry in enumerate(value):
+    # One read, and every verdict below is about the list it produced. A
+    # ``Sequence`` is not obliged to answer two reads the same way, so the
+    # per-entry checks and the duplicate check have to see the same entries for
+    # their verdicts to be about the same value - see :func:`_read_name_list`.
+    entries, unread = _read_name_list(value, param, context)
+    if unread is not None:
+        return unread
+    for i, entry in enumerate(entries):
         if not isinstance(entry, str):
             return f"{context}: {param}[{i}] must be a name (str), got {type(entry).__name__} ({_refusal_repr(entry)})."
         if not entry.strip():
             return f"{context}: {param}[{i}] must be a non-blank name, got {_refusal_repr(entry)}."
     seen: set[str] = set()
     repeated: set[str] = set()
-    for entry in value:
+    for entry in entries:
         if entry in seen:
             repeated.add(entry)
         seen.add(entry)
     if repeated:
         return (
-            f"{context}: {param} must not repeat a name, got {_refusal_container_repr(list(value))} "
+            f"{context}: {param} must not repeat a name, got {_refusal_container_repr(entries)} "
             f"({_refusal_container_repr(sorted(repeated))} appears more than once)."
         )
     return None
