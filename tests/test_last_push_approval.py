@@ -215,14 +215,95 @@ def test_the_most_recent_workflow_run_names_the_pusher():
     """
     payload = {
         "workflow_runs": [
-            {"created_at": "2026-08-01T07:50:16Z", "triggering_actor": {"login": "cagataycali"}},
-            {"created_at": "2026-08-02T09:00:00Z", "triggering_actor": {"login": "Vivek0712"}},
+            {
+                "created_at": "2026-08-01T07:50:16Z",
+                "event": "pull_request",
+                "triggering_actor": {"login": "cagataycali"},
+            },
+            {"created_at": "2026-08-02T09:00:00Z", "event": "pull_request", "triggering_actor": {"login": "Vivek0712"}},
         ]
     }
     original = mod._get
     try:
         mod._get = lambda url, token: payload
         assert mod.resolve_pusher("strands-labs/robots", "deadbeef", "t") == "Vivek0712"
+    finally:
+        mod._get = original
+
+
+def test_a_review_triggered_run_does_not_name_the_pusher():
+    """The check's own `pull_request_review` trigger poisons the field it reads.
+
+    Verbatim from #1921, this check's own pull request. Adding the review
+    trigger creates a run on the same head sha attributed to the **reviewer**,
+    newer than every run the push itself produced. Reading the newest run
+    unfiltered named yinsong1986 as the pusher of a commit cagataycali pushed,
+    and reported `pusher-only-approval` while GitHub read the pull request
+    `APPROVED` / `UNSTABLE` -- a false positive that would have fired on every
+    approved pull request in the repository.
+    """
+    payload = {
+        "workflow_runs": [
+            {
+                "created_at": "2026-08-03T22:45:21Z",
+                "event": "pull_request",
+                "triggering_actor": {"login": "cagataycali"},
+                "name": "Last Push Approval Check",
+            },
+            {
+                "created_at": "2026-08-03T22:45:21Z",
+                "event": "pull_request",
+                "triggering_actor": {"login": "cagataycali"},
+                "name": "Pull Request and Push Action",
+            },
+            {
+                "created_at": "2026-08-03T23:11:27Z",
+                "event": "pull_request_review",
+                "triggering_actor": {"login": "yinsong1986"},
+                "name": "Last Push Approval Check",
+            },
+        ]
+    }
+    original = mod._get
+    try:
+        mod._get = lambda url, token: payload
+        pusher = mod.resolve_pusher("strands-labs/robots", "2714eacf", "t")
+    finally:
+        mod._get = original
+
+    assert pusher == "cagataycali"
+    # And therefore the verdict agrees with GitHub rather than contradicting it.
+    assert mod.classify(pusher, [approved("yinsong1986")]).outcome == mod.SATISFIED
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["pull_request_review", "pull_request_review_comment", "issue_comment", "workflow_dispatch", "schedule"],
+)
+def test_only_push_producing_events_attribute_a_pusher(event):
+    """Anything a push did not cause names whoever caused it instead."""
+    original = mod._get
+    try:
+        mod._get = lambda url, token: {
+            "workflow_runs": [
+                {"created_at": "2026-08-03T23:00:00Z", "event": event, "triggering_actor": {"login": "someone-else"}}
+            ]
+        }
+        assert mod.resolve_pusher("strands-labs/robots", "deadbeef", "t") is None
+    finally:
+        mod._get = original
+
+
+def test_a_push_event_run_attributes_the_pusher():
+    """A branch in this repository produces `push` runs rather than `pull_request` ones."""
+    original = mod._get
+    try:
+        mod._get = lambda url, token: {
+            "workflow_runs": [
+                {"created_at": "2026-08-03T23:00:00Z", "event": "push", "triggering_actor": {"login": "cagataycali"}}
+            ]
+        }
+        assert mod.resolve_pusher("strands-labs/robots", "deadbeef", "t") == "cagataycali"
     finally:
         mod._get = original
 
@@ -241,8 +322,12 @@ def test_a_run_without_a_triggering_actor_is_skipped_not_trusted():
     try:
         mod._get = lambda url, token: {
             "workflow_runs": [
-                {"created_at": "2026-08-02T09:00:00Z", "triggering_actor": None},
-                {"created_at": "2026-08-01T09:00:00Z", "triggering_actor": {"login": "cagataycali"}},
+                {"created_at": "2026-08-02T09:00:00Z", "event": "pull_request", "triggering_actor": None},
+                {
+                    "created_at": "2026-08-01T09:00:00Z",
+                    "event": "pull_request",
+                    "triggering_actor": {"login": "cagataycali"},
+                },
             ]
         }
         assert mod.resolve_pusher("strands-labs/robots", "deadbeef", "t") == "cagataycali"

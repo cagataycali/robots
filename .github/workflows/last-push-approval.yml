@@ -19,6 +19,14 @@
 # arrive with a push. A `pull_request`-only trigger would evaluate every branch
 # at the one moment it is guaranteed to have no approval, and always pass.
 #
+# That trigger also *pollutes the signal the script reads*, which is worth
+# knowing before adding another one. A run started by a review is attributed to
+# the reviewer, so the newest run on the head sha named the approver as the
+# pusher and the check reported a deadlock on every approved pull request --
+# observed on #1921, its own. The script counts only runs whose event a push
+# produces (`PUSH_ATTRIBUTING_EVENTS`); any trigger added here that is not
+# caused by a push must stay outside that set.
+#
 # Whether a finding blocks a merge is a branch-protection decision, not a
 # property of this file, and this one is deliberately not in the required set.
 # Unlike merge-base-overlap.yml the remedy here is not self-clearing: it needs a

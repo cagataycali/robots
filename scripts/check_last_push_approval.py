@@ -114,6 +114,18 @@ API_ROOT = "https://api.github.com"
 # not, which is why it cannot retract an earlier approval.
 POSITION_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
 
+# Workflow-run events whose ``triggering_actor`` is the account that put the
+# commit there. Every other event names whoever caused *that* event instead, and
+# filtering on this set is load-bearing rather than defensive: this check's own
+# ``pull_request_review`` trigger produces a run on the same head sha attributed
+# to the **reviewer**, newer than the push's own runs. Reading the newest run
+# unfiltered therefore named the approver as the pusher and reported
+# ``pusher-only-approval`` for every approved pull request -- observed on #1921,
+# this check's own, where GitHub read `APPROVED`/`UNSTABLE` and the check
+# disagreed. Pinned by
+# tests/test_last_push_approval.py::test_a_review_triggered_run_does_not_name_the_pusher
+PUSH_ATTRIBUTING_EVENTS = frozenset({"push", "pull_request"})
+
 SATISFIED = "satisfied"
 AWAITING_FIRST_REVIEW = "awaiting-first-review"
 PUSHER_ONLY_APPROVAL = "pusher-only-approval"
@@ -235,15 +247,23 @@ def _get(url: str, token: str) -> object:
 def resolve_pusher(repo: str, head_sha: str, token: str) -> str | None:
     """Return the account GitHub attributes the head push to, or ``None``.
 
-    Reads ``triggering_actor`` from the workflow runs for the commit. When
-    several runs exist they normally agree; when they do not, the most recently
-    created run wins, because a re-push under a different account produces newer
-    runs than the ones the previous push left behind.
+    Reads ``triggering_actor`` from the workflow runs for the commit, counting
+    only runs whose event is one a push produces (``PUSH_ATTRIBUTING_EVENTS``).
+    A run started by anything else -- a review, a comment, a manual dispatch --
+    is attributed to whoever did *that*, not to the pusher. When several
+    qualifying runs exist they normally agree; when they do not, the most
+    recently created wins, because a re-push under a different account produces
+    newer runs than the ones the previous push left behind.
+
+    Returns ``None`` when no qualifying run exists, which the caller reports as
+    ``unknown-pusher`` rather than falling back to the commit metadata.
     """
     payload = _get(f"{API_ROOT}/repos/{repo}/actions/runs?head_sha={head_sha}&per_page=100", token)
     runs = payload.get("workflow_runs", []) if isinstance(payload, dict) else []
     dated: list[tuple[str, str]] = []
     for run in runs:
+        if run.get("event") not in PUSH_ATTRIBUTING_EVENTS:
+            continue
         actor = (run.get("triggering_actor") or {}).get("login")
         if actor:
             dated.append((run.get("created_at") or "", actor))

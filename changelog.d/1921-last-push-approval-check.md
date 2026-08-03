@@ -32,6 +32,15 @@ rather than guessing from the commit. Verified against six live pull requests wi
 no false positive - #1722 and #1035 the finding, #1894 and #1920 (both merged)
 satisfied, #1899 and #1901 awaiting review.
 
+Only workflow runs whose event a push produces attribute a pusher. That filter
+is load-bearing, not defensive: the check's own `pull_request_review` trigger
+creates a run on the same head sha attributed to the *reviewer*, newer than any
+run the push produced, so reading the newest run unfiltered named the approver as
+the pusher and reported a deadlock on every approved pull request. It was caught
+on #1921 itself, where GitHub read `APPROVED` / `UNSTABLE` and the check
+disagreed - the six-PR verification above had passed only because no head sha
+carried a review-triggered run until this workflow existed.
+
 It reports and does not gate, and is absent from the required set on purpose.
 Unlike `merge-base-overlap.yml`, whose remedy is self-clearing, this one's remedy
 is a second reviewer and no work the author does turns it green. A gate a branch
