@@ -46,6 +46,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CONFIG_PATH = _REPO_ROOT / ".github" / "codeql" / "codeql-config.yml"
 _WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "codeql.yml"
@@ -348,14 +350,16 @@ class TestTheNarrowingMeasurementStillHolds:
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(job)
-            try:
-                future.result()
-            except BaseException as exc:  # noqa: BLE001 - the point is to catch anything
-                observed: BaseException | None = exc
-            else:
-                observed = None
 
-        assert observed is sentinel, (
+        # pytest.raises rather than a hand-rolled catch: the executor's __exit__ has
+        # joined, so result() re-raises here on the caller's thread, and there is no
+        # thread boundary left for an exception to be marshalled across. Writing
+        # `except BaseException` for it would be the alert this module is about,
+        # earned for nothing.
+        with pytest.raises(SystemExit) as caught:
+            future.result()
+
+        assert caught.value is sentinel, (
             "Future.result() must re-raise the very object the worker raised. Identity - not "
             "merely type - is what lets AGENTS.md call delegating strictly better than a "
             "hand-rolled box, so a regression here weakens the prescription rather than any "
