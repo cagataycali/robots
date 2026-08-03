@@ -497,6 +497,58 @@ def _describe_unrenderable(value: Any) -> str:
     return f"<unrepresentable {type(value).__name__}>"
 
 
+def _describe_failed_read(exc: Exception) -> str:
+    """``RuntimeError: no keys for you`` for a read a refusal could not complete.
+
+    The one spelling of a failed read in this module's refusal text, shared by
+    the guard that reports a read whose *verdict* it became
+    (:func:`_read_name_list`) and the read a message makes only to *quote*
+    something (:func:`_read_to_quote`). Named rather than repeated for the reason
+    :func:`_describe_unrenderable` is shared between the two render forms: a
+    refusal degraded on one path must not describe the same failure differently
+    from another.
+
+    ``exc`` goes through :func:`_refusal_str` rather than being interpolated: a
+    value hostile enough to raise from its own read is not one whose exception is
+    assumed to have a working ``__str__``, which would be the #1873 escape
+    reintroduced inside a message built to avoid it.
+
+    Args:
+        exc: The exception the read raised.
+
+    Returns:
+        Its type name and text, which cannot itself raise.
+    """
+    return f"{type(exc).__name__}: {_refusal_str(exc)}"
+
+
+def _read_to_quote(value: Any) -> tuple[list[Any] | None, str | None]:
+    """The elements of ``value`` for a refusal to quote, or why they could not be read.
+
+    The read a refusal makes for its own *text*, which is a different job from
+    :func:`_read_name_list`'s and needs the opposite answer. There the verdict
+    depends on the read, so a read that fails becomes the verdict. Here the
+    verdict is settled *before* the read happens - a mapping is refused whatever
+    its keys say, and a string whatever its characters are - so a read that fails
+    must not replace it: the caller passed a mapping, and that is the mistake
+    worth reporting even when its keys cannot be quoted. The failure is therefore
+    described for the message to carry rather than returned as a message of its
+    own (#1903).
+
+    Args:
+        value: The caller-supplied value a refusal wants to quote.
+
+    Returns:
+        ``(elements, None)`` when the read finished, or ``(None, description)``
+        when it did not. Exactly one side is ever populated, so a caller holding
+        a ``None`` description holds the elements.
+    """
+    try:
+        return list(value), None
+    except Exception as exc:
+        return None, _describe_failed_read(exc)
+
+
 def _refusal_container_repr(value: Any) -> str:
     """``repr(value)`` for a refusal that reports a whole container, elementwise if it must.
 
@@ -1116,10 +1168,9 @@ def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any],
     names rather than numbers. A read that never began is reported without an
     index, because there is no element to name; the index is the measurement.
 
-    ``exc`` goes through :func:`_refusal_str` rather than being interpolated: a
-    value hostile enough to raise from its own read is not one whose exception is
-    assumed to have a working ``__str__``, which would be the #1873 escape
-    reintroduced inside the fix for this one.
+    The exception is rendered by :func:`_describe_failed_read`, which is also what
+    a refusal that could only not *quote* something reports (#1903), so the two
+    cannot describe one failure two ways.
 
     Args:
         value: The caller-supplied value, already known to be a
@@ -1136,7 +1187,7 @@ def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any],
     except Exception as exc:
         return [], (
             f"{context}: {param} could not be iterated: "
-            f"{type(exc).__name__}: {_refusal_str(exc)} (got {_refusal_container_repr(value)}). "
+            f"{_describe_failed_read(exc)} (got {_refusal_container_repr(value)}). "
             f"Pass a list or tuple of names."
         )
     entries: list[Any] = []
@@ -1153,7 +1204,7 @@ def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any],
         except Exception as exc:
             return entries, (
                 f"{context}: {param}[{len(entries)}] could not be read: "
-                f"{type(exc).__name__}: {_refusal_str(exc)} (got {_refusal_container_repr(value)}). "
+                f"{_describe_failed_read(exc)} (got {_refusal_container_repr(value)}). "
                 f"Pass a list or tuple of names."
             )
         entries.append(entry)
@@ -1234,20 +1285,50 @@ def name_list_error(value: Any, param: str, context: str) -> str | None:
         An error message, or ``None`` when the value is usable.
     """
     if isinstance(value, str | bytes):
-        shown = value.decode(errors="replace") if isinstance(value, bytes) else value
+        # One read builds the whole consequence clause. ``bytes.decode`` is
+        # overridable and a ``str`` subclass owns its own ``__iter__`` and
+        # ``__len__``, so producing the characters and counting them are both
+        # reads of the caller's value - and taking the count from the same read
+        # that produced the characters is #1897's property applied to a message,
+        # rather than a second read the first is not obliged to agree with.
+        shown: Any = value
+        characters: list[Any] | None = None
+        unreadable: str | None = None
+        try:
+            shown = value.decode(errors="replace") if isinstance(value, bytes) else value
+        except Exception as exc:
+            unreadable = _describe_failed_read(exc)
+        else:
+            characters, unreadable = _read_to_quote(shown)
+        if characters is None:
+            consequence = (
+                f"A string is iterable per character, so this would be read as one name per "
+                f"character; its own characters could not be read to quote them here ({unreadable})."
+            )
+        else:
+            consequence = (
+                f"A string is iterable per character, so this would be read as "
+                f"{_refusal_container_repr(characters[:6])}{' ...' if len(characters) > 6 else ''} "
+                f"({len(characters)} name(s))."
+            )
         return (
             f"{context}: {param} must be a list of names, not a single string, "
-            f"got {_refusal_container_repr(value)}. "
-            f"A string is iterable per character, so this would be read as "
-            f"{[c for c in shown][:6]}{' ...' if len(shown) > 6 else ''} "
-            f"({len(shown)} name(s)). Wrap it in a list: [{_refusal_repr(shown)}]."
+            f"got {_refusal_container_repr(value)}. {consequence} "
+            f"Wrap it in a list: [{_refusal_repr(shown)}]."
         )
     if isinstance(value, Mapping):
+        # The verdict is not in doubt on this branch, so a key read that fails
+        # degrades the remedy and leaves the verdict standing (#1903).
+        names, unquotable = _read_to_quote(value)
+        remedy = (
+            f"pass the names as a list; its own keys could not be read to quote them here ({unquotable})."
+            if names is None
+            else f"pass the names as a list: {_refusal_container_repr(names)}."
+        )
         return (
             f"{context}: {param} must be a list of names, not a mapping, "
             f"got {_refusal_container_repr(value)}. "
-            f"A mapping is iterable over its keys, so its values would be discarded - "
-            f"pass the names as a list: {_refusal_container_repr(list(value))}."
+            f"A mapping is iterable over its keys, so its values would be discarded - {remedy}"
         )
     if not isinstance(value, Sequence):
         return (

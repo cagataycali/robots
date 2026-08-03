@@ -1340,6 +1340,61 @@ class HostileKeyMapping(Mapping[str, str]):
         raise RuntimeError("no keys for you")
 
 
+class UnprintableKeyFailureMapping(Mapping[str, str]):
+    """A ``Mapping`` whose key read raises an exception that cannot print itself."""
+
+    def __len__(self) -> int:
+        return 1
+
+    def __getitem__(self, key: str) -> str:
+        return "camera"
+
+    def __iter__(self) -> Iterator[str]:
+        raise UnprintableFailureError
+
+
+class HostileCharacterStr(str):
+    """A ``str`` whose own iteration raises, reached by the consequence clause's read.
+
+    A ``str`` subclass is the shape a name arrives as when a caller wraps one -
+    an interned label, a path-like, an enum member's value - so overriding
+    ``__iter__`` is not the only route here, merely the clearest.
+    """
+
+    def __iter__(self) -> Iterator[str]:
+        raise RuntimeError("no characters for you")
+
+
+class HostileLengthStr(str):
+    """A ``str`` whose ``__len__`` raises, which the character count used to call."""
+
+    def __len__(self) -> int:
+        raise RuntimeError("no length for you")
+
+
+class UnprintableCharacterStr(str):
+    """A ``str`` that iterates into elements whose ``repr`` raises.
+
+    The container-renderer half of the same branch: reading the characters can
+    succeed and *quoting* them still escape, which is #1875's defect one level
+    inside the clause that quotes them.
+    """
+
+    def __iter__(self) -> Iterator[Any]:
+        return iter([Unprintable()])
+
+
+class UndecodableBytes(bytes):
+    """``bytes`` whose ``decode`` raises, which the branch calls before any read.
+
+    ``bytes`` is the one input class this branch *transforms* before quoting it,
+    so producing the text to quote is itself a read of the caller's value.
+    """
+
+    def decode(self, encoding: str = "utf-8", errors: str = "strict") -> str:
+        raise RuntimeError("no decoding for you")
+
+
 class TestTheNameListIsReadOnceAndAnsweredNotEscaped:
     """``name_list_error`` reads the caller's value once, and answers a read that fails (#1897).
 
@@ -1514,22 +1569,167 @@ class TestTheNameListIsReadOnceAndAnsweredNotEscaped:
         assert "could not be read" in str(finite_vector_error("raycast", "origin", GetItemOnly()))
         assert "could not be iterated" in str(finite_vector_error("raycast", "origin", HostileIteration()))
 
-    def test_a_mapping_whose_keys_cannot_be_read_is_a_stated_boundary(self) -> None:
-        """Measured, out of scope here, and filed as #1903 rather than absorbed.
+    def test_a_mapping_whose_keys_cannot_be_read_keeps_its_verdict(self) -> None:
+        """Replaces the #1903 boundary this class stated: the mapping verdict survives.
 
-        The mapping refusal quotes the mapping's own keys as its remedy ("pass
-        the names as a list: [...]"), which is a read of the caller's value and
-        escapes like the others did. It is not fixed here because it is not the
-        same question: a mapping is refused whatever its keys say, so the verdict
-        is already known and only the *remedy* is unmeasurable, and how a refusal
-        should degrade when its remedy cannot be computed has no precedent in
-        this file to follow - #1903 lays out the three candidates. Deciding
-        that inside this change would settle a message-design question in a diff
-        whose subject is a read count.
+        The pin this replaces asserted the escape - ``pytest.raises`` on the
+        remedy's own ``list(value)``. What made it a boundary rather than a bug
+        to absorb was that the verdict was never in doubt on this branch, so the
+        question was what a refusal says when only its *advice* is unmeasurable,
+        and that is a message-design decision rather than a guarded read.
 
-        Pinned so the boundary is a measurement rather than a claim, and so that
-        closing it has to replace this test rather than pass it silently.
+        It is answered by keeping the verdict and degrading the remedy, which is
+        the only one of #1903's three candidates that states both what was
+        measured and what was not. Dropping the verdict would stop naming the
+        mistake the caller actually made, and dropping the remedy silently would
+        omit advice on one path without saying why.
         """
         assert isinstance(HostileKeyMapping(), Mapping)
-        with pytest.raises(RuntimeError, match="no keys for you"):
-            name_list_error(HostileKeyMapping(), "cameras", "render_all")
+        message = name_list_error(HostileKeyMapping(), "cameras", "render_all")
+        assert message is not None
+        assert "must be a list of names, not a mapping" in message
+        assert "its own keys could not be read to quote them here" in message
+        assert "RuntimeError: no keys for you" in message
+
+
+class TestARefusalDegradesWhenItCannotQuoteWhatItRefuses:
+    """``name_list_error``'s text reads the caller's value, and those reads are guarded (#1903).
+
+    The eighth and last member of the family - rendering (#1873), scalar
+    conversion (#1874), container conversion (#1875), ``__iter__`` (#1878), the
+    shared length probe (#1888), element production (#1889), the name-list read
+    count (#1897) - and the only one where the read was never load-bearing.
+
+    Every other member guarded a read the *verdict* needed, so a read that failed
+    became the verdict. Here the verdict is settled before the read happens: a
+    mapping is refused whatever its keys say, and a string whatever its
+    characters are. So the read exists only to quote something, and the decision
+    #1903 asked for is what the refusal says when it cannot. It keeps the verdict
+    and degrades the clause that wanted the quotation, naming the read failure
+    with ``_describe_failed_read`` - the stem ``_read_name_list`` already uses -
+    so a refusal degraded here reads like every other read failure in the module.
+
+    #1903 described one read, on the mapping branch. There are five, across two
+    branches, and the four the issue did not have are asserted below: the string
+    branch produced its characters with a comprehension, counted them with a
+    second ``len`` the first was not obliged to agree with, rendered them with a
+    bare f-string rather than the elementwise renderer, and decoded ``bytes``
+    with an overridable method before any of that.
+    """
+
+    def test_a_string_whose_characters_cannot_be_read_keeps_its_verdict(self) -> None:
+        """Not in #1903, and the same shape one branch up.
+
+        ``[c for c in shown]`` built the consequence clause and was as unguarded
+        as the mapping's ``list(value)``.
+        """
+        message = name_list_error(HostileCharacterStr("wrist"), "cameras", "render_all")
+        assert message is not None
+        assert "must be a list of names, not a single string" in message
+        assert "its own characters could not be read to quote them here" in message
+        assert "RuntimeError: no characters for you" in message
+
+    def test_the_character_count_comes_from_the_read_that_produced_them(self) -> None:
+        """``len(shown)`` was a second read, so a hostile ``__len__`` escaped too.
+
+        This is #1897's property applied to a message rather than to a verdict:
+        the quotation and the count beside it now come from one read, so they
+        cannot describe different values.
+        """
+        message = name_list_error(HostileLengthStr("wrist"), "cameras", "render_all")
+        assert message is not None
+        assert "RuntimeError: no length for you" in message
+
+    def test_the_quoted_characters_go_through_the_elementwise_renderer(self) -> None:
+        """Reading the characters can succeed and quoting them still escape.
+
+        The clause interpolated the list directly, so ``repr`` recursed into an
+        element that cannot print - #1875's defect, inside the fix for #1903's.
+        """
+        message = name_list_error(UnprintableCharacterStr("w"), "cameras", "render_all")
+        assert message is not None
+        assert "<unrepresentable Unprintable>" in message
+        assert "(1 name(s))" in message
+
+    def test_bytes_whose_decode_raises_keeps_its_verdict(self) -> None:
+        """``bytes`` is the one input class this branch transforms before quoting it.
+
+        So producing the text is a read of the caller's value, and it ran outside
+        the guard - the earliest of the five escapes on this branch.
+        """
+        message = name_list_error(UndecodableBytes(b"wrist"), "cameras", "render_all")
+        assert message is not None
+        assert "must be a list of names, not a single string" in message
+        assert "RuntimeError: no decoding for you" in message
+
+    def test_a_degraded_remedy_still_offers_the_remedy(self) -> None:
+        """Candidate 3 - drop the clause - is excluded by measurement, not by prose.
+
+        The advice is what the caller acts on, so the refusal keeps saying to
+        pass a list and reports only that it could not quote the names.
+        """
+        mapping = name_list_error(HostileKeyMapping(), "cameras", "render_all")
+        string = name_list_error(HostileCharacterStr("wrist"), "cameras", "render_all")
+        assert mapping is not None and string is not None
+        assert "pass the names as a list" in mapping
+        assert "Wrap it in a list: ['wrist']." in string
+
+    def test_a_degraded_refusal_does_not_claim_a_check_that_did_not_run(self) -> None:
+        """#1878's lesson: the entries were never read, so no entry verdict may appear."""
+        message = name_list_error(HostileKeyMapping(), "cameras", "render_all")
+        assert message is not None
+        assert "must be a name (str)" not in message
+        assert "must not repeat a name" not in message
+        assert "could not be iterated" not in message
+
+    def test_an_exception_whose_own_str_raises_does_not_reescape(self) -> None:
+        """The fix must not reintroduce #1873 inside its own degraded clause."""
+        message = name_list_error(UnprintableKeyFailureMapping(), "cameras", "render_all")
+        assert message is not None
+        assert "could not be read to quote them here" in message
+        assert "UnprintableFailureError" in message
+
+    def test_no_accepted_or_refused_message_moved(self) -> None:
+        """The whole point of degrading is that nothing else changes.
+
+        Asserted as exact text rather than as substrings, because a rewrite of
+        two message branches is precisely the change that moves a word nobody
+        looks at. The ``(5 name(s))`` count and the ``['top', 'wrist']`` remedy
+        are the two values now taken from the single read.
+        """
+        assert name_list_error(["top", "wrist"], "cameras", "render_all") is None
+        assert name_list_error("wrist", "cameras", "render_all") == (
+            "render_all: cameras must be a list of names, not a single string, got 'wrist'. "
+            "A string is iterable per character, so this would be read as "
+            "['w', 'r', 'i', 's', 't'] (5 name(s)). Wrap it in a list: ['wrist']."
+        )
+        assert name_list_error(b"wrist", "cameras", "render_all") == (
+            "render_all: cameras must be a list of names, not a single string, got b'wrist'. "
+            "A string is iterable per character, so this would be read as "
+            "['w', 'r', 'i', 's', 't'] (5 name(s)). Wrap it in a list: ['wrist']."
+        )
+        assert name_list_error("shoulder", "cameras", "render_all") == (
+            "render_all: cameras must be a list of names, not a single string, got 'shoulder'. "
+            "A string is iterable per character, so this would be read as "
+            "['s', 'h', 'o', 'u', 'l', 'd'] ... (8 name(s)). Wrap it in a list: ['shoulder']."
+        )
+        assert name_list_error({"top": 1, "wrist": 2}, "cameras", "render_all") == (
+            "render_all: cameras must be a list of names, not a mapping, "
+            "got {'top': 1, 'wrist': 2}. A mapping is iterable over its keys, so its values "
+            "would be discarded - pass the names as a list: ['top', 'wrist']."
+        )
+
+    def test_the_probes_are_the_types_the_branches_dispatch_on(self) -> None:
+        """Non-vacuity: a probe that missed its branch would pass every test above.
+
+        ``UnprintableCharacterStr`` is checked for the property it is *for* -
+        readable characters that cannot be quoted - since a probe that raised on
+        the read instead would satisfy this class's other assertions by accident.
+        """
+        assert isinstance(HostileCharacterStr("w"), str)
+        assert isinstance(HostileLengthStr("w"), str)
+        assert isinstance(UndecodableBytes(b"w"), bytes)
+        assert isinstance(UnprintableKeyFailureMapping(), Mapping)
+        assert len(list(UnprintableCharacterStr("w"))) == 1
+        with pytest.raises(RuntimeError, match="no repr for you"):
+            repr(list(UnprintableCharacterStr("w")))

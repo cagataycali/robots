@@ -92,7 +92,7 @@ import numbers
 import pathlib
 import sys
 import textwrap
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple
 
 import numpy as np
@@ -743,6 +743,170 @@ CONTAINER_GUARDS = frozenset(
 )
 
 
+#: Builtin calls that *read* the value handed to them, as opposed to inspecting it.
+#: ``isinstance`` and ``type`` ask a question of the object's class and cannot run
+#: the value's own code; every name here dispatches to a dunder the value owns.
+READING_BUILTINS = frozenset(
+    {
+        "all",
+        "any",
+        "dict",
+        "enumerate",
+        "frozenset",
+        "iter",
+        "len",
+        "list",
+        "max",
+        "min",
+        "next",
+        "repr",
+        "reversed",
+        "set",
+        "sorted",
+        "str",
+        "sum",
+        "tuple",
+    }
+)
+
+#: The helpers that perform a read *inside* a ``try`` and hand back an ordinary
+#: value. A name bound from one of these is this module's own object rather than
+#: the caller's, so reading it further cannot run caller code and the scan below
+#: stops following it. Without this the scan would report
+#: ``len(characters)`` - a plain ``list`` produced by a guarded read - as loudly
+#: as it reports ``len(value)``.
+GUARDED_READERS = frozenset(
+    {
+        "_describe_failed_read",
+        "_describe_unrenderable",
+        "_read_name_list",
+        "_read_to_quote",
+        "_refusal_container_repr",
+        "_refusal_repr",
+        "_refusal_str",
+        "sequence_length",
+    }
+)
+
+
+def _scan_unguarded_message_reads(source: str) -> dict[str, tuple[tuple[str, str], ...]]:
+    """Map each public guard in ``source`` to the caller reads it makes outside a ``try``.
+
+    The companion to :func:`_scan_direct_renders`, and the escape that scan is
+    blind to. It reports a caller value *rendered* without a shared renderer,
+    which is why ``_refusal_container_repr(list(value))`` satisfied it: the value
+    reaching the renderer is a ``list`` the guard built, and building it ran the
+    caller's ``__iter__``. So the render was guarded and the read feeding it was
+    not, and the whole of #1903 lived in that gap - as did the four escapes on
+    ``name_list_error``'s string branch that #1903 did not have.
+
+    "Reads the caller's value" is followed rather than assumed. The parameters
+    annotated ``Any`` are the caller's, and so is any local assigned from one:
+    ``name_list_error``'s ``shown`` is the caller's own ``str`` under a different
+    name, and reading *it* is what escaped. The chain stops at
+    :data:`GUARDED_READERS`, whose members read inside a ``try`` and return an
+    ordinary value - so a local bound from one is no longer the caller's object
+    and reading it cannot run their code.
+
+    Only public functions are scanned. The private helpers below them are the
+    guarded layer a guard is built from, so a read inside one is the point rather
+    than a defect, and reporting them would make the table a list of the fixes
+    instead of a list of the escapes.
+
+    Args:
+        source: The contents of a Python module.
+
+    Returns:
+        Every public guard that reads a caller value outside a ``try``, mapped to
+        ``(name, kind)`` pairs, where kind names the read form - a builtin, an
+        attribute call, a comprehension or a subscript.
+    """
+    tree = ast.parse(source)
+    found: dict[str, tuple[tuple[str, str], ...]] = {}
+    for fn in [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef)]:
+        if fn.name.startswith("_"):
+            continue
+        args = fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs
+        tainted = {arg.arg for arg in args if arg.annotation is not None and ast.unparse(arg.annotation) == "Any"}
+        if not tainted:
+            continue
+
+        # Follow the caller's value through assignments until nothing new is
+        # bound. A guarded reader breaks the chain; anything else propagates,
+        # because a slice or a decode of the caller's object is still theirs.
+        for _ in range(len(list(ast.walk(fn)))):
+            grown = set(tainted)
+            for node in ast.walk(fn):
+                if not isinstance(node, ast.Assign | ast.AnnAssign) or node.value is None:
+                    continue
+                calls = {
+                    call.func.id
+                    for call in ast.walk(node.value)
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Name)
+                }
+                if calls & GUARDED_READERS:
+                    continue
+                sources = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
+                if not sources & tainted:
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    grown |= {n.id for n in ast.walk(target) if isinstance(n, ast.Name)}
+            if grown == tainted:
+                break
+            tainted = grown
+
+        guarded = {
+            id(n) for stmt in ast.walk(fn) if isinstance(stmt, ast.Try) for body in stmt.body for n in ast.walk(body)
+        }
+        raised = {id(n) for stmt in ast.walk(fn) if isinstance(stmt, ast.Raise) for n in ast.walk(stmt)}
+        reads: set[tuple[str, str]] = set()
+        for node in ast.walk(fn):
+            if id(node) in guarded or id(node) in raised:
+                continue
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in READING_BUILTINS:
+                for arg in node.args:
+                    reads |= {
+                        (n.id, f"{node.func.id}()")
+                        for n in ast.walk(arg)
+                        if isinstance(n, ast.Name) and n.id in tainted
+                    }
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+                target = node.func.value
+                if isinstance(target, ast.Name) and target.id in tainted:
+                    reads.add((target.id, f".{node.func.attr}()"))
+            elif isinstance(node, ast.ListComp | ast.SetComp | ast.GeneratorExp | ast.DictComp):
+                for generator in node.generators:
+                    reads |= {
+                        (n.id, "comprehension")
+                        for n in ast.walk(generator.iter)
+                        if isinstance(n, ast.Name) and n.id in tainted
+                    }
+            elif isinstance(node, ast.Subscript) and isinstance(node.value, ast.Name) and node.value.id in tainted:
+                reads.add((node.value.id, "subscript"))
+        if reads:
+            found[fn.name] = tuple(sorted(reads))
+    return found
+
+
+#: The reads still outstanding, which is what this scan was written to surface.
+#: ``name_list_error`` came off the table with #1903 - five reads across two
+#: branches, one of them filed and four of them not - and the three the scan found
+#: beside it are #1906: each coercion validates its value with a guard that reads
+#: it and then reads it again to build the floats, so a value that answers one
+#: read and refuses the next escapes. Two of the three are on the *accepted* path
+#: rather than in a message, which is why they are a tracked boundary here rather
+#: than absorbed into #1903 - and why ``coerce_rgba`` is the one that breaks a
+#: stated contract, its second read being quoted by the wrong-length refusal.
+#: :class:`TestTheCoercionsSecondReadIsAStatedBoundary` measures the escape, so
+#: emptying this table and replacing that pin are one change.
+KNOWN_MESSAGE_READS: dict[str, tuple[tuple[str, str], ...]] = {
+    "coerce_pose_vector": (("vec", "comprehension"),),
+    "coerce_rgba": (("color", "comprehension"),),
+    "coerce_size_vector": (("size", "comprehension"),),
+}
+
+
 class TestNoGuardRendersACallerValueDirectly:
     """A guard must render a refused value through a shared renderer.
 
@@ -845,6 +1009,245 @@ class TestNoGuardRendersACallerValueDirectly:
         )
         assert _scan_direct_renders(raising) == {}
         assert "_safe_join" not in KNOWN_DIRECT_RENDERS
+
+
+class TestNoGuardReadsACallerValueOutsideATry:
+    """A guard must not run the caller's own code while building its refusal (#1903).
+
+    ``TestNoGuardRendersACallerValueDirectly`` above holds the *rendering* of a
+    refused value, and that is not the same property. Its table is empty because
+    every guard renders through a shared renderer - and
+    ``_refusal_container_repr(list(value))`` satisfied it completely, because the
+    value handed to the renderer was a ``list`` the guard had already built. The
+    render could not raise; building its argument ran the caller's ``__iter__``,
+    which could.
+
+    So this is the read-side scan, stated over the module rather than over a list
+    of guards, for the reason the sibling gives: a fixed list would not survive a
+    tenth guard being added. It is what closing #1903 needed in order not to be a
+    one-branch patch - the issue described the mapping's ``list(value)``, and the
+    scan found four more on the string branch beside it.
+    """
+
+    def _source(self) -> str:
+        return pathlib.Path(inspect.getfile(utils)).read_text(encoding="utf-8")
+
+    def test_no_public_guard_reads_a_caller_value_outside_a_try(self) -> None:
+        found = _scan_unguarded_message_reads(self._source())
+        adrift = {name: sites for name, sites in found.items() if name not in KNOWN_MESSAGE_READS}
+        assert adrift == {}, f"these run caller code outside a try: {adrift}"
+        assert found == KNOWN_MESSAGE_READS, f"the set of unguarded reads changed: {found}"
+
+    def test_the_scan_reaches_the_guards_it_is_asserted_over(self) -> None:
+        """An empty result and a scanner that looks at nothing are the same table."""
+        scanned = set(_scan_unguarded_message_reads(self._source() + _PLANTED_UNGUARDED_READ))
+        assert scanned == set(KNOWN_MESSAGE_READS) | {"new_guard_error"}, (
+            f"the planted guard was not reached: {scanned}"
+        )
+
+    def test_the_scanner_reports_the_read_1903_was_filed_for(self) -> None:
+        """The mapping remedy, verbatim, as the escape it was."""
+        assert _scan_unguarded_message_reads(
+            textwrap.dedent(
+                """
+                def new_guard_error(value: Any, param: str, context: str) -> str | None:
+                    if isinstance(value, Mapping):
+                        return f"{param} must be a list: {_refusal_container_repr(list(value))}."
+                    return None
+                """
+            )
+        ) == {"new_guard_error": (("value", "list()"),)}
+
+    def test_the_scanner_reports_the_four_reads_1903_did_not_have(self) -> None:
+        """The string branch as it stood: a comprehension, a length, and a decode.
+
+        All four were invisible to every existing assertion - the rendering scan
+        sees a shared renderer, and no test passed a hostile ``str`` subclass.
+        """
+        assert _scan_unguarded_message_reads(
+            textwrap.dedent(
+                """
+                def new_guard_error(value: Any, param: str, context: str) -> str | None:
+                    shown = value.decode(errors="replace") if isinstance(value, bytes) else value
+                    return (
+                        f"{param}: read as {[c for c in shown][:6]} ({len(shown)} name(s)). "
+                        f"Wrap it in a list: [{_refusal_repr(shown)}]."
+                    )
+                """
+            )
+        ) == {
+            "new_guard_error": (
+                ("shown", "comprehension"),
+                ("shown", "len()"),
+                ("value", ".decode()"),
+            )
+        }
+
+    def test_the_scanner_accepts_a_read_moved_inside_a_try(self) -> None:
+        """The control for the control: the shape this change lands must not be reported."""
+        assert (
+            _scan_unguarded_message_reads(
+                textwrap.dedent(
+                    """
+                    def new_guard_error(value: Any, param: str, context: str) -> str | None:
+                        try:
+                            names = list(value)
+                        except Exception:
+                            return f"{param}: could not be read."
+                        return f"{param} must be a list: {_refusal_container_repr(names)}."
+                    """
+                )
+            )
+            == {}
+        )
+
+    def test_the_scanner_accepts_a_read_of_a_guarded_readers_result(self) -> None:
+        """``len(characters)`` is this module's own list, not the caller's value.
+
+        Without this the scan would report the fix as loudly as the defect, and an
+        unfollowable chain is what makes a taint scan get switched off.
+        """
+        assert (
+            _scan_unguarded_message_reads(
+                textwrap.dedent(
+                    """
+                    def new_guard_error(value: Any, param: str, context: str) -> str | None:
+                        characters, unreadable = _read_to_quote(value)
+                        if characters is None:
+                            return f"{param}: could not be read ({unreadable})."
+                        return f"{param}: read as {characters[:6]} ({len(characters)} name(s))."
+                    """
+                )
+            )
+            == {}
+        )
+
+    def test_the_scanner_ignores_a_type_test(self) -> None:
+        """``isinstance`` asks the class, so it cannot run the value's own code.
+
+        A scan that reported it would fire on every guard in the file and be
+        deleted within a week, which is the failure mode worth a control of its own.
+        """
+        assert (
+            _scan_unguarded_message_reads(
+                textwrap.dedent(
+                    """
+                    def new_guard_error(value: Any, param: str, context: str) -> str | None:
+                        if isinstance(value, Mapping) or type(value) is dict:
+                            return f"{param} must be a list of names."
+                        return None
+                    """
+                )
+            )
+            == {}
+        )
+
+    def test_the_scanner_ignores_a_private_helper(self) -> None:
+        """A read inside the guarded layer is the point, not the defect.
+
+        ``_read_to_quote`` reads the caller's value on purpose; a scan that
+        reported it would hold the table open on the very functions that close it.
+        """
+        assert (
+            _scan_unguarded_message_reads(
+                textwrap.dedent(
+                    """
+                    def _read_to_quote(value: Any) -> tuple[list[Any] | None, str | None]:
+                        return list(value), None
+                    """
+                )
+            )
+            == {}
+        )
+
+
+class FailsOnItsSecondNumericRead(Sequence[Any]):
+    """Answers one full read and refuses the next, the #1897 probe shape.
+
+    Distinct from that module's ``FailsOnItsSecondRead`` in carrying numbers, so
+    it reaches the numeric coercions rather than being refused as a non-name
+    before the second read happens.
+    """
+
+    def __init__(self, *values: Any) -> None:
+        self.values = list(values)
+        self.reads = 0
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def __getitem__(self, index: Any) -> Any:
+        if index == 0:
+            self.reads += 1
+            if self.reads > 1:
+                raise RuntimeError("no second read for you")
+        return self.values[index]
+
+
+class TestTheCoercionsSecondReadIsAStatedBoundary:
+    """Measured while closing #1903, out of scope there, and filed as #1906.
+
+    The read-side scan's first find beyond the guard #1903 was about. Each
+    coercion validates its value with a guard that reads it - ``pose_vector_error``
+    or ``finite_vector_error``, both of which read element by element inside a
+    ``try`` since #1889 - and then reads it again, unguarded, to build the floats.
+    The reads are independent, so nothing obliges them to agree, which is #1897's
+    finding on three guards that fix could not reach.
+
+    It is not absorbed into #1903 because two of the three reads are on the
+    **accepted** path and build the return value rather than a message, so "a
+    refusal must not raise" does not reach them and the family's usual argument
+    does not apply unchanged. ``coerce_rgba`` is the exception - its second read is
+    quoted by the wrong-length refusal - and it is why #1906 is a bug rather than a
+    hardening request. Fixing it properly means the shared numeric validators
+    return the list they read, which is a signature change on guards with many
+    callers and a decision of its own.
+
+    Pinned so the boundary is a measurement rather than a claim, and so that
+    closing #1906 has to replace this class and empty ``KNOWN_MESSAGE_READS`` in
+    one change rather than pass either silently.
+    """
+
+    def test_the_three_coercions_raise_on_a_value_that_refuses_a_second_read(self) -> None:
+        probes = (
+            (utils.coerce_pose_vector, ("add_object", "position", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3), 3)),
+            (utils.coerce_rgba, ("add_object", "color", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3))),
+            (utils.coerce_size_vector, ("add_object", "size", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3))),
+        )
+        for guard, args in probes:
+            with pytest.raises(RuntimeError, match="no second read for you"):
+                guard(*args)
+
+    def test_coerce_rgba_escapes_on_the_path_that_exists_to_return_text(self) -> None:
+        """The one of the three that breaks a stated contract, which #1906 turns on.
+
+        Two components is a refusal, and the value never reaches it: the second
+        read happens before the length is compared, so the guard raises on exactly
+        the path documented never to.
+        """
+        with pytest.raises(RuntimeError, match="no second read for you"):
+            utils.coerce_rgba("add_object", "color", FailsOnItsSecondNumericRead(0.1, 0.2))
+
+    def test_the_guard_read_once_does_not_escape(self) -> None:
+        """Non-vacuity: the probe is answerable, and #1897's guard answers it.
+
+        Without this the three failures above could be a probe no guard could ever
+        accept rather than a read count.
+        """
+        assert utils.name_list_error(FailsOnItsSecondNumericRead("top", "wrist"), "cameras", "render_all") is None
+
+
+#: A guard that reads the caller's value straight into its message, appended to
+#: ``utils.py``'s own source so the scan is shown to reach a function it has never
+#: seen. Kept beside the tests that use it rather than inlined, because both the
+#: reachability check and its own report read the same planted text.
+_PLANTED_UNGUARDED_READ = textwrap.dedent(
+    """
+
+def new_guard_error(value: Any, param: str, context: str) -> str | None:
+    return f"{context}: {param} must be a list of names, got {len(value)}."
+"""
+)
 
 
 def test_the_digit_limit_this_module_turns_on_is_below_its_probe() -> None:
