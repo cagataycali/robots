@@ -372,11 +372,28 @@ def sequence_length(value: Any) -> int | None:
     parameter nor the method - past agent-tool dispatch, which is documented
     never to raise.
 
-    ``TypeError`` is the narrowest superset: CPython raises it both for a value
-    with no ``__len__`` at all (a plain ``float``, a ``numpy.float64``) and for
-    one whose ``__len__`` exists but refuses. Both answer the caller's question
-    the same way - this value does not carry a component count - so both report
-    as ``None`` and one branch covers them.
+    ``TypeError`` covers the two spellings this probe was written for - CPython
+    raises it for a value carrying no ``__len__`` at all (a plain ``float``, a
+    ``numpy.float64``) and for the 0-d array whose ``__len__`` exists and
+    refuses - but it is not the superset it was once documented as, and the gap
+    needs no hostile value to reach. ``len()`` converts whatever ``__len__``
+    returns into an index, and that conversion has refusals of its own: a
+    negative length raises ``ValueError`` and a length past ``sys.maxsize``
+    raises ``OverflowError``, both from CPython rather than from the value. A
+    ``__len__`` that computes its answer - ``self._end - self._start`` on a
+    proxy whose window is inverted - is ordinary Python returning an ordinary
+    ``int`` and reaches neither branch a ``TypeError`` probe has.
+
+    So the exception's type is not the question being asked. Every one of these
+    answers the caller's question the same way - this value does not carry a
+    readable component count - so all of them report as ``None`` and one branch
+    covers them. A probe on the path whose whole purpose is to answer an
+    unusable input with a message cannot assume good behaviour of the value it
+    was handed, which is the property #1873, #1874, #1875 and #1878 established
+    on four neighbouring guards. Only ``len(value)`` runs inside the ``try``, so
+    a broad clause here masks no logic of this library's own; ``Exception``
+    rather than ``BaseException`` keeps ``KeyboardInterrupt`` and ``SystemExit``
+    propagating.
 
     Args:
         value: Any caller-supplied value a validator needs the length of.
@@ -386,7 +403,7 @@ def sequence_length(value: Any) -> int | None:
     """
     try:
         return len(value)
-    except TypeError:
+    except Exception:
         return None
 
 
@@ -1308,9 +1325,16 @@ def pose_vector_error(method: str, param_name: str, vec: Any, expected_len: int)
     entry point refuses must be refused by the other. Returns ``None`` when
     ``vec`` is acceptable.
     """
-    try:
-        length = len(vec)
-    except TypeError:
+    # Read through the shared probe rather than a second ``len()`` here. The
+    # rule "how many components is this?" has one owner (:func:`sequence_length`)
+    # precisely so it cannot be answered two ways, and this call site answered it
+    # a second way: an ``except TypeError`` clause, which is the gap that owner
+    # closed - a ``__len__`` refusing any other way, or returning a negative or
+    # an oversized ``int`` that CPython itself refuses to convert, escaped this
+    # guard and the structured contract its callers document. Both verdicts below
+    # are unchanged, including the text for a value carrying no readable length.
+    length = sequence_length(vec)
+    if length is None:
         return (
             f"{method}: '{param_name}' must be a list/tuple of {expected_len} numbers, "
             f"got {_refusal_container_repr(vec)}"

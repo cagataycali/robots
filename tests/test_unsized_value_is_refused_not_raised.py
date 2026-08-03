@@ -26,6 +26,18 @@ reached the branch written for it.
 it answers "no readable length" for a 0-d array and for a plain scalar alike -
 and these tests pin every surface that reads a caller-supplied length through
 it, plus the accepted values that must keep working.
+
+Being the single owner turned out to be two claims, and both needed work
+(#1888). The owner reported only a ``TypeError`` ``__len__`` as "no length",
+which is not the superset it was documented as: ``len()`` converts whatever
+``__len__`` returns into an index, so a negative length is a ``ValueError`` and
+one past ``sys.maxsize`` an ``OverflowError`` - raised by CPython, with the value
+raising nothing at all and its ``__len__`` returning an ordinary ``int``. And
+``pose_vector_error`` answered the same question a second way, with its own
+``except TypeError``, so the rule had two implementations and the duplicate
+carried the same gap. Every unreadable length now reports as ``None`` from one
+probe, which is what the guards' callers document, and the tests below pin that
+domain at the owner rather than at each of its readers.
 """
 
 from __future__ import annotations
@@ -33,6 +45,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import inspect
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -43,10 +56,61 @@ from strands_robots.policies.mock import MockPolicy
 from strands_robots.policies.wbc.policy import WBCPolicy
 from strands_robots.rendering.video import mjpeg_frames
 from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
-from strands_robots.utils import sequence_length
+from strands_robots.utils import coerce_rgba, pose_vector_error, sequence_length
 
 # A 0-d array: declares ``__len__``, raises from it, holds exactly one scalar.
 UNSIZED = np.array(0.5)
+
+
+# The three ways a length is unreadable *without* a ``TypeError``. Each carries a
+# ``__getitem__`` as well, which is the 0-d array's own shape (``simulation/
+# base.py`` notes such a value "declares ``__len__`` and ``__getitem__`` but
+# raises from ``len()``") and is what the call sites gating on ``__getitem__``
+# before they probe a length require to be reached at all.
+class _NegativeLength:
+    """``len()`` raises ``ValueError``: a length may not be negative.
+
+    Nothing here raises. ``__len__`` returns an ordinary ``int`` and CPython
+    refuses to convert it, which is why a computed length - ``self._end -
+    self._start`` on a proxy whose window is inverted - reaches this row without
+    anything being hostile.
+    """
+
+    def __len__(self) -> int:
+        return -1
+
+    def __getitem__(self, index: int) -> float:
+        return 0.5
+
+
+class _OversizedLength:
+    """``len()`` raises ``OverflowError``: a length must fit in an index."""
+
+    def __len__(self) -> int:
+        return sys.maxsize + 1
+
+    def __getitem__(self, index: int) -> float:
+        return 0.5
+
+
+class _RefusingLength:
+    """``__len__`` refuses on its own account, as any third-party type may.
+
+    The #1873 argument applied to ``__len__``: a method like any other, owing a
+    caller nothing, on the one path whose purpose is to answer instead of raise.
+    """
+
+    def __len__(self) -> int:
+        raise RuntimeError("length unavailable")
+
+    def __getitem__(self, index: int) -> float:
+        return 0.5
+
+
+# ``UNSIZED`` first: the value the rule was written for, so a parametrization
+# over this tuple is a widening of an existing pin rather than a separate one.
+UNREADABLE_LENGTHS = (UNSIZED, _NegativeLength(), _OversizedLength(), _RefusingLength())
+UNREADABLE_IDS = ("zero_d_array", "negative_len", "oversized_len", "refusing_len")
 
 
 # A minimal actuated arm: enough for send_action to reach the action coercion,
@@ -106,6 +170,27 @@ class TestUnsizedValuePremise:
         with pytest.raises(TypeError):
             len(scalar)
 
+    @pytest.mark.parametrize(
+        ("value", "raised"),
+        [
+            (_NegativeLength(), ValueError),
+            (_OversizedLength(), OverflowError),
+            (_RefusingLength(), RuntimeError),
+        ],
+        ids=["negative_len", "oversized_len", "refusing_len"],
+    )
+    def test_len_refuses_in_more_ways_than_a_type_error(self, value: Any, raised: type[Exception]) -> None:
+        """``TypeError`` is not a superset of what ``len()`` raises (#1888).
+
+        The first two values raise nothing themselves: ``len()`` converts what
+        ``__len__`` returned into an index and CPython refuses, so a probe
+        catching only ``TypeError`` is escaped by ordinary Python returning an
+        ordinary ``int``. The third is the third-party case.
+        """
+        assert not issubclass(raised, TypeError), "the premise is that this is not the caught type"
+        with pytest.raises(raised):
+            len(value)
+
     def test_a_numpy_scalar_declares_no_length_at_all(self) -> None:
         """The other half of the domain: ``len()`` raises ``TypeError`` here too.
 
@@ -146,12 +231,83 @@ class TestSequenceLength:
             0.5,
             None,
             object(),
+            _NegativeLength(),
+            _OversizedLength(),
+            _RefusingLength(),
         ],
-        ids=["zero_d_float", "zero_d_bool", "np_float64", "np_int64", "float", "none", "object"],
+        ids=[
+            "zero_d_float",
+            "zero_d_bool",
+            "np_float64",
+            "np_int64",
+            "float",
+            "none",
+            "object",
+            "negative_len",
+            "oversized_len",
+            "refusing_len",
+        ],
     )
     def test_reports_none_for_a_value_without_a_readable_length(self, value: Any) -> None:
-        """No readable length is ``None``, never an exception."""
+        """No readable length is ``None``, never an exception.
+
+        The last three rows are #1888: a length is unreadable whether ``__len__``
+        is absent, refuses with a ``TypeError``, refuses some other way, or
+        returns an ``int`` CPython will not convert. All four answer the caller's
+        question the same way, so all four report through the one branch and the
+        exception's type is not part of the question.
+        """
         assert sequence_length(value) is None
+
+
+class TestEveryUnreadableLengthAnswersTheSameWay:
+    """The widened domain where this change is: the guards, and one live envelope.
+
+    ``UNSIZED`` is pinned at every surface further down this module, and those
+    surfaces reach the shared owner by the same route these values do - so
+    re-asserting all of them four times over would measure one branch four
+    times. What is worth pinning here is the owner's own domain (above), the
+    guard that answered the length question a *second* way and therefore had to
+    be fixed separately, and that a public envelope still closes over a value
+    whose length refuses rather than merely being absent.
+    """
+
+    @pytest.mark.parametrize("value", UNREADABLE_LENGTHS, ids=UNREADABLE_IDS)
+    def test_pose_vector_error_reports_a_value_with_no_readable_length(self, value: Any) -> None:
+        """The second probe is gone; the verdict and its wording are not.
+
+        ``pose_vector_error`` carried its own ``try: len(vec) except TypeError``,
+        so it inherited nothing when the owner was widened. It now reads through
+        the owner, and this is the text it already produced for a value carrying
+        no readable length.
+        """
+        message = pose_vector_error("add_object", "position", value, 3)
+        assert message is not None, "a value with no readable length was accepted as a pose"
+        assert "'position' must be a list/tuple of 3 numbers" in message
+
+    @pytest.mark.parametrize("value", UNREADABLE_LENGTHS, ids=UNREADABLE_IDS)
+    def test_coerce_rgba_reports_a_value_with_no_readable_length(self, value: Any) -> None:
+        """The colour guard reads the shared probe with no gate in front of it."""
+        colour, reason = coerce_rgba("add_object", "color", value)
+        assert colour is None
+        assert reason is not None and "'color' must be a sequence of numbers" in reason
+
+    @pytest.mark.parametrize("value", UNREADABLE_LENGTHS, ids=UNREADABLE_IDS)
+    def test_the_router_still_answers_through_its_envelope(self, value: Any) -> None:
+        """End to end: a dispatched vector parameter, refused rather than raised.
+
+        The router is the surface #1844 was written for and the one whose
+        contract is documented as never raising, so it is the envelope worth
+        re-measuring for a length that refuses rather than one that is absent.
+        """
+        engine = MuJoCoSimEngine(tool_name="refusing_length_router", mesh=False)
+        signature = inspect.signature(MuJoCoSimEngine.add_object)
+        _, error = engine._validate_and_build_kwargs(
+            "add_object", "add_object", signature, {"name": "crate", "position": value}
+        )
+        assert error is not None, "add_object(position=<unreadable length>) was accepted"
+        assert error["status"] == "error"
+        assert "Parameter 'position' must be a list of" in _text(error)
 
 
 # --------------------------------------------------------------------------- #
@@ -442,3 +598,94 @@ class TestNoDirectLengthProbe:
         """Meta: an empty result means clean sources, not a scanner matching nothing."""
         planted = ast.parse('if not hasattr(value, "__len__"):\n    pass\n')
         assert _hasattr_len_probes(planted) == [1]
+
+
+# --------------------------------------------------------------------------- #
+# Structural: the rule keeps exactly one owner.
+# --------------------------------------------------------------------------- #
+def _own_length_probes(tree: ast.AST) -> list[tuple[str, int]]:
+    """``(function, line)`` for every ``len(<param>)`` on a parameter annotated ``Any``.
+
+    ``Any`` is how ``utils.py`` spells "the caller's value" - its guards' other
+    parameters are the ``str`` labels a call site supplies, which are literals -
+    so it is the same key #1873's rendering scan used, for the same reason.
+
+    The scope is ``utils.py`` rather than the package. Measured package-wide the
+    same scan reports a dozen legitimate reads, all taken *after* a type check
+    has established the value is a sized container (``mesh/security.py``,
+    ``tools/use_lerobot.py``, the LIBERO parsers), so a package-wide assertion
+    would have to enumerate exceptions and would stop meaning anything. Inside
+    ``utils.py`` the question is unambiguous: this module *is* where the rule
+    lives, so a second ``len()`` on a caller value here is a second answer to it.
+    """
+    hits: list[tuple[str, int]] = []
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        arguments = function.args
+        untyped = {
+            argument.arg
+            for argument in [*arguments.posonlyargs, *arguments.args, *arguments.kwonlyargs]
+            if isinstance(argument.annotation, ast.Name) and argument.annotation.id == "Any"
+        }
+        if not untyped:
+            continue
+        for node in ast.walk(function):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "len"
+                and len(node.args) == 1
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id in untyped
+            ):
+                hits.append((function.name, node.lineno))
+    return hits
+
+
+class TestTheLengthRuleHasOneOwner:
+    """A second probe cannot reappear, having been the other half of #1888.
+
+    ``sequence_length`` exists because the rule cannot be kept in step in two
+    places, and it was in two places: ``pose_vector_error`` carried its own
+    ``except TypeError``, so widening the owner left it untouched. A list of
+    guards would not have caught that - the duplicate was added beside the owner,
+    in the same module, by someone reading the same docstring - so the invariant
+    is scanned rather than enumerated.
+    """
+
+    def test_sequence_length_is_the_only_function_asking_len_of_a_caller_value(self) -> None:
+        """One owner, by name, so the offender is named rather than merely counted."""
+        source = ast.parse(Path(inspect.getfile(sequence_length)).read_text())
+        owners = {name for name, _ in _own_length_probes(source)}
+        assert owners == {"sequence_length"}, (
+            f"ask sequence_length() for the length and branch on None, rather than a second len(): {sorted(owners)}"
+        )
+
+    def test_the_scanner_reports_the_probe_that_was_removed(self) -> None:
+        """Meta: the scan matched the duplicate it is here to prevent.
+
+        Planted in the shape ``pose_vector_error`` actually carried, so a scanner
+        rewrite that stopped matching it would fail here rather than pass
+        vacuously against clean sources.
+        """
+        planted = ast.parse(
+            "def pose_vector_error(method: str, param_name: str, vec: Any, expected_len: int) -> str | None:\n"
+            "    try:\n"
+            "        length = len(vec)\n"
+            "    except TypeError:\n"
+            "        return method\n"
+            "    return None\n"
+        )
+        assert _own_length_probes(planted) == [("pose_vector_error", 3)]
+
+    def test_the_scanner_does_not_match_a_read_of_this_modules_own_value(self) -> None:
+        """Non-over-reach: a length taken of a value the function built is fine.
+
+        ``require_optionals`` reads ``len(missing)`` and the name-list guard reads
+        ``len(shown)``; neither is a caller value and neither may be reported.
+        """
+        planted = ast.parse(
+            "def guard(value: Any) -> str:\n    missing = [value]\n    return 'is' if len(missing) == 1 else 'are'\n"
+        )
+        assert _own_length_probes(planted) == []

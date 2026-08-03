@@ -876,10 +876,18 @@ class TestTheIterationIsAnsweredNotEscaped:
     only one guard ever reached an iteration, so the surface this closes is one
     ``iter()`` call - but the verdict on that call is now a message.
 
-    This is the fourth and last escape in the family: rendering (#1873), scalar
-    conversion (#1874), container conversion and rendering (#1875), and iteration
-    here. All four are the same defect - a guard whose entire purpose is to answer
-    an unusable input with a structured refusal, raising instead.
+    This is the fourth escape in the family: rendering (#1873), scalar conversion
+    (#1874), container conversion and rendering (#1875), and iteration here. All
+    four are the same defect - a guard whose entire purpose is to answer an
+    unusable input with a structured refusal, raising instead.
+
+    It was recorded as the *last* of them, and that did not hold. The shared
+    length probe every vector guard runs first carried the same shape and was
+    closed by #1888, and the element access one level inside this guard's own loop
+    still carries it (#1889, pinned in
+    :class:`TestElementAccessStaysOutOfScope`). "Last" is an assertion about
+    everything that was not measured, so the family is named here by what it
+    contains rather than by being finished.
     """
 
     def test_a_hostile_iteration_is_refused_rather_than_raised(self) -> None:
@@ -944,7 +952,8 @@ class TestTheIterationIsAnsweredNotEscaped:
     def test_the_other_guards_still_answer_because_they_ask_for_a_length_first(self) -> None:
         """Unchanged, and still the reason the closed surface is one call.
 
-        ``pose_vector_error`` takes ``len()`` before iterating and
+        ``pose_vector_error`` asks for a length before iterating - through the
+        shared probe since #1888, with its own ``len()`` before that - and
         ``name_list_error`` tests ``isinstance(value, Sequence)``, so neither ever
         reached an iteration to escape from.
         """
@@ -954,3 +963,90 @@ class TestTheIterationIsAnsweredNotEscaped:
     def test_the_rendering_half_was_already_closed(self) -> None:
         """The renderer was never what left this open, and still is not."""
         assert _refusal_container_repr(HostileIteration()) == "<unrepresentable HostileIteration>"
+
+
+class GetItemOnly:
+    """A sequence by the legacy protocol: ``__getitem__``, no ``__iter__``.
+
+    CPython synthesises an iterator for such a value *without* calling
+    ``__getitem__``, so ``iter()`` succeeds and the first ``next()`` is what
+    raises. This is the 0-d array's own shape - ``simulation/base.py`` notes such
+    a value "declares ``__len__`` and ``__getitem__``" - so it is a shape the
+    library documents itself as receiving, not an invented one.
+    """
+
+    def __len__(self) -> int:
+        return 3
+
+    def __getitem__(self, index: int) -> float:
+        raise RuntimeError("backing store unavailable")
+
+
+def failing_generator() -> Iterator[float]:
+    """Yields once, then fails. ``iter()`` on a generator cannot fail at all."""
+    yield 0.1
+    raise RuntimeError("stream truncated")
+
+
+class MutatedWhileRead:
+    """Grows during its own iteration, so the stdlib raises, not the value."""
+
+    def __init__(self) -> None:
+        self._items = {"a": 1.0, "b": 2.0}
+
+    def __iter__(self) -> Iterator[float]:
+        for key in self._items:
+            self._items[key + "x"] = 1.0
+            yield self._items[key]
+
+
+class TestElementAccessStaysOutOfScope:
+    """``__iter__`` is answered; ``__next__``, one level in, still is not (#1889).
+
+    The guard probes ``iter(vec)`` inside a ``try`` and then walks the iterator in
+    a ``for`` loop that is not guarded, so an exception raised while *producing*
+    an element escapes exactly as an exception from ``__iter__`` used to. The
+    current code states this boundary and chose it - "it stays lazy - a
+    materialising ``list(vec)`` would answer for ``__next__`` too, but at the cost
+    of holding a whole vector that the element loop below only ever needs one at a
+    time" - so it is a stated limit rather than an oversight.
+
+    Left alone here deliberately. Closing it is a decision rather than a defect
+    fix: it trades away that laziness, and #1878's own lesson forbids reusing the
+    ``could not be iterated`` verdict for it, since a value that failed at element
+    4 of 7 had four components read and found fine, which is a different
+    measurement from one whose iteration never started. Tracked in #1889.
+
+    These assertions pin the defective behaviour, so they must be **replaced**
+    rather than deleted when #1889 lands, per the premise-test guidance in
+    ``AGENTS.md``.
+    """
+
+    def test_a_legacy_sequence_whose_item_access_raises_escapes(self) -> None:
+        """``iter()`` succeeds, so the guarded probe never sees this one."""
+        assert iter(GetItemOnly()) is not None
+        with pytest.raises(RuntimeError, match="backing store unavailable"):
+            finite_vector_error("raycast", "origin", GetItemOnly())
+
+    def test_a_generator_that_fails_after_its_first_yield_escapes(self) -> None:
+        """A generator cannot fail at ``iter()``, so the probe is blind to it."""
+        with pytest.raises(RuntimeError, match="stream truncated"):
+            finite_vector_error("raycast", "origin", failing_generator())
+
+    def test_a_container_mutated_during_its_own_read_escapes(self) -> None:
+        """The exception is the stdlib's; the value raises nothing of its own."""
+        with pytest.raises(RuntimeError, match="changed size during iteration"):
+            finite_vector_error("raycast", "origin", MutatedWhileRead())
+
+    def test_coerce_size_vector_inherits_this_one_too(self) -> None:
+        """The same inheritance that carried the ``__iter__`` escape carries this."""
+        with pytest.raises(RuntimeError, match="backing store unavailable"):
+            coerce_size_vector("add_object", "size", GetItemOnly())
+
+    def test_the_iter_half_still_answers(self) -> None:
+        """Non-vacuity: the boundary narrowed to ``__next__``, it did not move back.
+
+        Without this, a regression that reopened the ``__iter__`` escape would
+        leave every assertion above passing for the wrong reason.
+        """
+        assert finite_vector_error("raycast", "origin", HostileIteration()) is not None
