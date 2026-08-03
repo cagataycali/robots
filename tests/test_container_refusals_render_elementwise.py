@@ -881,12 +881,12 @@ class TestTheIterationIsAnsweredNotEscaped:
     four are the same defect - a guard whose entire purpose is to answer an
     unusable input with a structured refusal, raising instead.
 
-    It was recorded as the *last* of them, and that did not hold. The shared
-    length probe every vector guard runs first carried the same shape and was
-    closed by #1888, and the element access one level inside this guard's own loop
-    still carries it (#1889, pinned in
-    :class:`TestElementAccessStaysOutOfScope`). "Last" is an assertion about
-    everything that was not measured, so the family is named here by what it
+    It was recorded as the *last* of them, and that did not hold twice over. The
+    shared length probe every vector guard runs first carried the same shape and
+    was closed by #1888, and the element access one level inside this guard's own
+    loop carried it until #1889, now measured in
+    :class:`TestElementProductionIsAnsweredNotEscaped`. "Last" is an assertion
+    about everything that was not measured, so the family is named here by what it
     contains rather than by being finished.
     """
 
@@ -949,13 +949,19 @@ class TestTheIterationIsAnsweredNotEscaped:
         assert "could not be iterated" in message
         assert "UnprintableFailureError" in message
 
-    def test_the_other_guards_still_answer_because_they_ask_for_a_length_first(self) -> None:
-        """Unchanged, and still the reason the closed surface is one call.
+    def test_the_other_guards_answer_this_value_before_they_reach_an_iteration(self) -> None:
+        """Unchanged, and the reason the surface closed by *this* call is one ``iter()``.
 
-        ``pose_vector_error`` asks for a length before iterating - through the
-        shared probe since #1888, with its own ``len()`` before that - and
-        ``name_list_error`` tests ``isinstance(value, Sequence)``, so neither ever
-        reached an iteration to escape from.
+        ``pose_vector_error`` asks for a length first - through the shared probe
+        since #1888, with its own ``len()`` before that - and ``name_list_error``
+        tests ``isinstance(value, Sequence)``, so this probe is refused by those
+        guards before either reaches an iteration.
+
+        That is a property of the probe, not a general exemption: it carries no
+        length and is no ``Sequence``. A value that clears those first checks does
+        reach the iteration through them, which is why the element-production
+        escape had a wider surface than this one - see
+        :class:`TestElementProductionIsAnsweredNotEscaped`.
         """
         assert pose_vector_error("add_object", "position", HostileIteration(), 3) is not None
         assert name_list_error(HostileIteration(), "cameras", "render_all") is not None
@@ -1000,53 +1006,178 @@ class MutatedWhileRead:
             yield self._items[key]
 
 
-class TestElementAccessStaysOutOfScope:
-    """``__iter__`` is answered; ``__next__``, one level in, still is not (#1889).
+class UnprintableItemFailure:
+    """A legacy sequence whose item access raises an exception that cannot be rendered.
 
-    The guard probes ``iter(vec)`` inside a ``try`` and then walks the iterator in
-    a ``for`` loop that is not guarded, so an exception raised while *producing*
-    an element escapes exactly as an exception from ``__iter__`` used to. The
-    current code states this boundary and chose it - "it stays lazy - a
-    materialising ``list(vec)`` would answer for ``__next__`` too, but at the cost
-    of holding a whole vector that the element loop below only ever needs one at a
-    time" - so it is a stated limit rather than an oversight.
-
-    Left alone here deliberately. Closing it is a decision rather than a defect
-    fix: it trades away that laziness, and #1878's own lesson forbids reusing the
-    ``could not be iterated`` verdict for it, since a value that failed at element
-    4 of 7 had four components read and found fine, which is a different
-    measurement from one whose iteration never started. Tracked in #1889.
-
-    These assertions pin the defective behaviour, so they must be **replaced**
-    rather than deleted when #1889 lands, per the premise-test guidance in
-    ``AGENTS.md``.
+    The ``__next__`` counterpart of :class:`UnprintableFailure`. The refusal for a
+    failed read interpolates an exception supplied by the same hostile value, so
+    without this probe that interpolation is the #1873 rendering escape again, one
+    level inside the fix for #1889.
     """
 
-    def test_a_legacy_sequence_whose_item_access_raises_escapes(self) -> None:
-        """``iter()`` succeeds, so the guarded probe never sees this one."""
+    def __repr__(self) -> str:
+        raise RuntimeError("no repr for you")
+
+    def __len__(self) -> int:
+        return 3
+
+    def __getitem__(self, index: int) -> float:
+        raise UnprintableFailureError
+
+
+class CountedRead:
+    """Yields ``values`` one at a time, recording how many were produced.
+
+    The guard's laziness is a documented property - it reads a component at a
+    time rather than materialising the vector - and a property nothing measures is
+    one a later rewrite can drop without noticing.
+    """
+
+    def __init__(self, *values: Any) -> None:
+        self.values = values
+        self.produced = 0
+
+    def __iter__(self) -> Iterator[Any]:
+        for value in self.values:
+            self.produced += 1
+            yield value
+
+
+class TestElementProductionIsAnsweredNotEscaped:
+    """A read that fails part-way is refused, not raised (#1889).
+
+    Replaces ``TestElementAccessStaysOutOfScope``, which pinned the opposite while
+    the escape was a stated boundary rather than a fixed defect. ``iter(vec)`` was
+    probed inside a ``try`` and the iterator then walked by an unguarded ``for``,
+    so an exception raised while *producing* an element escaped exactly as one
+    from ``__iter__`` used to - the same defect as #1873, #1874, #1875 and #1878,
+    one level in.
+
+    Three routes reach it and none needs a hostile type. ``iter()`` of a generator
+    cannot fail, so the probe was structurally blind to a generator that fails
+    after its first yield; CPython synthesises the iterator for a legacy
+    ``__getitem__`` sequence *without* calling ``__getitem__``, which is the 0-d
+    array's own shape this library documents itself as receiving; and a container
+    mutated during its own read raises from the stdlib rather than from the value.
+
+    The verdict is not the ``__iter__`` one reworded. A read that stopped at
+    element 4 had four components read and found finite, which is a different
+    measurement from a value whose iteration never began, so it names the element
+    it stopped at - #1878's own lesson, that a refusal must not state what was
+    never measured.
+    """
+
+    def test_a_legacy_sequence_whose_item_access_raises_is_refused(self) -> None:
+        """``iter()`` succeeds on this value, so only a guarded read answers it."""
         assert iter(GetItemOnly()) is not None
-        with pytest.raises(RuntimeError, match="backing store unavailable"):
-            finite_vector_error("raycast", "origin", GetItemOnly())
+        message = finite_vector_error("raycast", "origin", GetItemOnly())
+        assert message is not None
+        assert "raycast: 'origin[0]' could not be read" in message
 
-    def test_a_generator_that_fails_after_its_first_yield_escapes(self) -> None:
-        """A generator cannot fail at ``iter()``, so the probe is blind to it."""
-        with pytest.raises(RuntimeError, match="stream truncated"):
-            finite_vector_error("raycast", "origin", failing_generator())
+    def test_the_refusal_names_the_exception_that_stopped_the_read(self) -> None:
+        """The type and text are what make it actionable, as on the ``__iter__`` half."""
+        message = finite_vector_error("raycast", "origin", GetItemOnly())
+        assert message is not None
+        assert "RuntimeError" in message
+        assert "backing store unavailable" in message
 
-    def test_a_container_mutated_during_its_own_read_escapes(self) -> None:
+    def test_a_generator_that_fails_after_its_first_yield_names_where_it_stopped(self) -> None:
+        """The index is the measurement: element 0 was read and was finite.
+
+        This is the whole reason the verdict is not the ``__iter__`` text - a
+        value that produced good components before failing is not one that held
+        nothing readable.
+        """
+        message = finite_vector_error("raycast", "origin", failing_generator())
+        assert message is not None
+        assert "'origin[1]' could not be read" in message
+        assert "stream truncated" in message
+
+    def test_a_container_mutated_during_its_own_read_is_refused(self) -> None:
         """The exception is the stdlib's; the value raises nothing of its own."""
-        with pytest.raises(RuntimeError, match="changed size during iteration"):
-            finite_vector_error("raycast", "origin", MutatedWhileRead())
+        message = finite_vector_error("raycast", "origin", MutatedWhileRead())
+        assert message is not None
+        assert "could not be read" in message
+        assert "changed size during iteration" in message
 
-    def test_coerce_size_vector_inherits_this_one_too(self) -> None:
-        """The same inheritance that carried the ``__iter__`` escape carries this."""
-        with pytest.raises(RuntimeError, match="backing store unavailable"):
-            coerce_size_vector("add_object", "size", GetItemOnly())
+    def test_it_does_not_claim_the_value_was_not_a_list_of_numbers(self) -> None:
+        """The domain check never ran on the element that could not be produced."""
+        message = finite_vector_error("raycast", "origin", GetItemOnly())
+        assert message is not None
+        assert "must be a list/tuple of numbers" not in message
+
+    def test_the_two_iteration_verdicts_are_not_the_same_text(self) -> None:
+        """Distinct measurements, so distinct messages.
+
+        A shared verdict would be the failure #1878 avoided when it declined to
+        fold itself into #1875: reporting a check that did not run.
+        """
+        part_way = finite_vector_error("raycast", "origin", GetItemOnly())
+        never_started = finite_vector_error("raycast", "origin", HostileIteration())
+        assert part_way is not None and never_started is not None
+        assert "could not be iterated" in never_started
+        assert "could not be iterated" not in part_way
+        assert part_way != never_started
+
+    def test_every_guard_reaching_this_iteration_inherits_the_answer(self) -> None:
+        """The surface is four calls, not the one ``iter()`` #1878 closed.
+
+        A legacy sequence carries a readable ``__len__``, so it clears the length
+        check that refused #1878's probe and reaches the iteration through
+        ``pose_vector_error`` and ``coerce_rgba`` as well - which is why the fix
+        belongs in the shared guard and not at a call site.
+        """
+        assert pose_vector_error("add_object", "position", GetItemOnly(), 3) is not None
+        assert coerce_pose_vector("add_object", "position", GetItemOnly(), 3)[1] is not None
+        assert coerce_rgba("add_object", "color", GetItemOnly())[1] is not None
+        assert coerce_size_vector("add_object", "size", GetItemOnly())[1] is not None
+
+    def test_an_exception_whose_own_str_raises_does_not_reescape(self) -> None:
+        """The fix must not reintroduce #1873 inside its own message."""
+        message = finite_vector_error("raycast", "origin", UnprintableItemFailure())
+        assert message is not None
+        assert "could not be read" in message
+        assert "UnprintableFailureError" in message
 
     def test_the_iter_half_still_answers(self) -> None:
-        """Non-vacuity: the boundary narrowed to ``__next__``, it did not move back.
+        """Non-vacuity: the ``__iter__`` verdict is unchanged, not absorbed."""
+        message = finite_vector_error("raycast", "origin", HostileIteration())
+        assert message is not None
+        assert "could not be iterated" in message
 
-        Without this, a regression that reopened the ``__iter__`` escape would
-        leave every assertion above passing for the wrong reason.
+    def test_an_acceptable_lazy_vector_is_still_accepted(self) -> None:
+        """The rewritten loop must not refuse what the ``for`` accepted.
+
+        A generator of finite numbers, and an empty one - the ``StopIteration``
+        that ends the read is the read finishing, not a failure.
         """
-        assert finite_vector_error("raycast", "origin", HostileIteration()) is not None
+        assert finite_vector_error("raycast", "origin", (v for v in (0.1, 0.2, 0.3))) is None
+        assert finite_vector_error("raycast", "origin", (v for v in ())) is None
+
+    def test_the_index_is_a_position_and_not_a_constant(self) -> None:
+        """Non-vacuity of the index: three values, three different positions.
+
+        Without this, a hard-coded ``[0]`` would satisfy every assertion above
+        while naming the wrong element for every value but the first.
+        """
+
+        def fails_at_element(position: int) -> Iterator[float]:
+            for _ in range(position):
+                yield 0.1
+            raise RuntimeError("halted")
+
+        for position in (0, 1, 2):
+            message = finite_vector_error("raycast", "origin", fails_at_element(position))
+            assert message is not None
+            assert f"'origin[{position}]' could not be read" in message
+
+    def test_the_read_is_still_one_component_at_a_time(self) -> None:
+        """The laziness the guard documents, measured rather than asserted in prose.
+
+        A materialising ``list(vec)`` would answer for ``__next__`` too, and would
+        read every component before examining any - so it could neither stop at the
+        first unusable one nor say how far the read got.
+        """
+        vector = CountedRead(0.1, "not a number", 0.3)
+        assert finite_vector_error("raycast", "origin", vector) is not None
+        assert vector.produced == 2

@@ -1223,11 +1223,15 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
       either poisons the physics state on the next ``mj_forward`` or aborts the
       spec recompile with a cryptic "spec recompile refused", reporting a
       success/garbage result instead of an actionable error.
-    * A value whose ``__iter__`` raises something other than ``TypeError``
+    * A value whose iteration raises something other than ``TypeError`` -
+      from ``__iter__``, or from ``__next__`` once the read is under way -
       otherwise propagates that exception out of the guard, which is the same
       contract break by a different route - the caller asked for a verdict and
-      got a traceback. Reported as its own "could not be iterated" refusal,
-      because whether it held numbers is precisely what could not be determined.
+      got a traceback. Both are reported, and not in the same words, because the
+      two are not the same measurement: a refusing ``__iter__`` yields "could not
+      be iterated", since whether it held numbers is precisely what could not be
+      determined, while a read that fails part-way names the element it stopped
+      at, the components before it having been read and found finite.
 
     A numpy real scalar per element is accepted (``np.float64`` and friends are
     registered as ``numbers.Real``), matching the "accept NumPy scalar
@@ -1253,9 +1257,18 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
     # The iterator is bound and then iterated, rather than ``iter(vec)`` being
     # called for its exception and ``vec`` iterated again: one ``__iter__`` call
     # is what the probe is asking about, and a second one is free to answer
-    # differently than the one that was checked. It stays lazy - a materialising
-    # ``list(vec)`` would answer for ``__next__`` too, but at the cost of holding
-    # a whole vector that the element loop below only ever needs one at a time.
+    # differently than the one that was checked.
+    #
+    # This clause answers for ``__iter__`` only, and a success here says nothing
+    # about the read that follows (#1889): CPython synthesises the iterator for a
+    # legacy ``__getitem__`` sequence *without* calling ``__getitem__``, and
+    # ``iter()`` of a generator cannot fail at all, so a value that fails part-way
+    # through its own iteration arrives past this line intact. The element loop
+    # below guards the call that produces each element for that reason. A
+    # materialising ``list(vec)`` would cover both in one clause and is declined
+    # for a stronger reason than the memory it holds: it raises before any element
+    # has been examined, so its verdict could not say how far the read got - the
+    # one thing that distinguishes a part-way failure from an outright refusal.
     # ``exc`` is rendered through ``_refusal_str`` rather than interpolated: a
     # value hostile enough to raise a non-``TypeError`` from ``__iter__`` is not
     # a value whose exception is assumed to have a working ``__str__``, and that
@@ -1270,7 +1283,27 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
             f"{type(exc).__name__}: {_refusal_str(exc)} (got {_refusal_container_repr(vec)}). "
             f"Pass a list or tuple of numbers."
         )
-    for _elem in elements:
+    index = 0
+    while True:
+        # ``next()`` is called explicitly because a ``for`` cannot guard the call
+        # it makes: an exception raised while *producing* an element is the
+        # ``__iter__`` escape one level in, on the same path that must not raise.
+        # It is reported against the element's own index, the convention every
+        # other guard here that names one already uses (``{param}[{i}]``), so the
+        # message states both what failed and what was read before it.
+        # ``StopIteration`` is the read finishing normally; an empty ``vec`` is
+        # accepted exactly as before, a component count not being this guard's
+        # question.
+        try:
+            _elem = next(elements)
+        except StopIteration:
+            break
+        except Exception as exc:
+            return (
+                f"{method}: '{param_name}[{index}]' could not be read: "
+                f"{type(exc).__name__}: {_refusal_str(exc)} (got {_refusal_container_repr(vec)}). "
+                f"Pass a list or tuple of numbers."
+            )
         # ``numbers.Real`` accepts a numpy scalar (``np.float32`` / ``np.int64``
         # are registered) and rejects a string, ``None`` or a nested list.
         # ``bool`` is an ``int`` subclass, so it would otherwise pass as a
@@ -1303,6 +1336,7 @@ def finite_vector_error(method: str, param_name: str, vec: Any) -> str | None:
             return (
                 f"{method}: '{param_name}' must contain finite numbers (no nan/inf), got {_refusal_container_repr(vec)}"
             )
+        index += 1
     return None
 
 
