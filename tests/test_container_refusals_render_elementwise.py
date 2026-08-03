@@ -1152,7 +1152,8 @@ class TestElementProductionIsAnsweredNotEscaped:
         that ends the read is the read finishing, not a failure.
         """
         assert finite_vector_error("raycast", "origin", (v for v in (0.1, 0.2, 0.3))) is None
-        assert finite_vector_error("raycast", "origin", (v for v in ())) is None
+        empty: tuple[float, ...] = ()
+        assert finite_vector_error("raycast", "origin", (v for v in empty)) is None
 
     def test_the_index_is_a_position_and_not_a_constant(self) -> None:
         """Non-vacuity of the index: three values, three different positions.
