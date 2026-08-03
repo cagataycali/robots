@@ -20,6 +20,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -39,11 +40,15 @@ mod = _load()
 Review = mod.Review
 
 
-def approved(author: str, at: str = "2026-08-01T00:00:00Z") -> Review:
+# ``Review`` is reached through the importlib load below, so it is a module
+# attribute at runtime and not a name mypy can resolve to a type. These helpers
+# are annotated ``Any`` for that reason rather than to loosen anything: the
+# script itself is fully typed and checked (mypy scripts/check_last_push_approval.py).
+def approved(author: str, at: str = "2026-08-01T00:00:00Z") -> Any:
     return Review(author=author, state="APPROVED", submitted_at=at)
 
 
-def commented(author: str, at: str = "2026-08-01T00:00:00Z") -> Review:
+def commented(author: str, at: str = "2026-08-01T00:00:00Z") -> Any:
     return Review(author=author, state="COMMENTED", submitted_at=at)
 
 
