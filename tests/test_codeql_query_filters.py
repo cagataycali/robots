@@ -22,6 +22,12 @@ about *scope*, not about CodeQL working:
   and the instances need reading one at a time;
 - the config is **reachable**, i.e. the workflow actually passes it, since an
   unreferenced config file silently filters nothing;
+- ``AGENTS.md`` states the gate the same way the workflow does. It carried the
+  same false sentence, and survived the correction for a structural reason: #1810
+  fixed and pinned only the workflow's copy, so nothing failed while the file every
+  contributor reads first still said the opposite. A claim with two homes needs the
+  pin to cover both, which is why this assertion lives here beside the workflow's
+  rather than in a module of its own;
 - ruff still selects **B015 and B018**, which is the load-bearing one. Excluding
   ``py/ineffectual-statement`` is only a no-loss trade because the real no-op
   statement class moved to a check that is merge-blocking here where CodeQL is
@@ -44,6 +50,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _CONFIG_PATH = _REPO_ROOT / ".github" / "codeql" / "codeql-config.yml"
 _WORKFLOW_PATH = _REPO_ROOT / ".github" / "workflows" / "codeql.yml"
 _PYPROJECT_PATH = _REPO_ROOT / "pyproject.toml"
+_AGENTS_PATH = _REPO_ROOT / "AGENTS.md"
 
 #: The only two rule ids this repository filters, and the reason each is here.
 #:
@@ -140,6 +147,52 @@ class TestTheConfigIsReachable:
             "codeql.yml must say what actually happens, not merely stop saying the wrong thing. A "
             "contributor reading it needs to know an alert blocks the merge before they spend a "
             "round wondering why an approved, green PR will not go in."
+        )
+
+
+class TestTheRulesFileStatesTheGate:
+    """``AGENTS.md`` is where a contributor looks before they read any workflow.
+
+    #1810 corrected ``codeql.yml`` and pinned it above, but the identical false
+    sentence in ``AGENTS.md`` went unpinned and survived - so the file that frames
+    every contribution told the reader an alert is advisory while the ruleset
+    blocked the merge on it. #1890 is the shape #1892 recorded: approved, required
+    check green, one unresolved note-severity thread - free to merge by that file's
+    account, and in fact not merging for 53 minutes, until the thread was resolved.
+
+    A negative assertion alone would not hold this - the claim can be restated in
+    new words and still be false - so it is paired with the two positives that make
+    the section actionable: the ruleset property that does the gating, and the
+    dismissal path that clears a deliberate finding without editing the code.
+    """
+
+    def test_it_no_longer_claims_a_finding_does_not_block(self):
+        text = _AGENTS_PATH.read_text(encoding="utf-8")
+        assert "not PR-blocking" not in text, (
+            "AGENTS.md used to state that CodeQL findings are not PR-blocking. A "
+            "`github-advanced-security` review thread on an alert is a merge gate under "
+            "`required_review_thread_resolution`, whatever the severity, so that sentence "
+            "described a policy the repository does not implement. Do not restore it - and see "
+            "the workflow assertion above, which is the same claim in its other home."
+        )
+
+    def test_it_names_the_ruleset_property_that_gates(self):
+        text = _AGENTS_PATH.read_text(encoding="utf-8")
+        assert "required_review_thread_resolution" in text, (
+            "AGENTS.md must name what actually blocks the merge, not merely stop denying it. A "
+            "contributor who knows only that 'CodeQL is advisory' - true of the check context, "
+            "which is not in the required set - has no account of an approved, green PR that "
+            "will not go in, and spends the round #1892 was filed to prevent."
+        )
+
+    def test_it_records_the_dismissal_path(self):
+        text = _AGENTS_PATH.read_text(encoding="utf-8")
+        assert "dismissed_reason" in text, (
+            "AGENTS.md must keep naming dismissal as the way to clear a deliberate, test-only "
+            "finding. Without it the only visible options are editing the flagged code - which "
+            "cost #1879 a round, and on #1890 would have left a fixture asserting nothing, since "
+            "the IndexError the query asks for is what CPython clears to end iteration - or "
+            "widening the filter set the test above pins at two."
         )
 
 

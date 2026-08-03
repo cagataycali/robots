@@ -507,9 +507,45 @@ Corrections from code review that apply to all future contributions:
   network exposure.
 
 ### CI Security Baseline
-- **CodeQL findings are not PR-blocking but ARE actionable** - check the Security
-  tab after pushing to a branch. False-positives get dismissed with a reason;
-  real findings get fixed.
+- **A CodeQL alert gates the merge; the CodeQL *check* does not.** These are two
+  objects and only one of them is advisory. The `CodeQL` context is not in the
+  required set (above), so it can sit at `NEUTRAL` indefinitely without blocking
+  anything - but the alert also opens a `github-advanced-security` **review
+  thread**, and the `default` ruleset sets
+  `required_review_thread_resolution: true`, so the merge waits on that thread
+  whatever the alert's severity. This file used to assert the opposite - that a
+  finding does not block a pull request - which is the half that is false and the
+  sentence #1810 was filed about; `.github/workflows/codeql.yml` carries the
+  corrected wording and `tests/test_codeql_query_filters.py` pins it for both
+  files. #1890 measured both halves at once: required check `SUCCESS`, `CodeQL`
+  `NEUTRAL`, `APPROVED` - and it sat for 53 minutes on one unresolved
+  note-severity thread, then merged 8 seconds after that thread was resolved.
+- **Clearing an alert has three tools and they are not interchangeable.**
+  - *Fix it.* The default for anything under `strands_robots/`, and the only
+    option for a real finding.
+  - *Dismiss it with a reason* when the flagged construct is deliberate and
+    test-only: the Security tab, or `PATCH /code-scanning/alerts/{n}` with
+    `dismissed_reason` and `dismissed_comment`. That comment is capped at **280
+    characters** and the endpoint needs `PAT_TOKEN`, so the argument goes in the
+    review thread and the dismissal points at it. This is the usual answer for a
+    hostile fixture, and it is a repeat: alert 590 (`_HostileRobot.__getattr__`)
+    and alert 852 (`GetItemOnly.__getitem__`, #1890) are the same rule,
+    `py/unexpected-raise-in-special-method`, dismissed for the same reason. Then
+    resolve the thread with a reply carrying the reasoning - dismissing alone
+    leaves the gate closed.
+  - *Filter the rule* in `.github/codeql/codeql-config.yml` only when **every**
+    instance in the tree is an idiom the codebase is obliged to use. The set is
+    two, `tests/test_codeql_query_filters.py` pins it, and appending a rule id is
+    otherwise the cheapest way to clear any alert - which is how a filter file
+    ends up quietly opting out of the whole suite.
+
+  Rewriting the flagged code to satisfy the query is the tempting fourth option
+  and the one that costs: #1879 spent a round removing a `__float__` from a test
+  fixture for a finding that gated nothing. It can also destroy the measurement
+  the code exists for. On #1890 the query asked for a `LookupError`; the one it
+  names first, `IndexError`, is what CPython's `seqiter` *clears* to terminate
+  legacy-protocol iteration, so taking the suggestion would have left the fixture
+  raising nothing and the test asserting nothing, still green.
 - **Dependency Review hard-fails on high/critical CVEs in new deps.** If a PR
   needs a dep with a known critical CVE, the conversation is "do we need this
   dep" not "let's bypass the check."
