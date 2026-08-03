@@ -409,6 +409,30 @@ hatch run format            # ruff check --fix, ruff format
    not; #1035's head names the maintainer outright. Same `REVIEW_REQUIRED`,
    opposite metadata. Only `triggering_actor` is load-bearing.
 
+   All of the above was documented here and enforced by nothing, which is the
+   same shape as the changelog rule in step 3 before #1784. It is now surfaced by
+   `.github/workflows/last-push-approval.yml`, which names the pusher and the
+   approvers on every review event and fails when they are the same single
+   account. The point of automating it is not that the check is clever - it is
+   that the state it reports is *invisible*: `REVIEW_REQUIRED` / `BLOCKED` is
+   byte for byte what an unreviewed pull request looks like, so the two are
+   indistinguishable in every field a sweep reads and they need opposite actions.
+   Verified against six pull requests, three outcomes, no false positive:
+
+   | pull request | pushed by | approved by | outcome |
+   |---|---|---|---|
+   | #1722, #1035 | the maintainer | the maintainer | `pusher-only-approval` |
+   | #1894, #1920 | either | a second account | `satisfied` |
+   | #1899, #1901 | the author | nobody yet | `awaiting-first-review` |
+
+   `awaiting-first-review` is a pass on purpose. It is the ordinary state of an
+   open pull request and is already visible, so making it red would put a red X
+   on every branch in the repository and the finding would stop meaning
+   anything. Unlike the overlap check in step 8 this one is **not** self-clearing
+   - its remedy is a second human, and no work the author does turns it green -
+   so it reports and is deliberately absent from the required set. A gate a
+   branch cannot clear by doing anything is a report, whatever it is wired to.
+
    The general rule behind all three: **a decision recorded only in a PR or
    issue comment is not durable** - the next contributor will not read the same
    comment. If a decision must survive, it belongs in this file.
