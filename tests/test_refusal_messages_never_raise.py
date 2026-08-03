@@ -1209,14 +1209,18 @@ class TestTheCoercionsSecondReadIsAStatedBoundary:
     """
 
     def test_the_three_coercions_raise_on_a_value_that_refuses_a_second_read(self) -> None:
-        probes = (
-            (utils.coerce_pose_vector, ("add_object", "position", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3), 3)),
-            (utils.coerce_rgba, ("add_object", "color", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3))),
-            (utils.coerce_size_vector, ("add_object", "size", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3))),
-        )
-        for guard, args in probes:
-            with pytest.raises(RuntimeError, match="no second read for you"):
-                guard(*args)
+        """Called one by one rather than looped over: the three signatures differ.
+
+        ``coerce_pose_vector`` takes the component count the others infer, so a
+        loop over ``(guard, args)`` pairs would hide that behind a ``*args`` splat
+        no reader - and no static analysis - can check against either signature.
+        """
+        with pytest.raises(RuntimeError, match="no second read for you"):
+            utils.coerce_pose_vector("add_object", "position", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3), 3)
+        with pytest.raises(RuntimeError, match="no second read for you"):
+            utils.coerce_rgba("add_object", "color", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3))
+        with pytest.raises(RuntimeError, match="no second read for you"):
+            utils.coerce_size_vector("add_object", "size", FailsOnItsSecondNumericRead(0.1, 0.2, 0.3))
 
     def test_coerce_rgba_escapes_on_the_path_that_exists_to_return_text(self) -> None:
         """The one of the three that breaks a stated contract, which #1906 turns on.
