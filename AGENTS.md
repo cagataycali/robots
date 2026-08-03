@@ -587,6 +587,73 @@ Corrections from code review that apply to all future contributions:
   names first, `IndexError`, is what CPython's `seqiter` *clears* to terminate
   legacy-protocol iteration, so taking the suggestion would have left the fixture
   raising nothing and the test asserting nothing, still green.
+- **One alert class clears under none of the three, and the question that settles
+  it is which thread you marshal onto.** `py/catch-base-exception` never fires on
+  cleanup-and-reraise: the query accepts a handler that re-raises *lexically*, and
+  six of the tree's seven `except BaseException` handlers do, so they have never
+  been flagged.
+
+  | handler | ends in | flagged |
+  |---|---|---|
+  | `robot.py:368` | `sim.destroy()`, bare `raise` | no |
+  | `policies/persistent.py:193` | `handoff.abandon()`, bare `raise` | no |
+  | `simulation/safe_output.py:185` | `os.unlink(tmp)`, bare `raise` | no |
+  | `hardware_robot.py:1865` | `self._release_task()`, bare `raise` | no |
+  | `tests/policies/lerobot_local/test_list_policy_types.py:70` | `raise AssertionError(...) from exc` | no |
+  | `tests/policies/lerobot_local/test_vla_jepa.py:164` | `raise AssertionError(...) from exc` | no |
+  | `simulation/isaac/simulation.py:5125` | `box["exc"] = exc`, no lexical raise | **yes** |
+
+  The rule's entire alert surface here is therefore one construct: a
+  **cross-thread exception-marshal box**, which parks the exception for *another*
+  thread to re-raise, where the query cannot follow the control flow.
+
+  Narrowing it to `Exception` is not the safe default it looks like, and the worst
+  case is silent. What the *caller* thread observes:
+
+  | raised on the worker | `except BaseException` | `except Exception` |
+  |---|---|---|
+  | `RuntimeError` | `RuntimeError` | `RuntimeError` |
+  | `SystemExit` | `SystemExit` | **`None`, no traceback at all** |
+  | `KeyboardInterrupt` | `KeyboardInterrupt` | `None`, plus unhandled-exception noise |
+
+  Both escapes reach `threading.excepthook`, whose default ignores `SystemExit`
+  specifically - so that one writes nothing at all to stderr, where an escaping
+  `RuntimeError` prints a full traceback. Narrowing therefore does not relocate
+  the exception, it deletes it silently, and the caller re-raises nothing. That is
+  the no-silent-defaults rule, reached from an exception clause.
+
+  So decide by direction, because the box is obliged in one and avoidable in the
+  other:
+
+  - *Marshalling onto an existing foreign thread* - `IsaacSimulation.run_on_main`
+    handing a job to the thread that owns the Kit pump. `concurrent.futures`
+    cannot target an already-running foreign thread, so the hand-rolled box is
+    the only implementation there is. Obliged: dismiss with a reason and resolve
+    the thread pointing at it, per the bullet above.
+  - *Marshalling off a new thread you create* - running an agent off-main, or a
+    test helper that calls into a worker. `concurrent.futures` **is** that
+    pattern, and the `except BaseException` then belongs to CPython
+    (`concurrent/futures/thread.py`, `_WorkItem.run`) rather than to this tree.
+    `Future.result()` re-raises `RuntimeError`, `SystemExit` and
+    `KeyboardInterrupt` with object *identity* preserved (`got is exc` for all
+    three), so delegating is strictly better than the box rather than merely
+    quieter. Not obliged: delegate, and the handler, the alert and the blocking
+    review thread go at once.
+
+  Do not reach for the filter. Its test is that *every* instance is an obliged
+  idiom, and the second bullet is a standing counter-example, so this rule id
+  must keep failing the two-id set `tests/test_codeql_query_filters.py` pins.
+
+  What makes the class worth naming is that both answers are live right now and
+  nothing else records why they differ. Alert #691 - `run_on_main`'s box at
+  `simulation/isaac/simulation.py:5125` - has been open on `refs/heads/main` since
+  2026-07-07 at note severity, gating nothing, carrying only a
+  `# noqa: BLE001` that CodeQL does not read. Alerts #853 and #854 are the same
+  idiom raised on a branch, one of them in that same file, and each opened a
+  review thread, so under `required_review_thread_resolution` they gate the
+  merge. Identical construct, opposite consequence, separated only by having
+  arrived on a branch - and two rounds were spent arguing the idiom rather than
+  applying the second bullet. See #1919.
 - **Dependency Review hard-fails on high/critical CVEs in new deps.** If a PR
   needs a dep with a known critical CVE, the conversation is "do we need this
   dep" not "let's bypass the check."
