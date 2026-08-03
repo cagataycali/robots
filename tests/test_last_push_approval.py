@@ -17,6 +17,7 @@ section of AGENTS.md.
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 
@@ -301,3 +302,96 @@ def test_no_report_string_carries_a_non_ascii_character():
         report = mod.render(verdict, "strands-labs/robots", 1722, "3375c000")
         report.encode("ascii")
     mod.render(mod.classify(None, []), "strands-labs/robots", 1722, "3375c000").encode("ascii")
+
+
+# --------------------------------------------------------------------------
+# The workflow's bootstrapping guard.
+#
+# The job checks out the *base* branch, not the pull request head, so that a
+# branch forked before this check landed does not die on a missing script
+# (#1791). That has a mirror-image hole which was not theoretical: the base does
+# not carry the script either until this change lands, so the introducing pull
+# request exited 2 with `can't open file`, and the checks UI renders exit 2 and
+# exit 1 as the same red X -- accusing a branch of a deadlock the job never
+# computed. The guard makes that case pass, which is the same rule the script
+# applies to an undetermined pusher and to a failed lookup.
+# --------------------------------------------------------------------------
+
+_WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "last-push-approval.yml"
+
+
+def _run_step_body() -> str:
+    """The shell body of the workflow's checking step, as text.
+
+    Read with a line scan rather than a YAML parse because ``pyyaml`` is an
+    optional dependency here, matching tests/test_pull_request_trigger_types.py.
+    """
+    lines = _WORKFLOW.read_text(encoding="utf-8").splitlines()
+    start = next(i for i, line in enumerate(lines) if line.strip() == "run: |")
+    body: list[str] = []
+    for line in lines[start + 1 :]:
+        if line.strip() and not line.startswith(" " * 10):
+            break
+        body.append(line[10:] if len(line) > 10 else "")
+    return "\n".join(body)
+
+
+def test_the_workflow_runs_the_script_from_a_guarded_path():
+    body = _run_step_body()
+    assert "check_last_push_approval.py" in body
+    assert "if [ ! -f scripts/check_last_push_approval.py ]" in body
+    assert "exit 0" in body
+
+
+def test_the_workflow_passes_when_the_base_lacks_the_script(tmp_path):
+    """Exit 0, not 2, when the checked-out base predates the script.
+
+    Executes the workflow's own shell body in a directory without the script,
+    so the pin is on the shipped text rather than on a paraphrase of it.
+    """
+    import subprocess
+
+    body = _run_step_body()
+    result = subprocess.run(
+        ["sh", "-c", body],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env={"BASE_REF": "main", "GITHUB_REPOSITORY": "strands-labs/robots", "PATH": os.environ["PATH"]},
+    )
+    assert result.returncode == 0, result.stderr
+    assert "nothing to report" in result.stdout
+
+
+def test_the_guard_does_not_swallow_a_real_finding(tmp_path):
+    """With the script present, the guard is transparent and the exit status is the script's.
+
+    Otherwise the fix for the bootstrapping case would have turned the whole
+    check into a permanent no-op, which is the failure mode that would be
+    hardest to notice: a green check that never looks at anything.
+    """
+    import shutil
+    import subprocess
+    import textwrap
+
+    (tmp_path / "scripts").mkdir()
+    stub = tmp_path / "scripts" / "check_last_push_approval.py"
+    stub.write_text(
+        textwrap.dedent("""
+        import sys
+        print("stub ran")
+        sys.exit(1)
+    """)
+    )
+    assert shutil.which("sh")
+
+    result = subprocess.run(
+        ["sh", "-c", _run_step_body()],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        env={"BASE_REF": "main", "GITHUB_REPOSITORY": "strands-labs/robots", "PATH": os.environ["PATH"]},
+    )
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "stub ran" in result.stdout
+    assert "nothing to report" not in result.stdout

@@ -83,9 +83,30 @@ jobs:
       # Standard library only, so there is nothing to install. The head SHA is
       # passed explicitly rather than left to the script's own lookup so that
       # the commit judged is the one this event fired for.
+      #
+      # The guard is the bootstrapping case, and it is not hypothetical: this
+      # workflow failed on the very pull request that introduced it. Checking out
+      # the base is what keeps a branch forked before the gate from dying on a
+      # missing script (#1791), and it has the mirror-image hole -- the base does
+      # not carry the script either until this lands, so the step exited 2 with
+      # `can't open file`, which the checks UI renders as the same red X as a real
+      # finding. Passing here is the same rule the script already applies to an
+      # undetermined pusher and to a failed API lookup: a check that cannot
+      # compute an answer reports nothing rather than accusing a branch of a
+      # state it never observed. It is a no-op exactly once, on this pull request
+      # and on any branch whose base predates the script, and correct after.
+      # Pinned by tests/test_last_push_approval.py::test_the_workflow_passes_when_the_base_lacks_the_script
       - name: Check who pushed the head against who approved
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: python3 scripts/check_last_push_approval.py --repo "$GITHUB_REPOSITORY"
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          if [ ! -f scripts/check_last_push_approval.py ]; then
+            echo "check_last_push_approval: not present on ${BASE_REF}, so there is nothing to report."
+            echo "The base branch predates this check. Reporting nothing rather than exiting 2,"
+            echo "which the checks UI cannot tell apart from a real finding."
+            exit 0
+          fi
+          python3 scripts/check_last_push_approval.py --repo "$GITHUB_REPOSITORY"
