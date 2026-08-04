@@ -22,7 +22,7 @@ import serial.tools.list_ports
 from strands import tool
 
 from strands_robots.tools._path_validation import validate_save_path
-from strands_robots.utils import positive_count_error, positive_finite_number_error
+from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +211,176 @@ class MotorConfig(TypedDict):
     resolution: int
 
 
+# Default motor configurations for SO-101.
+#
+# Module-level rather than built inside ``MotorController.__init__`` because the
+# ``range`` of each joint is consulted twice: by
+# :meth:`MotorController.degrees_to_position`, which converts a target into a
+# ``Goal_Position``, and by :func:`_joint_target_error`, which refuses a target
+# that conversion could not represent. A second copy of these bounds could
+# disagree with the one the servo is actually driven from, which is the failure
+# the guard exists to prevent.
+_DEFAULT_MOTOR_CONFIGS: dict[str, MotorConfig] = {
+    "shoulder_pan": {"id": 1, "range": (-180, 180), "resolution": 4095},
+    "shoulder_lift": {"id": 2, "range": (-90, 90), "resolution": 4095},
+    "elbow_flex": {"id": 3, "range": (-150, 150), "resolution": 4095},
+    "wrist_flex": {"id": 4, "range": (-90, 90), "resolution": 4095},
+    "wrist_roll": {"id": 5, "range": (-180, 180), "resolution": 4095},
+    "gripper": {"id": 6, "range": (0, 100), "resolution": 4095},
+}
+
+# The degree-valued target each action reads. An action absent from this map
+# commands no joint and is never refused here.
+_TARGET_OPTION_BY_ACTION: dict[str, str] = {
+    "move_motor": "position",
+    "move_multiple": "positions",
+    "incremental_move": "delta",
+}
+
+
+def _target_unit(motor_name: str) -> str:
+    """The unit a target for ``motor_name`` is quoted in.
+
+    Args:
+        motor_name: The motor the target is for.
+
+    Returns:
+        ``"percent"`` for the gripper, which is configured 0-100, else
+        ``"degrees"``.
+    """
+    return "percent" if motor_name == "gripper" else "degrees"
+
+
+def _joint_target_error(action: str, label: str, motor_name: str | None, value: Any) -> str | None:
+    """Error text when ``value`` is not a target ``motor_name`` can be driven to.
+
+    ``degrees_to_position`` clamps its argument into the joint's configured
+    ``range`` before scaling it onto the 12-bit ``Goal_Position`` register, so
+    every value outside that range shares one encoding: the mechanical limit.
+    That makes the clamp a silent rewrite rather than a safety net -- the arm
+    travels to the end stop, and the caller is told it moved to the value it
+    asked for, because the success text echoes the request. ``nan`` lands there
+    too, since ``min(max_deg, nan)`` returns ``max_deg``.
+
+    Finiteness, numeric-ness and ``bool`` are delegated to
+    :func:`~strands_robots.utils.finite_number_error` so an off-domain target is
+    reported in the words every other surface uses; only the per-joint bounds
+    are decided here, because they are a property of the arm this module drives.
+
+    A motor absent from :data:`_DEFAULT_MOTOR_CONFIGS` has no bounds to check
+    against and is left to the action's own unknown-motor path.
+
+    Args:
+        action: The requested action, used as the message prefix.
+        label: How the target is named in the message.
+        motor_name: The motor the target is for.
+        value: The caller-supplied target.
+
+    Returns:
+        An error message, or ``None`` when the target can be honored.
+    """
+    if error := finite_number_error(value, label, action):
+        return error
+    name = motor_name or ""
+    config = _DEFAULT_MOTOR_CONFIGS.get(name)
+    if config is None:
+        return None
+    low, high = config["range"]
+    if not low <= value <= high:
+        return (
+            f"{action}: {label} must be within [{low}, {high}] {_target_unit(name)} "
+            f"(the configured travel of '{name}'), got {value}."
+        )
+    return None
+
+
+def _joint_delta_error(action: str, motor_name: str | None, delta: Any) -> str | None:
+    """Error text when ``delta`` is not a displacement ``motor_name`` can travel.
+
+    Bounded by the joint's *full travel* rather than by its endpoints, which is
+    the one way this domain differs from :func:`_joint_target_error`: the
+    endpoints are absolute and a displacement is not, so the value cannot be
+    compared against them without knowing where the joint currently is. A
+    magnitude larger than the whole range is unhonorable from every starting
+    position, which is checkable without that reading.
+
+    The resulting absolute target is left to ``degrees_to_position``, whose clamp
+    remains the last resort for a target computed from a live position reading
+    rather than supplied by the caller.
+
+    Args:
+        action: The requested action, used as the message prefix.
+        motor_name: The motor the displacement is for.
+        delta: The caller-supplied displacement.
+
+    Returns:
+        An error message, or ``None`` when the displacement can be honored.
+    """
+    if error := finite_number_error(delta, "delta", action):
+        return error
+    name = motor_name or ""
+    config = _DEFAULT_MOTOR_CONFIGS.get(name)
+    if config is None:
+        return None
+    low, high = config["range"]
+    span = high - low
+    if abs(delta) > span:
+        return (
+            f"{action}: delta must be at most {span} {_target_unit(name)} in magnitude "
+            f"(the full travel of '{name}', so no starting position could honor more), got {delta}."
+        )
+    return None
+
+
+def _pose_target_error(
+    action: str,
+    *,
+    motor_name: str | None,
+    position: Any,
+    delta: Any,
+    positions: Any,
+) -> str | None:
+    """Error text for a degree-valued target ``action`` reads but cannot honor.
+
+    Only the target the requested action consumes is checked, so a caller is
+    never refused for a value the action never looks at. A target left unset
+    stays the concern of the action's own "required" check, which reports the
+    whole missing pair at once.
+
+    Args:
+        action: The requested action.
+        motor_name: The motor ``position`` / ``delta`` are for.
+        position: The absolute target for ``move_motor``.
+        delta: The displacement for ``incremental_move``.
+        positions: The per-motor targets for ``move_multiple``.
+
+    Returns:
+        The first error message, or ``None`` when every target read is usable.
+    """
+    param = _TARGET_OPTION_BY_ACTION.get(action)
+    if param is None:
+        return None
+
+    if param == "positions":
+        # A non-mapping (or empty) ``positions`` is reported by the action's own
+        # required check, which names the parameter rather than one motor.
+        if not isinstance(positions, dict):
+            return None
+        for name, value in positions.items():
+            if error := _joint_target_error(action, f"positions[{name!r}]", name, value):
+                return error
+        return None
+
+    if param == "position":
+        if position is None:
+            return None
+        return _joint_target_error(action, "position", motor_name, position)
+
+    if delta is None:
+        return None
+    return _joint_delta_error(action, motor_name, delta)
+
+
 class MotorController:
     """Low-level motor control for fine movements."""
 
@@ -219,14 +389,8 @@ class MotorController:
         self.baudrate = baudrate
         self.serial_conn: serial.Serial | None = None
 
-        # Default motor configurations for SO-101
         self.motor_configs: dict[str, MotorConfig] = {
-            "shoulder_pan": {"id": 1, "range": (-180, 180), "resolution": 4095},
-            "shoulder_lift": {"id": 2, "range": (-90, 90), "resolution": 4095},
-            "elbow_flex": {"id": 3, "range": (-150, 150), "resolution": 4095},
-            "wrist_flex": {"id": 4, "range": (-90, 90), "resolution": 4095},
-            "wrist_roll": {"id": 5, "range": (-180, 180), "resolution": 4095},
-            "gripper": {"id": 6, "range": (0, 100), "resolution": 4095},
+            name: config.copy() for name, config in _DEFAULT_MOTOR_CONFIGS.items()
         }
 
     def connect(self) -> tuple[bool, str]:
@@ -501,9 +665,17 @@ def pose_tool(
         port: Serial port for robot communication
         pose_name: Name for pose operations
         motor_name: Motor name for single motor operations
-        position: Target position in degrees (or 0-100% for gripper)
-        delta: Incremental movement in degrees
-        positions: Dictionary of motor positions {motor_name: degrees}
+        position: Target position in degrees (or 0-100% for gripper). A finite
+            number within the motor's configured travel - a value outside it is
+            refused rather than clamped to the mechanical limit, because the
+            clamp cannot be told apart from a typo and the success text echoes
+            the value asked for.
+        delta: Incremental movement in degrees. A finite number whose magnitude
+            is at most the motor's full travel, which no starting position could
+            exceed.
+        positions: Dictionary of motor positions {motor_name: degrees}. Every
+            value is held to the same domain as ``position``, and the first that
+            is not names the motor it came from.
         description: Description for stored poses
         smooth: Use smooth interpolated movement
         steps: Number of increments for an interpolated move. A positive
@@ -521,7 +693,8 @@ def pose_tool(
 
     Returns:
         Dict containing status and response content, or an error dict when an
-        interpolation option the requested action reads cannot be honored.
+        interpolation option or a joint target the requested action reads cannot
+        be honored.
     """
 
     # Both interpolation options are consumed on a live servo bus - one as a
@@ -530,6 +703,17 @@ def pose_tool(
     # is opened, rather than raising part-way through a trajectory.
     if option_error := _smooth_move_option_error(action, smooth=smooth, steps=steps, step_delay=step_delay):
         return {"status": "error", "content": [{"text": option_error}]}
+
+    # Every degree-valued target is scaled onto ``Goal_Position`` by
+    # ``degrees_to_position``, which clamps into the joint's configured range -
+    # so a target outside it is not refused but silently rewritten to the
+    # mechanical limit, while the success text echoes the value asked for. It is
+    # refused here, before the port is opened, so the arm never travels to an
+    # end stop on a request that could not be honored.
+    if target_error := _pose_target_error(
+        action, motor_name=motor_name, position=position, delta=delta, positions=positions
+    ):
+        return {"status": "error", "content": [{"text": target_error}]}
 
     # Initialize managers
     pose_manager = PoseManager(robot_id)
