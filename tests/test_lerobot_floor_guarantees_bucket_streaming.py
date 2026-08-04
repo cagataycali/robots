@@ -69,6 +69,26 @@ def _lerobot_requirements() -> dict[str, Requirement]:
     return out
 
 
+def _installed_lerobot_or_skip() -> Version:
+    """The installed lerobot version, or skip when lerobot is not available.
+
+    Returning the version (rather than binding it in a ``try`` whose ``except``
+    calls :func:`pytest.skip`) keeps the caller free of a local that static
+    analysis must prove is bound: ``pytest.skip`` is ``NoReturn``, but that is
+    not something every checker can see.
+    """
+    pytest.importorskip("lerobot", reason="lerobot is an optional extra")
+    try:
+        return Version(md.version("lerobot"))
+    except md.PackageNotFoundError:  # pragma: no cover - importable but unmetadata'd
+        pytest.skip("lerobot version metadata unresolvable")
+
+
+def _declared_lerobot_specifier() -> SpecifierSet:
+    """The version range the ``[lerobot]`` extra permits the resolver to install."""
+    return SpecifierSet(str(_lerobot_requirements()["lerobot"].specifier))
+
+
 class TestEveryExtraFloorsAtTheBucketStreamingVersion:
     """The resolver, not the docs, must guarantee the flagship streaming path."""
 
@@ -132,12 +152,8 @@ class TestTheFloorReallyDeliversTheCapability:
         moved to a different release, the floor would still read plausibly while
         no longer delivering what it exists to guarantee.
         """
-        pytest.importorskip("lerobot", reason="lerobot is an optional extra")
-        try:
-            installed = Version(md.version("lerobot"))
-        except md.PackageNotFoundError:  # pragma: no cover - importable but unmetadata'd
-            pytest.skip("lerobot version metadata unresolvable")
-        specifier = SpecifierSet(str(_lerobot_requirements()["lerobot"].specifier))
+        installed = _installed_lerobot_or_skip()
+        specifier = _declared_lerobot_specifier()
         if installed not in specifier:
             pytest.skip(f"installed lerobot {installed} is outside the declared floor {specifier}")
 
@@ -152,12 +168,8 @@ class TestTheFloorReallyDeliversTheCapability:
 
     def test_open_does_not_refuse_bucket_on_a_conforming_lerobot(self) -> None:
         """The guard must not fire for a lerobot the declared floor admits."""
-        pytest.importorskip("lerobot", reason="lerobot is an optional extra")
-        try:
-            installed = Version(md.version("lerobot"))
-        except md.PackageNotFoundError:  # pragma: no cover
-            pytest.skip("lerobot version metadata unresolvable")
-        if installed not in SpecifierSet(str(_lerobot_requirements()["lerobot"].specifier)):
+        installed = _installed_lerobot_or_skip()
+        if installed not in _declared_lerobot_specifier():
             pytest.skip(f"installed lerobot {installed} is outside the declared floor")
 
         # A stand-in mirroring the real constructor's repo_type parameter keeps
