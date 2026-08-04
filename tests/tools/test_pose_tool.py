@@ -648,13 +648,24 @@ def test_pose_tool_reset_to_home_reports_move_failure(cwd_tmp, monkeypatch) -> N
     The home move is fault-injected at the controller boundary (the bus accepts
     the connection but the grouped move reports failure), pinning that the tool
     does not claim the arm reached home when it did not.
+
+    The double also records the interpolation options it was handed, so this
+    pins that the caller's ``steps`` / ``step_delay`` reach the controller on
+    the failure path too, not only on the successful one.
     """
+    seen: dict[str, Any] = {}
+
+    def _refuse(self, positions, smooth=True, steps=20, step_delay=0.05) -> bool:
+        seen.update(positions=positions, smooth=smooth, steps=steps, step_delay=step_delay)
+        return False
+
     monkeypatch.setattr(serial, "Serial", AlwaysReadingSerial)
-    monkeypatch.setattr(pose_mod.MotorController, "move_multiple_motors", lambda self, positions, smooth=True: False)
-    result = pose_tool(action="reset_to_home", robot_id="hw_arm", port="/dev/ttyTEST")
+    monkeypatch.setattr(pose_mod.MotorController, "move_multiple_motors", _refuse)
+    result = pose_tool(action="reset_to_home", robot_id="hw_arm", port="/dev/ttyTEST", steps=6, step_delay=0.01)
     assert result["status"] == "error"
     _assert_ascii(result)
     assert "Failed to move to home position" in _texts(result)
+    assert (seen["steps"], seen["step_delay"]) == (6, 0.01), seen
 
 
 def test_pose_tool_smooth_move_interpolates_from_current_positions(cwd_tmp, reading_serial) -> None:
