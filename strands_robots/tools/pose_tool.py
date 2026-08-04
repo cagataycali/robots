@@ -22,8 +22,82 @@ import serial.tools.list_ports
 from strands import tool
 
 from strands_robots.tools._path_validation import validate_save_path
+from strands_robots.utils import positive_count_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
+
+
+# Interpolation options: which actions read them, and the domain they must be in.
+#
+# ``steps`` and ``step_delay`` are only consumed on the interpolated path, so an
+# action that moves in one shot never reads them and must never be refused for
+# them. ``reset_to_home`` interpolates unconditionally; ``load_pose`` and
+# ``move_multiple`` interpolate only when the caller leaves ``smooth`` truthy.
+_INTERPOLATING_ACTIONS = frozenset({"load_pose", "move_multiple"})
+_ALWAYS_INTERPOLATING_ACTIONS = frozenset({"reset_to_home"})
+
+
+def _interpolates(action: str, smooth: bool) -> bool:
+    """Report whether ``action`` will build an interpolated trajectory.
+
+    Args:
+        action: The requested action.
+        smooth: The caller's ``smooth`` flag, which only some actions consult.
+
+    Returns:
+        True when the action reads ``steps`` / ``step_delay``.
+    """
+    if action in _ALWAYS_INTERPOLATING_ACTIONS:
+        return True
+    return action in _INTERPOLATING_ACTIONS and bool(smooth)
+
+
+def _smooth_move_option_error(action: str, *, smooth: bool, steps: Any, step_delay: Any) -> str | None:
+    """Error text for an interpolation option this action cannot honor.
+
+    Both options are consumed inside the interpolation loop, on a live servo
+    bus: ``steps`` divides the travel into increments and bounds the loop, and
+    ``step_delay`` is the pause between successive goal positions. Their product
+    is the trajectory's duration, so neither has a usable value outside its
+    domain and each fails in its own way if one is not applied.
+
+    ``steps`` is checked against
+    :func:`~strands_robots.utils.positive_count_error`: it is a divisor and a
+    ``range()`` bound, so ``0`` raises ``ZeroDivisionError``, a negative count
+    makes the loop body unreachable and reports a move that never happened, and
+    a fractional or string count raises ``TypeError`` from ``range()``. ``bool``
+    is refused with it, because ``True`` is a silent single increment - a
+    full-travel jump on exactly the path a caller asking to interpolate wanted
+    to avoid.
+
+    ``step_delay`` is checked against
+    :func:`~strands_robots.utils.positive_finite_number_error` - the same domain
+    the library's other pacing knobs use - and that includes refusing ``0``. The
+    pause *is* the smoothing: with no pause the increments are written as fast as
+    the bus accepts them (a six-motor 20-step move is ~126 short writes, on the
+    order of ten milliseconds at 1 Mbaud) instead of over the requested
+    ``steps * step_delay`` seconds, so the interpolation the caller asked for
+    cannot be honored. A caller who wants to go straight to the target already
+    has ``smooth=False`` for it. A negative or ``nan`` delay raises
+    ``ValueError`` from ``time.sleep`` and ``inf`` blocks the call forever,
+    leaving the arm stopped part-way through its trajectory with the port still
+    open.
+
+    Args:
+        action: The requested action; decides whether the options are read.
+        smooth: The caller's ``smooth`` flag.
+        steps: Interpolation step count, as supplied.
+        step_delay: Seconds between increments, as supplied.
+
+    Returns:
+        An error message naming the action and the option, or ``None`` when the
+        action reads neither option or both values are usable.
+    """
+    if not _interpolates(action, bool(smooth)):
+        return None
+    if error := positive_count_error(steps, "steps", action):
+        return error
+    return positive_finite_number_error(step_delay, "step_delay", action)
 
 
 @dataclass
@@ -300,10 +374,30 @@ class MotorController:
                 positions[motor_name] = pos
         return positions
 
-    def move_multiple_motors(self, positions: dict[str, float], smooth: bool = True) -> bool:
-        """Move multiple motors simultaneously."""
+    def move_multiple_motors(
+        self,
+        positions: dict[str, float],
+        smooth: bool = True,
+        steps: int = 20,
+        step_delay: float = 0.05,
+    ) -> bool:
+        """Move multiple motors simultaneously.
+
+        Args:
+            positions: Target position per motor name.
+            smooth: Interpolate towards the targets instead of commanding them
+                in one shot.
+            steps: Number of increments when interpolating. Forwarded to
+                :meth:`_smooth_move`, which requires a positive integer.
+            step_delay: Seconds between increments when interpolating.
+                Forwarded to :meth:`_smooth_move`, which requires a positive
+                finite value.
+
+        Returns:
+            True when every motor was commanded successfully.
+        """
         if smooth:
-            return self._smooth_move(positions)
+            return self._smooth_move(positions, steps=steps, step_delay=step_delay)
         else:
             success = True
             for motor_name, position in positions.items():
@@ -312,7 +406,22 @@ class MotorController:
             return success
 
     def _smooth_move(self, target_positions: dict[str, float], steps: int = 20, step_delay: float = 0.05) -> bool:
-        """Smoothly move to target positions."""
+        """Smoothly move to target positions.
+
+        Args:
+            target_positions: Target position per motor name.
+            steps: Number of increments; must be a positive integer, since it is
+                the divisor for each motor's per-step increment and the bound of
+                the write loop.
+            step_delay: Seconds between increments; must be positive and finite,
+                since it is passed straight to ``time.sleep``.
+                :func:`_smooth_move_option_error` is what holds both to those
+                domains for every caller that reaches here through
+                :func:`pose_tool`.
+
+        Returns:
+            True once every increment has been written.
+        """
         current_positions = self.read_all_positions()
 
         # Calculate step increments
@@ -397,12 +506,30 @@ def pose_tool(
         positions: Dictionary of motor positions {motor_name: degrees}
         description: Description for stored poses
         smooth: Use smooth interpolated movement
-        steps: Number of steps for smooth movement
-        step_delay: Delay between movement steps
+        steps: Number of increments for an interpolated move. A positive
+            integer - it divides the travel and bounds the write loop.
+        step_delay: Seconds between increments of an interpolated move. A
+            positive finite number - this pause is what makes the move smooth,
+            so ``0`` is refused; use ``smooth=False`` to go straight to the
+            target. Together with ``steps`` it sets the trajectory duration
+            (the default 20 x 0.05s = ~1s).
+
+    Both interpolation options are read only by ``load_pose`` and
+    ``move_multiple`` (when ``smooth`` is left truthy) and by
+    ``reset_to_home``, which always interpolates; any other action ignores them
+    and is never refused for them.
 
     Returns:
-        Dict containing status and response content
+        Dict containing status and response content, or an error dict when an
+        interpolation option the requested action reads cannot be honored.
     """
+
+    # Both interpolation options are consumed on a live servo bus - one as a
+    # divisor and loop bound, one as the pause between goal positions - so an
+    # unusable value is refused here, before any pose file is read or the port
+    # is opened, rather than raising part-way through a trajectory.
+    if option_error := _smooth_move_option_error(action, smooth=smooth, steps=steps, step_delay=step_delay):
+        return {"status": "error", "content": [{"text": option_error}]}
 
     # Initialize managers
     pose_manager = PoseManager(robot_id)
@@ -592,7 +719,7 @@ def pose_tool(
                 return {"status": "error", "content": [{"text": f"{error}"}]}
 
             try:
-                success = controller.move_multiple_motors(pose.positions, smooth)
+                success = controller.move_multiple_motors(pose.positions, smooth, steps=steps, step_delay=step_delay)
                 if success:
                     return {
                         "status": "success",
@@ -633,7 +760,7 @@ def pose_tool(
                 return {"status": "error", "content": [{"text": f"{error}"}]}
 
             try:
-                success = controller.move_multiple_motors(positions, smooth)
+                success = controller.move_multiple_motors(positions, smooth, steps=steps, step_delay=step_delay)
                 if success:
                     pos_text = "\n".join(
                         [
@@ -682,7 +809,9 @@ def pose_tool(
                 return {"status": "error", "content": [{"text": f"{error}"}]}
 
             try:
-                success = controller.move_multiple_motors(home_positions, smooth=True)
+                success = controller.move_multiple_motors(
+                    home_positions, smooth=True, steps=steps, step_delay=step_delay
+                )
                 if success:
                     return {
                         "status": "success",
