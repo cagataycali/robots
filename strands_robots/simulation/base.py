@@ -316,12 +316,11 @@ def randomization_seed_error(value: Any, context: str, *, max_seed: int | None =
     non-negative integer of any width. A rollout seed is applied through
     :func:`~strands_robots.simulation.policy_runner.set_eval_seed`, which also
     reseeds the legacy NumPy global RNG (``numpy.random.seed``) - the one most
-    policies draw from - and that refuses anything above
-    :data:`MAX_EVAL_SEED`. ``max_seed``
-    carries that ceiling, so the rollout surfaces refuse a value they could not
-    apply while the randomization surfaces keep the width they can honor. One
-    rule with an explicit bound per destination is what stops the accepted
-    domain drifting from the applier in either direction.
+    policies draw from - and that refuses anything above :data:`MAX_EVAL_SEED`.
+    ``max_seed`` carries that ceiling, so the rollout surfaces refuse a value
+    they could not apply while the randomization surfaces keep the width they
+    can honor. One rule with an explicit bound per destination is what stops
+    the accepted domain drifting from the applier in either direction.
 
     Args:
         value: The candidate seed (``None`` selects fresh entropy).
