@@ -109,7 +109,7 @@ class TestValidate:
     def test_nonpositive_steps_reported(self, spec):
         spec.steps = 0
         problems = create_trainer("mock").validate(spec)
-        assert any("steps must be > 0" in p for p in problems)
+        assert any("steps must be a positive integer" in p for p in problems)
 
 
 class TestLifecycle:

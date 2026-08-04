@@ -547,8 +547,9 @@ class LerobotTrainer(Trainer):
 
         Runs the shared input-safety gate, then checks a data source -
         exactly one of a local LeRobotDataset v3 ``dataset_root`` or a Hub
-        ``dataset_repo_id`` (for streaming) - an ``output_dir``, positive
-        ``steps``, single-node only (``num_nodes == 1``), a ``val_episodes``
+        ``dataset_repo_id`` (for streaming) - an ``output_dir``, a usable run
+        size (``steps`` / ``global_batch_size``), single-node only
+        (``num_nodes == 1``), a ``val_episodes``
         split below the dataset total, and that ``lerobot.scripts.lerobot_train``
         is importable. ``extra['reward_model']`` switches to reward-model
         preflight; otherwise the default policy path is checked. Returns the
@@ -592,8 +593,7 @@ class LerobotTrainer(Trainer):
         else:
             problems.extend(self._validate_policy(spec))
 
-        if spec.steps <= 0:
-            problems.append(f"steps must be > 0, got {spec.steps}")
+        problems.extend(self._run_size_problems(spec))
 
         if spec.num_nodes > 1:
             problems.append(

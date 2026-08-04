@@ -236,6 +236,32 @@ class Trainer(ABC):
 
         return validate_train_inputs(spec)
 
+    def _run_size_problems(self, spec: TrainSpec) -> list[str]:
+        """Run-size preflight shared by every backend that consumes it.
+
+        Returns problems for :attr:`TrainSpec.steps` /
+        :attr:`TrainSpec.global_batch_size` - the two factors of how much
+        training the spec asks for - against the one shared positive-count
+        domain. A :meth:`validate` implementation that reads either field MUST
+        call this instead of comparing the value itself: a local ``<= 0`` test
+        admits a ``bool`` as a silent run of one step, admits a fractional or
+        non-finite value that then raises inside the backend's ``range()``
+        after the dataset and model are already loaded, and raises out of the
+        comparison itself for a non-numeric value - from a method documented to
+        *return* problems.
+
+        A backend that drives training from other fields (the RL trainers, on
+        ``total_timesteps`` / ``batch_size``) MUST NOT call this: per
+        :class:`TrainSpec`, a backend ignores the fields it does not support,
+        so reporting on one it never reads would be a false rejection.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import run_size_problems
+
+        return run_size_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 

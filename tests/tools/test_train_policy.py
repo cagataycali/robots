@@ -216,7 +216,7 @@ def test_export_with_invalid_spec_exports_nothing(tmp_path: Path) -> None:
 
 def test_train_with_invalid_spec_launches_nothing(tmp_path: Path) -> None:
     kwargs = _valid_kwargs(tmp_path)
-    kwargs["steps"] = 0  # steps must be > 0 -> preflight problem
+    kwargs["steps"] = 0  # not a positive integer -> preflight problem
     result = train_policy(action="train", **kwargs)
     _assert_canonical(result)
     assert result["status"] == "error"

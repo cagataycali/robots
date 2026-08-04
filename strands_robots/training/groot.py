@@ -123,8 +123,9 @@ class Gr00tTrainer(Trainer):
 
         Runs the shared input-safety gate, then checks a LeRobotDataset v3
         ``dataset_root``, a ``base_model``, an ``output_dir``, a required
-        ``embodiment`` tag, a supported ``method``, positive ``steps``,
-        single-node only (``num_nodes == 1``), a resolvable Isaac-GR00T
+        ``embodiment`` tag, a supported ``method``, a usable run size (``steps``
+        / ``global_batch_size``), single-node only (``num_nodes == 1``), a
+        resolvable Isaac-GR00T
         checkout (GR00T_ROOT / ``groot_root`` / ``extra['groot_root']``),
         and an optional ``extra['modality_config_path']`` that exists.
         Returns the problem list; empty means launchable. Read-only.
@@ -152,8 +153,7 @@ class Gr00tTrainer(Trainer):
                 f"(expected one of {sorted(_SUPPORTED_METHODS)}); "
                 f"use tune={{...}} for fine-grained control"
             )
-        if spec.steps <= 0:
-            problems.append(f"steps must be > 0, got {spec.steps}")
+        problems.extend(self._run_size_problems(spec))
 
         if spec.num_nodes > 1:
             problems.append(

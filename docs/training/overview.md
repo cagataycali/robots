@@ -93,6 +93,7 @@ supports and **ignores the rest** (the same tolerance rule as
 | `dataset_repo_id` | Hub dataset id `org/name` | alternative data source; train from the Hub (lerobot) |
 | `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local) |
 | `base_model` | HF id / local ckpt to tune from | required for GR00T & Cosmos |
+| `steps` / `global_batch_size` | the run size: optimizer steps x batch | each must be a positive integer; `validate()` refuses `0`, a fractional or non-finite value, and a `bool` (`True` would read as a silent one-step run) before anything is loaded |
 | `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` | `lora`+`expert_only` are mutually exclusive |
 | `tune` | `{llm,visual,projector,diffusion}` | GR00T only |
 | `val_episodes` | hold out the LAST N episodes | deterministic split |

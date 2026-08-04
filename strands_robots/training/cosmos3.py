@@ -128,7 +128,8 @@ class Cosmos3Trainer(Trainer):
 
         Runs the shared input-safety gate, then checks a LeRobotDataset v3
         ``dataset_root``, a ``base_model`` to convert to DCP, an
-        ``output_dir``, a supported ``method``, positive ``steps``, an
+        ``output_dir``, a supported ``method``, a usable run size (``steps`` /
+        ``global_batch_size``), an
         ``extra['sft_toml']`` recipe that exists, and a resolvable
         ``cosmos_framework`` checkout (COSMOS_ROOT / ``cosmos_root`` /
         ``extra['cosmos_root']``). Returns the problem list; empty means
@@ -153,8 +154,7 @@ class Cosmos3Trainer(Trainer):
             problems.append(
                 f"unsupported method '{spec.method}' for Cosmos3 (expected one of {sorted(_SUPPORTED_METHODS)})"
             )
-        if spec.steps <= 0:
-            problems.append(f"steps must be > 0, got {spec.steps}")
+        problems.extend(self._run_size_problems(spec))
 
         if not spec.extra.get("sft_toml"):
             problems.append(

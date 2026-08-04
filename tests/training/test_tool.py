@@ -310,7 +310,7 @@ class TestTrainErrorBoundary:
         )
         assert res["status"] == "error"
         assert "validation problems (nothing launched)" in _text(res)
-        assert "steps must be > 0" in _text(res)
+        assert "steps must be a positive integer" in _text(res)
         # "launches nothing" is the behavioural claim: no checkpoint stub exists.
         assert not (out / "checkpoints" / "last").exists()
 

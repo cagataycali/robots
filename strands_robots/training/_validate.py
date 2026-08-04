@@ -15,6 +15,16 @@ an arbitrary ``extra`` key could set an arbitrary config attribute / override.
 from every backend's :meth:`Trainer.validate`, which each backend's
 :meth:`Trainer.train` calls (fail-closed) before building any config - so no
 run can start with unvalidated input regardless of the call path.
+
+:func:`run_size_problems` is the second shared gate, on a different axis: the
+*run size* numerics. ``steps`` and ``global_batch_size`` are the two factors of
+how much training a spec asks for, and both are read straight into a backend's
+loop bound / dataloader. They live in their own gate rather than in
+:func:`validate_train_inputs` because :class:`TrainSpec` documents that a
+backend "reads the fields it supports and ignores the rest": the RL trainers
+drive training from ``total_timesteps`` / ``batch_size`` and never read either
+field, so reporting a problem for them there would be a false rejection of a
+field that backend does not use.
 """
 
 from __future__ import annotations
@@ -23,6 +33,7 @@ import re
 from typing import TYPE_CHECKING
 
 from strands_robots.tools._path_validation import validate_save_path
+from strands_robots.utils import positive_count_error
 
 if TYPE_CHECKING:
     from strands_robots.training.base import TrainSpec
@@ -81,4 +92,37 @@ def validate_train_inputs(spec: TrainSpec) -> list[str]:
                 f"no leading dash, no '=', no whitespace)"
             )
 
+    return problems
+
+
+def run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return run-size problems for a :class:`TrainSpec`.
+
+    ``steps`` and ``global_batch_size`` are the two factors of the amount of
+    training a spec asks for, and each is consumed directly as a discrete
+    count: ``steps`` bounds the backend's optimizer loop (lerobot iterates
+    ``range(step, cfg.steps)``) and ``global_batch_size`` becomes a
+    ``DataLoader`` batch size / a ``--global_batch_size`` flag. Only a positive
+    integer can be honored, which is why both are checked against the one
+    shared :func:`~strands_robots.utils.positive_count_error` domain rather
+    than a local comparison: a bare ``value <= 0`` test admits every value that
+    is not comparably non-positive, so ``True`` reads as a silent run of one
+    step, a fractional or non-finite value reaches ``range()`` and raises
+    there, and a string raises out of the comparison itself - inside a
+    :meth:`Trainer.validate` that is documented to *return* problems.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        One problem per unusable field; empty when both are usable counts.
+    """
+    problems: list[str] = []
+    for param, value in (("steps", spec.steps), ("global_batch_size", spec.global_batch_size)):
+        error = positive_count_error(value, param, context)
+        if error is not None:
+            problems.append(error)
     return problems

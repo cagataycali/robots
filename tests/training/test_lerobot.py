@@ -453,7 +453,7 @@ class TestValidateAdditionalBranches:
     def test_non_positive_steps(self, spec):
         spec.steps = 0
         problems = LerobotTrainer().validate(spec)
-        assert any("steps must be > 0" in p for p in problems)
+        assert any("steps must be a positive integer" in p for p in problems)
 
     def test_multinode_rejected(self, spec):
         spec.num_nodes = 2
