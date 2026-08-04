@@ -1,0 +1,119 @@
+{
+ "tree": "/tmp/robots-src",
+ "rows": [
+  {
+   "param": "steps",
+   "label": "0",
+   "consequence": "parses as int 0 -> range(0,0) empty: TRAINS NOTHING",
+   "v": "refused",
+   "detail": "lerobot_train: steps must be a positive integer, got 0."
+  },
+  {
+   "param": "steps",
+   "label": "-5",
+   "consequence": "parses as int -5 -> range(0,-5) empty: TRAINS NOTHING",
+   "v": "refused",
+   "detail": "lerobot_train: steps must be a positive integer, got -5."
+  },
+  {
+   "param": "steps",
+   "label": "True",
+   "consequence": "parses as int 1: a silent run of ONE",
+   "v": "refused",
+   "detail": "lerobot_train: steps must be a positive integer, got True."
+  },
+  {
+   "param": "steps",
+   "label": "2.7",
+   "consequence": "DecodingError in the detached process, minutes later",
+   "v": "refused",
+   "detail": "lerobot_train: steps must be a positive integer, got 2.7."
+  },
+  {
+   "param": "steps",
+   "label": "nan",
+   "consequence": "DecodingError in the detached process, minutes later",
+   "v": "refused",
+   "detail": "lerobot_train: steps must be a positive integer, got nan."
+  },
+  {
+   "param": "steps",
+   "label": "inf",
+   "consequence": "DecodingError in the detached process, minutes later",
+   "v": "refused",
+   "detail": "lerobot_train: steps must be a positive integer, got inf."
+  },
+  {
+   "param": "batch_size",
+   "label": "0",
+   "consequence": "DataLoader(batch_size=0): ValueError in the detached process",
+   "v": "refused",
+   "detail": "lerobot_train: batch_size must be a positive integer, got 0."
+  },
+  {
+   "param": "batch_size",
+   "label": "-8",
+   "consequence": "DataLoader(batch_size=-8): ValueError in the detached process",
+   "v": "refused",
+   "detail": "lerobot_train: batch_size must be a positive integer, got -8."
+  },
+  {
+   "param": "batch_size",
+   "label": "True",
+   "consequence": "parses as int 1: a silent batch of ONE",
+   "v": "refused",
+   "detail": "lerobot_train: batch_size must be a positive integer, got True."
+  },
+  {
+   "param": "batch_size",
+   "label": "2.7",
+   "consequence": "DecodingError in the detached process, minutes later",
+   "v": "refused",
+   "detail": "lerobot_train: batch_size must be a positive integer, got 2.7."
+  },
+  {
+   "param": "steps",
+   "label": "20000",
+   "consequence": "",
+   "v": "accepted",
+   "detail": "--steps=20000"
+  },
+  {
+   "param": "batch_size",
+   "label": "8",
+   "consequence": "",
+   "v": "accepted",
+   "detail": "--batch_size=8"
+  },
+  {
+   "param": "steps",
+   "label": "None",
+   "consequence": "",
+   "v": "accepted",
+   "detail": "(--steps omitted)"
+  },
+  {
+   "param": "save_freq",
+   "label": "0",
+   "consequence": "DataLoader(batch_size=0): ValueError in the detached process",
+   "v": "accepted",
+   "detail": "--save_freq=0"
+  }
+ ],
+ "control_argv": [
+  "python",
+  "-m",
+  "lerobot.scripts.lerobot_train",
+  "--dataset.repo_id=local",
+  "--dataset.root=/data/cubes",
+  "--policy.type=act",
+  "--policy.device=cuda",
+  "--policy.push_to_hub=false",
+  "--job_name=strands_ft",
+  "--wandb.enable=false",
+  "--output_dir=/data/out",
+  "--steps=20000",
+  "--batch_size=8",
+  "--save_freq=5000"
+ ]
+}
