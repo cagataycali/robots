@@ -377,7 +377,7 @@ class TestTheVectorCoercionRefusesABooleanComponent:
         the units of the joint writers - not of a coordinate, an extent or a
         colour channel.
         """
-        from strands_robots.simulation.mujoco.physics import _BOOLEAN_STATE_REASON
+        from strands_robots.simulation.base import _BOOLEAN_STATE_REASON
         from strands_robots.utils import BOOLEAN_VECTOR_REASON
 
         _, err = self._coerce([True, 0.0, 0.0], "origin", "raycast")

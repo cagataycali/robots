@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from strands_robots.simulation.base import _BOOLEAN_STATE_REASON
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _ensure_mujoco,
@@ -36,30 +37,6 @@ from strands_robots.simulation.mujoco.scene_ops import (
 from strands_robots.utils import BOOLEAN_VECTOR_REASON, coerce_rgba, is_boolean
 
 logger = logging.getLogger(__name__)
-
-
-# Why a runtime state write refuses a boolean, kept in one place because three
-# surfaces quote it (set_joint_positions, set_joint_velocities, apply_force).
-#
-# The actuator-command path refuses one for a stronger reason: 1.0 is re-read in
-# each drive's own units, so the same True commands a different pose on every
-# actuator. Here 1.0 is a single unambiguous quantity - 1 radian, 1 rad/s, 1 N -
-# so a boolean is merely wrong rather than ambiguous, which is why #1837 left
-# these writers alone and #1838 settled them separately.
-#
-# They refuse it anyway, and the deciding argument is consistency of the domain
-# rather than the severity of the outcome: every scene-construction vector in
-# strands_robots.utils already rejects a bool component for exactly this reason
-# ("float(True) would silently write 1.0 where a coordinate, extent or colour
-# channel belongs"). A caller who cannot place a body at True should not be able
-# to teleport a joint to True either, and no caller can plausibly mean "1 radian"
-# by True. The alternative - accepting it here - would leave the direct API and
-# the tool surface stating different domains for the same kind of number.
-_BOOLEAN_STATE_REASON = (
-    "float(True) is 1.0, so a boolean would be written as 1 radian, 1 rad/s or "
-    "1 N depending on the surface, and the call would report success. Pass the "
-    "quantity in the surface's own units."
-)
 
 
 def _coerce_finite_vector(
@@ -189,71 +166,6 @@ def _coerce_rgba(color: Any, method: str, name: str = "color") -> tuple[list[flo
     if reason is not None:
         return None, {"status": "error", "content": [{"text": reason}]}
     return rgba, None
-
-
-def _coerce_finite_joint_map(
-    values: dict[str, Any],
-    name: str,
-    method: str,
-) -> tuple[dict[str, float], dict[str, Any] | None]:
-    """Coerce a ``{joint_name: value}`` map to finite floats before any write.
-
-    Each value must be a real number (Python or NumPy scalar) and finite, and
-    must not be a boolean. A
-    non-numeric value would otherwise raise ``ValueError`` from ``float(value)``
-    past the structured-error dispatch contract, and ``nan`` / ``inf`` would
-    slip straight into ``data.qpos`` / ``data.qvel`` -- ``mj_forward`` then
-    propagates the ``nan`` across the whole kinematic state (or an ``inf``
-    velocity blows up the integrator) while the tool still reports
-    ``status="success"``. A boolean is refused for the reason in
-    :data:`_BOOLEAN_STATE_REASON`: it survives ``float()`` as a silent ``1.0``,
-    so it is the one invalid value the finiteness check cannot see. Validating up
-    front keeps the write atomic: an invalid value leaves the model untouched.
-
-    Args:
-        values: The ``{joint_name: value}`` mapping to validate.
-        name: Parameter name (``"positions"`` / ``"velocities"``), used in error text.
-        method: Calling method name, used in error text.
-
-    Returns:
-        ``(coerced, None)`` on success, or ``({}, error_dict)`` on the first
-        invalid value -- matching the structured-error tool contract so the
-        caller never raises past dispatch.
-    """
-    out: dict[str, float] = {}
-    for jnt_name, value in values.items():
-        # Before float(): float(True) is 1.0, so the boolean is unrecoverable
-        # once coerced and the write would report success having set 1 rad /
-        # 1 rad/s. numpy.bool_ needs the .item() unwrap is_boolean applies.
-        if is_boolean(value):
-            return {}, {
-                "status": "error",
-                "content": [
-                    {
-                        "text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, not a bool (got {value!r}). {_BOOLEAN_STATE_REASON}"
-                    }
-                ],
-            }
-        try:
-            f = float(value)
-        except (TypeError, ValueError):
-            return {}, {
-                "status": "error",
-                "content": [
-                    {"text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, got {value!r}"}
-                ],
-            }
-        if not math.isfinite(f):
-            return {}, {
-                "status": "error",
-                "content": [
-                    {
-                        "text": f"{method}: '{name}' value for joint '{jnt_name}' must be finite (no nan/inf), got {value!r}"
-                    }
-                ],
-            }
-        out[jnt_name] = f
-    return out, None
 
 
 # A ray batch is a sequence of 3-component direction vectors. Spelling it out in
@@ -564,6 +476,11 @@ class PhysicsMixin:
 
         def _validate_mass(self, mass: Any, method: str, param: str = "mass") -> dict[str, Any] | None:
             """Reject a body mass the physics engine cannot honor."""
+
+        def _coerce_joint_state_map(
+            self, values: dict[str, Any], name: str, method: str
+        ) -> tuple[dict[str, float], dict[str, Any] | None]:
+            """Coerce a joint-state map to finite floats before any write."""
 
     # State Checkpointing
 
@@ -1516,7 +1433,7 @@ class PhysicsMixin:
         # this a non-numeric entry raises ValueError past the structured-error
         # contract, and a nan/inf lands in data.qpos where mj_forward propagates
         # it across the whole kinematic state while the tool still reports success.
-        positions, err = _coerce_finite_joint_map(positions, "positions", "set_joint_positions")
+        positions, err = self._coerce_joint_state_map(positions, "positions", "set_joint_positions")
         if err:
             return err
 
@@ -1626,7 +1543,7 @@ class PhysicsMixin:
         # Validate every value is a finite number before any qvel write (see
         # set_joint_positions): a nan/inf velocity blows up the integrator on the
         # next step and a non-numeric entry escapes the structured-error contract.
-        velocities, err = _coerce_finite_joint_map(velocities, "velocities", "set_joint_velocities")
+        velocities, err = self._coerce_joint_state_map(velocities, "velocities", "set_joint_velocities")
         if err:
             return err
 

@@ -5252,6 +5252,40 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         ``positions`` may be a ``dict`` keyed by joint name (only the
         listed joints are written; others retain their current value)
         or a list/array in the robot's joint order.
+
+        Validation
+        ----------
+        The write is all-or-nothing, on the same terms the MuJoCo backend's
+        :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.set_joint_positions`
+        already enforces, so the accepted domain does not depend on which engine
+        the caller is driving:
+
+        * the list form's length must equal the robot's joint count - a shorter
+          or longer vector is refused rather than resizing the articulation's
+          joint-position array, which would otherwise be handed to PhysX at the
+          wrong width;
+        * every ``dict`` key must name one of the robot's joints, and the mapping
+          must not be empty - an unresolvable name used to be skipped silently, so
+          a typo (or a name from the wrong robot) wrote nothing, or wrote only
+          part of the requested pose, while the caller was told the pose had been
+          applied;
+        * every value must be a finite, non-boolean real number, on the shared
+          :meth:`~strands_robots.simulation.base.SimEngine._coerce_joint_state_map`
+          domain. A ``nan`` / ``inf`` is refused rather than written into the
+          articulation, where PhysX surfaces it from a *later* step as an
+          "Illegal BroadPhaseUpdateData - non-finite bounds" error; a boolean is
+          refused because ``float(True)`` is a silent 1-radian target.
+
+        Validation runs synchronously, before the write is queued for the main
+        thread, so a rejected value is reported to the caller rather than raised
+        on the pump thread - where the queued-action handler swallows it after
+        this method has already answered ``status="success"``.
+
+        Returns
+        -------
+        dict
+            Standard ``{"status", "content"}`` envelope; ``error`` for an
+            unknown/uninitialized robot or a value outside the domain above.
         """
         with self._lock:
             if not self._world_created or not self._robots:
@@ -5264,16 +5298,84 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             if r is None or r.articulation is None:
                 return {"status": "error", "content": [{"text": f"Robot {robot_name!r} not initialized."}]}
 
+            joint_names = list(r.joint_names)
+            # Normalize both accepted shapes to a {joint name: value} mapping so
+            # one set of checks covers them. The list form binds positionally to
+            # the robot's joint order, so its length is part of the contract: a
+            # mismatched vector used to be written straight through, resizing the
+            # articulation's joint-position array instead of being refused.
+            if isinstance(positions, dict):
+                requested: dict[str, Any] = dict(positions)
+            elif isinstance(positions, (list, tuple, np.ndarray)):
+                ordered = list(positions)
+                if len(ordered) != len(joint_names):
+                    return {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"set_joint_positions: list length {len(ordered)} does not match robot "
+                                    f"{robot_name!r} joint count {len(joint_names)}. Use a dict for partial updates."
+                                )
+                            }
+                        ],
+                    }
+                requested = dict(zip(joint_names, ordered, strict=True))
+            else:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                "set_joint_positions: 'positions' must be a dict or list, "
+                                f"got {type(positions).__name__}"
+                            )
+                        }
+                    ],
+                }
+
+            # Resolve every name before any write, so a partially-resolvable
+            # mapping is refused rather than applied in part and reported as a
+            # complete pose.
+            if not requested:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                "set_joint_positions: 'positions' is empty, so there is nothing to write. "
+                                "Pass at least one joint (dict form) or a full ordered vector (list form); "
+                                "use action='robot_joint_names' to see one robot's joints."
+                            )
+                        }
+                    ],
+                }
+            index_of = {jn: i for i, jn in enumerate(joint_names)}
+            unresolved = [jn for jn in requested if jn not in index_of]
+            if unresolved:
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"set_joint_positions: unresolved 'positions' keys {unresolved} on robot "
+                                f"{robot_name!r}. Its joints are {joint_names}; "
+                                "use action='robot_joint_names' to list them."
+                            )
+                        }
+                    ],
+                }
+
+            coerced, err = self._coerce_joint_state_map(requested, "positions", "set_joint_positions")
+            if err:
+                return err
+            targets = {index_of[jn]: value for jn, value in coerced.items()}
+
             def _apply() -> None:
-                if isinstance(positions, dict):
-                    cur = list(r.articulation.get_joint_positions())
-                    idx = {jn: i for i, jn in enumerate(r.joint_names)}
-                    for jn, v in positions.items():
-                        if jn in idx:
-                            cur[idx[jn]] = float(v)
-                    r.articulation.set_joint_positions(np.array(cur, dtype=float))
-                else:
-                    r.articulation.set_joint_positions(np.array(positions, dtype=float))
+                cur = list(r.articulation.get_joint_positions())
+                for dof, value in targets.items():
+                    cur[dof] = value
+                r.articulation.set_joint_positions(np.array(cur, dtype=float))
 
             if self._on_main_thread():
                 _apply()

@@ -406,6 +406,21 @@ def _boolean_action_error(label: str, value: Any) -> dict[str, Any] | None:
     }
 
 
+# Why a runtime *state* write refuses a boolean, kept in one place because three
+# surfaces quote it (set_joint_positions, set_joint_velocities, apply_force).
+#
+# The actuator-command path refuses one for a stronger reason - see
+# :data:`_BOOLEAN_ACTION_REASON`: 1.0 is re-read in each drive's own units, so the
+# same True commands a different pose on every actuator. Here 1.0 is a single
+# unambiguous quantity - 1 radian, 1 rad/s, 1 N - so a boolean is merely wrong
+# rather than ambiguous.
+_BOOLEAN_STATE_REASON = (
+    "float(True) is 1.0, so a boolean would be written as 1 radian, 1 rad/s or "
+    "1 N depending on the surface, and the call would report success. Pass the "
+    "quantity in the surface's own units."
+)
+
+
 class SimEngine(ABC):
     """Abstract base class for simulation engines.
 
@@ -1175,6 +1190,78 @@ class SimEngine(ABC):
                 return None, error
             bound[name] = value
         return bound, None
+
+    @staticmethod
+    def _coerce_joint_state_map(
+        values: dict[str, Any],
+        name: str,
+        method: str,
+    ) -> tuple[dict[str, float], dict[str, Any] | None]:
+        """Coerce a ``{joint_name: value}`` state map to finite floats before any write.
+
+        Backs the kinematic state writers on every backend
+        (:meth:`set_joint_positions` / :meth:`set_joint_velocities`), so the
+        accepted domain cannot differ by which engine the caller happens to be
+        driving.
+
+        Each value must be a real number (Python or NumPy scalar) and finite, and
+        must not be a boolean. A non-numeric value would otherwise raise
+        ``ValueError`` from ``float(value)`` past the structured-error dispatch
+        contract, and ``nan`` / ``inf`` would slip straight into the engine's
+        joint state - MuJoCo's ``mj_forward`` propagates the ``nan`` across the
+        whole kinematic state (or an ``inf`` velocity blows up the integrator),
+        and PhysX reports a non-finite articulation as an "Illegal
+        BroadPhaseUpdateData - non-finite bounds" error from a later step -
+        while the tool still reports ``status="success"``. A boolean is refused
+        for the reason in :data:`_BOOLEAN_STATE_REASON`: it survives ``float()``
+        as a silent ``1.0``, so it is the one invalid value the finiteness check
+        cannot see. Validating up front keeps the write atomic: an invalid value
+        leaves the joint state untouched.
+
+        Args:
+            values: The ``{joint_name: value}`` mapping to validate.
+            name: Parameter name (``"positions"`` / ``"velocities"``), used in error text.
+            method: Calling method name, used in error text.
+
+        Returns:
+            ``(coerced, None)`` on success, or ``({}, error_dict)`` on the first
+            invalid value -- matching the structured-error tool contract so the
+            caller never raises past dispatch.
+        """
+        out: dict[str, float] = {}
+        for jnt_name, value in values.items():
+            # Before float(): float(True) is 1.0, so the boolean is unrecoverable
+            # once coerced and the write would report success having set 1 rad /
+            # 1 rad/s. numpy.bool_ needs the .item() unwrap is_boolean applies.
+            if is_boolean(value):
+                return {}, {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, not a bool (got {value!r}). {_BOOLEAN_STATE_REASON}"
+                        }
+                    ],
+                }
+            try:
+                f = float(value)
+            except (TypeError, ValueError):
+                return {}, {
+                    "status": "error",
+                    "content": [
+                        {"text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, got {value!r}"}
+                    ],
+                }
+            if not math.isfinite(f):
+                return {}, {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": f"{method}: '{name}' value for joint '{jnt_name}' must be finite (no nan/inf), got {value!r}"
+                        }
+                    ],
+                }
+            out[jnt_name] = f
+        return out, None
 
     @abstractmethod
     def send_action(
