@@ -1,0 +1,133 @@
+{
+  "tree": "/tmp/pre-serial",
+  "positions": [
+    {
+      "label": "0",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position 0 (0.0 deg)",
+      "bytes": "FFFF0105032A0000CC",
+      "secs": 0.0,
+      "requested": 0,
+      "wire": 0
+    },
+    {
+      "label": "2048",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position 2048 (180.0 deg)",
+      "bytes": "FFFF0105032A0008C4",
+      "secs": 0.0,
+      "requested": 2048,
+      "wire": 2048
+    },
+    {
+      "label": "4095",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position 4095 (360.0 deg)",
+      "bytes": "FFFF0105032AFF0FBE",
+      "secs": 0.0,
+      "requested": 4095,
+      "wire": 4095
+    },
+    {
+      "label": "5000",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position 5000 (439.6 deg)",
+      "bytes": "FFFF0105032A881331",
+      "secs": 0.0,
+      "requested": 5000,
+      "wire": 5000
+    },
+    {
+      "label": "70000",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position 70000 (6153.8 deg)",
+      "bytes": "FFFF0105032A70114B",
+      "secs": 0.0,
+      "requested": 70000,
+      "wire": 4464
+    },
+    {
+      "label": "-1",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position -1 (-0.1 deg)",
+      "bytes": "FFFF0105032AFFFFCE",
+      "secs": 0.0,
+      "requested": -1,
+      "wire": 65535
+    },
+    {
+      "label": "65536",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position 65536 (5761.4 deg)",
+      "bytes": "FFFF0105032A0000CC",
+      "secs": 0.0,
+      "requested": 65536,
+      "wire": 0
+    }
+  ],
+  "options": [
+    {
+      "label": "motor_id=255",
+      "status": "success",
+      "text": "Feetech Motor 255 -> Position 100 (8.8 deg)",
+      "bytes": "FFFFFF05032A64006A",
+      "secs": 0.0
+    },
+    {
+      "label": "motor_id=True",
+      "status": "success",
+      "text": "Feetech Motor True -> Position 100 (8.8 deg)",
+      "bytes": "FFFF0105032A640068",
+      "secs": 0.0
+    },
+    {
+      "label": "velocity=70000",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Velocity 70000",
+      "bytes": "FFFF0105032E701147",
+      "secs": 0.0
+    },
+    {
+      "label": "read_bytes=4",
+      "status": "success",
+      "text": "Read 4 bytes:",
+      "bytes": "",
+      "secs": 0.151
+    },
+    {
+      "label": "read_bytes=0",
+      "status": "success",
+      "text": "Read 0 bytes:",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "read_bytes=2.7",
+      "status": "error",
+      "text": "Error: 'float' object cannot be interpreted as an integer",
+      "bytes": "",
+      "secs": 0.15
+    },
+    {
+      "label": "timeout=nan",
+      "status": "success",
+      "text": "Read 0 bytes:",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "timeout=inf",
+      "status": "error",
+      "text": "Error: timestamp out of range for platform time_t",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "baudrate=2.7",
+      "status": "success",
+      "text": "Read 4 bytes:",
+      "bytes": "",
+      "secs": 0.15
+    }
+  ]
+}

@@ -1,0 +1,133 @@
+{
+  "tree": "/tmp/robots-src",
+  "positions": [
+    {
+      "label": "0",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position 0 (0.0 deg)",
+      "bytes": "FFFF0105032A0000CC",
+      "secs": 0.0,
+      "requested": 0,
+      "wire": 0
+    },
+    {
+      "label": "2048",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position 2048 (180.0 deg)",
+      "bytes": "FFFF0105032A0008C4",
+      "secs": 0.0,
+      "requested": 2048,
+      "wire": 2048
+    },
+    {
+      "label": "4095",
+      "status": "success",
+      "text": "Feetech Motor 1 -> Position 4095 (360.0 deg)",
+      "bytes": "FFFF0105032AFF0FBE",
+      "secs": 0.0,
+      "requested": 4095,
+      "wire": 4095
+    },
+    {
+      "label": "5000",
+      "status": "error",
+      "text": "feetech_position: position must be at most 4095 (Goal_Position is a 12-bit register, the same full scale the reported angle divides by), got 5000.",
+      "bytes": "",
+      "secs": 0.0,
+      "requested": 5000,
+      "wire": null
+    },
+    {
+      "label": "70000",
+      "status": "error",
+      "text": "feetech_position: position must be at most 4095 (Goal_Position is a 12-bit register, the same full scale the reported angle divides by), got 70000.",
+      "bytes": "",
+      "secs": 0.0,
+      "requested": 70000,
+      "wire": null
+    },
+    {
+      "label": "-1",
+      "status": "error",
+      "text": "feetech_position: position must be a non-negative integer, got -1.",
+      "bytes": "",
+      "secs": 0.0,
+      "requested": -1,
+      "wire": null
+    },
+    {
+      "label": "65536",
+      "status": "error",
+      "text": "feetech_position: position must be at most 4095 (Goal_Position is a 12-bit register, the same full scale the reported angle divides by), got 65536.",
+      "bytes": "",
+      "secs": 0.0,
+      "requested": 65536,
+      "wire": null
+    }
+  ],
+  "options": [
+    {
+      "label": "motor_id=255",
+      "status": "error",
+      "text": "feetech_position: motor_id must be at most 254 (the packet carries the ID in one byte, and 255 is the frame header), got 255.",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "motor_id=True",
+      "status": "error",
+      "text": "feetech_position: motor_id must be a positive integer, got True.",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "velocity=70000",
+      "status": "error",
+      "text": "feetech_velocity: velocity must be at most 65535 (Goal_Velocity is written as two bytes), got 70000.",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "read_bytes=4",
+      "status": "success",
+      "text": "Read 4 bytes:",
+      "bytes": "",
+      "secs": 0.15
+    },
+    {
+      "label": "read_bytes=0",
+      "status": "error",
+      "text": "read: read_bytes must be a positive integer, got 0.",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "read_bytes=2.7",
+      "status": "error",
+      "text": "read: read_bytes must be a positive integer, got 2.7.",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "timeout=nan",
+      "status": "error",
+      "text": "read: timeout must be a finite number, got nan.",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "timeout=inf",
+      "status": "error",
+      "text": "read: timeout must be a finite number, got inf.",
+      "bytes": "",
+      "secs": 0.0
+    },
+    {
+      "label": "baudrate=2.7",
+      "status": "error",
+      "text": "read: baudrate must be a positive integer, got 2.7.",
+      "bytes": "",
+      "secs": 0.0
+    }
+  ]
+}
