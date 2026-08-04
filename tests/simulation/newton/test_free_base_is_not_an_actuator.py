@@ -72,11 +72,16 @@ class TestTheFreeBaseIsNotAnActionKey:
         """The state-side vocabulary is deliberately out of scope here.
 
         ``robot_joint_names`` has the same disagreement on the state side - it
-        advertises a joint ``get_observation`` never emits - but it also sizes
-        ``training/rl/env.py``'s ``num_actions`` and names policy state keys, so
-        narrowing it is a wider change than "the free joint is not an actuator"
-        and is tracked separately. Asserted rather than left implicit so the two
-        halves cannot be conflated by a later reader.
+        advertises a joint ``get_observation`` never emits - and it still names
+        policy state keys, so narrowing it is a wider change than "the free
+        joint is not an actuator" and is tracked separately. Asserted rather
+        than left implicit so the two halves cannot be conflated by a later
+        reader.
+
+        The action-sizing consumer this docstring used to name is gone:
+        ``training/rl``'s action head and checkpoint metadata read
+        ``robot_action_keys``, so this list no longer sizes an action vector -
+        see ``tests/training/test_rl_action_head_binds_action_keys.py``.
         """
         assert _engine(free_base=True).robot_joint_names("g1") == [_BASE_JOINT] + _SCALAR_JOINTS
 
