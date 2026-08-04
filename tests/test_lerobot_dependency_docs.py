@@ -1,6 +1,6 @@
 """Keep the VLA install docs consistent with the declared dependencies.
 
-The ``lerobot>=0.6.0`` bump obsoleted a body of pre-0.6 install guidance that
+The ``lerobot>=0.6`` bump obsoleted a body of pre-0.6 install guidance that
 lived in the ``train_policy`` tool docstring and the policy/training docs:
 
 * ``pip install 'lerobot[smolvla]==0.5.1'`` and a ``transformers==5.3.0`` pin -
@@ -12,7 +12,7 @@ lived in the ``train_policy`` tool docstring and the policy/training docs:
   longer applies to the supported range.
 * "MolmoAct2 requires lerobot **from source**" - ``MolmoAct2Policy`` ships in
   lerobot >= 0.6, so ``strands-robots[molmoact2]`` (which pulls
-  ``strands-robots[lerobot]`` -> ``lerobot>=0.6.0``) resolves it straight from
+  ``strands-robots[lerobot]`` -> ``lerobot>=0.6.1``) resolves it straight from
   PyPI; no ``git+`` install.
 
 These assertions pin the pyproject reality and forbid the stale guidance from
@@ -23,6 +23,9 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+
+from packaging.requirements import Requirement
+from packaging.version import Version
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
@@ -36,10 +39,16 @@ def _extras() -> dict[str, list[str]]:
 # --- positive contract: the pyproject reality the docs must reflect ---
 
 
-def test_lerobot_extra_requires_0_6() -> None:
-    joined = " ".join(_extras()["lerobot"])
-    assert "lerobot" in joined
-    assert ">=0.6.0" in joined, f"lerobot extra no longer pins >=0.6.0: {joined!r}"
+def test_lerobot_extra_requires_0_6_1() -> None:
+    """The ``[lerobot]`` extra floors lerobot at >= 0.6.1.
+
+    0.6.1 is the first release whose ``StreamingLeRobotDataset`` accepts
+    ``repo_type``, so flooring there makes bucket streaming resolver-guaranteed
+    rather than docs-guaranteed.
+    """
+    req = next(r for r in map(Requirement, _extras()["lerobot"]) if r.name == "lerobot")
+    lower = min(Version(s.version) for s in req.specifier if s.operator == ">=")
+    assert lower >= Version("0.6.1"), f"lerobot extra no longer floors >=0.6.1: {req.specifier}"
 
 
 def test_molmoact2_extra_is_pure_pypi_with_transformers_5_4_plus() -> None:
@@ -50,10 +59,13 @@ def test_molmoact2_extra_is_pure_pypi_with_transformers_5_4_plus() -> None:
     # lerobot[transformers-dep] (>=5.4.0) transitively, so the >=5.4.0 guarantee
     # is preserved by construction while staying in lock-step with lerobot.
     assert "lerobot[molmoact2]" in joined, joined
-    # the lerobot floor is >=0.6.0 (MolmoAct2Policy landed in lerobot 0.6), so
-    # its transformers-dep (>=5.4.0) is what gets resolved - never the pre-0.6
-    # transformers==5.3.0.
-    assert ">=0.6.0" in joined, joined
+    # the lerobot floor is >=0.6 (MolmoAct2Policy landed in lerobot 0.6), so its
+    # transformers-dep (>=5.4.0) is what gets resolved - never the pre-0.6
+    # transformers==5.3.0. Asserted as a bound, not a literal substring, so a
+    # floor raise cannot strand a guard whose requirement it still satisfies.
+    req = next(r for r in map(Requirement, _extras()["molmoact2"]) if r.name == "lerobot")
+    lower = min(Version(s.version) for s in req.specifier if s.operator == ">=")
+    assert lower >= Version("0.6"), f"molmoact2 lerobot floor is below 0.6: {req.specifier}"
     # resolves from PyPI - no git-from-source URL
     assert "git+" not in joined, f"molmoact2 extra should not need a git URL: {joined!r}"
 
@@ -97,7 +109,7 @@ def test_lerobot_local_docs_do_not_claim_molmoact2_needs_source() -> None:
 
 # --- negative contract, extended: the pre-0.6 "lerobot from source / <0.6 pin"
 #     narrative also lingered in the architecture / troubleshooting / molmoact2
-#     pages after the >=0.6.0 floor bump. These pin it out. ---
+#     pages after the >=0.6 floor bump. These pin it out. ---
 
 _ARCHITECTURE = _REPO_ROOT / "docs" / "architecture.md"
 _TROUBLESHOOTING = _REPO_ROOT / "docs" / "troubleshooting.md"
@@ -117,16 +129,19 @@ def test_architecture_lerobot_extra_row_matches_pyproject_floor() -> None:
     text = _ARCHITECTURE.read_text()
     # the dependency-matrix row must not advertise the dead pre-0.6 cap
     assert "lerobot>=0.5.0,<0.6.0" not in text, "architecture.md still cites the dead <0.6.0 lerobot cap"
-    # it must reflect the real floor (>=0.6.0)
-    assert ">=0.6.0" in text, "architecture.md [lerobot] row should name the >=0.6.0 floor"
+    # It must reflect the real floor, read from pyproject rather than hardcoded:
+    # a floor bump would otherwise leave this page citing a dead version while
+    # the guard kept passing.
+    floor = _lerobot_floor_from_pyproject()
+    assert f"lerobot{floor}" in text, f"architecture.md [lerobot] row should name the pyproject floor lerobot{floor}"
 
 
 def test_troubleshooting_version_skew_remedy_does_not_conflict_with_floor() -> None:
     text = _TROUBLESHOOTING.read_text()
     # remedying a version-skew ImportError by pinning ``<0.6`` directly conflicts
-    # with the pyproject floor (``lerobot[...]>=0.6.0``); the remedy must (re)install
+    # with the pyproject floor (``lerobot[...]>=0.6.1``); the remedy must (re)install
     # the extra instead of a manual sub-floor pin.
-    assert "lerobot>=0.5.0,<0.6" not in text, "troubleshooting remedy pins lerobot below the required >=0.6.0 floor"
+    assert "lerobot>=0.5.0,<0.6" not in text, "troubleshooting remedy pins lerobot below the required >=0.6.1 floor"
     assert "strands-robots[lerobot]" in text
 
 

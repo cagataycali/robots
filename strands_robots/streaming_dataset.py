@@ -27,6 +27,16 @@ from strands_robots.utils import lerobot_version
 
 logger = logging.getLogger(__name__)
 
+# The first lerobot release whose ``StreamingLeRobotDataset`` accepts a
+# ``repo_type`` parameter, i.e. the floor for bucket streaming. 0.6.0's
+# constructor has no such parameter; 0.6.1 added
+# ``repo_type: Literal["dataset", "bucket"]``. The ``[lerobot]`` extra floors
+# lerobot here so a resolver-conformant install always has the capability; this
+# constant is what the runtime guard below advertises to an environment that
+# carries a pre-existing older lerobot, so the packaging floor and the remedy
+# the error message names cannot drift apart.
+BUCKET_STREAMING_MIN_LEROBOT = "0.6.1"
+
 
 # Only the POSITIVE result is cached. lerobot availability is a process
 # capability that can transiently fail to resolve (a slow/locked import, or - in
@@ -122,11 +132,13 @@ class StreamingDatasetReader:
         Raises:
             RuntimeError: ``repo_type`` is not ``"dataset"`` but the installed
                 ``StreamingLeRobotDataset`` does not accept a ``repo_type``
-                parameter. No released lerobot does (the versioned-dataset vs
-                bucket storage split is not upstream); the parameter is retained
-                only for a lerobot build that adds it. Silently dropping the
-                kwarg would stream from the versioned *dataset* namespace instead
-                of the requested bucket - a different storage system, not a
+                parameter. lerobot >= :data:`BUCKET_STREAMING_MIN_LEROBOT`
+                accepts it; earlier releases do not. The ``[lerobot]`` extra
+                floors lerobot at that version, so this guard only fires for an
+                environment carrying a pre-existing older lerobot - and it
+                names the upgrade as the remedy. Silently dropping the kwarg
+                would stream from the versioned *dataset* namespace instead of
+                the requested bucket - a different storage system, not a
                 cosmetic difference - so this is never tolerant-dropped.
             ValueError: ``drop_videos=True`` but no non-video keys remain in
                 ``delta_timestamps`` (or none were passed). Without a proprio
@@ -141,18 +153,22 @@ class StreamingDatasetReader:
         accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in init_sig.values())
 
         # repo_type selects WHICH storage system is read (versioned dataset
-        # namespace vs bucket). No released lerobot accepts it; unlike the
-        # cosmetic kwargs below, silently dropping a non-default value would open
-        # the wrong storage system without error - fail fast instead.
+        # namespace vs bucket). lerobot >= BUCKET_STREAMING_MIN_LEROBOT accepts
+        # it and the [lerobot] extra floors there, so this only fires for a
+        # pre-existing older lerobot; unlike the cosmetic kwargs below, silently
+        # dropping a non-default value would open the wrong storage system
+        # without error - fail fast, naming the upgrade, instead.
         if repo_type != "dataset" and not (accepts_var_kw or "repo_type" in init_sig):
             raise RuntimeError(
-                f"repo_type={repo_type!r} is not supported by any released lerobot "
-                f"(installed: {lerobot_version()}): StreamingLeRobotDataset does not "
-                "accept a repo_type parameter (the versioned-dataset vs bucket storage "
-                "split is not upstream), and silently falling back to the 'dataset' "
-                "namespace would stream from a different storage system. Pass "
-                "repo_type='dataset' (the default) or use a lerobot build whose "
-                "StreamingLeRobotDataset accepts repo_type."
+                f"repo_type={repo_type!r} requires lerobot >= "
+                f"{BUCKET_STREAMING_MIN_LEROBOT} (installed: {lerobot_version()}): "
+                "this StreamingLeRobotDataset does not accept a repo_type "
+                "parameter, and silently falling back to the 'dataset' namespace "
+                "would stream from a different storage system. Upgrade with "
+                '`pip install -U "strands-robots[lerobot]"` (its floor is at '
+                "least that), or pass "
+                "repo_type='dataset' (the default) to stream from the versioned "
+                "dataset namespace."
             )
 
         # Proprio-only: strip video keys from delta_timestamps so video decode

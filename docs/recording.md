@@ -624,9 +624,11 @@ least one non-video key, otherwise `open()` raises `ValueError` rather than
 silently streaming video anyway).
 
 One kwarg is **not** tolerant-forwarded because its absence changes semantics:
-`repo_type="bucket"` requires `lerobot>=0.6.1` — on older versions `open()`
-raises `RuntimeError` instead of silently streaming from the versioned dataset
-namespace (a different storage system).
+`repo_type="bucket"` requires `lerobot>=0.6.1`, which the `[lerobot]` extra
+floors — so a resolver-conformant install always has it. On an environment
+carrying an older lerobot, `open()` raises `RuntimeError` naming the upgrade
+instead of silently streaming from the versioned dataset namespace (a different
+storage system).
 
 For **training**, the upstream trainer uses the same engine:
 

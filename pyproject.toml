@@ -183,7 +183,16 @@ lerobot = [
     # marker. NOTE: torch/torchcodec ship as +cuXXX wheels resolved by
     # UV_TORCH_BACKEND; a plain `pip install` on Thor may need the matching CUDA
     # index -- see the README Installation section for the Thor/Jetson caveat.
-    "lerobot[feetech,dataset]>=0.6.0,<0.7.0",
+    #
+    # The floor is 0.6.1 rather than 0.6.0 because bucket streaming
+    # (`stream_dataset(repo_type="bucket")`) needs a StreamingLeRobotDataset
+    # that accepts `repo_type`, and 0.6.1 is the first release that does
+    # (0.6.0's constructor has no such parameter). Flooring here makes the
+    # flagship streaming path resolver-guaranteed instead of docs-guaranteed;
+    # `strands_robots.streaming_dataset.BUCKET_STREAMING_MIN_LEROBOT` carries
+    # the same version for the runtime guard that protects an environment with
+    # a pre-existing older lerobot.
+    "lerobot[feetech,dataset]>=0.6.1,<0.7.0",
 ]
 # Remote/offloaded inference via lerobot's native async-inference gRPC
 # transport (the `lerobot_async` policy provider, LerobotAsyncPolicy). Layers
@@ -193,7 +202,7 @@ lerobot = [
 # it here, so the gRPC/protobuf floor tracks lerobot.
 lerobot-async = [
     "strands-robots[lerobot]",
-    "lerobot[async]>=0.6.0,<0.7.0",
+    "lerobot[async]>=0.6.1,<0.7.0",
 ]
 # MolmoAct2 transformers-native VLA (e.g. allenai/MolmoAct2-SO100_101). The
 # MolmoAct2Policy ships in lerobot >= 0.6 (landed via lerobot PR #3604). Rather
@@ -202,11 +211,11 @@ lerobot-async = [
 # own ``[molmoact2]`` extra. That extra pulls lerobot[transformers-dep],
 # lerobot[peft-dep], lerobot[scipy-dep] at exactly the versions the MolmoAct2
 # modeling/processor code was built against, so the two stay in lock-step by
-# construction. The base ``strands-robots[lerobot]`` pin (>=0.6.0,<0.7.0) already
+# construction. The base ``strands-robots[lerobot]`` pin (>=0.6.1,<0.7.0) already
 # fixes the lerobot floor; ``lerobot[molmoact2]`` just adds the aux deps.
 molmoact2 = [
     "strands-robots[lerobot]",
-    "lerobot[molmoact2]>=0.6.0,<0.7.0",
+    "lerobot[molmoact2]>=0.6.1,<0.7.0",
 ]
 sim = [
     "robot_descriptions>=1.11.0,<2.0.0",
