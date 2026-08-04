@@ -1050,6 +1050,26 @@ class LerobotTrainer(Trainer):
             reward_cfg = make_reward_model_config(rtype, **reward_kwargs)
         except TypeError as e:
             raise ValueError(f"reward_model type '{rtype}' rejected field(s) {sorted(reward_kwargs)}: {e}") from e
+        except OSError as e:
+            # A reward config may derive a field from a pretrained asset inside
+            # its own __post_init__ (robometer reads its backbone's config and
+            # tokenizer to size ``vlm_config``), so merely CONSTRUCTING it can
+            # need a download. Every huggingface_hub failure class for that is
+            # an OSError subclass (LocalEntryNotFoundError, HfHubHTTPError,
+            # GatedRepoError, OfflineModeIsEnabled), and transformers re-raises
+            # a plain OSError, so this is the narrowest superset that covers
+            # "the asset could not be obtained" without swallowing the
+            # ValueErrors a config raises for a bad field value - those are
+            # already actionable and name the field.
+            raise ValueError(
+                f"reward_model type '{rtype}' could not be constructed: building its config "
+                f"needed a pretrained asset this host could not obtain ({e}). The spec itself "
+                f"is fine - validate() cannot reach the network to see this. Either make the "
+                f"asset available (a warm Hugging Face cache, or network access with "
+                f"HF_HUB_OFFLINE unset), or pass the field the config derives from it in "
+                f"extra['reward_model'] so its constructor fetches nothing. Fields this type "
+                f"accepts: {', '.join(sorted(friendly))}."
+            ) from e
         if hasattr(reward_cfg, "push_to_hub"):
             reward_cfg.push_to_hub = False
         if spec.base_model and hasattr(reward_cfg, "pretrained_path"):

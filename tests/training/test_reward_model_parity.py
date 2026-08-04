@@ -79,6 +79,46 @@ def _register_subclass_name(deco: ast.expr) -> str | None:
     return None
 
 
+# ``extra['reward_model']`` keys that make each type's config construct from
+# local state alone.
+#
+# A reward config may derive a field from a pretrained asset inside its own
+# ``__post_init__``: robometer reads its backbone's config and tokenizer to size
+# ``vlm_config``, so constructing it with the shipped defaults downloads ~11 MB
+# from the Hub and fails outright on a host that cannot reach it. That download
+# is incidental to what these tests assert - strands' discovery and passthrough
+# are local contracts - so the parity cases supply the derived field and let the
+# constructor skip the fetch. ``__post_init__`` only checks that ``vlm_config``
+# is non-empty, so a minimal backbone-shaped dict is enough.
+#
+# ``test_default_construction_populates_the_backbone_config`` keeps the fetching
+# path covered wherever the backbone is already cached.
+_LOCAL_VLM_CONFIG = {"text_config": {"vocab_size": 151_674}}
+_LOCAL_CONSTRUCTION_EXTRA: dict[str, dict[str, object]] = {
+    "sarm": {},
+    "robometer": {"vlm_config": _LOCAL_VLM_CONFIG},
+    "topreward": {},
+    "reward_classifier": {},
+}
+
+
+def _backbone_is_cached(rtype: str) -> bool:
+    """True when ``rtype``'s config can be built without a Hub round trip.
+
+    Pure local-cache lookup (``try_to_load_from_cache`` never touches the
+    network), so a test can decide to skip instead of failing on a host with a
+    cold cache. Types that derive nothing from a pretrained asset are always
+    constructible.
+    """
+    if rtype != "robometer":
+        return True
+    from huggingface_hub import try_to_load_from_cache
+    from lerobot.rewards.robometer.configuration_robometer import RobometerConfig
+
+    repo = RobometerConfig.base_model_id
+    return all(try_to_load_from_cache(repo, f) is not None for f in ("config.json", "tokenizer_config.json"))
+
+
 @pytest.fixture
 def dataset_root(tmp_path):
     meta = tmp_path / "meta"
@@ -112,7 +152,7 @@ class TestRewardModelConfigParity:
             base_model="",
             output_dir=str(tmp_path / f"{rtype}_out"),
             steps=100,
-            extra={"reward_model": {"type": rtype}},
+            extra={"reward_model": {"type": rtype, **_LOCAL_CONSTRUCTION_EXTRA[rtype]}},
         )
         trainer = LerobotTrainer(device="cpu")
         assert trainer.validate(spec) == [], f"{rtype} failed validation"
@@ -146,7 +186,7 @@ class TestRewardModelConfigParity:
             base_model="",
             output_dir=str(tmp_path / f"{rtype}_out"),
             steps=100,
-            extra={"reward_model": {"type": rtype, field: value}},
+            extra={"reward_model": {"type": rtype, field: value, **_LOCAL_CONSTRUCTION_EXTRA[rtype]}},
         )
         trainer = LerobotTrainer(device="cpu")
         assert trainer.validate(spec) == [], f"{rtype}.{field} rejected"
@@ -211,3 +251,128 @@ class TestRewardModelConfigParity:
         assert "device" in msg
         # The original TypeError is chained for debugging, not swallowed.
         assert isinstance(excinfo.value.__cause__, TypeError)
+
+    @pytest.mark.parametrize("rtype", ["sarm", "robometer", "topreward", "reward_classifier"])
+    def test_construction_needs_no_backbone_fetch(self, rtype, dataset_root, tmp_path, monkeypatch):
+        """Building a reward config from ``_LOCAL_CONSTRUCTION_EXTRA`` fetches nothing.
+
+        Both backbone entry points are made fatal, so reaching either one fails
+        the test rather than silently downloading. This is what keeps the parity
+        suite a measurement of strands' passthrough instead of a measurement of
+        Hub reachability - a reward type that starts deriving a field from a
+        pretrained asset must be given that field here, not left to download it.
+        """
+        pytest.importorskip("lerobot.rewards")
+        transformers = pytest.importorskip("transformers")
+
+        def _fetched(*args, **kwargs):
+            raise AssertionError("a backbone fetch was attempted")
+
+        monkeypatch.setattr(transformers.AutoConfig, "from_pretrained", _fetched)
+        monkeypatch.setattr(transformers.AutoTokenizer, "from_pretrained", _fetched)
+
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / f"{rtype}_out"),
+            steps=100,
+            extra={"reward_model": {"type": rtype, **_LOCAL_CONSTRUCTION_EXTRA[rtype]}},
+        )
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        assert cfg.reward_model.type == rtype
+
+    def test_default_construction_populates_the_backbone_config(self, dataset_root, tmp_path):
+        """robometer's shipped defaults still build, wherever the backbone is cached.
+
+        The parity cases above hand robometer its ``vlm_config`` so they stay
+        local; this keeps the deriving path itself covered. It skips - rather
+        than fails - when the backbone is not in the local cache, because that
+        is a property of the host, not of strands.
+        """
+        pytest.importorskip("lerobot.rewards")
+        if not _backbone_is_cached("robometer"):
+            pytest.skip("robometer's backbone config is not in the local Hugging Face cache")
+
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "robometer_default"),
+            steps=100,
+            extra={"reward_model": {"type": "robometer"}},
+        )
+        cfg = LerobotTrainer(device="cpu").build_config(spec)
+        # The derived field is what the fetch exists to populate.
+        assert cfg.reward_model.vlm_config
+        assert "text_config" in cfg.reward_model.vlm_config
+
+    def test_unobtainable_asset_becomes_actionable_error(self, dataset_root, tmp_path, monkeypatch):
+        """A config whose constructor cannot obtain its asset names the type and a remedy.
+
+        Constructing a reward config can need a download (robometer sizes
+        ``vlm_config`` from its backbone), so on a host that cannot reach the Hub
+        ``build_config`` fails inside ``make_reward_model_config``. transformers
+        and huggingface_hub both report that as an ``OSError``, which said
+        nothing about the trainer, the reward type or what to do next - the same
+        bare, contextless leak the ``TypeError`` translation above exists to
+        prevent. ``validate()`` cannot see it, having no network, so the error
+        must say that the spec is not what is wrong.
+        """
+        pytest.importorskip("lerobot.rewards")
+        import lerobot.rewards as lr
+
+        def _unobtainable(rtype, **kwargs):
+            raise OSError("We couldn't connect to 'https://huggingface.co' to load the files")
+
+        monkeypatch.setattr(lr, "make_reward_model_config", _unobtainable)
+
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "robometer_out"),
+            steps=100,
+            extra={"reward_model": {"type": "robometer"}},
+        )
+        with pytest.raises(ValueError) as excinfo:
+            LerobotTrainer(device="cpu").build_config(spec)
+
+        msg = str(excinfo.value)
+        assert "reward_model type 'robometer' could not be constructed" in msg
+        # The underlying reason is quoted, so the failure stays diagnosable.
+        assert "huggingface.co" in msg
+        # The spec is explicitly cleared, because validate() accepted it.
+        assert "validate()" in msg
+        # Both remedies are named, and the second one is checkable: vlm_config is
+        # a real forwardable field, so a caller can act on the message.
+        assert "cache" in msg
+        assert "extra['reward_model']" in msg
+        assert "vlm_config" in msg
+        assert "vlm_config" in _reward_friendly_fields("robometer")
+        # The original OSError is chained for debugging, not swallowed.
+        assert isinstance(excinfo.value.__cause__, OSError)
+
+    def test_a_rejected_field_value_keeps_its_own_error(self, dataset_root, tmp_path):
+        """A bad field VALUE keeps the config's own message; only asset failures are re-worded.
+
+        ``__post_init__`` already raises a ``ValueError`` naming the field and its
+        accepted values, so re-wrapping it would bury the actionable part. Guards
+        the scope of the asset translation.
+        """
+        pytest.importorskip("lerobot.rewards")
+        spec = TrainSpec(
+            dataset_root=dataset_root,
+            base_model="",
+            output_dir=str(tmp_path / "robometer_out"),
+            steps=100,
+            extra={
+                "reward_model": {
+                    "type": "robometer",
+                    "reward_output": "not-a-mode",
+                    **_LOCAL_CONSTRUCTION_EXTRA["robometer"],
+                }
+            },
+        )
+        with pytest.raises(ValueError) as excinfo:
+            LerobotTrainer(device="cpu").build_config(spec)
+        msg = str(excinfo.value)
+        assert "reward_output" in msg
+        assert "could not be constructed" not in msg
