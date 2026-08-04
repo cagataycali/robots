@@ -256,10 +256,28 @@ def run_policy(
     # loop after step 2 had already created a dataset. Shares the domain every
     # rollout surface uses, so a seed this loop accepts is one the facade it
     # forwards to can apply.
-    from strands_robots.simulation.base import randomization_seed_error
+    # ``None`` is the documented "draw fresh entropy" spelling, so there is
+    # nothing to check for it - and this module keeps every strands_robots import
+    # lazy, so a caller who supplies no seed pulls in no extra module.
+    if seed is not None:
+        from strands_robots.simulation.base import randomization_seed_error
+        from strands_robots.simulation.policy_runner import MAX_EVAL_SEED
 
-    if seed_error := randomization_seed_error(seed, "run_policy"):
-        return _err(seed_error)
+        if seed_error := randomization_seed_error(seed, "run_policy", max_seed=MAX_EVAL_SEED):
+            return _err(seed_error)
+
+        # The value each episode applies is ``seed + ep``, not ``seed``, so a
+        # seed inside the ceiling can still derive one above it - the same
+        # accepted-but-unappliable gap, one derivation further on. The check
+        # above has already established that ``seed`` is an integer, and
+        # ``n_episodes`` is validated further up, so this is computable here.
+        if randomization_seed_error(seed + n_episodes - 1, "run_policy", max_seed=MAX_EVAL_SEED):
+            return _err(
+                f"run_policy: episode seeds are derived as seed + episode index, so seed={seed!r} "
+                f"with n_episodes={n_episodes} reaches {seed + n_episodes - 1} on the last episode - "
+                f"above the {MAX_EVAL_SEED} ceiling every rollout surface accepts. Lower the seed or "
+                "the episode count."
+            )
 
     if video is not None and not isinstance(video, dict):
         return _err(

@@ -828,6 +828,38 @@ class TestSeedIsPreFlighted:
         assert sim.start_recording_calls == []
         assert sim.run_policy_calls == []
 
+    @pytest.mark.parametrize("seed", [2**32, 2**32 + 1, 1_754_000_000_000], ids=repr)
+    def test_a_seed_above_the_appliers_ceiling_is_refused(self, tmp_path: Path, seed: int) -> None:
+        """The applier reseeds NumPy's legacy global RNG, which stops at
+        ``2**32 - 1``; a millisecond-epoch timestamp is above it."""
+        sim = _FakeSim()
+        result = run_policy_tool(sim, n_episodes=2, n_steps=4, seed=seed, dataset_root=str(tmp_path / "ds"))
+        assert result["status"] == "error"
+        text = " ".join(b.get("text", "") for b in result["content"] if isinstance(b, dict))
+        assert "seed must be an integer in [0, 4294967295]" in text
+        assert sim.start_recording_calls == []
+        assert sim.run_policy_calls == []
+
+    def test_a_seed_whose_last_episode_offset_exceeds_the_ceiling_is_refused(self, tmp_path: Path) -> None:
+        """Each episode applies ``seed + ep``, so the accepted value is the one
+        the last episode derives - not the one the caller passed."""
+        sim = _FakeSim()
+        result = run_policy_tool(sim, n_episodes=3, n_steps=2, seed=2**32 - 1, dataset_root=str(tmp_path / "ds"))
+        assert result["status"] == "error"
+        text = " ".join(b.get("text", "") for b in result["content"] if isinstance(b, dict))
+        assert "seed + episode index" in text
+        assert "4294967297" in text
+        assert sim.start_recording_calls == []
+        assert sim.run_policy_calls == []
+
+    def test_the_largest_seed_every_episode_can_apply_is_accepted(self) -> None:
+        """Over-reach control: the derived check must not refuse a run whose
+        every episode seed fits."""
+        sim = _FakeSim()
+        result = run_policy_tool(sim, n_episodes=3, n_steps=2, seed=2**32 - 3)
+        assert result["status"] == "success", result
+        assert [call["seed"] for call in sim.run_policy_calls] == [2**32 - 3, 2**32 - 2, 2**32 - 1]
+
     @pytest.mark.parametrize("seed", [None, 0, 11], ids=repr)
     def test_a_usable_seed_is_offset_per_episode(self, seed: Any) -> None:
         sim = _FakeSim()

@@ -29,3 +29,17 @@ its worker thread; and `True` was accepted everywhere as a silent seed of `1`.
 already used - so a seed refused for one cannot be accepted for the rollout whose
 reproducibility it is supposed to pin. The tool refuses it before it opens a
 dataset, matching its sibling pre-flight checks.
+
+The rollout surfaces carry one bound the randomization surfaces do not, because
+their appliers are not equally wide. `set_eval_seed` reseeds the legacy NumPy
+global RNG (`numpy.random.seed`) as well as `default_rng`, and that one refuses
+anything above `2**32 - 1` - so a seed in `[2**32, inf)`, which includes the
+common millisecond-epoch timestamp idiom, was accepted and then raised NumPy's
+own `Seed must be between 0 and 2**32 - 1` from inside the rollout: past the
+envelope on `eval_policy`, and on a worker thread after `start_policy` had
+already reported "started". `randomization_seed_error` now takes an optional
+ceiling, and the rollout surfaces pass `MAX_EVAL_SEED`; `randomize` /
+`set_obs_noise` reach only `default_rng` and keep the unbounded domain they can
+honor. `set_eval_seed` enforces it too, since it is public API documented for
+direct callers, and the `run_policy` tool checks the seed its *last* episode
+derives (`seed + n_episodes - 1`) rather than only the one it was handed.

@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 # AST). Instead, we reference ``OnFrame`` in the ``evaluate_benchmark``
 # signature as a *string* annotation; ``from __future__ import
 # annotations`` (already in effect) makes that a no-op at runtime.
-from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
+from strands_robots.simulation.policy_runner import MAX_EVAL_SEED, PolicyRunner, VideoConfig
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     is_boolean,
@@ -271,7 +271,7 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
     return None
 
 
-def randomization_seed_error(value: Any, context: str) -> str | None:
+def randomization_seed_error(value: Any, context: str, *, max_seed: int | None = None) -> str | None:
     """Return why a value cannot seed a reproducible randomization stream.
 
     The seed reaches ``numpy.random.default_rng``, which accepts only
@@ -286,14 +286,27 @@ def randomization_seed_error(value: Any, context: str) -> str | None:
     the domain-randomization streams, and the ``seed`` of a policy rollout or
     evaluation (``run_policy`` / ``eval_policy`` / ``start_policy`` /
     ``evaluate_benchmark``), which pins the client RNGs a stochastic policy
-    samples from. Both end at ``numpy.random.seed`` / ``default_rng``, so a
-    seed one refuses cannot be usable for the other. The name reads for the
-    first family and is accurate for both: a rollout seed exists precisely to
-    make the policy's randomization reproducible.
+    samples from. The name reads for the first family and is accurate for both:
+    a rollout seed exists precisely to make the policy's randomization
+    reproducible.
+
+    Their appliers are not equally wide, so the accepted domain is not either.
+    ``randomize`` / ``set_obs_noise`` reach ``default_rng``, which takes a
+    non-negative integer of any width. A rollout seed is applied through
+    :func:`~strands_robots.simulation.policy_runner.set_eval_seed`, which also
+    reseeds the legacy NumPy global RNG (``numpy.random.seed``) - the one most
+    policies draw from - and that refuses anything above
+    :data:`~strands_robots.simulation.policy_runner.MAX_EVAL_SEED`. ``max_seed``
+    carries that ceiling, so the rollout surfaces refuse a value they could not
+    apply while the randomization surfaces keep the width they can honor. One
+    rule with an explicit bound per destination is what stops the accepted
+    domain drifting from the applier in either direction.
 
     Args:
         value: The candidate seed (``None`` selects fresh entropy).
         context: Method name to prefix the message with.
+        max_seed: Largest value the caller's applier can honor, or ``None``
+            when the non-negative-integer rule is the only bound.
 
     Returns:
         ``None`` when the seed is usable, otherwise the reason as a string.
@@ -304,6 +317,11 @@ def randomization_seed_error(value: Any, context: str) -> str | None:
         return f"{context}: seed must be a non-negative integer or None, got {value!r} (None draws fresh entropy)"
     if int(value) < 0:
         return f"{context}: seed must be a non-negative integer or None, got {value!r} (None draws fresh entropy)"
+    if max_seed is not None and int(value) > max_seed:
+        return (
+            f"{context}: seed must be an integer in [0, {max_seed}] or None, got {value!r} "
+            "(a rollout seed is applied to the legacy NumPy global RNG, which refuses a larger value)"
+        )
     return None
 
 
@@ -1537,6 +1555,14 @@ class SimEngine(ABC):
         tool-error envelope, so a seed refused for ``randomize`` cannot be
         accepted for the rollout whose reproducibility it is supposed to pin.
 
+        The rollout binding supplies :data:`MAX_EVAL_SEED` as the ceiling. Its
+        applier reseeds the legacy NumPy global RNG as well as ``default_rng``,
+        and that one refuses a larger value - so without the bound a seed in
+        ``[2**32, inf)`` passed this guard and then raised NumPy's own message
+        from inside the rollout, which is the failure this guard exists to
+        replace. ``randomize`` / ``set_obs_noise`` reach only ``default_rng``
+        and keep the unbounded domain they can honor.
+
         Args:
             seed: The caller-supplied value (``None`` draws fresh entropy).
             method: Public method name, used to prefix the error message.
@@ -1544,7 +1570,7 @@ class SimEngine(ABC):
         Returns:
             An error dict naming the offending parameter, or ``None``.
         """
-        if error := randomization_seed_error(seed, method):
+        if error := randomization_seed_error(seed, method, max_seed=MAX_EVAL_SEED):
             return {"status": "error", "content": [{"text": error}]}
         return None
 

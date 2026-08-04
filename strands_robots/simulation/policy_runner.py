@@ -65,6 +65,16 @@ from strands_robots.simulation.safe_output import validate_output_path, video_sa
 logger = logging.getLogger(__name__)
 
 
+# The largest seed :func:`set_eval_seed` can apply. It reseeds the legacy NumPy
+# global RNG (``numpy.random.seed``), which refuses anything above 2**32 - 1 -
+# unlike ``numpy.random.default_rng``, the destination of the ``randomize`` /
+# ``set_obs_noise`` seeds, which accepts an integer of any width. That is why a
+# rollout seed carries a ceiling those two do not: the accepted domain of a
+# parameter is bounded by what its applier can honor, and ``random.seed`` /
+# ``torch.manual_seed`` (the other two RNGs seeded here) are wider still.
+MAX_EVAL_SEED = 2**32 - 1
+
+
 def set_eval_seed(seed: int) -> None:
     """Seed Python / NumPy / torch RNGs for reproducible eval rollouts.
 
@@ -89,7 +99,9 @@ def set_eval_seed(seed: int) -> None:
 
     * Python ``random.seed``.
     * NumPy ``np.random.seed`` (the legacy global RNG; matches what
-      most policies use under the hood).
+      most policies use under the hood). This is the narrowest of the
+      three: it refuses a seed above :data:`MAX_EVAL_SEED`, so that is
+      the ceiling every rollout surface accepts.
     * PyTorch CPU (``torch.manual_seed``) - if torch is importable.
     * PyTorch CUDA all devices (``torch.cuda.manual_seed_all``) - if
       torch is importable AND CUDA is available.
@@ -108,6 +120,17 @@ def set_eval_seed(seed: int) -> None:
     installs that don't have torch (e.g. ``policy_provider="mock"``
     smoke tests).
     """
+    # Local import: base.py imports this module at module level, so reaching the
+    # shared domain from here has to stay deferred - the same convention this
+    # module already uses for simulation.benchmark / .recording / .predicates.
+    from strands_robots.simulation.base import randomization_seed_error
+
+    # This is public API (exported via ``__all__``) and documented for standalone
+    # callers, so the bound is enforced where it is owned rather than only at the
+    # facades one layer up: NumPy's own "Seed must be between 0 and 2**32 - 1"
+    # names neither the parameter nor the method that accepted it.
+    if seed_error := randomization_seed_error(seed, "set_eval_seed", max_seed=MAX_EVAL_SEED):
+        raise ValueError(seed_error)
     random.seed(seed)
     try:
         import numpy as _np
@@ -1123,7 +1146,7 @@ class PolicyRunner:
         # simulation.benchmark / simulation.recording / simulation.predicates.
         from strands_robots.simulation.base import randomization_seed_error
 
-        if seed_error := randomization_seed_error(seed, "PolicyRunner.run"):
+        if seed_error := randomization_seed_error(seed, "PolicyRunner.run", max_seed=MAX_EVAL_SEED):
             raise ValueError(seed_error)
         if seed is not None:
             set_eval_seed(seed)
@@ -2224,7 +2247,7 @@ class PolicyRunner:
         # simulation.benchmark / simulation.recording / simulation.predicates.
         from strands_robots.simulation.base import randomization_seed_error
 
-        if seed_error := randomization_seed_error(seed, "PolicyRunner.evaluate"):
+        if seed_error := randomization_seed_error(seed, "PolicyRunner.evaluate", max_seed=MAX_EVAL_SEED):
             raise ValueError(seed_error)
         if spec is not None and success_fn is not None:
             return {
@@ -3077,4 +3100,12 @@ class PolicyRunner:
         raise ValueError(f"Unknown success_fn string: {success_fn!r}")
 
 
-__all__ = ["PolicyRunner", "OnFrame", "SuccessFn", "CooperativeStop", "TrajectoryStep", "set_eval_seed"]
+__all__ = [
+    "MAX_EVAL_SEED",
+    "PolicyRunner",
+    "OnFrame",
+    "SuccessFn",
+    "CooperativeStop",
+    "TrajectoryStep",
+    "set_eval_seed",
+]
