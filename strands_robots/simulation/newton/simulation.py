@@ -1200,7 +1200,10 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
 
         Mirrors the MuJoCo backend: a scalar is interpreted as the z-component
         ``[0, 0, g]``; a 3-element list sets the full ``[x, y, z]`` vector in
-        m/s^2. Newton's solver snapshots gravity at construction time, so the
+        m/s^2. The accepted domain is
+        :meth:`~strands_robots.simulation.base.SimEngine._normalize_gravity`,
+        shared with ``create_world`` and with every other backend, so a value
+        one gravity surface refuses is refused by all of them. Newton's solver snapshots gravity at construction time, so the
         model is rebuilt; this re-initialises the world to its rest pose, so
         prefer setting gravity before stepping. Live joint targets are
         preserved across the rebuild.
@@ -1214,31 +1217,19 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
-        if isinstance(gravity, (int, float)):
-            gravity = [0.0, 0.0, float(gravity)]
-        try:
-            if len(gravity) != 3:
-                return {
-                    "status": "error",
-                    "content": [
-                        {"text": f"set_gravity: 'gravity' must be a 3-element list [x,y,z], got {len(gravity)}"}
-                    ],
-                }
-            gravity = [float(g) for g in gravity]
-        except (TypeError, ValueError) as exc:
-            return {
-                "status": "error",
-                "content": [{"text": f"set_gravity: 'gravity' must be a 3-element list of numbers ({exc})"}],
-            }
-        if not all(math.isfinite(g) for g in gravity):
-            return {
-                "status": "error",
-                "content": [{"text": f"set_gravity: all components must be finite, got {gravity}"}],
-            }
+        # Normalize through the shared domain rather than a local copy of it,
+        # so what this backend refuses and accepts cannot drift from
+        # ``create_world`` above or from the other backends. The local copy
+        # coerced a scalar with ``float()``, and bool is an int subclass, so
+        # ``set_gravity(True)`` configured a +1 m/s^2 gravity pointing *up* and
+        # reported success.
+        components, gravity_error = self._normalize_gravity(gravity, "set_gravity")
+        if components is None:
+            return cast("dict[str, Any]", gravity_error)
         with self._lock:
-            self._world.gravity = gravity
+            self._world.gravity = components
             self._rebuild()
-        return {"status": "success", "content": [{"text": f"Gravity: {gravity}"}]}
+        return {"status": "success", "content": [{"text": f"Gravity: {components}"}]}
 
     def set_timestep(self, timestep: float) -> dict[str, Any]:
         """Set the physics integration timestep in seconds.

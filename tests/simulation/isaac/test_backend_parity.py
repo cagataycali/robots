@@ -143,10 +143,17 @@ class TestCreateWorldGravity:
         assert "z-aligned" in text or "z-aligned gravity" in text
 
     def test_wrong_length_vector_rejected(self):
+        """The component count is the shared domain's, so the wording is too.
+
+        ``create_world`` now normalizes through
+        ``SimEngine._normalize_gravity`` instead of counting components locally,
+        so a wrong-length vector reports the same sentence here as it does on
+        the MuJoCo and Newton backends.
+        """
         sim = IsaacSimulation()
         result = sim.create_world(gravity=[0.0, -9.81])
         assert result["status"] == "error"
-        assert "3 components" in result["content"][0]["text"]
+        assert "3-element" in result["content"][0]["text"]
 
     def test_non_finite_gravity_rejected(self):
         sim = IsaacSimulation()
@@ -161,7 +168,7 @@ class TestCreateWorldGravity:
         result = sim.create_world(gravity=[0.0, 0.0, -9.81])
         assert result["status"] == "error"
         assert "z-aligned" not in result["content"][0]["text"].lower()
-        assert "3 components" not in result["content"][0]["text"]
+        assert "3-element" not in result["content"][0]["text"]
 
 
 class TestAddRobotUnsupportedParams:

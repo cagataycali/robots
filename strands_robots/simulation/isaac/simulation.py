@@ -29,7 +29,7 @@ import os
 import queue
 import threading
 import time
-from typing import TYPE_CHECKING, Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
 
@@ -922,59 +922,36 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         # up front and reject anything the backend cannot honour, rather than
         # applying a gravity the caller never asked for.
         if gravity is not None:
-            if isinstance(gravity, (list, tuple)):
-                if len(gravity) != 3:
-                    return {
-                        "status": "error",
-                        "content": [
-                            {
-                                "text": (
-                                    f"create_world: gravity vector must have 3 components [gx, gy, gz], "
-                                    f"got {len(gravity)}."
-                                )
-                            }
-                        ],
-                    }
-                try:
-                    gvec = [float(g) for g in gravity]
-                except (TypeError, ValueError):
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"create_world: gravity components must be numbers, got {gravity!r}."}],
-                    }
-                if not all(np.isfinite(gvec)):
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"create_world: gravity components must be finite, got {gravity!r}."}],
-                    }
-                if gvec[0] != 0.0 or gvec[1] != 0.0:
-                    return {
-                        "status": "error",
-                        "content": [
-                            {
-                                "text": (
-                                    f"create_world: the Isaac backend only supports Z-aligned gravity "
-                                    f"(its PhysicsContext.set_gravity takes a signed scalar); a non-Z-aligned "
-                                    f"vector like {gravity!r} cannot be honoured. Pass a scalar or a "
-                                    f"[0, 0, gz] vector, or use create_simulation(backend='mujoco') for "
-                                    f"arbitrary-direction gravity."
-                                )
-                            }
-                        ],
-                    }
-            elif isinstance(gravity, (int, float)):
-                if not np.isfinite(gravity):
-                    return {
-                        "status": "error",
-                        "content": [{"text": f"create_world: gravity must be finite, got {gravity!r}."}],
-                    }
-            else:
+            # Normalize through the shared domain first, so the component count,
+            # the numeric domain and the boolean refusal are the ones every
+            # other gravity surface applies. The local copy coerced a scalar
+            # with ``float()``, and bool is an int subclass, so
+            # ``create_world(gravity=True)`` configured a +1 m/s^2 gravity
+            # pointing *up*; it also keyed on ``isinstance(gravity, (list, tuple))``,
+            # so a NumPy vector - which the other backends accept - was refused
+            # as "not a scalar or vector". The Z-alignment constraint below is
+            # this backend's own and is applied to the normalized components.
+            components, gravity_error = self._normalize_gravity(gravity, "create_world")
+            if components is None:
+                return cast("dict[str, Any]", gravity_error)
+            if components[0] != 0.0 or components[1] != 0.0:
                 return {
                     "status": "error",
                     "content": [
-                        {"text": f"create_world: gravity must be a scalar or [gx, gy, gz] vector, got {gravity!r}."}
+                        {
+                            "text": (
+                                f"create_world: the Isaac backend only supports Z-aligned gravity "
+                                f"(its PhysicsContext.set_gravity takes a signed scalar); a non-Z-aligned "
+                                f"vector like {gravity!r} cannot be honoured. Pass a scalar or a "
+                                f"[0, 0, gz] vector, or use create_simulation(backend='mujoco') for "
+                                f"arbitrary-direction gravity."
+                            )
+                        }
                     ],
                 }
+            # Store the normalized components so what the result reports and
+            # what the physics context receives are the same value.
+            gravity = components
         with self._lock:
             if self._world_created:
                 return {
