@@ -70,18 +70,23 @@ def _lerobot_requirements() -> dict[str, Requirement]:
 
 
 def _installed_lerobot_or_skip() -> Version:
-    """The installed lerobot version, or skip when lerobot is not available.
+    """The installed lerobot version, or skip when it cannot be determined.
 
-    Returning the version (rather than binding it in a ``try`` whose ``except``
-    calls :func:`pytest.skip`) keeps the caller free of a local that static
-    analysis must prove is bound: ``pytest.skip`` is ``NoReturn``, but that is
-    not something every checker can see.
+    Shaped so neither arm depends on ``pytest.skip`` being understood as
+    ``NoReturn``: the version string is bound on *both* branches of the
+    ``try``, and the function has a single explicit exit that every path
+    reaches. A reader - human or static - can therefore see that no local is
+    read before it is bound and that nothing falls off the end returning
+    ``None``, without having to prove the skip cannot return.
     """
     pytest.importorskip("lerobot", reason="lerobot is an optional extra")
     try:
-        return Version(md.version("lerobot"))
+        raw: str | None = md.version("lerobot")
     except md.PackageNotFoundError:  # pragma: no cover - importable but unmetadata'd
+        raw = None
+    if raw is None:  # pragma: no cover - importable but unmetadata'd
         pytest.skip("lerobot version metadata unresolvable")
+    return Version(raw)
 
 
 def _declared_lerobot_specifier() -> SpecifierSet:
@@ -187,6 +192,27 @@ class TestTheFloorReallyDeliversTheCapability:
             mp.setattr(sd, "StreamingLeRobotDataset", _Conforming, raising=False)
             reader = sd.StreamingDatasetReader.open("org/ds", repo_type="bucket", validate_deltas=False)
         assert reader.dataset.repo_type == "bucket"
+
+    def test_an_unresolvable_installed_version_skips_rather_than_failing(self) -> None:
+        """Not knowing what is installed is not a defect in the library.
+
+        A lerobot that imports without distribution metadata cannot be placed
+        against the declared floor, so the executed checks skip instead of
+        reporting a failure the library is not responsible for. That arm is
+        unreachable in a normal environment - hence its ``pragma: no cover`` -
+        which is exactly why it is pinned here: it is the one path
+        :func:`_installed_lerobot_or_skip` takes that no other test in this
+        module reaches, and the arm whose control flow was reshaped to keep the
+        helper free of a possibly-unbound local and an implicit fall-through.
+        """
+
+        def _no_distribution_metadata(name: str) -> str:
+            raise md.PackageNotFoundError(name)
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(md, "version", _no_distribution_metadata)
+            with pytest.raises(pytest.skip.Exception, match="metadata unresolvable"):
+                _installed_lerobot_or_skip()
 
 
 class TestTheGuardIsRetainedAndNamesTheUpgrade:
