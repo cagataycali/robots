@@ -1241,25 +1241,27 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         Args:
             timestep: Positive integration timestep in seconds.
 
+        Validation: ``timestep`` must be a finite number greater than zero.
+        ``bool`` is refused explicitly (``True`` would otherwise act as a
+        1-second step, 500x the default) and so is a non-numeric value. The
+        domain is :meth:`~strands_robots.simulation.base.SimEngine._validate_timestep`,
+        shared with :meth:`create_world` and with the MuJoCo setter, so a value
+        one surface accepts is accepted by all of them.
+
         Returns:
             Status dict reporting the timestep and equivalent control rate, or
-            an error dict when no world exists or the value is not finite and
-            positive.
+            an error dict when no world exists or the value is outside that
+            domain.
         """
         if self._world is None or self._model is None:
             return {"status": "error", "content": [{"text": "No world. Call create_world first."}]}
-        try:
-            timestep = float(timestep)
-        except (TypeError, ValueError):
-            return {
-                "status": "error",
-                "content": [{"text": f"set_timestep: must be a positive number, got {timestep!r}"}],
-            }
-        if not math.isfinite(timestep) or timestep <= 0:
-            return {
-                "status": "error",
-                "content": [{"text": f"set_timestep: must be a finite positive number, got {timestep}"}],
-            }
+        # Shared with create_world, and with the MuJoCo setter this method
+        # mirrors, so no surface can install a dt another one refuses. The
+        # hand-rolled float()/isfinite() pair this replaces had no bool arm, so
+        # ``True`` coerced to a 1-second step under status="success".
+        if err := self._validate_timestep(timestep, "set_timestep"):
+            return err
+        timestep = float(timestep)
         warn = " Warning: unusually large timestep (>0.1s); physics may be unstable" if timestep > 0.1 else ""
         with self._lock:
             self._world.timestep = timestep
