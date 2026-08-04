@@ -194,6 +194,44 @@ hatch run format            # ruff check --fix, ruff format
      problem below, which is independent of dismissal and does not care that the
      merge was clean. Ask the contributor to absorb `main` so they stay the last
      pusher; #1827 was left alone for that reason.
+   - *And that the mutation named the object you meant.* A mutation
+     names its subject by node ID and by nothing else - `createIssue` takes a
+     `repositoryId`, not an owner and a name - so a well-formed ID that is wrong
+     does not fail. It succeeds against whatever object it *does* name. Filing
+     an issue for this repository with a `repositoryId` carried over from an
+     earlier response rather than queried - `R_kgDOD1WOFw` for `R_kgDORUMiZg` -
+     created issue #1 in an unrelated third-party repository and returned
+     success. The only clue was the `url` in the response, and there is no undo:
+     `deleteIssue` needs admin on the *target*, so the stray issue could only be
+     closed as `NOT_PLANNED` with an apology. See #1916.
+
+     **A node ID is not opaque, which is what makes this checkable before the
+     write.** It is `<TypePrefix>_<urlsafe-base64(msgpack array)>`, where a
+     repository is `[0, databaseId]` and anything a repository owns is
+     `[0, repository databaseId, own databaseId]` - so the type and the target
+     repository are both readable with no network call:
+
+     | node ID | decodes to | target |
+     |---|---|---|
+     | `R_kgDORUMiZg` | `[0, 1162027622]` | this repository |
+     | `R_kgDOD1WOFw` | `[0, 257265175]` | the stray one |
+     | `PR_kwDOD1WOF87DdSjQ` | `[0, 257265175, 3279235280]` | **the same stray one** |
+
+     That third row is the finding. All three guessed IDs in that run carried
+     one wrong repository, so a single stale value contaminated every mutation,
+     and the two that failed did so only because their own databaseId happened
+     not to exist there - `Could not resolve to a node`. Failing closed was luck
+     about the guess, not a property of the API, and the guess that got lucky the
+     other way is the one that wrote.
+
+     So resolve every ID from a query in the same run whose owner and name are
+     written out literally; check the prefix against the parameter, since a
+     `PR_...` handed to a `repositoryId` is wrong by type alone; and read the
+     `url` in the response back before treating the write as done.
+     `tests/test_graphql_node_id_targeting.py` decodes this repository's own node
+     IDs against the `databaseId`s the API publishes beside them, so the claim
+     that the check is available offline fails loudly rather than quietly if the
+     envelope ever changes.
    And before merging, `reviewDecision: APPROVED` alone is not the gate: poll
    the **required** contexts' own conclusions and `mergeStateStatus == CLEAN`
    together, since `reviewDecision` flips before the checks finish.
