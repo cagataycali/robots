@@ -1,6 +1,6 @@
 # Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Shared serial-layer doubles for the ``pose_tool`` test modules.
+"""Shared serial-layer doubles for the tool modules that drive a servo bus.
 
 These live in a conftest rather than in one test module because two modules
 now need them, and importing a fixture across test modules re-binds the name
@@ -11,7 +11,11 @@ implicit dependency of the other.
 ``emergency_stop`` above all -- write to the bus, so every test that reaches
 the motor path must both take ``fake_serial`` and pass an explicit fake
 ``port``. Otherwise the suite drives whatever arm is plugged into the machine
-running it.
+running it. The same applies to ``serial_tool``'s Feetech actions.
+
+The fixture yields the list of instances it constructed, so a test can also
+assert that a port was never opened at all -- which is how the guards that must
+refuse a value *before* reaching the bus are pinned.
 """
 
 from __future__ import annotations

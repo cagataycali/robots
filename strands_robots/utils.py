@@ -1064,6 +1064,48 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
     return None
 
 
+def bounded_count_error(value: Any, param: str, context: str, *, minimum: int, maximum: int) -> str | None:
+    """Error text when ``value`` is not a whole number inside ``[minimum, maximum]``.
+
+    Shared domain for a discrete quantity bounded at *both* ends by the field it
+    is written into, rather than only at zero: :func:`tcp_port_error`'s index
+    into the 16-bit TCP port space, and the Feetech servo registers
+    :mod:`~strands_robots.tools.serial_tool` writes - a motor address byte, and
+    a goal value that must fit the register it is packed into.
+
+    The upper bound is load-bearing wherever the value is packed into a
+    fixed-width field, because the packing silently *reduces* an out-of-range
+    value instead of refusing it. A two-byte little-endian write of ``65536``
+    puts ``0`` on the wire and one of ``-1`` puts ``65535`` there, so the
+    quantity that arrives is a different one from the quantity the caller named
+    - and, on a surface that echoes the request back, a different one from the
+    quantity that was reported.
+
+    In every other respect it mirrors :func:`positive_count_error`: the value is
+    consumed as an index or packed into a byte, where an integral float raises
+    ``TypeError`` rather than being coerced, so only a true ``int`` can be
+    honored. ``bool`` is rejected explicitly, because as an ``int`` subclass a
+    bare ``minimum <= value <= maximum`` test lets ``True`` through as a silent
+    ``1`` that the caller never named.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it - the
+            requested action for an agent tool, or the class name for a
+            constructor parameter.
+        minimum: Smallest value the receiving field can hold, inclusive.
+        maximum: Largest value the receiving field can hold, inclusive.
+
+    Returns:
+        An error message naming the accepted range, or ``None`` when the value
+        is usable.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+        return f"{context}: invalid {param}: {_refusal_repr(value)} (expected {minimum}-{maximum})"
+    return None
+
+
 def tcp_port_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` cannot address a TCP port.
 
@@ -1089,9 +1131,12 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
     same port cannot be refused by one transport onto a service and accepted by
     the next.
 
-    ``bool`` is rejected explicitly. It is an ``int`` subclass, so a bare
-    ``1 <= value <= 65535`` test lets ``True`` through as a silent port 1 - a
-    privileged port the caller never named.
+    The range test itself is :func:`bounded_count_error`, which owns the one
+    bounded whole-number rule this and the Feetech register writes both need.
+    A second copy of that rule would agree with this one until one of them
+    was changed, and ``bool`` is exactly the case a hand-rolled copy tends to
+    miss: it is an ``int`` subclass, so a bare ``1 <= value <= 65535`` test
+    lets ``True`` through as a silent port 1 the caller never named.
 
     Args:
         value: The caller-supplied value.
@@ -1103,9 +1148,7 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
     Returns:
         An error message, or ``None`` when the value is usable.
     """
-    if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
-        return f"{context}: invalid {param}: {_refusal_repr(value)} (expected 1-65535)"
-    return None
+    return bounded_count_error(value, param, context, minimum=1, maximum=65535)
 
 
 def non_negative_count_error(value: Any, param: str, context: str) -> str | None:

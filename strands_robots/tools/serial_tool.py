@@ -5,6 +5,79 @@ import serial
 import serial.tools.list_ports
 from strands import tool
 
+from strands_robots.utils import bounded_count_error
+
+# The Feetech STS/SMS control-table domains this tool can honor, read off the
+# protocol it writes rather than chosen here.
+#
+# ``motor_id`` becomes the packet's address byte, so it must both fit a byte and
+# name a motor; 1-254 is the range this tool documents. ``position`` is the
+# Goal_Position register, and the 0-4095 scale is already the one this tool
+# reports on - it echoes every write back as ``position / 4095 * 360`` degrees,
+# so a value outside that scale has no meaningful degree reading. ``velocity``
+# declares no travel limit, so it is bounded by the width of the field instead:
+# both goal values are packed little-endian into two bytes.
+_MOTOR_ID_RANGE = (1, 254)
+_POSITION_RANGE = (0, 4095)
+# Derived from the width of the field rather than restated as a magnitude: the
+# two goal bytes below are ``value & 0xFF`` and ``(value >> 8) & 0xFF``, so this
+# range is exactly the set of values that survives that packing.
+_GOAL_REGISTER_BYTES = 2
+_VELOCITY_RANGE = (0, 2 ** (8 * _GOAL_REGISTER_BYTES) - 1)
+
+_PARAM_RANGES: dict[str, tuple[int, int]] = {
+    "motor_id": _MOTOR_ID_RANGE,
+    "position": _POSITION_RANGE,
+    "velocity": _VELOCITY_RANGE,
+}
+
+# Which of those parameters each action writes into a packet. An action absent
+# from this map writes none of them, so a caller is never refused here for a
+# value the requested action does not read.
+_FEETECH_PARAMS: dict[str, tuple[str, ...]] = {
+    "feetech_position": ("motor_id", "position"),
+    "feetech_velocity": ("motor_id", "velocity"),
+    "feetech_ping": ("motor_id",),
+}
+
+
+def feetech_param_error(action: str, *, motor_id: Any, position: Any, velocity: Any) -> str | None:
+    """Error text for the first Feetech parameter ``action`` writes but cannot carry.
+
+    Each of these is packed into a fixed-width field of the servo packet, and
+    that packing reduces an out-of-range value rather than refusing it: the two
+    goal registers are written as ``value & 0xFF`` and ``(value >> 8) & 0xFF``,
+    so ``65536`` puts ``0`` on the bus and ``-1`` puts ``65535`` there. A
+    different command reaches the motor than the one the caller asked for, and
+    than the one this tool reports back - which is why the range is checked here
+    rather than left to the servo, and why it is checked before the port is
+    opened rather than beside the write.
+
+    Only the parameters ``action`` actually writes are checked, and a parameter
+    that was not supplied at all is left to the branch that reads it, so its
+    existing "required" message is unchanged.
+
+    Args:
+        action: The requested action; decides which parameters are effective.
+        motor_id: Motor address, as supplied.
+        position: Goal_Position value, as supplied.
+        velocity: Goal_Velocity value, as supplied.
+
+    Returns:
+        An error message naming the action, the parameter and the accepted
+        range, or ``None`` when every parameter this action writes is usable.
+    """
+    supplied: dict[str, Any] = {"motor_id": motor_id, "position": position, "velocity": velocity}
+    for param in _FEETECH_PARAMS.get(action, ()):
+        value = supplied[param]
+        if value is None:
+            continue
+        minimum, maximum = _PARAM_RANGES[param]
+        error = bounded_count_error(value, param, action, minimum=minimum, maximum=maximum)
+        if error:
+            return error
+    return None
+
 
 @tool
 def serial_tool(
@@ -40,8 +113,15 @@ def serial_tool(
         hex_data: Hex string data to send (e.g., "FF FF 01 04 03 00 64 92")
         motor_id: Motor ID for Feetech commands (1-254)
         position: Target position for Feetech motors (0-4095)
-        velocity: Target velocity for Feetech motors
+        velocity: Target velocity for Feetech motors (0-65535, the width of the
+            two-byte register it is written into)
         read_bytes: Number of bytes to read
+
+    The Feetech commands pack ``motor_id`` into the packet's address byte and
+    ``position`` / ``velocity`` into a two-byte register field, so each is
+    refused unless it fits that field. Out-of-range values are otherwise reduced
+    modulo the field width and a different command reaches the bus than the one
+    reported back.
 
     Returns:
         Dict containing status and response content
@@ -87,6 +167,12 @@ def serial_tool(
 
         if not port:
             return {"status": "error", "content": [{"text": "Port parameter required for this action"}]}
+
+        # Refuse an unusable Feetech parameter before the bus is opened, so a
+        # value that cannot be carried never energizes a motor.
+        param_error = feetech_param_error(action, motor_id=motor_id, position=position, velocity=velocity)
+        if param_error:
+            return {"status": "error", "content": [{"text": param_error}]}
 
         # Open serial connection
         ser = serial.Serial(port, baudrate, timeout=timeout)
