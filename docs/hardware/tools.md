@@ -83,6 +83,28 @@ own "required" message rather than as an unusable value.
 needs no bound of its own - it clamps to each motor's declared range before
 encoding, so the mask only ever sees a value that fits.
 
+### A mesh wait budget is bounded where the command body cannot carry it
+
+`robot_mesh` takes four numeric options. `duration` and `policy_port` travel
+inside the command body that
+[`validate_command`](../security.md) inspects, so that validator already bounds
+them. `timeout` and `limit` never enter a command body, so they are bounded by
+the tool:
+
+| Option | Accepted | Why the floor is where it is |
+|--------|----------|------------------------------|
+| `timeout` | positive finite number | it becomes a `threading.Event` wait; `0`/negative/`nan` return from that wait immediately, so the tool reports `{"status": "timeout"}` for a peer it never gave the chance to answer, and `inf` overflows the deadline |
+| `limit` | positive integer | it is a slice index into the `inbox` buffer; a non-positive or `nan` value selected the *whole* buffer, and a fractional one raised out of the dispatcher |
+
+`stop` additionally caps `timeout` at 5s so a stop cannot hang, but the cap
+cannot replace the domain: `min(nan, 5.0)` is `nan`, so `nan` passed straight
+through it.
+
+The same scoping rule applies: `timeout` is read by `tell` / `send` / `rpc` /
+`broadcast` / `stop`, `limit` only by `inbox`, and the rest are never refused
+for either. `emergency_stop` fans out on a fixed internal budget, so the
+caller's `timeout` is not effective there.
+
 ## Examples
 
 ```python
