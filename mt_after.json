@@ -1,0 +1,318 @@
+{
+ "tree": "/tmp/robots-mine",
+ "cells": {
+  "lerobot_local|num_gpus|0": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_gpus must be a positive integer, got 0."
+  },
+  "lerobot_local|num_gpus|-4": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_gpus must be a positive integer, got -4."
+  },
+  "lerobot_local|num_gpus|True": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_gpus must be a positive integer, got True."
+  },
+  "lerobot_local|num_gpus|nan": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_gpus must be a positive integer, got nan."
+  },
+  "lerobot_local|num_gpus|2.7": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_gpus must be a positive integer, got 2.7."
+  },
+  "lerobot_local|num_gpus|inf": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_gpus must be a positive integer, got inf."
+  },
+  "lerobot_local|num_gpus|'4'": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_gpus must be a positive integer, got '4'."
+  },
+  "lerobot_local|num_gpus|None": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_gpus must be a positive integer, got None."
+  },
+  "lerobot_local|num_gpus|[2]": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_gpus must be a positive integer, got [2]."
+  },
+  "lerobot_local|num_nodes|0": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_nodes must be a positive integer, got 0."
+  },
+  "lerobot_local|num_nodes|-4": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_nodes must be a positive integer, got -4."
+  },
+  "lerobot_local|num_nodes|True": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_nodes must be a positive integer, got True."
+  },
+  "lerobot_local|num_nodes|nan": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_nodes must be a positive integer, got nan."
+  },
+  "lerobot_local|num_nodes|2.7": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_nodes must be a positive integer, got 2.7."
+  },
+  "lerobot_local|num_nodes|inf": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_nodes must be a positive integer, got inf."
+  },
+  "lerobot_local|num_nodes|'4'": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_nodes must be a positive integer, got '4'."
+  },
+  "lerobot_local|num_nodes|None": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_nodes must be a positive integer, got None."
+  },
+  "lerobot_local|num_nodes|[2]": {
+   "verdict": "refused (domain)",
+   "detail": "lerobot_local: num_nodes must be a positive integer, got [2]."
+  },
+  "groot|num_gpus|0": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_gpus must be a positive integer, got 0."
+  },
+  "groot|num_gpus|-4": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_gpus must be a positive integer, got -4."
+  },
+  "groot|num_gpus|True": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_gpus must be a positive integer, got True."
+  },
+  "groot|num_gpus|nan": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_gpus must be a positive integer, got nan."
+  },
+  "groot|num_gpus|2.7": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_gpus must be a positive integer, got 2.7."
+  },
+  "groot|num_gpus|inf": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_gpus must be a positive integer, got inf."
+  },
+  "groot|num_gpus|'4'": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_gpus must be a positive integer, got '4'."
+  },
+  "groot|num_gpus|None": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_gpus must be a positive integer, got None."
+  },
+  "groot|num_gpus|[2]": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_gpus must be a positive integer, got [2]."
+  },
+  "groot|num_nodes|0": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_nodes must be a positive integer, got 0."
+  },
+  "groot|num_nodes|-4": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_nodes must be a positive integer, got -4."
+  },
+  "groot|num_nodes|True": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_nodes must be a positive integer, got True."
+  },
+  "groot|num_nodes|nan": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_nodes must be a positive integer, got nan."
+  },
+  "groot|num_nodes|2.7": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_nodes must be a positive integer, got 2.7."
+  },
+  "groot|num_nodes|inf": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_nodes must be a positive integer, got inf."
+  },
+  "groot|num_nodes|'4'": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_nodes must be a positive integer, got '4'."
+  },
+  "groot|num_nodes|None": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_nodes must be a positive integer, got None."
+  },
+  "groot|num_nodes|[2]": {
+   "verdict": "refused (domain)",
+   "detail": "groot: num_nodes must be a positive integer, got [2]."
+  },
+  "cosmos3|num_gpus|0": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_gpus must be a positive integer, got 0."
+  },
+  "cosmos3|num_gpus|-4": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_gpus must be a positive integer, got -4."
+  },
+  "cosmos3|num_gpus|True": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_gpus must be a positive integer, got True."
+  },
+  "cosmos3|num_gpus|nan": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_gpus must be a positive integer, got nan."
+  },
+  "cosmos3|num_gpus|2.7": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_gpus must be a positive integer, got 2.7."
+  },
+  "cosmos3|num_gpus|inf": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_gpus must be a positive integer, got inf."
+  },
+  "cosmos3|num_gpus|'4'": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_gpus must be a positive integer, got '4'."
+  },
+  "cosmos3|num_gpus|None": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_gpus must be a positive integer, got None."
+  },
+  "cosmos3|num_gpus|[2]": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_gpus must be a positive integer, got [2]."
+  },
+  "cosmos3|num_nodes|0": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_nodes must be a positive integer, got 0."
+  },
+  "cosmos3|num_nodes|-4": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_nodes must be a positive integer, got -4."
+  },
+  "cosmos3|num_nodes|True": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_nodes must be a positive integer, got True."
+  },
+  "cosmos3|num_nodes|nan": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_nodes must be a positive integer, got nan."
+  },
+  "cosmos3|num_nodes|2.7": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_nodes must be a positive integer, got 2.7."
+  },
+  "cosmos3|num_nodes|inf": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_nodes must be a positive integer, got inf."
+  },
+  "cosmos3|num_nodes|'4'": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_nodes must be a positive integer, got '4'."
+  },
+  "cosmos3|num_nodes|None": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_nodes must be a positive integer, got None."
+  },
+  "cosmos3|num_nodes|[2]": {
+   "verdict": "refused (domain)",
+   "detail": "cosmos3: num_nodes must be a positive integer, got [2]."
+  }
+ },
+ "controls": {
+  "lerobot_local|num_gpus|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|8": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_nodes|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_nodes|8": {
+   "verdict": "refused (support)",
+   "detail": "num_nodes=8: multi-node lerobot needs a per-node launcher and cannot run in-process; use num_nodes=1."
+  },
+  "groot|num_gpus|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|8": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_nodes|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_nodes|8": {
+   "verdict": "refused (support)",
+   "detail": "num_nodes=8: multi-node GR00T needs a per-node rendezvous launcher; this in-process trainer runs single-node only. Run o"
+  },
+  "cosmos3|num_gpus|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|8": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|8": {
+   "verdict": "accepted",
+   "detail": ""
+  }
+ },
+ "facts": {
+  "0": {
+   "gt1": false,
+   "max1": "1",
+   "launchconfig": "accepts"
+  },
+  "-4": {
+   "gt1": false,
+   "max1": "1",
+   "launchconfig": "accepts"
+  },
+  "True": {
+   "gt1": false,
+   "max1": "1",
+   "launchconfig": "accepts"
+  },
+  "nan": {
+   "gt1": false,
+   "max1": "1",
+   "launchconfig": "accepts"
+  },
+  "2.7": {
+   "gt1": true,
+   "max1": "2.7",
+   "launchconfig": "accepts"
+  },
+  "inf": {
+   "gt1": true,
+   "max1": "inf",
+   "launchconfig": "accepts"
+  },
+  "'4'": {
+   "gt1": "raises TypeError",
+   "max1": "raises TypeError",
+   "launchconfig": "accepts"
+  },
+  "None": {
+   "gt1": "raises TypeError",
+   "max1": "raises TypeError",
+   "launchconfig": "accepts"
+  },
+  "[2]": {
+   "gt1": "raises TypeError",
+   "max1": "raises TypeError",
+   "launchconfig": "accepts"
+  }
+ }
+}

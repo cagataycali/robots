@@ -1,0 +1,318 @@
+{
+ "tree": "/tmp/pre-topology",
+ "cells": {
+  "lerobot_local|num_gpus|0": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|-4": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|True": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|nan": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|2.7": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|inf": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|'4'": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|None": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|[2]": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_nodes|0": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_nodes|-4": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_nodes|True": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_nodes|nan": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_nodes|2.7": {
+   "verdict": "refused (support)",
+   "detail": "num_nodes=2.7: multi-node lerobot needs a per-node launcher and cannot run in-process; use num_nodes=1."
+  },
+  "lerobot_local|num_nodes|inf": {
+   "verdict": "refused (support)",
+   "detail": "num_nodes=inf: multi-node lerobot needs a per-node launcher and cannot run in-process; use num_nodes=1."
+  },
+  "lerobot_local|num_nodes|'4'": {
+   "verdict": "raised",
+   "detail": "TypeError: '>' not supported between instances of 'str' and 'int'"
+  },
+  "lerobot_local|num_nodes|None": {
+   "verdict": "raised",
+   "detail": "TypeError: '>' not supported between instances of 'NoneType' and 'int'"
+  },
+  "lerobot_local|num_nodes|[2]": {
+   "verdict": "raised",
+   "detail": "TypeError: '>' not supported between instances of 'list' and 'int'"
+  },
+  "groot|num_gpus|0": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|-4": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|True": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|nan": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|2.7": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|inf": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|'4'": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|None": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|[2]": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_nodes|0": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_nodes|-4": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_nodes|True": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_nodes|nan": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_nodes|2.7": {
+   "verdict": "refused (support)",
+   "detail": "num_nodes=2.7: multi-node GR00T needs a per-node rendezvous launcher; this in-process trainer runs single-node only. Run"
+  },
+  "groot|num_nodes|inf": {
+   "verdict": "refused (support)",
+   "detail": "num_nodes=inf: multi-node GR00T needs a per-node rendezvous launcher; this in-process trainer runs single-node only. Run"
+  },
+  "groot|num_nodes|'4'": {
+   "verdict": "raised",
+   "detail": "TypeError: '>' not supported between instances of 'str' and 'int'"
+  },
+  "groot|num_nodes|None": {
+   "verdict": "raised",
+   "detail": "TypeError: '>' not supported between instances of 'NoneType' and 'int'"
+  },
+  "groot|num_nodes|[2]": {
+   "verdict": "raised",
+   "detail": "TypeError: '>' not supported between instances of 'list' and 'int'"
+  },
+  "cosmos3|num_gpus|0": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|-4": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|True": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|nan": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|2.7": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|inf": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|'4'": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|None": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|[2]": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|0": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|-4": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|True": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|nan": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|2.7": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|inf": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|'4'": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|None": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|[2]": {
+   "verdict": "accepted",
+   "detail": ""
+  }
+ },
+ "controls": {
+  "lerobot_local|num_gpus|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_gpus|8": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_nodes|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "lerobot_local|num_nodes|8": {
+   "verdict": "refused (support)",
+   "detail": "num_nodes=8: multi-node lerobot needs a per-node launcher and cannot run in-process; use num_nodes=1."
+  },
+  "groot|num_gpus|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_gpus|8": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_nodes|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "groot|num_nodes|8": {
+   "verdict": "refused (support)",
+   "detail": "num_nodes=8: multi-node GR00T needs a per-node rendezvous launcher; this in-process trainer runs single-node only. Run o"
+  },
+  "cosmos3|num_gpus|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_gpus|8": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|1": {
+   "verdict": "accepted",
+   "detail": ""
+  },
+  "cosmos3|num_nodes|8": {
+   "verdict": "accepted",
+   "detail": ""
+  }
+ },
+ "facts": {
+  "0": {
+   "gt1": false,
+   "max1": "1",
+   "launchconfig": "accepts"
+  },
+  "-4": {
+   "gt1": false,
+   "max1": "1",
+   "launchconfig": "accepts"
+  },
+  "True": {
+   "gt1": false,
+   "max1": "1",
+   "launchconfig": "accepts"
+  },
+  "nan": {
+   "gt1": false,
+   "max1": "1",
+   "launchconfig": "accepts"
+  },
+  "2.7": {
+   "gt1": true,
+   "max1": "2.7",
+   "launchconfig": "accepts"
+  },
+  "inf": {
+   "gt1": true,
+   "max1": "inf",
+   "launchconfig": "accepts"
+  },
+  "'4'": {
+   "gt1": "raises TypeError",
+   "max1": "raises TypeError",
+   "launchconfig": "accepts"
+  },
+  "None": {
+   "gt1": "raises TypeError",
+   "max1": "raises TypeError",
+   "launchconfig": "accepts"
+  },
+  "[2]": {
+   "gt1": "raises TypeError",
+   "max1": "raises TypeError",
+   "launchconfig": "accepts"
+  }
+ }
+}
