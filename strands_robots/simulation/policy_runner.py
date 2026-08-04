@@ -1112,6 +1112,19 @@ class PolicyRunner:
         # state untouched, preserving historical behaviour.
         # Refuse before any frame reaches the engine's open recording.
         self._reject_recording_rate_mismatch(control_frequency, "PolicyRunner.run")
+        # The domain is enforced here as well as at the facades one layer up:
+        # PolicyRunner is drivable directly, and a direct caller has no
+        # structured envelope to read a refusal from. Same shared rule as
+        # SimEngine._validate_seed, raised rather than returned because raising
+        # is this layer's contract.
+        # Local import: base.py imports PolicyRunner at module level, so
+        # reaching the shared domain from here has to stay deferred - the
+        # same convention this module already uses for
+        # simulation.benchmark / simulation.recording / simulation.predicates.
+        from strands_robots.simulation.base import randomization_seed_error
+
+        if seed_error := randomization_seed_error(seed, "PolicyRunner.run"):
+            raise ValueError(seed_error)
         if seed is not None:
             set_eval_seed(seed)
             try:
@@ -2205,6 +2218,14 @@ class PolicyRunner:
         """
         # Refuse before any frame reaches the engine's open recording.
         self._reject_recording_rate_mismatch(control_frequency, "PolicyRunner.evaluate")
+        # Local import: base.py imports PolicyRunner at module level, so
+        # reaching the shared domain from here has to stay deferred - the
+        # same convention this module already uses for
+        # simulation.benchmark / simulation.recording / simulation.predicates.
+        from strands_robots.simulation.base import randomization_seed_error
+
+        if seed_error := randomization_seed_error(seed, "PolicyRunner.evaluate"):
+            raise ValueError(seed_error)
         if spec is not None and success_fn is not None:
             return {
                 "status": "error",
@@ -2286,6 +2307,21 @@ class PolicyRunner:
         # as run(). The default n_substeps=1 made eval rollouts under-step.
         n_substeps = self._control_substeps(control_frequency, control_substeps)
         policy.set_control_frequency(control_frequency)
+
+        # Reproducibility for this path. ``seed`` reached exactly one statement
+        # in this method - the ``_evaluate_with_spec`` delegation above - so the
+        # loop below ran unseeded while reporting success, and every
+        # ``eval_policy`` call lands here because that facade exposes no
+        # ``spec``. A caller who asked for a reproducible eval got a different
+        # rollout on every run, with ``policy.reset(seed=...)`` never forwarded -
+        # the half a service-mode policy needs to reseed its own process.
+        #
+        # A ``None`` seed leaves the master RNG unbuilt rather than seeding it
+        # from entropy: an unseeded eval must not acquire a global RNG side
+        # effect it never had.
+        master_rng = random.Random(seed) if seed is not None else None
+        if seed is not None:
+            set_eval_seed(seed)
 
         # RTC telemetry, reported in the result json so inference cost (and,
         # under async_rtc, latency masking) is provable without grepping logs.
@@ -2371,6 +2407,25 @@ class PolicyRunner:
                 current_vwriter, _video_err = _RolloutVideoWriter.open(self.sim, ep_vcfg, control_frequency)
                 if _video_err is not None:
                     return _video_err
+
+                # Per-episode reseed, mirroring ``_evaluate_with_spec``: episode
+                # N starts from the same RNG state regardless of what episodes
+                # 0..N-1 drew, so a stochastic policy's sampling is stable across
+                # re-runs at the same master seed. Forwarded to ``policy.reset``
+                # too, because a service-mode policy samples in another process
+                # that ``set_eval_seed`` cannot reach. Best-effort, like every
+                # other ``reset`` call site.
+                if master_rng is not None:
+                    episode_seed = master_rng.randint(0, 2**31 - 1)
+                    set_eval_seed(episode_seed)
+                    try:
+                        policy.reset(seed=episode_seed)
+                    except Exception as e:  # noqa: BLE001 - reset is best-effort
+                        logger.warning(
+                            "policy.reset(seed=%d) raised %s; continuing without per-episode reset",
+                            episode_seed,
+                            e,
+                        )
 
                 if async_rtc:
                     # Opt-in async overlap: a single background worker computes the

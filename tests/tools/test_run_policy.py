@@ -25,6 +25,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from strands_robots.tools.run_policy import run_policy as run_policy_tool
 
 
@@ -791,3 +793,46 @@ class TestStopWhenPassThrough:
         episodes = result["content"][1]["json"]["episodes"]
         assert episodes[0]["stopped_reason"] == "predicate"
         assert episodes[0]["steps_used"] == 7
+
+
+class TestSeedIsPreFlighted:
+    """A seed this loop cannot use is refused before step 2 opens a dataset.
+
+    The per-episode seed is derived arithmetically (``seed + ep``) and that
+    statement sits OUTSIDE the per-episode ``try``, so a non-numeric seed
+    propagated out of the tool entirely - past the structured result an agent
+    reads - while a float or negative one reached NumPy inside the loop after a
+    dataset had already been created and every episode was reported as raised.
+    That is the failure mode the tool's other pre-flight checks (``video``,
+    ``policy_config``, ``stop_when``) each exist to avoid, stated in their own
+    comments. The seed shares the one rollout seed domain, so a value this loop
+    accepts is one the facade it forwards to can actually apply.
+    """
+
+    @pytest.mark.parametrize("seed", [-1, 2.7, 3.0, True, float("nan"), float("inf"), "42", [1]], ids=repr)
+    def test_an_unusable_seed_is_refused_before_recording_starts(self, tmp_path: Path, seed: Any) -> None:
+        sim = _FakeSim()
+        result = run_policy_tool(
+            sim,
+            n_episodes=2,
+            n_steps=4,
+            seed=seed,
+            dataset_root=str(tmp_path / "ds"),
+        )
+        assert result["status"] == "error"
+        text = " ".join(b.get("text", "") for b in result["content"] if isinstance(b, dict))
+        assert "seed must be a non-negative integer or None" in text
+        assert "run_policy" in text
+        # The pre-flight claim: nothing was set up, so no empty dataset is left
+        # behind and no episode is reported as raised.
+        assert sim.start_recording_calls == []
+        assert sim.run_policy_calls == []
+
+    @pytest.mark.parametrize("seed", [None, 0, 11], ids=repr)
+    def test_a_usable_seed_is_offset_per_episode(self, seed: Any) -> None:
+        sim = _FakeSim()
+        result = run_policy_tool(sim, n_episodes=3, n_steps=2, seed=seed)
+        assert result["status"] == "success", result
+        forwarded = [call["seed"] for call in sim.run_policy_calls]
+        expected = [None, None, None] if seed is None else [seed, seed + 1, seed + 2]
+        assert forwarded == expected

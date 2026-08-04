@@ -249,6 +249,18 @@ def run_policy(
     if not isinstance(n_steps, int) or isinstance(n_steps, bool) or n_steps < 1:
         return _err(f"run_policy: n_steps must be a positive int, got {n_steps!r}.")
 
+    # Same pre-flight reason as the schema checks below: the per-episode seed is
+    # derived arithmetically (``seed + ep``) OUTSIDE the per-episode try, so a
+    # non-numeric seed raised out of this tool entirely - past the structured
+    # result an agent reads - and a float/negative one reached NumPy inside the
+    # loop after step 2 had already created a dataset. Shares the domain every
+    # rollout surface uses, so a seed this loop accepts is one the facade it
+    # forwards to can apply.
+    from strands_robots.simulation.base import randomization_seed_error
+
+    if seed_error := randomization_seed_error(seed, "run_policy"):
+        return _err(seed_error)
+
     if video is not None and not isinstance(video, dict):
         return _err(
             "run_policy: video must be a dict (VideoConfig kwargs) or None, "

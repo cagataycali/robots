@@ -4114,7 +4114,10 @@ class MuJoCoSimEngine(
         # receive a false "started" success and the robot would be left marked
         # as running. Both horizon knobs are covered: the step count via
         # _resolve_horizon, and the wall-clock duration it falls back to (the
-        # default path, when n_steps is omitted) via _validate_duration.
+        # default path, when n_steps is omitted) via _validate_duration. The
+        # seed is covered for the same reason and was not: an unusable one
+        # reached NumPy on the worker thread, where the raise was swallowed, so
+        # the caller read "started" and the rollout ran unseeded.
         if err := self._validate_positive_frequency(control_frequency, "start_policy"):
             return err
         resolved_duration, resolved_n_steps, horizon_error = self._resolve_horizon(
@@ -4126,6 +4129,8 @@ class MuJoCoSimEngine(
             if err := self._validate_duration(resolved_duration, "start_policy"):
                 return err
         if err := self._validate_action_horizon(action_horizon, "start_policy"):
+            return err
+        if err := self._validate_seed(seed, "start_policy"):
             return err
         # Same reason as the horizon guards above: a malformed video config
         # would otherwise be rejected inside the future, after the caller has
