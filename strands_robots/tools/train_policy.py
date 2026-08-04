@@ -110,7 +110,10 @@ def train_policy(
         learning_rate: Optimizer learning rate. ``None`` (default) uses the
             backend's own default (the policy training preset for lerobot,
             GR00T's FinetuneConfig default, Cosmos's TOML default); an explicit
-            value is honored by every backend.
+            value must be a positive finite number and is honored by every
+            backend. ``0`` and ``inf`` are refused up front: the first trains
+            for the whole run without updating a weight, the second writes a
+            checkpoint of ``NaN``, and no backend reports either.
         save_freq: Checkpoint cadence in steps.
         num_gpus: GPUs on this node (``>1`` -> accelerate/torchrun multi-GPU).
         num_nodes: Nodes (Cosmos HSDP / torchrun ``--nnodes``).

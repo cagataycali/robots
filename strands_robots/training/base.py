@@ -87,7 +87,11 @@ class TrainSpec:
             ``policy.optimizer_lr`` and rejects it loudly if the policy has no
             such field. RL trainers (PPO/FastSAC) have no preset to defer to,
             so :class:`~strands_robots.training.rl.base_algo.RLTrainSpec`
-            overrides this default with a concrete value.
+            overrides this default with a concrete value. An explicit value
+            must be a positive finite number: ``0`` trains for the full run
+            without updating a weight and ``inf`` writes a checkpoint of
+            ``NaN``, neither of which any backend can report, so both are
+            refused by :meth:`Trainer.validate` before a run starts.
         save_freq: Checkpoint cadence in steps.
         num_gpus: GPUs on this node. ``>1`` runs the backend under torch's
             in-process ``elastic_launch`` (the engine behind ``torchrun``).
@@ -261,6 +265,30 @@ class Trainer(ABC):
         from strands_robots.training._validate import run_size_problems
 
         return run_size_problems(spec, context=self.provider_name)
+
+    def _learning_rate_problems(self, spec: TrainSpec) -> list[str]:
+        """Learning-rate preflight shared by EVERY backend.
+
+        Returns a problem when :attr:`TrainSpec.learning_rate` is supplied and
+        is not a usable positive finite number, against the one shared
+        continuous domain. Unlike :meth:`_run_size_problems` there is no
+        backend that may skip this: the supervised backends assign the value to
+        their config's optimizer field and the RL trainers pass it to
+        ``torch.optim.Adam``, so every concrete :meth:`validate` MUST call it.
+
+        Checking it here rather than leaving it to the optimizer matters
+        because the silent ends of the domain never reach an exception: ``0``
+        does the full run and updates nothing, and ``inf`` writes a checkpoint
+        of ``NaN`` - both under a successful result. The values the optimizer
+        *does* reject only reach it after the dataset and model are loaded,
+        which is what this preflight exists to precede.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import learning_rate_problems
+
+        return learning_rate_problems(spec, context=self.provider_name)
 
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.

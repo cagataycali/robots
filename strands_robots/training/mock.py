@@ -50,6 +50,7 @@ class MockTrainer(Trainer):
             problems.append("lora and expert_only are mutually exclusive")
 
         problems.extend(self._run_size_problems(spec))
+        problems.extend(self._learning_rate_problems(spec))
 
         return problems
 

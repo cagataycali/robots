@@ -25,6 +25,17 @@ backend "reads the fields it supports and ignores the rest": the RL trainers
 drive training from ``total_timesteps`` / ``batch_size`` and never read either
 field, so reporting a problem for them there would be a false rejection of a
 field that backend does not use.
+
+:func:`learning_rate_problems` is the third, on the optimization axis. It lives
+in its own gate for the opposite reason to :func:`run_size_problems`: *every*
+backend reads ``learning_rate`` -- the three supervised ones map it onto their
+config's optimizer field, and the RL trainers hand it straight to
+``torch.optim.Adam`` -- so there is no backend for which reporting on it would
+be a false rejection, and :class:`~strands_robots.training.rl.base_algo.RLTrainSpec`
+documents the field as one of the "universal" ones. It is separate from
+:func:`validate_train_inputs` because that gate answers a different question
+(is this value safe to interpolate into a config or an argv token) from this one
+(can this value be honored at all).
 """
 
 from __future__ import annotations
@@ -33,7 +44,7 @@ import re
 from typing import TYPE_CHECKING
 
 from strands_robots.tools._path_validation import validate_save_path
-from strands_robots.utils import positive_count_error
+from strands_robots.utils import positive_count_error, positive_finite_number_error
 
 if TYPE_CHECKING:
     from strands_robots.training.base import TrainSpec
@@ -126,3 +137,57 @@ def run_size_problems(spec: TrainSpec, *, context: str) -> list[str]:
         if error is not None:
             problems.append(error)
     return problems
+
+
+def learning_rate_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return optimizer learning-rate problems for a :class:`TrainSpec`.
+
+    ``learning_rate`` is the one numeric on a :class:`TrainSpec` that decides
+    whether a run *learns* rather than how much work it does, and every backend
+    reads it: the supervised three assign it to their config's optimizer field
+    (LeRobot ``policy.optimizer_lr``, GR00T ``FinetuneConfig.learning_rate``,
+    Cosmos ``optimizer.lr``) and the RL trainers pass it directly to
+    ``torch.optim.Adam(..., lr=...)``.
+
+    Only a positive finite value can be honored, and the two ends of the domain
+    fail *silently* rather than loudly, which is why this is a preflight rather
+    than something the backend can be left to notice:
+
+    * ``0`` (and ``False``, which is ``0`` to every consumer) runs the full
+      ``steps`` x ``global_batch_size`` of work and updates no weight, so the
+      run reports success and writes a checkpoint identical to its
+      initialisation. That is the pathology :func:`run_size_problems` exists to
+      prevent, reached by a different route and at full cost.
+    * ``inf`` diverges on the first optimizer step, so the checkpoint is all
+      ``NaN`` -- again under a successful result.
+    * ``True`` is a silent learning rate of ``1.0``, four orders of magnitude
+      above a typical fine-tuning preset.
+
+    A negative or ``nan`` value *is* refused by ``torch.optim.Adam``
+    (``ValueError: Invalid learning rate``), but only once the dataset and model
+    are already loaded -- after the point :meth:`Trainer.validate` documents
+    itself as running before ("it powers a ``plan`` advisor that runs *before*
+    anything expensive starts").
+
+    ``None`` is the documented sentinel for "use the backend's own default" and
+    is therefore not a problem. It is checked against the shared
+    :func:`~strands_robots.utils.positive_finite_number_error` domain rather
+    than a local comparison because a bare ``value <= 0`` test admits ``nan``
+    (every comparison against it is ``False``), admits a ``bool``, and raises
+    out of the comparison itself for a non-numeric value -- inside a method
+    documented to *return* problems.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single problem when ``learning_rate`` is supplied and unusable;
+        empty when it is usable or left at ``None``.
+    """
+    if spec.learning_rate is None:
+        return []
+    error = positive_finite_number_error(spec.learning_rate, "learning_rate", context)
+    return [error] if error is not None else []

@@ -154,6 +154,7 @@ class Gr00tTrainer(Trainer):
                 f"use tune={{...}} for fine-grained control"
             )
         problems.extend(self._run_size_problems(spec))
+        problems.extend(self._learning_rate_problems(spec))
 
         if spec.num_nodes > 1:
             problems.append(
