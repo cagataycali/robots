@@ -1,0 +1,391 @@
+{
+ "joints": [
+  "shoulder",
+  "elbow",
+  "wrist"
+ ],
+ "home": [
+  0.1,
+  0.2,
+  0.3
+ ],
+ "rows": [
+  {
+   "case": "positions={'shoulder': True}",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     1.0,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     1.0,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': np.True_}",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     1.0,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     1.0,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': nan}",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     "nan",
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": true,
+    "changed": true,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     "nan",
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": true,
+    "changed": true,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': inf}",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     Infinity,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": true,
+    "changed": true,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     Infinity,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": true,
+    "changed": true,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoudler': 0.9}  (typo)",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': 0.9, 'nope': 0.5}",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.9,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.9,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={}",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': 'abc'}",
+   "main": {
+    "verdict": "raised",
+    "text": "ValueError: could not convert string to float: 'abc'",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": "ValueError: could not convert string to float: 'abc'",
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions=[0.5, 0.6]  (3 joints)",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.5,
+     0.6
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 2
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.5,
+     0.6
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 2
+   }
+  },
+  {
+   "case": "positions=[0.5, 0.6, 0.7, 0.8]",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.5,
+     0.6,
+     0.7,
+     0.8
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 4
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.5,
+     0.6,
+     0.7,
+     0.8
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 4
+   }
+  },
+  {
+   "case": "positions='abc'",
+   "main": {
+    "verdict": "raised",
+    "text": "ValueError: could not convert string to float: 'abc'",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": "ValueError: could not convert string to float: 'abc'",
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "CONTROL positions={'shoulder': 0.9}",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.9,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.9,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   }
+  },
+  {
+   "case": "CONTROL positions=[0.5, 0.6, 0.7]",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.5,
+     0.6,
+     0.7
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.5,
+     0.6,
+     0.7
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   }
+  }
+ ]
+}

@@ -1,0 +1,391 @@
+{
+ "joints": [
+  "shoulder",
+  "elbow",
+  "wrist"
+ ],
+ "home": [
+  0.1,
+  0.2,
+  0.3
+ ],
+ "rows": [
+  {
+   "case": "positions={'shoulder': True}",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be a number, not a bool (got True). float(True) is 1.0, so a boolean would be written as 1 radian, 1 rad/s or 1 N depending on the surface, and the call would report success. Pass the quantity in the surface's own units.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be a number, not a bool (got True). float(True) is 1.0, so a boolean would be written as 1 radian, 1 rad/s or 1 N depending on the surface, and the call would report success. Pass the quantity in the surface's own units.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': np.True_}",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be a number, not a bool (got np.True_). float(True) is 1.0, so a boolean would be written as 1 radian, 1 rad/s or 1 N depending on the surface, and the call would report success. Pass the quantity in the surface's own units.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be a number, not a bool (got np.True_). float(True) is 1.0, so a boolean would be written as 1 radian, 1 rad/s or 1 N depending on the surface, and the call would report success. Pass the quantity in the surface's own units.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': nan}",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be finite (no nan/inf), got nan",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be finite (no nan/inf), got nan",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': inf}",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be finite (no nan/inf), got inf",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be finite (no nan/inf), got inf",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoudler': 0.9}  (typo)",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: unresolved 'positions' keys ['shoudler'] on robot 'arm'. Its joints are ['shoulder', 'elbow', 'wrist']; use action='robot_joint_names' to list them.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: unresolved 'positions' keys ['shoudler'] on robot 'arm'. Its joints are ['shoulder', 'elbow', 'wrist']; use action='robot_joint_names' to list them.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': 0.9, 'nope': 0.5}",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: unresolved 'positions' keys ['nope'] on robot 'arm'. Its joints are ['shoulder', 'elbow', 'wrist']; use action='robot_joint_names' to list them.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: unresolved 'positions' keys ['nope'] on robot 'arm'. Its joints are ['shoulder', 'elbow', 'wrist']; use action='robot_joint_names' to list them.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={}",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' is empty, so there is nothing to write. Pass at least one joint (dict form) or a full ordered vector (list form); use action='robot_joint_names' to see one robot's joints.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' is empty, so there is nothing to write. Pass at least one joint (dict form) or a full ordered vector (list form); use action='robot_joint_names' to see one robot's joints.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions={'shoulder': 'abc'}",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be a number, got 'abc'",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' value for joint 'shoulder' must be a number, got 'abc'",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions=[0.5, 0.6]  (3 joints)",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: list length 2 does not match robot 'arm' joint count 3. Use a dict for partial updates.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: list length 2 does not match robot 'arm' joint count 3. Use a dict for partial updates.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions=[0.5, 0.6, 0.7, 0.8]",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: list length 4 does not match robot 'arm' joint count 3. Use a dict for partial updates.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: list length 4 does not match robot 'arm' joint count 3. Use a dict for partial updates.",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "positions='abc'",
+   "main": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' must be a dict or list, got str",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "error",
+    "text": "set_joint_positions: 'positions' must be a dict or list, got str",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.1,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": false,
+    "width": 3
+   }
+  },
+  {
+   "case": "CONTROL positions={'shoulder': 0.9}",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.9,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.9,
+     0.2,
+     0.3
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   }
+  },
+  {
+   "case": "CONTROL positions=[0.5, 0.6, 0.7]",
+   "main": {
+    "verdict": "success",
+    "text": "Set joint positions (main).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.5,
+     0.6,
+     0.7
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   },
+   "queued": {
+    "verdict": "success",
+    "text": "Set joint positions (queued).",
+    "pump_swallowed": null,
+    "joint_state": [
+     0.5,
+     0.6,
+     0.7
+    ],
+    "nonfinite_written": false,
+    "changed": true,
+    "width": 3
+   }
+  }
+ ]
+}
