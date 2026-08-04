@@ -870,9 +870,14 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
 def non_negative_whole_number_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable non-negative whole number.
 
-    Shared domain for the number of physics steps a caller asks a simulation to
-    advance - the ``n_steps`` of every backend's
-    :meth:`~strands_robots.simulation.base.SimEngine.step`.
+    Shared domain for two families of discrete quantity whose ``0`` is a real
+    setting rather than a degenerate one: the number of physics steps a caller
+    asks a simulation to advance - the ``n_steps`` of every backend's
+    :meth:`~strands_robots.simulation.base.SimEngine.step` - and the two
+    whole-number teleop knobs :mod:`~strands_robots.tools.lerobot_teleoperate`
+    puts on the lerobot CLI, where ``dataset_reset_time_s=0`` is "no operator
+    pause between recorded episodes" and ``replay_episode=0`` is the first
+    episode.
 
     Not the only physics-step count in the tree, and the difference is the
     floor rather than the scalar policy: the ``n_substeps`` of

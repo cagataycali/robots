@@ -34,6 +34,28 @@ from strands_robots.tools import (
 
 Parse results via `result["content"][0]["text"]`, not custom keys like `result["ports"]`.
 
+### Numeric options are checked before the session starts
+
+A teleop session runs in a detached subprocess, so a value the lerobot CLI
+cannot parse would not be reported by the call that supplied it - the session
+would start, report a pid, and fail minutes later in its log. `lerobot_teleoperate`
+therefore refuses an unusable numeric option up front, and only for the options
+the requested action actually puts on the lerobot command line:
+
+| Option | Accepted | Why the floor is where it is |
+|--------|----------|------------------------------|
+| `dataset_fps`, `fps` | positive whole number | lerobot declares both `int`; an integral float (`30.0`) is accepted and emitted as `30` |
+| `dataset_num_episodes`, `dagger_num_episodes` | positive whole number | a recording of no episodes cannot be produced |
+| `dataset_episode_time_s` | positive whole number | an episode of no length records nothing |
+| `dataset_reset_time_s` | non-negative whole number | `0` is a real setting: no operator pause between episodes |
+| `replay_episode` | non-negative whole number | `0` is the first episode |
+| `teleop_time_s` | positive number, or `None` | lerobot declares it `float \| None`; `None` (the default) means no time limit, and a fractional budget is usable |
+
+`teleop_time_s=0` is refused rather than read as "no limit" - it is the one value
+that means "stop at once", so treating it as unset would invert the request.
+Passing a value an action ignores is never an error: `action="start"` without a
+`dataset_repo_id` teleoperates and reads no `dataset_*` option.
+
 ## Examples
 
 ```python

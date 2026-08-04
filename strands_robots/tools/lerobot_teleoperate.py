@@ -16,11 +16,18 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import psutil
 from strands import tool
+
+from strands_robots.utils import (
+    non_negative_whole_number_error,
+    positive_finite_number_error,
+    positive_whole_number_error,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +36,80 @@ logger = logging.getLogger(__name__)
 # Session storage directory
 SESSION_DIR = Path.cwd() / ".strands_robots/.sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# The numeric knobs each command mode actually puts on the lerobot argv. Every
+# one is interpolated with ``str()`` into the command line of a DETACHED
+# subprocess, so a value the lerobot CLI cannot parse is never reported by the
+# call that supplied it: the session starts, ``status="success"`` is returned,
+# and the failure appears minutes later in that session's log. A value the CLI
+# *can* parse but should not have been given - a zero recording rate, a negative
+# episode index - is worse, because nothing reports it at all.
+#
+# Refusing a knob the requested mode never emits would be a false rejection, so
+# the scoping is driven by this table rather than by validating the whole
+# signature unconditionally.
+_MODE_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
+    "replay": ("replay_episode", "dataset_fps"),
+    "record": ("dataset_num_episodes", "dataset_fps", "dataset_episode_time_s", "dataset_reset_time_s"),
+    "teleoperate": ("fps", "teleop_time_s"),
+    "dagger": ("dagger_num_episodes", "dataset_num_episodes", "dataset_fps", "fps"),
+}
+
+# The domain each knob is checked against, in the order errors are reported.
+# The whole-number knobs are declared ``int`` by lerobot's own config
+# dataclasses (``DatasetRecordConfig.fps`` / ``.num_episodes``,
+# ``TeleoperateConfig.fps``, ``DatasetReplayConfig.episode``) and by this
+# module's own signature, so a whole number is the honest domain and an integral
+# float read from a config is still honored. ``teleop_time_s`` is lerobot's
+# ``float | None`` session budget, where a fractional value is perfectly usable.
+#
+# Two knobs take the non-negative floor instead of the positive one:
+# ``dataset_reset_time_s=0`` (no operator pause between episodes) and
+# ``replay_episode=0`` (the first episode) are both real requests, whereas a
+# zero recording rate, a zero-length episode and a zero-episode recording are
+# each a request no run can satisfy.
+_OPTION_DOMAINS: tuple[tuple[str, Callable[[Any, str, str], str | None]], ...] = (
+    ("dataset_fps", positive_whole_number_error),
+    ("dataset_num_episodes", positive_whole_number_error),
+    ("dataset_episode_time_s", positive_whole_number_error),
+    ("dataset_reset_time_s", non_negative_whole_number_error),
+    ("dagger_num_episodes", positive_whole_number_error),
+    ("fps", positive_whole_number_error),
+    ("replay_episode", non_negative_whole_number_error),
+    ("teleop_time_s", positive_finite_number_error),
+)
+
+# Knobs whose ``None`` means "omit the flag and take the lerobot default", so
+# there ``None`` is a supplied value rather than an unusable one. Every other
+# knob in the table has a non-None default, so ``None`` is a caller mistake.
+_OPTIONAL_OPTIONS: frozenset[str] = frozenset({"teleop_time_s", "dagger_num_episodes"})
+
+
+def _numeric_option_error(mode: str, supplied: dict[str, Any]) -> str | None:
+    """Error text for the first numeric knob ``mode`` emits but cannot honor.
+
+    Args:
+        mode: A key of :data:`_MODE_NUMERIC_OPTIONS`; decides which knobs are
+            effective. A mode absent from that map emits none of them and is
+            never refused here.
+        supplied: Every knob in :data:`_OPTION_DOMAINS`, as supplied by the
+            caller.
+
+    Returns:
+        An error message naming the knob and its domain, or ``None`` when every
+        knob this mode emits is usable.
+    """
+    consumed = set(_MODE_NUMERIC_OPTIONS.get(mode, ()))
+    for param, check in _OPTION_DOMAINS:
+        if param not in consumed:
+            continue
+        value = supplied[param]
+        if value is None and param in _OPTIONAL_OPTIONS:
+            continue
+        if error := check(value, param, "build_lerobot_command"):
+            return error
+    return None
 
 
 class SessionManager:
@@ -238,26 +319,44 @@ def build_lerobot_command(
         The argv list, beginning with ``["python", "-m", "lerobot.scripts...."]``.
 
     Raises:
-        ValueError: If ``action`` is unknown, or ``replay`` is requested without
-            ``dataset_repo_id``.
+        ValueError: If ``action`` is unknown, ``replay`` is requested without
+            ``dataset_repo_id``, or a numeric knob the requested mode emits
+            cannot be honored (see :data:`_OPTION_DOMAINS`). The refusal
+            precedes the argv, so no subprocess is launched.
     """
+    # Every numeric knob below is interpolated into a detached subprocess's
+    # command line, which is not a channel this call can read a failure back
+    # from. Check the ones this mode actually emits before building the argv.
+    numeric_options: dict[str, Any] = {
+        "dataset_fps": dataset_fps,
+        "dataset_num_episodes": dataset_num_episodes,
+        "dataset_episode_time_s": dataset_episode_time_s,
+        "dataset_reset_time_s": dataset_reset_time_s,
+        "dagger_num_episodes": dagger_num_episodes,
+        "fps": fps,
+        "replay_episode": replay_episode,
+        "teleop_time_s": teleop_time_s,
+    }
     if action == "replay":
         if not dataset_repo_id:
             raise ValueError("dataset_repo_id is required for replay action")
+        if error := _numeric_option_error("replay", numeric_options):
+            raise ValueError(error)
         cmd = ["python", "-m", "lerobot.scripts.lerobot_replay"]
         cmd.extend(
             _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
         )
-        cmd.extend(["--dataset.repo_id", dataset_repo_id, "--dataset.episode", str(replay_episode)])
+        cmd.extend(["--dataset.repo_id", dataset_repo_id, "--dataset.episode", str(int(replay_episode))])
         if dataset_root:
             cmd.extend(["--dataset.root", dataset_root])
-        if dataset_fps:
-            cmd.extend(["--dataset.fps", str(dataset_fps)])
+        cmd.extend(["--dataset.fps", str(int(dataset_fps))])
         return cmd
 
     if action == "start":
         if dataset_repo_id:
             # Recording mode -> lerobot-record (pure data collection via teleop).
+            if error := _numeric_option_error("record", numeric_options):
+                raise ValueError(error)
             from strands_robots.dataset_recorder import resolve_dataset_dir
 
             cmd = ["python", "-m", "lerobot.scripts.lerobot_record"]
@@ -266,12 +365,12 @@ def build_lerobot_command(
             )
             cmd.extend(_teleop_args(teleop_type, teleop_port, teleop_id, teleop_left_arm_port, teleop_right_arm_port))
             cmd.extend(["--dataset.repo_id", dataset_repo_id])
-            cmd.extend(["--dataset.num_episodes", str(dataset_num_episodes)])
+            cmd.extend(["--dataset.num_episodes", str(int(dataset_num_episodes))])
             if dataset_single_task:
                 cmd.extend(["--dataset.single_task", dataset_single_task])
-            cmd.extend(["--dataset.fps", str(dataset_fps)])
-            cmd.extend(["--dataset.episode_time_s", str(dataset_episode_time_s)])
-            cmd.extend(["--dataset.reset_time_s", str(dataset_reset_time_s)])
+            cmd.extend(["--dataset.fps", str(int(dataset_fps))])
+            cmd.extend(["--dataset.episode_time_s", str(int(dataset_episode_time_s))])
+            cmd.extend(["--dataset.reset_time_s", str(int(dataset_reset_time_s))])
             # Always pin --dataset.root to a resolved on-disk path. On a fresh
             # (non-resume) recording, lerobot-record calls
             # ``cfg.dataset.stamp_repo_id()`` which rewrites repo_id to
@@ -290,13 +389,18 @@ def build_lerobot_command(
             return cmd
 
         # Simple teleoperation mode -> lerobot-teleoperate.
+        if error := _numeric_option_error("teleoperate", numeric_options):
+            raise ValueError(error)
         cmd = ["python", "-m", "lerobot.scripts.lerobot_teleoperate"]
         cmd.extend(
             _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
         )
         cmd.extend(_teleop_args(teleop_type, teleop_port, teleop_id, teleop_left_arm_port, teleop_right_arm_port))
-        cmd.extend(["--fps", str(fps)])
-        if teleop_time_s:
+        cmd.extend(["--fps", str(int(fps))])
+        # ``is not None``, not truthiness: ``0`` is now refused above, and reading
+        # it as "unset" made the one value meaning "stop at once" emit no budget
+        # at all - an unbounded session where the caller asked for none.
+        if teleop_time_s is not None:
             cmd.extend(["--teleop_time_s", str(teleop_time_s)])
         if display_data:
             cmd.extend(["--display_data", "true"])
@@ -316,6 +420,10 @@ def build_lerobot_command(
             raise ValueError("dataset_repo_id is required for dagger action (corrections are recorded)")
         if dagger_input_device not in ("keyboard", "pedal"):
             raise ValueError(f"dagger_input_device must be 'keyboard' or 'pedal', got '{dagger_input_device}'")
+        # Before the lerobot-version preflight below, so the same caller mistake
+        # reports identically whether or not the rollout entry point is present.
+        if error := _numeric_option_error("dagger", numeric_options):
+            raise ValueError(error)
 
         # lerobot.scripts.lerobot_rollout (the DAgger entry point) landed in
         # lerobot 0.6.0; on an older install the subprocess would fail with an
@@ -339,19 +447,19 @@ def build_lerobot_command(
         if dagger_record_autonomous:
             cmd.extend(["--strategy.record_autonomous", "true"])
         if dagger_num_episodes is not None:
-            cmd.extend(["--strategy.num_episodes", str(dagger_num_episodes)])
+            cmd.extend(["--strategy.num_episodes", str(int(dagger_num_episodes))])
         cmd.extend(["--dataset.repo_id", dataset_repo_id])
         if dataset_single_task:
             cmd.extend(["--dataset.single_task", dataset_single_task])
-        cmd.extend(["--dataset.num_episodes", str(dataset_num_episodes)])
-        cmd.extend(["--dataset.fps", str(dataset_fps)])
+        cmd.extend(["--dataset.num_episodes", str(int(dataset_num_episodes))])
+        cmd.extend(["--dataset.fps", str(int(dataset_fps))])
         if dataset_root:
             cmd.extend(["--dataset.root", dataset_root])
         # push_to_hub defaults to True in lerobot's DatasetRecordConfig; make it
         # explicit so an unattended correction run never uploads by surprise.
         cmd.extend(["--dataset.push_to_hub", "true" if dataset_push_to_hub else "false"])
         cmd.extend(["--dataset.video", "true" if dataset_video else "false"])
-        cmd.extend(["--fps", str(fps)])
+        cmd.extend(["--fps", str(int(fps))])
         if display_data:
             cmd.extend(["--display_data", "true"])
         return cmd
