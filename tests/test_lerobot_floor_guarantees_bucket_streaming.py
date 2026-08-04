@@ -86,6 +86,7 @@ def _installed_lerobot_or_skip() -> Version:
         raw = None
     if raw is None:  # pragma: no cover - importable but unmetadata'd
         pytest.skip("lerobot version metadata unresolvable")
+        return Version("0")  # unreachable; terminates the branch for static analysis
     return Version(raw)
 
 
