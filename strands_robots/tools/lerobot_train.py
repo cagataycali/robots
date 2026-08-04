@@ -28,7 +28,11 @@ import psutil
 from strands import tool
 from strands.types.tools import ToolContext
 
-from strands_robots.utils import validation_split_error, validation_split_fraction
+from strands_robots.utils import (
+    positive_count_error,
+    validation_split_error,
+    validation_split_fraction,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -385,10 +389,19 @@ def build_train_command(
     ``--config_path=<ckpt>/train_config.json --resume=true`` form lerobot's
     validate() requires, instead of the from-scratch flags.
 
+    ``steps`` and ``batch_size`` size the run, so each is checked against the
+    shared positive-count domain before it reaches the argv. lerobot declares
+    both as a plain ``int``: ``steps`` bounds the training loop
+    (``for _ in range(step, cfg.steps)``, which is empty for a non-positive
+    value) and ``batch_size`` reaches ``torch.utils.data.DataLoader``, which
+    requires a positive integer. Passing ``None`` for either omits the flag and
+    leaves lerobot's own default in place.
+
     Raises:
         ValueError: if ``lora`` and ``train_expert_only`` are both set (both
             freeze the VLM and are mutually exclusive), if ``train_expert_only``
-            is requested for a non-expert policy, or if ``num_gpus < 1``.
+            is requested for a non-expert policy, if ``num_gpus < 1``, or if a
+            supplied ``steps`` / ``batch_size`` is not a positive integer.
     """
     if lora and train_expert_only:
         raise ValueError(
@@ -401,6 +414,16 @@ def build_train_command(
         )
     if num_gpus < 1:
         raise ValueError(f"num_gpus must be >= 1, got {num_gpus}")
+    # The two knobs that size the run. An unusable value here is not merely
+    # rejected downstream: it is written into the argv of a DETACHED process, so
+    # the caller is told the run started and only the training log records that
+    # it could not be honored. ``None`` means "omit the flag and keep lerobot's
+    # default", so only a supplied value is checked.
+    for size_param, size_value in (("steps", steps), ("batch_size", batch_size)):
+        if size_value is not None:
+            size_error = positive_count_error(size_value, size_param, "lerobot_train")
+            if size_error:
+                raise ValueError(size_error)
 
     resume_config = _has_resumable_checkpoint(output_dir) if (resume and output_dir) else None
 
