@@ -1,0 +1,19 @@
+{
+  "tree": "/tmp/robots-mine",
+  "validate_default": [],
+  "build_default": {
+    "raised": "ValueError",
+    "msg": "reward_model type 'robometer' could not be constructed: building its config needed a pretrained asset this host could not obtain (We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'.). The spec itself is fine - validate() cannot reach the network to see this. Either make the asset available (a warm Hugging Face cache, or network access with HF_HUB_OFFLINE unset), or pass the field the config derives from it in extra['reward_model'] so its constructor fetches nothing. Fields this type accepts: average_temporal_patches, base_model_id, default_task, frame_pooling, frame_pooling_attn_temperature, image_key, max_frames, normalization_mapping, progress_discrete_bins, progress_loss_type, reward_output, success_threshold, task_key, torch_dtype, use_multi_image, use_per_frame_progress_token, vlm_config."
+  },
+  "build_remedy": {
+    "raised": null,
+    "msg": "built type=robometer"
+  },
+  "build_bad_value": {
+    "raised": "ValueError",
+    "msg": "reward_output must be 'progress' or 'success', got 'not-a-mode'"
+  },
+  "vlm_config_is_forwardable": true,
+  "suite_offline": "======================== 17 passed, 1 skipped in 3.16s =========================",
+  "suite_offline_failed": 0
+}

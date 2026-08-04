@@ -1,0 +1,19 @@
+{
+  "tree": "/tmp/ctrl-main",
+  "validate_default": [],
+  "build_default": {
+    "raised": "OSError",
+    "msg": "We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'."
+  },
+  "build_remedy": {
+    "raised": null,
+    "msg": "built type=robometer"
+  },
+  "build_bad_value": {
+    "raised": "ValueError",
+    "msg": "reward_output must be 'progress' or 'success', got 'not-a-mode'"
+  },
+  "vlm_config_is_forwardable": true,
+  "suite_offline": "========================= 2 failed, 9 passed in 3.16s ==========================",
+  "suite_offline_failed": 2
+}
