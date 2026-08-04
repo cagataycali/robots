@@ -1,0 +1,184 @@
+{
+ "tree": "/tmp/robots-src",
+ "rows": [
+  {
+   "field": "steps",
+   "value": "10000",
+   "per": {
+    "mock": "accepted",
+    "cosmos3": "accepted",
+    "groot": "accepted",
+    "lerobot": "accepted"
+   },
+   "uniform": "accepted"
+  },
+  {
+   "field": "steps",
+   "value": "0",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "steps",
+   "value": "-5",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "steps",
+   "value": "True",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "steps",
+   "value": "2.7",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "steps",
+   "value": "nan",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "steps",
+   "value": "inf",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "steps",
+   "value": "'1000'",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "steps",
+   "value": "None",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "global_batch_size",
+   "value": "32",
+   "per": {
+    "mock": "accepted",
+    "cosmos3": "accepted",
+    "groot": "accepted",
+    "lerobot": "accepted"
+   },
+   "uniform": "accepted"
+  },
+  {
+   "field": "global_batch_size",
+   "value": "0",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "global_batch_size",
+   "value": "-8",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "global_batch_size",
+   "value": "True",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "global_batch_size",
+   "value": "2.7",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "global_batch_size",
+   "value": "nan",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  },
+  {
+   "field": "global_batch_size",
+   "value": "'32'",
+   "per": {
+    "mock": "refused",
+    "cosmos3": "refused",
+    "groot": "refused",
+    "lerobot": "refused"
+   },
+   "uniform": "refused"
+  }
+ ],
+ "local_copies": 0,
+ "gate_call_sites": 4,
+ "batch_factor_checked": true
+}
