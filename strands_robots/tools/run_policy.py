@@ -260,8 +260,7 @@ def run_policy(
     # nothing to check for it - and this module keeps every strands_robots import
     # lazy, so a caller who supplies no seed pulls in no extra module.
     if seed is not None:
-        from strands_robots.simulation.base import randomization_seed_error
-        from strands_robots.simulation.policy_runner import MAX_EVAL_SEED
+        from strands_robots.simulation.base import MAX_EVAL_SEED, randomization_seed_error
 
         if seed_error := randomization_seed_error(seed, "run_policy", max_seed=MAX_EVAL_SEED):
             return _err(seed_error)

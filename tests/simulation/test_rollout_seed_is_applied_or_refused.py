@@ -51,8 +51,8 @@ from typing import Any
 
 import pytest
 
-from strands_robots.simulation.base import SimEngine, randomization_seed_error
-from strands_robots.simulation.policy_runner import MAX_EVAL_SEED, PolicyRunner, set_eval_seed
+from strands_robots.simulation.base import MAX_EVAL_SEED, SimEngine, randomization_seed_error
+from strands_robots.simulation.policy_runner import PolicyRunner, set_eval_seed
 
 pytest.importorskip("mujoco")
 

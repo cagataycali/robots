@@ -48,7 +48,7 @@ if TYPE_CHECKING:
 # AST). Instead, we reference ``OnFrame`` in the ``evaluate_benchmark``
 # signature as a *string* annotation; ``from __future__ import
 # annotations`` (already in effect) makes that a no-op at runtime.
-from strands_robots.simulation.policy_runner import MAX_EVAL_SEED, PolicyRunner, VideoConfig
+from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     is_boolean,
@@ -271,6 +271,27 @@ def finite_non_negative_error(value: Any, param: str, context: str) -> str | Non
     return None
 
 
+# The largest seed a rollout can apply. ``set_eval_seed`` reseeds the legacy
+# NumPy global RNG (``numpy.random.seed``), which refuses anything above
+# 2**32 - 1 - unlike ``numpy.random.default_rng``, the destination of the
+# ``randomize`` / ``set_obs_noise`` seeds, which accepts an integer of any
+# width. That is why a rollout seed carries a ceiling those two do not: the
+# accepted domain of a parameter is bounded by what its applier can honor, and
+# ``random.seed`` / ``torch.manual_seed`` (the other two RNGs seeded there) are
+# wider still.
+#
+# It lives here, beside the ``max_seed`` parameter it feeds, rather than in
+# ``policy_runner`` with the applier it describes. The note above this module's
+# ``policy_runner`` import is the reason: CodeQL's ``py/unsafe-cyclic-import``
+# walks ``TYPE_CHECKING`` blocks, and ``policy_runner`` imports ``SimEngine``
+# from here under one, so every name added to that module-level import line
+# closes an AST-visible cycle. Adding this constant to it raised
+# ``py/unsafe-cyclic-import`` on all three names that line carries. The rollout
+# side reaches it through the function-local import it already uses for
+# ``randomization_seed_error``, so neither module gains a module-level edge.
+MAX_EVAL_SEED = 2**32 - 1
+
+
 def randomization_seed_error(value: Any, context: str, *, max_seed: int | None = None) -> str | None:
     """Return why a value cannot seed a reproducible randomization stream.
 
@@ -296,7 +317,7 @@ def randomization_seed_error(value: Any, context: str, *, max_seed: int | None =
     :func:`~strands_robots.simulation.policy_runner.set_eval_seed`, which also
     reseeds the legacy NumPy global RNG (``numpy.random.seed``) - the one most
     policies draw from - and that refuses anything above
-    :data:`~strands_robots.simulation.policy_runner.MAX_EVAL_SEED`. ``max_seed``
+    :data:`MAX_EVAL_SEED`. ``max_seed``
     carries that ceiling, so the rollout surfaces refuse a value they could not
     apply while the randomization surfaces keep the width they can honor. One
     rule with an explicit bound per destination is what stops the accepted

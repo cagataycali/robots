@@ -43,3 +43,12 @@ ceiling, and the rollout surfaces pass `MAX_EVAL_SEED`; `randomize` /
 honor. `set_eval_seed` enforces it too, since it is public API documented for
 direct callers, and the `run_policy` tool checks the seed its *last* episode
 derives (`seed + n_episodes - 1`) rather than only the one it was handed.
+
+`MAX_EVAL_SEED` lives in `simulation/base.py`, beside the `max_seed` parameter it
+feeds, rather than in `policy_runner.py` with the applier it describes. The note
+above `base.py`'s `policy_runner` import records why: CodeQL's
+`py/unsafe-cyclic-import` walks `TYPE_CHECKING` blocks, and `policy_runner`
+imports `SimEngine` from `base` under one, so any name added to that module-level
+import line closes an AST-visible cycle. The rollout side reaches the constant
+through the function-local import it already uses for `randomization_seed_error`,
+so neither module gains a module-level edge.
