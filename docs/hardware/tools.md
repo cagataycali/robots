@@ -56,6 +56,33 @@ that means "stop at once", so treating it as unset would invert the request.
 Passing a value an action ignores is never an error: `action="start"` without a
 `dataset_repo_id` teleoperates and reads no `dataset_*` option.
 
+### A raw servo write is bounded by the register it encodes into
+
+`serial_tool` writes Feetech registers by masking the value into fixed-width
+bytes of the outgoing packet, so an out-of-range value was never rejected on the
+wire - it was truncated into a different, reachable command while the success
+message quoted the value the caller supplied. `position=70000` put 4464 on the
+wire and `position=-1` put 65535, the largest the two-byte field holds. Each
+field is therefore bounded before the port is opened:
+
+| Option | Accepted | Why the bound is where it is |
+|--------|----------|------------------------------|
+| `motor_id` | integer in `[1, 254]` | the frame carries the ID in one byte, and `255` is the header value |
+| `position` | integer in `[0, 4095]` | `Goal_Position` is a 12-bit register - the same full scale the reported angle divides by |
+| `velocity` | integer in `[0, 65535]` | `Goal_Velocity` is written as two bytes |
+| `baudrate` | positive integer | pyserial coerces rather than checks, so `2.7` opens the port at 2 baud |
+| `read_bytes` | positive integer | pyserial's read loop is `while len(read) < size`, so a non-positive size returns no bytes and looks like a timeout |
+| `timeout` | finite number >= 0 | `0` is pyserial's non-blocking mode (return what is buffered); `nan` waits no time at all and `inf` overflows the deadline |
+
+The same scoping rule applies: `action="read"` never looks at a servo register,
+so a bad `motor_id` does not refuse it, and `action="list_ports"` reads none of
+these options. An unset `motor_id` / `position` is still reported by the action's
+own "required" message rather than as an unusable value.
+
+`pose_tool` writes the same `Goal_Position` register through the same mask and
+needs no bound of its own - it clamps to each motor's declared range before
+encoding, so the mask only ever sees a value that fits.
+
 ## Examples
 
 ```python
