@@ -133,20 +133,21 @@ class TestTheRecordedWidthRoundTrips:
     ``PolicyRunner.replay`` binds ``robot_action_keys`` against the recorded
     action vector and aborts the episode when the two widths differ, so this
     equality is the property that makes a floating-base recording replayable at
-    all. Pinned as an equality between the two producers rather than assumed
-    from the fact that Newton's schema fallback happens to be the scalar joint
-    list, so either side drifting fails here.
+    all. Pinned as an equality between the two producers rather than assumed, so
+    either side drifting fails here. The schema's action columns are now declared
+    from ``robot_action_keys`` outright rather than inherited from the recorder's
+    joint-name fallback, so these read the action slot of the schema tuple.
     """
 
     def test_the_declared_action_columns_equal_the_action_keys(self):
         engine = _engine(free_base=True)
-        declared, _cam_keys, _cam_dims, _robot_type, _rec_cams = engine._collect_recording_schema()
+        _joint_names, declared, *_rest = engine._collect_recording_schema()
         assert declared == engine.robot_action_keys("g1")
 
     def test_a_vector_action_of_the_recorded_width_is_accepted(self):
         """Pre-fix this refused: 4 recorded values against 5 advertised keys."""
         engine = _engine(free_base=True)
-        declared, *_ = engine._collect_recording_schema()
+        _joint_names, declared, *_rest = engine._collect_recording_schema()
         recorded_frame = [0.1] * len(declared)
 
         result = engine.send_action(recorded_frame, robot_name="g1", n_substeps=1)

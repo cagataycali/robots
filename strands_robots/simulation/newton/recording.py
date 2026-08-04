@@ -231,7 +231,14 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             # and wipe on overwrite. See DatasetRecordingMixin._prepare_dataset_target.
             resume_existing = self._prepare_dataset_target(dataset_dir, overwrite)
 
-            joint_names, camera_keys, camera_dims, robot_type, recording_cameras = self._collect_recording_schema()
+            (
+                joint_names,
+                action_names,
+                camera_keys,
+                camera_dims,
+                robot_type,
+                recording_cameras,
+            ) = self._collect_recording_schema()
 
             # Backend parity with the MuJoCo recorder: a floating-base robot
             # (humanoid / mobile) exposes full base kinematics via
@@ -320,6 +327,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
                     fps=fps,
                     robot_type=robot_type,
                     joint_names=joint_names,
+                    action_names=action_names,
                     extra_state_specs=base_state_specs,
                     camera_keys=camera_keys,
                     camera_dims=camera_dims,
@@ -349,13 +357,17 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
 
     def _collect_recording_schema(
         self,
-    ) -> tuple[list[str], list[str], dict[str, tuple[int, int]], str, list[tuple[str, str, int, int]]]:
+    ) -> tuple[list[str], list[str], list[str], dict[str, tuple[int, int]], str, list[tuple[str, str, int, int]]]:
         """Build the dataset schema from the live Newton scene.
 
         Returns:
-            A 5-tuple of:
-              * ``joint_names``: ordered state/action joint ids (namespaced
+            A 6-tuple of:
+              * ``joint_names``: ordered scalar state joint ids (namespaced
                 ``robot__joint`` when more than one robot exists).
+              * ``action_names``: ordered action column ids, taken from
+                :meth:`robot_action_keys` - the same authority ``send_action``
+                and the recording hook's ``required_action_keys`` resolve, so a
+                declared column is always a key ``add_frame`` can receive.
               * ``camera_keys``: sanitized camera feature names (``/`` -> ``__``).
               * ``camera_dims``: map of camera feature name -> ``(height, width)``.
               * ``robot_type``: the dataset ``robot_type`` string.
@@ -365,6 +377,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
         world = self._world
         assert world is not None  # guarded by start_recording
         joint_names: list[str] = []
+        action_names: list[str] = []
         robot_type = "unknown"
         multi_robot = len(world.robots) > 1
         free_base = getattr(self, "_robot_free_base_joint", {})
@@ -376,10 +389,23 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             # Mirrors get_observation / get_robot_state.
             free_short = free_base.get(rname)
             scalar_jn = [jn for jn in robot.joint_names if jn != free_short]
+            # Action columns come from ``robot_action_keys``, not from the
+            # scalar joint list computed above, even though the two agree for
+            # every robot this backend can build today. They agree only because
+            # both apply the free-base exclusion, and each applied it from its
+            # own copy of the rule; declaring the action schema from the joint
+            # list makes that agreement load-bearing. A column declared under a
+            # name the hook never emits is not a mismatch the recorder can
+            # report - ``add_frame`` reads the action dict by declared name, so
+            # an unmatched column takes the ``0.0`` fill and the episode records
+            # a command nobody issued under a success result (#1715).
+            act_keys = self.robot_action_keys(rname)
             if multi_robot:
                 joint_names.extend(f"{rname}__{jn}" for jn in scalar_jn)
+                action_names.extend(f"{rname}__{ak}" for ak in act_keys)
             else:
                 joint_names.extend(scalar_jn)
+                action_names.extend(act_keys)
             robot_type = robot.data_config or rname
 
         camera_keys: list[str] = []
@@ -392,7 +418,7 @@ class NewtonRecordingMixin(DatasetRecordingMixin):
             camera_keys.append(safe_name)
             camera_dims[safe_name] = (height, width)
             recording_cameras.append((cam_name, safe_name, width, height))
-        return joint_names, camera_keys, camera_dims, robot_type, recording_cameras
+        return joint_names, action_names, camera_keys, camera_dims, robot_type, recording_cameras
 
     def _make_run_policy_hook(self, robot_name: str, instruction: str) -> Any:
         """Build the per-step ``on_frame`` recording hook for Newton.
