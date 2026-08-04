@@ -73,8 +73,10 @@ logger = logging.getLogger(__name__)
 _GRIPPER_HINTS = ("gripper", "finger", "jaw")
 
 # Valid values for the registry gripper metadata ``closed`` / ``open`` fields:
-# which ctrlrange END the state maps to. The registry integrity tests
-# shape-check the shipped robots.json against the same two values.
+# which END of the gripper's set-point range the state maps to (that range is
+# normally the actuator ctrlrange; see _gripper_setpoint_range for the driven-
+# joint substitution). The registry integrity tests shape-check the shipped
+# robots.json against the same two values.
 _CTRLRANGE_ENDS = ("low", "high")
 
 # Wrist-yaw joint hints, most-specific first. Fallback: the last non-gripper
@@ -217,6 +219,12 @@ class MotionPrimitivesMixin:
         actuator are included (the DOFs a position set-point can drive).
         Tendon-driven actuators (e.g. a Franka split gripper) have no matching
         joint and are excluded - ``set_gripper`` resolves those by name instead.
+
+        That exclusion is load-bearing twice over: it is also what scopes
+        :meth:`_gripper_setpoint_range`'s driven-joint substitution to the
+        transmissions where ``ctrl`` is the joint target, so a tendon gripper
+        with an unusable ctrlrange keeps refusing rather than being commanded
+        in the wrong units.
         """
         mj = self._mj
         joint_trn = {int(mj.mjtTrn.mjTRN_JOINT), int(mj.mjtTrn.mjTRN_JOINTINPARENT)}
@@ -230,6 +238,84 @@ class MotionPrimitivesMixin:
             if jnt_id in joint_ids and int(model.jnt_type[jnt_id]) in settable:
                 out[jnt_id] = act_id
         return out
+
+    def _gripper_setpoint_range(
+        self, model: Any, act_id: int, jnt_id: int | None
+    ) -> tuple[tuple[float, float] | None, str]:
+        """Open/close set-point bounds for a gripper actuator, and their source.
+
+        Returns ``((lo, hi), source)`` - *source* naming where the bounds came
+        from, for the success payload - or ``(None, reason)`` when every source
+        is exhausted, *reason* then naming each one that was tried so the
+        refusal says what it looked at.
+
+        The actuator ``ctrlrange`` is authoritative whenever it is usable. When
+        it is not, MuJoCo's encoding is the thing to read carefully: a position
+        servo whose MJCF declares neither ``ctrlrange`` nor ``inheritrange="1"``
+        compiles to ``ctrlrange == (0, 0)`` with ``actuator_ctrllimited == 0``,
+        and that is the UNLIMITED actuator - a different claim from "this
+        actuator accepts nothing". For a JOINT / JOINTINPARENT transmission
+        ``ctrl`` IS the joint target, so the driven joint's own limits are the
+        open/close set-points, and they are precisely what ``inheritrange="1"``
+        would have compiled the ctrlrange to. Both sibling primitives already
+        make that substitution (``rotate_wrist`` and ``move_to`` read
+        ``jnt_range`` under ``jnt_limited``); ``set_gripper`` read only the
+        ctrlrange and so refused on so101, whose shipped MJCF authors neither
+        attribute while so100's sets ``inheritrange="1"`` on every actuator -
+        the only reason so100 was unaffected (GH #1942).
+
+        Three shapes keep refusing, and none of them is an omission to repair:
+
+        * ``actuator_ctrllimited == 1`` alongside a degenerate range is a claim
+          about the actuator, so it is respected rather than second-guessed.
+          The MJCF compiler cannot produce that combination - it rejects an
+          explicit ``ctrllimited="true"`` whose range is not strictly increasing
+          with *invalid control range for actuator*, and it compiles a bare
+          degenerate range (``"0 0"``, ``"0.5 0.5"``) to ``ctrllimited == 0`` -
+          so this guard bites only on a model mutated after compilation, which
+          this package does do: :mod:`strands_robots.policies.wbc.sim_control`
+          rewrites ``ctrlrange`` to hand control to a whole-body controller and
+          restores it afterwards.
+        * A driven joint that is itself unlimited has no limits to lend.
+        * A tendon actuator's ctrlrange is a normalised command space, not joint
+          units - the shipped Franka gripper is ``(0, 255)`` - so a joint range
+          would command the wrong quantity. *jnt_id* is ``None`` for one by
+          construction: only JOINT / JOINTINPARENT transmissions appear in
+          :meth:`_joint_actuator_map`.
+
+        A degenerate range *stored* under ``ctrllimited == 0`` is inert rather
+        than restrictive - MuJoCo clamps ``ctrl`` only when
+        ``ctrllimited == 1`` - so such an actuator genuinely accepts any
+        command, and substituting the joint range restricts nothing that was
+        previously free and widens nothing that was previously enforced.
+        """
+        lo = float(model.actuator_ctrlrange[act_id][0])
+        hi = float(model.actuator_ctrlrange[act_id][1])
+        if hi > lo:
+            return (lo, hi), "actuator ctrlrange"
+        if bool(model.actuator_ctrllimited[act_id]):
+            return None, (
+                f"its ctrlrange ({lo}, {hi}) is degenerate and ctrllimited=1 declares that "
+                "as a real limit rather than an unset one"
+            )
+        if jnt_id is None:
+            return None, (
+                f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and it drives no joint "
+                "whose limits could substitute - a tendon actuator's ctrlrange is a normalised "
+                "command space, not joint units"
+            )
+        if not bool(model.jnt_limited[jnt_id]):
+            return None, (
+                f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and the joint it drives is itself unlimited"
+            )
+        jnt_lo = float(model.jnt_range[jnt_id][0])
+        jnt_hi = float(model.jnt_range[jnt_id][1])
+        if jnt_hi > jnt_lo:
+            return (jnt_lo, jnt_hi), "driven joint range"
+        return None, (
+            f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and the joint it drives has "
+            f"a degenerate range ({jnt_lo}, {jnt_hi})"
+        )
 
     def _short_name(self, name: str | None, namespace: str) -> str:
         """Strip the robot namespace prefix for hint matching."""
@@ -681,7 +767,9 @@ class MotionPrimitivesMixin:
         Resolves the gripper actuator(s) via :meth:`_resolve_gripper_actuators`
         (registry ``gripper`` metadata for the robot's ``data_config`` when
         present, else the ``gripper`` / ``finger`` / ``jaw`` name heuristic)
-        and commands the actuator ctrlrange end-point. With no metadata,
+        and commands an end-point of its set-point range - the actuator
+        ctrlrange, or the driven joint's limits when the MJCF left the
+        ctrlrange unset (see :meth:`_gripper_setpoint_range`). With no metadata,
         ``"open"`` drives to the HIGH end and ``"close"`` to the LOW end -
         the convention for SO-100/SO-101 (the jaw closes toward the
         low/negative end of its range - the sign trap documented in the
@@ -699,9 +787,12 @@ class MotionPrimitivesMixin:
 
         Returns:
             ``{"status": "success", ...}`` with a json block
-            ``{state, actuators, targets, gripper_joint_positions}``;
-            structured error when the gripper cannot be resolved or the
-            ctrlrange gives no usable set-points. Never raises.
+            ``{state, actuators, targets, setpoint_sources,
+            gripper_joint_positions}`` - ``setpoint_sources`` naming, per
+            actuator, where its bounds came from, so a substituted joint range
+            is visible rather than silent; structured error when the gripper
+            cannot be resolved or no source gives usable set-points. Never
+            raises.
         """
         if state not in ("open", "close"):
             return _err(f'set_gripper: \'state\' must be "open" or "close", got {state!r}.')
@@ -743,7 +834,7 @@ class MotionPrimitivesMixin:
                     "Drive it directly with action='send_action' instead."
                 )
 
-            # Which ctrlrange END each state maps to: the registry metadata's
+            # Which END of the set-point range each state maps to: the registry metadata's
             # `closed`/`open` fields when present, else the open=HIGH /
             # close=LOW convention (correct for SO-100/SO-101 and Franka, but
             # a convention, not a law - the metadata field exists to remove
@@ -754,17 +845,18 @@ class MotionPrimitivesMixin:
                 end = "high" if state == "open" else "low"
 
             targets: dict[int, float] = {}
+            setpoint_sources: dict[int, str] = {}
             for act_id in gripper_acts:
-                lo = float(model.actuator_ctrlrange[act_id][0])
-                hi = float(model.actuator_ctrlrange[act_id][1])
-                if not (hi > lo):
+                span, detail = self._gripper_setpoint_range(model, act_id, jnt_by_act.get(act_id))
+                if span is None:
                     act_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id)
                     return _err(
-                        f"set_gripper: actuator '{act_name}' has no usable ctrlrange "
-                        f"({lo}, {hi}); cannot infer open/close set-points. Drive it directly "
-                        "with action='send_action'."
+                        f"set_gripper: actuator '{act_name}' has no usable open/close set-points - "
+                        f"{detail}. Drive it directly with action='send_action'."
                     )
+                lo, hi = span
                 targets[act_id] = hi if end == "high" else lo
+                setpoint_sources[act_id] = detail
 
         for _ in range(steps):
             with self._lock:
@@ -787,6 +879,7 @@ class MotionPrimitivesMixin:
             "state": state,
             "actuators": act_names,
             "targets": {n: targets[a] for n, a in zip(act_names, gripper_acts, strict=True)},
+            "setpoint_sources": {n: setpoint_sources[a] for n, a in zip(act_names, gripper_acts, strict=True)},
             "gripper_joint_positions": joint_positions,
         }
         return {

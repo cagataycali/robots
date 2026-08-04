@@ -311,7 +311,7 @@
     "state": {
       "type": "string",
       "enum": ["open", "close"],
-      "description": "set_gripper set-point: 'open'/'close' drive the gripper actuator(s) to the ctrlrange end declared in the robot registry's gripper metadata when present, else the default convention: 'open' = HIGH end, 'close' = LOW end (SO-100/SO-101 jaw closes toward the low end)"
+      "description": "set_gripper set-point: 'open'/'close' drive the gripper actuator(s) to the set-point-range end declared in the robot registry's gripper metadata when present, else the default convention: 'open' = HIGH end, 'close' = LOW end (SO-100/SO-101 jaw closes toward the low end). The range is the actuator ctrlrange, falling back to the driven joint's limits when the MJCF left the ctrlrange unset"
     },
     "steps": {
       "type": "integer",

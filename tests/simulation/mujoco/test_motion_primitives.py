@@ -15,8 +15,10 @@ inline MJCF arm - no asset downloads):
   error with the IK residual for an unreachable one (never a hang or raise),
   rejects targets outside the workspace sanity box, and degrades to a
   structured error (not a raise) when ``mink`` is missing; ``set_gripper``
-  drives toward the correct ctrlrange end per state; ``rotate_wrist`` reaches
-  a set-point and rejects out-of-range targets;
+  drives toward the correct set-point-range end per state (the range itself,
+  including the driven-joint substitution for an MJCF that left the ctrlrange
+  unset, is pinned by ``test_set_gripper_setpoint_range_sources.py``);
+  ``rotate_wrist`` reaches a set-point and rejects out-of-range targets;
 * recording interplay (the #1498 bug class): primitive motion does NOT feed
   the dataset recorder - pinned explicitly so a silent zero-frame "recording"
   can never masquerade as a recorded episode.
