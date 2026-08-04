@@ -1,0 +1,148 @@
+{
+ "tree": "/tmp/robots-mine",
+ "matrix": {
+  "-1": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration=-1.0 out of bounds [0.0, 3600.0]"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port=-1 out of bounds [1, 65535]"
+   ],
+   "timeout": [
+    "bounded",
+    "robot_mesh send: timeout must be > 0, got -1.0."
+   ],
+   "limit": [
+    "bounded",
+    "robot_mesh inbox: limit must be a positive integer, got -1.0"
+   ]
+  },
+  "nan": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration must be finite, got nan"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port must be finite, got nan"
+   ],
+   "timeout": [
+    "bounded",
+    "robot_mesh send: timeout must be > 0, got nan."
+   ],
+   "limit": [
+    "bounded",
+    "robot_mesh inbox: limit must be a positive integer, got nan."
+   ]
+  },
+  "inf": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration must be finite, got inf"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port must be finite, got inf"
+   ],
+   "timeout": [
+    "bounded",
+    "robot_mesh send: timeout must be > 0, got inf."
+   ],
+   "limit": [
+    "bounded",
+    "robot_mesh inbox: limit must be a positive integer, got inf."
+   ]
+  },
+  "True": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration must be a number, got bool"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port must be an integer, got bool"
+   ],
+   "timeout": [
+    "bounded",
+    "robot_mesh send: timeout must be > 0, got True."
+   ],
+   "limit": [
+    "bounded",
+    "robot_mesh inbox: limit must be a positive integer, got True"
+   ]
+  },
+  "'30'": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration must be a number, got str"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port must be an integer, got str"
+   ],
+   "timeout": [
+    "bounded",
+    "robot_mesh send: timeout must be > 0, got '30'."
+   ],
+   "limit": [
+    "bounded",
+    "robot_mesh inbox: limit must be a positive integer, got '30'"
+   ]
+  }
+ },
+ "stop_wire": {
+  "30.0": {
+   "status": "success",
+   "on_wire": [
+    "5.0"
+   ]
+  },
+  "2.5": {
+   "status": "success",
+   "on_wire": [
+    "2.5"
+   ]
+  },
+  "nan": {
+   "status": "error",
+   "on_wire": []
+  },
+  "True": {
+   "status": "error",
+   "on_wire": []
+  },
+  "-1": {
+   "status": "error",
+   "on_wire": []
+  }
+ },
+ "inbox_cap": {
+  "50": {
+   "status": "success",
+   "returned": 50,
+   "text": "[inbox 's'] 120 total, showing last 50"
+  },
+  "5": {
+   "status": "success",
+   "returned": 5,
+   "text": "[inbox 's'] 120 total, showing last 5"
+  },
+  "0": {
+   "status": "error",
+   "returned": -1,
+   "text": "robot_mesh inbox: limit must be a positive integer, got 0."
+  },
+  "-5": {
+   "status": "error",
+   "returned": -1,
+   "text": "robot_mesh inbox: limit must be a positive integer, got -5."
+  },
+  "nan": {
+   "status": "error",
+   "returned": -1,
+   "text": "robot_mesh inbox: limit must be a positive integer, got nan."
+  }
+ }
+}

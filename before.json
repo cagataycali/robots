@@ -1,0 +1,154 @@
+{
+ "tree": "/tmp/pre-1940",
+ "matrix": {
+  "-1": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration=-1.0 out of bounds [0.0, 3600.0]"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port=-1 out of bounds [1, 65535]"
+   ],
+   "timeout": [
+    "accepted",
+    "[send -> p] {\"status\": \"ok\"}"
+   ],
+   "limit": [
+    "accepted",
+    "[inbox 's'] 120 total, showing last 120\n  - strands/peer/str"
+   ]
+  },
+  "nan": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration must be finite, got nan"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port must be finite, got nan"
+   ],
+   "timeout": [
+    "accepted",
+    "[send -> p] {\"status\": \"ok\"}"
+   ],
+   "limit": [
+    "accepted",
+    "[inbox 's'] 120 total, showing last 120\n  - strands/peer/str"
+   ]
+  },
+  "inf": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration must be finite, got inf"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port must be finite, got inf"
+   ],
+   "timeout": [
+    "accepted",
+    "[send -> p] {\"status\": \"ok\"}"
+   ],
+   "limit": [
+    "raised",
+    "TypeError"
+   ]
+  },
+  "True": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration must be a number, got bool"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port must be an integer, got bool"
+   ],
+   "timeout": [
+    "accepted",
+    "[send -> p] {\"status\": \"ok\"}"
+   ],
+   "limit": [
+    "accepted",
+    "[inbox 's'] 120 total, showing last 1\n  - strands/peer/strea"
+   ]
+  },
+  "'30'": {
+   "duration": [
+    "bounded",
+    "tell rejected: duration must be a number, got str"
+   ],
+   "policy_port": [
+    "bounded",
+    "tell rejected: policy_port must be an integer, got str"
+   ],
+   "timeout": [
+    "accepted",
+    "[send -> p] {\"status\": \"ok\"}"
+   ],
+   "limit": [
+    "raised",
+    "TypeError"
+   ]
+  }
+ },
+ "stop_wire": {
+  "30.0": {
+   "status": "success",
+   "on_wire": [
+    "5.0"
+   ]
+  },
+  "2.5": {
+   "status": "success",
+   "on_wire": [
+    "2.5"
+   ]
+  },
+  "nan": {
+   "status": "success",
+   "on_wire": [
+    "nan"
+   ]
+  },
+  "True": {
+   "status": "success",
+   "on_wire": [
+    "True"
+   ]
+  },
+  "-1": {
+   "status": "success",
+   "on_wire": [
+    "-1.0"
+   ]
+  }
+ },
+ "inbox_cap": {
+  "50": {
+   "status": "success",
+   "returned": 50,
+   "text": "[inbox 's'] 120 total, showing last 50"
+  },
+  "5": {
+   "status": "success",
+   "returned": 5,
+   "text": "[inbox 's'] 120 total, showing last 5"
+  },
+  "0": {
+   "status": "success",
+   "returned": 120,
+   "text": "[inbox 's'] 120 total, showing last 120"
+  },
+  "-5": {
+   "status": "success",
+   "returned": 120,
+   "text": "[inbox 's'] 120 total, showing last 120"
+  },
+  "nan": {
+   "status": "success",
+   "returned": 120,
+   "text": "[inbox 's'] 120 total, showing last 120"
+  }
+ }
+}
