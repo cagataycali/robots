@@ -30,15 +30,17 @@ the one that pulls in the upstream package to discover task files.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import importlib
+import inspect
 import json
 import logging
 import math
 import os
 import random
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -72,6 +74,81 @@ logger = logging.getLogger(__name__)
 _ISAAC_FRANKA_ARM_JOINTS: tuple[str, ...] = tuple(f"panda_joint{i}" for i in range(1, 8))
 _ISAAC_FRANKA_GRIPPER_JOINTS: tuple[str, ...] = ("panda_finger_joint1", "panda_finger_joint2")
 _ISAAC_FRANKA_EEF_LINK = "panda_hand"
+
+
+#: Key the per-camera config must not carry: :meth:`LiberoAdapter._install_libero_cameras`
+#: supplies the camera name itself from the mapping key, so a config that also
+#: sets it collides on every backend.
+_CAMERA_NAME_KEY = "name"
+
+
+def camera_config_error(add_camera: Any, cam_name: str, cam_kwargs: Mapping[str, Any]) -> str | None:
+    """Report a per-camera config the sim's ``add_camera`` cannot accept.
+
+    ``LiberoAdapter(cameras=...)`` documents each value as the keyword
+    arguments forwarded to :meth:`Simulation.add_camera`, so a key that
+    method does not declare cannot be honored on any call: the splat raises
+    :class:`TypeError` before the camera is created. The install loop is
+    best-effort about a sim *failing* to add a camera - one flaky camera must
+    not kill a whole eval - and that tolerance used to cover this case too,
+    which left a one-character typo silently equivalent to omitting the
+    camera: the policy's required ``image`` / ``wrist_image`` view never
+    entered the world and every subsequent inference failed for a reason
+    unrelated to the policy under test.
+
+    The accepted key set belongs to the backend, not to this adapter -
+    MuJoCo and Newton declare ``parent_body`` and Isaac does not - so it is
+    read from the bound method rather than hard-coded here. A sim whose
+    ``add_camera`` takes ``**kwargs`` genuinely accepts any key, so only the
+    reserved name is checked there.
+
+    ``name`` is reserved: the install loop supplies it positionally by
+    keyword, so a config that also sets it is a guaranteed
+    "multiple values for keyword argument" on every backend.
+
+    Args:
+        add_camera: The bound ``add_camera`` of the sim under configuration.
+        cam_name: Camera name the config is keyed by, for the message.
+        cam_kwargs: The caller-supplied per-camera keyword mapping.
+
+    Returns:
+        A message naming every unusable key, or ``None`` when every key can
+        be forwarded.
+    """
+    try:
+        params = inspect.signature(add_camera).parameters
+    except (TypeError, ValueError):
+        # Not introspectable (a C-implemented or exotic callable): nothing can
+        # be checked, so defer to the call itself as before.
+        return None
+
+    takes_var_kw = any(pp.kind is inspect.Parameter.VAR_KEYWORD for pp in params.values())
+    accepted = {
+        pname
+        for pname, pp in params.items()
+        if pname != "self" and pp.kind not in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+    }
+    prefix = f"LiberoAdapter cameras[{cam_name!r}]: "
+
+    if _CAMERA_NAME_KEY in cam_kwargs:
+        return (
+            f"{prefix}{_CAMERA_NAME_KEY!r} must not be set - the camera name is the mapping key, "
+            f"and the install passes it to add_camera itself. Drop it from the config."
+        )
+    if takes_var_kw:
+        return None
+
+    unknown = [str(k) for k in cam_kwargs if k not in accepted]
+    if not unknown:
+        return None
+    parts = []
+    for key in sorted(unknown):
+        close = difflib.get_close_matches(key.lower(), sorted(accepted), n=1, cutoff=0.7)
+        parts.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
+    return (
+        f"{prefix}add_camera does not accept {', '.join(parts)}. "
+        f"Accepted keys: {', '.join(sorted(accepted - {_CAMERA_NAME_KEY}))}."
+    )
 
 
 class LiberoAdapter(BenchmarkProtocol):
@@ -205,8 +282,11 @@ class LiberoAdapter(BenchmarkProtocol):
                 no-ops on auto-generated scenes.
             cameras: Override / extend :attr:`LIBERO_CAMERAS`. Keyed by
                 camera name, each value is forwarded as ``**kwargs`` to
-                :meth:`Simulation.add_camera`. Passing an empty dict
-                disables camera installation regardless of
+                :meth:`Simulation.add_camera`; a key that method does not
+                accept, or a ``"name"`` key (the mapping key already names
+                the camera), is refused when the cameras are installed
+                rather than leaving the camera silently absent. Passing an
+                empty dict disables camera installation regardless of
                 ``install_cameras``.
             eef_body_name: MuJoCo body name whose pose is read for the
                 LIBERO ``state.x/y/z/roll/pitch/yaw`` keys *as a fallback*
@@ -2854,6 +2934,13 @@ class LiberoAdapter(BenchmarkProtocol):
 
         Other ``add_camera`` failures are logged at WARNING but never
         fatal - one missing camera shouldn't kill the whole eval.
+
+        A per-camera config carrying a key ``add_camera`` cannot accept is the
+        one exception: :func:`camera_config_error` refuses it with a
+        ``ValueError`` rather than letting the splat's ``TypeError`` fall into
+        the tolerance above. Retrying cannot help - the key is wrong on every
+        episode - and swallowing it leaves the policy's required view absent
+        from the world with only a WARNING to say so.
         """
         add_camera = getattr(sim, "add_camera", None)
         if add_camera is None:
@@ -2863,6 +2950,16 @@ class LiberoAdapter(BenchmarkProtocol):
         existing = self._existing_camera_names(sim)
 
         for cam_name, cam_kwargs in self._cameras.items():
+            # Refuse a config this sim's add_camera cannot accept BEFORE either
+            # branch below. The skip branch is as affected as the add branch:
+            # it forwards the same mapping to _publish_camera_dims_to_world,
+            # which reads ``width`` / ``height`` by name, so a misspelled
+            # dimension silently publishes the 256x256 fallback for a
+            # model-side camera. A key no call can honor is a caller error no
+            # retry fixes, unlike the add_camera failures the loop below is
+            # deliberately tolerant of.
+            if config_error := camera_config_error(add_camera, cam_name, cam_kwargs):
+                raise ValueError(config_error)
             if cam_name in existing:
                 logger.debug("LiberoAdapter: camera %r already in sim; skipping install", cam_name)
                 # #168: even when we skip add_camera (because
