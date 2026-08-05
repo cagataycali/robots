@@ -34,7 +34,7 @@ from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 import numpy as np
 
-from strands_robots.simulation.base import SimEngine
+from strands_robots.simulation.base import SimEngine, unknown_kwargs_error
 from strands_robots.simulation.isaac.config import IsaacConfig
 from strands_robots.simulation.isaac.joint_names import demangle_usd_joint_names, urdf_joint_names
 from strands_robots.simulation.isaac.recording import IsaacRecordingMixin
@@ -233,6 +233,26 @@ class SimulationAppLaunchConfig(TypedDict, total=False):
 # throughout the docs; it normalizes to the canonical ``"box"`` (see #88).
 # A unit test pins this mapping so docs and code can't drift apart again.
 _SHAPE_ALIASES: dict[str, str] = {"cuboid": "box"}
+
+# Every keyword :meth:`IsaacSimulation.add_object` honors, including the one it
+# reads out of its own ``**kwargs`` (``scale``, the ``size`` alias). Doubles as
+# the "Valid:" hint in the unknown-keyword refusal, so it lists the declared
+# parameters too rather than only the residual-key vocabulary. A unit test pins
+# it against the live signature so a parameter added to ``add_object`` cannot
+# start being reported as unknown.
+_ADD_OBJECT_PARAMS: tuple[str, ...] = (
+    "color",
+    "is_static",
+    "mass",
+    "material",
+    "mesh_path",
+    "name",
+    "orientation",
+    "position",
+    "scale",
+    "shape",
+    "size",
+)
 
 
 def _rgb_png_block(rgb: np.ndarray) -> dict[str, Any] | None:
@@ -1912,6 +1932,10 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             Visual material/texture spec. NOT supported by the Isaac backend
             yet; a non-``None`` value is rejected loudly rather than silently
             dropped (use the MuJoCo backend for matte/textured surfaces).
+        **kwargs
+            ``scale`` (the ``size`` alias documented above) is the only
+            keyword read here. Any other keyword is refused rather than
+            dropped -- see Validation below.
 
         Validation
         ----------
@@ -1933,6 +1957,18 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
         ``_objects``, leaving the name permanently taken. A static object's mass
         is never read, so it is not validated - the same scope MuJoCo uses.
 
+        A keyword this method does not honor is refused by name on the shared
+        :func:`~strands_robots.simulation.base.unknown_kwargs_error` contract the
+        MuJoCo and Newton backends' discarding ``**kwargs`` sinks (``randomize``,
+        ``set_obs_noise``) already apply, so a caller mistake reports the same way
+        on every backend. Both sibling ``add_object`` implementations declare the
+        same ten parameters with no ``**kwargs`` at all, so Python refuses an
+        unknown keyword there with a ``TypeError``; here the keys reached a sink
+        that read ``scale`` and discarded the rest, turning ``heigth=0.3`` or
+        ``colour=[1, 0, 0]`` into a silent no-op reported as success. The check
+        runs before anything else so a refused call constructs no prim, takes no
+        lock and leaves the name reusable.
+
         Returns
         -------
         dict
@@ -1942,6 +1978,19 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             ``mass``, and ``is_static`` so an agent can confirm what
             actually landed on the stage without re-querying.
         """
+        # ``**kwargs`` exists for one keyword - the documented ``scale`` alias
+        # read below - and every other residual key used to be dropped. That
+        # made a misspelled or invented parameter a successful no-op on the
+        # backend's most-used scene surface: ``add_object(name="crate",
+        # heigth=0.3)`` returned ``status="success"`` having compiled the
+        # default extents, while the sibling backends' ``add_object`` - which
+        # declare the same ten parameters and no ``**kwargs`` - refuse the same
+        # call with a ``TypeError``. The action dispatcher deliberately skips
+        # its own unknown-key check for a ``**kwargs`` method and delegates it
+        # to the method (see ``_validate_and_build_kwargs``), so this is the
+        # only place it can run.
+        if err := unknown_kwargs_error("add_object", kwargs, _ADD_OBJECT_PARAMS):
+            return err
         if material is not None:
             return {
                 "status": "error",

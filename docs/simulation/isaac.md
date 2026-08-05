@@ -118,6 +118,19 @@ sim.destroy()
 backend selection is identical whether you go through `Robot()` or
 `create_simulation()`.
 
+`scale=` above is an accepted alias for `add_object(size=...)`, and it is the only
+extra keyword that method reads. Any other keyword is refused by name rather than
+dropped -- the same contract `IsaacConfig` applies to `create_simulation` kwargs,
+and the same verdict the MuJoCo and Newton backends give (they declare the same
+`add_object` parameters and no `**kwargs`, so an unknown keyword is a `TypeError`
+there):
+
+```python
+sim.add_object(name="cube", heigth=0.3)
+# {"status": "error", "content": [{"text":
+#   "Unknown parameter(s) ['heigth'] for action 'add_object'. Valid: [...]"}]}
+```
+
 ## Configuration (`IsaacConfig`)
 
 Keyword arguments to `create_simulation("isaac", ...)` (or
