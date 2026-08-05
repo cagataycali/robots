@@ -1,0 +1,75 @@
+{
+ "tree": "/tmp/pre1964",
+ "rows": {
+  "8000  (default)": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:8000/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:8000/ws/sdk",
+   "api_result": null
+  },
+  "9001": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:9001/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:9001/ws/sdk",
+   "api_result": null
+  },
+  "0": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:0/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:0/ws/sdk",
+   "api_result": null
+  },
+  "-1": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:-1/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:-1/ws/sdk",
+   "api_result": null
+  },
+  "99999": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:99999/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:99999/ws/sdk",
+   "api_result": null
+  },
+  "True": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:True/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:True/ws/sdk",
+   "api_result": null
+  },
+  "2.7": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:2.7/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:2.7/ws/sdk",
+   "api_result": null
+  },
+  "None": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:None/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:None/ws/sdk",
+   "api_result": null
+  }
+ },
+ "api_valid_down": {
+  "error": "<urlopen error [Errno 111] Connection refused>"
+ },
+ "api_out_of_range": {
+  "error": "<urlopen error [Errno 111] Connection refused>"
+ }
+}

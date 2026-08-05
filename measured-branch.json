@@ -1,0 +1,69 @@
+{
+ "tree": "/tmp/robots-mine",
+ "rows": {
+  "8000  (default)": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:8000/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:8000/ws/sdk",
+   "api_result": null
+  },
+  "9001": {
+   "construct": "accepted",
+   "reason": null,
+   "rest": "http://reachy-mini.local:9001/api/daemon/status",
+   "variant": "Zenoh (Wireless)",
+   "ws": "ws://reachy-mini.local:9001/ws/sdk",
+   "api_result": null
+  },
+  "0": {
+   "construct": "REFUSED",
+   "reason": "ReachyMiniDriver: invalid api_port: 0 (expected 1-65535)",
+   "rest": null,
+   "ws": null,
+   "variant": null
+  },
+  "-1": {
+   "construct": "REFUSED",
+   "reason": "ReachyMiniDriver: invalid api_port: -1 (expected 1-65535)",
+   "rest": null,
+   "ws": null,
+   "variant": null
+  },
+  "99999": {
+   "construct": "REFUSED",
+   "reason": "ReachyMiniDriver: invalid api_port: 99999 (expected 1-65535)",
+   "rest": null,
+   "ws": null,
+   "variant": null
+  },
+  "True": {
+   "construct": "REFUSED",
+   "reason": "ReachyMiniDriver: invalid api_port: True (expected 1-65535)",
+   "rest": null,
+   "ws": null,
+   "variant": null
+  },
+  "2.7": {
+   "construct": "REFUSED",
+   "reason": "ReachyMiniDriver: invalid api_port: 2.7 (expected 1-65535)",
+   "rest": null,
+   "ws": null,
+   "variant": null
+  },
+  "None": {
+   "construct": "REFUSED",
+   "reason": "ReachyMiniDriver: invalid api_port: None (expected 1-65535)",
+   "rest": null,
+   "ws": null,
+   "variant": null
+  }
+ },
+ "api_valid_down": {
+  "error": "<urlopen error [Errno 111] Connection refused>"
+ },
+ "api_out_of_range": {
+  "error": "<urlopen error [Errno 111] Connection refused>"
+ }
+}
