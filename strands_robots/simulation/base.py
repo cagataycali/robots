@@ -52,6 +52,7 @@ from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
     is_boolean,
+    non_negative_count_error,
     positive_count_error,
     positive_finite_number_error,
     sequence_length,
@@ -2834,7 +2835,8 @@ class SimEngine(ABC):
         still open).
 
         Args:
-            expected: The episode count the caller intended to record.
+            expected: The episode count the caller intended to record. A
+                non-negative int; anything else is reported as an error dict.
 
         Returns:
             Standard status dict. ``status`` is ``"success"`` when the parquet
@@ -2851,13 +2853,12 @@ class SimEngine(ABC):
             since the episodes found are then only a lower bound. An unreadable
             or corrupt parquet is reported as this same error dict, never raised.
         """
-        if not isinstance(expected, int) or expected < 0:
-            return {
-                "status": "error",
-                "content": [
-                    {"text": f"verify_dataset_episodes: expected must be a non-negative int, got {expected!r}."}
-                ],
-            }
+        # Shares the count domain with the programmatic
+        # :func:`strands_robots.verify_dataset.verify_dataset` gate rather than
+        # re-deriving it: one rule for one question, so neither surface can accept
+        # an episode count the other refuses.
+        if error := non_negative_count_error(expected, "expected", "verify_dataset_episodes"):
+            return {"status": "error", "content": [{"text": error}]}
 
         root = self._active_dataset_root()
         if not root:

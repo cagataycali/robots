@@ -340,6 +340,17 @@ never written. It resolves each camera's MP4 from `meta/info.json`'s
 `strands_robots.verify_dataset.verify_dataset(root, expected=None, min_frames=1, check_videos=True)`,
 which returns the same report dict.
 
+`--expected` and `--min-frames` are both non-negative integers, and each has a
+meaningful `0`: `--expected 0` asks that a dataset be empty, and `--min-frames 0`
+skips the per-episode length check (useful when the writer omits the `length`
+column). Anything else - a negative threshold, a fraction, a non-finite value -
+is reported as a problem and exits non-zero, rather than being applied. That
+matters for `--min-frames` specifically: the length check runs only when the
+threshold is above zero, so a value that is not a usable count would otherwise
+switch the check off and certify a dataset holding a zero-length episode. The
+same domain backs `verify_dataset_episodes(expected=...)`, so neither surface
+accepts an episode count the other refuses.
+
 `verify-dataset` always produces a report - it never crashes on the corruption
 it exists to flag. A corrupt or foreign `meta/episodes` parquet, a non-v3
 `video_path` template, or a truncated / unreadable MP4 is reported as a problem

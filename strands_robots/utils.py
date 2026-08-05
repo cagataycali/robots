@@ -1129,6 +1129,15 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
       ``torch.manual_seed`` reduces a negative seed modulo ``2**64`` (so ``-1``
       silently becomes ``2**64 - 1`` and collides with a seed a caller could
       have named), while NumPy's legacy seeder refuses a negative or a float.
+    * The episode counts of the dataset-integrity gate
+      (:func:`strands_robots.verify_dataset.verify_dataset`'s ``expected`` and
+      ``min_frames``, and the sim facade's
+      :meth:`~strands_robots.simulation.base.SimEngine.verify_dataset_episodes`).
+      ``expected=0`` asks that a dataset be empty and ``min_frames=0`` skips the
+      per-episode length check, so ``0`` selects a mode there rather than
+      degenerating one. A value outside the domain cannot: the length check runs
+      only for a threshold above zero, so a negative or non-finite one disables
+      the check instead of failing it.
 
     Refusing ``0`` would reject the common configuration for both, which is why
     this is a separate domain rather than a caller of
