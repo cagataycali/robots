@@ -61,6 +61,11 @@ print(server.port)
 server.stop()
 ```
 
+`port` is an `int` in `[1, 65535]`, plus `0` for the ephemeral bind above. A
+value outside that - a negative, an out-of-range number, a float, a `bool`, a
+string - is refused by the constructor and by `--port`, before any policy is
+built, rather than reaching the socket.
+
 The server binds `127.0.0.1` by default. Set `host="0.0.0.0"` to accept remote
 connections and wrap the link in tailscale / wireguard for production - the v1
 transport is plaintext (auth/TLS is out of scope, see Non-goals).
@@ -82,6 +87,14 @@ The server endpoint is set via `endpoint=` (with a `host=`/`port=` fallback).
 forwarded unchanged, but passing the endpoint under any other name (e.g. `uri=`)
 logs a WARNING naming the ignored kwarg and the endpoint actually in use, rather
 than silently connecting to the default `ws://127.0.0.1:8765`.
+
+When `port=` is the effective spelling it must be an `int` in `[1, 65535]`, and
+is refused before the endpoint is built. Unlike the server the client cannot
+accept `0`: asking the kernel for a free port is something only the binding side
+can do, so there is nothing for a client to dial. Refusing it here matters
+because a WebSocket target is only resolved on first use - an unusable port is
+not rejected by the transport, it surfaces later as an unreachable server and
+implicates the service you were trying to reach.
 
 Then drive it exactly like a local policy. In simulation:
 

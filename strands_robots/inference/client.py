@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error
+from strands_robots.utils import name_list_error, tcp_port_error
 
 if TYPE_CHECKING:
     from websockets.sync.client import ClientConnection
@@ -56,7 +56,11 @@ class RemotePolicy(Policy):
         endpoint: Full server URL, e.g. ``ws://gpu-box:8765``. When given it
             takes precedence over ``host``/``port``.
         host: Server host (used when ``endpoint`` is not given).
-        port: Server port (used when ``endpoint`` is not given).
+        port: Server port (used when ``endpoint`` is not given). Must be an
+            ``int`` in ``[1, 65535]``: this client has to dial the port, so
+            unlike :class:`~strands_robots.inference.PolicyServer` - which
+            binds one - it cannot accept ``0``, the request for an ephemeral
+            port that only the server side can make.
         connect_timeout: Seconds to wait for the WebSocket handshake.
         request_timeout: Seconds to wait for a reply to each request.
 
@@ -66,6 +70,7 @@ class RemotePolicy(Policy):
     otherwise leave the client silently connected to the default endpoint.
 
     Raises:
+        ValueError: If ``port`` cannot address a server to dial.
         ConnectionError: On first use, if the server cannot be reached.
     """
 
@@ -79,6 +84,15 @@ class RemotePolicy(Policy):
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         **ignored_kwargs: Any,
     ) -> None:
+        # ``port`` is interpolated into the URI verbatim, and a WebSocket target
+        # is only resolved on first use - so an unusable value is not refused by
+        # the transport, it fails much later as an unreachable server and
+        # implicates the service the caller was trying to reach. Refuse it while
+        # the caller still holds the value, before ``uri`` exists at all.
+        # ``endpoint`` supersedes ``host``/``port``, so the port is validated
+        # only when it is the effective spelling.
+        if not endpoint and (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
+            raise ValueError(port_error)
         self.uri = endpoint if endpoint else f"ws://{host}:{port}"
         if not self.uri.startswith(("ws://", "wss://")):
             self.uri = f"ws://{self.uri}"
