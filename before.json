@@ -1,0 +1,40 @@
+{
+  "tree": "/tmp/pre1977",
+  "requested": [
+    0.3,
+    0.3,
+    0.3
+  ],
+  "cases": {
+    "scale (documented alias)": {
+      "status": "success",
+      "text": "Object 'crate' added (shape=box, pos=[0.0, 0.0, 0.5]).",
+      "compiled": [
+        0.3,
+        0.3,
+        0.3
+      ],
+      "json_size": [
+        0.3,
+        0.3,
+        0.3
+      ],
+      "registered": true
+    },
+    "extents (plausible, wrong)": {
+      "status": "success",
+      "text": "Object 'crate' added (shape=box, pos=[0.0, 0.0, 0.5]).",
+      "compiled": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "json_size": [
+        0.05,
+        0.05,
+        0.05
+      ],
+      "registered": true
+    }
+  }
+}

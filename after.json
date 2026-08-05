@@ -1,0 +1,32 @@
+{
+  "tree": "/tmp/robots-mine",
+  "requested": [
+    0.3,
+    0.3,
+    0.3
+  ],
+  "cases": {
+    "scale (documented alias)": {
+      "status": "success",
+      "text": "Object 'crate' added (shape=box, pos=[0.0, 0.0, 0.5]).",
+      "compiled": [
+        0.3,
+        0.3,
+        0.3
+      ],
+      "json_size": [
+        0.3,
+        0.3,
+        0.3
+      ],
+      "registered": true
+    },
+    "extents (plausible, wrong)": {
+      "status": "error",
+      "text": "Unknown parameter(s) ['extents'] for action 'add_object'. Valid: ['color', 'is_static', 'mass', 'material', 'mesh_path', 'name', 'orientation', 'position', 'scale', 'shape', 'size']",
+      "compiled": null,
+      "json_size": null,
+      "registered": false
+    }
+  }
+}
