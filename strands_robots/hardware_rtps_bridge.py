@@ -44,7 +44,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.ros_telemetry import RosTelemetryBase
-from strands_robots.utils import dds_domain_id_error, require_optional
+from strands_robots.utils import dds_domain_id_error, positive_finite_number_error, require_optional
 
 if TYPE_CHECKING:
     import numpy as np
@@ -112,6 +112,12 @@ class HardwareRtpsBridge(RosTelemetryBase):
             the bound robot's name (the namespace we publish ``joint_states``
             under).
         poll_period: Seconds between inbound command reads on the poll thread.
+            Only a positive finite number paces a loop. It is the sole pacing
+            of ``_poll_loop``, handed to ``Event.wait``, where ``0``, a
+            negative and ``nan`` all return immediately - turning the thread
+            into a busy-spin with no bound - and ``inf`` raises
+            ``OverflowError`` out of it, killing the loop while the bridge
+            reports a successful construction.
         joint_limits: Optional ``{motor: (min, max)}`` clamp ranges. When set,
             an inbound ``joint_command`` whose ANY commanded joint falls outside
             its declared range is rejected whole (no partial application), so a
@@ -127,8 +133,9 @@ class HardwareRtpsBridge(RosTelemetryBase):
 
     Raises:
         ImportError: If ``cyclonedds`` (the ``[ros2]`` extra) is not installed.
-        ValueError: If ``domain_id`` is outside ``[0, 232]`` (checked before
-            the ``cyclonedds`` probe, so the same caller mistake reports
+        ValueError: If ``domain_id`` is outside ``[0, 232]`` or ``poll_period``
+            is not a positive finite number (both checked before the
+            ``cyclonedds`` probe, so the same caller mistake reports
             identically on an install without the extra), if ``joint_limits`` /
             ``dds_security_config`` is malformed, or if commands are enabled
             with neither a security config nor the explicit insecure opt-out.
@@ -149,6 +156,12 @@ class HardwareRtpsBridge(RosTelemetryBase):
         # mistake reports identically whether or not the [ros2] extra is
         # installed - and so it is answered before any DDS state is built.
         if error := dds_domain_id_error(domain_id, "domain_id", type(self).__name__):
+            raise ValueError(error)
+
+        # The poll period is answered here too, for the same two reasons: it is
+        # the only pacing ``_poll_loop`` has, and a value that cannot pace a
+        # loop is not made usable by having a transport to poll.
+        if error := positive_finite_number_error(poll_period, "poll_period", type(self).__name__):
             raise ValueError(error)
 
         # cyclonedds is the only dependency - no rclpy, no sourced ROS 2 distro.
@@ -207,6 +220,10 @@ class HardwareRtpsBridge(RosTelemetryBase):
         self._JointState = get_type(_JOINT_STATE_TYPE)
         self._Image = get_type(_IMAGE_TYPE)
 
+        # ``float`` after the guard rather than instead of it: the shared domain
+        # accepts any real scalar - a ``np.float32`` read from a config array is
+        # documented as usable - and ``Event.wait`` rejects ``np.float32``
+        # outright, so the conversion is what makes an accepted value consumable.
         self._poll_period = float(poll_period)
         self._command_reader: Any = None
         self._stop = threading.Event()
