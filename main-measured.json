@@ -1,0 +1,76 @@
+{
+  "tree": "/tmp/pre1949",
+  "with_torch": {
+    "None": {
+      "kind": "raised",
+      "msg": "TypeError: int() argument must be a string, a bytes-like object or a real number, not 'NoneType'",
+      "random_moved": true,
+      "numpy_moved": true
+    },
+    "2.5": {
+      "kind": "refused",
+      "msg": "set_eval_seed: seed must be a non-negative integer or None, got 2.5 (None draws fresh entropy)",
+      "random_moved": false,
+      "numpy_moved": false
+    },
+    "7": {
+      "kind": "accepted",
+      "msg": "",
+      "random_moved": true,
+      "numpy_moved": true
+    },
+    "MAX+1": {
+      "kind": "refused",
+      "msg": "set_eval_seed: seed must be an integer in [0, 4294967295] or None, got 4294967296 (a rollout seed is applied to the legacy NumPy global RNG, which refuses a larger value)",
+      "random_moved": false,
+      "numpy_moved": false
+    }
+  },
+  "without_torch": {
+    "None": {
+      "kind": "accepted",
+      "msg": "",
+      "random_moved": true,
+      "numpy_moved": true
+    },
+    "2.5": {
+      "kind": "refused",
+      "msg": "set_eval_seed: seed must be a non-negative integer or None, got 2.5 (None draws fresh entropy)",
+      "random_moved": false,
+      "numpy_moved": false
+    },
+    "7": {
+      "kind": "accepted",
+      "msg": "",
+      "random_moved": true,
+      "numpy_moved": true
+    },
+    "MAX+1": {
+      "kind": "refused",
+      "msg": "set_eval_seed: seed must be an integer in [0, 4294967295] or None, got 4294967296 (a rollout seed is applied to the legacy NumPy global RNG, which refuses a larger value)",
+      "random_moved": false,
+      "numpy_moved": false
+    }
+  },
+  "domain": {
+    "None": null,
+    "2.5": "set_eval_seed: seed must be a non-negative integer or None, got 2.5 (None draws fresh entropy)",
+    "7": null,
+    "MAX+1": "set_eval_seed: seed must be an integer in [0, 4294967295] or None, got 4294967296 (a rollout seed is applied to the legacy NumPy global RNG, which refuses a larger value)"
+  },
+  "default_msgs": {
+    "2.5": "randomize: seed must be a non-negative integer or None, got 2.5 (None draws fresh entropy)",
+    "-1": "randomize: seed must be a non-negative integer or None, got -1 (None draws fresh entropy)",
+    "'42'": "randomize: seed must be a non-negative integer or None, got '42' (None draws fresh entropy)",
+    "True": "randomize: seed must be a non-negative integer or None, got True (None draws fresh entropy)",
+    "nan": "randomize: seed must be a non-negative integer or None, got nan (None draws fresh entropy)"
+  },
+  "default_ceiling": "run_policy: seed must be an integer in [0, 4294967295] or None, got 4294967296 (a rollout seed is applied to the legacy NumPy global RNG, which refuses a larger value)",
+  "facade_none_accepted": true,
+  "randomize_none_accepted": true,
+  "valid_seeds_reproducible": {
+    "0": true,
+    "7": true,
+    "4294967295": true
+  }
+}
