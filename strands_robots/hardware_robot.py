@@ -37,7 +37,12 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolResult, ToolSpec, ToolUse
 
 from strands_robots.teleop_mixin import TeleopMixin
-from strands_robots.utils import positive_count_error, positive_finite_number_error, require_optional
+from strands_robots.utils import (
+    dds_domain_id_error,
+    positive_count_error,
+    positive_finite_number_error,
+    require_optional,
+)
 
 if TYPE_CHECKING:
     from lerobot.robots.config import RobotConfig
@@ -451,6 +456,8 @@ class Robot(TeleopMixin, AgentTool):
                 missing. Defaults to False - the robot never touches ROS 2,
                 so disabling the bridge is simply the default (opt-in).
             ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+                Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
+                discovery ports from it, and 233 lands past the end of the port space.
             ros2_commands: When True (default), the bridge also subscribes to
                 ``/<robot>/joint_command`` and forwards inbound messages to
                 ``send_action`` so an external ROS 2 stack can drive the real
@@ -667,6 +674,8 @@ class Robot(TeleopMixin, AgentTool):
         Args:
             ros2_bridge: Enable the ROS 2 bridge for this robot.
             ros2_domain: ROS 2 / DDS domain id to publish on.
+                Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
+                discovery ports from it, and 233 lands past the end of the port space.
             ros2_commands: When True (default), also subscribe to
                 ``joint_command`` and drive the arm; False for read-only.
             ros2_transport: ``"rclpy"`` or ``"rtps"`` (see above).
@@ -679,13 +688,18 @@ class Robot(TeleopMixin, AgentTool):
                 layer, not by a config dict).
 
         Raises:
-            ValueError: If ``ros2_transport`` is not ``"rclpy"`` or ``"rtps"``;
+            ValueError: If ``ros2_domain`` is outside ``[0, 232]``; if
+                ``ros2_transport`` is not ``"rclpy"`` or ``"rtps"``;
                 if ``joint_limits`` / ``dds_security_config`` are supplied with
                 ``ros2_bridge=False``; or if ``dds_security_config`` is supplied
                 with ``ros2_transport="rclpy"``.
         """
         self._ros2_bridge_enabled = bool(ros2_bridge)
-        self._ros2_domain = int(ros2_domain)
+        # A domain id outside the RTPS port map cannot be published on by either
+        # transport, so refuse it here rather than letting it reach one of them.
+        if error := dds_domain_id_error(ros2_domain, "ros2_domain", type(self).__name__):
+            raise ValueError(error)
+        self._ros2_domain = ros2_domain
         self._ros2_transport = ros2_transport
         self._ros_bridge: Any = None
         if not self._ros2_bridge_enabled:

@@ -69,6 +69,8 @@ class HardwareRosBridge(RosTelemetryBridge):
             that only publish (the per-step control-loop path) opt out of the
             inbound half entirely.
         domain_id: ROS 2 domain (``ROS_DOMAIN_ID``) to publish/subscribe on.
+            Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
+            discovery ports from it, and 233 lands past the end of the port space.
         node_name: Internal rclpy node name (defaults to ``strands_hardware``).
         qos_depth: Depth of the publishers'/subscription's KEEP_LAST history.
         enable_commands: When True (default) and a ``robot`` is bound, subscribe
@@ -85,8 +87,9 @@ class HardwareRosBridge(RosTelemetryBridge):
             single out-of-range joint can never drive part of the arm.
 
     Raises:
-        ValueError: If ``joint_limits`` is not a ``{motor: (min, max)}`` mapping
-            of numeric pairs with ``min <= max``.
+        ValueError: If ``domain_id`` is outside ``[0, 232]``, or if
+            ``joint_limits`` is not a ``{motor: (min, max)}`` mapping of numeric
+            pairs with ``min <= max``.
     """
 
     default_node_name = "strands_hardware"

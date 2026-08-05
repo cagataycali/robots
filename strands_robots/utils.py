@@ -1166,6 +1166,63 @@ def non_negative_count_error(value: Any, param: str, context: str) -> str | None
     return None
 
 
+#: Highest DDS domain id whose RTPS discovery ports fit the 16-bit port space.
+#:
+#: RTPS derives every discovery port from the domain id (RTPS 2.2 sec. 9.6.1.1):
+#: ``PB + DG * domain_id + d0`` for the SPDP multicast port and
+#: ``PB + DG * domain_id + d1 + PG * participant_id`` for the unicast one. With
+#: the standard values (``PB=7400``, ``DG=250``, ``d0=0``, ``d1=10``,
+#: ``PG=2``) domain 232 lands on ports 65400/65410 and domain 233 lands on
+#: 65650 - past the end of the port space, so there is nothing to bind. The
+#: bound is the protocol's, not a policy choice.
+MAX_DDS_DOMAIN_ID = 232
+
+
+def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` cannot name a DDS domain.
+
+    Shared domain for every caller-supplied ROS 2 / DDS domain id: the hardware
+    ``Robot``'s ``ros2_domain``, a simulation backend's ``ros2_domain``, and the
+    ``domain_id`` the rclpy telemetry bridge
+    (:class:`~strands_robots.ros_telemetry.RosTelemetryBridge`) and the pure-RTPS
+    bridge (:class:`~strands_robots.hardware_rtps_bridge.HardwareRtpsBridge`)
+    publish on. A domain id indexes the RTPS port map, so only an ``int`` in
+    ``[0, MAX_DDS_DOMAIN_ID]`` names one - see :data:`MAX_DDS_DOMAIN_ID` for the
+    arithmetic that fixes the ceiling.
+
+    The rclpy bridge makes the range load-bearing at the boundary rather than at
+    the participant: it pins the domain by writing ``ROS_DOMAIN_ID`` into the
+    process environment, and that write happens before ``rclpy`` is even
+    imported. So a value outside the range is not refused by the transport - it
+    is published to the whole process, where it outlives the call that set it
+    and steers every later participant (and every subprocess that inherits the
+    environment) at a domain nothing can be reached on.
+
+    It lives here rather than beside one of its callers for the same reason
+    :func:`tcp_port_error` does: those callers sit in different layers
+    (:mod:`strands_robots.hardware_robot`, :mod:`strands_robots.simulation` and
+    the two bridge modules) and the accepted domain must not diverge between
+    them - the same domain id cannot be refused by the rclpy bridge and accepted
+    by the RTPS one, when the two exist to advertise the same topics.
+
+    ``bool`` is rejected explicitly. It is an ``int`` subclass, so a bare
+    ``0 <= value <= 232`` test lets ``True`` through as a silent domain 1 and
+    ``False`` through as domain 0 - a domain the caller never named.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter name it came from, used in the message.
+        context: Message prefix identifying the surface that received it,
+            usually the class name for a constructor parameter.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_DDS_DOMAIN_ID:
+        return f"{context}: invalid {param}: {_refusal_repr(value)} (expected 0-{MAX_DDS_DOMAIN_ID})"
+    return None
+
+
 def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any], str | None]:
     """Read ``value`` into a list once, or return why the read could not finish.
 

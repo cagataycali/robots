@@ -31,7 +31,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import require_optional
+from strands_robots.utils import dds_domain_id_error, require_optional
 
 if TYPE_CHECKING:
     import numpy as np
@@ -310,10 +310,15 @@ class RosTelemetryBridge(RosTelemetryBase):
 
     Args:
         domain_id: ROS 2 domain (``ROS_DOMAIN_ID``) the bridge publishes on.
+            Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
+            discovery ports from it, and 233 lands past the end of the port space.
         node_name: Name of the internal rclpy node.
         qos_depth: Depth of the publishers' KEEP_LAST history.
 
     Raises:
+        ValueError: If ``domain_id`` is outside ``[0, 232]``. Checked before the
+            process-wide ``ROS_DOMAIN_ID`` write, so a refused domain leaves the
+            environment as it found it.
         ImportError: When ``rclpy`` / the ROS 2 message packages are not
             importable, with an install hint (system ROS 2 or the docker image).
     """
@@ -322,10 +327,17 @@ class RosTelemetryBridge(RosTelemetryBase):
     default_node_name = "strands_robots"
 
     def __init__(self, domain_id: int = 0, node_name: str | None = None, qos_depth: int = 10) -> None:
+        # Refuse a domain id outside the RTPS port map BEFORE writing it. The
+        # write below is process-wide and lands ahead of the rclpy import, so an
+        # unusable value would otherwise outlive this call and steer every later
+        # participant - a value the transport is never given the chance to reject.
+        if error := dds_domain_id_error(domain_id, "domain_id", type(self).__name__):
+            raise ValueError(error)
+
         # Pin the domain before rclpy reads it. Set it unconditionally so the
         # bridge publishes where the caller asked, not where the shell happened
         # to point.
-        os.environ["ROS_DOMAIN_ID"] = str(int(domain_id))
+        os.environ["ROS_DOMAIN_ID"] = str(domain_id)
 
         rclpy_mod: Any = require_optional(
             "rclpy", extra="ros2", purpose="the ROS 2 telemetry bridge (ros2_bridge=True)"

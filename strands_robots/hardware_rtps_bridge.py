@@ -44,7 +44,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.ros_telemetry import RosTelemetryBase
-from strands_robots.utils import require_optional
+from strands_robots.utils import dds_domain_id_error, require_optional
 
 if TYPE_CHECKING:
     import numpy as np
@@ -104,6 +104,8 @@ class HardwareRtpsBridge(RosTelemetryBase):
             ``None``, no command surface is created (telemetry-only), mirroring
             the rclpy bridge's pure-publisher mode.
         domain_id: ROS 2 / DDS domain id to publish/subscribe on.
+            Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
+            discovery ports from it, and 233 lands past the end of the port space.
         enable_commands: When True (default) and a ``robot`` is bound, subscribe
             to ``/<robot>/joint_command`` and drive the arm.
         command_robot_name: Topic namespace for the command topic; defaults to
@@ -125,9 +127,11 @@ class HardwareRtpsBridge(RosTelemetryBase):
 
     Raises:
         ImportError: If ``cyclonedds`` (the ``[ros2]`` extra) is not installed.
-        ValueError: If ``joint_limits`` / ``dds_security_config`` is malformed,
-            or commands are enabled with neither a security config nor the
-            explicit insecure opt-out.
+        ValueError: If ``domain_id`` is outside ``[0, 232]`` (checked before
+            the ``cyclonedds`` probe, so the same caller mistake reports
+            identically on an install without the extra), if ``joint_limits`` /
+            ``dds_security_config`` is malformed, or if commands are enabled
+            with neither a security config nor the explicit insecure opt-out.
     """
 
     def __init__(
@@ -141,6 +145,12 @@ class HardwareRtpsBridge(RosTelemetryBase):
         joint_limits: dict[str, tuple[float, float]] | None = None,
         dds_security_config: dict[str, str] | None = None,
     ) -> None:
+        # Refuse a domain id outside the RTPS port map first, so the same caller
+        # mistake reports identically whether or not the [ros2] extra is
+        # installed - and so it is answered before any DDS state is built.
+        if error := dds_domain_id_error(domain_id, "domain_id", type(self).__name__):
+            raise ValueError(error)
+
         # cyclonedds is the only dependency - no rclpy, no sourced ROS 2 distro.
         require_optional(
             "cyclonedds",
@@ -156,7 +166,7 @@ class HardwareRtpsBridge(RosTelemetryBase):
         self._dds_topic_name = dds_topic_name
 
         self._robot = robot
-        self._domain_id = int(domain_id)
+        self._domain_id = domain_id
 
         # Whether this bridge exposes an inbound (arm-driving) command surface.
         # Resolved BEFORE the participant is built so the DDS Security gate and

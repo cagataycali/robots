@@ -51,6 +51,7 @@ if TYPE_CHECKING:
 from strands_robots.simulation.policy_runner import PolicyRunner, VideoConfig
 from strands_robots.utils import (
     FREE_CAMERA_TOKENS,
+    dds_domain_id_error,
     is_boolean,
     non_negative_count_error,
     positive_count_error,
@@ -572,9 +573,15 @@ class SimEngine(ABC):
                 an :class:`ImportError` is raised here if it is missing.
                 Defaults to False - the sim never touches ROS 2.
             ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+                Only an ``int`` in ``[0, 232]`` names a domain; a value
+                outside the RTPS port map raises :class:`ValueError`.
         """
         self._ros2_bridge_enabled = bool(ros2_bridge)
-        self._ros2_domain = int(ros2_domain)
+        # Refuse a domain id outside the RTPS port map here, so a backend that
+        # only publishes later still rejects it at construction.
+        if error := dds_domain_id_error(ros2_domain, "ros2_domain", type(self).__name__):
+            raise ValueError(error)
+        self._ros2_domain = ros2_domain
         self._ros_bridge: Any = None
         if self._ros2_bridge_enabled:
             from strands_robots.simulation.ros_bridge import SimRosBridge
