@@ -193,6 +193,38 @@ hatch run format            # ruff check --fix, ruff format
    trace - until a `Status` written on the strength of it silently overwrites a
    value that was never read. Read a field before you set it, and treat an
    empty project read as unknown rather than as absent.
+   **A closing keyword in a PR *title* links nothing.** GitHub parses closing
+   keywords from the body and from commit messages, never from the title. A title
+   ending `... (closes #1891)` therefore leaves that issue open on merge, and
+   nothing on either side says the claim was dropped: a bare cross-reference
+   renders identically to the start of a closing link, and the field that would
+   contradict the title is one nobody opens. Measured over the last 100 pull
+   requests here - 29 titles carry a keyword before an issue number, 27 also
+   linked the issue, and two did not:
+
+   | pull request | title claims | links | what it cost |
+   |---|---|---|---|
+   | #1894 | `closes #1891` | none | #1891 was still open two days after the merge |
+   | #1923 | `closes #1912` | none | #1912 had to be closed by hand |
+
+   So put the keyword in the **body** - a line reading `Closes #N` - and leave the
+   title free to describe the change. This is now surfaced by
+   `.github/workflows/closing-reference.yml`, the same documented-and-enforced-by-
+   nothing shape as the changelog rule in step 3 before #1784.
+
+   It deliberately does **not** scan the body for the keyword, because that
+   implementation passes the incident it was written for: #1894's body *does* say
+   `closes #1891` - inside a code span, which GitHub does not link - so a text
+   scan and GitHub disagree on exactly the pull request that matters. The gate
+   compares the title against `closingIssuesReferences`, which is the link set
+   itself. Two consequences worth knowing when you write a description: a keyword
+   in a code span or a fenced block links nothing, and one keyword governs one
+   number, so `fixes #12 and #13` closes only #12.
+
+   The gate is self-clearing - editing the description creates the link and the
+   check re-runs on `edited` - and it says nothing about a pull request that
+   claims nothing anywhere. Whether every change must trace to an issue is the
+   separate question #1961 raises, where the board-coverage half of this lives.
 7. Squash merge into `main`
 8. **Verify a PR's state by reading it back - before and after you change it.**
    Neither direction can be inferred:

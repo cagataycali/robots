@@ -55,6 +55,22 @@ reintroduces one. Every other ``pull_request`` workflow in the repository
 ``llm-input-safety``) already takes that default; ``pr-and-push.yml`` was the
 only one that did not, and it is the only one holding a required check.
 
+One workflow is exempt, and the shape of the exemption matters more than the
+entry. The rule above is a statement about *what a workflow reads*: a run whose
+input is the tree learns nothing from an event that cannot change the tree.
+``closing-reference.yml`` does not read the tree -- its inputs are the pull
+request's title and its ``closingIssuesReferences``, and ``edited`` is the only
+event that changes either. It is also the event that check's own remedy produces:
+moving a closing keyword out of the title and into the body changes no sha, so
+without ``edited`` the report would ask for a fix it could never observe.
+
+The measured harm cannot follow from it either, and that is a premise rather than
+an assurance: cancellation is per concurrency group, ``pr-and-push.yml`` keys its
+group on its own ``github.workflow`` name and does not subscribe to ``edited``,
+so an edit starts no run in that group. Both halves are read back by
+``test_an_exempt_workflow_cannot_cancel_the_required_check``, so an exemption
+cannot outlive the reasoning that admitted it.
+
 ``test_no_workflow_gates_on_draft_status`` is the premise behind dropping
 ``ready_for_review`` specifically: nothing in the fleet skips a draft pull
 request, so a draft's CI has already run and marking it ready re-runs the same
@@ -82,6 +98,19 @@ _REQUIRED_CHECK_WORKFLOW = _WORKFLOW_DIR / "pr-and-push.yml"
 #: for ``pull_request``, which is why omitting the key entirely is the preferred
 #: spelling: there is then no second copy of this list to drift from it.
 _SHA_CHANGING_TYPES = frozenset({"opened", "synchronize", "reopened"})
+
+#: Workflows whose input is not the tree, mapped to the sha-invariant activity
+#: types they consequently need. An entry here is not a waiver of the rule above
+#: but an application of it -- the rule asks whether an event can change what the
+#: workflow reads, and for these the answer is yes. Safety rests on the required
+#: check being unreachable by the event, which
+#: ``test_an_exempt_workflow_cannot_cancel_the_required_check`` reads back.
+_INPUT_IS_NOT_THE_TREE = {
+    # Reads the title and the link set (scripts/check_closing_reference.py), and
+    # ``edited`` is both the only event that changes them and the event its own
+    # remedy produces.
+    "closing-reference.yml": frozenset({"edited"}),
+}
 
 #: Matches a top-level trigger key inside an ``on:`` mapping, e.g.
 #: ``  pull_request:`` or ``  push:``.
@@ -138,6 +167,12 @@ def _pull_request_types(text: str) -> list[str] | None:
     return None
 
 
+def _workflow_name(text: str) -> str:
+    """Return a workflow's ``name:``, which is the ``github.workflow`` its concurrency group keys on."""
+    match = re.search(r"^name:\s*(?P<name>.+?)\s*$", text, re.MULTILINE)
+    return match.group("name") if match else ""
+
+
 def test_the_scanner_finds_the_pull_request_workflows() -> None:
     """Guard the pins below against a regex that quietly matches nothing.
 
@@ -170,7 +205,8 @@ def test_no_pull_request_trigger_subscribes_to_a_sha_invariant_type() -> None:
         types = _pull_request_types(path.read_text(encoding="utf-8"))
         if types is None:
             continue
-        extra = sorted(set(types) - _SHA_CHANGING_TYPES)
+        allowed = _SHA_CHANGING_TYPES | _INPUT_IS_NOT_THE_TREE.get(path.name, frozenset())
+        extra = sorted(set(types) - allowed)
         if extra:
             offenders[path.name] = extra
     assert not offenders, (
@@ -195,6 +231,34 @@ def test_the_required_check_workflow_takes_the_default_types() -> None:
         f"{_REQUIRED_CHECK_WORKFLOW.name} lists pull_request types explicitly ({types}); "
         "omit the key so there is one definition of which events can change a head sha"
     )
+
+
+def test_an_exempt_workflow_cannot_cancel_the_required_check() -> None:
+    """The premise every entry in :data:`_INPUT_IS_NOT_THE_TREE` rests on.
+
+    An exemption is safe only while the exempt event cannot reach the required
+    check, and that holds for two independent reasons which are both read back
+    here: the required check does not subscribe to the event, and cancellation is
+    scoped to a concurrency group keyed on the workflow's own name. If either
+    stops being true, the exempt workflow starts discarding the required check's
+    progress and this fails with the entry that did it.
+    """
+    required = _REQUIRED_CHECK_WORKFLOW.read_text(encoding="utf-8")
+    required_types = set(_pull_request_types(required) or _SHA_CHANGING_TYPES)
+
+    assert _INPUT_IS_NOT_THE_TREE, "the exemption table is empty; this pin has nothing to check"
+    for name, exempt_types in _INPUT_IS_NOT_THE_TREE.items():
+        path = _WORKFLOW_DIR / name
+        assert path.exists(), f"{name} is exempt but does not exist"
+        text = path.read_text(encoding="utf-8")
+
+        assert not exempt_types & required_types, (
+            f"{name} is exempt for {sorted(exempt_types)}, but the required check now subscribes to "
+            f"{sorted(exempt_types & required_types)} too, so those events do discard its run"
+        )
+        assert _workflow_name(text) != _workflow_name(required), (
+            f"{name} now shares the required check's workflow name, so it shares its concurrency group"
+        )
 
 
 def test_the_required_check_discards_its_in_flight_run() -> None:
