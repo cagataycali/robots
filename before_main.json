@@ -1,0 +1,89 @@
+{
+  "tree": "/tmp/pre1951",
+  "rows": [
+    {
+      "value": "8820",
+      "verdict": "accepted",
+      "client": "ws://127.0.0.1:8820",
+      "client_port": "8820",
+      "server_uri": "ws://127.0.0.1:8820",
+      "argv": "8820",
+      "agree": true,
+      "distinct": 1
+    },
+    {
+      "value": "2.7",
+      "verdict": "accepted",
+      "client": "ws://127.0.0.1:2",
+      "client_port": "2",
+      "server_uri": "ws://127.0.0.1:2.7",
+      "argv": "2.7",
+      "agree": false,
+      "distinct": 2
+    },
+    {
+      "value": "True",
+      "verdict": "accepted",
+      "client": "ws://127.0.0.1:1",
+      "client_port": "1",
+      "server_uri": "ws://127.0.0.1:True",
+      "argv": "True",
+      "agree": false,
+      "distinct": 2
+    },
+    {
+      "value": "0",
+      "verdict": "accepted",
+      "client": "ws://127.0.0.1:0",
+      "client_port": "0",
+      "server_uri": "ws://127.0.0.1:0",
+      "argv": "0",
+      "agree": true,
+      "distinct": 1
+    },
+    {
+      "value": "-1",
+      "verdict": "accepted",
+      "client": "ws://127.0.0.1:-1",
+      "client_port": "-1",
+      "server_uri": "ws://127.0.0.1:-1",
+      "argv": "-1",
+      "agree": true,
+      "distinct": 1
+    },
+    {
+      "value": "70000",
+      "verdict": "accepted",
+      "client": "ws://127.0.0.1:70000",
+      "client_port": "70000",
+      "server_uri": "ws://127.0.0.1:70000",
+      "argv": "70000",
+      "agree": true,
+      "distinct": 1
+    },
+    {
+      "value": "nan",
+      "verdict": "refused",
+      "exc": "ValueError",
+      "msg": "cannot convert float NaN to integer",
+      "agree": null,
+      "distinct": 0
+    },
+    {
+      "value": "'8820'",
+      "verdict": "accepted",
+      "client": "ws://127.0.0.1:8820",
+      "client_port": "8820",
+      "server_uri": "ws://127.0.0.1:8820",
+      "argv": "8820",
+      "agree": true,
+      "distinct": 1
+    }
+  ],
+  "vis": {
+    "8821": "8821",
+    "0": "viewer disabled",
+    "-1": "-1",
+    "True": "True"
+  }
+}

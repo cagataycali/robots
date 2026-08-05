@@ -1,0 +1,77 @@
+{
+  "tree": "/tmp/robots-mine",
+  "rows": [
+    {
+      "value": "8820",
+      "verdict": "accepted",
+      "client": "ws://127.0.0.1:8820",
+      "client_port": "8820",
+      "server_uri": "ws://127.0.0.1:8820",
+      "argv": "8820",
+      "agree": true,
+      "distinct": 1
+    },
+    {
+      "value": "2.7",
+      "verdict": "refused",
+      "exc": "ValueError",
+      "msg": "VeraConfig: invalid server_port: 2.7 (expected 1-65535)",
+      "agree": null,
+      "distinct": 0
+    },
+    {
+      "value": "True",
+      "verdict": "refused",
+      "exc": "ValueError",
+      "msg": "VeraConfig: invalid server_port: True (expected 1-65535)",
+      "agree": null,
+      "distinct": 0
+    },
+    {
+      "value": "0",
+      "verdict": "refused",
+      "exc": "ValueError",
+      "msg": "VeraConfig: invalid server_port: 0 (expected 1-65535)",
+      "agree": null,
+      "distinct": 0
+    },
+    {
+      "value": "-1",
+      "verdict": "refused",
+      "exc": "ValueError",
+      "msg": "VeraConfig: invalid server_port: -1 (expected 1-65535)",
+      "agree": null,
+      "distinct": 0
+    },
+    {
+      "value": "70000",
+      "verdict": "refused",
+      "exc": "ValueError",
+      "msg": "VeraConfig: invalid server_port: 70000 (expected 1-65535)",
+      "agree": null,
+      "distinct": 0
+    },
+    {
+      "value": "nan",
+      "verdict": "refused",
+      "exc": "ValueError",
+      "msg": "VeraConfig: invalid server_port: nan (expected 1-65535)",
+      "agree": null,
+      "distinct": 0
+    },
+    {
+      "value": "'8820'",
+      "verdict": "refused",
+      "exc": "ValueError",
+      "msg": "VeraConfig: invalid server_port: '8820' (expected 1-65535)",
+      "agree": null,
+      "distinct": 0
+    }
+  ],
+  "vis": {
+    "8821": "8821",
+    "0": "viewer disabled",
+    "-1": "refused: ValueError",
+    "True": "refused: ValueError"
+  }
+}
