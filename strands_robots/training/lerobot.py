@@ -550,7 +550,8 @@ class LerobotTrainer(Trainer):
         ``dataset_repo_id`` (for streaming) - an ``output_dir``, a usable run
         size (``steps`` / ``global_batch_size``), single-node only
         (``num_nodes == 1``), a ``val_episodes``
-        split below the dataset total, and that ``lerobot.scripts.lerobot_train``
+        split below the dataset total, usable LoRA hyperparameters when
+        ``method == "lora"``, and that ``lerobot.scripts.lerobot_train``
         is importable. ``extra['reward_model']`` switches to reward-model
         preflight; otherwise the default policy path is checked. Returns the
         problem list; empty means launchable. Read-only.
@@ -625,6 +626,8 @@ class LerobotTrainer(Trainer):
             )
             if split_err:
                 problems.append(split_err)
+
+        problems.extend(self._lora_hyperparameter_problems(spec))
 
         # lerobot must be importable to actually train.
         try:

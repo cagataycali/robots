@@ -53,6 +53,12 @@ ignores it must not report on it. What makes a shared gate the right home
 rather than a local test is the conversion: the count becomes a real-valued
 split fraction whose ceiling lerobot takes, so a comparison admits values that
 reserve a different number of episodes than the one asked for.
+
+:func:`lora_hyperparameter_problems` is the seventh, on the *adapter* axis:
+``lora_r`` and ``lora_alpha``, the rank and the scaling numerator of a LoRA
+fine-tune. It is scoped like :func:`run_size_problems` and narrowed once more -
+only the LeRobot backend reads either field, and only on its ``method == "lora"``
+branch, so a value a run's own strategy never reads must not be reported.
 """
 
 from __future__ import annotations
@@ -369,3 +375,74 @@ def validation_episodes_problems(spec: TrainSpec, *, context: str) -> list[str]:
         return []
     error = positive_count_error(spec.val_episodes, "val_episodes", context)
     return [] if error is None else [error]
+
+
+def lora_hyperparameter_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return LoRA adapter-hyperparameter problems for a :class:`TrainSpec`.
+
+    ``lora_r`` and ``lora_alpha`` are the rank and the scaling numerator of a
+    LoRA fine-tune: peft builds a rank-``r`` adapter and applies its update
+    scaled by ``lora_alpha / r``. The two fields fail in opposite ways, and only
+    one of them fails loudly:
+
+    * ``lora_r`` is refused by peft, but only from inside
+      ``get_peft_model`` - after the base model has been downloaded and loaded.
+      A non-positive rank raises ``ValueError: `r` should be a positive integer
+      value``, and a ``bool``/float/string one raises out of torch's tensor
+      allocation with a message naming neither the field nor the run.
+    * ``lora_alpha`` is **accepted for every unusable value**. It is only ever a
+      numerator, so nothing downstream compares it: ``lora_alpha=0`` builds the
+      adapter, reports its trainable parameters and trains them with a scaling
+      of ``0.0``, so the adapter provably cannot change the model's output - the
+      fine-tune runs to completion, writes checkpoints, and has learned nothing
+      that can ever be applied. A negative value applies the negation of what
+      the adapter learned, and ``True`` is a silent alpha of one.
+
+    The two paths that carry these fields also disagree about a fractional
+    value. In-process, peft accepts ``lora_alpha=2.7`` and scales by
+    ``2.7 / r``; on the argv-parity path the same value reaches lerobot's
+    ``PeftConfig``, whose ``r`` and ``lora_alpha`` are declared ``int``, and
+    draccus refuses it. So one spelling of one run honors a value the other
+    rejects.
+
+    A positive integer is therefore the only thing both paths can honor, and it
+    is checked against the same shared
+    :func:`~strands_robots.utils.positive_count_error` domain
+    :func:`run_size_problems` uses - the domain that also rejects ``bool``,
+    which a bare ``value < 1`` test would let through as a silent rank or alpha
+    of one.
+
+    ``None`` is the documented sentinel for "omit the option and keep peft's own
+    default" and is therefore not a problem, exactly as it is not one for
+    :func:`seed_problems` or :func:`validation_episodes_problems`.
+
+    Both fields are read only on the ``method == "lora"`` branch, so a spec that
+    carries them under another strategy reports nothing: the fields are inert
+    there, and refusing a value the run never reads would be a false rejection -
+    the same reason this is a separate gate from :func:`learning_rate_problems`
+    rather than part of it.
+
+    ``lora_target_modules`` is out of scope: it is a module-name string rather
+    than a count, and :func:`validate_train_inputs` already owns what may be
+    interpolated into a config field or an argv token.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        One problem per supplied-and-unusable adapter hyperparameter; empty when
+        the spec does not request LoRA or both values are usable.
+    """
+    if spec.method != "lora":
+        return []
+    problems: list[str] = []
+    for param, value in (("lora_r", spec.lora_r), ("lora_alpha", spec.lora_alpha)):
+        if value is None:
+            continue
+        error = positive_count_error(value, param, context)
+        if error is not None:
+            problems.append(error)
+    return problems

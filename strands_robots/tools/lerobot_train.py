@@ -401,7 +401,8 @@ def build_train_command(
         ValueError: if ``lora`` and ``train_expert_only`` are both set (both
             freeze the VLM and are mutually exclusive), if ``train_expert_only``
             is requested for a non-expert policy, if ``num_gpus < 1``, or if a
-            supplied ``steps`` / ``batch_size`` is not a positive integer.
+            supplied ``steps`` / ``batch_size`` - or, under ``lora``, a supplied
+            ``lora_r`` / ``lora_alpha`` - is not a positive integer.
     """
     if lora and train_expert_only:
         raise ValueError(
@@ -501,6 +502,17 @@ def build_train_command(
 
     if lora:
         cmd.append("--peft.method_type=LORA")
+        # The adapter's rank and scaling numerator, on the same shared count
+        # domain as the run-size knobs above. peft judges only the rank, and only
+        # from inside get_peft_model once the base model is loaded; lora_alpha is
+        # a bare numerator nothing compares, so alpha=0 trains an adapter whose
+        # scaling is 0.0 and which cannot change the model's output. Only checked
+        # under `lora`, since neither flag is emitted otherwise.
+        for lora_param, lora_value in (("lora_r", lora_r), ("lora_alpha", lora_alpha)):
+            if lora_value is not None:
+                lora_error = positive_count_error(lora_value, lora_param, "lerobot_train")
+                if lora_error:
+                    raise ValueError(lora_error)
         if lora_r is not None:
             cmd.append(f"--peft.r={lora_r}")
         if lora_alpha is not None:

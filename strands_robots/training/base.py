@@ -113,7 +113,13 @@ class TrainSpec:
             :meth:`Trainer.validate`.
         lora_r / lora_alpha / lora_target_modules: LoRA hyperparameters
             (used only when ``method == "lora"``). ``lora_target_modules=None``
-            means "use the policy's built-in default targets".
+            means "use the policy's built-in default targets". ``lora_r`` is the
+            adapter rank and ``lora_alpha`` the numerator of its ``lora_alpha /
+            lora_r`` scaling, so each must be a positive integer or ``None``
+            (keep peft's own default); a backend that reads them MUST check them
+            through :meth:`Trainer._lora_hyperparameter_problems` rather than
+            leave them to peft, which judges only the rank and only once the base
+            model is loaded.
         tune: Fine-grained component toggles for backends that expose them
             (GR00T: ``{"llm": bool, "visual": bool, "projector": bool,
             "diffusion": bool}``). Ignored by backends that don't.
@@ -389,6 +395,33 @@ class Trainer(ABC):
         from strands_robots.training._validate import validation_episodes_problems
 
         return validation_episodes_problems(spec, context=self.provider_name)
+
+    def _lora_hyperparameter_problems(self, spec: TrainSpec) -> list[str]:
+        """LoRA adapter preflight shared by every backend that reads it.
+
+        Returns a problem per supplied-and-unusable :attr:`TrainSpec.lora_r` /
+        :attr:`TrainSpec.lora_alpha`, against the same shared positive-count
+        domain :meth:`_run_size_problems` uses. A :meth:`validate`
+        implementation that reads either field MUST call this instead of leaving
+        the values to peft, because peft only judges one of them: it refuses a
+        non-positive ``lora_r`` from inside ``get_peft_model``, after the base
+        model is already loaded, while ``lora_alpha`` is a bare numerator that
+        nothing compares - ``lora_alpha=0`` trains an adapter whose scaling is
+        ``0.0`` and which therefore cannot change the model's output, and a
+        negative value applies the negation of what it learned.
+
+        A backend that does not read the fields MUST NOT call this: per
+        :class:`TrainSpec`, a backend ignores the fields it does not support, so
+        reporting on ones it never reads would be a false rejection. That is why
+        this is a separate gate from :meth:`_learning_rate_problems`, which every
+        backend does call.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import lora_hyperparameter_problems
+
+        return lora_hyperparameter_problems(spec, context=self.provider_name)
 
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
