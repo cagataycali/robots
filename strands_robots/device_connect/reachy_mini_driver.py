@@ -24,6 +24,7 @@ from strands_robots.device_connect.reachy_transport import (
     identity_pose,
     rpy_to_pose,
 )
+from strands_robots.utils import tcp_port_error
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,26 @@ class ReachyMiniDriver(DeviceDriver):
         prefix: str = "reachy_mini",
         api_port: int = 8000,
     ):
+        """Configure the driver for a Reachy Mini reachable at ``host``.
+
+        Args:
+            host: Hostname or IP of the Reachy Mini daemon.
+            prefix: Zenoh key prefix used by the Wireless variant.
+            api_port: TCP port the daemon serves its REST API and WebSocket on.
+                Must name a port: an ``int`` in ``[1, 65535]``.
+
+        Raises:
+            ValueError: If ``api_port`` cannot address a TCP port.
+        """
+        # Refused here rather than at first use, and before any base-class state
+        # is allocated. This port is interpolated verbatim into both the daemon
+        # REST URL (``reachy_transport.api``) and the Lite WebSocket target, and
+        # neither refuses it: ``api`` reports every failure as an ``{"error":
+        # ...}`` result rather than raising, so an unusable port is reported as
+        # an unreachable daemon - identically to a reachable port with the
+        # daemon down. Naming the port is the only point a caller can act on.
+        if (port_error := tcp_port_error(api_port, "api_port", type(self).__name__)) is not None:
+            raise ValueError(port_error)
         super().__init__()
         self._host = host
         self._prefix = prefix
