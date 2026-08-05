@@ -1,7 +1,9 @@
 """Shared test fixtures and configuration.
 
-Installs a torch mock (if real torch is unavailable) so CI can run
-all unit tests without PyTorch installed.
+Installs a numpy-backed torch stand-in when real torch is unavailable, so the
+parts of the suite that need only a thin tensor surface run without the ~2GB
+dependency. That stand-in is a subset rather than a replacement: a test reaching
+outside it is skipped with the attribute and the remedy named, not failed.
 
 Also disables the Zenoh mesh by default during the test suite so the
 ``Robot()`` / ``Simulation()`` factory does not spin up real Zenoh

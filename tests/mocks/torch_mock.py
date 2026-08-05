@@ -1,9 +1,19 @@
-"""Comprehensive torch mock for CI environments without PyTorch.
+"""Numpy-backed torch stand-in for environments without PyTorch.
 
-Used by conftest.py to enable running all unit tests in CI without installing
-PyTorch (~2GB). The mock provides numpy-backed replacements sufficient for
-testing policy logic, observation mapping, and action conversion without
-actual GPU inference.
+``conftest`` installs this when ``import torch`` fails, so the parts of the suite
+that need only a thin tensor surface still run without the ~2GB dependency. It is
+a *subset*, not a replacement: it covers policy logic, observation mapping and
+action conversion.
+
+The contract is serve-or-skip. An attribute the mock does not provide raises
+:class:`MissingMockAttribute`, which is both an ``AttributeError`` -- so every
+existing ``hasattr`` probe and ``except AttributeError`` fallback behaves exactly
+as it does against real torch -- and a pytest skip naming the attribute and the
+remedy. So a test that needs real torch is reported as skipped rather than as a
+failure whose text mentions neither the mock nor the absent extra, and a module
+whose imports need more of the surface than the mock has (``lerobot`` reads
+``torch.dtype`` at import time) is skipped rather than erroring during
+collection.
 
 Provides numpy-backed replacements for:
 - torch.Tensor (MockTensor) - arithmetic, reshaping, device, slicing
@@ -12,6 +22,11 @@ Provides numpy-backed replacements for:
 - Factory functions: tensor, zeros, ones, randint, rand, from_numpy, stack, cat
 - Context managers: no_grad, inference_mode
 - Submodules: torch.nn, torch.cuda, torch.backends, torch.amp
+
+A test that knows up front that it needs real torch should say so with
+:func:`real_torch_installed`, which is the one discriminator:
+``pytest.importorskip("torch")`` cannot answer the question, because the mock
+registers a module in ``sys.modules`` and the import therefore succeeds.
 
 Usage:
     from tests.mocks.torch_mock import install_torch_mock
@@ -24,6 +39,12 @@ import types
 from unittest.mock import MagicMock
 
 import numpy as np
+
+# ``pytest.skip.Exception`` is the documented handle for this class, but it is a
+# runtime attribute on a function, so it cannot be used in a base-class
+# position under a type checker. This import is the same object -- pinned as an
+# executable premise by the contract tests rather than left as a claim here.
+from _pytest.outcomes import Skipped
 
 logger = logging.getLogger(__name__)
 
@@ -289,47 +310,87 @@ def _randn(*shape, dtype=None, device=None):
 # Public API
 
 
-def install_torch_mock():
-    """Install a comprehensive torch mock into sys.modules.
+class MissingMockAttribute(AttributeError, Skipped):
+    """A torch attribute this mock does not provide.
 
-    No-op if real torch is already importable.
+    Both base classes are load-bearing:
+
+    - ``AttributeError`` keeps every ``hasattr`` probe and
+      ``except AttributeError`` fallback behaving as it does against real torch,
+      so making a miss visible cannot turn a graceful path into a skip.
+    - ``Skipped`` (which is ``pytest.skip.Exception``) means an *unguarded* miss
+      is reported as a skip
+      that names the attribute and the remedy, rather than as a failure whose
+      text names neither the mock nor the missing extra.
+
+    ``AttributeError`` is first in the MRO, so its ``__init__`` runs and the
+    fields pytest reads off a skip have to be set here rather than delegated.
+    """
+
+    def __init__(self, message: str) -> None:
+        AttributeError.__init__(self, message)
+        self.msg = message
+        self.pytrace = False
+        # Permit the skip during module import: without this, a module whose
+        # imports touch an unsupported attribute is a collection error, and
+        # collection errors abort the whole run rather than one module.
+        self.allow_module_level = True
+        self._use_item_location = False
+
+
+def _missing_attribute(module_name, attribute):
+    """Build the :class:`MissingMockAttribute` for one miss.
+
+    The message opens with the wording real torch uses, so anything matching on
+    that prefix is unaffected, and then states what the reader cannot otherwise
+    know: that a stand-in answered, what it covers, and both remedies.
+    """
+    return MissingMockAttribute(
+        f"module {module_name!r} has no attribute {attribute!r}: this is the "
+        "numpy-backed torch stand-in the test suite installs when real torch is "
+        "not importable, and it covers policy logic, observation mapping and "
+        "action conversion only. Install the real dependency to run this test "
+        '(pip install -e ".[all,dev]"), or -- if the test needs real torch by '
+        "nature -- gate it on real_torch_installed(), because "
+        'pytest.importorskip("torch") cannot skip while the stand-in is '
+        "registered in sys.modules."
+    )
+
+
+def _guard_missing_attributes(module):
+    """Make every miss on ``module`` explain itself, and return the module."""
+
+    def __getattr__(name):
+        # Dunders keep plain lookup semantics: the import machinery probes
+        # ``__path__``, pytest introspects ``__spec__``, and
+        # ``real_torch_installed`` probes ``__version__`` -- none of which is a
+        # test touching an unsupported part of the tensor surface, so none of
+        # them should change behaviour here.
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(f"module {module.__name__!r} has no attribute {name!r}")
+        raise _missing_attribute(module.__name__, name)
+
+    module.__getattr__ = __getattr__
+    return module
+
+
+def real_torch_installed():
+    """Return True when the importable ``torch`` is real rather than this mock.
+
+    The one discriminator, so that the reason it cannot be
+    ``pytest.importorskip("torch")`` is written down once: the mock registers a
+    module in ``sys.modules``, so the import succeeds and only attribute access
+    fails. The mock never sets ``__version__``.
     """
     try:
-        import torch  # noqa: F401
+        import torch
+    except ImportError:
+        return False
+    return hasattr(torch, "__version__")
 
-        logger.info("Real torch is available (version=%s) - mock not installed", torch.__version__)
-        return  # Real torch available - nothing to do
-    except Exception as exc:  # noqa: BLE001 - diagnostics: any import failure means we mock
-        # IMPORTANT: print to stderr (not just logging.info, which pytest captures
-        # and hides) so CI logs ALWAYS show WHY the mock was installed. A silent
-        # fallback here previously masked an env-resolution bug (a CUDA torch
-        # wheel that failed to import) for hours of log-archaeology.
-        _msg = (
-            f"[torch_mock] real torch import FAILED ({type(exc).__name__}: {exc}); "
-            "installing numpy mock. If this is unexpected, the torch wheel in this "
-            "env is broken/unimportable (e.g. wrong CUDA build)."
-        )
-        # pytest captures stdout/stderr, so ALSO write to a sentinel file that
-        # CI can cat unconditionally -- this is what makes the diagnosis a
-        # one-line grep instead of log-archaeology.
-        print(_msg, file=sys.stderr)
-        try:
-            import os as _os
 
-            with open(
-                _os.environ.get("TORCH_MOCK_SENTINEL", "/tmp/torch_mock_active.txt"),
-                "w",
-            ) as _fh:
-                _fh.write(_msg + "\n")
-        except OSError:
-            # Sentinel-file write is best-effort diagnostics only (read-only or
-            # full /tmp, restricted CI sandbox, etc.). The stderr message above
-            # already conveys why the mock was installed, so a failed write must
-            # never abort mock installation or fail the test run.
-            pass
-
-    logger.info("Installing torch mock (real torch not available)")
-
+def _build_torch_mock():
+    """Build the mock module tree; return ``{module name: module}``."""
     # Root module
     torch_mock = types.ModuleType("torch")
     torch_mock.Tensor = MockTensor
@@ -388,19 +449,66 @@ def install_torch_mock():
     amp_mock.autocast = MagicMock
     torch_mock.amp = amp_mock
 
-    # Register in sys.modules
-    sys.modules["torch"] = torch_mock
-    sys.modules["torch.nn"] = nn_mock
-    sys.modules["torch.nn.functional"] = nn_functional_mock
-    sys.modules["torch.cuda"] = cuda_mock
-    sys.modules["torch.backends"] = backends_mock
-    sys.modules["torch.backends.mps"] = mps_mock
-    sys.modules["torch.backends.cudnn"] = cudnn_mock
-    sys.modules["torch.amp"] = amp_mock
-
     # torchvision
     torchvision_mock = types.ModuleType("torchvision")
     torchvision_transforms = types.ModuleType("torchvision.transforms")
     torchvision_mock.transforms = torchvision_transforms
-    sys.modules["torchvision"] = torchvision_mock
-    sys.modules["torchvision.transforms"] = torchvision_transforms
+
+    modules = {
+        "torch": torch_mock,
+        "torch.nn": nn_mock,
+        "torch.nn.functional": nn_functional_mock,
+        "torch.cuda": cuda_mock,
+        "torch.backends": backends_mock,
+        "torch.backends.mps": mps_mock,
+        "torch.backends.cudnn": cudnn_mock,
+        "torch.amp": amp_mock,
+        "torchvision": torchvision_mock,
+        "torchvision.transforms": torchvision_transforms,
+    }
+    for module in modules.values():
+        _guard_missing_attributes(module)
+    return modules
+
+
+def install_torch_mock():
+    """Install the torch stand-in into ``sys.modules``.
+
+    No-op if real torch is already importable.
+    """
+    try:
+        import torch  # noqa: F401
+
+        logger.info("Real torch is available (version=%s) - mock not installed", torch.__version__)
+        return  # Real torch available - nothing to do
+    except Exception as exc:  # noqa: BLE001 - diagnostics: any import failure means we mock
+        # IMPORTANT: print to stderr (not just logging.info, which pytest captures
+        # and hides) so CI logs ALWAYS show WHY the mock was installed. A silent
+        # fallback here previously masked an env-resolution bug (a CUDA torch
+        # wheel that failed to import) for hours of log-archaeology.
+        _msg = (
+            f"[torch_mock] real torch import FAILED ({type(exc).__name__}: {exc}); "
+            "installing numpy mock. If this is unexpected, the torch wheel in this "
+            "env is broken/unimportable (e.g. wrong CUDA build)."
+        )
+        # pytest captures stdout/stderr, so ALSO write to a sentinel file that
+        # CI can cat unconditionally -- this is what makes the diagnosis a
+        # one-line grep instead of log-archaeology.
+        print(_msg, file=sys.stderr)
+        try:
+            import os as _os
+
+            with open(
+                _os.environ.get("TORCH_MOCK_SENTINEL", "/tmp/torch_mock_active.txt"),
+                "w",
+            ) as _fh:
+                _fh.write(_msg + "\n")
+        except OSError:
+            # Sentinel-file write is best-effort diagnostics only (read-only or
+            # full /tmp, restricted CI sandbox, etc.). The stderr message above
+            # already conveys why the mock was installed, so a failed write must
+            # never abort mock installation or fail the test run.
+            pass
+
+    logger.info("Installing torch mock (real torch not available)")
+    sys.modules.update(_build_torch_mock())

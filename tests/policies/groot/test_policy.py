@@ -32,6 +32,7 @@ from strands_robots.policies.groot.policy import (  # noqa: E402
     _to_state_batch,
     _to_video_batch,
 )
+from tests.mocks.torch_mock import real_torch_installed  # noqa: E402
 
 # (section)
 # Helpers
@@ -108,11 +109,11 @@ def _require_real_torch():
     no-op ``manual_seed`` and its tensors have no ``tolist``, so the assertion
     is both meaningless and crash-prone under the mock. ``importorskip`` alone
     is insufficient because the mock registers a ``torch`` module in
-    ``sys.modules`` (so the import succeeds); the mock never sets
-    ``__version__``, which is the discriminator used here.
+    ``sys.modules``, so the import succeeds; :func:`real_torch_installed` is the
+    one discriminator that answers the question.
     """
     torch = pytest.importorskip("torch", reason="torch not installed")
-    if not hasattr(torch, "__version__"):
+    if not real_torch_installed():
         pytest.skip("requires real torch (mock active); RNG reproducibility is real-torch-only")
     return torch
 
