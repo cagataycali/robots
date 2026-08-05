@@ -144,6 +144,15 @@ wins over code defaults):
 | `motion_plan_scale` | `VERA_MOTION_PLAN_SCALE` | live `configure` |
 | `server_mode` | `VERA_SERVER_MODE` | `subprocess` \| `docker` |
 
+Both ports take the shared TCP-port domain every port-dialing provider applies:
+an `int` in `[1, 65535]`, or `None` for the per-embodiment default. The value is
+checked once, on the config, because three consumers read it — the client dials
+it, the runner launches the server on it, and `VeraConfig.server_uri` reports it
+— so a value outside the range is not merely refused late but resolved
+differently by each of them. `vis_port = 0` is the one exception and disables the
+live viewer (`--vis-port` is omitted). The `VERA_*_PORT` overrides go through the
+same check.
+
 ## Wire protocol
 
 The provider keeps a rolling **context window** of the last `context_frames`

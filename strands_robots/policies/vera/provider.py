@@ -99,8 +99,12 @@ class VeraPolicy(Policy):
 
     Args:
         embodiment: ``"pusht"`` | ``"mimicgen"`` | ``"allegro"`` | ``"droid"``.
-        server_port: Policy-server websocket port (per-embodiment default).
-        vis_port: MJPEG live-viewer port; ``None`` / ``0`` disables it.
+        server_port: Policy-server websocket port. ``None`` applies the
+            per-embodiment default; any other value must be an ``int`` in
+            ``[1, 65535]``.
+        vis_port: MJPEG live-viewer port. ``None`` applies the per-embodiment
+            default; ``0`` disables the viewer; any other value must be an
+            ``int`` in ``[1, 65535]``.
         algo_config: WAN planner ``algo_config.yaml`` (point at omni to swap).
         text_prompt: Optional text conditioning for the video planner.
         ckpt_root: Root of downloaded VERA checkpoints (``VERA_CKPT_ROOT``).

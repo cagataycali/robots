@@ -16,7 +16,9 @@ from __future__ import annotations
 import dataclasses
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+from strands_robots.utils import tcp_port_error
 
 Embodiment = Literal["pusht", "mimicgen", "allegro", "droid"]
 # "mimicgen" is the working, faithful embodiment end-to-end (eef-delta -> IK
@@ -67,6 +69,35 @@ def _env_int(name: str) -> int | None:
         return None
 
 
+def _viewer_port_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` cannot address the MJPEG live-viewer port.
+
+    :func:`~strands_robots.utils.tcp_port_error` owns the range and the scalar
+    policy; this wrapper decides only the floor, because ``vis_port`` documents
+    ``0`` as "disable the live viewer" rather than as a port to bind - the
+    runner omits the ``--vis-port`` flag entirely for a falsy value. A genuine
+    ``int`` zero is therefore accepted here and every other value is deferred,
+    so the two ports cannot drift apart on what counts as an addressable one.
+
+    ``bool`` is deliberately not spelled in the zero test: ``False == 0``, so a
+    bare ``value == 0`` would read ``False`` as the disable spelling. The type
+    identity is checked first, and a boolean falls through to
+    :func:`~strands_robots.utils.tcp_port_error`, which refuses it for the same
+    reason it refuses one for ``server_port``.
+
+    Args:
+        value: The caller-supplied value, after the default has been applied.
+        param: The field name it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if isinstance(value, int) and not isinstance(value, bool) and value == 0:
+        return None
+    return tcp_port_error(value, param, context)
+
+
 def _env_float(name: str) -> float | None:
     v = os.environ.get(name)
     if v is None or v.strip() == "":
@@ -89,8 +120,13 @@ class VeraConfig:
         embodiment: VERA embodiment - selects the WAN/DFoT planner + Jacobian
             IDM pair and the client-side action adapter.
         host: Policy-server hostname.
-        server_port: Policy-server websocket port (per-embodiment default).
-        vis_port: MJPEG live-viewer port; ``None`` / ``0`` disables it.
+        server_port: Policy-server websocket port. ``None`` applies the
+            per-embodiment default; any other value must be an ``int`` in
+            ``[1, 65535]``, because the client dials it and the server binds it.
+        vis_port: MJPEG live-viewer port. ``None`` applies the per-embodiment
+            default; ``0`` disables the viewer (the runner omits
+            ``--vis-port``); any other value must be an ``int`` in
+            ``[1, 65535]``.
         algo_config: WAN planner ``algo_config.yaml`` path. Point at the omni
             config to swap the planner without retraining the IDM.
         dynamics_run_id: Jacobian/IDM checkpoint id (wandb run id); falls back
@@ -147,6 +183,23 @@ class VeraConfig:
         if self.vis_port is None:
             env_vis = _env_int("VERA_VIS_PORT")
             self.vis_port = env_vis if env_vis is not None else default_vis
+
+        # Both ports are validated here, on the effective value, because this is
+        # the one funnel every caller passes through - the ``VeraPolicy``
+        # keywords, a pre-built config handed to it, and the ``VERA_*_PORT``
+        # environment overrides above - and because a port reaches three
+        # consumers under three different coercions: the provider dials
+        # ``int(server_port or 0)``, :attr:`server_uri` interpolates the field
+        # verbatim, and the runner's argv carries ``str(server_port)``. An
+        # unusable value is therefore not merely refused late; it is applied as
+        # three different ports (``2.7`` dials ``:2``, reports
+        # ``ws://host:2.7`` and launches ``--port 2.7``, so the client cannot
+        # reach the server it just started). Refusing before any client or
+        # runner is built leaves nothing half-configured behind.
+        if (err := tcp_port_error(self.server_port, "server_port", type(self).__name__)) is not None:
+            raise ValueError(err)
+        if (err := _viewer_port_error(self.vis_port, "vis_port", type(self).__name__)) is not None:
+            raise ValueError(err)
 
         if self.render_width is None:
             self.render_width = _env_int("VERA_RENDER_WIDTH") or _DEFAULT_RENDER_WIDTH.get(self.embodiment, 128)
