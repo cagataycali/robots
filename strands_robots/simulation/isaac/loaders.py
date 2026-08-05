@@ -1,6 +1,6 @@
 """Robot description file loaders -> :class:`ProceduralRobot`.
 
-Follow-up to the R7 Phase 1 procedural-builder slice (PR #46): instead of
+Follow-up to the R7 Phase 1 procedural-builder slice (robots-sim#46): instead of
 hardcoding ``_build_so100`` / ``_build_panda`` / ``_build_unitree_g1`` in
 :mod:`strands_robots.simulation.isaac.procedural`, drive the same
 ``ProceduralRobot`` dataclass from existing
@@ -539,7 +539,7 @@ def _extract_mjcf_shape(body_el: ET.Element) -> tuple[str, tuple[float, ...]]:
 
 
 def _lazy_import_usd() -> tuple[Any, Any, Any]:
-    """Lazy-import pxr.Usd / Sdf / UsdPhysics. Mirrors the pattern from PR #44.
+    """Lazy-import pxr.Usd / Sdf / UsdPhysics. Mirrors the pattern from robots-sim#44.
 
     Returns (Usd, Sdf, UsdPhysics) tuple. Raises ImportError with an install
     hint when the modules are unavailable (Pixar USD ships only via the
