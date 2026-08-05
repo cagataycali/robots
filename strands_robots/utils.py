@@ -1015,7 +1015,7 @@ def step_aborted_msg(completed: int, requested: int, *, context: str = "step") -
 def positive_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive integer count.
 
-    Shared domain for two families of discrete quantity:
+    Shared domain for three families of discrete quantity:
 
     * The knobs that count iterations of a control or rollout loop - the
       simulation's ``n_episodes`` / ``max_steps`` / ``control_substeps`` /
@@ -1028,6 +1028,19 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
       buffer), but the floor itself must not differ between them: the same
       camera configuration cannot be refused on one backend and accepted on
       another.
+
+    * A socket receive/send budget in whole milliseconds - the ``timeout_ms``
+      of the clients that dial an out-of-process policy sidecar
+      (:class:`~strands_robots.policies.groot.client.Gr00tInferenceClient`,
+      :class:`~strands_robots.policies.moveit2.client.MoveIt2InferenceClient`,
+      and the :class:`~strands_robots.policies.moveit2.MoveIt2Policy` that
+      forwards it). The value is written straight into ZMQ's ``RCVTIMEO`` /
+      ``SNDTIMEO``, a C ``int``, so the "only a true ``int`` can be honored"
+      reasoning below applies verbatim - ``setsockopt`` raises ``TypeError:
+      expected int, got: 2.7`` rather than coercing. ZMQ additionally reads
+      ``0`` as "return immediately" and ``-1`` as "block forever", so neither
+      can serve as a budget; the floor here excludes both without needing a
+      rule of its own.
 
     It lives here rather than beside one of its callers because those callers
     sit in different layers (:mod:`strands_robots.hardware_robot` must not

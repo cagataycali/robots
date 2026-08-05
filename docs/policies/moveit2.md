@@ -70,10 +70,16 @@ MoveIt2Policy(
     host="127.0.0.1",      # sidecar hostname (loopback only by default)
     port=5556,             # sidecar port
     planning_group="arm",  # default MoveIt2 planning group; per-call override allowed
-    timeout_ms=15000,      # ZMQ send + recv timeout in milliseconds
+    timeout_ms=15000,      # ZMQ send + recv budget, a positive int of milliseconds
     api_token=None,        # included in every request; falls back to MOVEIT2_API_TOKEN
 )
 ```
+
+`timeout_ms` is a wait budget, so it must be a positive whole number of
+milliseconds. ZMQ's own sentinels are not accepted: `0` ("return immediately")
+makes every request fail before a healthy sidecar can answer, and `-1` ("block
+forever") is an unbounded receive inside an inference call. Both are refused at
+construction rather than written to the socket.
 
 `api_token` falls back to the `MOVEIT2_API_TOKEN` environment variable when not
 passed. The client emits a plaintext-over-TCP warning when `host` is a non-

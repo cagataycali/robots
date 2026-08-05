@@ -41,7 +41,7 @@ import os
 from typing import Any
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error, tcp_port_error
+from strands_robots.utils import name_list_error, positive_count_error, tcp_port_error
 
 from .client import MoveIt2InferenceClient
 
@@ -70,7 +70,11 @@ class MoveIt2Policy(Policy):
             ``tcp://<host>:<port>``.
         planning_group: Default MoveIt2 planning-group name. Per-call
             ``planning_group`` kwargs override this.
-        timeout_ms: ZMQ socket timeout (send + recv) in milliseconds.
+        timeout_ms: Socket send/recv budget in milliseconds - a positive
+            ``int``. ZMQ's ``0`` ("return immediately") and ``-1`` ("block
+            forever") sentinels are refused rather than forwarded: a
+            zero-millisecond budget reports a healthy sidecar as unreachable,
+            and an unbounded receive inside an inference call has no recovery.
         api_token: Optional token included in every request. Falls back
             to the ``MOVEIT2_API_TOKEN`` environment variable if not
             provided.
@@ -111,6 +115,11 @@ class MoveIt2Policy(Policy):
         # one and accepted by the next.
         if (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
             raise ValueError(port_error)
+        # ``timeout_ms`` is forwarded verbatim to the client's socket below, and
+        # is refused here as well so the message names the surface the caller
+        # called rather than the client it happens to build.
+        if (budget_error := positive_count_error(timeout_ms, "timeout_ms", type(self).__name__)) is not None:
+            raise ValueError(budget_error)
         self.host = host
         self.port = port
         self.planning_group = planning_group

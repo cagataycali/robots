@@ -11,7 +11,7 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import require_optional
+from strands_robots.utils import positive_count_error, require_optional
 
 from .data_config import ModalityConfig
 
@@ -90,7 +90,11 @@ class Gr00tInferenceClient:
     Args:
         host: Server hostname or IP.
         port: Server port.
-        timeout_ms: Socket timeout in milliseconds.
+        timeout_ms: Socket send/recv budget in milliseconds - a positive
+            ``int``. ZMQ's ``0`` ("return immediately") and ``-1`` ("block
+            forever") sentinels are refused rather than forwarded: a
+            zero-millisecond budget reports a healthy sidecar as unreachable,
+            and an unbounded receive inside an inference call has no recovery.
         api_token: Optional token included in every request for authentication.
     """
 
@@ -101,6 +105,16 @@ class Gr00tInferenceClient:
         timeout_ms: int = 15000,
         api_token: str | None = None,
     ):
+        # ``timeout_ms`` becomes this socket's RCVTIMEO/SNDTIMEO, so only a
+        # positive whole number of milliseconds can be honored, and ZMQ's own
+        # sentinels are deliberately not exposed as budgets. ``0`` returns
+        # EAGAIN before a sidecar can answer, so a healthy service is reported
+        # unreachable; ``-1`` is an infinite receive - the very unbounded block
+        # the ``LINGER, 0`` in ``_init_socket`` exists to remove, reachable
+        # through the parameter above it. Refused before the socket is created,
+        # so a rejected budget dials nothing.
+        if (budget_error := positive_count_error(timeout_ms, "timeout_ms", type(self).__name__)) is not None:
+            raise ValueError(budget_error)
         self._zmq = _load_zmq()
         self.context = self._zmq.Context()
         self.host = host
