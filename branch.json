@@ -1,0 +1,74 @@
+{
+ "tree": "/tmp/robots-src",
+ "total": 10,
+ "labels": [
+  "3",
+  "0",
+  "-5",
+  "True",
+  "2.7",
+  "0.5",
+  "nan",
+  "'5'",
+  "[5]",
+  "None"
+ ],
+ "usable": [
+  "3",
+  "None"
+ ],
+ "rows": {
+  "3": {
+   "validate": "no problem",
+   "reserved": "3 episode(s), split=0.25",
+   "tool": "accepted"
+  },
+  "0": {
+   "validate": "reports a problem",
+   "reserved": "refused before the run starts",
+   "tool": "refused (names the field)"
+  },
+  "-5": {
+   "validate": "reports a problem",
+   "reserved": "refused before the run starts",
+   "tool": "refused (names the field)"
+  },
+  "True": {
+   "validate": "reports a problem",
+   "reserved": "refused before the run starts",
+   "tool": "refused (names the field)"
+  },
+  "2.7": {
+   "validate": "reports a problem",
+   "reserved": "refused before the run starts",
+   "tool": "refused (names the field)"
+  },
+  "0.5": {
+   "validate": "reports a problem",
+   "reserved": "refused before the run starts",
+   "tool": "refused (names the field)"
+  },
+  "nan": {
+   "validate": "reports a problem",
+   "reserved": "refused before the run starts",
+   "tool": "refused (names the field)"
+  },
+  "'5'": {
+   "validate": "reports a problem",
+   "reserved": "refused before the run starts",
+   "tool": "refused (names the field)"
+  },
+  "[5]": {
+   "validate": "reports a problem",
+   "reserved": "refused before the run starts",
+   "tool": "refused (names the field)"
+  },
+  "None": {
+   "validate": "no problem",
+   "reserved": "no split, no eval pass",
+   "tool": "accepted"
+  }
+ },
+ "cells": 30,
+ "divergences": 0
+}

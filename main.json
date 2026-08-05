@@ -1,0 +1,74 @@
+{
+ "tree": "/tmp/pre-val",
+ "total": 10,
+ "labels": [
+  "3",
+  "0",
+  "-5",
+  "True",
+  "2.7",
+  "0.5",
+  "nan",
+  "'5'",
+  "[5]",
+  "None"
+ ],
+ "usable": [
+  "3",
+  "None"
+ ],
+ "rows": {
+  "3": {
+   "validate": "no problem",
+   "reserved": "3 episode(s), split=0.25",
+   "tool": "accepted"
+  },
+  "0": {
+   "validate": "no problem",
+   "reserved": "no split, no eval pass",
+   "tool": "refused (names the field)"
+  },
+  "-5": {
+   "validate": "no problem",
+   "reserved": "no split, no eval pass",
+   "tool": "refused (names the field)"
+  },
+  "True": {
+   "validate": "no problem",
+   "reserved": "1 episode(s), split=0.05",
+   "tool": "accepted"
+  },
+  "2.7": {
+   "validate": "no problem",
+   "reserved": "3 episode(s), split=0.22",
+   "tool": "accepted"
+  },
+  "0.5": {
+   "validate": "no problem",
+   "reserved": "0 episode(s), split=0",
+   "tool": "accepted"
+  },
+  "nan": {
+   "validate": "no problem",
+   "reserved": "no split, no eval pass",
+   "tool": "accepted"
+  },
+  "'5'": {
+   "validate": "raises TypeError",
+   "reserved": "raises TypeError",
+   "tool": "raises TypeError"
+  },
+  "[5]": {
+   "validate": "raises TypeError",
+   "reserved": "raises TypeError",
+   "tool": "raises TypeError"
+  },
+  "None": {
+   "validate": "no problem",
+   "reserved": "no split, no eval pass",
+   "tool": "accepted"
+  }
+ },
+ "cells": 30,
+ "divergences": 22
+}
