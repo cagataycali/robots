@@ -51,7 +51,11 @@ import re
 from typing import TYPE_CHECKING
 
 from strands_robots.tools._path_validation import validate_save_path
-from strands_robots.utils import positive_count_error, positive_finite_number_error
+from strands_robots.utils import (
+    non_negative_count_error,
+    positive_count_error,
+    positive_finite_number_error,
+)
 
 if TYPE_CHECKING:
     from strands_robots.training.base import TrainSpec
@@ -245,3 +249,58 @@ def learning_rate_problems(spec: TrainSpec, *, context: str) -> list[str]:
         return []
     error = positive_finite_number_error(spec.learning_rate, "learning_rate", context)
     return [error] if error is not None else []
+
+
+def seed_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return reproducibility-seed problems for a :class:`TrainSpec`.
+
+    ``seed`` is the field a caller sets to make a run reproducible, and the four
+    backends that read it apply it through appliers that disagree about what a
+    single value means:
+
+    * The RL trainers hand it to ``torch.manual_seed``, which reduces it modulo
+      ``2**64``. A negative seed is therefore *silently a different seed*:
+      ``manual_seed(-1)`` and ``manual_seed(2**64 - 1)`` draw the identical
+      stream, so two seeds the caller means to be distinct collapse onto one and
+      the run is reproducible under a number nobody asked for. ``True`` is
+      likewise a silent seed of ``1`` and ``2.7`` a silent seed of ``2``.
+    * LeRobot assigns it to ``cfg.seed``, which reaches lerobot's ``set_seed``:
+      ``random.seed`` first, then ``numpy.random.seed``. NumPy is far narrower
+      than torch - it refuses a negative value and a float or string outright -
+      but only *after* ``random.seed`` has run, so a refused seed leaves the
+      process RNG reseeded by a call that failed.
+    * Cosmos interpolates it into a ``trainer.seed=`` Hydra override, and
+      LeRobot's argv-parity path into a ``--seed=`` token. There every value
+      renders - ``nan``, ``2.7``, ``[7]`` - and fails, if at all, inside the
+      run after the dataset and model are already loaded.
+
+    So the same ``seed=-1`` is silently rewritten by one backend and refused with
+    a bare third-party message by the next. Only a non-negative integer can be
+    honored by all of them, so it is checked against the one shared
+    :func:`~strands_robots.utils.non_negative_count_error` domain: the same
+    non-negative-integer rule, whose ``0`` is first-class here too (seed ``0`` is
+    a seed), and which rejects ``bool`` explicitly because a bare ``value < 0``
+    test lets ``True`` through as a silent seed of one.
+
+    ``None`` is the documented sentinel for "use the backend's own default"
+    (LeRobot's is ``1000``) and is therefore not a problem, exactly as it is not
+    one for :func:`learning_rate_problems`.
+
+    One boundary this does not decide: the appliers also disagree about the
+    upper end - torch accepts up to ``2**64 - 1`` while NumPy's legacy seeder
+    stops at ``2**32 - 1`` - so a per-backend ceiling is a separate question from
+    the floor and type checked here.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single problem when ``seed`` is supplied and unusable; empty otherwise.
+    """
+    if spec.seed is None:
+        return []
+    error = non_negative_count_error(spec.seed, "seed", context)
+    return [] if error is None else [error]

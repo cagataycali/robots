@@ -131,6 +131,7 @@ class FastSacTrainer(BaseRLAlgo):
         """Preflight an :class:`RLTrainSpec` for a FastSAC run (pure / read-only)."""
         problems = self._security_problems(spec)
         problems.extend(self._learning_rate_problems(spec))
+        problems.extend(self._seed_problems(spec))
         if not isinstance(spec, RLTrainSpec):
             problems.append(f"fast_sac requires an RLTrainSpec, got {type(spec).__name__}")
             return problems

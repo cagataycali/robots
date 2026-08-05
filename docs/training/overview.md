@@ -98,6 +98,7 @@ supports and **ignores the rest** (the same tolerance rule as
 | `tune` | `{llm,visual,projector,diffusion}` | GR00T only |
 | `val_episodes` | hold out the LAST N episodes | deterministic split |
 | `num_gpus` / `num_nodes` | multi-GPU / multi-node | selects the launcher |
+| `seed` | reproducibility seed | must be a non-negative integer; `validate()` refuses a negative (`torch.manual_seed` would take it modulo `2**64`, so `-1` silently becomes `2**64 - 1`), a fractional or non-finite value, and a `bool`. `None` uses the backend's own default |
 | `extra["policy_type"]` | lerobot `--policy.type` | act/diffusion/smolvla/pi0/pi05/... |
 | `extra["groot_root"]` | Isaac-GR00T checkout | GR00T |
 | `extra["sft_toml"]` / `extra["cosmos_root"]` | recipe + checkout | Cosmos |

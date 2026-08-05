@@ -595,6 +595,7 @@ class LerobotTrainer(Trainer):
 
         problems.extend(self._run_size_problems(spec))
         problems.extend(self._learning_rate_problems(spec))
+        problems.extend(self._seed_problems(spec))
         # Captured rather than extended blind: the multi-node refusal below
         # compares num_nodes, which is only a meaningful comparison once this
         # gate has established it IS a count - a string or None would raise out

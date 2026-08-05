@@ -323,6 +323,33 @@ class Trainer(ABC):
 
         return launch_topology_problems(spec, context=self.provider_name)
 
+    def _seed_problems(self, spec: TrainSpec) -> list[str]:
+        """Reproducibility-seed preflight shared by every backend that reads it.
+
+        Returns a problem when :attr:`TrainSpec.seed` is supplied and is not a
+        usable non-negative integer, against the one shared non-negative-count
+        domain. A :meth:`validate` implementation that reads the field MUST call
+        this rather than pass the value straight to its applier: the appliers do
+        not agree about it. ``torch.manual_seed`` takes the value modulo
+        ``2**64``, so a negative seed silently becomes a large positive one and
+        collides with a seed a caller could legitimately have named, while
+        lerobot's ``set_seed`` reseeds Python's ``random`` and only then hands
+        the value to NumPy, which refuses a negative - leaving the process RNG
+        reseeded by a call that failed.
+
+        A backend that does not read the field MUST NOT call this: per
+        :class:`TrainSpec`, a backend ignores the fields it does not support, so
+        reporting on one it never reads would be a false rejection. That is why
+        this is a separate gate from :meth:`_learning_rate_problems`, which
+        every backend does call.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import seed_problems
+
+        return seed_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 
