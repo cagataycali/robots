@@ -387,10 +387,33 @@ def test_the_gate_asks_for_the_scope_the_link_set_needs() -> None:
 
 
 def test_the_gate_runs_the_script_from_the_base_checkout() -> None:
-    """#1791: a branch that forked before this job landed does not carry the script."""
+    """#1791: a branch that forked before this job landed does not carry the script.
+
+    Checking out the base also means the job never executes the code it is
+    reviewing, which matters for a job holding a token on a fork's pull request.
+    """
     workflow = _workflow()
     assert "ref: ${{ github.base_ref }}" in workflow
-    assert "run: python3 scripts/check_closing_reference.py" in workflow
+    assert "python3 scripts/check_closing_reference.py" in workflow
+
+
+def test_the_gate_passes_when_the_base_carries_no_copy_of_the_check() -> None:
+    """The residual case a base checkout cannot cover: the branch that adds the script.
+
+    Measured on this pull request's own first run, which died with
+    ``can't open file ... check_closing_reference.py`` and exit 2 -- neither of the
+    script's own statuses, and rendered by the checks UI as the same red X as a
+    real finding, which is the argument #1791 makes about exit 2.
+
+    This is a bounded condition and not a bypass: the ref checked out is the base
+    branch tip rather than the merge base, so the file is missing only for runs
+    that happen before this lands. A later deletion is caught by the module-level
+    load at the top of this file, which fails at import, in the required check.
+    """
+    workflow = _workflow()
+    assert "if [ ! -f scripts/check_closing_reference.py ]; then" in workflow
+    assert "::notice title=No closing-reference rule on this base::" in workflow
+    assert _SCRIPT.exists()
 
 
 def test_the_title_reaches_the_script_through_the_environment() -> None:
@@ -398,6 +421,6 @@ def test_the_title_reaches_the_script_through_the_environment() -> None:
     workflow = _workflow()
     assert "PR_TITLE: ${{ github.event.pull_request.title }}" in workflow
 
-    run_lines = [line for line in workflow.splitlines() if line.lstrip().startswith("run:")]
-    assert run_lines
-    assert all("${{" not in line for line in run_lines)
+    invocation = [line for line in workflow.splitlines() if "check_closing_reference.py" in line]
+    assert invocation
+    assert all("${{" not in line for line in invocation)

@@ -105,9 +105,34 @@ jobs:
       # would be a shell-injection seam in a job that holds a token. The script
       # reads PR_TITLE itself; it also falls back to the API's copy of the title,
       # so a workflow that stopped setting it would still check the right string.
+      #
+      # The absence guard is the residual case #1791 could not cover. Checking out
+      # the base fixes a head that predates the script; it cannot fix a *base*
+      # that predates it, which is true for exactly one branch -- the one adding
+      # it. Measured on this pull request's own first run:
+      #
+      #     python3: can't open file '.../scripts/check_closing_reference.py'
+      #     Process completed with exit code 2
+      #
+      # and exit 2 is the state that issue reserves its argument for: it is
+      # neither the script's 0 nor its 1, and the checks UI renders it as the same
+      # red X as a real finding. The honest verdict when the base carries no copy
+      # of the check is that this base has no such rule to enforce, so the job
+      # says so and passes.
+      #
+      # It cannot become a standing no-op. The ref checked out is the base branch
+      # *tip*, not the merge base, so the file is absent only for runs that happen
+      # before this lands. Deleting it later is loud rather than silent: the pins
+      # in tests/test_closing_reference_gate.py load the script by path and fail
+      # at import if it is gone, and that suite is in the required check.
       - name: Check for a closing keyword that links nothing
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           PR_TITLE: ${{ github.event.pull_request.title }}
-        run: python3 scripts/check_closing_reference.py
+        run: |
+          if [ ! -f scripts/check_closing_reference.py ]; then
+            echo "::notice title=No closing-reference rule on this base::The base branch carries no scripts/check_closing_reference.py, so there is no rule here to enforce."
+            exit 0
+          fi
+          python3 scripts/check_closing_reference.py
