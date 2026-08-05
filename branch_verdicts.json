@@ -1,0 +1,127 @@
+{
+ "tree": "/tmp/robots-src",
+ "rows": {
+  "-1": {
+   "lerobot": "refused",
+   "cosmos3": "refused",
+   "fast_sac": "refused",
+   "ppo": "refused"
+  },
+  "-5": {
+   "lerobot": "refused",
+   "cosmos3": "refused",
+   "fast_sac": "refused",
+   "ppo": "refused"
+  },
+  "True": {
+   "lerobot": "refused",
+   "cosmos3": "refused",
+   "fast_sac": "refused",
+   "ppo": "refused"
+  },
+  "2.7": {
+   "lerobot": "refused",
+   "cosmos3": "refused",
+   "fast_sac": "refused",
+   "ppo": "refused"
+  },
+  "3.0": {
+   "lerobot": "refused",
+   "cosmos3": "refused",
+   "fast_sac": "refused",
+   "ppo": "refused"
+  },
+  "nan": {
+   "lerobot": "refused",
+   "cosmos3": "refused",
+   "fast_sac": "refused",
+   "ppo": "refused"
+  },
+  "inf": {
+   "lerobot": "refused",
+   "cosmos3": "refused",
+   "fast_sac": "refused",
+   "ppo": "refused"
+  },
+  "'42'": {
+   "lerobot": "refused",
+   "cosmos3": "refused",
+   "fast_sac": "refused",
+   "ppo": "refused"
+  },
+  "[7]": {
+   "lerobot": "refused",
+   "cosmos3": "refused",
+   "fast_sac": "refused",
+   "ppo": "refused"
+  },
+  "0": {
+   "lerobot": "accepted",
+   "cosmos3": "accepted",
+   "fast_sac": "accepted",
+   "ppo": "accepted"
+  },
+  "42": {
+   "lerobot": "accepted",
+   "cosmos3": "accepted",
+   "fast_sac": "accepted",
+   "ppo": "accepted"
+  },
+  "None": {
+   "lerobot": "accepted",
+   "cosmos3": "accepted",
+   "fast_sac": "accepted",
+   "ppo": "accepted"
+  }
+ },
+ "control": {
+  "cosmos_override": [
+   "trainer.seed=42"
+  ],
+  "lerobot_argv": [
+   "--seed=42"
+  ]
+ },
+ "collide": {
+  "-1": {
+   "actual": 18446744073709551615,
+   "draws": [
+    0.993799,
+    0.571306,
+    0.570008,
+    0.049504
+   ],
+   "identical": true
+  },
+  "-5": {
+   "actual": 18446744073709551611,
+   "draws": [
+    0.930815,
+    0.660724,
+    0.980769,
+    0.93241
+   ],
+   "identical": true
+  },
+  "True": {
+   "actual": 1,
+   "draws": [
+    0.757632,
+    0.279311,
+    0.403069,
+    0.734684
+   ],
+   "identical": true
+  },
+  "2.7": {
+   "actual": 2,
+   "draws": [
+    0.614695,
+    0.381013,
+    0.637114,
+    0.474461
+   ],
+   "identical": true
+  }
+ }
+}
