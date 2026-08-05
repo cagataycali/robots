@@ -137,14 +137,19 @@ wbc = [
     # Required so create_policy("wbc") with no local checkpoint works out of the
     # box - WBCPolicy._maybe_download_checkpoint raises RuntimeError naming the
     # [wbc] extra when it is absent.
-    # Floor at >=1.0 (cap the MAJOR only, <2.0.0): the docs' bucket-sync
+    # Floor at >=1.5 (cap the MAJOR only, <2.0.0): the docs' bucket-sync
     # guidance (README streamed-training section + dataset_recorder.sync_to_bucket)
-    # instructs `pip install -U "huggingface_hub>=1.0"` because the `hf buckets`/
-    # `hf sync` CLI subcommands only exist on huggingface_hub>=1.0; a <1.0 floor
-    # lets a fresh resolve land on 0.36.x, whose `hf` entry point lacks those
-    # subcommands. >=1.0 also matches lerobot (huggingface-hub>=1.0.0) - and
-    # [wbc] is pulled into [all] alongside lerobot, so the two co-resolve.
-    "huggingface_hub>=1.0,<2.0.0",
+    # instructs `pip install -U "huggingface_hub>=1.5"` because the `hf buckets`/
+    # `hf sync` CLI subcommands first ship in huggingface_hub 1.5.0
+    # (huggingface_hub/cli/buckets.py, registered by cli/hf.py). Every earlier
+    # release installs an `hf` entry point WITHOUT them - 0.36.x, but also
+    # 1.0-1.4.x, which answer `hf buckets create` with
+    # "Error: No such command 'buckets'". A floor below 1.5 therefore lets a
+    # fresh resolve land on a CLI that cannot run a bucket sync while satisfying
+    # the documented minimum. lerobot floors it higher still
+    # (lerobot 0.6.1 requires huggingface-hub>=1.6.0) and [wbc] is pulled into
+    # [all] alongside lerobot, so the two co-resolve on the stricter of the two.
+    "huggingface_hub>=1.5,<2.0.0",
 ]
 motionbricks = [
     # MotionBricks (NVlabs/GR00T-WholeBodyControl `motionbricks/`) generative

@@ -27,8 +27,15 @@ from pathlib import Path
 from packaging.requirements import Requirement
 from packaging.version import Version
 
+from strands_robots import dataset_recorder
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
+
+
+def _bucket_cli_floor_spec() -> str:
+    """The requirement string the library's bucket-sync guidance must quote."""
+    return dataset_recorder._HF_BUCKET_CLI_MIN_SPEC
 
 
 def _extras() -> dict[str, list[str]]:
@@ -242,17 +249,19 @@ def test_readme_streamed_training_invocation_is_current() -> None:
     )
 
 
-def test_hf_cli_install_guidance_pins_huggingface_hub_1_0() -> None:
-    # `pip install -U huggingface_hub` (unversioned) resolves to 0.36.x in many
-    # envs, which has no `buckets`/`sync` subcommands; every install line next
-    # to `sync_to_bucket` guidance must pin >=1.0.
+def test_hf_cli_install_guidance_pins_the_bucket_cli_floor() -> None:
+    # `pip install -U huggingface_hub` (unversioned) resolves to whatever is
+    # newest, and an environment pinned below the floor resolves to a CLI
+    # without the `buckets`/`sync` subcommands; every install line next to
+    # `sync_to_bucket` guidance must name the floor that ships them.
+    floor = _bucket_cli_floor_spec()
     for path in (_README, _DATASET_RECORDER):
         text = path.read_text()
         assert "pip install -U huggingface_hub" not in text, (
             f"{path.name} recommends an unversioned huggingface_hub install; "
-            "the `hf buckets`/`hf sync` subcommands need >=1.0"
+            f"the `hf buckets`/`hf sync` subcommands need {floor}"
         )
-        assert "huggingface_hub>=1.0" in text, f"{path.name} lost the huggingface_hub>=1.0 pin"
+        assert floor in text, f"{path.name} lost the {floor} pin"
 
 
 def test_shard_size_claim_names_both_lerobot_defaults() -> None:
@@ -290,15 +299,16 @@ def test_dataset_recorder_codec_docs_track_the_supported_lerobot_floor() -> None
 
 # --- positive contract: the [wbc] extra's huggingface_hub floor must guarantee
 #     the `hf buckets`/`hf sync` CLI subcommands the bucket-sync docs instruct.
-#     Those subcommands only exist on huggingface_hub>=1.0; the docs (README
+#     Those subcommands first ship in huggingface_hub 1.5.0; the docs (README
 #     streamed-training section + dataset_recorder.sync_to_bucket, pinned by
-#     test_hf_cli_install_guidance_pins_huggingface_hub_1_0) tell users to
-#     `pip install -U "huggingface_hub>=1.0"`, so a fresh
+#     test_hf_cli_install_guidance_pins_the_bucket_cli_floor) tell users to
+#     `pip install -U "huggingface_hub>=1.5"`, so a fresh
 #     `pip install strands-robots[wbc]` that resolves an `hf` entry point WITHOUT
-#     those subcommands (huggingface_hub 0.36.x satisfies a <1.0 floor) silently
-#     reproduces the exact "hf CLI not found / no such subcommand" failure the
-#     docs' own error message calls out. Floor the direct pin at >=1.0 so the
-#     resolver can't drift below the documented minimum. See issue #1549. ---
+#     those subcommands (0.36.x, but equally 1.0-1.4.x, satisfy a <1.5 floor)
+#     silently reproduces the exact "hf CLI not found / no such subcommand"
+#     failure the docs' own error message calls out. Floor the direct pin at the
+#     capability version so the resolver can't drift below the documented
+#     minimum. See issue #1549. ---
 
 
 def _wbc_huggingface_hub_spec() -> str:
@@ -311,14 +321,16 @@ def _wbc_huggingface_hub_spec() -> str:
     raise AssertionError("no huggingface_hub pin found in the [wbc] extra")
 
 
-def test_wbc_extra_huggingface_hub_floor_is_at_least_1_0() -> None:
+def test_wbc_extra_huggingface_hub_floor_ships_the_bucket_cli() -> None:
     spec = _wbc_huggingface_hub_spec()
-    # floor at >=1.0 so the resolved `hf` CLI carries the buckets/sync subcommands
-    assert ">=1.0" in spec, (
-        f"[wbc] huggingface_hub floor must be >=1.0 (the `hf buckets`/`hf sync` "
-        f"CLI subcommands the bucket-sync docs instruct only exist on >=1.0); got {spec!r}"
+    # Assert the declared lower BOUND, not a `">=X" in spec` substring: a later
+    # floor raise falsifies the substring while the property it stands for -
+    # "the resolved `hf` CLI carries the buckets/sync subcommands" - still holds.
+    lower = min(Version(s.version) for s in Requirement(spec).specifier if s.operator == ">=")
+    minimum = Version(".".join(str(part) for part in dataset_recorder._HF_BUCKET_CLI_MIN_VERSION))
+    assert lower >= minimum, (
+        f"[wbc] huggingface_hub floor must be >= {minimum} (the `hf buckets`/`hf sync` "
+        f"CLI subcommands the bucket-sync docs instruct first ship there); got {spec!r}"
     )
-    # the dead pre-1.0 floor must not linger
-    assert ">=0.20.0" not in spec, f"[wbc] still pins the dead pre-1.0 huggingface_hub floor: {spec!r}"
     # keep the MAJOR cap (<2.0.0) per repo convention (>=1.0 deps cap the major)
     assert "<2.0.0" in spec, f"[wbc] huggingface_hub pin lost its <2.0.0 major cap: {spec!r}"

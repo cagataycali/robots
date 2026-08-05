@@ -371,8 +371,9 @@ sim.stop_recording(bucket="your-org/robot-fave")   # → hf://buckets/your-org/r
 ```
 
 Requires the `hf` CLI with the `buckets`/`sync` subcommands
-(`pip install -U "huggingface_hub>=1.0"` + `hf auth login` — 0.x releases of
-`huggingface_hub` ship an `hf` entry point without them).
+(`pip install -U "huggingface_hub>=1.5"` + `hf auth login` — those subcommands
+first ship in 1.5.0; every earlier release, including 1.0–1.4.x, installs an
+`hf` entry point without them).
 
 Any on-disk dataset directory can be synced (or daily re-synced) without a live
 recording session — one recorded earlier in the process, or on hardware via

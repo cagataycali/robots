@@ -144,7 +144,7 @@ def sync_dataset_to_bucket(
     Mutable, Xet-deduplicated dump target for COLLECTION - avoids git-LFS
     history bloat of push_to_hub during recording. Daily re-sync uploads
     only changed chunks (content-defined chunking). Requires the ``hf`` CLI
-    with the ``buckets``/``sync`` subcommands (``huggingface_hub>=1.0``)
+    with the ``buckets``/``sync`` subcommands (``huggingface_hub>=1.5``)
     and ``hf auth login``.
 
     ``bucket`` and ``run_id`` are validated against an allowlist before any
@@ -180,12 +180,13 @@ def sync_dataset_to_bucket(
     if hf is None:
         return {
             "status": "error",
-            "message": '`hf` CLI not found. pip install -U "huggingface_hub>=1.0" and run `hf auth login`.',
+            "message": f'`hf` CLI not found. pip install -U "{_HF_BUCKET_CLI_MIN_SPEC}" and run `hf auth login`.',
         }
 
-    # `hf buckets` / `hf sync` need huggingface_hub>=1.0; on 0.x the CLI
-    # exists but rejects those subcommands with argparse noise. Gate on the
-    # installed package version so users get an upgrade instruction instead.
+    # `hf buckets` / `hf sync` need huggingface_hub>=1.5; on every older
+    # release (0.36.x, but also 1.0-1.4.x) the CLI exists and rejects those
+    # subcommands with usage noise. Gate on the installed package version so
+    # users get an upgrade instruction instead.
     version_error = _huggingface_hub_version_error()
     if version_error is not None:
         return {"status": "error", "message": version_error}
@@ -272,19 +273,42 @@ def _hf_executable() -> str | None:
     return shutil.which("hf")
 
 
+#: Oldest ``huggingface_hub`` release whose ``hf`` CLI carries the
+#: ``hf buckets`` / ``hf sync`` subcommands :func:`sync_dataset_to_bucket`
+#: invokes.
+#:
+#: They first ship in 1.5.0, as ``huggingface_hub/cli/buckets.py`` registered by
+#: ``cli/hf.py`` (``app.add_group(buckets_cli, name="buckets")`` and
+#: ``app.command()(sync)``). 1.0-1.4.x install the ``hf`` entry point without
+#: that module, so they answer both invocations with
+#: ``Error: No such command 'buckets'`` / ``'sync'``.
+#:
+#: This is the single source of the floor: the version gate below, the upgrade
+#: instructions it and :func:`sync_dataset_to_bucket` emit, and the pin the
+#: ``[wbc]`` extra declares are all checked against it, so the accepted domain
+#: cannot drift from the release that can actually honor a bucket sync.
+_HF_BUCKET_CLI_MIN_VERSION = (1, 5)
+
+#: The requirement string every bucket-sync upgrade instruction quotes, derived
+#: from :data:`_HF_BUCKET_CLI_MIN_VERSION` so the advice cannot name a release
+#: that does not ship the subcommands.
+_HF_BUCKET_CLI_MIN_SPEC = "huggingface_hub>=" + ".".join(str(part) for part in _HF_BUCKET_CLI_MIN_VERSION)
+
+
 def _huggingface_hub_version_error() -> str | None:
     """Return an actionable error message if ``huggingface_hub`` is too old for bucket sync.
 
-    The ``hf buckets`` / ``hf sync`` subcommands ship in huggingface_hub>=1.0.
-    On older releases (e.g. the 0.36.x stable line) the ``hf`` binary exists,
-    so :func:`_hf_executable` succeeds, but the subcommands fail with argparse
-    usage noise ("invalid choice: 'buckets'") that gives no hint the fix is an
+    The ``hf buckets`` / ``hf sync`` subcommands ship in
+    :data:`_HF_BUCKET_CLI_MIN_VERSION` and later. On any older release - the
+    0.36.x stable line, but equally 1.0-1.4.x - the ``hf`` binary exists, so
+    :func:`_hf_executable` succeeds, but the subcommands fail with usage noise
+    (``Error: No such command 'buckets'``) that gives no hint the fix is an
     upgrade. Version-checking the installed package up front turns that noise
     into a clear upgrade instruction without spawning a subprocess.
 
     Returns ``None`` (no error) when:
 
-    - the installed version is >= 1.0, or
+    - the installed version is >= :data:`_HF_BUCKET_CLI_MIN_VERSION`, or
     - ``huggingface_hub`` is not importable in this interpreter (the ``hf``
       binary may come from a different environment on PATH whose version we
       cannot see; the normal subprocess error path still applies), or
@@ -300,11 +324,11 @@ def _huggingface_hub_version_error() -> str | None:
     match = re.match(r"(\d+)\.(\d+)", version)
     if match is None:
         return None
-    if (int(match.group(1)), int(match.group(2))) >= (1, 0):
+    if (int(match.group(1)), int(match.group(2))) >= _HF_BUCKET_CLI_MIN_VERSION:
         return None
     return (
-        f"bucket sync requires huggingface_hub>=1.0 (`hf buckets`/`hf sync`); "
-        f"installed: {version}. pip install -U 'huggingface_hub>=1.0'."
+        f"bucket sync requires {_HF_BUCKET_CLI_MIN_SPEC} (`hf buckets`/`hf sync`); "
+        f"installed: {version}. pip install -U '{_HF_BUCKET_CLI_MIN_SPEC}'."
     )
 
 
