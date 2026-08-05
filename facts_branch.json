@@ -1,0 +1,85 @@
+{
+  "tree": "/tmp/robots-mine",
+  "recording": {
+    "stop_status": "success",
+    "mp4": "videos/observation.images.default/chunk-000/file-000.mp4",
+    "mp4_kb": 132.7,
+    "decoded_frames": 72,
+    "fps": 30
+  },
+  "corruption": {
+    "episode_lengths_before": [
+      24,
+      24,
+      24
+    ],
+    "episode_lengths_after": [
+      24,
+      24,
+      0
+    ],
+    "reader_frames_per_episode": [
+      24,
+      24,
+      0
+    ],
+    "reader_total_episodes": 3
+  },
+  "frame_npy": "/tmp/art_branch/frame.npy",
+  "verdicts": [
+    {
+      "value": "1",
+      "outcome": "error",
+      "named_the_short_episode": true,
+      "problem": "1 episode(s) below min_frames=1: episode 2=0 frame(s)"
+    },
+    {
+      "value": "0",
+      "outcome": "success",
+      "named_the_short_episode": false,
+      "problem": ""
+    },
+    {
+      "value": "-5",
+      "outcome": "error",
+      "named_the_short_episode": false,
+      "problem": "verify_dataset: min_frames must be a non-negative integer, got -5."
+    },
+    {
+      "value": "False",
+      "outcome": "error",
+      "named_the_short_episode": false,
+      "problem": "verify_dataset: min_frames must be a non-negative integer, got False."
+    },
+    {
+      "value": "nan",
+      "outcome": "error",
+      "named_the_short_episode": false,
+      "problem": "verify_dataset: min_frames must be a non-negative integer, got nan."
+    },
+    {
+      "value": "2.7",
+      "outcome": "error",
+      "named_the_short_episode": false,
+      "problem": "verify_dataset: min_frames must be a non-negative integer, got 2.7."
+    },
+    {
+      "value": "'2'",
+      "outcome": "error",
+      "named_the_short_episode": false,
+      "problem": "verify_dataset: min_frames must be a non-negative integer, got '2'."
+    },
+    {
+      "value": "None",
+      "outcome": "error",
+      "named_the_short_episode": false,
+      "problem": "verify_dataset: min_frames must be a non-negative integer, got None."
+    }
+  ],
+  "cli": {
+    "corrupt_default": 1,
+    "corrupt_min_frames_neg5": 1,
+    "corrupt_min_frames_0": 0,
+    "healthy_default": 0
+  }
+}
