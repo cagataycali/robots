@@ -23,7 +23,12 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from strands_robots.utils import lerobot_version
+from strands_robots.utils import (
+    finite_number_error,
+    lerobot_version,
+    non_negative_count_error,
+    positive_count_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -89,6 +94,69 @@ def _get_streaming_cls() -> Any:
         ) from exc
 
 
+def _tolerance_error(value: Any) -> str | None:
+    """Return why ``tolerance_s`` cannot be used as a grid-match half-width.
+
+    ``tolerance_s`` is the half-width of the window
+    ``lerobot.datasets.feature_utils.check_delta_timestamps`` compares each
+    delta against, and :meth:`StreamingDatasetReader.open` runs that check
+    itself to restore the grid validation the streaming path skips. So the
+    value decides whether that check can answer at all, in both directions:
+    ``inf`` makes ``... <= tolerance_s`` true for every delta, silently
+    accepting an off-grid ``delta_timestamps`` and disabling the very parity
+    the call was replicating, while ``nan`` and a negative half-width make it
+    false for every delta, refusing a perfectly on-grid one with a message
+    that blames the caller's deltas.
+
+    ``0`` is first-class here rather than degenerate - it asks for an exact
+    grid match, the strictest tolerance available - so neither shared
+    continuous domain fits (:func:`~strands_robots.utils.positive_finite_number_error`
+    refuses it). This decides only the floor and defers the numeric-ness,
+    finiteness and ``bool`` decisions to
+    :func:`~strands_robots.utils.finite_number_error`, so the two cannot
+    diverge on them.
+
+    Args:
+        value: The caller-supplied tolerance, in seconds.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if error := finite_number_error(value, "tolerance_s", "open"):
+        return error
+    if float(value) < 0.0:
+        return (
+            f"open: tolerance_s must be >= 0, got {value!r}. It is the half-width of the "
+            "grid-match window, so a negative one is satisfied by no delta at all and "
+            "refuses an on-grid delta_timestamps. Pass 0 to require an exact grid match."
+        )
+    return None
+
+
+# Every numeric parameter of ``StreamingDatasetReader.open`` and the domain
+# that decides it. A table rather than an inline chain because the pairing is
+# what stops the two drifting apart: a knob added to the signature without a
+# domain is a knob forwarded raw into a constructor that validates only
+# ``repo_type``, which is how these four came to be unguarded.
+_NUMERIC_DOMAINS: dict[str, Callable[[Any], str | None]] = {
+    # Half-width of the grid-match window; see _tolerance_error.
+    "tolerance_s": _tolerance_error,
+    # Reservoir size: the exclusive upper bound of ``rng.integers(0, buffer_size)``
+    # and the length the frame buffer is compared against, so only a true
+    # positive int can be honored - 0 and a negative raise ``high <= 0`` from
+    # NumPy part-way through iteration, and a fractional one is used verbatim.
+    "buffer_size": lambda value: positive_count_error(value, "buffer_size", "open"),
+    # Shard count: reaches ``min(hf_shards, max_num_shards)`` and then
+    # ``range(num_shards)``, so 0 or a negative yields zero shards and the
+    # reader streams no frames at all under a successful open.
+    "max_num_shards": lambda value: positive_count_error(value, "max_num_shards", "open"),
+    # Reproducibility seed for the reservoir shuffle: ``np.random.default_rng``
+    # refuses a negative or a float, and 0 is simply a seed - the domain
+    # ``TrainSpec.seed`` already uses.
+    "seed": lambda value: non_negative_count_error(value, "seed", "open"),
+}
+
+
 class StreamingDatasetReader:
     """Version-tolerant wrapper over lerobot's StreamingLeRobotDataset.
 
@@ -129,7 +197,20 @@ class StreamingDatasetReader:
     ) -> StreamingDatasetReader:
         """Open a version-tolerant streaming reader.
 
+        Validation:
+            The numeric knobs are checked against
+            :data:`_NUMERIC_DOMAINS` before the lerobot import, because
+            ``StreamingLeRobotDataset`` validates only ``repo_type`` and stores
+            the rest verbatim. So an unusable one is a caller mistake reported
+            the same way with or without the extra installed, rather than a
+            NumPy error part-way through iteration, a shard count of zero that
+            streams no frames, or a tolerance that switches the grid check off.
+
         Raises:
+            ValueError: A numeric knob (``tolerance_s``, ``buffer_size``,
+                ``max_num_shards`` or ``seed``) is outside its domain. The
+                message names the parameter, the value and why it cannot be
+                honored.
             RuntimeError: ``repo_type`` is not ``"dataset"`` but the installed
                 ``StreamingLeRobotDataset`` does not accept a ``repo_type``
                 parameter. lerobot >= :data:`BUCKET_STREAMING_MIN_LEROBOT`
@@ -147,6 +228,21 @@ class StreamingDatasetReader:
                 call would silently do the opposite of what was asked.
             ImportError: ``StreamingLeRobotDataset`` is not importable.
         """
+        # Before the lerobot import: a value outside these domains is a caller
+        # mistake rather than a capability question, so it must be reported the
+        # same way whether or not the extra is installed - and refusing it here
+        # means an unusable value never reaches the constructor, which fetches
+        # dataset metadata and re-shards before any of it would be consumed.
+        supplied = {
+            "tolerance_s": tolerance_s,
+            "buffer_size": buffer_size,
+            "max_num_shards": max_num_shards,
+            "seed": seed,
+        }
+        for param, domain in _NUMERIC_DOMAINS.items():
+            if error := domain(supplied[param]):
+                raise ValueError(error)
+
         StreamingCls = _get_streaming_cls()
         init_sig = inspect.signature(StreamingCls).parameters
         # If the constructor accepts **kwargs, every candidate is forwardable.

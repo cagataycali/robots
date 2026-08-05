@@ -623,6 +623,16 @@ edge devices without a torchcodec wheel; requires `delta_timestamps` with at
 least one non-video key, otherwise `open()` raises `ValueError` rather than
 silently streaming video anyway).
 
+The four numeric kwargs (`tolerance_s`, `buffer_size`, `max_num_shards`,
+`seed`) are checked before the lerobot import: `StreamingLeRobotDataset`
+validates only `repo_type` and stores the rest verbatim, so every consumer of
+them is downstream of a call that already returned. `open()` raises `ValueError`
+naming the parameter instead - a shard count of `0` used to open successfully
+and then stream **zero frames**, a `buffer_size` of `0` raised out of NumPy
+part-way through iteration, and a `tolerance_s` of `inf` switched off the
+delta-grid check below. `tolerance_s=0` is accepted and means "require an exact
+grid match"; `seed=0` is accepted and is simply a seed.
+
 One kwarg is **not** tolerant-forwarded because its absence changes semantics:
 `repo_type="bucket"` requires `lerobot>=0.6.1`, which the `[lerobot]` extra
 floors — so a resolver-conformant install always has it. On an environment
