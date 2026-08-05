@@ -107,6 +107,16 @@ def set_eval_seed(seed: int) -> None:
     going through ``evaluate_benchmark`` can call it directly to get
     reproducible rollouts.
 
+    ``seed`` is required. ``None`` is the absence of a seed, and the three RNGs
+    disagree about it: ``random`` and NumPy reseed from entropy while
+    ``torch.manual_seed`` refuses it outright, so passing it through would leave
+    a process-wide RNG side effect on a rollout that asked for none - and none at
+    all on an install without torch, where the same call silently succeeds. The
+    shared domain accepts ``None`` because ``randomize(seed=None)`` legitimately
+    means "draw fresh entropy"; this applier opts out with ``allow_none=False``.
+    To leave the RNGs untouched, do not call it - which is what every caller in
+    this module already does (``if seed is not None``).
+
     NumPy / torch are imported lazily so this helper works on minimal
     installs that don't have torch (e.g. ``policy_provider="mock"``
     smoke tests).
@@ -120,7 +130,15 @@ def set_eval_seed(seed: int) -> None:
     # callers, so the bound is enforced where it is owned rather than only at the
     # facades one layer up: NumPy's own "Seed must be between 0 and 2**32 - 1"
     # names neither the parameter nor the method that accepted it.
-    if seed_error := randomization_seed_error(seed, "set_eval_seed", max_seed=MAX_EVAL_SEED):
+    #
+    # ``allow_none=False``: this is the applier, and there is no seed to apply for
+    # ``None``. Passing it through would reseed ``random`` / NumPy from entropy and
+    # then raise out of ``torch.manual_seed`` (or, on an install without torch,
+    # silently succeed) - a process-wide side effect on a rollout that asked for no
+    # seed, which is the opposite of the rule ``evaluate`` states below: "a ``None``
+    # seed leaves the master RNG unbuilt rather than seeding it from entropy". The
+    # refusal sits ahead of every RNG, so it has no side effect either.
+    if seed_error := randomization_seed_error(seed, "set_eval_seed", max_seed=MAX_EVAL_SEED, allow_none=False):
         raise ValueError(seed_error)
     random.seed(seed)
     try:
