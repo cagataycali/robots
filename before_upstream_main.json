@@ -1,0 +1,84 @@
+{
+ "tree": "/tmp/pre-streaming",
+ "fps": 10,
+ "limit": 40,
+ "cases": [
+  {
+   "label": "defaults",
+   "knob": "-",
+   "open": "success",
+   "open_s": 3.95,
+   "num_shards": 1,
+   "frames": 40,
+   "iter": "ok",
+   "seconds": 5.07
+  },
+  {
+   "label": "max_num_shards=0",
+   "knob": "max_num_shards",
+   "open": "success",
+   "open_s": 0.04,
+   "num_shards": 0,
+   "frames": 0,
+   "iter": "ok",
+   "seconds": 0.04
+  },
+  {
+   "label": "max_num_shards=-5",
+   "knob": "max_num_shards",
+   "open": "success",
+   "open_s": 0.03,
+   "num_shards": -5,
+   "frames": 0,
+   "iter": "ok",
+   "seconds": 0.03
+  },
+  {
+   "label": "buffer_size=0",
+   "knob": "buffer_size",
+   "open": "success",
+   "open_s": 0.03,
+   "num_shards": 1,
+   "frames": 0,
+   "iter": "ValueError: high <= 0",
+   "seconds": 0.04
+  },
+  {
+   "label": "seed=-1",
+   "knob": "seed",
+   "open": "ValueError: expected non-negative integer",
+   "open_s": 0.0,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.0
+  },
+  {
+   "label": "tolerance_s=inf, OFF-grid deltas",
+   "knob": "tolerance_s",
+   "open": "success",
+   "open_s": 0.03,
+   "num_shards": 1,
+   "frames": 40,
+   "iter": "ok",
+   "seconds": 1.02
+  },
+  {
+   "label": "tolerance_s=nan, on-grid deltas",
+   "knob": "tolerance_s",
+   "open": "ValueError: \n                The following delta_timestamps are found outside of tolerance range.\n                Please make sure they are multiples of 1/10 +/- ",
+   "open_s": 0.04,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.04
+  },
+  {
+   "label": "tolerance_s=1e-4, OFF-grid deltas",
+   "knob": "control",
+   "open": "ValueError: \n                The following delta_timestamps are found outside of tolerance range.\n                Please make sure they are multiples of 1/10 +/- ",
+   "open_s": 0.03,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.03
+  }
+ ]
+}

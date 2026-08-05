@@ -1,0 +1,80 @@
+{
+ "tree": "/tmp/robots-mine",
+ "fps": 10,
+ "limit": 40,
+ "cases": [
+  {
+   "label": "defaults",
+   "knob": "-",
+   "open": "success",
+   "open_s": 3.89,
+   "num_shards": 1,
+   "frames": 40,
+   "iter": "ok",
+   "seconds": 5.02
+  },
+  {
+   "label": "max_num_shards=0",
+   "knob": "max_num_shards",
+   "open": "ValueError: open: max_num_shards must be a positive integer, got 0.",
+   "open_s": 0.0,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.0
+  },
+  {
+   "label": "max_num_shards=-5",
+   "knob": "max_num_shards",
+   "open": "ValueError: open: max_num_shards must be a positive integer, got -5.",
+   "open_s": 0.0,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.0
+  },
+  {
+   "label": "buffer_size=0",
+   "knob": "buffer_size",
+   "open": "ValueError: open: buffer_size must be a positive integer, got 0.",
+   "open_s": 0.0,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.0
+  },
+  {
+   "label": "seed=-1",
+   "knob": "seed",
+   "open": "ValueError: open: seed must be a non-negative integer, got -1.",
+   "open_s": 0.0,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.0
+  },
+  {
+   "label": "tolerance_s=inf, OFF-grid deltas",
+   "knob": "tolerance_s",
+   "open": "ValueError: open: tolerance_s must be a finite number, got inf.",
+   "open_s": 0.0,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.0
+  },
+  {
+   "label": "tolerance_s=nan, on-grid deltas",
+   "knob": "tolerance_s",
+   "open": "ValueError: open: tolerance_s must be a finite number, got nan.",
+   "open_s": 0.0,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.0
+  },
+  {
+   "label": "tolerance_s=1e-4, OFF-grid deltas",
+   "knob": "control",
+   "open": "ValueError: \n                The following delta_timestamps are found outside of tolerance range.\n                Please make sure they are multiples of 1/10 +/- ",
+   "open_s": 0.04,
+   "frames": null,
+   "iter": "not reached",
+   "seconds": 0.04
+  }
+ ]
+}
