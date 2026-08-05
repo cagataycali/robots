@@ -78,7 +78,33 @@ hatch run format            # ruff check --fix, ruff format
 
 ## PR Workflow
 
-1. Create feature branch from `main`
+1. Create the feature branch **on your fork**. Branch creation in the base
+   repository is refused for every account, `ADMIN` included: the `default`
+   ruleset's conditions are `ref_name.include: ["~ALL"]` rather than the default
+   branch alone, and its rules include `creation` with `bypass_actors: []`, so
+   `git push <base> HEAD:refs/heads/<new>` comes back as a `repository rule
+   violation` that does not name the rule.
+
+   That message is indistinguishable from the two failure modes this file does
+   describe - a token missing a permission, and the `.github/workflows/**` write
+   refusal that makes an installation token read `BLOCKED` (step 8) - and both of
+   those are answered by retrying with a wider token, which is why that is the
+   natural next move and why it cannot work here. A ruleset bypass is granted per
+   ruleset, so no role implies one, and there is no classic branch protection to
+   be exempt from (`GET /repos/{owner}/{repo}/branches/main/protection` -> 404).
+   Read the rule back rather than widening the token:
+
+   ```
+   GET /repos/{owner}/{repo}/rulesets/{id}
+     conditions.ref_name.include  = ["~ALL"]        # not just the default branch
+     rules[].type                 contains "creation"
+     bypass_actors                = []              # so no account clears it
+   ```
+
+   Push the branch to your fork and open the pull request cross-repo:
+   `createPullRequest` takes the base repository as `repositoryId` and the fork
+   as a separate `headRepositoryId`. Step 5 already says "from your fork"; step 1
+   is where that stops being a preference.
 2. Make changes, run `hatch run format && hatch run lint && hatch run test`
 3. Record the change as a news fragment: `changelog.d/<pr-number>-<slug>.md`
    (see [`changelog.d/README.md`](changelog.d/README.md)). **Never append to
