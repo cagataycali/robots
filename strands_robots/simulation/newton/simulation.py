@@ -72,6 +72,7 @@ from strands_robots.utils import (
     require_optional,
     reserved_camera_name_error,
     step_aborted_msg,
+    tcp_port_error,
 )
 
 if TYPE_CHECKING:
@@ -1806,7 +1807,12 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                   tests / benchmarks).
                 * ``"auto"`` (default) -- ``"gl"`` when a display is present,
                   otherwise ``"viser"`` so headless hosts still get a live view.
-            port: TCP port for the ``"viser"`` browser dashboard.
+            port: TCP port for the ``"viser"`` browser dashboard, an ``int``
+                in ``[1, 65535]``. Read only by the ``"viser"`` branch, so
+                ``"gl"`` and ``"null"`` ignore it. ``0`` is refused rather
+                than forwarded as an ephemeral-bind request, because this
+                surface advertises the requested port in the dashboard URL
+                instead of reading the assigned one back.
             width: Window width in pixels for the ``"gl"`` viewer.
             height: Window height in pixels for the ``"gl"`` viewer.
 
@@ -1844,6 +1850,15 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                     }
                 ],
             }
+        # Only the viser branch reads ``port`` - it binds the dashboard and the
+        # returned text advertises it - so the domain is applied on that branch
+        # alone, as the policy providers apply theirs only when they dial.
+        # Placed before the lock because a refusal must construct no viewer: the
+        # viewer is a single slot, and a value forwarded verbatim that happens
+        # not to raise inside ``ViewerViser`` fills it, after which the obvious
+        # retry with a usable port is refused as "Viewer already open".
+        if kind == "viser" and (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
+            return {"status": "error", "content": [{"text": port_error}]}
         with self._lock:
             try:
                 vmod = self._nt.viewer

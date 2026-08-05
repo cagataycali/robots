@@ -1071,10 +1071,12 @@ def tcp_port_error(value: Any, param: str, context: str) -> str | None:
     reach a service over TCP (``use_rosbridge``'s WebSocket,
     ``gr00t_inference``'s inference service), the mesh bridges that construct
     one, the policy providers that dial one (``groot``, ``moveit2``,
-    ``cosmos3``, ``lerobot_async``, ``vera``), and the Device Connect drivers
+    ``cosmos3``, ``lerobot_async``, ``vera``), the Device Connect drivers
     that address a device daemon
     (:class:`~strands_robots.device_connect.reachy_mini_driver.ReachyMiniDriver`'s
-    ``api_port``). A port is an index into the
+    ``api_port``), and the simulation backends that bind one
+    (:meth:`~strands_robots.simulation.newton.simulation.NewtonSimEngine.open_viewer`'s
+    ``port`` for the viser dashboard). A port is an index into the
     16-bit TCP port
     space, so only an ``int`` in ``[1, 65535]`` names one: ``0`` asks the kernel
     for an ephemeral port rather than naming a port, and a value outside the
