@@ -1731,13 +1731,20 @@ def test_sync_to_bucket_old_huggingface_hub_errors(tmp_path, monkeypatch):
     result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
 
     assert result["status"] == "error"
-    assert "huggingface_hub>=1.0" in result["message"]
+    assert "huggingface_hub>=1.5.0" in result["message"]
     assert "0.36.2" in result["message"]
-    assert "pip install -U 'huggingface_hub>=1.0'" in result["message"]
+    assert "pip install -U 'huggingface_hub>=1.5.0'" in result["message"]
 
 
-def test_sync_to_bucket_new_huggingface_hub_passes_version_gate(tmp_path, monkeypatch):
-    """huggingface_hub>=1.0 passes the version gate and proceeds to sync."""
+def test_sync_to_bucket_capable_huggingface_hub_passes_version_gate(tmp_path, monkeypatch):
+    """A huggingface_hub carrying the bucket CLI passes the gate and proceeds to sync.
+
+    This test previously used 1.0.0, which satisfied the old ``>=1.0`` gate but
+    ships no ``hf buckets``/``hf sync``: with the subprocess stubbed out it
+    asserted success for a release whose real CLI answers ``No such command
+    'sync'``. It now uses the release the subcommands actually appear in, so a
+    pass means the gate admits a CLI that can carry out the sync.
+    """
     import subprocess
 
     import huggingface_hub
@@ -1746,7 +1753,7 @@ def test_sync_to_bucket_new_huggingface_hub_passes_version_gate(tmp_path, monkey
 
     _write_meta(tmp_path)
     monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
-    monkeypatch.setattr(huggingface_hub, "__version__", "1.0.0")
+    monkeypatch.setattr(huggingface_hub, "__version__", dr._BUCKET_CLI_MIN_HUB_VERSION_STR)
 
     def _fake_run(cmd, *_a, **_k):
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")

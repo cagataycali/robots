@@ -63,7 +63,7 @@ for i, frame in enumerate(reader):
 # 3. (Optional) Sync the finished dataset into a mutable HF Storage Bucket for
 #    collection — Xet-deduped, overwrite-in-place (Phase 1/2). Use the
 #    lifecycle-independent helper, which syncs an on-disk dataset without a live
-#    recording session (needs `hf auth login` + huggingface_hub >= 1.0). Set
+#    recording session (needs `hf auth login` + huggingface_hub >= 1.5.0). Set
 #    STRANDS_DEMO_BUCKET="your-org/robot-fave" to run it; it stays a no-op
 #    otherwise so the default path needs no Hub credentials.
 bucket = os.environ.get("STRANDS_DEMO_BUCKET")
