@@ -36,14 +36,36 @@ from typing import Any
 import pytest
 
 import strands_robots
+from strands_robots.policies.groot.client import Gr00tInferenceClient
+from strands_robots.policies.groot.client import MsgSerializer as GrootSerializer
+from strands_robots.policies.moveit2.client import MoveIt2InferenceClient
 from strands_robots.utils import MAX_ZMQ_TIMEOUT_MS, coerce_zmq_timeout_ms
 
-zmq = pytest.importorskip("zmq", reason="pyzmq is the transport under test")
-msgpack = pytest.importorskip("msgpack", reason="the moveit2 sidecar wire format")
+# ``pyzmq`` is imported optionally rather than through a module-level
+# ``importorskip``, so that the tests which need no socket keep running without
+# it. Both clients load ZMQ lazily (``_load_zmq``) and refuse an unusable
+# ``timeout_ms`` *before* that call, so the domain verdicts, the refusal path,
+# the constructor ordering and the structural drift guard are all answerable on
+# an install without the ``[groot]`` / ``[moveit2]`` extra. A module-level skip
+# would have taken the drift guard with it - which is the one check here whose
+# whole job is to still be running when someone changes something unrelated.
+try:
+    import zmq
+except ImportError:  # pragma: no cover - exercised by the extra-less install
+    zmq = None  # type: ignore[assignment]
 
-from strands_robots.policies.groot.client import Gr00tInferenceClient  # noqa: E402
-from strands_robots.policies.groot.client import MsgSerializer as GrootSerializer  # noqa: E402
-from strands_robots.policies.moveit2.client import MoveIt2InferenceClient  # noqa: E402
+try:
+    import msgpack
+except ImportError:  # pragma: no cover - exercised by the extra-less install
+    msgpack = None  # type: ignore[assignment]
+
+#: For tests that must configure a real socket.
+requires_zmq = pytest.mark.skipif(zmq is None, reason="pyzmq is the transport under test")
+
+#: For tests that must round-trip against a real sidecar.
+requires_wire = pytest.mark.skipif(
+    zmq is None or msgpack is None, reason="pyzmq and msgpack are the sidecar wire format"
+)
 
 #: Values that name no usable ZMQ wait budget, with why each one matters.
 UNUSABLE: list[tuple[str, Any]] = [
@@ -172,6 +194,7 @@ class TestTheSharedDomain:
         assert str(MAX_ZMQ_TIMEOUT_MS) in over
         assert over != under
 
+    @requires_zmq
     def test_the_ceiling_is_the_largest_value_zmq_can_store(self) -> None:
         """Non-vacuity for the constant: it is the transport's bound, not a choice.
 
@@ -244,6 +267,7 @@ class TestBothClientsRefuseTheSameBudgets:
             cls(host="127.0.0.1", port=5555, timeout_ms=0)
 
 
+@requires_wire
 class TestAHealthyServerIsNoLongerReportedUnreachable:
     """The defect, against a live sidecar. Behaviour, not the raise."""
 
@@ -273,6 +297,7 @@ class TestAHealthyServerIsNoLongerReportedUnreachable:
                 cls(host="127.0.0.1", port=sidecar.port, timeout_ms=value)
 
 
+@requires_wire
 class TestABudgetTheSiblingTransportsAcceptIsUsableHere:
     """The coercion: this is a fix, not only a refusal."""
 
@@ -322,6 +347,7 @@ class TestABudgetTheSiblingTransportsAcceptIsUsableHere:
             client.context.term()
 
 
+@requires_wire
 class TestZmqStillTreatsTheseValuesAsMeasured:
     """Premise tests: ``pyzmq``'s behaviour, which the reasoning above rests on.
 
@@ -500,6 +526,7 @@ class TestTheGuardPrecedesTheSocketOptions:
         assert "self.timeout_ms" in source
 
 
+@requires_wire
 def test_a_usable_budget_still_times_out_against_a_slow_sidecar() -> None:
     """The domain bounds the value, it does not change what a timeout means.
 

@@ -70,7 +70,12 @@ unchanged and the usages across the tests, docs and examples all sit inside the
 accepted domain.
 
 Pinned by `tests/test_zmq_timeout_ms_domain.py` - 123 cases, 70 of which fail
-with the guards removed. It asserts the misattribution rather than the raise (an
+with the guards removed. `pyzmq` is imported optionally rather than through a
+module-level `importorskip`, because both clients load it lazily and refuse an
+unusable budget *before* that call: on an install without the `[groot]` /
+`[moveit2]` extra 87 of the cases still run and 60 of them still fail with the
+guards removed, where a module-level skip would have taken the structural drift
+guard with it. It asserts the misattribution rather than the raise (an
 unusable budget can no longer report a live loopback sidecar as unreachable), the
 two clients' verdicts are asserted equal over the whole probe set so they cannot
 diverge, the ceiling is asserted against `setsockopt` rather than restated as a
