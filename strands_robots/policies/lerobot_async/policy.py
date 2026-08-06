@@ -205,8 +205,15 @@ class LerobotAsyncPolicy(Policy):
         # settled together with ``port``, and well before ``require_optional``
         # imports grpc, so the same mistake reports identically with and without
         # the [lerobot-async] extra.
-        for _param, _value in (("connect_timeout", connect_timeout), ("request_timeout", request_timeout)):
-            if error := positive_finite_number_error(_value, _param, type(self).__name__):
+        # Named apart from the ``actions_per_*`` loop below rather than reusing
+        # its ``_param`` / ``_value``: these are ``float`` and those are
+        # ``int | None``, so one pair of names would bind the narrower type here
+        # and make the later loop an assignment error.
+        for _timeout_param, _timeout_value in (
+            ("connect_timeout", connect_timeout),
+            ("request_timeout", request_timeout),
+        ):
+            if error := positive_finite_number_error(_timeout_value, _timeout_param, type(self).__name__):
                 raise ValueError(error)
         address = server_address or f"{host}:{port}"
         if "://" in address:
