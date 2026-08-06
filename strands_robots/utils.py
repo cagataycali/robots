@@ -806,9 +806,13 @@ def positive_whole_number_error(value: Any, param: str, context: str) -> str | N
     documented policy, on the grounds that a per-call ceiling belongs to the
     consumer - and for its one caller that holds, because MuJoCo's
     ``_MAX_STEPS_PER_CALL`` is exactly such a ceiling and refuses an outsized
-    step count with a reason of its own. No consumer of *this* domain owns one.
+    step count with a reason of its own. Exactly one consumer of *this* domain
+    owns such a ceiling: :func:`coerce_zmq_timeout_ms` composes this guard and
+    then applies :data:`MAX_ZMQ_TIMEOUT_MS`, because a ZMQ send/receive timeout
+    is stored as a C ``int`` and this domain accepts ``2**31``.
     Its callers are ``fps``, ``width``, ``height``, ``max_frames``, the mesh
-    robots' ``drive(count=...)`` and ``send_action(n_substeps=)``. Two of those
+    robots' ``drive(count=...)``, ``send_action(n_substeps=)`` and the ZMQ
+    clients' ``timeout_ms``. Two of those
     repeat work that nothing bounds: ``drive`` repeats an actuation command, so
     an unbounded count is an unbounded actuation loop against a physical robot
     rather than a slow call, and ``n_substeps`` is a physics-step count that
@@ -1221,6 +1225,86 @@ def dds_domain_id_error(value: Any, param: str, context: str) -> str | None:
     if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= MAX_DDS_DOMAIN_ID:
         return f"{context}: invalid {param}: {_refusal_repr(value)} (expected 0-{MAX_DDS_DOMAIN_ID})"
     return None
+
+
+MAX_ZMQ_TIMEOUT_MS = 2**31 - 1
+
+
+def coerce_zmq_timeout_ms(method: str, param_name: str, value: Any) -> tuple[int | None, str | None]:
+    """Read ``value`` as a ZMQ send/receive timeout in milliseconds.
+
+    Shared domain for the ``timeout_ms`` of both ZMQ REQ inference clients -
+    :class:`~strands_robots.policies.groot.client.Gr00tInferenceClient` and
+    :class:`~strands_robots.policies.moveit2.client.MoveIt2InferenceClient` -
+    which each hand it to ``setsockopt(RCVTIMEO)`` and ``setsockopt(SNDTIMEO)``
+    on the socket they dial their sidecar with. It is the third remote-inference
+    transport, and it is spelled differently from the WebSocket and gRPC pair's
+    ``connect_timeout`` / ``request_timeout`` (#1984), which is why it was
+    missed when those were settled: same concern, different parameter name.
+
+    Returns the value **coerced to** ``int``, which is load-bearing rather than
+    tidiness. ``setsockopt`` takes a C ``int`` and refuses every other spelling
+    of the same budget, so ``15000.0`` read out of a JSON config and
+    ``np.int64(15000)`` read out of a config array both raise
+    ``TypeError: expected int`` from inside ``pyzmq`` - naming no parameter -
+    even though each names a perfectly usable budget. The sibling transports
+    accept those spellings, so coercing here is what keeps one budget from
+    being usable on two transports and unusable on the third.
+
+    Only a positive whole number can be honored, and the floor is where the
+    damage is. A ``0`` timeout is ZMQ's "return immediately" spelling, so every
+    request raises ``zmq.Again`` regardless of whether a sidecar is listening -
+    and both clients' ``ping()`` catch every exception and return ``False``, so
+    a running, reachable server is reported as unreachable with the reason at
+    ``logger.debug`` only. ``False`` is the same value arriving by a different
+    route, and ``True`` is a silent 1 ms budget whose verdict depends on how
+    long the peer takes to answer, so it fails on one client and passes on the
+    other against the same sidecar.
+
+    **The ceiling is the transport's, not a policy choice.** ``RCVTIMEO`` is
+    stored as a C ``int``, so :data:`MAX_ZMQ_TIMEOUT_MS` - ``2**31 - 1`` ms,
+    close to 24.9 days - is the largest budget ZMQ will accept; one millisecond
+    more raises ``OverflowError: value too large to convert to int``. This is
+    why :func:`positive_whole_number_error` cannot be applied on its own: that
+    domain accepts ``2**31`` as a positive whole number inside the float64
+    range, and the transport then refuses it with a message naming nothing.
+
+    ``-1`` is refused, and it is the one value that deserves the reason stated.
+    ZMQ documents it as "block forever", so unlike the ``inf`` of the sibling
+    transports it *is* honored - which is what makes it dangerous rather than
+    merely useless. It reinstates on the request path exactly the hang that
+    ``LINGER = 0``, set two lines below in the same ``_init_socket``, exists to
+    prevent on teardown: a request to an unreachable sidecar never returns, and
+    ``ping()`` - whose whole contract is to answer ``True`` or ``False`` about
+    connectivity - can then never answer at all. Neither client documents ``-1``
+    as a spelling, and an unbounded wait on a robot control path wants its own
+    parameter and its own decision rather than arriving as a negative
+    millisecond count. A premise test pins ZMQ's treatment of it, so this
+    reopens loudly if that changes.
+
+    Args:
+        method: Message prefix identifying the surface that received the value,
+            usually the class name for a constructor parameter.
+        param_name: The parameter name it came from, used in the message.
+        value: The caller-supplied value.
+
+    Returns:
+        ``(timeout_ms, None)`` with ``timeout_ms`` an ``int`` when the value is
+        usable, or ``(None, reason)`` when it is not.
+    """
+    if (reason := positive_whole_number_error(value, param_name, method)) is not None:
+        return None, reason
+    # ``positive_whole_number_error`` has already established a finite real
+    # inside the float64 range, so ``float`` cannot raise here. The comparison
+    # is done in float rather than int because an integral ``np.float64`` is an
+    # accepted spelling and ``int`` on it would be a second conversion before
+    # the range is known to hold.
+    if float(value) > MAX_ZMQ_TIMEOUT_MS:
+        return None, (
+            f"{method}: {param_name} must be at most {MAX_ZMQ_TIMEOUT_MS} ms "
+            f"(the largest send/receive timeout ZMQ can store), got {_refusal_repr(value)}."
+        )
+    return int(value), None
 
 
 def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any], str | None]:
