@@ -383,6 +383,52 @@ hatch run format            # ruff check --fix, ruff format
      installer and the correct action was to drop the fix rather than relocate
      it. Check what actually shipped before deciding an archived finding needs a
      home.
+   - *And that the field naming the review decision is present at all.*
+     `reviewDecision` has a third reading beyond `APPROVED` and
+     `REVIEW_REQUIRED`: **`null`** - and it does not mean what an absent value
+     suggests. #1974 sat at `mergeStateStatus` `BLOCKED` carrying a current
+     `APPROVED` review that post-dated its head commit, the required check
+     `SUCCESS`, `require_last_push_approval` satisfied, and `reviewDecision`
+     `null`. Resolving its one unresolved thread moved both fields at once:
+
+     | field | one unresolved thread | after `resolveReviewThread` |
+     |---|---|---|
+     | `mergeStateStatus` | `BLOCKED` | `CLEAN` |
+     | `reviewDecision` | `null` | `APPROVED` |
+
+     The gate behind it is already in this file: the `default` ruleset sets
+     `required_review_thread_resolution: true`, and #1890 measured a merge
+     landing 8 seconds after its last thread was resolved. What #1974 adds is
+     the *signature*, and it is the one value that misreads in the reassuring
+     direction - `REVIEW_REQUIRED` at least says a review is owed, whereas
+     `null` reads as "no review requirement applies here" rather than "one
+     resolve from merging". It is not a recompute lag: that approval was more
+     than twenty minutes old when the field was read as `null`. The two also
+     need opposite actions - the `REVIEW_REQUIRED` case above needs a second
+     account, this one needs no review at all. The distinguishing read is the
+     threads, not the decision:
+
+     ```graphql
+     reviewThreads(first: 50) { nodes { id isResolved isOutdated } }
+     ```
+
+     `isOutdated: true` on an unresolved thread is the common form, and it is a
+     prompt rather than reassurance: the diff moved on, so the request has
+     usually already been satisfied by a later commit and only the resolve is
+     outstanding. #1974's was addressed by the commit before its head, and the
+     approving review said so, and it still held the merge.
+
+     **`resolveReviewThread` needs `PAT_TOKEN`.** Under the Actions
+     `GITHUB_TOKEN` it returns `Resource not accessible by integration` - the
+     same refusal shape as the board reads in step 6. Resolving is often the
+     entire remaining distance to a merge, so a sweep holding only an
+     installation token cannot finish the job it has correctly diagnosed.
+
+     Resolve rather than push. A push clears nothing here and costs the approval
+     twice: `dismiss_stale_reviews_on_push` drops it, and
+     `require_last_push_approval` then disqualifies the pushing account from
+     re-supplying it, turning a one-approval merge into one that needs a second
+     reviewer.
    And before merging, `reviewDecision: APPROVED` alone is not the gate: poll
    the **required** contexts' own conclusions and `mergeStateStatus == CLEAN`
    together, since `reviewDecision` flips before the checks finish.
