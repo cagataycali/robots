@@ -61,6 +61,20 @@ one millisecond more raises `OverflowError`. This is also why
 claimed "No consumer of *this* domain owns one" of these ceilings; that is no
 longer true and is corrected in place.
 
+The accepted budget is read from the caller's value exactly once. The first
+spelling of the helper validated with `positive_whole_number_error` and then read
+`value` twice more - `float(value)` for the range and `int(value)` for the result
+- on the reasoning that the guard had made those conversions safe. That is the
+reasoning #1875 shipped for the vector coercions and #1906 withdrew, and
+`utils.py` carries a module-wide scan asserting that no function in it converts
+with a `float()` no `try` protects, against a set that is empty and is asserted
+so it "can neither grow nor be quietly narrowed". So the ceiling is now compared
+against the `int` the helper itself produced: `int` is exact for every value that
+reaches it (the guard has established a finite, integral `numbers.Real`) and is
+arbitrary-precision, so an integral `1e300` converts rather than overflowing and
+is then refused by the ceiling. A new guard joins that invariant rather than the
+exception list.
+
 Each guard is placed ahead of its constructor's `_load_zmq()`, so the same caller
 mistake reports identically on an install with the `[groot]` / `[moveit2]` extra
 and one without it, and a refused budget leaves no socket configured behind it.
@@ -69,11 +83,11 @@ Every value that already named a budget still does: the default `15000` is
 unchanged and the usages across the tests, docs and examples all sit inside the
 accepted domain.
 
-Pinned by `tests/test_zmq_timeout_ms_domain.py` - 123 cases, 70 of which fail
+Pinned by `tests/test_zmq_timeout_ms_domain.py` - 130 cases, 70 of which fail
 with the guards removed. `pyzmq` is imported optionally rather than through a
 module-level `importorskip`, because both clients load it lazily and refuse an
 unusable budget *before* that call: on an install without the `[groot]` /
-`[moveit2]` extra 87 of the cases still run and 60 of them still fail with the
+`[moveit2]` extra 94 of the cases still run and 60 of them still fail with the
 guards removed, where a module-level skip would have taken the structural drift
 guard with it. It asserts the misattribution rather than the raise (an
 unusable budget can no longer report a live loopback sidecar as unreachable), the
@@ -83,7 +97,10 @@ constant, and premise tests pin pyzmq's own treatment of `0`, `True`, `-1`, `-2`
 and the non-`int` spellings so the reasoning above fails loudly rather than going
 stale. A structural check requires every module that sets `RCVTIMEO` / `SNDTIMEO`
 to route the value through the shared domain, so a third ZMQ client cannot ship
-without joining the rule.
+without joining the rule. The read-once property is asserted as a delta against
+`positive_whole_number_error` called alone, so the guard's own reads are the
+baseline and what the coercion adds is measured rather than the guard's internals
+restated; the three cases covering it fail on the first spelling.
 
 The other unvalidated timeout surfaces #1984 named and left - `IotTransport.connect_timeout`,
 `VeraConfig.server_ready_timeout`, `RosBridgeRobot.navigate_to`'s `timeout` - stay

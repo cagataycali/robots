@@ -1294,17 +1294,30 @@ def coerce_zmq_timeout_ms(method: str, param_name: str, value: Any) -> tuple[int
     """
     if (reason := positive_whole_number_error(value, param_name, method)) is not None:
         return None, reason
-    # ``positive_whole_number_error`` has already established a finite real
-    # inside the float64 range, so ``float`` cannot raise here. The comparison
-    # is done in float rather than int because an integral ``np.float64`` is an
-    # accepted spelling and ``int`` on it would be a second conversion before
-    # the range is known to hold.
-    if float(value) > MAX_ZMQ_TIMEOUT_MS:
+    # Read once, and compare the number this function produced rather than the
+    # caller's value a second time. The first spelling of this validated with
+    # the guard and then read ``value`` twice more - ``float(value)`` for the
+    # range and ``int(value)`` for the result - which is the escape #1906 closed
+    # for the vector guards: independent reads are not obliged to agree, so the
+    # magnitude a refusal quoted need not have been the magnitude the ceiling
+    # examined, and a ``numbers.Real`` whose second ``__float__`` refuses raised
+    # straight out of a function whose contract is to answer with text. The
+    # module-wide scan in ``tests/test_conversion_escape_is_closed.py`` reports
+    # exactly that unprotected ``float()``, so this is the invariant's verdict
+    # and not a style preference.
+    #
+    # ``int`` is exact for every value that reaches here and needs no ``try``:
+    # the guard established a ``numbers.Real`` whose ``float()`` succeeded, is
+    # finite and is integral, so no rounding is possible, and the arbitrary
+    # precision of ``int`` means an integral ``1e300`` converts rather than
+    # overflowing and is then refused by the ceiling below.
+    timeout_ms = int(value)
+    if timeout_ms > MAX_ZMQ_TIMEOUT_MS:
         return None, (
             f"{method}: {param_name} must be at most {MAX_ZMQ_TIMEOUT_MS} ms "
             f"(the largest send/receive timeout ZMQ can store), got {_refusal_repr(value)}."
         )
-    return int(value), None
+    return timeout_ms, None
 
 
 def _read_name_list(value: object, param: str, context: str) -> tuple[list[Any], str | None]:

@@ -21,6 +21,8 @@ The tests are grouped by what they protect rather than by client:
   fails here first rather than silently invalidating the reasoning above.
 * :class:`TestNoZmqTimeoutSurfaceDrifts` - structural, so a third ZMQ client
   cannot ship without joining the rule.
+* :class:`TestTheCoercionReadsTheValueOnce` - the module's no-unprotected-
+  conversion invariant, stated over this helper.
 """
 
 from __future__ import annotations
@@ -28,6 +30,7 @@ from __future__ import annotations
 import ast
 import contextlib
 import inspect
+import numbers
 import pathlib
 import threading
 import time
@@ -39,7 +42,7 @@ import strands_robots
 from strands_robots.policies.groot.client import Gr00tInferenceClient
 from strands_robots.policies.groot.client import MsgSerializer as GrootSerializer
 from strands_robots.policies.moveit2.client import MoveIt2InferenceClient
-from strands_robots.utils import MAX_ZMQ_TIMEOUT_MS, coerce_zmq_timeout_ms
+from strands_robots.utils import MAX_ZMQ_TIMEOUT_MS, coerce_zmq_timeout_ms, positive_whole_number_error
 
 # ``pyzmq`` is imported optionally rather than through a module-level
 # ``importorskip``, so that the tests which need no socket keep running without
@@ -160,6 +163,41 @@ def sidecar_for(cls: type) -> Any:
         yield server
     finally:
         server.close()
+
+
+class CountingWholeNumber:
+    """A registered :class:`numbers.Real` that counts every read of itself.
+
+    Registered rather than subclassed for :class:`RealNoFloat`'s reason in
+    ``tests/test_conversion_escape_is_closed.py``: ``numbers.Real`` is a
+    registration, so a value can satisfy a guard's ``isinstance`` check while
+    owing it nothing else. It names a perfectly usable budget, so it travels the
+    accept path to the end - which is the path where a second read is a silent
+    hazard rather than an immediate refusal.
+    """
+
+    def __init__(self, value: int) -> None:
+        self._value = value
+        self.float_reads = 0
+        self.int_reads = 0
+
+    def __float__(self) -> float:
+        self.float_reads += 1
+        return float(self._value)
+
+    def __int__(self) -> int:
+        self.int_reads += 1
+        return self._value
+
+    @property
+    def reads(self) -> int:
+        return self.float_reads + self.int_reads
+
+    def __repr__(self) -> str:
+        return f"CountingWholeNumber({self._value})"
+
+
+numbers.Real.register(CountingWholeNumber)
 
 
 class TestTheSharedDomain:
@@ -559,3 +597,124 @@ def test_a_usable_budget_still_times_out_against_a_slow_sidecar() -> None:
         client.context.term()
         rep.close()
         ctx.term()
+
+
+class TestTheCoercionReadsTheValueOnce:
+    """The module's no-unprotected-conversion invariant, over this helper.
+
+    ``strands_robots/utils.py`` carries a module-wide scan
+    (``tests/test_conversion_escape_is_closed.py``) asserting that no function in
+    it converts with a ``float()`` no ``try`` protects. The set it compares
+    against is empty and is asserted "so it can neither grow nor be quietly
+    narrowed", so a new guard joins the rule rather than the exception list.
+
+    The first spelling of :func:`coerce_zmq_timeout_ms` did not: it validated
+    with :func:`positive_whole_number_error` and then read the caller's value
+    twice more, ``float(value)`` for the range and ``int(value)`` for the result,
+    on the reasoning that the guard had made the conversion safe. That is the
+    reasoning #1875 shipped for the vector coercions and #1906 withdrew - the
+    scan could not see the upstream guarantee, and independent reads are not
+    obliged to agree, so the magnitude a refusal quoted need not have been the
+    magnitude the ceiling examined. The tests below state both halves: no
+    unprotected conversion, *and* the value is read exactly once, because a
+    helper that stopped converting at all would satisfy the first alone.
+    """
+
+    METHOD = "Gr00tInferenceClient"
+    PARAM = "timeout_ms"
+
+    @staticmethod
+    def _bare_float_calls(func: Any) -> list[str]:
+        """Names converted by a ``float()`` call that no ``try`` protects.
+
+        The module-wide scanner's question, asked here so a re-introduced
+        conversion fails in the file that owns this helper rather than only in
+        the shared invariant file.
+        """
+        tree = ast.parse(inspect.getsource(func).lstrip())
+        protected: set[ast.AST] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Try):
+                for stmt in node.body:
+                    for inner in ast.walk(stmt):
+                        if isinstance(inner, ast.Call):
+                            protected.add(inner)
+        return [
+            ast.unparse(node.args[0])
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "float"
+            and node not in protected
+            and node.args
+        ]
+
+    def test_it_makes_no_unprotected_conversion(self) -> None:
+        assert self._bare_float_calls(coerce_zmq_timeout_ms) == []
+
+    def test_the_scanner_reports_a_planted_conversion(self) -> None:
+        """Control: an always-empty scan would satisfy the test above."""
+
+        def planted(value: Any) -> bool:
+            return float(value) > 1.0
+
+        assert self._bare_float_calls(planted) == ["value"]
+
+    def test_the_guard_alone_already_reads_the_value(self) -> None:
+        """Non-vacuity for the double: the baseline below is a measurement."""
+        counted = CountingWholeNumber(15_000)
+        assert positive_whole_number_error(counted, self.PARAM, self.METHOD) is None
+        assert counted.reads > 0
+
+    def test_it_adds_exactly_one_read_to_the_guards_own(self) -> None:
+        """The accepted budget is converted once, by this helper.
+
+        Measured as a delta against :func:`positive_whole_number_error` called
+        alone, so the guard's own reads are the baseline and this asserts what
+        the coercion adds rather than restating the guard's internals.
+        """
+        baseline = CountingWholeNumber(15_000)
+        assert positive_whole_number_error(baseline, self.PARAM, self.METHOD) is None
+
+        counted = CountingWholeNumber(15_000)
+        assert coerce_zmq_timeout_ms(self.METHOD, self.PARAM, counted) == (15_000, None)
+
+        assert counted.reads - baseline.reads == 1
+
+    def test_the_one_added_read_is_the_int_the_caller_gets(self) -> None:
+        """And it is the ``int``, not a re-read of the range.
+
+        Stated separately from the count so that trading the ``int()`` for a
+        second ``float()`` - which keeps the total at one - fails here.
+        """
+        baseline = CountingWholeNumber(15_000)
+        assert positive_whole_number_error(baseline, self.PARAM, self.METHOD) is None
+
+        counted = CountingWholeNumber(15_000)
+        assert coerce_zmq_timeout_ms(self.METHOD, self.PARAM, counted) == (15_000, None)
+
+        assert counted.float_reads == baseline.float_reads
+        assert counted.int_reads == baseline.int_reads + 1
+
+    def test_an_integral_value_above_the_float64_int_range_is_still_refused(self) -> None:
+        """The ceiling comparison happens on an ``int``, which cannot overflow.
+
+        ``1e300`` is integral, finite and inside the float64 range, so the guard
+        accepts it and the ceiling is what refuses it. Converting it with ``int``
+        first is safe because ``int`` is arbitrary-precision - the case that
+        makes reading the value as an ``int`` rather than a ``float`` a
+        correctness statement and not only a read-count one.
+        """
+        timeout_ms, reason = coerce_zmq_timeout_ms(self.METHOD, self.PARAM, 1e300)
+        assert timeout_ms is None
+        assert reason is not None
+        assert f"at most {MAX_ZMQ_TIMEOUT_MS} ms" in reason
+
+    def test_the_ceiling_itself_is_unchanged_by_the_read(self) -> None:
+        """Boundary pin: the accepted edge and the first refused value."""
+        assert coerce_zmq_timeout_ms(self.METHOD, self.PARAM, MAX_ZMQ_TIMEOUT_MS) == (
+            MAX_ZMQ_TIMEOUT_MS,
+            None,
+        )
+        timeout_ms, reason = coerce_zmq_timeout_ms(self.METHOD, self.PARAM, MAX_ZMQ_TIMEOUT_MS + 1)
+        assert (timeout_ms, reason is None) == (None, False)
