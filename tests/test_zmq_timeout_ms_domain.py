@@ -232,7 +232,7 @@ class TestBothClientsRefuseTheSameBudgets:
 
     @pytest.mark.parametrize(("label", "value"), UNUSABLE, ids=[c[0] for c in UNUSABLE])
     def test_the_two_clients_agree_on_every_verdict(self, label: str, value: Any) -> None:
-        reasons = []
+        reasons: list[str | None] = []
         for cls in CLIENTS:
             try:
                 cls(host="127.0.0.1", port=5555, timeout_ms=value)
@@ -515,14 +515,14 @@ class TestTheGuardPrecedesTheSocketOptions:
 
     @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
     def test_the_coercion_appears_before_load_zmq_in_the_constructor(self, cls: type) -> None:
-        source = inspect.getsource(cls.__init__)
+        source = inspect.getsource(getattr(cls, "__init__"))
         assert "coerce_zmq_timeout_ms" in source
         assert source.index("coerce_zmq_timeout_ms") < source.index("_load_zmq")
 
     @pytest.mark.parametrize("cls", CLIENTS, ids=lambda c: c.__name__)
     def test_the_socket_is_configured_from_the_stored_budget(self, cls: type) -> None:
         """``_init_socket`` reads ``self.timeout_ms``, which is the coerced int."""
-        source = inspect.getsource(cls._init_socket)
+        source = inspect.getsource(getattr(cls, "_init_socket"))
         assert "self.timeout_ms" in source
 
 
