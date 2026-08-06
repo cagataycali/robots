@@ -1301,10 +1301,11 @@ def coerce_zmq_timeout_ms(method: str, param_name: str, value: Any) -> tuple[int
     # for the vector guards: independent reads are not obliged to agree, so the
     # magnitude a refusal quoted need not have been the magnitude the ceiling
     # examined, and a ``numbers.Real`` whose second ``__float__`` refuses raised
-    # straight out of a function whose contract is to answer with text. The
-    # module-wide scan in ``tests/test_conversion_escape_is_closed.py`` reports
-    # exactly that unprotected ``float()``, so this is the invariant's verdict
-    # and not a style preference.
+    # straight out of a function whose contract is to answer with text. This
+    # module carries that as a scanned invariant - no function in it may reach a
+    # ``float()`` that no ``try`` protects - and the second read was exactly such
+    # a conversion, so this is the invariant's verdict and not a style
+    # preference.
     #
     # ``int`` is exact for every value that reaches here and needs no ``try``:
     # the guard established a ``numbers.Real`` whose ``float()`` succeeded, is
