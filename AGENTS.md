@@ -340,6 +340,49 @@ hatch run format            # ruff check --fix, ruff format
      IDs against the `databaseId`s the API publishes beside them, so the claim
      that the check is available offline fails loudly rather than quietly if the
      envelope ever changes.
+   - *And that the repository still accepts writes at all.* Archiving is
+     invisible in every field a sweep already reads. `strands-labs/robots-sim`
+     was archived at 01:33 UTC on 2026-08-06, between one scheduled cycle and
+     the next, and a scan taken minutes afterwards returned its open pull
+     request and its four open issues completely normally, next to
+     `viewerPermission: ADMIN`. Nothing in that payload distinguishes it from a
+     live repository. The first and only signal was the mutation:
+
+     ```
+     createIssue  ->  Repository was archived so is read-only
+     ```
+
+     `viewerPermission` is the field that misleads, and it keeps reporting
+     `ADMIN` afterwards because the permission is genuine - the repository is
+     what changed, not the grant. So it is not a stale or buggy read, and no
+     amount of re-reading it helps; it answers a different question than the one
+     being asked.
+
+     What it costs is the whole run rather than a retry, because the refusal
+     arrives at the *end*: an archived repository accepts no branch, no issue and
+     no pull request, so a clone, a branch, a three-file fix, a regression pin
+     verified to fail on pre-fix code, and a clean `black`/`isort`/`flake8` run
+     were all completed before anything reported a problem, and none of it could
+     land. A fork's branch still pushes, which makes it worse rather than better
+     - the pull request it would open is the step that is refused. Ask for the
+     one field on a query already being made, before the work and not after it:
+
+     ```
+     repository(owner: ..., name: ...) { isArchived viewerPermission }
+     ```
+
+     Two consequences beyond the read. An archived repository is terminal, so
+     treat `strands-labs/robots-sim` as closed for good: epic robots-sim#167
+     completed, and any remaining cross-repo item naming it - the
+     `robots-sim MIGRATION.md` half of #1274 - can now only be satisfied or
+     closed on this side. And a defect found in a repository that is already
+     archived is not automatically worth fixing anywhere: the deprecation notice
+     there names an undeclared upstream extra, which is the exact hazard
+     `tests/test_dependency_audit.py` guards here, but robots-sim never cut a
+     release carrying it - its latest tag predates the notice - so it reached no
+     installer and the correct action was to drop the fix rather than relocate
+     it. Check what actually shipped before deciding an archived finding needs a
+     home.
    And before merging, `reviewDecision: APPROVED` alone is not the gate: poll
    the **required** contexts' own conclusions and `mergeStateStatus == CLEAN`
    together, since `reviewDecision` flips before the checks finish.
