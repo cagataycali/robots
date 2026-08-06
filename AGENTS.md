@@ -668,6 +668,44 @@ hatch run format            # ruff check --fix, ruff format
    so it reports and is deliberately absent from the required set. A gate a
    branch cannot clear by doing anything is a report, whatever it is wired to.
 
+   **Automating it is not the same as covering the population, and the gap is
+   silent in the same direction as the bug.** That workflow fires on
+   `pull_request` and `pull_request_review`, so it can only evaluate a pull
+   request that has had one of those *since it landed* - and the pull requests
+   this is written for are the ones that have not. #1035's head was pushed
+   2026-08-01 and approved 51 minutes later, both before the workflow existed on
+   2026-08-04, so `Detect an approval the last pusher cannot supply` is absent
+   from the 11 check runs on that head, while every other check is present. So
+   the check read `SUCCESS` on pull requests that did not have the condition and
+   said nothing at all about the two that did.
+
+   The verdict was never the problem. Run directly, the same script answers
+   immediately, and did before this was noticed:
+
+   ```
+   python3 scripts/check_last_push_approval.py --repo strands-labs/robots --pr 1035
+     -> Outcome: pusher-only-approval, pushed by cagataycali, exit 1
+   ```
+
+   #1905 attributes the silence to the workflow's base-branch guard instead.
+   That is worth correcting rather than leaving, because it points at a fix that
+   would change nothing: the guard checks out the **base**, `main` carries the
+   script, so the guard passes and the script would run. What was missing was a
+   caller, which is now `--all-open`:
+
+   ```
+   python3 scripts/check_last_push_approval.py --repo <owner/name> --all-open
+   ```
+
+   Run that when reporting repository health. A sweep that reads only
+   `reviewDecision` and `mergeStateStatus` cannot tell
+   `awaiting-first-review` from `pusher-only-approval` - both are
+   `REVIEW_REQUIRED` / `BLOCKED` - and reporting the second as the first is
+   exactly how "reviewer bandwidth is the sole constraint" stood for eight
+   consecutive scans over two permanently unmergeable pull requests. Exit 1
+   means at least one open pull request needs an approver who is not its pusher,
+   and no amount of reviewer time supplies one.
+
    The general rule behind all three: **a decision recorded only in a PR or
    issue comment is not durable** - the next contributor will not read the same
    comment. If a decision must survive, it belongs in this file.

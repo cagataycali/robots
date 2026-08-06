@@ -82,10 +82,51 @@ also cannot be self-cleared by the pull request author alone, which is exactly
 why it reports rather than blocks: a gate whose remedy is "find another human"
 would otherwise sit red on a branch that has done nothing wrong.
 
+Why there is a sweep mode
+-------------------------
+The workflow that runs this is driven by ``pull_request`` and
+``pull_request_review`` events, so it can only ever evaluate a pull request
+that has had one **since the workflow landed**. The population the check was
+written for is precisely the population that has not.
+
+Measured on #1035: its head was pushed 2026-08-01T08:00:37Z and the approval
+submitted 51 minutes later, both before the workflow existed on 2026-08-04, so
+no qualifying event has fired on it since and ``Detect an approval the last
+pusher cannot supply`` is absent from the 11 check runs on that head. Nothing
+about the verdict was ever wrong -- invoked directly against the same pull
+request the classifier answers immediately::
+
+    python3 scripts/check_last_push_approval.py --pr 1035
+    -> Outcome: pusher-only-approval, pushed by cagataycali, exit 1
+
+So the gap was never in the reasoning; it was that on a standing pull request
+nothing asks for it. Issue #1905 attributes the silence to this workflow's
+base-branch guard instead. That is not the cause and the distinction matters,
+because it points at a different fix: the guard checks out the **base**, ``main``
+carries the script, so the guard passes and would run it. What is missing is a
+caller.
+
+``--all-open`` is that caller. It classifies every open pull request on demand,
+which is what a scheduled status scan needs in order to tell "waiting on a
+reviewer" from "cannot merge on any further review by this account" -- the two
+states this file exists to separate, and the ones that stood conflated in eight
+consecutive scan summaries. Draft pull requests are excluded: a draft cannot
+merge whatever its approvals say, so a finding on one does not mean what a
+finding here means.
+
+A per-pull-request lookup failure inside a sweep is reported and skipped rather
+than allowed to abort the run, because one rate-limited pull request must not
+suppress a finding on the others. Skipped numbers are named in the report for
+the same reason the outcomes are: an unevaluated pull request that says nothing
+is the failure mode this whole file is written against.
+
 Usage
 -----
 ``--repo``   ``owner/name`` (default: ``$GITHUB_REPOSITORY``).
 ``--pr``     pull request number (default: ``$PR_NUMBER``).
+``--all-open``
+             Sweep every open non-draft pull request instead of one. Mutually
+             exclusive with ``--pr``.
 ``--head``   head commit SHA (default: ``$HEAD_SHA``; falls back to the pull
              request's own ``head.sha``).
 ``--token``  API token (default: ``$GITHUB_TOKEN``). Needs ``actions: read``
@@ -126,10 +167,39 @@ POSITION_STATES = frozenset({"APPROVED", "CHANGES_REQUESTED", "DISMISSED"})
 # tests/test_last_push_approval.py::test_a_review_triggered_run_does_not_name_the_pusher
 PUSH_ATTRIBUTING_EVENTS = frozenset({"push", "pull_request"})
 
+# Pagination ceiling for the open-pull-request listing. A repository with more
+# than this many open pull requests at once has a different problem, and an
+# unbounded loop over a paginated endpoint is how a transient API shape change
+# becomes a hang rather than an error.
+_MAX_PAGES = 20
+
 SATISFIED = "satisfied"
 AWAITING_FIRST_REVIEW = "awaiting-first-review"
 PUSHER_ONLY_APPROVAL = "pusher-only-approval"
 UNKNOWN_PUSHER = "unknown-pusher"
+
+
+# The remedy text, shared by the single-pull-request report and the sweep so
+# the two cannot drift into describing different remedies for one rule.
+WHAT_CLEARS_THIS: tuple[str, ...] = (
+    "",
+    "### What clears this",
+    "",
+    "1. A second reviewer approves. Preserves the guarantee the rule exists",
+    "   to provide, and is the cheapest of the three.",
+    "2. The branch author pushes the head commit, which makes the existing",
+    "   approval count again. `dismiss_stale_reviews_on_push` is also set, so",
+    "   this costs a re-approval round -- but one that then counts.",
+    "3. Admin bypass. Not recommended: the rule exists to stop one account",
+    "   both writing and approving a change, so bypassing it to merge code",
+    "   that account pushed defeats the control rather than working around a",
+    "   technicality.",
+    "",
+    "Avoiding it next time: pushing a fix onto a contributor's branch consumes",
+    "the approval of whoever owns the token it is pushed with. Prefer leaving",
+    "the change as review feedback for the author to push, or land it as a",
+    "separate pull request against the base branch.",
+)
 
 
 @dataclass(frozen=True)
@@ -292,6 +362,100 @@ def resolve_head_sha(repo: str, pr: int, token: str) -> str:
     return head.get("sha") or ""
 
 
+@dataclass(frozen=True)
+class SweepRow:
+    """One open pull request and the verdict computed for it."""
+
+    pr: int
+    head_sha: str
+    verdict: Verdict
+
+
+def resolve_open_pull_requests(repo: str, token: str) -> list[tuple[int, str]]:
+    """Return ``(number, head_sha)`` for every open non-draft pull request.
+
+    Sorted by number so the sweep report is stable between runs and a diff of
+    two reports shows changed verdicts rather than reordered rows.
+    """
+    found: list[tuple[int, str]] = []
+    for page in range(1, _MAX_PAGES + 1):
+        payload = _get(f"{API_ROOT}/repos/{repo}/pulls?state=open&per_page=100&page={page}", token)
+        rows = payload if isinstance(payload, list) else []
+        for row in rows:
+            if row.get("draft"):
+                continue
+            number = row.get("number")
+            head = ((row.get("head") or {}).get("sha")) or ""
+            if isinstance(number, int) and head:
+                found.append((number, head))
+        if len(rows) < 100:
+            break
+    return sorted(found)
+
+
+def sweep(repo: str, token: str) -> tuple[list[SweepRow], list[int]]:
+    """Classify every open non-draft pull request.
+
+    Returns the rows it could evaluate and the numbers it could not. A failure
+    on one pull request is skipped rather than raised: the sweep exists to
+    surface findings across the standing population, and one unreachable pull
+    request must not take the rest of the report with it.
+    """
+    rows: list[SweepRow] = []
+    skipped: list[int] = []
+    for pr, head_sha in resolve_open_pull_requests(repo, token):
+        try:
+            pusher = resolve_pusher(repo, head_sha, token)
+            reviews = resolve_reviews(repo, pr, token)
+        except (urllib.error.URLError, urllib.error.HTTPError, ValueError) as exc:
+            print(f"check_last_push_approval: {repo}#{pr} lookup failed, not evaluated: {exc}", file=sys.stderr)
+            skipped.append(pr)
+            continue
+        rows.append(SweepRow(pr, head_sha, classify(pusher, reviews)))
+    return rows, skipped
+
+
+def render_sweep(rows: Sequence[SweepRow], skipped: Sequence[int], repo: str) -> str:
+    """Render one table for the whole sweep, findings named up front."""
+    findings = [row for row in rows if row.verdict.is_finding]
+    lines = [
+        "## Last-push approval sweep",
+        "",
+        f"Evaluated {len(rows)} open non-draft pull request(s) in {repo}.",
+        "",
+    ]
+    if findings:
+        named = ", ".join(f"#{row.pr}" for row in findings)
+        lines += [
+            f"**{len(findings)} needs an approver who did not push the head:** {named}.",
+            "",
+            "Each is approved, and blocked anyway. No further review by the pushing",
+            "account can clear it, so this does not resolve with reviewer time.",
+            "",
+        ]
+    else:
+        lines += ["No pull request is held by an approval its pusher supplied.", ""]
+    lines += [
+        "| pull request | outcome | pushed by | current approvals |",
+        "|---|---|---|---|",
+    ]
+    for row in rows:
+        lines.append(
+            f"| #{row.pr} | {row.verdict.outcome} | {row.verdict.pusher or '(undetermined)'} "
+            f"| {_join(row.verdict.approvers)} |"
+        )
+    if skipped:
+        lines += [
+            "",
+            "Not evaluated (lookup failed): " + ", ".join(f"#{pr}" for pr in skipped) + ".",
+            "A pull request this run could not read is named rather than omitted, so a",
+            "silent gap in coverage cannot read as a clean sweep.",
+        ]
+    if findings:
+        lines += list(WHAT_CLEARS_THIS)
+    return "\n".join(lines)
+
+
 def render(verdict: Verdict, repo: str, pr: int, head_sha: str) -> str:
     lines = [
         "## Last-push approval",
@@ -309,25 +473,35 @@ def render(verdict: Verdict, repo: str, pr: int, head_sha: str) -> str:
     ]
     if verdict.is_finding:
         lines += [
-            "",
-            "### What clears this",
-            "",
-            "1. A second reviewer approves. Preserves the guarantee the rule exists",
-            "   to provide, and is the cheapest of the three.",
-            "2. The branch author pushes the head commit, which makes the existing",
-            "   approval count again. `dismiss_stale_reviews_on_push` is also set, so",
-            "   this costs a re-approval round -- but one that then counts.",
-            "3. Admin bypass. Not recommended: the rule exists to stop one account",
-            "   both writing and approving a change, so bypassing it to merge code",
-            "   that account pushed defeats the control rather than working around a",
-            "   technicality.",
-            "",
-            "Avoiding it next time: pushing a fix onto a contributor's branch consumes",
-            "the approval of whoever owns the token it is pushed with. Prefer leaving",
-            "the change as review feedback for the author to push, or land it as a",
-            "separate pull request against the base branch.",
+            *WHAT_CLEARS_THIS,
         ]
     return "\n".join(lines)
+
+
+def _emit(report: str) -> None:
+    """Print the report, and append it to the step summary when there is one."""
+    print(report)
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.write(report + "\n")
+
+
+def _run_sweep(repo: str, token: str) -> int:
+    """Sweep the open pull requests, reporting every finding. Exit 1 if any."""
+    try:
+        rows, skipped = sweep(repo, token)
+    except (urllib.error.URLError, urllib.error.HTTPError, ValueError) as exc:
+        # Listing the pull requests is the one lookup with no partial result to
+        # report, so it follows the same rule as a single-pull-request failure.
+        print(f"check_last_push_approval: could not list open pull requests: {exc}", file=sys.stderr)
+        return 0
+
+    _emit(render_sweep(rows, skipped, repo))
+    findings = [row for row in rows if row.verdict.is_finding]
+    for row in findings:
+        print(f"::warning title=Needs an approver who did not push the head::{repo}#{row.pr}: {row.verdict.summary}")
+    return 1 if findings else 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -336,12 +510,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--pr", default=os.environ.get("PR_NUMBER", ""))
     parser.add_argument("--head", default=os.environ.get("HEAD_SHA", ""))
     parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN", ""))
+    parser.add_argument(
+        "--all-open",
+        action="store_true",
+        help="Sweep every open non-draft pull request instead of one.",
+    )
     args = parser.parse_args(argv)
 
-    if not args.repo or not args.pr:
-        parser.error("--repo and --pr are required (or set GITHUB_REPOSITORY and PR_NUMBER)")
     if not args.token:
         parser.error("--token is required (or set GITHUB_TOKEN)")
+    if not args.repo:
+        parser.error("--repo is required (or set GITHUB_REPOSITORY)")
+    # Refused rather than resolved in either direction: silently ignoring --pr
+    # would report on pull requests the caller did not ask about, and silently
+    # ignoring --all-open would report on one when a sweep was wanted. Both
+    # read as a successful run of the other thing.
+    if args.all_open and args.pr:
+        parser.error("--all-open and --pr are mutually exclusive")
+    if not args.all_open and not args.pr:
+        parser.error("--pr is required (or set PR_NUMBER), or pass --all-open")
+
+    if args.all_open:
+        return _run_sweep(args.repo, args.token)
 
     pr = int(args.pr)
     try:
@@ -356,12 +546,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     verdict = classify(pusher, reviews)
     report = render(verdict, args.repo, pr, head_sha)
-    print(report)
-
-    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
-    if summary_path:
-        with open(summary_path, "a", encoding="utf-8") as handle:
-            handle.write(report + "\n")
+    _emit(report)
 
     if verdict.is_finding:
         print(f"::warning title=Needs an approver who did not push the head::{verdict.summary}")

@@ -485,3 +485,217 @@ def test_the_guard_does_not_swallow_a_real_finding(tmp_path):
     assert result.returncode == 1, result.stdout + result.stderr
     assert "stub ran" in result.stdout
     assert "nothing to report" not in result.stdout
+
+
+# --------------------------------------------------------------------------
+# The sweep over the standing open pull requests.
+#
+# The workflow driving this check fires on `pull_request` and
+# `pull_request_review`, so it can only evaluate a pull request that has had one
+# since the workflow landed -- and the population the check was written for is
+# the population that has not. Measured on #1035: head pushed 2026-08-01, the
+# approval 51 minutes later, the workflow landed 2026-08-04, so
+# `Detect an approval the last pusher cannot supply` is absent from the 11 check
+# runs on that head while the classifier answers `pusher-only-approval` the
+# moment it is invoked. These pin the caller that closes that gap, not the
+# verdict, which was never wrong.
+# --------------------------------------------------------------------------
+
+
+def _pull(number: int, sha: str, draft: bool = False) -> dict[str, Any]:
+    return {"number": number, "head": {"sha": sha}, "draft": draft}
+
+
+def _sweep_fixture(monkeypatch, pulls, approvals, *, unreadable=()):
+    """Wire the three lookups a sweep makes from plain fixtures.
+
+    ``approvals`` maps a pull request number to its approving accounts; every
+    head is pushed by ``cagataycali``, which is the measured shape of the two
+    deadlocked pull requests. ``unreadable`` names head shas whose pusher
+    lookup raises, standing in for a rate limit on one pull request.
+    """
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(mod, "_get", lambda *a, **k: pulls)
+
+    def pusher(_repo, head_sha, _token):
+        if head_sha in unreadable:
+            raise mod.urllib.error.URLError("rate limited")
+        return "cagataycali"
+
+    monkeypatch.setattr(mod, "resolve_pusher", pusher)
+    monkeypatch.setattr(
+        mod,
+        "resolve_reviews",
+        lambda _repo, pr, _token: [approved(a) for a in approvals.get(pr, ())],
+    )
+
+
+def test_the_sweep_finds_a_pull_request_no_event_has_fired_on(monkeypatch, capsys):
+    """The measured case: #1035 and #1722 held, #1087 merely unreviewed.
+
+    This is the sweep's whole reason to exist. All three read `REVIEW_REQUIRED`
+    / `BLOCKED`, and the first two need a different reviewer while the third
+    needs any reviewer at all.
+    """
+    _sweep_fixture(
+        monkeypatch,
+        [_pull(1035, "8d6a4c42"), _pull(1087, "8352a8ee"), _pull(1722, "3a32a145")],
+        {1035: ("cagataycali",), 1722: ("cagataycali",)},
+    )
+
+    assert mod.main(["--repo", "strands-labs/robots", "--all-open", "--token", "t"]) == 1
+    report = capsys.readouterr().out
+    assert "#1035, #1722" in report
+    assert "| #1087 | awaiting-first-review |" in report
+    assert "| #1035 | pusher-only-approval | cagataycali | cagataycali |" in report
+
+
+def test_a_draft_pull_request_is_not_swept(monkeypatch):
+    """A draft cannot merge whatever its approvals say.
+
+    So a finding on one does not mean what this check's finding means -- that a
+    pull request otherwise ready needs a second account -- and reporting it
+    would dilute the one thing the red state says.
+    """
+    monkeypatch.setattr(
+        mod,
+        "_get",
+        lambda *a, **k: [_pull(1, "aaa"), _pull(2, "bbb", draft=True)],
+    )
+    assert mod.resolve_open_pull_requests("strands-labs/robots", "t") == [(1, "aaa")]
+
+
+def test_one_unreadable_pull_request_does_not_suppress_the_others(monkeypatch, capsys):
+    """A failure on one pull request must not take the report with it.
+
+    The sweep's value is the finding, and a rate limit on an unrelated pull
+    request silently swallowing it would reproduce the invisibility this whole
+    check exists to remove. The skipped number is named for the same reason.
+    """
+    _sweep_fixture(
+        monkeypatch,
+        [_pull(1035, "8d6a4c42"), _pull(1900, "ffffffff")],
+        {1035: ("cagataycali",)},
+        unreadable={"ffffffff"},
+    )
+
+    assert mod.main(["--repo", "strands-labs/robots", "--all-open", "--token", "t"]) == 1
+    captured = capsys.readouterr()
+    assert "#1035" in captured.out
+    assert "Not evaluated (lookup failed): #1900." in captured.out
+    assert "not evaluated" in captured.err
+
+
+def test_the_sweep_exit_status_is_one_only_for_a_finding(monkeypatch):
+    pulls = [_pull(1035, "8d6a4c42")]
+    _sweep_fixture(monkeypatch, pulls, {1035: ("cagataycali",)})
+    assert mod.main(["--repo", "strands-labs/robots", "--all-open", "--token", "t"]) == 1
+
+    # A second approver clears it, exactly as in the single-pull-request path.
+    _sweep_fixture(monkeypatch, pulls, {1035: ("cagataycali", "yinsong1986")})
+    assert mod.main(["--repo", "strands-labs/robots", "--all-open", "--token", "t"]) == 0
+
+    _sweep_fixture(monkeypatch, pulls, {})
+    assert mod.main(["--repo", "strands-labs/robots", "--all-open", "--token", "t"]) == 0
+
+
+def test_a_clean_sweep_says_so_rather_than_printing_a_bare_table(monkeypatch, capsys):
+    _sweep_fixture(monkeypatch, [_pull(1087, "8352a8ee")], {})
+    mod.main(["--repo", "strands-labs/robots", "--all-open", "--token", "t"])
+    out = capsys.readouterr().out
+    assert "No pull request is held by an approval its pusher supplied." in out
+    # The remedy block belongs only to a finding, in both reports.
+    assert "Admin bypass" not in out
+
+
+def test_both_reports_carry_the_same_remedy_text():
+    """One rule, one remedy. The sweep and the single report share the source.
+
+    They described the same three options in two places before, which is how a
+    fix to one of them silently stops applying to the other.
+    """
+    finding = mod.classify("cagataycali", [approved("cagataycali")])
+    single = mod.render(finding, "strands-labs/robots", 1035, "8d6a4c42")
+    swept = mod.render_sweep([mod.SweepRow(1035, "8d6a4c42", finding)], [], "strands-labs/robots")
+    remedy = "\n".join(mod.WHAT_CLEARS_THIS)
+    assert remedy in single
+    assert remedy in swept
+
+
+def test_the_sweep_rows_are_ordered_by_pull_request_number(monkeypatch):
+    """A stable report, so diffing two sweeps shows changed verdicts only."""
+    monkeypatch.setattr(
+        mod,
+        "_get",
+        lambda *a, **k: [_pull(1722, "c"), _pull(1035, "a"), _pull(1087, "b")],
+    )
+    assert [pr for pr, _ in mod.resolve_open_pull_requests("r", "t")] == [1035, 1087, 1722]
+
+
+def test_the_listing_stops_on_a_short_page_and_is_bounded(monkeypatch):
+    """Pagination ends on a short page, and cannot loop without end.
+
+    An unbounded loop over a paginated endpoint is how an API shape change
+    becomes a hang instead of an error.
+    """
+    pages: list[str] = []
+
+    def paged(url, _token):
+        pages.append(url)
+        return [_pull(1000 + i, f"sha{i}") for i in range(100)] if len(pages) == 1 else [_pull(9, "z")]
+
+    monkeypatch.setattr(mod, "_get", paged)
+    assert len(mod.resolve_open_pull_requests("r", "t")) == 101
+    assert len(pages) == 2
+    assert "page=2" in pages[1]
+
+    pages.clear()
+    monkeypatch.setattr(mod, "_get", lambda url, _t: pages.append(url) or [_pull(i, f"s{i}") for i in range(100)])
+    mod.resolve_open_pull_requests("r", "t")
+    assert len(pages) == mod._MAX_PAGES
+
+
+def test_a_failure_listing_the_pull_requests_reports_nothing(monkeypatch, capsys):
+    """No partial result exists for the listing itself, so it passes and says so."""
+
+    def boom(*_a, **_k):
+        raise mod.urllib.error.URLError("rate limited")
+
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+    monkeypatch.setattr(mod, "_get", boom)
+    assert mod.main(["--repo", "strands-labs/robots", "--all-open", "--token", "t"]) == 0
+    assert "could not list open pull requests" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "argv, expected",
+    [
+        (["--repo", "r", "--all-open", "--pr", "1035"], "mutually exclusive"),
+        (["--repo", "r"], "--pr is required"),
+    ],
+)
+def test_an_ambiguous_invocation_is_refused_rather_than_resolved(argv, expected, capsys, monkeypatch):
+    """Neither flag may be silently ignored.
+
+    Dropping --pr would report on pull requests the caller did not ask about;
+    dropping --all-open would report on one when a sweep was wanted. Both read
+    as a successful run of the other thing.
+    """
+    monkeypatch.delenv("PR_NUMBER", raising=False)
+    with pytest.raises(SystemExit):
+        mod.main([*argv, "--token", "t"])
+    assert expected in capsys.readouterr().err
+
+
+def test_the_sweep_report_stays_ascii():
+    """Per the repo's Unicode hygiene rule, as the single report already is."""
+    finding = mod.classify("cagataycali", [approved("cagataycali")])
+    waiting = mod.classify("cagataycali", [])
+    unknown = mod.classify(None, [])
+    rows = [
+        mod.SweepRow(1035, "8d6a4c42", finding),
+        mod.SweepRow(1087, "8352a8ee", waiting),
+        mod.SweepRow(1722, "3a32a145", unknown),
+    ]
+    mod.render_sweep(rows, [1900], "strands-labs/robots").encode("ascii")
+    mod.render_sweep([], [], "strands-labs/robots").encode("ascii")
