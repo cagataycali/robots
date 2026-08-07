@@ -63,7 +63,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import pytest
@@ -137,7 +137,11 @@ def _run(width: int, n_views: int = 1) -> dict:
     """Drive one ``get_actions`` at ``width`` and return the wire payload."""
     client = _FakeClient({"action_space": "pos", "context_frames": 1}, [[0.0]])
     policy = VeraPolicy(
-        client=client,
+        # The stand-in is duck-typed against the four client methods the provider
+        # calls, not a ``VeraWebsocketClient`` subclass, so the parameter's type
+        # is widened here rather than the fake being grown a socket it must not
+        # open. Cast at the boundary keeps the rest of this helper checked.
+        client=cast(Any, client),
         config=_config(embodiment="mimicgen", render_width=width, auto_launch_server=False),
     )
     obs = {f"cam{i}": _cam() for i in range(n_views)}
