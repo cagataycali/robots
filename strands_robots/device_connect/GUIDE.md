@@ -429,6 +429,15 @@ invoke("device(reachy-mini-1).function(look)", {"pitch": -15, "yaw": 30})
 invoke("device(reachy-mini-1).function(nod)")
 ```
 
+The movement RPCs (`look`, `antennas`, `body`) carry signed physical quantities
+-- angles in degrees, offsets in millimetres. Each must be a finite number of
+either sign; zero and negatives are meaningful (a negative pitch looks down,
+zero re-centres). An argument outside that domain is refused with a
+`{"status": "error", "reason": ...}` naming the RPC and the parameter, and no
+command reaches the robot -- a non-finite value would otherwise serialize onto
+the wire as a JSON token RFC 8259 does not define. The reachable workspace is
+bounded by the daemon, not here.
+
 ### E2E Demo
 
 > Requires a Reachy Mini robot.
