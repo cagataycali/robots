@@ -63,7 +63,12 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import require_optional, sequence_length
+from strands_robots.utils import (
+    finite_number_error,
+    finite_vector_error,
+    require_optional,
+    sequence_length,
+)
 
 from .config import WBCConfig
 from .control import compute_targets, pd_control, projected_gravity
@@ -500,6 +505,8 @@ class WBCPolicy(Policy):
             omega]`` triple used for walk-vs-main policy selection (matching the
             upstream ``norm(loco_cmd) <= 0.05`` test on the raw command).
         """
+        self._validate_goal_overrides(kwargs)
+
         tv = kwargs.get("target_velocity")
         if tv is not None:
             vel_full = self._validate_velocity(tv)
@@ -1006,6 +1013,53 @@ class WBCPolicy(Policy):
             base = base if base.is_dir() else base.parent
             return str(base / filename)
         return None
+
+    def _validate_goal_overrides(self, kwargs: dict[str, Any]) -> None:
+        """Hold the per-call goal overrides to the domain of the config defaults they override.
+
+        ``height`` and ``target_orientation`` are the per-call spellings of
+        :attr:`WBCConfig.height_cmd` and :attr:`WBCConfig.rpy_cmd`: they are
+        written into the SAME command slots, and when they are omitted those
+        config fields supply the value. ``WBCConfig`` refuses a non-finite,
+        ``bool`` or non-numeric value for both, so accepting one here would let
+        the override install exactly what the default it overrides may not hold.
+
+        Both are *applied* rather than forwarded - they become entries of the
+        command block, which is a slice of the network's own input - so nothing
+        downstream refuses an unusable value. A ``nan`` height reaches the
+        network, whose first matmul spans the whole input, so every returned
+        action is non-finite; that action is then stored as ``_prev_action`` and
+        fed into every subsequent frame, so ONE unusable goal makes every later
+        tick non-finite too, under a ``status="success"`` result and with the
+        caller's next, perfectly usable goal applied as asked. Only
+        :meth:`reset` clears it. ``True`` and ``"0.8"`` are the quieter half:
+        both are silently coerced into a base-height command the caller never
+        asked for.
+
+        Called as the first statement of :meth:`_resolve_command`, which is
+        itself the first statement of ``get_actions``, so a refused goal
+        advances no gait phase, pushes no observation frame and leaves
+        ``_prev_action`` untouched - there is no half-applied tick to undo.
+
+        Args:
+            kwargs: The ``get_actions`` keyword arguments to read the goal
+                overrides from. A key that is absent or ``None`` means "no
+                override", which is what lets the guarded config default
+                through unexamined.
+
+        Raises:
+            ValueError: If ``height`` is not a finite number, or any component
+                of ``target_orientation`` is not a finite number. The message
+                names the offending parameter and the calling class, so the
+                gait variant reports its own name.
+        """
+        context = f"{type(self).__name__}.get_actions"
+        height = kwargs.get("height")
+        if height is not None and (error := finite_number_error(height, "height", context)):
+            raise ValueError(error)
+        rpy = kwargs.get("target_orientation")
+        if rpy is not None and (error := finite_vector_error(context, "target_orientation", rpy)):
+            raise ValueError(error)
 
     @staticmethod
     def _validate_velocity(tv: Any) -> np.ndarray:

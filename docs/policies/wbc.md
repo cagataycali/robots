@@ -129,6 +129,31 @@ A per-call `target_velocity` overrides the constructor-time default. With no
 command at all the controller holds a standing balance (zero velocity, default
 height + level orientation).
 
+### Goal value domain
+
+A per-call goal is held to the *same* domain as the config field it overrides,
+because they are two spellings of one value: whichever is supplied lands in the
+same command slot, and the command block is a slice of the network's own input,
+so nothing downstream refuses an unusable one.
+
+| Key | Accepted | Refused, and why |
+|-----|----------|------------------|
+| `target_velocity` | finite, `>= 3` components | Non-finite; a vector shorter than `[vx, vy, omega]`. |
+| `height` | finite (same domain as `height_cmd`) | `nan`/`inf`, `bool` (`True` is a silent 1 m command), non-numeric. |
+| `target_orientation` | finite, per component (same domain as `rpy_cmd`) | A non-finite or `bool` component, a non-numeric element, a bare scalar. Length is not constrained - components past the command block are still checked. |
+
+Omitting a key, or passing `None`, still means "no override" and takes the
+config default unexamined.
+
+A refused goal is refused *before* the tick starts: no observation frame is
+pushed, `_prev_action` is unchanged, the gait phase is not advanced and no
+inference runs, so there is no half-applied tick to undo. This matters because
+the damage from an accepted one does not stay on its own tick - a non-finite
+goal makes the network's action non-finite, that action becomes `_prev_action`,
+and `_prev_action` is fed into every later frame, so every subsequent tick is
+non-finite too even after the caller supplies a usable goal. Only `reset()`
+clears it.
+
 ## Control contract
 
 WBC reproduces the upstream `GearWbcController` loop (NVlabs/GR00T-WholeBodyControl

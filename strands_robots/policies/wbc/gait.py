@@ -401,6 +401,8 @@ class WBCGaitPolicy(WBCPolicy):
             ``cmd_scale`` applied to the velocity, and the UNSCALED ``[vx, vy,
             omega]`` triple.
         """
+        self._validate_goal_overrides(kwargs)
+
         tv = kwargs.get("target_velocity")
         if tv is not None:
             vel_full = self._validate_velocity(tv)
