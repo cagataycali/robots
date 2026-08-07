@@ -150,6 +150,9 @@ class PpoTrainer(BaseRLAlgo):
             problems.append("env_factory is required (a zero-arg callable returning a SimEnv)")
         if not spec.output_dir:
             problems.append("output_dir is required")
+        # gamma discounts the return this backend optimizes; the arithmetic that
+        # consumes it never judges it, so the shared interval domain does.
+        problems.extend(self._discount_factor_problems(spec))
         if spec.total_timesteps <= 0:
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:

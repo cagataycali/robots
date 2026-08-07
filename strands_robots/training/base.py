@@ -423,6 +423,38 @@ class Trainer(ABC):
 
         return lora_hyperparameter_problems(spec, context=self.provider_name)
 
+    def _discount_factor_problems(self, spec: TrainSpec) -> list[str]:
+        """Discount-factor preflight shared by every RL backend.
+
+        Returns a problem when :attr:`RLTrainSpec.gamma` is not a real number in
+        the closed interval ``[0, 1]``. A :meth:`validate` implementation that
+        discounts a return with the field MUST call this instead of leaving the
+        value to the arithmetic that consumes it, because that arithmetic never
+        judges it: ``gamma > 1`` makes the discounted return diverge in the
+        rollout horizon and the run still reports success and writes a
+        checkpoint, ``gamma < 0`` alternates the sign of each future reward so
+        the trace stops accumulating return at all, and a non-finite value
+        surfaces only once the update samples the action distribution - as a
+        torch constraint error naming neither the field nor the run, after the
+        env, the networks and a full rollout have been built.
+
+        Both interval endpoints are inside the domain (``gamma=1`` is the
+        undiscounted episodic return, ``gamma=0`` a myopic agent), so the check
+        is a closed interval rather than a positivity test - and it rejects
+        ``bool``, which a bare comparison against the bounds accepts as a silent
+        ``gamma`` of one.
+
+        Every RL backend reads the field, so unlike
+        :meth:`_lora_hyperparameter_problems` there is no backend for which
+        reporting on it would be a false rejection.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import discount_factor_problems
+
+        return discount_factor_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 

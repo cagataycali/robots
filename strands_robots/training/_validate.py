@@ -59,15 +59,25 @@ reserve a different number of episodes than the one asked for.
 fine-tune. It is scoped like :func:`run_size_problems` and narrowed once more -
 only the LeRobot backend reads either field, and only on its ``method == "lora"``
 branch, so a value a run's own strategy never reads must not be reported.
+
+:func:`discount_factor_problems` is the eighth, on the *return* axis:
+``gamma``, the discount factor of the return the algorithm optimizes. It is
+scoped like :func:`learning_rate_problems` rather than like
+:func:`run_size_problems` - it is the one
+:class:`~strands_robots.training.rl.base_algo.RLTrainSpec` coefficient that
+*every* RL backend reads (PPO discounts the GAE recursion with it, FastSAC
+discounts its target-Q bootstrap), so there is no RL backend for which
+reporting on it would be a false rejection.
 """
 
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from strands_robots.tools._path_validation import validate_save_path
 from strands_robots.utils import (
+    finite_number_error,
     non_negative_count_error,
     positive_count_error,
     positive_finite_number_error,
@@ -446,3 +456,87 @@ def lora_hyperparameter_problems(spec: TrainSpec, *, context: str) -> list[str]:
         if error is not None:
             problems.append(error)
     return problems
+
+
+def _closed_unit_interval_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when *value* is not a real number in the closed range [0, 1].
+
+    Numeric-ness, ``bool`` rejection and finiteness are delegated to the shared
+    :func:`~strands_robots.utils.finite_number_error` domain, so those refusals
+    read identically to every other numeric field's. The only thing decided here
+    is the interval, which no shared domain expresses: ``utils`` carries
+    open-ended families (positive, non-negative) rather than a bounded one.
+
+    Both endpoints are inside the domain and neither is a degenerate spelling of
+    "disabled", which is why the interval is closed rather than half-open.
+
+    Args:
+        value: The caller-supplied value.
+        param: Field name for the message.
+        context: Caller label the message is prefixed with.
+
+    Returns:
+        The error text, or None when *value* is a real number in [0, 1].
+    """
+    error = finite_number_error(value, param, context)
+    if error is not None:
+        return error
+    if not 0.0 <= float(value) <= 1.0:
+        return f"{context}: {param} must be in [0, 1], got {value!r}."
+    return None
+
+
+def discount_factor_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return discount-factor problems for an RL :class:`TrainSpec`.
+
+    ``gamma`` weights every future reward in the return the algorithm optimizes,
+    and it is the one coefficient both RL backends read: PPO discounts the GAE
+    recursion with it (twice - the single-env and vectorized rollout paths), and
+    FastSAC discounts its target-Q bootstrap. A discounted return is a geometric
+    series, so the domain is not a matter of taste:
+
+    * ``gamma > 1`` makes that series **diverge**. The advantages grow without
+      bound in the rollout horizon rather than being merely large - over a
+      24-step rollout of unit rewards, ``gamma=1.5`` inflates the largest
+      advantage from 12.9 to 1.2e4, and ``gamma=5`` to 4.6e15. Nothing refuses
+      it: the run trains on those advantages, reports success, and writes a
+      checkpoint.
+    * ``gamma < 0`` alternates the sign of each successive reward, so the trace
+      no longer accumulates future return at all - the same rollout collapses
+      the largest advantage to the immediate reward, 1.0.
+    * ``nan``/``inf`` make every advantage non-finite, which surfaces only once
+      the update samples the action distribution: ``ValueError: Expected
+      parameter loc ... of distribution Normal ... to satisfy the constraint
+      Real()``, a torch message that names neither the field nor the run, raised
+      after the env, the networks and a full rollout have been built. That is
+      exactly the "deep stack trace" a read-only preflight exists to replace.
+    * ``True`` is a silent ``gamma`` of one, because a bare comparison against
+      the interval bounds accepts it - ``bool`` is an ``int`` subclass.
+
+    Both endpoints are legitimate and standard: ``gamma=1`` is the undiscounted
+    episodic return, ``gamma=0`` a myopic agent that optimizes the immediate
+    reward only. So the domain is the *closed* interval [0, 1], checked through
+    :func:`_closed_unit_interval_error`.
+
+    The sibling FastSAC preflight already bounds its own interval coefficient
+    this way (``tau`` must be in ``(0, 1]``), which is the shape this gate
+    generalizes: an interval coefficient is checked against its interval rather
+    than left to the arithmetic that consumes it.
+
+    ``lam`` and the remaining PPO coefficients (``clip_param``,
+    ``num_learning_epochs``, ``entropy_coef``, ``value_loss_coef``,
+    ``max_grad_norm``, ``init_noise_std``) are out of scope here: they are read
+    by the on-policy backend only, so per :class:`TrainSpec` a backend that
+    ignores them must not report on them, and they belong in their own gate.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``gamma`` cannot be honored; empty otherwise.
+    """
+    error = _closed_unit_interval_error(getattr(spec, "gamma", 0.0), "gamma", context)
+    return [error] if error is not None else []

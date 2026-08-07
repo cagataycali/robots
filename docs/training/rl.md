@@ -194,6 +194,16 @@ off-policy SAC fields (`buffer_size`, `batch_size`, `learning_starts`,
 `gradient_steps`, `tau`, `autotune_alpha`, `init_alpha`, `alpha_lr`,
 `target_entropy`), plus the universal `output_dir` / `learning_rate` / `seed`.
 
+`gamma` must be a finite number in the closed interval `[0, 1]`, checked by
+`validate()` on both backends. It is the one coefficient both of them read (PPO
+discounts the GAE recursion with it, FastSAC its target-Q bootstrap) and a
+discounted return is a geometric series, so a value above 1 makes that series
+diverge in the rollout horizon rather than merely being large - the run would
+train on the inflated advantages, report success and write a checkpoint. Both
+endpoints are inside the domain: `gamma=1` is the undiscounted episodic return
+and `gamma=0` a myopic agent that optimizes the immediate reward only. The
+FastSAC `tau` is bounded the same way, in `(0, 1]`.
+
 ## Worked example
 
 `examples/training/train_ppo_reach.py` (on-policy) and `examples/training/train_fastsac_reach.py`
