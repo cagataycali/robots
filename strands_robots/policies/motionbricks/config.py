@@ -14,6 +14,17 @@ typed dataclass (rather than a raw dict) means a bad path or an out-of-range
 synthesis knob surfaces at construction with a clear message rather than as an
 opaque failure deep inside the generator.
 
+The numeric knobs are held to the shared domains in
+:mod:`strands_robots.utils` (:func:`~strands_robots.utils.positive_whole_number_error`
+for ``fps``, :func:`~strands_robots.utils.positive_finite_number_error` for
+``generate_dt`` and each ``speed_scale`` component) rather than to a local
+comparison, because a comparison is not a domain: ``fps < 1`` and
+``generate_dt <= 0`` are both ``False`` for ``nan``, and every value they let
+through reached :attr:`MotionBricksConfig.controller_dt` and from there the
+generator's ``generate_new_frames``. The path/identity fields (``result_dir``,
+``device``, ``clips``, ``exp``, ``style``) keep their own local checks and are
+not part of that numeric domain - see #2008.
+
 No checkpoints are bundled: ``result_dir`` must point at the upstream ``out/``
 checkpoint tree (``motionbricks_pose`` / ``motionbricks_root`` /
 ``motionbricks_vqvae`` + ``G1-clip.ckpt``), fetched with git-LFS under the
@@ -26,6 +37,12 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from strands_robots.utils import (
+    positive_finite_number_error,
+    positive_whole_number_error,
+    sequence_length,
+)
 
 # Upstream defaults from ``interactive_demo_g1.py`` + the demo controllers.
 # The reference controller regenerates motion every ``NUM_REGEN_FRAMES`` (8)
@@ -64,11 +81,21 @@ class MotionBricksConfig:
             clip mode name (``str``, e.g. ``"walk"``, ``"stealth_walk"``).
             Overridable per call via the ``style`` / ``mode`` kwarg.
         generate_dt: Synthesis horizon multiplier (upstream ``--generate_dt``).
-            Larger values plan further ahead per regeneration.
-        fps: Motion frame rate (upstream model fps, 30).
+            Larger values plan further ahead per regeneration. Must be a
+            positive finite number: it is the multiplier of
+            :attr:`controller_dt`, so ``0`` gives the generator no time to
+            integrate, ``inf`` an unbounded horizon and ``nan`` a horizon that
+            poisons every frame synthesised from it.
+        fps: Motion frame rate (upstream model fps, 30). Must be a positive
+            whole number - it is the divisor of :attr:`controller_dt`, so a
+            fractional rate is not a frame count the generator can emit, and
+            ``inf`` collapses the horizon to ``0`` rather than making it small.
         device: Torch device for the generator (``"cuda"`` or ``"cpu"``).
         speed_scale: ``(min, max)`` root-velocity perturbation range (upstream
-            ``--speed_scale``). ``(1.0, 1.0)`` disables perturbation.
+            ``--speed_scale``). ``(1.0, 1.0)`` disables perturbation. Both
+            components must be positive finite numbers with ``min <= max``;
+            they multiply the synthesised root velocity, so a non-finite
+            component scales it to a velocity no integrator can consume.
         exp: Upstream experiment key selecting the checkpoint layout
             (``"default"``).
         style_map: Optional overrides merged over the built-in
@@ -95,19 +122,32 @@ class MotionBricksConfig:
         # never carry a value that will misbehave deep inside the generator).
         if not self.result_dir:
             raise ValueError("MotionBricksConfig.result_dir must be a non-empty path to the 'out/' checkpoint tree")
-        if self.fps < 1:
-            raise ValueError(f"MotionBricksConfig.fps must be >= 1, got {self.fps}")
-        if self.generate_dt <= 0:
-            raise ValueError(f"MotionBricksConfig.generate_dt must be > 0, got {self.generate_dt}")
+        # The synthesis knobs go through the shared numeric domains rather than a
+        # local comparison, because a comparison is not a domain: ``fps < 1`` is
+        # ``False`` for ``nan`` and for ``inf``, and ``True`` is an ``int``
+        # subclass that reads as a 1 Hz frame rate. Each of those reached
+        # ``controller_dt`` and, from there, ``generate_new_frames``.
+        if error := positive_whole_number_error(self.fps, "fps", "MotionBricksConfig"):
+            raise ValueError(error)
+        if error := positive_finite_number_error(self.generate_dt, "generate_dt", "MotionBricksConfig"):
+            raise ValueError(error)
         if not isinstance(self.style, (int, str)):
             raise ValueError(
                 f"MotionBricksConfig.style must be an int mode index or a str mode name, got {self.style!r}"
             )
-        scale = tuple(self.speed_scale)
-        if len(scale) != 2:
+        # Arity is read with ``sequence_length`` rather than ``len(tuple(...))``
+        # so a scalar is refused by this message instead of raising ``'float'
+        # object is not iterable`` from the arity check itself.
+        if sequence_length(self.speed_scale) != 2:
             raise ValueError(f"MotionBricksConfig.speed_scale must be a (min, max) pair, got {self.speed_scale!r}")
-        lo, hi = float(scale[0]), float(scale[1])
-        if lo <= 0 or hi <= 0 or hi < lo:
+        lo_raw, hi_raw = tuple(self.speed_scale)
+        for index, component in ((0, lo_raw), (1, hi_raw)):
+            # Before the ``float()`` below, not after: that conversion is what
+            # used to launder ``speed_scale=("1", "2")`` into ``(1.0, 2.0)``.
+            if error := positive_finite_number_error(component, f"speed_scale[{index}]", "MotionBricksConfig"):
+                raise ValueError(error)
+        lo, hi = float(lo_raw), float(hi_raw)
+        if hi < lo:
             raise ValueError(f"MotionBricksConfig.speed_scale must be 0 < min <= max, got ({lo}, {hi})")
         # Normalise speed_scale to a plain float tuple (frozen -> object.__setattr__).
         object.__setattr__(self, "speed_scale", (lo, hi))
