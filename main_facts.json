@@ -1,0 +1,60 @@
+{
+  "tree": "/tmp/pre-wbc",
+  "raw_action": 0.35,
+  "cases": {
+    "honored": {
+      "label": "honored",
+      "cfg": {},
+      "built": true,
+      "status": "success",
+      "z_start": 0.793,
+      "z_end": 0.7213,
+      "ctrl_absmax": 21.5217,
+      "ctrl_finite": true,
+      "qpos_finite": true,
+      "png": "/tmp/wbc_art/main_honored.png"
+    },
+    "scale_zero": {
+      "label": "scale_zero",
+      "cfg": {
+        "action_scale": "0.0"
+      },
+      "built": true,
+      "status": "success",
+      "z_start": 0.793,
+      "z_end": 0.3093,
+      "ctrl_absmax": 5.7012,
+      "ctrl_finite": true,
+      "qpos_finite": true,
+      "png": "/tmp/wbc_art/main_scale_zero.png"
+    },
+    "gains_negative": {
+      "label": "gains_negative",
+      "cfg": {
+        "kps": "[-150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0]"
+      },
+      "built": true,
+      "status": "success",
+      "z_start": 0.793,
+      "z_end": 0.1858,
+      "ctrl_absmax": 461.8583,
+      "ctrl_finite": true,
+      "qpos_finite": true,
+      "png": "/tmp/wbc_art/main_gains_negative.png"
+    },
+    "scale_nan": {
+      "label": "scale_nan",
+      "cfg": {
+        "action_scale": "nan"
+      },
+      "built": true,
+      "status": "error",
+      "z_start": 0.793,
+      "z_end": 0.74,
+      "ctrl_absmax": 0.0,
+      "ctrl_finite": true,
+      "qpos_finite": true,
+      "png": "/tmp/wbc_art/main_scale_nan.png"
+    }
+  }
+}

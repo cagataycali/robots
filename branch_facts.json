@@ -1,0 +1,42 @@
+{
+  "tree": "/tmp/robots-mine",
+  "raw_action": 0.35,
+  "cases": {
+    "honored": {
+      "label": "honored",
+      "cfg": {},
+      "built": true,
+      "status": "success",
+      "z_start": 0.793,
+      "z_end": 0.7213,
+      "ctrl_absmax": 21.5217,
+      "ctrl_finite": true,
+      "qpos_finite": true,
+      "png": "/tmp/wbc_art/branch_honored.png"
+    },
+    "scale_zero": {
+      "label": "scale_zero",
+      "cfg": {
+        "action_scale": "0.0"
+      },
+      "built": false,
+      "refusal": "WBCConfig: action_scale must be > 0, got 0.0."
+    },
+    "gains_negative": {
+      "label": "gains_negative",
+      "cfg": {
+        "kps": "[-150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0, -150.0]"
+      },
+      "built": false,
+      "refusal": "WBCConfig: kps[0] must be >= 0, got -150.0."
+    },
+    "scale_nan": {
+      "label": "scale_nan",
+      "cfg": {
+        "action_scale": "nan"
+      },
+      "built": false,
+      "refusal": "WBCConfig: action_scale must be > 0, got nan."
+    }
+  }
+}
