@@ -92,6 +92,27 @@ WBCPolicy(
 A missing `onnxruntime` or a missing checkpoint raises `RuntimeError` at
 construction - WBC never falls back to silent zero torques.
 
+### Config value domain
+
+`WBCConfig` rejects an unusable *value* at construction, not just an impossible
+dimension - the same reason a bad dimension is refused there. Every numeric
+field is read verbatim into the PD law that writes `data.ctrl` or into the
+observation the network sees, so an unusable one becomes a wrong torque rather
+than an error:
+
+| Field | Accepted | Why |
+|-------|----------|-----|
+| `action_scale` | finite `> 0` | The only path from the network to the joint targets. `0` (or `False`) makes `target_q == default_angles`, discarding the policy; a negative value inverts every offset. |
+| `kps`, `kds` | finite `>= 0`, per component | `kp = 0` with `kd > 0` is a pure-damping joint and stays valid; a *negative* gain makes `(target_q - q) * kp` drive the joint away from its target. |
+| `default_angles`, `cmd_scale`, `rpy_cmd` | finite, per component | Signed quantities (a stance angle, a yaw rate, a roll target), so only finiteness is constrained. |
+| `obs_scales` values, `height_cmd`, `freq_cmd` | finite | A non-finite scale poisons the observation frame the network is given. |
+
+A `nan`/`inf` anywhere reaches `data.ctrl` as a non-finite torque on all
+`num_actions` joints; a `None` or a numeric string raises from the `float()`
+inside `compute_targets`, which runs per tick inside `get_actions` - after the
+ONNX sessions have loaded and the rollout has started. Both now surface as a
+`ValueError` naming the field (and the component index) at construction.
+
 ## Goal kwargs
 
 WBC reads locomotion commands from `**kwargs`, sharing the non-VLA goal
