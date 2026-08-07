@@ -41,13 +41,67 @@ from typing import Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
-from strands_robots.utils import name_list_error
+from strands_robots.utils import finite_number_error, name_list_error, positive_finite_number_error
 
 from .client import VeraWebsocketClient
 from .config import VeraConfig
 from .server_runner import VeraServerRunner, make_server_runner
 
 logger = logging.getLogger(__name__)
+
+
+#: Upper bound (exclusive) on the IK output-smoothing coefficient. ``alpha``
+#: weights the *previous* joint target in the EMA
+#: ``target = (1 - alpha) * solved + alpha * previous``, so ``1.0`` weights the
+#: previous value alone and the arm never leaves the pose it was first solved
+#: to; anything above ``1.0`` puts a negative weight on the IK solution and the
+#: targets diverge away from it, growing without bound down the chunk.
+MAX_IK_SMOOTHING = 1.0
+
+
+def _ik_smoothing_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable IK output-smoothing coefficient.
+
+    The EMA blending each IK solution toward the previous target only has a
+    meaning for ``alpha`` in ``[0, 1)``: ``0`` disables the smoothing (the
+    documented default) and a value approaching ``1`` damps harder. Outside that
+    interval the blend is not a smoother:
+
+    * ``1.0`` (and ``True``, which is ``1.0``) makes every commanded target the
+      previous one, so the arm freezes at the pose the first solve produced and
+      the whole chunk is discarded.
+    * above ``1.0`` the weight on the IK solution is negative, so each target
+      extrapolates *away* from where the solver put it - measured at ``-5.9x``
+      the solved joint travel for ``1.5`` and ``-35.3x`` for ``2.0``.
+    * a negative value and ``nan`` both fail the ``alpha > 0`` test the EMA is
+      gated on, so the smoothing the caller asked for is silently not applied.
+    * ``inf`` makes every target after the first non-finite.
+
+    Only the interval is decided here; numeric-ness, ``bool`` rejection and
+    finiteness are :func:`~strands_robots.utils.finite_number_error`'s, whose
+    domain this is a bounded subset of. The rule is private to this module
+    because the interval is a property of this EMA rather than of a shared
+    quantity - :func:`~strands_robots.utils.positive_finite_number_error` is the
+    nearest shared domain and its ``> 0`` floor is wrong here, since ``0`` is
+    the documented "no smoothing" default.
+
+    Args:
+        value: The caller-supplied coefficient.
+        param: The parameter it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if (err := finite_number_error(value, param, context)) is not None:
+        return err
+    if not 0.0 <= float(value) < MAX_IK_SMOOTHING:
+        return (
+            f"{context}: {param} must be in [0, {MAX_IK_SMOOTHING}) - 0 disables "
+            f"the smoothing, and {MAX_IK_SMOOTHING} would weight only the previous "
+            f"target so the arm never leaves its first solved pose. Got {value!r}."
+        )
+    return None
 
 
 def _is_image_value(value: Any) -> bool:
@@ -165,6 +219,12 @@ class VeraPolicy(Policy):
         # policy server has been launched and the model loaded.
         if image_keys and (err := name_list_error(image_keys, "image_keys", "VeraPolicy")):
             raise ValueError(err)
+        # Same reason, same place: the smoothing coefficient blends every
+        # commanded joint target with the previous one inside get_actions, so
+        # a value outside [0, 1) freezes or diverges the arm mid-rollout
+        # instead of damping it.
+        if (err := _ik_smoothing_error(ik_smoothing, "ik_smoothing", "VeraPolicy")) is not None:
+            raise ValueError(err)
         self.config = config or VeraConfig(
             embodiment=embodiment,  # type: ignore[arg-type]
             host=host,
@@ -268,7 +328,11 @@ class VeraPolicy(Policy):
             ee_frame_type: ``"body"`` | ``"site"`` | ``"geom"``.
             rotation_dim: Override the delta rotation encoding (3=axis-angle,
                 6=rot6d). Defaults to the embodiment's convention.
-            translation_scale: Optional scale on the translation delta.
+            translation_scale: Multiplier on the translation delta, composed
+                on top of the OSC position scale. ``None`` (the default)
+                leaves the current value; a supplied one must be a positive
+                finite number, since it scales every translation delta the
+                policy converts to joint targets.
         """
         self._mj_model = mj_model
         self._ee_frame_name = ee_frame_name
@@ -276,6 +340,10 @@ class VeraPolicy(Policy):
         if rotation_dim is not None:
             self._rotation_dim = int(rotation_dim)
         if translation_scale is not None:
+            if (
+                err := positive_finite_number_error(translation_scale, "translation_scale", "set_ik_target")
+            ) is not None:
+                raise ValueError(err)
             self._translation_scale = float(translation_scale)
         self._ik_bridge = None  # force rebuild
 

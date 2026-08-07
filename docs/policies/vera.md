@@ -153,6 +153,29 @@ differently by each of them. `vis_port = 0` is the one exception and disables th
 live viewer (`--vis-port` is omitted). The `VERA_*_PORT` overrides go through the
 same check.
 
+### IK conversion knobs
+
+Two keyword-only numbers shape every joint target the eef-delta path produces,
+and both are checked where they are supplied because both are *applied* rather
+than forwarded — nothing downstream can refuse them:
+
+| kwarg | surface | domain |
+|-------|---------|--------|
+| `translation_scale` | `set_ik_target(...)`, `decode_vera_delta_chunk_to_targets(...)` | a positive finite number (`None` on the setter leaves the current value) |
+| `ik_smoothing` | `VeraPolicy(...)` | `[0, 1)` — `0` disables the smoothing |
+
+`translation_scale` multiplies every translation delta on top of the OSC position
+scale, so `0` discards the translation half of each action and returns a
+rotation-only chunk, a negative value inverts it, and `nan`/`inf` make *every*
+returned joint target non-finite — refused one layer later by `send_action`,
+where it reads as a wrong-embodiment action-key mismatch rather than as the scale
+that caused it. `ik_smoothing` weights the *previous* target in the EMA
+`target = (1 - alpha) * solved + alpha * previous`, so `1.0` freezes the arm at
+its first solved pose, above `1.0` the targets diverge away from the solution
+(measured at `-5.9x` the solved joint travel for `1.5`), and a negative or `nan`
+value fails the `alpha > 0` test the blend is gated on — silently applying no
+smoothing at all.
+
 ## Wire protocol
 
 The provider keeps a rolling **context window** of the last `context_frames`

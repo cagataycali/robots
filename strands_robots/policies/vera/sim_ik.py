@@ -30,6 +30,7 @@ import numpy as np
 
 from strands_robots.simulation.ik import MinkIKBridge as _SharedMinkIKBridge
 from strands_robots.simulation.ik import resolve_qp_solver
+from strands_robots.utils import positive_finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -140,11 +141,36 @@ def decode_vera_delta_chunk_to_targets(
         has_gripper: Whether the chunk carries a trailing gripper column.
         gripper_dim_index: Index of the gripper column (``-1`` => last when
             ``has_gripper``); the value is passed through (binarized by caller).
-        translation_scale: Optional scale on the translation delta (units match).
+        translation_scale: Multiplier on the translation delta, composed on
+            top of the OSC position scale (units match). Must be a positive
+            finite number; see the ``Raises`` section for why.
+
+    Raises:
+        ValueError: If ``action_chunk`` is not ``[T, D]``, if it carries too
+            few pose dims, or if ``translation_scale`` is not a positive
+            finite number. The scale multiplies every translation delta in
+            the chunk, so an unusable one is not refused by anything
+            downstream: ``0`` discards the translation half of every action
+            and returns only the rotation, a negative value inverts it, and
+            ``nan``/``inf`` make **every** returned joint target non-finite
+            (along with the ``tracking_error`` that would otherwise report
+            it). ``send_action`` then refuses each of those targets for
+            being non-finite, which reads as a wrong-embodiment action-key
+            mismatch rather than as the scale that caused it.
 
     Returns:
         ``{"qpos": [T, nq], "gripper": [T] | None, "tracking_error": {...}}``.
     """
+    # Refused before the first IK solve. This multiplies every translation
+    # delta in the chunk, so an unusable value is applied rather than
+    # rejected - see Raises. The domain matches the two sibling action
+    # multipliers (``SimEnv.action_scale``, ``WBCConfig.action_scale``).
+    if (
+        err := positive_finite_number_error(
+            translation_scale, "translation_scale", "decode_vera_delta_chunk_to_targets"
+        )
+    ) is not None:
+        raise ValueError(err)
     action_chunk = np.asarray(action_chunk, dtype=np.float64)
     if action_chunk.ndim != 2:
         raise ValueError(f"action_chunk must be [T, D]; got {action_chunk.shape}")
