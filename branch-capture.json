@@ -1,0 +1,92 @@
+{
+ "tree": "/tmp/robots-mine",
+ "rpy_cmd": [
+  0.1,
+  0.3,
+  -0.2
+ ],
+ "cases": {
+  "omitted": {
+   "status": "accepted",
+   "rpy": [
+    0.1,
+    0.3,
+    -0.2
+   ],
+   "detail": null
+  },
+  "[0.05, 0.10, -0.15]": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.1,
+    -0.15
+   ],
+   "detail": null
+  },
+  "[0.05, 0.10]": {
+   "status": "refused",
+   "rpy": null,
+   "detail": "target_orientation must have at least 3 elements [roll, pitch, yaw], got 2"
+  },
+  "[0.05]": {
+   "status": "refused",
+   "rpy": null,
+   "detail": "target_orientation must have at least 3 elements [roll, pitch, yaw], got 1"
+  },
+  "0.05": {
+   "status": "refused",
+   "rpy": null,
+   "detail": "target_orientation must have at least 3 elements [roll, pitch, yaw], got 1"
+  },
+  "[]": {
+   "status": "refused",
+   "rpy": null,
+   "detail": "target_orientation must have at least 3 elements [roll, pitch, yaw], got 0"
+  }
+ },
+ "gait": {
+  "omitted": {
+   "status": "accepted",
+   "rpy": [
+    0.1,
+    0.3,
+    -0.2
+   ],
+   "detail": null
+  },
+  "[0.05, 0.10, -0.15]": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.1,
+    -0.15
+   ],
+   "detail": null
+  },
+  "[0.05, 0.10]": {
+   "status": "refused",
+   "rpy": null,
+   "detail": "target_orientation must have at least 3 elements [roll, pitch, yaw], got 2"
+  },
+  "[0.05]": {
+   "status": "refused",
+   "rpy": null,
+   "detail": "target_orientation must have at least 3 elements [roll, pitch, yaw], got 1"
+  },
+  "0.05": {
+   "status": "refused",
+   "rpy": null,
+   "detail": "target_orientation must have at least 3 elements [roll, pitch, yaw], got 1"
+  },
+  "[]": {
+   "status": "refused",
+   "rpy": null,
+   "detail": "target_orientation must have at least 3 elements [roll, pitch, yaw], got 0"
+  }
+ },
+ "rollout": {
+  "status": "success",
+  "pelvis_z": 0.749
+ }
+}

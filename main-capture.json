@@ -1,0 +1,124 @@
+{
+ "tree": "/tmp/wt-main",
+ "rpy_cmd": [
+  0.1,
+  0.3,
+  -0.2
+ ],
+ "cases": {
+  "omitted": {
+   "status": "accepted",
+   "rpy": [
+    0.1,
+    0.3,
+    -0.2
+   ],
+   "detail": null
+  },
+  "[0.05, 0.10, -0.15]": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.1,
+    -0.15
+   ],
+   "detail": null
+  },
+  "[0.05, 0.10]": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.1,
+    0.0
+   ],
+   "detail": null
+  },
+  "[0.05]": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.0,
+    0.0
+   ],
+   "detail": null
+  },
+  "0.05": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.0,
+    0.0
+   ],
+   "detail": null
+  },
+  "[]": {
+   "status": "accepted",
+   "rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "detail": null
+  }
+ },
+ "gait": {
+  "omitted": {
+   "status": "accepted",
+   "rpy": [
+    0.1,
+    0.3,
+    -0.2
+   ],
+   "detail": null
+  },
+  "[0.05, 0.10, -0.15]": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.1,
+    -0.15
+   ],
+   "detail": null
+  },
+  "[0.05, 0.10]": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.1,
+    0.0
+   ],
+   "detail": null
+  },
+  "[0.05]": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.0,
+    0.0
+   ],
+   "detail": null
+  },
+  "0.05": {
+   "status": "accepted",
+   "rpy": [
+    0.05,
+    0.0,
+    0.0
+   ],
+   "detail": null
+  },
+  "[]": {
+   "status": "accepted",
+   "rpy": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "detail": null
+  }
+ },
+ "rollout": {
+  "status": "success",
+  "pelvis_z": 0.749
+ }
+}
