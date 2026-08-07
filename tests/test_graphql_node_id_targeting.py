@@ -19,8 +19,8 @@ What makes the rule worth pinning rather than merely regretting is that the
 premise the incident was written up under is measurably false. The ID is *not*
 opaque. It is ``<TypePrefix>_<urlsafe-base64(msgpack array)>``, where a
 repository is ``[0, databaseId]`` and anything a repository owns is
-``[0, repository databaseId, own databaseId]``, so both the type and the target
-repository are readable offline before the write:
+``[0, repository databaseId, own databaseId]``, so both the type and a
+repository ``databaseId`` are readable offline before the write:
 
 =============================  ==========================  =======================
 node ID                        decodes to                  target
@@ -28,6 +28,7 @@ node ID                        decodes to                  target
 ``R_kgDORUMiZg``               ``[0, 1162027622]``          this repository
 ``R_kgDOD1WOFw``               ``[0, 257265175]``           the stray repository
 ``PR_kwDOD1WOF87DdSjQ``        ``[0, 257265175, ...]``      the same stray one
+``PR_kwDORUMiZs7Kw3fA``        ``[0, 1162027622, ...]``     ``uutils/coreutils#11342``
 =============================  ==========================  =======================
 
 That third row is the finding the incident write-up did not have: all three
@@ -38,8 +39,23 @@ their own databaseId happened not to exist under that repository
 a property of the API - and the one that got lucky the other way is the one
 that wrote.
 
-So two classes are asserted here, and the first is what keeps the second
-honest:
+The fourth row is the correction, and it runs the other way. That ID was handed
+to a ``mergePullRequest`` while merging #2006. Its middle field is *this*
+repository's ``databaseId``, so a check that reads the target repository out of
+the ID clears it - and it resolves to an open pull request in
+``uutils/coreutils``, whose repository ``databaseId`` is ``11847500``. The
+repository field of an owned object's ID is neither what GitHub routes on nor
+validated against the object, so it can name this repository while the object
+lives in another. The write was refused by permissions, not by any check.
+
+That makes the decode sound in exactly one direction: a repository that is not
+this one is proof of a wrong ID, and a repository that is this one is no
+information at all. The rule the guidance now leads with therefore has no decode
+in it - read every ID back from a query naming ``owner`` / ``name`` / ``number``
+- and the decode is kept as the fast reject it is. See #2007.
+
+So four classes are asserted here, and the executable ones are what keep the
+prose ones honest:
 
 ``TestTheNodeIdEnvelopeIsCheckableOffline`` *executes* the claim. It decodes
 this repository's own node ID and the node IDs of an issue and a pull request in
@@ -51,7 +67,15 @@ against a future ID format that had stopped being checkable, leaving the
 guidance reading plausibly while advising something impossible. This fails
 instead.
 
-``TestTheGuidanceNamesTheDecodableEnvelope`` pins the prose, because the prose
+``TestTheEnvelopeRepositoryFieldCannotClearAWrite`` *executes* the correction,
+against the measured pair rather than against a restatement of it. A test that
+only asserted the prose says "proves nothing" would keep passing if the envelope
+ever started routing on its repository field, leaving the guidance discouraging a
+check that had become sound. This one fails instead, because it holds the
+counterexample itself.
+
+``TestTheGuidanceNamesTheDecodableEnvelope`` and
+``TestTheGuidanceStatesTheDecodeIsRejectOnly`` pin the prose, because the prose
 is the deliverable: an agent reads ``AGENTS.md``, not this module. What is
 asserted is *adjacency* rather than vocabulary - the fail-open property, the
 decodable envelope and the absence of an undo have to stay in the same breath as
@@ -62,11 +86,22 @@ the same structural reason ``tests/test_merge_gate_viewer_scope.py`` and
 ``tests/test_codeql_query_filters.py`` exist, and these text assertions follow
 the shape those modules established.
 
-Negative control: with ``origin/main``'s ``AGENTS.md`` restored, all 5 tests in
-``TestTheGuidanceNamesTheDecodableEnvelope`` fail - the four qualifiers and the
-context guard that locates the passage - while ``TestTheNodeIdEnvelopeIsCheckableOffline``
-passes unchanged. The envelope is a property of GitHub's IDs rather than of this
-change; only the guidance is new.
+Negative control, re-measured for the #2007 correction. With ``origin/main``'s
+``AGENTS.md`` restored (that is, the passage before the correction), the run is
+``7 failed, 19 passed``:
+
+- all 7 of ``TestTheGuidanceStatesTheDecodeIsRejectOnly`` fail - the six
+  qualifiers and the context guard that locates them;
+- all 4 of ``TestTheEnvelopeRepositoryFieldCannotClearAWrite`` pass unchanged,
+  because the envelope's behaviour is a property of GitHub's IDs and not of this
+  repository's prose. Only the guidance is new;
+- the 10 in ``TestTheNodeIdEnvelopeIsCheckableOffline`` and the 5 in
+  ``TestTheGuidanceNamesTheDecodableEnvelope`` also pass against the old text, so
+  the correction neither invalidated the #1916 pins nor made them depend on it.
+
+The split matters: the executable classes are the ones that would catch the
+envelope changing under the advice, and they are deliberately insensitive to how
+the advice is worded.
 """
 
 from __future__ import annotations
@@ -98,6 +133,23 @@ _OWNED_OBJECTS = [
 _STRAY_REPOSITORY_NODE_ID = "R_kgDOD1WOFw"
 _STRAY_PULL_REQUEST_NODE_ID = "PR_kwDOD1WOF87DdSjQ"
 _STRAY_REPOSITORY_DATABASE_ID = 257265175
+
+# The #2007 counterexample. This ID was handed to a `mergePullRequest` while
+# merging #2006 and refused only by the token's lack of write permission on a
+# stranger's repository. Ground truth for what it resolves to comes from one
+# `node(id:) { ... on PullRequest { repository { nameWithOwner databaseId } } }`
+# query; it is recorded here as a constant because the pair - a claim of *this*
+# repository against an object in another - is the whole of the finding.
+_FOREIGN_PULL_REQUEST_NODE_ID = "PR_kwDORUMiZs7Kw3fA"
+_FOREIGN_PULL_REQUEST_NUMBER = 11342
+_FOREIGN_PULL_REQUEST_REPOSITORY = "uutils/coreutils"
+_FOREIGN_PULL_REQUEST_REPOSITORY_DATABASE_ID = 11847500
+
+# The ID that was meant, read back from
+# `repository(owner: "strands-labs", name: "robots") { pullRequest(number: 2006) }`
+# - the literal-owner-and-name query the guidance asks for, which cannot address
+# the wrong repository.
+_INTENDED_PULL_REQUEST_NODE_ID = "PR_kwDORUMiZs78G3VE"
 
 # msgpack tags the envelope uses. A GitHub node ID is a short array of unsigned
 # integers, so this is the whole grammar needed - anything else is a shape this
@@ -164,12 +216,16 @@ def _decode_node_id(node_id: str) -> tuple[str, list[int]]:
     return prefix, values
 
 
-def _target_repository(node_id: str) -> int:
-    """The ``databaseId`` of the repository ``node_id`` writes to.
+def _claimed_repository(node_id: str) -> int:
+    """The repository ``databaseId`` that ``node_id`` *claims*, decoded offline.
 
-    A repository's own ID names it directly; anything it owns carries it as the
-    second element. Either way the answer is available without a network call,
-    which is the property the guidance rests on.
+    A repository's own ID names itself directly and authoritatively. For anything
+    it owns, this is only a claim: the value is carried in the envelope but is not
+    what GitHub resolves the object by, and
+    ``TestTheEnvelopeRepositoryFieldCannotClearAWrite`` holds an ID whose claim is
+    this repository and whose object is in ``uutils/coreutils``. So a mismatch
+    disproves an ID and a match establishes nothing - the name says ``claimed``
+    rather than ``target`` because reading it as the target is the #2007 defect.
     """
     prefix, values = _decode_node_id(node_id)
     if prefix == "R":
@@ -211,13 +267,13 @@ class TestTheNodeIdEnvelopeIsCheckableOffline:
     def test_the_stray_id_is_distinguishable_from_the_intended_one(self) -> None:
         # The check that would have caught #1916, in the form it was available:
         # the two spellings are visually close and decode to different targets.
-        assert _target_repository(_REPOSITORY_NODE_ID) == _REPOSITORY_DATABASE_ID
-        assert _target_repository(_STRAY_REPOSITORY_NODE_ID) == _STRAY_REPOSITORY_DATABASE_ID
-        assert _target_repository(_STRAY_REPOSITORY_NODE_ID) != _target_repository(_REPOSITORY_NODE_ID)
+        assert _claimed_repository(_REPOSITORY_NODE_ID) == _REPOSITORY_DATABASE_ID
+        assert _claimed_repository(_STRAY_REPOSITORY_NODE_ID) == _STRAY_REPOSITORY_DATABASE_ID
+        assert _claimed_repository(_STRAY_REPOSITORY_NODE_ID) != _claimed_repository(_REPOSITORY_NODE_ID)
 
     def test_every_stray_id_from_the_incident_names_one_wrong_repository(self) -> None:
         strays = {_STRAY_REPOSITORY_NODE_ID, _STRAY_PULL_REQUEST_NODE_ID}
-        targets = {_target_repository(node_id) for node_id in strays}
+        targets = {_claimed_repository(node_id) for node_id in strays}
         assert targets == {_STRAY_REPOSITORY_DATABASE_ID}, (
             "The repository ID and the pull-request ID guessed in that run should both "
             "decode to the same wrong repository. That is why one stale value was able "
@@ -236,6 +292,67 @@ class TestTheNodeIdEnvelopeIsCheckableOffline:
         # write is safe, so guessing is worse than refusing.
         with pytest.raises(ValueError):
             _decode_node_id(malformed)
+
+
+class TestTheEnvelopeRepositoryFieldCannotClearAWrite:
+    """A decode showing the right repository is no evidence about the target.
+
+    ``TestTheNodeIdEnvelopeIsCheckableOffline`` above establishes that the
+    envelope is readable. This class establishes what reading it does *not* buy,
+    which is the half #1916's write-up asserted and #2007 measured.
+    """
+
+    def test_the_foreign_id_claims_this_repository(self) -> None:
+        assert _claimed_repository(_FOREIGN_PULL_REQUEST_NODE_ID) == _REPOSITORY_DATABASE_ID, (
+            f"{_FOREIGN_PULL_REQUEST_NODE_ID!r} should decode to a middle field equal to this "
+            "repository's databaseId. That is what makes it a counterexample rather than a "
+            "curiosity: the pre-write decode AGENTS.md used to prescribe reads this value and "
+            "clears the write. See #2007."
+        )
+
+    def test_the_object_it_claims_this_repository_for_is_in_another_one(self) -> None:
+        # The claim is not merely unauthoritative, it is false about the object:
+        # the pull request's real repository databaseId is a different number.
+        assert _FOREIGN_PULL_REQUEST_REPOSITORY_DATABASE_ID != _REPOSITORY_DATABASE_ID
+        assert _claimed_repository(_FOREIGN_PULL_REQUEST_NODE_ID) != _FOREIGN_PULL_REQUEST_REPOSITORY_DATABASE_ID, (
+            f"{_FOREIGN_PULL_REQUEST_NODE_ID!r} resolves to {_FOREIGN_PULL_REQUEST_REPOSITORY} "
+            f"#{_FOREIGN_PULL_REQUEST_NUMBER}, whose repository databaseId is "
+            f"{_FOREIGN_PULL_REQUEST_REPOSITORY_DATABASE_ID}. If the envelope has started "
+            "carrying the object's real repository, the field has become authoritative and the "
+            "AGENTS.md guidance that a matching decode proves nothing is now too strict - "
+            "correct the guidance rather than relaxing this test. See #2007."
+        )
+
+    def test_the_decode_disproves_an_id_but_never_confirms_one(self) -> None:
+        # Both directions in one assertion pair, so neither can rot alone.
+        # Reject: the #1916 stray claims a repository that is not this one.
+        assert _claimed_repository(_STRAY_REPOSITORY_NODE_ID) != _REPOSITORY_DATABASE_ID
+        # No clearance: a claim equal to this repository holds for an ID that
+        # names an object here and for one that does not, so the two are
+        # indistinguishable by decode alone.
+        assert _claimed_repository(_INTENDED_PULL_REQUEST_NODE_ID) == _claimed_repository(
+            _FOREIGN_PULL_REQUEST_NODE_ID
+        ), (
+            "The intended ID and the foreign one should be indistinguishable by their decoded "
+            "repository field. That indistinguishability is the reason the guidance leads with "
+            "reading an ID back rather than with decoding it. See #2007."
+        )
+
+    def test_a_prefix_comparison_against_a_known_good_id_also_clears_it(self) -> None:
+        # The check that actually happened, and it is the same unsound test done
+        # less precisely: eyeballing the ID against a known-good one for this
+        # repository. They agree on 14 of 19 characters.
+        shared = 0
+        for left, right in zip(_INTENDED_PULL_REQUEST_NODE_ID, _FOREIGN_PULL_REQUEST_NODE_ID):
+            if left != right:
+                break
+            shared += 1
+        assert shared == 14
+        assert len(_FOREIGN_PULL_REQUEST_NODE_ID) == len(_INTENDED_PULL_REQUEST_NODE_ID) == 19, (
+            "Equal lengths and a 14-character shared prefix are what make the two IDs "
+            "interchangeable to a reader. Recorded so the guidance's claim about eyeballing is "
+            "measured rather than asserted. See #2007."
+        )
 
 
 def _agents_text() -> str:
@@ -304,4 +421,107 @@ class TestTheGuidanceNamesTheDecodableEnvelope:
             "AGENTS.md must keep the response-url check beside the rule: it is the only "
             "signal for the cases the envelope cannot cover, and in #1916 it was the "
             "single clue that anything had gone wrong. See #1916."
+        )
+
+
+#: The correction's own claim. Positioned like ``_SUBJECT_CLAIM`` above, and
+#: asserted first so the rest of the class cannot pass vacuously.
+_REJECT_ONLY_CLAIM = "fast reject and never a clearance"
+
+
+def _squash(text: str) -> str:
+    """Collapse whitespace runs, so a pin survives a rewrap of the same prose."""
+    return " ".join(text.split())
+
+
+def _bullet_after(text: str, anchor: str) -> str | None:
+    """The step-8 bullet containing ``anchor``, whitespace-squashed.
+
+    ``TestTheGuidanceNamesTheDecodableEnvelope`` measures adjacency with a fixed
+    ``_ADJACENCY_WINDOW``, which suited a passage that fit inside it. The #2007
+    correction roughly tripled this bullet's length, and a fixed window then has
+    to be either retuned on every edit or long enough to reach into the *next*
+    bullet - at which point it stops testing adjacency at all. The bullet
+    boundary is the unit the claim is actually about ("in the same breath as the
+    instruction"), it needs no constant, and moving a qualifier to a neighbouring
+    bullet still fails. ``\n   - *`` is the marker step 8's bullets begin with.
+    """
+    start = text.find(anchor)
+    if start < 0:
+        return None
+    end = text.find("\n   - *", start)
+    return _squash(text[start:end] if end > 0 else text[start:])
+
+
+class TestTheGuidanceStatesTheDecodeIsRejectOnly:
+    """The decode's one-directionality, the read-back rule, and the asymmetry.
+
+    Each of these is what makes the instruction beside it actionable, and each
+    would read as a reasonable simplification to delete. A future edit restoring
+    "the target repository is readable before the write" is exactly the #2007
+    regression, it looks like a tightening, and nothing else in the tree notices.
+    """
+
+    def test_the_reject_only_claim_is_present(self) -> None:
+        # Context guard: every assertion below is located from this phrase.
+        bullet = _bullet_after(_agents_text(), _SUBJECT_CLAIM)
+        assert bullet is not None and _REJECT_ONLY_CLAIM in bullet, (
+            f"AGENTS.md must state that the node-ID decode is a {_REJECT_ONLY_CLAIM!r}. If the "
+            "wording changed deliberately, update _REJECT_ONLY_CLAIM rather than deleting these "
+            "tests - the point is that the one-directionality stays stated. See #2007."
+        )
+
+    def test_the_guidance_says_a_matching_decode_proves_nothing(self) -> None:
+        bullet = _bullet_after(_agents_text(), _SUBJECT_CLAIM)
+        assert bullet is not None and "proves nothing" in bullet, (
+            "AGENTS.md must say that a decode showing this repository proves nothing. Without it "
+            "the decode reads as a pre-write safety check, which is the false safe #2007 "
+            "measured: an ID claiming this repository merged against uutils/coreutils."
+        )
+
+    def test_the_guidance_forbids_constructing_or_carrying_an_id(self) -> None:
+        bullet = _bullet_after(_agents_text(), _SUBJECT_CLAIM)
+        assert bullet is not None and "never construct or carry over a node ID" in bullet, (
+            "AGENTS.md must state the rule that has no decode in it. Both #1916 and the #2007 "
+            "reproductions began with an ID that was constructed or carried rather than queried, "
+            "so this is the sentence that prevents the class, not the decode."
+        )
+
+    def test_the_guidance_names_the_read_back_query_shape(self) -> None:
+        bullet = _bullet_after(_agents_text(), _SUBJECT_CLAIM)
+        assert bullet is not None and "`owner` / `name` / `number`" in bullet, (
+            "AGENTS.md must name the query shape that cannot address the wrong repository. "
+            "'Query the ID' is ambiguous between `node(id:)` - which takes the ID already in "
+            "doubt - and a literal owner-and-name lookup, and only the second is sound."
+        )
+
+    def test_the_guidance_carries_the_measured_counterexample(self) -> None:
+        bullet = _bullet_after(_agents_text(), _SUBJECT_CLAIM)
+        assert bullet is not None
+        assert _FOREIGN_PULL_REQUEST_NODE_ID in bullet, (
+            "AGENTS.md must carry the ID that clears the decode and resolves elsewhere. A rule "
+            "stated without it is advice a future reader may reasonably re-derive their way out "
+            "of; the ID is the thing that cannot be argued with. See #2007."
+        )
+        assert str(_FOREIGN_PULL_REQUEST_REPOSITORY_DATABASE_ID) in bullet, (
+            "AGENTS.md must record the resolved repository's real databaseId beside the claimed "
+            "one. Two different numbers for one object is the whole argument that the envelope's "
+            "repository field is not what GitHub routes on."
+        )
+
+    def test_the_guidance_states_the_create_merge_asymmetry(self) -> None:
+        bullet = _bullet_after(_agents_text(), _SUBJECT_CLAIM)
+        assert bullet is not None and "not symmetric" in bullet, (
+            "AGENTS.md must say the exposure is not symmetric between a merge and a create. The "
+            "#2007 merge was refused by permissions and left nothing behind; the createIssue "
+            "reproduction succeeded and could not be deleted. Only the second is irreversible, "
+            "and that is what should change behaviour at the call site."
+        )
+
+    def test_the_guidance_records_the_remedy_for_a_landed_write(self) -> None:
+        bullet = _bullet_after(_agents_text(), _SUBJECT_CLAIM)
+        assert bullet is not None and "retitle" in bullet, (
+            "AGENTS.md must record what to do about a stray write that already landed. The "
+            "instinct is deleteIssue, which is refused for want of admin on the target, so "
+            "without the remedy written down the incident stays as expensive as it was."
         )

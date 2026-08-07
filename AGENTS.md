@@ -323,33 +323,67 @@ hatch run format            # ruff check --fix, ruff format
      `deleteIssue` needs admin on the *target*, so the stray issue could only be
      closed as `NOT_PLANNED` with an apology. See #1916.
 
-     **A node ID is not opaque, which is what makes this checkable before the
-     write.** It is `<TypePrefix>_<urlsafe-base64(msgpack array)>`, where a
-     repository is `[0, databaseId]` and anything a repository owns is
-     `[0, repository databaseId, own databaseId]` - so the type and the target
-     repository are both readable with no network call:
+     **A node ID is not opaque, which makes a wrong one rejectable before the
+     write - but only in that one direction.** It is
+     `<TypePrefix>_<urlsafe-base64(msgpack array)>`, where a repository is
+     `[0, databaseId]` and anything a repository owns is
+     `[0, repository databaseId, own databaseId]`, so a type and a repository
+     databaseId are readable with no network call:
 
-     | node ID | decodes to | target |
+     | node ID | decodes to | resolves to |
      |---|---|---|
      | `R_kgDORUMiZg` | `[0, 1162027622]` | this repository |
      | `R_kgDOD1WOFw` | `[0, 257265175]` | the stray one |
      | `PR_kwDOD1WOF87DdSjQ` | `[0, 257265175, 3279235280]` | **the same stray one** |
+     | `PR_kwDORUMiZs7Kw3fA` | `[0, 1162027622, 3401807808]` | **`uutils/coreutils#11342`** |
 
-     That third row is the finding. All three guessed IDs in that run carried
-     one wrong repository, so a single stale value contaminated every mutation,
-     and the two that failed did so only because their own databaseId happened
-     not to exist there - `Could not resolve to a node`. Failing closed was luck
-     about the guess, not a property of the API, and the guess that got lucky the
-     other way is the one that wrote.
+     The third row is why a single stale value contaminated every mutation in
+     that run: all three guessed IDs carried one wrong repository, and the two
+     that failed did so only because their own databaseId happened not to exist
+     there - `Could not resolve to a node`. Failing closed was luck about the
+     guess, not a property of the API, and the guess that got lucky the other way
+     is the one that wrote.
 
-     So resolve every ID from a query in the same run whose owner and name are
-     written out literally; check the prefix against the parameter, since a
-     `PR_...` handed to a `repositoryId` is wrong by type alone; and read the
-     `url` in the response back before treating the write as done.
+     **The fourth row is why the decode cannot clear a write.** Its middle field
+     is this repository's `databaseId`, so a check that reads the target
+     repository out of the ID passes - and it resolves to an open pull request in
+     `uutils/coreutils`, whose repository `databaseId` is `11847500`. The
+     repository field of an owned object's ID is neither what GitHub routes on
+     nor validated against the object, so it can name this repository while the
+     object lives in another. `mergePullRequest` was issued against that ID while
+     merging #2006, and was refused only by the token lacking write permission on
+     a stranger's repository. It also shares 14 of its 19 characters with the
+     real ID (`PR_kwDORUMiZs7`), so comparing against a known-good ID for the
+     same repository is the same unsound test done less precisely - and that is
+     the one that actually happened.
+
+     So the decode is a fast reject and never a clearance: a repository that is
+     not this one proves the ID is wrong, and a repository that is this one
+     proves nothing. The sound rule has no decode in it - **never construct or
+     carry over a node ID; read it back, in the same run, from a query that names
+     the object by `owner` / `name` / `number`**, which cannot address the wrong
+     repository and costs one round trip. Every *read* in that run was correct
+     for exactly that reason; only mutations take a bare ID, and only mutations
+     change anything. Check the prefix against the parameter as well, since a
+     `PR_...` handed to a `repositoryId` is wrong by type alone.
+
+     **The exposure is not symmetric, and that is the part worth carrying to the
+     call site.** A refused `mergePullRequest` leaves nothing behind; a
+     `createIssue` against a wrong `repositoryId` succeeds, and cannot be undone
+     by the account that made it. Reproduced after #1916 on the way to #2009,
+     filing `Ali111q/todo#1` - a decode would have rejected that ID, and the step
+     was simply skipped, which is the likelier failure than an unsound check. So
+     `createIssue` / `addComment` / `updateIssue` earn the read-back more than the
+     merge that prompted it, not less. When a stray write has already landed the
+     remedy is not deletion, which is refused: retitle it to say it was opened in
+     error, replace the body with an explanation, close it, and do not open a
+     replacement in that repository.
+
      `tests/test_graphql_node_id_targeting.py` decodes this repository's own node
-     IDs against the `databaseId`s the API publishes beside them, so the claim
-     that the check is available offline fails loudly rather than quietly if the
-     envelope ever changes.
+     IDs against the `databaseId`s the API publishes beside them and pins the
+     fourth row above, so both halves - that the envelope is readable offline, and
+     that reading it cannot confirm a target - fail loudly rather than quietly if
+     either ever changes. See #2007.
    - *And that the repository still accepts writes at all.* Archiving is
      invisible in every field a sweep already reads. `strands-labs/robots-sim`
      was archived at 01:33 UTC on 2026-08-06, between one scheduled cycle and
