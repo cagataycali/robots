@@ -1,0 +1,44 @@
+{
+  "tree": "/tmp/wt-main",
+  "runs": {
+    "honored": {
+      "label": "honored",
+      "applied": 42,
+      "refused": 0,
+      "err": "",
+      "ee_travel": [
+        0.3434366256584995,
+        0.000262785164861733,
+        -0.5136758722642704
+      ],
+      "ee_dz": -0.5136758722642704,
+      "block_x": 0.5200000000168408
+    },
+    "frozen": {
+      "label": "frozen",
+      "applied": 42,
+      "refused": 0,
+      "err": "",
+      "ee_travel": [
+        0.017540460126986956,
+        3.7756003120944904e-05,
+        -0.054522933718689215
+      ],
+      "ee_dz": -0.054522933718689215,
+      "block_x": 0.519999999999032
+    },
+    "nanscale": {
+      "label": "nanscale",
+      "applied": 0,
+      "refused": 42,
+      "err": "send_action: action value for key 'actuator1' must be finite (no nan/inf), got nan. A non-finite value is not clamped into the actuator's control rang",
+      "ee_travel": [
+        -0.144411904443103,
+        -0.00011640749346959024,
+        0.2834762959254462
+      ],
+      "ee_dz": 0.2834762959254462,
+      "block_x": 0.52
+    }
+  }
+}
