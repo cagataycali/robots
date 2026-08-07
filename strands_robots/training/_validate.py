@@ -68,6 +68,15 @@ scoped like :func:`learning_rate_problems` rather than like
 *every* RL backend reads (PPO discounts the GAE recursion with it, FastSAC
 discounts its target-Q bootstrap), so there is no RL backend for which
 reporting on it would be a false rejection.
+
+:func:`gae_lambda_problems` is the ninth, on the same *return* axis and for the
+sibling factor: ``lam``, the GAE trace-decay coefficient. It is a separate gate
+from :func:`discount_factor_problems` because the two fields are scoped
+differently - every RL backend reads ``gamma``, but only the on-policy backend
+estimates an advantage trace, so per :class:`TrainSpec` FastSAC must not report
+on a field it never reads. They are nonetheless one contract: the trace decays
+by the *product* ``gamma * lam``, so bounding one factor does not bound the
+trace.
 """
 
 from __future__ import annotations
@@ -523,11 +532,13 @@ def discount_factor_problems(spec: TrainSpec, *, context: str) -> list[str]:
     generalizes: an interval coefficient is checked against its interval rather
     than left to the arithmetic that consumes it.
 
-    ``lam`` and the remaining PPO coefficients (``clip_param``,
-    ``num_learning_epochs``, ``entropy_coef``, ``value_loss_coef``,
-    ``max_grad_norm``, ``init_noise_std``) are out of scope here: they are read
-    by the on-policy backend only, so per :class:`TrainSpec` a backend that
-    ignores them must not report on them, and they belong in their own gate.
+    ``lam``, the other factor of the trace-decay product, has its own gate for
+    that same scoping reason - see :func:`gae_lambda_problems`. The remaining PPO
+    coefficients (``clip_param``, ``num_learning_epochs``, ``entropy_coef``,
+    ``value_loss_coef``, ``max_grad_norm``, ``init_noise_std``) are out of scope
+    here and there: they weight loss terms and bound gradients rather than the
+    return, and each carries its own undecided question about whether zero is a
+    disabled mode, so they belong in a gate on that axis.
 
     Args:
         spec: The spec to check.
@@ -539,4 +550,65 @@ def discount_factor_problems(spec: TrainSpec, *, context: str) -> list[str]:
         A single-element list when ``gamma`` cannot be honored; empty otherwise.
     """
     error = _closed_unit_interval_error(getattr(spec, "gamma", 0.0), "gamma", context)
+    return [error] if error is not None else []
+
+
+def gae_lambda_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return GAE-lambda problems for an on-policy RL :class:`TrainSpec`.
+
+    ``lam`` is the second factor of the advantage trace's decay. The GAE
+    recursion carries it forward as ``last_adv = delta + gamma * lam *
+    (1 - done) * last_adv``, so the trace decays by the **product**
+    ``gamma * lam`` and :func:`discount_factor_problems` bounding ``gamma``
+    alone does not bound it: with a ``gamma`` of ``0.99`` - comfortably inside
+    that gate's closed interval - a ``lam`` of ``1.5`` gives a decay factor of
+    ``1.485`` and the same divergence, measured on this backend's own
+    ``compute_gae`` over a rollout of unit rewards:
+
+    ======  =========  =========  =========  =========
+    ``lam``  ``T=12``   ``T=24``   ``T=48``   ``T=96``
+    ======  =========  =========  =========  =========
+    0.95      8.8        13.0       15.9       16.8
+    1.5     235.1      2.7e+04    3.6e+08    6.3e+16
+    1e6       inf        inf        inf        inf
+    ======  =========  =========  =========  =========
+
+    The largest advantage grows without bound in the rollout horizon rather than
+    being merely large, and nothing refuses it: the run trains on those
+    advantages, reports success, and writes a checkpoint.
+
+    The remaining values outside the interval fail in three further ways:
+
+    * ``lam < -1 / gamma`` diverges as well, because the trace decays by
+      ``|gamma * lam|`` - ``lam=-2`` reaches ``1.0e+28`` by ``T=96`` - while a
+      ``lam`` merely below zero (``-0.5``) collapses the trace to the immediate
+      reward, so the estimator stops accumulating future advantage at all.
+    * ``nan``/``inf`` make every advantage non-finite, which surfaces only once
+      the update samples the action distribution - a torch constraint error
+      naming neither the field nor the run, after the env, the networks and a
+      full rollout have been built.
+    * ``True`` is a silent ``lam`` of one, because a bare comparison against the
+      interval bounds accepts it: ``bool`` is an ``int`` subclass. That is a
+      different estimator from the one the caller asked for - Monte-Carlo return
+      rather than a bootstrapped trace.
+
+    Both endpoints are legitimate and standard, which is why the domain is the
+    *closed* interval [0, 1]: ``lam=1`` is the Monte-Carlo advantage (no
+    bootstrapping, 61.9 at ``T=96`` above) and ``lam=0`` is TD(0), the
+    one-step advantage.
+
+    Unlike ``gamma`` this is read by the on-policy backend only, so it is scoped
+    like :func:`run_size_problems`: FastSAC has no advantage trace and must not
+    report on a field it never reads.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``lam`` cannot be honored; empty otherwise.
+    """
+    error = _closed_unit_interval_error(getattr(spec, "lam", 0.0), "lam", context)
     return [error] if error is not None else []

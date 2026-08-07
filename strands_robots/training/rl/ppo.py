@@ -153,6 +153,9 @@ class PpoTrainer(BaseRLAlgo):
         # gamma discounts the return this backend optimizes; the arithmetic that
         # consumes it never judges it, so the shared interval domain does.
         problems.extend(self._discount_factor_problems(spec))
+        # lam is the other factor of the same trace decay: the recursion decays by
+        # gamma * lam, so the gate above cannot bound the trace on its own.
+        problems.extend(self._gae_lambda_problems(spec))
         if spec.total_timesteps <= 0:
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:

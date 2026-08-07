@@ -455,6 +455,39 @@ class Trainer(ABC):
 
         return discount_factor_problems(spec, context=self.provider_name)
 
+    def _gae_lambda_problems(self, spec: TrainSpec) -> list[str]:
+        """GAE-lambda preflight shared by every backend that estimates a trace.
+
+        Returns a problem when :attr:`RLTrainSpec.lam` is not a real number in
+        the closed interval ``[0, 1]``. A :meth:`validate` implementation that
+        decays an advantage trace with the field MUST call this **in addition
+        to** :meth:`_discount_factor_problems`, because the two fields are one
+        contract: the trace decays by the product ``gamma * lam``, so bounding
+        ``gamma`` alone leaves the divergence that gate exists to refuse
+        reachable through the other factor - a ``gamma`` of ``0.99`` with a
+        ``lam`` of ``1.5`` decays by ``1.485`` and the largest advantage grows
+        without bound in the rollout horizon, under a successful run that writes
+        a checkpoint.
+
+        Both interval endpoints are inside the domain (``lam=1`` is the
+        Monte-Carlo advantage, ``lam=0`` the one-step TD advantage), so the check
+        is a closed interval rather than a positivity test - and it rejects
+        ``bool``, which a bare comparison against the bounds accepts as a silent
+        ``lam`` of one, i.e. a different estimator from the requested one.
+
+        Only the on-policy backend estimates an advantage trace, so unlike
+        :meth:`_discount_factor_problems` a backend that does not read the field
+        MUST NOT call this: per :class:`TrainSpec` a backend ignores the fields
+        it does not support, so reporting on one it never reads would be a false
+        rejection.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import gae_lambda_problems
+
+        return gae_lambda_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 
