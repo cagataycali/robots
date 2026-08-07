@@ -1,0 +1,82 @@
+{
+  "tree": "/tmp/robots-mine",
+  "divergence": {
+    "0.99": {
+      "12": 8.756857872009277,
+      "24": 12.951106071472168,
+      "48": 15.922211647033691,
+      "96": 16.760181427001953
+    },
+    "1.0": {
+      "12": 9.192797660827637,
+      "24": 14.160218238830566,
+      "48": 18.294843673706055,
+      "96": 19.8546199798584
+    },
+    "1.5": {
+      "12": 162.61111450195312,
+      "24": 11563.2294921875,
+      "48": 56849148.0,
+      "96": 1373525172551680.0
+    },
+    "5.0": {
+      "12": 35179692.0,
+      "24": 4641040728326144.0,
+      "48": 8.077223158529581e+31,
+      "96": Infinity
+    },
+    "-0.5": {
+      "12": 1.0,
+      "24": 1.0,
+      "48": 1.0,
+      "96": 1.0
+    }
+  },
+  "verdicts": {
+    "ppo": {
+      "0.99": "accepted",
+      "1.0": "accepted",
+      "0.0": "accepted",
+      "1.5": "ppo: gamma must be in [0, 1], got 1.5.",
+      "5.0": "ppo: gamma must be in [0, 1], got 5.0.",
+      "-0.5": "ppo: gamma must be in [0, 1], got -0.5.",
+      "nan": "ppo: gamma must be a finite number, got nan.",
+      "True": "ppo: gamma must be a finite number, got True."
+    },
+    "fast_sac": {
+      "0.99": "accepted",
+      "1.0": "accepted",
+      "0.0": "accepted",
+      "1.5": "fast_sac: gamma must be in [0, 1], got 1.5.",
+      "5.0": "fast_sac: gamma must be in [0, 1], got 5.0.",
+      "-0.5": "fast_sac: gamma must be in [0, 1], got -0.5.",
+      "nan": "fast_sac: gamma must be a finite number, got nan.",
+      "True": "fast_sac: gamma must be a finite number, got True."
+    }
+  },
+  "runs": {
+    "honored": {
+      "validate_problems": [],
+      "status": "success",
+      "checkpoint": true,
+      "weight_absmax": 0.7058578133583069,
+      "render": "render_honored_branch.png",
+      "elbow": 0.0
+    },
+    "above_one": {
+      "validate_problems": [
+        "ppo: gamma must be in [0, 1], got 1.5."
+      ],
+      "status": "not run",
+      "checkpoint": false,
+      "refused_by": "ppo: gamma must be in [0, 1], got 1.5."
+    },
+    "nan": {
+      "validate_problems": [
+        "ppo: gamma must be a finite number, got nan."
+      ],
+      "status": "not run",
+      "refused_by": "ppo: gamma must be a finite number, got nan."
+    }
+  }
+}

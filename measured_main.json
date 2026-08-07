@@ -1,0 +1,80 @@
+{
+  "tree": "/tmp/wt-main",
+  "divergence": {
+    "0.99": {
+      "12": 8.756857872009277,
+      "24": 12.951106071472168,
+      "48": 15.922211647033691,
+      "96": 16.760181427001953
+    },
+    "1.0": {
+      "12": 9.192797660827637,
+      "24": 14.160218238830566,
+      "48": 18.294843673706055,
+      "96": 19.8546199798584
+    },
+    "1.5": {
+      "12": 162.61111450195312,
+      "24": 11563.2294921875,
+      "48": 56849148.0,
+      "96": 1373525172551680.0
+    },
+    "5.0": {
+      "12": 35179692.0,
+      "24": 4641040728326144.0,
+      "48": 8.077223158529581e+31,
+      "96": Infinity
+    },
+    "-0.5": {
+      "12": 1.0,
+      "24": 1.0,
+      "48": 1.0,
+      "96": 1.0
+    }
+  },
+  "verdicts": {
+    "ppo": {
+      "0.99": "accepted",
+      "1.0": "accepted",
+      "0.0": "accepted",
+      "1.5": "accepted",
+      "5.0": "accepted",
+      "-0.5": "accepted",
+      "nan": "accepted",
+      "True": "accepted"
+    },
+    "fast_sac": {
+      "0.99": "accepted",
+      "1.0": "accepted",
+      "0.0": "accepted",
+      "1.5": "accepted",
+      "5.0": "accepted",
+      "-0.5": "accepted",
+      "nan": "accepted",
+      "True": "accepted"
+    }
+  },
+  "runs": {
+    "honored": {
+      "validate_problems": [],
+      "status": "success",
+      "checkpoint": true,
+      "weight_absmax": 0.7058578133583069,
+      "render": "render_honored_main.png",
+      "elbow": 0.0
+    },
+    "above_one": {
+      "validate_problems": [],
+      "status": "success",
+      "checkpoint": true,
+      "weight_absmax": 0.7061177492141724,
+      "render": "render_above_one_main.png",
+      "elbow": 0.0
+    },
+    "nan": {
+      "validate_problems": [],
+      "status": "RAISED ValueError",
+      "raised": "ValueError: Expected parameter loc (Tensor of shape (5, 6)) of distribution Normal(loc: torch.Size([5, 6]), scale: torch.Size([5, 6])) to satisfy the constraint Real(), but found invalid values:\ntensor([[nan, nan"
+    }
+  }
+}
