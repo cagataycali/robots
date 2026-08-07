@@ -50,6 +50,14 @@ IDs also share 14 of their 19 characters, so comparing one by eye against a
 known-good ID for the same repository is the same unsound test done less
 precisely. See #2007.
 
+The exposure is also not symmetric, and that is what the reject direction is
+worth keeping for. A refused ``mergePullRequest`` leaves nothing behind; a
+``createIssue`` against a wrong ``repositoryId`` succeeds and cannot be undone
+by the account that made it. It has now happened twice - the second was
+``Ali111q/todo#1``, twenty minutes after #2007 was filed - and that second ID
+named a repository that is not this one, which is precisely the shape a decode
+does catch. Narrowing the check is therefore not the same as dropping it.
+
 So three classes are asserted here, and the first two are what keep the third
 honest:
 
@@ -125,6 +133,15 @@ _CROSS_REPOSITORY_NODE_ID = "PR_kwDORUMiZs7Kw3fA"
 _CROSS_REPOSITORY_OWN_DATABASE_ID = 3401807808
 _CROSS_REPOSITORY_RESOLVES_TO = "uutils/coreutils#11342"
 _CROSS_REPOSITORY_ACTUAL_DATABASE_ID = 11847500
+
+# The repository a second stray write landed in, twenty minutes after #2007 was
+# filed: `createIssue` with a `repositoryId` that was never resolved in that run.
+# Unlike the cross-repository ID above, its repository field is *not* this
+# repository, so the surviving reject direction covers it. Read back from
+# `repository(owner: "Ali111q", name: "todo")`. See #2007.
+_SECOND_STRAY_REPOSITORY_NODE_ID = "R_kgDOPzXPeg"
+_SECOND_STRAY_REPOSITORY_DATABASE_ID = 1060491130
+_SECOND_STRAY_RESOLVES_TO = "Ali111q/todo#1"
 
 #: The ID that mutation should have carried, from
 #: ``repository(owner:, name:) { pullRequest(number: 2006) { id } }``. Kept to
@@ -316,6 +333,30 @@ class TestTheDecodeIsARejectAndNeverAPass:
                 "the check rather than removing it."
             )
 
+    def test_the_second_incident_is_refusable_by_the_surviving_direction(self) -> None:
+        # Why the correction narrows the check instead of deleting it: the write
+        # that landed after #2007 was filed is one a decode would have stopped.
+        encoded = _encoded_repository(_SECOND_STRAY_REPOSITORY_NODE_ID)
+        assert encoded == _SECOND_STRAY_REPOSITORY_DATABASE_ID, (
+            f"{_SECOND_STRAY_REPOSITORY_NODE_ID!r} should decode to the databaseId of "
+            f"the repository {_SECOND_STRAY_RESOLVES_TO} landed in. If it does not, the "
+            "constant drifted; re-read it from a repository(owner:, name:) query."
+        )
+        assert encoded != _REPOSITORY_DATABASE_ID, (
+            f"{_SECOND_STRAY_RESOLVES_TO} was filed from an ID naming another "
+            "repository, which is the one shape a decode catches. This is why "
+            "AGENTS.md keeps the reject rather than dropping the decode outright."
+        )
+
+    def test_the_two_incidents_name_different_wrong_repositories(self) -> None:
+        # #1916's write-up read as one stale value contaminating one run. Two
+        # distinct wrong repositories make it a recurring class instead, which is
+        # what justifies weighting the rule by reversibility at the call site.
+        assert _STRAY_REPOSITORY_DATABASE_ID != _SECOND_STRAY_REPOSITORY_DATABASE_ID, (
+            "the two stray writes must name different repositories for the recurrence "
+            "to be the finding. If these agree, one of the constants is wrong."
+        )
+
     def test_the_prefix_check_is_unaffected_by_the_correction(self) -> None:
         # Orthogonal and still sound: the type is a property of the envelope, not
         # a claim about which object the payload addresses.
@@ -420,7 +461,7 @@ class TestTheGuidanceNamesTheDecodableEnvelope:
 
 
 class TestTheGuidanceLimitsTheDecodeToAReject:
-    """The correction is only actionable with its five qualifiers beside it."""
+    """The correction is only actionable with its seven qualifiers beside it."""
 
     def test_the_slice_is_the_bullet_and_not_its_neighbour(self) -> None:
         # Non-vacuity for `_bullet_after`: an empty or runaway slice would make
@@ -467,6 +508,23 @@ class TestTheGuidanceLimitsTheDecodeToAReject:
             "AGENTS.md must say the two directions are not symmetric: a refused merge "
             "leaves nothing behind, a createIssue against a wrong ID cannot be undone. "
             "That is the sentence that changes behaviour at the call site. See #2007."
+        )
+
+    def test_the_guidance_scopes_the_rule_to_mutations(self) -> None:
+        bullet = _bullet_after(_agents_text(), _SUBJECT_CLAIM)
+        assert bullet is not None and "Only a mutation takes a bare ID" in bullet, (
+            "AGENTS.md must say only a mutation takes a bare ID. Without it the rule "
+            "reads as applying to every call, which makes it look expensive enough to "
+            "skip - and a query cannot address the wrong repository at all. See #2007."
+        )
+
+    def test_the_guidance_records_the_second_incident(self) -> None:
+        bullet = _bullet_after(_agents_text(), _SUBJECT_CLAIM)
+        assert bullet is not None and _SECOND_STRAY_RESOLVES_TO in bullet, (
+            f"AGENTS.md must record that this recurred: {_SECOND_STRAY_RESOLVES_TO} "
+            "landed twenty minutes after #2007 was filed, from an ID a decode would "
+            "have rejected. One incident reads as a mishap; two is the reason the "
+            "reject direction is kept and the read-back is not optional. See #2007."
         )
 
     def test_the_guidance_names_the_remedy_for_a_write_that_landed(self) -> None:

@@ -16,7 +16,13 @@ naming the object by owner, name and number. The passage also states the
 asymmetry that decides how much the rule is worth, since a refused merge leaves
 nothing behind while a `createIssue` against a wrong ID succeeds and cannot be
 undone by the account that made it, and names the remedy for one that has
-already landed.
+already landed. That has now happened twice: `Ali111q/todo#1` was filed twenty
+minutes after the problem was reported, from an ID whose repository field reads
+`1060491130` rather than this repository's `1162027622` - so the surviving
+reject direction covers it, and the two strays name different repositories
+rather than one stale value. The passage also scopes the rule to mutations,
+since a query names its subject by owner, name and number and cannot address
+the wrong repository at all.
 
 `tests/test_graphql_node_id_targeting.py` executes the limit on the recorded
 cross-repository ID rather than asserting the prose says so, and keeps the
