@@ -1,0 +1,39 @@
+{
+  "tree": "/tmp/rw",
+  "sim_frame_shape": [
+    480,
+    480,
+    3
+  ],
+  "cases": {
+    "128": {
+      "requested": "128",
+      "config": "accepted",
+      "stored": "128",
+      "result": "success",
+      "view_widths": [
+        128
+      ],
+      "view_shape": [
+        128,
+        128,
+        3
+      ]
+    },
+    "0": {
+      "requested": "0",
+      "config": "refused",
+      "result": "ValueError: VeraConfig: render_width must be a positive whole number, got 0."
+    },
+    "2.7": {
+      "requested": "2.7",
+      "config": "refused",
+      "result": "ValueError: VeraConfig: render_width must be a positive whole number, got 2.7."
+    },
+    "True": {
+      "requested": "True",
+      "config": "refused",
+      "result": "ValueError: VeraConfig: render_width must be a positive whole number, got True."
+    }
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "tree": "/tmp/ctrlmain",
+  "sim_frame_shape": [
+    480,
+    480,
+    3
+  ],
+  "cases": {
+    "128": {
+      "requested": "128",
+      "config": "accepted",
+      "stored": "128",
+      "result": "success",
+      "view_widths": [
+        128
+      ],
+      "view_shape": [
+        128,
+        128,
+        3
+      ]
+    },
+    "0": {
+      "requested": "0",
+      "config": "accepted",
+      "stored": "0",
+      "result": "success",
+      "view_widths": [
+        128
+      ],
+      "view_shape": [
+        128,
+        128,
+        3
+      ]
+    },
+    "2.7": {
+      "requested": "2.7",
+      "config": "accepted",
+      "stored": "2.7",
+      "result": "success",
+      "view_widths": [
+        2
+      ],
+      "view_shape": [
+        2,
+        2,
+        3
+      ]
+    },
+    "True": {
+      "requested": "True",
+      "config": "accepted",
+      "stored": "True",
+      "result": "success",
+      "view_widths": [
+        1
+      ],
+      "view_shape": [
+        1,
+        1,
+        3
+      ]
+    }
+  }
+}
