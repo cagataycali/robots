@@ -171,7 +171,16 @@ class TestCuroboPolicyConstruction:
         assert stub.warmup_called == 0  # caller-owned planner; no auto-warmup.
 
     def test_action_horizon_must_be_positive(self) -> None:
-        with pytest.raises(ValueError, match="action_horizon must be >= 1"):
+        """The floor of the shared provider chunk-count domain.
+
+        Narrowed rather than deleted when ``action_horizon`` adopted
+        ``chunk_count_error``: the boundary this pinned is unchanged, only the
+        message is, and the rest of that domain - ``True`` as a silent horizon
+        of one, a truncated ``2.7``, the values that escaped as ``TypeError`` /
+        ``OverflowError`` - is pinned in
+        ``tests/policies/curobo/test_action_horizon_domain.py``.
+        """
+        with pytest.raises(ValueError, match="action_horizon must be a positive integer"):
             CuroboPolicy(motion_gen=_StubMotionGen(), action_horizon=0)
 
     def test_missing_robot_config_and_motion_gen_raises(self) -> None:
