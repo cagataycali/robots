@@ -360,17 +360,27 @@ hatch run format            # ruff check --fix, ruff format
      literally, preferring the response of the query that named the object by
      `owner`/`name`/`number`; check the prefix against the parameter, since a
      `PR_...` handed to a `repositoryId` is wrong by type alone; and read the
-     `url` in the response back before treating the write as done.
+     `url` in the response back before treating the write as done. Only a
+     mutation takes a bare ID - a query names its subject by
+     `owner`/`name`/`number`, so it cannot address the wrong repository at all.
+     That is why no read has ever been implicated, and why the rule costs one
+     round trip and binds only where something changes.
 
      **Weight it by reversibility rather than by correctness**, because the two
      directions are not symmetric. A refused `mergePullRequest` leaves nothing
      behind; a `createIssue` against a wrong ID succeeds and cannot be undone by
      the account that made it, since `deleteIssue` needs admin on the target and a
-     stray write by definition lands where you have none. So `createIssue`,
+     stray write by definition lands where you have none. It has now happened
+     twice: the second was `Ali111q/todo#1` at 16:23 UTC on 2026-08-07, twenty
+     minutes after #2007 was filed, from a `repositoryId` whose repository field
+     reads `1060491130` and not this repository's `1162027622` - the one
+     direction a decode does catch. So `createIssue`,
      `addComment` and `updateIssue` earn the read-back more than the merge that
      prompted the rule, not less. If one has already landed, the remedy is not
      deletion: retitle it to mark it opened in error, replace the body with an
-     explanation, close it, and do not open a replacement in the same repository.
+     explanation, close it, and do not open a replacement in the same repository -
+     which is what `Ali111q/todo#1` now records, its own body noting that deletion
+     was refused.
      `tests/test_graphql_node_id_targeting.py` decodes both shapes against the
      `databaseId`s the API publishes beside them, so neither the envelope changing
      nor the reject-only limit softening back into a pass goes unnoticed.
