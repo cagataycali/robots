@@ -40,6 +40,7 @@ from collections.abc import Sequence
 from typing import Any
 
 from strands_robots.policies.base import Policy
+from strands_robots.utils import name_list_error
 
 logger = logging.getLogger(__name__)
 
@@ -76,10 +77,23 @@ class CompositePolicy(Policy):
         upper_obs_keys: Observation keys to forward to the upper policy. ``None``
             (default) forwards the full observation.
 
+    All four name lists are validated on the shared
+    :func:`~strands_robots.utils.name_list_error` domain - several distinct
+    non-blank names, in the order given. A single name must be wrapped in a list:
+    a bare string is iterable per character, so ``lower_joints="left_knee"`` would
+    claim one group member per letter, the lower policy would own no joint of the
+    robot, and every command it emits would be dropped from the merged chunk under
+    a successful call. The check is gated on a truthy value, so ``None`` ("no
+    explicit group") and ``[]`` ("claim nothing") keep their meanings, and it runs
+    before the disjointness test - which would otherwise compare two sets of
+    characters and can report an overlap for names that share none.
+
     Raises:
-        ValueError: If ``lower`` or ``upper`` is ``None``, or if ``lower_joints``
-            and ``upper_joints`` are both given and share a name (ambiguous
-            ownership).
+        ValueError: If ``lower`` or ``upper`` is ``None``, if any of
+            ``lower_joints`` / ``upper_joints`` / ``lower_obs_keys`` /
+            ``upper_obs_keys`` is not a list of distinct non-blank names, or if
+            ``lower_joints`` and ``upper_joints`` are both given and share a name
+            (ambiguous ownership).
     """
 
     def __init__(
@@ -94,6 +108,19 @@ class CompositePolicy(Policy):
     ) -> None:
         if lower is None or upper is None:
             raise ValueError("CompositePolicy requires both a 'lower' and an 'upper' policy.")
+        for value, param in (
+            (lower_joints, "lower_joints"),
+            (upper_joints, "upper_joints"),
+            (lower_obs_keys, "lower_obs_keys"),
+            (upper_obs_keys, "upper_obs_keys"),
+        ):
+            # Gated on truthiness like every other caller of this domain: ``None``
+            # means "no explicit group" and ``[]`` means "claim nothing", so both
+            # keep their documented meanings. Checked before the ``set()`` calls
+            # below, because a name list this domain refuses cannot be routed with
+            # and would reach the disjointness test as characters rather than names.
+            if value and (error := name_list_error(value, param, "CompositePolicy")):
+                raise ValueError(error)
         self._lower = lower
         self._upper = upper
         self._lower_joints: set[str] | None = set(lower_joints) if lower_joints is not None else None
