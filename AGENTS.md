@@ -493,6 +493,54 @@ hatch run format            # ruff check --fix, ruff format
    the sole constraint". It bites CI and process pull requests specifically,
    because those are the ones carrying workflow edits. See #1917.
 
+   A third cause of that same presentation needs no workflow edit, and no second
+   token to see. The `mergeStateStatus` values above - `BLOCKED` while the required
+   check runs, then `UNSTABLE` or `CLEAN` - assume the required check runs. A head
+   commit created through the API under the Actions `GITHUB_TOKEN`
+   (`createCommitOnBranch`, or `PUT /repos/{owner}/{repo}/contents/{path}`) spawns
+   **no check suite at all**, because GitHub suppresses workflow triggers for events
+   it attributes to that token so that a workflow cannot re-trigger itself. Nothing
+   ever reports `call-test-lint / Test and Lint`, so the required set is never
+   satisfied and `BLOCKED` is terminal rather than transient.
+
+   It is legible in one field, and only as an absence:
+
+   ```
+   commits(last: 1) { nodes { commit { checkSuites { totalCount } } } }   ->  0
+   ```
+
+   Zero suites, not a red one. On #1987 every commit pushed from a clone carried
+   10-13 suites and the one written through the API carried none, same branch, same
+   day:
+
+   | head | committer | `checkSuites.totalCount` |
+   |---|---|---|
+   | `b10f4dce` | `./c²` (clone) | 13 |
+   | `a3f3e3f6` | `cagataycali` (API) | 0 |
+
+   At `a3f3e3f6` that PR satisfied every gate this file tells you to read -
+   `APPROVED` by an account other than the pusher, `MERGEABLE`, no unresolved
+   thread - while `statusCheckRollup` read `null` and `mergeStateStatus` read
+   `BLOCKED`. That payload is indistinguishable from a required check still
+   queued, so it was reported as waiting on CI for two consecutive scheduled
+   cycles.
+
+   **Reopen it; do not re-push it.** `pr-and-push.yml` takes the default
+   `pull_request` types, so `reopened` recomputes the *unchanged* head sha: no
+   commit, therefore no push, therefore neither `dismiss_stale_reviews_on_push` nor
+   a new last pusher, and the approval survives. Re-pushing the same tree with
+   `PAT_TOKEN` triggers too, but pays a re-approval round that reviews no changed
+   behaviour - and re-running is not on the table, since `totalCount` is `0` so
+   there is no suite to re-run and the workflow has no `workflow_dispatch`.
+
+   **The flip needs `PAT_TOKEN` as well.** A close/reopen attributed to the Actions
+   token is suppressed for the same reason the commit was, so the remedy applied
+   with the wrong token is a silent no-op that looks like the diagnosis was wrong.
+   Read `timelineItems(itemTypes: [CLOSED_EVENT, REOPENED_EVENT])` first, as this
+   step already requires: #1987 had none and cleared on a single flip - same head,
+   still `APPROVED`, nine suites queued including the required one. #1988 has the
+   full account.
+
    This is worth the words because the failure mode is silent and expensive in the
    opposite direction from the usual one. Treating an advisory red as a merge
    blocker does not look like a mistake; it looks like diligence, and it costs a
