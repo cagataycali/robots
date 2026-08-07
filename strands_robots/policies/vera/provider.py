@@ -334,16 +334,19 @@ class VeraPolicy(Policy):
                 finite number, since it scales every translation delta the
                 policy converts to joint targets.
         """
+        # Validate before mutating any state, so a refused call leaves the
+        # policy untouched (guard-before-mutation discipline).
+        if translation_scale is not None:
+            if (
+                err := positive_finite_number_error(translation_scale, "translation_scale", "set_ik_target")
+            ) is not None:
+                raise ValueError(err)
         self._mj_model = mj_model
         self._ee_frame_name = ee_frame_name
         self._ee_frame_type = ee_frame_type
         if rotation_dim is not None:
             self._rotation_dim = int(rotation_dim)
         if translation_scale is not None:
-            if (
-                err := positive_finite_number_error(translation_scale, "translation_scale", "set_ik_target")
-            ) is not None:
-                raise ValueError(err)
             self._translation_scale = float(translation_scale)
         self._ik_bridge = None  # force rebuild
 

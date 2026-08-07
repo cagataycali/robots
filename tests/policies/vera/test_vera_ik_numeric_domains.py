@@ -250,10 +250,10 @@ class _StubClient:
         return {}
 
     def reset(self, info: Any) -> None:
-        del info
+        _ = info
 
     def configure(self, params: Any) -> dict[str, Any]:
-        del params
+        _ = params
         return {}
 
     def close(self) -> None:
@@ -360,10 +360,17 @@ class TestTheIntervalIsTheWholeLocalContribution:
 class TestNothingIsConfiguredByARefusedValue:
     def test_a_refused_scale_leaves_the_previous_one_in_place(self) -> None:
         policy = _policy()
-        policy.set_ik_target(object(), "hand", "body", translation_scale=2.5)
+        original_model = object()
+        policy.set_ik_target(original_model, "hand", "body", translation_scale=2.5)
+        original_bridge = policy._ik_bridge
         with pytest.raises(ValueError):
             policy.set_ik_target(object(), "elbow", "site", translation_scale=float("nan"))
         assert policy._translation_scale == 2.5
+        # Guard-before-mutation: nothing else changed either.
+        assert policy._mj_model is original_model
+        assert policy._ee_frame_name == "hand"
+        assert policy._ee_frame_type == "body"
+        assert policy._ik_bridge is original_bridge
 
     def test_a_refused_coefficient_precedes_the_config(self) -> None:
         """The guard runs before ``VeraConfig`` is built, so nothing is left half-configured."""
@@ -400,10 +407,10 @@ class TestTheGuardsSurviveARealRollout:
                 }
 
             def reset(self, info: Any) -> None:
-                del info
+                _ = info
 
             def configure(self, params: Any) -> dict[str, Any]:
-                del params
+                _ = params
                 return {}
 
             def infer(self, request: Any) -> dict[str, Any]:
