@@ -695,8 +695,16 @@ hatch run format            # ruff check --fix, ruff format
    All of the above was documented here and enforced by nothing, which is the
    same shape as the changelog rule in step 3 before #1784. It is now surfaced by
    `.github/workflows/last-push-approval.yml`, which names the pusher and the
-   approvers on every review event and fails when they are the same single
-   account. The point of automating it is not that the check is clever - it is
+   approvers on every review event and reports when they are the same single
+   account. It **reports** rather than fails: a finding leaves the job green and
+   lands in the step summary and in a `Needs an approver who did not push the
+   head` annotation, because a red X drags `statusCheckRollup.state` to
+   `FAILURE`, where it cannot be told apart from the branch's own tests failing -
+   measured on #1722, whose rollup read `FAILURE` with every required context
+   `SUCCESS` and this check as the only non-`SUCCESS` context, and misread as a
+   broken diff four times. Red on that job now means the check itself could not
+   compute an answer. The check row is named `Report the last-push-approval
+   state` for the same reason: green must not assert the absence of a finding. The point of automating it is not that the check is clever - it is
    that the state it reports is *invisible*: `REVIEW_REQUIRED` / `BLOCKED` is
    byte for byte what an unreviewed pull request looks like, so the two are
    indistinguishable in every field a sweep reads and they need opposite actions.
@@ -722,8 +730,9 @@ hatch run format            # ruff check --fix, ruff format
    request that has had one of those *since it landed* - and the pull requests
    this is written for are the ones that have not. #1035's head was pushed
    2026-08-01 and approved 51 minutes later, both before the workflow existed on
-   2026-08-04, so `Detect an approval the last pusher cannot supply` is absent
-   from the 11 check runs on that head, while every other check is present. So
+   2026-08-04, so `Report the last-push-approval state` (then named `Detect an
+   approval the last pusher cannot supply`) is absent from the 11 check runs on
+   that head, while every other check is present. So
    the check read `SUCCESS` on pull requests that did not have the condition and
    said nothing at all about the two that did.
 

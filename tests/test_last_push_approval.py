@@ -453,38 +453,79 @@ def test_the_workflow_passes_when_the_base_lacks_the_script(tmp_path):
     assert "nothing to report" in result.stdout
 
 
-def test_the_guard_does_not_swallow_a_real_finding(tmp_path):
-    """With the script present, the guard is transparent and the exit status is the script's.
+def _run_body_against_stub(tmp_path, exit_code: int):
+    """Execute the workflow's shell body against a stub script exiting ``exit_code``.
 
-    Otherwise the fix for the bootstrapping case would have turned the whole
-    check into a permanent no-op, which is the failure mode that would be
-    hardest to notice: a green check that never looks at anything.
+    Pins the shipped text rather than a paraphrase of it, which is the reason
+    this reads the body out of the YAML instead of restating the shell.
     """
     import shutil
     import subprocess
     import textwrap
 
     (tmp_path / "scripts").mkdir()
-    stub = tmp_path / "scripts" / "check_last_push_approval.py"
-    stub.write_text(
-        textwrap.dedent("""
+    (tmp_path / "scripts" / "check_last_push_approval.py").write_text(
+        textwrap.dedent(f"""
         import sys
         print("stub ran")
-        sys.exit(1)
+        sys.exit({exit_code})
     """)
     )
     assert shutil.which("sh")
 
-    result = subprocess.run(
+    return subprocess.run(
         ["sh", "-c", _run_step_body()],
         cwd=tmp_path,
         capture_output=True,
         text=True,
         env={"BASE_REF": "main", "GITHUB_REPOSITORY": "strands-labs/robots", "PATH": os.environ["PATH"]},
     )
-    assert result.returncode == 1, result.stdout + result.stderr
+
+
+def test_the_guard_does_not_swallow_a_real_finding(tmp_path):
+    """With the script present, the guard is transparent and the finding is stated.
+
+    Otherwise the fix for the bootstrapping case would have turned the whole
+    check into a permanent no-op, which is the failure mode that would be
+    hardest to notice: a green check that never looks at anything. The property
+    is unchanged; only the evidence for it moved, because the job no longer
+    reports a finding through its exit status. So this reads the output: the
+    script must actually have run, and the body must say what it found and why
+    it is not failing, rather than exiting 0 in silence.
+    """
+    result = _run_body_against_stub(tmp_path, 1)
+
     assert "stub ran" in result.stdout
+    assert "reported, not failed" in result.stdout
     assert "nothing to report" not in result.stdout
+
+
+def test_a_finding_does_not_fail_the_job(tmp_path):
+    """Exit 1 from the script is a finding, and a finding is not a job failure.
+
+    A single non-SUCCESS context drags ``statusCheckRollup.state`` to
+    ``FAILURE``, which carries no reason and so cannot be told apart from the
+    branch's own tests failing. Measured on #1722: every required context
+    SUCCESS, threads resolved, ``mergeable: MERGEABLE``, rollup ``FAILURE``
+    whose only non-SUCCESS context was this check. The remedy is a review from
+    another account, which no work on the branch supplies, so a red X here asks
+    the branch for something it cannot give.
+    """
+    assert _run_body_against_stub(tmp_path, 1).returncode == 0
+
+
+def test_a_check_that_cannot_compute_an_answer_still_fails_the_job(tmp_path):
+    """Exit 2 is a broken check, not a finding, and keeps the red X.
+
+    This is what keeps the test above from being satisfied by a body that
+    swallows every status: red still means something here, and what it means is
+    that this check could not do its job -- a broken checkout, a missing
+    argument, an API shape change -- which is a defect someone owns.
+    """
+    result = _run_body_against_stub(tmp_path, 2)
+
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "reported, not failed" not in result.stdout
 
 
 # --------------------------------------------------------------------------
@@ -495,7 +536,8 @@ def test_the_guard_does_not_swallow_a_real_finding(tmp_path):
 # since the workflow landed -- and the population the check was written for is
 # the population that has not. Measured on #1035: head pushed 2026-08-01, the
 # approval 51 minutes later, the workflow landed 2026-08-04, so
-# `Detect an approval the last pusher cannot supply` is absent from the 11 check
+# `Report the last-push-approval state` (then named `Detect an approval the last
+# pusher cannot supply`) is absent from the 11 check
 # runs on that head while the classifier answers `pusher-only-approval` the
 # moment it is invoked. These pin the caller that closes that gap, not the
 # verdict, which was never wrong.

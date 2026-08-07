@@ -32,8 +32,37 @@
 # Unlike merge-base-overlap.yml the remedy here is not self-clearing: it needs a
 # second human, so the pull request author cannot turn the check green by
 # working. A gate a branch cannot clear by doing anything is a report, and
-# reporting is what this does -- the exit status is 1 so the finding is visible
-# in the checks list, and nothing consumes it as a gate.
+# reporting is what this does.
+#
+# The report does not fail its job, and that is a correction rather than a
+# preference. Reporting through the exit status put a red X on the branch, and a
+# single non-SUCCESS context drags `statusCheckRollup.state` to `FAILURE`, where
+# it is indistinguishable from a broken diff because the rollup carries no
+# reason. Measured on #1722: every required context SUCCESS, every review thread
+# resolved, `mergeable: MERGEABLE`, and a rollup of `FAILURE` whose only
+# non-SUCCESS context was this one. Four consecutive passes over #1905 read that
+# rollup as the branch's own tests failing. Red on a finding also inverts what
+# the colour is for here -- the remedy is another account's review, so the one
+# thing a red X cannot ask for was the only thing it was carrying.
+#
+# The finding is not quieter for it, because the exit status was never the
+# channel. The script writes its full report to $GITHUB_STEP_SUMMARY, which
+# renders on the run page, and emits a
+# `::warning title=Needs an approver who did not push the head` annotation.
+# Both predate this change. The programmatic reader is
+# `check_last_push_approval.py --all-open`, which AGENTS.md requires when
+# reporting repository health and which classifies every open pull request in
+# one pass -- that, and not a check colour, is what separates
+# `awaiting-first-review` from `pusher-only-approval`. The script's own exit
+# status is unchanged at 1 for a finding, because the sweep is consumed that
+# way; this workflow declines to adopt it as the job's conclusion, which is a
+# different question.
+#
+# A non-zero status that is not 1 still fails the job. Exit 2 means the check
+# could not compute an answer -- a broken checkout, a missing argument, an API
+# shape change -- which is a defect in the check itself and actionable by
+# whoever owns it, so it keeps the red X that a finding gives up. Red here now
+# means "this check is broken", never "this branch needs another human".
 #
 
 name: Last Push Approval Check
@@ -65,7 +94,7 @@ permissions:
 
 jobs:
   last-push-approval:
-    name: Detect an approval the last pusher cannot supply
+    name: Report the last-push-approval state
     runs-on: ubuntu-latest
 
     steps:
@@ -117,4 +146,17 @@ jobs:
             echo "which the checks UI cannot tell apart from a real finding."
             exit 0
           fi
+          set +e
           python3 scripts/check_last_push_approval.py --repo "$GITHUB_REPOSITORY"
+          status=$?
+          set -e
+          if [ "$status" -eq 1 ]; then
+            echo "check_last_push_approval: the finding above is reported, not failed."
+            echo "Its remedy is an approving review from an account that did not push the"
+            echo "head, which no work on this branch supplies, so failing here would name"
+            echo "the branch for a state it cannot clear. The verdict is in the step"
+            echo "summary and in the 'Needs an approver who did not push the head'"
+            echo "annotation. Any other non-zero status is a broken check and does fail."
+            exit 0
+          fi
+          exit "$status"
