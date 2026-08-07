@@ -40,6 +40,7 @@ import numpy as np
 import pytest
 
 from strands_robots.policies.wbc import WBC_G1_ALL_JOINTS, WBCConfig, WBCPolicy
+from strands_robots.policies.wbc import policy as wbc_policy_module
 from strands_robots.policies.wbc.gait import GAIT_COMMAND_DIM, GAIT_SINGLE_OBS_DIM, WBCGaitPolicy
 from strands_robots.utils import finite_number_error, finite_vector_error
 
@@ -497,7 +498,9 @@ class TestTheUsableGoalsStayFirstClass:
 # Structural guard - a third _resolve_command cannot skip the domain
 # ---------------------------------------------------------------------------
 
-_WBC_PACKAGE = Path(WBCPolicy.__module__.replace(".", "/")).parent
+# Resolved from the imported module rather than from this file's position, so
+# the scan follows the package it is actually testing if either one moves.
+_WBC_PACKAGE = Path(wbc_policy_module.__file__).resolve().parent
 _GUARD_CALL = "_validate_goal_overrides"
 _GOAL_KWARGS = ("height", "target_orientation")
 
@@ -508,8 +511,7 @@ _EXPECTED_SURFACES = {("policy.py", "_resolve_command"), ("gait.py", "_resolve_c
 
 
 def _wbc_sources() -> list[Path]:
-    root = Path(__file__).resolve().parents[3] / "strands_robots" / "policies" / "wbc"
-    return sorted(p for p in root.glob("*.py") if p.name != "__init__.py")
+    return sorted(p for p in _WBC_PACKAGE.glob("*.py") if p.name != "__init__.py")
 
 
 def _goal_reading_functions(source: str) -> list[tuple[str, bool]]:
