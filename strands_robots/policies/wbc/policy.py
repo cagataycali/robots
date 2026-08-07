@@ -1062,12 +1062,23 @@ class WBCPolicy(Policy):
 
         Mirrors the per-component rule
         :class:`~strands_robots.policies.wbc.config.WBCConfig` applies to
-        ``rpy_cmd``, and the numeric-sequence rule :meth:`_validate_velocity`
-        applies to the sibling command component, so a roll/pitch/yaw target the
-        config refuses is not reachable through the kwarg that overrides it.
-        Without it a non-numeric sequence surfaces as NumPy's own
-        ``could not convert string to float`` - which names neither the kwarg nor
-        the policy - and a non-finite component reaches the network.
+        ``rpy_cmd``, and both the numeric-sequence AND at-least-three-elements
+        rules :meth:`_validate_velocity` applies to the sibling command
+        component, so a roll/pitch/yaw target the config refuses is not
+        reachable through the kwarg that overrides it. Without the sequence rule
+        a non-numeric sequence surfaces as NumPy's own ``could not convert
+        string to float`` - which names neither the kwarg nor the policy - and a
+        non-finite component reaches the network.
+
+        Arity: roll, pitch and yaw are a triple, so at least three components are
+        required and a SHORT sequence is refused. The command block is
+        zero-initialised and the write is clamped to what the caller supplied, so
+        accepting two components would leave yaw at 0.0 rather than at the
+        ``rpy_cmd`` value the omitted kwarg falls back to - discarding a
+        configured target for an axis the caller never mentioned. A LONGER
+        sequence is NOT refused: every component the block has room for is
+        honored and only the surplus is dropped, which is what
+        :meth:`_validate_velocity` does with a packed velocity too.
 
         Args:
             rpy_src: The caller-supplied ``[roll, pitch, yaw]`` sequence.
@@ -1076,13 +1087,21 @@ class WBCPolicy(Policy):
             The flattened ``float64`` array.
 
         Raises:
-            ValueError: If it is not a numeric sequence, or any component is not
-                a usable finite number.
+            ValueError: If it is not a numeric sequence, has fewer than three
+                components, or any component is not a usable finite number.
         """
         try:
             arr = np.asarray(rpy_src, dtype=np.float64).ravel()
         except (TypeError, ValueError) as e:
             raise ValueError(f"target_orientation must be a numeric sequence, got {rpy_src!r}") from e
+        # Arity before values, the order :meth:`_validate_velocity` uses. A short
+        # sequence is refused rather than zero-filled: the block is
+        # zero-initialised, so writing only the components supplied would leave
+        # the rest at 0.0 - not at the ``rpy_cmd`` value that applies when the
+        # kwarg is omitted - silently commanding zero for axes the caller never
+        # mentioned and discarding the ones they did configure.
+        if arr.shape[0] < 3:
+            raise ValueError(f"target_orientation must have at least 3 elements [roll, pitch, yaw], got {arr.shape[0]}")
         # Inspect the ORIGINAL elements, not ``arr``: the float coercion above
         # turns a ``True`` into a silent 1.0, and the config refuses a bool
         # component of ``rpy_cmd``. An object view keeps the two spellings of the

@@ -122,7 +122,7 @@ coupling to a backend:
 | Key | Type | Accepted | Meaning |
 |-----|------|----------|---------|
 | `target_velocity` | `list[float]` | numeric, >= 3 entries, every component finite | Locomotion command `[vx, vy, omega]` (m/s, m/s, rad/s). Scaled by `cmd_scale` (`[2.0, 2.0, 0.5]`) into the observation's command block. |
-| `target_orientation` | `list[float]` | numeric sequence, finite per component | Target base `[roll, pitch, yaw]` (rad), written to command slots `[4:7]`. Defaults to the config `rpy_cmd` (`[0,0,0]`). |
+| `target_orientation` | `list[float]` | numeric, >= 3 entries, every component finite | Target base `[roll, pitch, yaw]` (rad), written to command slots `[4:7]`. Defaults to the config `rpy_cmd` (`[0,0,0]`). |
 | `height` | `float` | finite | Target base height (m), written to command slot `[3]`. Defaults to the config `height_cmd` (`0.74`). |
 
 A per-call `target_velocity` overrides the constructor-time default. With no
@@ -133,7 +133,13 @@ source in the precedence chain, so `None` is how a kwarg spells "not supplied".
 Each key's accepted domain is the one `WBCConfig` enforces for the field it
 overrides - `height` for `height_cmd`, `target_orientation` for `rpy_cmd` - so a
 value the config refuses is not reachable through the kwarg documented to take
-precedence over it. The command block is the observation's first `command_dim`
+precedence over it. Both vector keys additionally require at least three
+components: the command block is zero-initialised, so accepting a shorter
+`target_orientation` would leave the axes it omits at `0.0` rather than at the
+configured `rpy_cmd` value the omitted kwarg falls back to - silently commanding
+zero for an axis the caller never mentioned. A LONGER sequence is accepted and
+truncated to the slots available, since every component the block has room for is
+honored and only the surplus is dropped. The command block is the observation's first `command_dim`
 entries, so a non-finite component is not one wrong slot: the network is dense,
 so it reaches all `num_actions` joint targets, every one is then refused by
 `send_action`, and the rollout aborts reporting *"100% unresolved keys ... the
