@@ -1,0 +1,160 @@
+{
+ "tree": "/tmp/robots-mine",
+ "gamma": 0.99,
+ "horizons": [
+  6,
+  12,
+  24,
+  48,
+  96
+ ],
+ "lams": [
+  "0.0",
+  "0.95",
+  "1.0",
+  "1.5",
+  "2.0",
+  "-0.5",
+  "-2.0",
+  "1000000.0"
+ ],
+ "divergence": {
+  "0.0": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ],
+  "0.95": [
+   5.175220012664795,
+   8.756857872009277,
+   12.951106071472168,
+   15.922211647033691,
+   16.760181427001953
+  ],
+  "1.0": [
+   5.851985454559326,
+   11.361512184143066,
+   21.432188034057617,
+   38.270992279052734,
+   61.89531707763672
+  ],
+  "1.5": [
+   20.049583435058594,
+   235.06227111816406,
+   27268.4453125,
+   360685056.0,
+   6.309547046495846e+16
+  ],
+  "2.0": [
+   60.464012145996094,
+   3703.70703125,
+   13450504.0,
+   177297759928320.0,
+   3.08058146788546e+28
+  ],
+  "-0.5": [
+   1.0,
+   1.0,
+   1.0,
+   1.0,
+   1.0
+  ],
+  "-2.0": [
+   19.884140014648438,
+   1217.9976806640625,
+   4423320.5,
+   58305984593920.0,
+   1.0130771214763316e+28
+  ],
+  "1000000.0": [
+   9.509909934567901e+29,
+   Infinity,
+   Infinity,
+   Infinity,
+   Infinity
+  ]
+ },
+ "probe": [
+  "0.0",
+  "0.95",
+  "1.0",
+  "1.5",
+  "2.0",
+  "-0.5",
+  "-2.0",
+  "1000000.0",
+  "True",
+  "nan",
+  "inf",
+  "'0.95'",
+  "None"
+ ],
+ "verdicts": {
+  "0.0": {
+   "outcome": "accepted",
+   "text": ""
+  },
+  "0.95": {
+   "outcome": "accepted",
+   "text": ""
+  },
+  "1.0": {
+   "outcome": "accepted",
+   "text": ""
+  },
+  "1.5": {
+   "outcome": "refused",
+   "text": "ppo: lam must be in [0, 1], got 1.5."
+  },
+  "2.0": {
+   "outcome": "refused",
+   "text": "ppo: lam must be in [0, 1], got 2.0."
+  },
+  "-0.5": {
+   "outcome": "refused",
+   "text": "ppo: lam must be in [0, 1], got -0.5."
+  },
+  "-2.0": {
+   "outcome": "refused",
+   "text": "ppo: lam must be in [0, 1], got -2.0."
+  },
+  "1000000.0": {
+   "outcome": "refused",
+   "text": "ppo: lam must be in [0, 1], got 1000000.0."
+  },
+  "True": {
+   "outcome": "refused",
+   "text": "ppo: lam must be a finite number, got True."
+  },
+  "nan": {
+   "outcome": "refused",
+   "text": "ppo: lam must be a finite number, got nan."
+  },
+  "inf": {
+   "outcome": "refused",
+   "text": "ppo: lam must be a finite number, got inf."
+  },
+  "'0.95'": {
+   "outcome": "refused",
+   "text": "ppo: lam must be a finite number, got '0.95'."
+  },
+  "None": {
+   "outcome": "refused",
+   "text": "ppo: lam must be a finite number, got None."
+  }
+ },
+ "sac_quiet": {
+  "1.5": [],
+  "nan": []
+ },
+ "run": {
+  "validate_problems": [],
+  "status": "success",
+  "lam": 0.95,
+  "n_params": 34715,
+  "w_absmax": "60.0000000000000000",
+  "w_sum": "140.1741638183593750"
+ }
+}
