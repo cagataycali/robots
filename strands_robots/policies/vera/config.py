@@ -18,7 +18,7 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from strands_robots.utils import tcp_port_error
+from strands_robots.utils import positive_whole_number_error, tcp_port_error
 
 Embodiment = Literal["pusht", "mimicgen", "allegro", "droid"]
 # "mimicgen" is the working, faithful embodiment end-to-end (eef-delta -> IK
@@ -127,6 +127,13 @@ class VeraConfig:
             default; ``0`` disables the viewer (the runner omits
             ``--vis-port``); any other value must be an ``int`` in
             ``[1, 65535]``.
+        render_width: Per-view width, in pixels, each camera frame is resized
+            to before it is sent to the planner. ``None`` applies
+            ``VERA_RENDER_WIDTH`` else the per-embodiment default; any other
+            value must be a positive whole number of pixels - the shared media
+            domain (:func:`~strands_robots.utils.positive_whole_number_error`)
+            that the recorders' ``width``/``height`` and
+            :class:`~strands_robots.rendering.HybridCompositor` already use.
         algo_config: WAN planner ``algo_config.yaml`` path. Point at the omni
             config to swap the planner without retraining the IDM.
         dynamics_run_id: Jacobian/IDM checkpoint id (wandb run id); falls back
@@ -153,7 +160,7 @@ class VeraConfig:
     host: str = "127.0.0.1"
     server_port: int | None = None
     vis_port: int | None = None
-    render_width: int | None = None  # per-view width sent to the server (per-embodiment default)
+    render_width: int | None = None  # per-view pixel width sent to the server (per-embodiment default)
     algo_config: Path | None = None
     dynamics_run_id: str | None = None
     text_prompt: str | None = None
@@ -201,8 +208,37 @@ class VeraConfig:
         if (err := _viewer_port_error(self.vis_port, "vis_port", type(self).__name__)) is not None:
             raise ValueError(err)
 
+        # ``render_width`` is a pixel count, so it takes the shared media domain
+        # rather than a local rule: it is the same quantity as the recorders'
+        # ``width``/``height`` and ``HybridCompositor.default_width``, and
+        # ``positive_whole_number_error`` names pixels as one of the two families
+        # it exists for. Applied here, on the effective value, for the reason the
+        # ports above are - ``render_width`` is read only inside
+        # ``_extract_frame``, which runs per frame *after* ``_ensure_started``
+        # has launched the WAN server subprocess and completed the handshake, so
+        # an unusable width surfaced there costs a model load (up to
+        # ``server_ready_timeout``) before reporting a value that was wrong at
+        # construction.
+        #
+        # The env override is read with ``is not None``, matching ``vis_port``
+        # above rather than the ``or`` this line used to carry. The two spellings
+        # are not interchangeable here: ``VERA_RENDER_WIDTH=0`` is falsy, so the
+        # override was discarded and the per-embodiment default silently applied
+        # in its place - a width of 0 cannot be honored, and the caller who asked
+        # for it is owed the refusal below, not 128 under a success.
         if self.render_width is None:
-            self.render_width = _env_int("VERA_RENDER_WIDTH") or _DEFAULT_RENDER_WIDTH.get(self.embodiment, 128)
+            env_width = _env_int("VERA_RENDER_WIDTH")
+            self.render_width = env_width if env_width is not None else _DEFAULT_RENDER_WIDTH.get(self.embodiment, 128)
+        if (err := positive_whole_number_error(self.render_width, "render_width", type(self).__name__)) is not None:
+            raise ValueError(err)
+        # Normalized to a plain ``int`` here because the domain accepts any real
+        # scalar with an integral value - a ``128.0`` or a ``np.int64`` passes -
+        # and the consumer requires a true ``int``: ``_resize_frame`` compares it
+        # against ``frame.shape`` and hands it to ``Image.resize``, and it is
+        # sent to the server as ``view_widths``. This is the normalization the
+        # shared domain documents as the caller's obligation, and it is why the
+        # ``int()`` at each read site is no longer needed.
+        self.render_width = int(self.render_width)
 
         # Environment overrides (deploy/CI win over code defaults).
         if self.algo_config is None:

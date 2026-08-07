@@ -484,7 +484,14 @@ class VeraPolicy(Policy):
                 "VeraPolicy requires at least one camera frame in the observation "
                 f"(keys: {list(observation_dict)}); none look like (H, W, 3) images."
             )
-        rw = int(self.config.render_width or 128)
+        # ``VeraConfig.__post_init__`` holds ``render_width`` to the shared media
+        # pixel domain and normalizes it to a plain ``int``, so there is nothing
+        # left to coerce or to fall back to here. This line used to read
+        # ``int(self.config.render_width or 128)``, which substituted 128 for a
+        # width of 0 and truncated a ``2.7`` to a 2-pixel view, both under a
+        # success result.
+        rw = self.config.render_width
+        assert rw is not None  # guaranteed by VeraConfig.__post_init__
         frames = [_resize_frame(_to_uint8_frame(observation_dict[k]), rw) for k in view_keys]
         if len(frames) == 1:
             return frames[0]
@@ -496,9 +503,15 @@ class VeraPolicy(Policy):
         view_keys = self._resolve_view_keys(observation_dict, meta)
         context_rgb = np.stack(list(self._window), axis=0)  # (T, H, W, 3) uint8
         # Each view was resized to render_width before concat, so view_widths is
-        # simply render_width per view (sum == concatenated rgb width).
+        # simply render_width per view (sum == concatenated rgb width). Read from
+        # the config rather than divided back out of the frame: the second
+        # fallback this line used to carry (``context_rgb.shape[2] // n_views``)
+        # was a second definition of the same falsy case that ``_extract_frame``
+        # spelled as 128, and the invariant above is what made the two agree
+        # rather than anything asserting they must.
         n_views = max(1, len(view_keys))
-        per_w = int(self.config.render_width or (context_rgb.shape[2] // n_views))
+        per_w = self.config.render_width
+        assert per_w is not None  # guaranteed by VeraConfig.__post_init__
         view_widths = [per_w] * n_views
         req: dict[str, Any] = {
             "context_rgb": context_rgb,
