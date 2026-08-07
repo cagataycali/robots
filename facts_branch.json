@@ -1,0 +1,32 @@
+{
+  "honored": {
+    "tag": "honored",
+    "tree": "/tmp/robots-src",
+    "height_arg": "0.74",
+    "status": "success",
+    "n_steps": 200,
+    "text": "Policy complete on 'unitree_g1'\nWBCPolicy | hold a standing balance\n4.7s | 200 steps | sim_t=4.000s",
+    "ticks": 201,
+    "pelvis_z_start": 0.793,
+    "pelvis_z_end": 0.7477,
+    "pelvis_z_min": 0.74,
+    "base_x_travel": -0.0641,
+    "n_non_finite_z": 0,
+    "render": true
+  },
+  "nan_height": {
+    "tag": "nan_height",
+    "tree": "/tmp/robots-src",
+    "height_arg": "nan",
+    "status": "error",
+    "n_steps": null,
+    "text": "Policy failed: WBCPolicy: height must be a finite number, got nan.",
+    "ticks": 2,
+    "pelvis_z_start": 0.793,
+    "pelvis_z_end": 0.74,
+    "pelvis_z_min": 0.74,
+    "base_x_travel": 0.0,
+    "n_non_finite_z": 0,
+    "render": true
+  }
+}

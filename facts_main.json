@@ -1,0 +1,32 @@
+{
+  "honored": {
+    "tag": "honored",
+    "tree": "/tmp/wt-main",
+    "height_arg": "0.74",
+    "status": "success",
+    "n_steps": 200,
+    "text": "Policy complete on 'unitree_g1'\nWBCPolicy | hold a standing balance\n4.7s | 200 steps | sim_t=4.000s",
+    "ticks": 201,
+    "pelvis_z_start": 0.793,
+    "pelvis_z_end": 0.7477,
+    "pelvis_z_min": 0.74,
+    "base_x_travel": -0.0641,
+    "n_non_finite_z": 0,
+    "render": true
+  },
+  "nan_height": {
+    "tag": "nan_height",
+    "tree": "/tmp/wt-main",
+    "height_arg": "nan",
+    "status": "error",
+    "n_steps": null,
+    "text": "Policy failed: All of the first 3 action steps had 100% unresolved keys on 'unitree_g1' -- the robot has not moved. Unresolved keys: ['left_hip_pitch_joint', 'left_hip_roll_joint', 'left_hip_yaw_joint",
+    "ticks": 4,
+    "pelvis_z_start": 0.793,
+    "pelvis_z_end": 0.74,
+    "pelvis_z_min": 0.74,
+    "base_x_travel": 0.0,
+    "n_non_finite_z": 0,
+    "render": true
+  }
+}
