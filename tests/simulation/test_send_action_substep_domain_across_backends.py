@@ -269,16 +269,18 @@ class TestTheFloorIsADecisionWithEvidence:
         assert runner._control_substeps(30.0) >= 1
 
     def test_the_rl_env_that_produces_this_count_also_refuses_a_non_positive(self) -> None:
-        """The second producer, refusing the same parameter name by its own raise.
+        """The second producer, on this very domain.
 
-        Read from the source rather than by constructing a ``SimEnv`` (which
-        needs a live engine): the point being pinned is that the floor exists in
-        a second place, so a reader cannot conclude ``1`` was invented here.
+        ``SimEnv`` forwards ``n_substeps`` verbatim to ``send_action``, and reads
+        its domain from the same guard, so the floor exists in a second place and
+        a reader cannot conclude ``1`` was invented here. Asserted through the
+        domain table rather than by constructing a ``SimEnv`` (which needs a live
+        engine) or by matching its message text (which would pin wording).
         """
         from strands_robots.training.rl import env as rl_env
 
-        source = inspect.getsource(rl_env)
-        assert "n_substeps must be >= 1" in source
+        assert rl_env._NUMERIC_DOMAINS["n_substeps"] is positive_whole_number_error
+        assert positive_whole_number_error(0, "n_substeps", "SimEnv") is not None
 
     def test_advance_nothing_still_has_a_spelling_and_it_is_named(self) -> None:
         """Refusing ``0`` removes nothing a caller can express, and says so.
@@ -638,13 +640,14 @@ class TestNeighbouringSubstepSurfacesStayOutOfScope:
     def test_the_rl_env_still_raises_rather_than_returning_a_structured_error(self) -> None:
         """``SimEnv`` refuses the same parameter with a ``ValueError`` of its own.
 
-        Left alone: it is a gym-style constructor rather than an agent tool, so a
-        raise is its documented channel and it has no ``{status, content}`` to
-        return. Recorded because the two refusals now differ in wording for the
-        same parameter name, which is a real inconsistency and a deliberate one.
+        The *channel* differs deliberately and is left alone: ``SimEnv`` is a
+        gym-style constructor rather than an agent tool, so a raise is its
+        documented channel and it has no ``{status, content}`` to return. The
+        *wording* no longer differs - it reads this domain from the same shared
+        guard, so the inconsistency this test used to record is resolved.
         """
         from strands_robots.training.rl import env as rl_env
 
-        source = inspect.getsource(rl_env)
-        assert "n_substeps must be >= 1" in source
-        assert "must be a positive whole number" not in source
+        assert rl_env._NUMERIC_DOMAINS["n_substeps"] is positive_whole_number_error
+        message = positive_whole_number_error(0, "n_substeps", "SimEnv")
+        assert message is not None and "must be a positive whole number" in message

@@ -62,6 +62,26 @@ def make_env() -> SimEnv:
     )
 ```
 
+### Numeric arguments
+
+Every numeric `SimEnv` stores is checked at construction, against the shared
+domain for its kind, before the engine is read:
+
+| Argument | Domain | Why |
+|---|---|---|
+| `action_scale` | positive finite | It multiplies every action sent. `0` disconnects the policy from the robot, a negative value inverts every commanded DOF, and `nan`/`inf` make each command unsendable - `send_action` refuses a non-finite action, and `step` discards that status, so the rollout banks its full return having moved nothing. |
+| `max_episode_steps` | positive whole number | `0` or below reports a time-out on the first step, so every episode ends before it begins - and reports it as a *truncation*, which on-policy GAE value-bootstraps. |
+| `n_substeps` | positive whole number | The action is a position target; the PD controller needs several substeps to track it. This is `send_action`'s own domain for the parameter, which `SimEnv` forwards it to. |
+| `action_dim` | positive integer, or `None` | `None` is the documented "size the head from the robot's action keys" spelling. A width of `0` gives the policy no outputs. Narrower than the two above because it sizes the trainers' action head, where an integral float raises rather than being coerced. |
+
+An unusable value raises `ValueError` naming the class and the argument
+(`SimEnv: action_scale must be > 0, got 0.0.`). Each domain is the one its
+consumer can honor, so nothing is refused here that the code downstream accepts:
+a fractional scale (`0.25`) and a scale read from a config array
+(`np.float32(0.25)`) are fine, and so is a whole-number count spelled `50.0` or
+`np.int64(50)` - all normalized to the plain `float`/`int` the attribute
+advertises.
+
 ## PPO
 
 ```python
