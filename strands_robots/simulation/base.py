@@ -3134,6 +3134,12 @@ class SimEngine(ABC):
     ) -> dict[str, Any]:
         """Replay a LeRobotDataset episode via ``PolicyRunner.replay``.
 
+        ``episode`` must be a non-negative whole number - the shared domain the
+        ``replay_episode`` teleop knob uses - and is rejected with a structured
+        error before the dataset is downloaded. A bool is refused rather than
+        read as an index: ``episode=True`` previously resolved episode 1 and
+        replayed it under a ``"success"`` status.
+
         ``speed`` is a playback-rate multiplier (1.0 = real time) and must be a
         positive number; a non-positive or non-numeric value is rejected with a
         structured error rather than raising or silently playing back at full

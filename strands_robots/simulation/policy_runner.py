@@ -48,6 +48,7 @@ from strands_robots._async_utils import _resolve_coroutine
 from strands_robots.dataset_recorder import RecordingFrameError
 from strands_robots.policies.base import resolve_chunk_length
 from strands_robots.utils import (
+    non_negative_whole_number_error,
     positive_count_error,
     positive_finite_number_error,
     positive_whole_number_error,
@@ -1861,7 +1862,13 @@ class PolicyRunner:
                 when omitted; an explicit name not present in the sim is
                 rejected with a structured error (no silent replay onto a
                 non-existent robot).
-            episode: Episode index in the dataset (non-negative).
+            episode: Episode index in the dataset. Must be a non-negative
+                whole number; any real scalar with an integral value is
+                accepted (including a NumPy scalar such as ``np.int64(2)``),
+                and a bool, a non-integral value, a non-finite value or a
+                non-numeric one is rejected with a structured error before the
+                dataset is downloaded. Refused rather than coerced because the
+                index selects which trajectory reaches the actuators.
             root: Optional local dataset root override.
             speed: Playback speed multiplier (1.0 = real time). Must be a
                 positive, finite number (any real scalar, including a NumPy
@@ -1936,6 +1943,26 @@ class PolicyRunner:
         key_map_error = _validate_action_key_map(action_key_map)
         if key_map_error is not None:
             return key_map_error
+
+        # ``episode`` selects WHICH recorded episode is replayed, so an
+        # unusable index is not a slow replay - it is the wrong trajectory
+        # sent to a real position-servo robot. It reached
+        # ``load_lerobot_episode``'s guard as a bare ``< 0`` test, which a
+        # bool passes: ``replay(episode=True)`` resolved episode 1 and
+        # replayed it under ``status="success"``. Validated here, with
+        # ``speed`` and ``action_key_map``, for the two reasons those are:
+        # the refusal arrives through this method's documented envelope
+        # rather than as a raise, and it lands before the (potentially
+        # multi-minute) dataset download. The rule is the shared one the
+        # neighbouring ``replay_episode`` teleop knob already applies, so
+        # the refusal is identical across both spellings of the parameter
+        # rather than merely equivalent in verdict.
+        if msg := non_negative_whole_number_error(episode, "episode", "replay"):
+            return {"status": "error", "content": [{"text": msg}]}
+        # Coerced for the same reason ``speed`` is: the accepted value flows
+        # into ``load_lerobot_episode`` and the returned status field, and a
+        # NumPy scalar is not natively JSON-serialisable.
+        episode = int(episode)
 
         try:
             from strands_robots.dataset_recorder import load_lerobot_episode

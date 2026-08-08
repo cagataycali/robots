@@ -32,7 +32,7 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import lerobot_version, name_list_error
+from strands_robots.utils import lerobot_version, name_list_error, non_negative_whole_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -1566,16 +1566,47 @@ class DatasetRecorder:
 def load_lerobot_episode(repo_id: str, episode: int = 0, root: str | None = None):
     """Load a LeRobotDataset and resolve the frame range for an episode.
 
+    Args:
+        repo_id: HuggingFace dataset id.
+        episode: Episode index, a non-negative whole number. Any real scalar
+            with an integral value is accepted (a ``2.0`` from a config, a
+            ``np.int64`` from arithmetic); the value is coerced with ``int()``
+            once the shared guard has round-tripped it, so an accepted index
+            reaches the O(1) ``episode_data_index`` lookup rather than the
+            last-resort frame scan a float index falls through to.
+        root: Optional local dataset root override.
+
     Returns:
         Tuple of (dataset, episode_start, episode_length) on success.
 
     Raises:
         ImportError: If lerobot is not installed.
-        ValueError: If the episode index is negative, out of range, or the
-            resolved episode has no frames.
+        ValueError: If the episode index is not a usable non-negative whole
+            number, is out of range, or the resolved episode has no frames.
     """
-    if episode < 0:
-        raise ValueError(f"Episode index must be non-negative, got {episode}")
+    # The domain is the shared non-negative whole-number rule, not a bare
+    # ``< 0`` test. That test gave a verdict to three classes of value it
+    # could not actually honor:
+    #
+    # * ``bool`` passed it (``True < 0`` is False) and then indexed the
+    #   episode table as an int, so ``episode=True`` resolved **episode 1**
+    #   and returned it as a success - a different episode than any caller
+    #   passing a flag could have meant.
+    # * A non-integral or non-finite value passed it too and was blamed on
+    #   the dataset after a full-length boundary scan ("Episode 2.5 has no
+    #   frames"), naming the data rather than the index.
+    # * A str/list/None reached the comparison itself and raised
+    #   ``TypeError``, which is not the ``ValueError`` this function
+    #   documents as its refusal channel.
+    #
+    # Shared with the ``replay_episode`` teleop knob rather than restated:
+    # that parameter is the same quantity on a neighbouring surface, and
+    # ``non_negative_whole_number_error`` already names it.
+    if msg := non_negative_whole_number_error(episode, "episode", "load_lerobot_episode"):
+        raise ValueError(msg)
+    # Safe because the guard performed this coercion and compared the result
+    # back; see its docstring on why the two steps are ordered this way.
+    episode = int(episode)
 
     from lerobot.datasets.lerobot_dataset import LeRobotDataset
 
