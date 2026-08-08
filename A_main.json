@@ -1,0 +1,85 @@
+{
+  "tree": "/tmp/wt-main",
+  "cases": {
+    "5 (default)": {
+      "refused": false,
+      "status": "success",
+      "steps": 60,
+      "losses": {
+        "surrogate_loss": -0.027421,
+        "value_loss": 19.523313,
+        "entropy": 8.509956
+      },
+      "fp": {
+        "n": 34701,
+        "sum": "18.0997320867186318"
+      }
+    },
+    "0": {
+      "refused": false,
+      "status": "success",
+      "steps": 0,
+      "losses": {
+        "surrogate_loss": 0.0,
+        "value_loss": 0.0,
+        "entropy": 0.0
+      },
+      "fp": {
+        "n": 34701,
+        "sum": "17.9251941755865118"
+      }
+    },
+    "-3": {
+      "refused": false,
+      "status": "success",
+      "steps": 0,
+      "losses": {
+        "surrogate_loss": 0.0,
+        "value_loss": 0.0,
+        "entropy": 0.0
+      },
+      "fp": {
+        "n": 34701,
+        "sum": "17.9251941755865118"
+      }
+    },
+    "True": {
+      "refused": false,
+      "status": "success",
+      "steps": 12,
+      "losses": {
+        "surrogate_loss": -0.004672,
+        "value_loss": 22.75643,
+        "entropy": 8.512657
+      },
+      "fp": {
+        "n": 34701,
+        "sum": "17.9809874918910282"
+      }
+    },
+    "2.7": {
+      "refused": false,
+      "status": "TypeError",
+      "steps": 0,
+      "losses": null,
+      "fp": null
+    },
+    "None": {
+      "refused": false,
+      "status": "TypeError",
+      "steps": 0,
+      "losses": null,
+      "fp": null
+    }
+  },
+  "never_trained": {
+    "refused": false,
+    "status": "success",
+    "steps": 0,
+    "losses": {},
+    "fp": {
+      "n": 34701,
+      "sum": "17.9251941755865118"
+    }
+  }
+}

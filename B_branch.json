@@ -1,0 +1,59 @@
+{
+  "tree": "/tmp/robots-mine",
+  "cases": {
+    "5 (default)": {
+      "refused": false,
+      "status": "success",
+      "steps": 60,
+      "losses": {
+        "surrogate_loss": -0.027421,
+        "value_loss": 19.523313,
+        "entropy": 8.509956
+      },
+      "fp": {
+        "n": 34701,
+        "sum": "18.0997320867186318"
+      }
+    },
+    "0": {
+      "refused": true,
+      "status": "refused by preflight",
+      "steps": 0,
+      "message": "ppo: num_learning_epochs must be a positive integer, got 0."
+    },
+    "-3": {
+      "refused": true,
+      "status": "refused by preflight",
+      "steps": 0,
+      "message": "ppo: num_learning_epochs must be a positive integer, got -3."
+    },
+    "True": {
+      "refused": true,
+      "status": "refused by preflight",
+      "steps": 0,
+      "message": "ppo: num_learning_epochs must be a positive integer, got True."
+    },
+    "2.7": {
+      "refused": true,
+      "status": "refused by preflight",
+      "steps": 0,
+      "message": "ppo: num_learning_epochs must be a positive integer, got 2.7."
+    },
+    "None": {
+      "refused": true,
+      "status": "refused by preflight",
+      "steps": 0,
+      "message": "ppo: num_learning_epochs must be a positive integer, got None."
+    }
+  },
+  "never_trained": {
+    "refused": false,
+    "status": "success",
+    "steps": 0,
+    "losses": {},
+    "fp": {
+      "n": 34701,
+      "sum": "17.9251941755865118"
+    }
+  }
+}
