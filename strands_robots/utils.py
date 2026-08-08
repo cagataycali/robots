@@ -1019,7 +1019,7 @@ def step_aborted_msg(completed: int, requested: int, *, context: str = "step") -
 def positive_count_error(value: Any, param: str, context: str) -> str | None:
     """Error text when ``value`` is not a usable positive integer count.
 
-    Shared domain for two families of discrete quantity:
+    Shared domain for three families of discrete quantity:
 
     * The knobs that count iterations of a control or rollout loop - the
       simulation's ``n_episodes`` / ``max_steps`` / ``control_substeps`` /
@@ -1032,6 +1032,11 @@ def positive_count_error(value: Any, param: str, context: str) -> str | None:
       buffer), but the floor itself must not differ between them: the same
       camera configuration cannot be refused on one backend and accepted on
       another.
+    * A bound on a slice of a token sequence - the ``tokenizer_max_length`` a
+      VLA provider hands a HuggingFace tokenizer as ``max_length`` alongside
+      ``truncation=True``. The tokenizer takes it as a slice bound over the
+      encoded instruction, so a count below one silently produces an EMPTY
+      prompt rather than an error.
 
     It lives here rather than beside one of its callers because those callers
     sit in different layers (:mod:`strands_robots.hardware_robot` must not

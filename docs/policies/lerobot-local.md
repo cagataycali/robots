@@ -47,6 +47,13 @@ LerobotLocalPolicy(
 )
 ```
 
+`tokenizer_max_length` is the instruction's token budget and must be a positive
+`int`. The tokenizer takes it as a slice bound over the encoded instruction, so a
+count below one truncates the instruction away and the policy acts on an empty
+prompt; an unusable value is refused when the policy is constructed (and by
+`preflight`, before the weights are fetched) rather than at the first inference.
+
+
 ### Pinning a Hub revision
 
 Pass `revision=` to pin a checkpoint to a reproducible Hub version - a

@@ -20,7 +20,7 @@ from typing import Any
 import numpy as np
 import torch
 
-from ...utils import name_list_error
+from ...utils import name_list_error, positive_count_error
 from .. import Policy, align_action_values, chunk_count_error
 from .embodiment import ZeroActionMonitor, diagnose_action_dim, hardware_pos_keys, state_key_remedy
 from .processor import ProcessorBridge
@@ -395,6 +395,12 @@ class LerobotLocalPolicy(Policy):
         use_processor: Whether to load the model's processor pipeline.
         processor_overrides: Dict of overrides for processor pipeline steps.
         tokenizer_max_length: Max token length for VLA language tokenization.
+            Must be a positive ``int``. The tokenizer takes it as a slice bound
+            over the encoded instruction (with ``truncation=True``), so a count
+            below one truncates the instruction away entirely and the policy is
+            asked to act on an empty prompt - which for a language-conditioned
+            VLA discards the whole task specification. It is refused here, where
+            the caller names it, rather than at the first inference.
         tokenizer_padding_side: Padding side for VLA tokenizer ("left" or "right").
         rtc_enabled: Enable Real-Time Chunking for flow-matching policies.
             Auto-detected from model config if None.
@@ -563,6 +569,18 @@ class LerobotLocalPolicy(Policy):
         # features, so the bridge was discarded (see _load_processor_bridge).
         self._embodiment_config_failed = False
         self._tokenizer: Any = None
+        # Refused where the caller's value arrives, and before any checkpoint is
+        # downloaded: the tokenizer reads this as a slice bound over the encoded
+        # instruction, so ``0`` (or ``False``) hands a language-conditioned VLA
+        # an empty prompt, ``True`` keeps only its first token, and ``None``
+        # falls back to the tokenizer's own ``model_max_length`` - none of which
+        # is reported anywhere. The remaining values reach the tokenizer's C
+        # binding and surface as an ``OverflowError`` / ``TypeError`` naming
+        # neither this parameter nor the policy, mid-rollout.
+        if (
+            token_length_error := positive_count_error(tokenizer_max_length, "tokenizer_max_length", "lerobot_local")
+        ) is not None:
+            raise ValueError(token_length_error)
         self._tokenizer_max_length: int = tokenizer_max_length
         self._tokenizer_padding_side: str = tokenizer_padding_side
 
@@ -1482,6 +1500,15 @@ class LerobotLocalPolicy(Policy):
         # supplied value only - ``None`` asks for the checkpoint's own horizon.
         if policy_config.get("rtc_execution_horizon") is not None:
             error = chunk_count_error(policy_config["rtc_execution_horizon"], "rtc_execution_horizon", "lerobot_local")
+            if error:
+                raise ValueError(error)
+
+        # The instruction's token budget, on the same reasoning: it is honored
+        # for every configuration that tokenizes at all, so it cannot be scoped
+        # to an embodiment either, and checking it here refuses it before the
+        # weight download rather than at the first inference.
+        if "tokenizer_max_length" in policy_config:
+            error = positive_count_error(policy_config["tokenizer_max_length"], "tokenizer_max_length", "lerobot_local")
             if error:
                 raise ValueError(error)
 
