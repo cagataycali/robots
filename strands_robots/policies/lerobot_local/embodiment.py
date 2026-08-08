@@ -27,12 +27,15 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+
+from strands_robots.utils import finite_number_error, positive_whole_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -404,25 +407,54 @@ class ZeroActionMonitor:
     warning when it stays below ``threshold`` for ``patience`` consecutive steps,
     pointing the operator at the embodiment / rename config.
 
+    A NON-FINITE magnitude is reported separately, because it is a different
+    fault with a different cause. ``nan`` compares ``False`` against every
+    threshold, so it would otherwise advance the near-zero streak and be
+    reported as a near-zero stream -- naming the obs/rename pipeline for an
+    action that is not near zero but not a number, while five real commands in
+    the same vector are ignored. ``inf`` compares ``True`` and would instead
+    clear the streak, leaving an action the backends refuse outright entirely
+    unreported. Neither value is evidence about the observation pipeline.
+
     Stateful but dependency-free (no torch/lerobot) so it is unit-testable in
     isolation. Call :meth:`update` once per inference step and :meth:`reset` on
     episode reset.
 
     Attributes:
         threshold: Max-abs action magnitude below which a step counts as
-            near-zero.
-        patience: Consecutive near-zero steps required before warning.
+            near-zero. Finite and ``>= 0``. The comparison is ``>=``, so a
+            threshold of ``0`` accepts every magnitude as motion and thereby
+            disables the near-zero report; it is permitted for compatibility.
+        patience: Consecutive near-zero steps required before warning. A
+            positive whole number.
     """
 
     def __init__(self, threshold: float = 1e-3, patience: int = 10) -> None:
-        if threshold < 0:
-            raise ValueError(f"threshold must be >= 0, got {threshold}")
-        if patience < 1:
-            raise ValueError(f"patience must be >= 1, got {patience}")
-        self.threshold = threshold
-        self.patience = patience
+        # The floor is decided here and everything else -- numeric-ness, bool,
+        # finiteness -- is delegated to the shared numeric rule, the same
+        # division of labour as WBCConfig's gain domain. A bare ``threshold < 0``
+        # comparison cannot express it: ``nan < 0`` and ``inf < 0`` are both
+        # False, so both were stored, and a threshold of ``nan`` or ``inf``
+        # compares False against EVERY magnitude -- the watchdog then fires on a
+        # healthy policy. ``True`` is an ``int`` subclass, so it was stored as a
+        # threshold of 1.0: on an SO-arm that reads every real action as
+        # near-zero. Symmetrically ``patience`` of ``nan``/``inf`` made
+        # ``streak >= patience`` False forever, silently disabling the warning
+        # this class exists to emit.
+        if error := finite_number_error(threshold, "threshold", "ZeroActionMonitor"):
+            raise ValueError(error)
+        if float(threshold) < 0.0:
+            raise ValueError(f"ZeroActionMonitor: threshold must be >= 0, got {threshold!r}.")
+        if error := positive_whole_number_error(patience, "patience", "ZeroActionMonitor"):
+            raise ValueError(error)
+        # Normalized so the two public attributes match their declared types:
+        # ``patience`` is read as a step count by callers (``range(mon.patience)``),
+        # which an integral float the guard accepts would break.
+        self.threshold = float(threshold)
+        self.patience = int(patience)
         self._streak = 0
         self._warned = False
+        self._nonfinite_warned = False
 
     def update(self, max_abs_action: float) -> str | None:
         """Record one step's max-abs action magnitude.
@@ -431,10 +463,30 @@ class ZeroActionMonitor:
             max_abs_action: ``max(abs(action))`` for this inference step.
 
         Returns:
-            A warning string exactly once -- on the step where the near-zero
-            streak first reaches ``patience`` -- and ``None`` otherwise. A single
-            above-threshold step clears the streak and re-arms the warning.
+            A warning string exactly once per fault -- on the step where the
+            near-zero streak first reaches ``patience``, or on the first step
+            whose magnitude is not finite -- and ``None`` otherwise. A single
+            above-threshold step clears the near-zero streak and re-arms that
+            warning; the two faults are tracked independently.
+
+        Raises:
+            TypeError: If ``max_abs_action`` is not a real number, as before.
         """
+        if not math.isfinite(max_abs_action):
+            # Neither motion nor near-zero: report the fault that was measured
+            # and leave the near-zero streak untouched, so a stream that is
+            # genuinely both still gets both warnings.
+            if self._nonfinite_warned:
+                return None
+            self._nonfinite_warned = True
+            return (
+                f"Policy emitted a non-finite action (max abs = {max_abs_action:g}): the robot "
+                f"will not move. This is not the near-zero case -- a non-finite action is refused "
+                f"by the simulation and hardware backends rather than applied, so the obs_rename / "
+                f"camera keys are not implicated. Check the checkpoint's normalization statistics "
+                f"(a zero divisor yields inf/nan) and whether any observation value is itself "
+                f"non-finite."
+            )
         if max_abs_action >= self.threshold:
             self._streak = 0
             self._warned = False
@@ -451,9 +503,10 @@ class ZeroActionMonitor:
         return None
 
     def reset(self) -> None:
-        """Reset streak + warned state (call on episode reset)."""
+        """Reset streak + warned state for both faults (call on episode reset)."""
         self._streak = 0
         self._warned = False
+        self._nonfinite_warned = False
 
 
 # Registered pipeline step: pack scalar joint obs -> observation.state
