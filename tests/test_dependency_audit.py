@@ -812,3 +812,206 @@ def test_environment_coverage_is_compatible_with_numba_robosuite() -> None:
         "(the resulting pip conflict warning against isaacsim-kernel is cosmetic - "
         "coverage is kit test tooling, not a runtime dependency)."
     )
+
+
+# ---------------------------------------------------------------------------
+# Security floors for transitive packages.
+#
+# ``cbor2``, ``ujson``, ``twisted`` and ``pyopenssl`` each arrive only through
+# another dependency (cbor2/ujson under autobahn, twisted under roslibpy,
+# pyopenssl under twisted), so nothing in ``[project]`` declares a version for
+# them. All four resolve above a HIGH advisory, which is why
+# ``dependency-review-action`` (``fail-on-severity: high``) is green -- but the
+# version was the resolver's choice, not a stated requirement, and cbor2 sits
+# exactly ON its patch floor with no margin at all. Any input that moves one of
+# them down re-introduces a HIGH advisory into the dependency graph GitHub
+# scans: a transitive cap added upstream, a new marker branch, or another fork
+# of the resolution under ``[tool.uv] conflicts`` is each sufficient, and none
+# of them looks like a security change in review.
+#
+# ``[tool.uv] constraint-dependencies`` is the mechanism, and it is a constraint
+# rather than an override for a measured reason. A constraint bounds a version
+# and fails the resolution loudly when something genuinely requires less; an
+# override *replaces* the conflicting requirement and resolves in silence.
+# Measured on this manifest with ``gymnasium>=1.1.1``, which the ``[vera-sim]``
+# extra contradicts by pinning ``gymnasium==0.29.1``:
+#
+#   as a constraint -> `uv lock` exits 1: "Because strands-robots[vera-sim]
+#                      depends on gymnasium==0.29.1 and gymnasium>=1.1.1 ...
+#                      requirements are unsatisfiable"
+#   as an override  -> `uv lock` exits 0: "Updated gymnasium v0.29.1 -> v1.3.0"
+#
+# For a security floor the loud failure is the wanted behaviour: it says a
+# dependency asked for a vulnerable version, which is the thing worth knowing.
+# The floors below cost nothing to state -- adding them changed no resolved
+# version (264 packages, zero differences).
+#
+# Each floor is the first version clearing every HIGH/CRITICAL advisory for that
+# package, deliberately not the version currently resolved: the floor states the
+# requirement, so it stays correct as the resolution moves above it.
+
+_UV_LOCK = _REPO_ROOT / "uv.lock"
+
+#: Transitive package -> the HIGH advisory its floor clears. These are the
+#: packages a floor is *required* for; the constraint table may hold more.
+_SECURITY_FLOORS: dict[str, str] = {
+    "cbor2": "GHSA-3c37-wwvx-h642",
+    "twisted": "GHSA-grgv-6hw6-v9g4",
+    "ujson": "GHSA-c38f-wx89-p2xg",
+    "pyopenssl": "GHSA-5pwr-322w-8jr4",
+}
+
+
+def _uv_requirement_list(key: str) -> list[str]:
+    """A requirement list from ``[tool.uv]`` - the constraints or the overrides."""
+    table = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8")).get("tool", {}).get("uv", {})
+    raw = table.get(key, [])
+    assert isinstance(raw, list), f"[tool.uv] {key} must be a list, got {type(raw).__name__}"
+    return [str(spec) for spec in raw]
+
+
+def _declared_constraints() -> dict[str, Requirement]:
+    """``[tool.uv] constraint-dependencies`` keyed by distribution name."""
+    return {Requirement(spec).name: Requirement(spec) for spec in _uv_requirement_list("constraint-dependencies")}
+
+
+def _locked_versions() -> dict[str, list[Version]]:
+    """Every version ``uv.lock`` resolves, keyed by name.
+
+    A name maps to more than one version when ``[tool.uv] conflicts`` forks the
+    resolution, so a floor has to hold for *each* fork, not just the first.
+    """
+    lock = tomllib.loads(_UV_LOCK.read_text(encoding="utf-8"))
+    out: dict[str, list[Version]] = {}
+    for package in lock.get("package", []):
+        if "version" in package:
+            out.setdefault(package["name"], []).append(Version(package["version"]))
+    return out
+
+
+def _unsatisfied_floors(constraints: dict[str, Requirement], locked: dict[str, list[Version]]) -> list[str]:
+    """Names whose locked version falls below a declared floor.
+
+    Pure so the check itself can be exercised against a synthetic lock; a
+    package absent from the lock is not a violation (a constraint applies only
+    where the package is actually resolved).
+    """
+    return sorted(
+        name for name, req in constraints.items() for version in locked.get(name, []) if version not in req.specifier
+    )
+
+
+def _comment_block_above(entry_substring: str) -> str:
+    """The contiguous ``#`` comment lines directly above a constraint entry."""
+    lines = _PYPROJECT.read_text(encoding="utf-8").splitlines()
+    hits = [i for i, line in enumerate(lines) if entry_substring in line and not line.lstrip().startswith("#")]
+    assert len(hits) == 1, f"expected one entry line containing {entry_substring!r}, got {len(hits)}"
+    index = hits[0] - 1
+    collected: list[str] = []
+    while index >= 0 and lines[index].lstrip().startswith("#"):
+        collected.append(lines[index])
+        index -= 1
+    return "\n".join(reversed(collected))
+
+
+def test_every_transitive_package_clearing_a_high_advisory_declares_a_floor() -> None:
+    """Each of the four must carry a floor, so the version is stated not chosen.
+
+    Without a floor the resolver is free to pick any release the graph allows,
+    including one inside the advisory range. cbor2 makes the point: it resolves
+    to 5.9.0, which *is* the first patched version for GHSA-3c37-wwvx-h642, so
+    there is no margin whatsoever between the current resolution and a HIGH
+    advisory re-entering the dependency graph.
+    """
+    declared = _declared_constraints()
+    missing = sorted(set(_SECURITY_FLOORS) - set(declared))
+    assert not missing, (
+        f"transitive packages with no declared security floor: {missing}. Each "
+        "resolves above a HIGH advisory only because the resolver happened to "
+        "pick that version. Declare the floor in [tool.uv] constraint-dependencies."
+    )
+
+
+def test_every_declared_constraint_is_satisfied_by_the_locked_version() -> None:
+    """A declared floor the lock does not meet is a floor in name only.
+
+    The resolver enforces this when it runs, so a violation means the lock was
+    not regenerated after the floor was raised - the same manifest/lock drift
+    class the parity gate exists for, on the security-relevant field.
+    """
+    constraints = _declared_constraints()
+    assert constraints, "no [tool.uv] constraint-dependencies declared, so this guard checks nothing"
+    locked = _locked_versions()
+    violations = _unsatisfied_floors(constraints, locked)
+    assert not violations, (
+        "uv.lock resolves these below their declared floor: "
+        + ", ".join(f"{n} -> {[str(v) for v in locked[n]]} violates {constraints[n].specifier}" for n in violations)
+        + ". Run `uv lock` and commit the result."
+    )
+
+
+def test_each_security_floor_names_the_advisory_it_clears() -> None:
+    """A bare version pin is indistinguishable from an arbitrary one.
+
+    The advisory id is what lets a later reader tell a security floor from a
+    compatibility pin, and therefore what stops it being dropped as noise on
+    the next dependency sweep.
+    """
+    for name, ghsa in sorted(_SECURITY_FLOORS.items()):
+        comment = _comment_block_above(f'"{name}>=')
+        assert ghsa in comment, f"the {name} floor does not name {ghsa} in the comment above it; got {comment!r}"
+
+
+def test_the_security_floors_are_constraints_and_not_overrides() -> None:
+    """These must bound the version, never replace the requirement.
+
+    An override silently discards a conflicting requirement - measured on this
+    manifest, ``gymnasium>=1.1.1`` as an override resolves cleanly while the
+    ``[vera-sim]`` extra's ``gymnasium==0.29.1`` is dropped without a word. As a
+    constraint the same floor fails the resolution and names the conflict. A
+    security floor that hides "a dependency asked for a vulnerable version" has
+    removed the signal it exists to raise.
+    """
+    overrides = {Requirement(spec).name for spec in _uv_requirement_list("override-dependencies")}
+    misplaced = sorted(set(_SECURITY_FLOORS) & overrides)
+    assert not misplaced, (
+        f"security floors must live in constraint-dependencies, not "
+        f"override-dependencies (an override masks a genuine conflict): {misplaced}"
+    )
+
+
+def test_the_floored_packages_are_transitive_rather_than_declared() -> None:
+    """A floor in ``[tool.uv]`` is the right home only while these stay transitive.
+
+    If one of them ever becomes a direct dependency, its version belongs in
+    ``[project]`` beside the requirement that needs it, where the bound is
+    visible to anyone reading the dependency list. This holds today and is
+    asserted so the constraint table does not outlive its justification.
+    """
+    project = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]
+    declared_names = {
+        Requirement(spec).name
+        for group in [project.get("dependencies", [])] + list(project.get("optional-dependencies", {}).values())
+        for spec in group
+        if not spec.startswith("strands-robots[")
+    }
+    direct = sorted(set(_SECURITY_FLOORS) & declared_names)
+    assert not direct, (
+        f"these carry a [tool.uv] constraint but are now declared directly, so the "
+        f"bound belongs in [project] beside the requirement: {direct}"
+    )
+
+
+def test_the_floor_check_rejects_a_lock_below_a_declared_floor() -> None:
+    """The satisfaction check must actually fire, not merely find nothing.
+
+    Feeds a synthetic lock so a green suite means the floors hold, rather than
+    meaning the comparison silently matched nothing.
+    """
+    constraints = {"cbor2": Requirement("cbor2>=5.9.0")}
+    assert _unsatisfied_floors(constraints, {"cbor2": [Version("5.9.0")]}) == []
+    assert _unsatisfied_floors(constraints, {"cbor2": [Version("5.8.0")]}) == ["cbor2"]
+    # A fork that resolves one version below the floor is still a violation.
+    assert _unsatisfied_floors(constraints, {"cbor2": [Version("5.9.0"), Version("5.8.0")]}) == ["cbor2"]
+    # A package the lock does not resolve at all is not a violation.
+    assert _unsatisfied_floors(constraints, {}) == []

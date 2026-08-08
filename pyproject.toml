@@ -492,6 +492,30 @@ conflicts = [
     [{ extra = "vera-sim" }, { extra = "all" }],
     [{ extra = "vera-sim" }, { extra = "benchmark-libero" }],
 ]
+# SECURITY floors for transitive packages. Each of these arrives only through
+# another dependency (cbor2/ujson under autobahn, twisted under roslibpy,
+# pyopenssl under twisted), so nothing in [project] declares a version for
+# them and the resolver is free to pick any release the graph allows --
+# including one inside a HIGH advisory range. A constraint bounds a transitive
+# without claiming it as a direct dependency, and unlike an override it fails
+# the resolution loudly if something genuinely requires less, which is the
+# wanted behaviour for a security floor.
+#
+# Each floor is the first version that clears every HIGH/CRITICAL advisory for
+# that package, not the version currently resolved: the floor states the
+# requirement, so it stays correct as the resolution moves.
+constraint-dependencies = [
+    # GHSA-3c37-wwvx-h642 (HIGH): uncontrolled recursion DoS in cbor2.loads, <= 5.8.0.
+    "cbor2>=5.9.0",
+    # GHSA-grgv-6hw6-v9g4 (HIGH): twisted.names DNS compression-pointer DoS,
+    # <= 25.5.0. First patched in 26.4.0rc2; 26.4.0 is the first stable release
+    # that clears it, and a floor at the rc would admit a prerelease.
+    "twisted>=26.4.0",
+    # GHSA-c38f-wx89-p2xg (HIGH): memory leak in ujson.dump() on write failure, <= 5.12.0.
+    "ujson>=5.12.1",
+    # GHSA-5pwr-322w-8jr4 (HIGH): DTLS cookie-callback buffer overflow, >= 22.0.0 < 26.0.0.
+    "pyopenssl>=26.0.0",
+]
 override-dependencies = [
     # SECURITY: diffusers <0.36 is vulnerable to a GHSA trust_remote_code bypass
     # + a TOCTOU RCE (fixed in 0.38.0). diffusers is only exercised by the

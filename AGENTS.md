@@ -86,6 +86,20 @@ hatch run format            # ruff check --fix, ruff format
     field and the answer was local: the only other `if not self.<path field>` in the
     tree (`training/_inproc.py`) is a branch that skips logging, not a validation.
 
+12. **A security floor on a transitive package is a constraint, not an override** -
+    a package that arrives only through another dependency has no version declared
+    anywhere, so the resolver's choice is what stands between the dependency graph
+    and a HIGH advisory. State the floor in `[tool.uv] constraint-dependencies`,
+    at the first version clearing the advisory rather than the version currently
+    resolved, and name the GHSA id in a comment beside it. Use a constraint and
+    not an override: measured on this manifest, `gymnasium>=1.1.1` as a constraint
+    fails `uv lock` and names the `[vera-sim]` extra's contradicting
+    `gymnasium==0.29.1`, while the same floor as an override resolves silently and
+    discards that requirement - so an override hides exactly the signal a security
+    floor exists to raise. `[project]` is the wrong home while the package stays
+    transitive; move the bound there if it ever becomes direct. Pinned by
+    tests/test_dependency_audit.py.
+
 ## PR Workflow
 
 1. Create the feature branch **on your fork**. Branch creation in the base
