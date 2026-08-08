@@ -1,0 +1,80 @@
+{
+ "tree": "/tmp/ctrl-479699",
+ "baseline_w_sum": "17.9251941756",
+ "rows": [
+  {
+   "value": "1.0",
+   "problems": [],
+   "status": "success",
+   "detail": "ppo: 3 iterations x 20 steps complete",
+   "w_sum": "17.9833114612",
+   "delta_norm": "0.2564953121",
+   "identical_to_untrained": false
+  },
+  {
+   "value": "inf",
+   "problems": [],
+   "status": "success",
+   "detail": "ppo: 3 iterations x 20 steps complete",
+   "w_sum": "17.9604155714",
+   "delta_norm": "0.2528932023",
+   "identical_to_untrained": false
+  },
+  {
+   "value": "0.0",
+   "problems": [],
+   "status": "success",
+   "detail": "ppo: 3 iterations x 20 steps complete",
+   "w_sum": "17.9251941756",
+   "delta_norm": "0.0000000000",
+   "identical_to_untrained": true
+  },
+  {
+   "value": "-1.0",
+   "problems": [],
+   "status": "success",
+   "detail": "ppo: 3 iterations x 20 steps complete",
+   "w_sum": "17.8211606460",
+   "delta_norm": "0.2636196737",
+   "identical_to_untrained": false
+  },
+  {
+   "value": "True",
+   "problems": [],
+   "status": "success",
+   "detail": "ppo: 3 iterations x 20 steps complete",
+   "w_sum": "17.9833114612",
+   "delta_norm": "0.2564953121",
+   "identical_to_untrained": false
+  },
+  {
+   "value": "nan",
+   "problems": [],
+   "status": "RAISED",
+   "detail": "ValueError: Expected parameter loc (Tensor of shape (5, 6)) of distribution Normal(loc: torch.Size([5, 6]), scale: torch.S"
+  }
+ ],
+ "cosine_honoured_vs_negated": "-0.992055",
+ "clip_grad_norm_effect": {
+  "1.0": [
+   0.6,
+   0.8
+  ],
+  "inf": [
+   3.0,
+   4.0
+  ],
+  "0.0": [
+   0.0,
+   0.0
+  ],
+  "-1.0": [
+   -0.6,
+   -0.8
+  ],
+  "nan": [
+   NaN,
+   NaN
+  ]
+ }
+}

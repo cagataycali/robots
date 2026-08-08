@@ -1,0 +1,78 @@
+{
+ "tree": "/tmp/robots-mine",
+ "baseline_w_sum": "17.9251941756",
+ "rows": [
+  {
+   "value": "1.0",
+   "problems": [],
+   "status": "success",
+   "detail": "ppo: 3 iterations x 20 steps complete",
+   "w_sum": "17.9833114612",
+   "delta_norm": "0.2564953121",
+   "identical_to_untrained": false
+  },
+  {
+   "value": "inf",
+   "problems": [],
+   "status": "success",
+   "detail": "ppo: 3 iterations x 20 steps complete",
+   "w_sum": "17.9604155714",
+   "delta_norm": "0.2528932023",
+   "identical_to_untrained": false
+  },
+  {
+   "value": "0.0",
+   "problems": [
+    "ppo: max_grad_norm must be > 0, got 0.0."
+   ],
+   "status": "error",
+   "detail": "validation failed: ppo: max_grad_norm must be > 0, got 0.0."
+  },
+  {
+   "value": "-1.0",
+   "problems": [
+    "ppo: max_grad_norm must be > 0, got -1.0."
+   ],
+   "status": "error",
+   "detail": "validation failed: ppo: max_grad_norm must be > 0, got -1.0."
+  },
+  {
+   "value": "True",
+   "problems": [
+    "ppo: max_grad_norm must be > 0, got True."
+   ],
+   "status": "error",
+   "detail": "validation failed: ppo: max_grad_norm must be > 0, got True."
+  },
+  {
+   "value": "nan",
+   "problems": [
+    "ppo: max_grad_norm must be > 0, got nan."
+   ],
+   "status": "error",
+   "detail": "validation failed: ppo: max_grad_norm must be > 0, got nan."
+  }
+ ],
+ "clip_grad_norm_effect": {
+  "1.0": [
+   0.6,
+   0.8
+  ],
+  "inf": [
+   3.0,
+   4.0
+  ],
+  "0.0": [
+   0.0,
+   0.0
+  ],
+  "-1.0": [
+   -0.6,
+   -0.8
+  ],
+  "nan": [
+   NaN,
+   NaN
+  ]
+ }
+}
