@@ -210,6 +210,49 @@ hatch run format            # ruff check --fix, ruff format
    under ten paragraphs restating it, and a reviewer must scroll all of them to
    learn nothing changed. Same shape as #1919 - the policy was not wrong, it
    was silent on a case that recurs every scheduled cycle.
+   **Ask the intake question again before the first push.** Step 1's
+   duplicate-claim read is a claim about minute 0, and authoring a tested change
+   takes longer than the window in which a collision becomes observable. Every
+   pair #2017 measured opened inside one ~35-minute span, and the cycle that
+   shipped #2030 re-read its own gate ~40 minutes after intake to find the issue
+   already claimed, approved and merged.
+
+   Two reads, because neither the command nor the branch answers this alone:
+
+   - *Unpushed work claiming an issue.* Re-run step 1's command, and read the
+     issue's own `state` and `stateReason`. The command reads
+     `repository.pullRequests(states: OPEN)`, so it can see a rival only while
+     that rival is open: #2030 opened 07:24:45 and merged 07:43:54 closing
+     #2029, and the same command run at 07:56 reported `unique-claim` with exit
+     `0` over four compared pull requests -- while #2029 was `CLOSED` /
+     `COMPLETED` with #2030 recorded as its closer. That is a 19-minute
+     observability window inside a ~40-minute authoring one, and the answer
+     outside it is the reassuring one. The issue's state is the signal that
+     stays true; the command is the one that names the rival, which is why both
+     are worth asking.
+
+   - *A review-round push on an existing pull request.* Read
+     `pullRequest { state mergedAt }`. Comparing the branch against the sha you
+     recorded at the start catches a sibling push, but a squash merge writes a
+     new commit onto the base and never moves the head ref, so the comparison
+     cannot observe it. On #2015 that cost a round: merged 23:13:13 with
+     `headRefOid ea5e3ff8`, `mergeCommit 1026088`, and a round pushed a minute
+     earlier left the fork branch at `e7ab4d5b` -- which is not an ancestor of
+     `main`. The comparison passed, the push succeeded, and the content was
+     orphaned on the fork; the recovery was a second pull request (#2018).
+
+   The same read carries `reviewThreads`, so ask for them there rather than
+   separately -- an unresolved thread is also only unresolved as of the read. On
+   #2028 a thread arrived at 06:18:56, 16 minutes after the commit pushed at
+   06:02:32, so a run that read threads when it pushed could not have seen it.
+
+   Guidance rather than a check, by necessity: the collision is between an
+   unpushed local tree and a remote pull request, which no workflow can see. The
+   `scripts/` gate deliberately says nothing about whether an issue is closed --
+   refusing a pull request for that would accuse correct work whose issue
+   someone else closed first -- and that is the same mode split as its `--repo`
+   default. What is decisive for unpushed work is not what a review check should
+   refuse.
 6. Track follow-up items as issues on the [project board](https://github.com/orgs/strands-labs/projects/2)
 
    **Read the board with `PAT_TOKEN`, not the Actions `GITHUB_TOKEN`.** An
