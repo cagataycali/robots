@@ -1,0 +1,135 @@
+{
+ "tree": "/tmp/wt-main-1104627",
+ "instruction": "pick up the red block and place it in the bowl",
+ "real_tokens": 11,
+ "tokenizer": "Qwen2Tokenizer",
+ "rows": {
+  "48": {
+   "construction": "accepted",
+   "construction_text": "",
+   "preflight": "accepted",
+   "prompt": {
+    "outcome": "tokenized",
+    "width": 48,
+    "attended": 11,
+    "prompt": "pick up the red block and place it in the bowl",
+    "ids_head": [
+     29245,
+     705,
+     279,
+     2518,
+     2504,
+     323,
+     1992,
+     432,
+     304,
+     279,
+     19212,
+     151643
+    ]
+   }
+  },
+  "8": {
+   "construction": "accepted",
+   "construction_text": "",
+   "preflight": "accepted",
+   "prompt": {
+    "outcome": "tokenized",
+    "width": 8,
+    "attended": 8,
+    "prompt": "pick up the red block and place it",
+    "ids_head": [
+     29245,
+     705,
+     279,
+     2518,
+     2504,
+     323,
+     1992,
+     432
+    ]
+   }
+  },
+  "0": {
+   "construction": "accepted",
+   "construction_text": "",
+   "preflight": "accepted",
+   "prompt": {
+    "outcome": "tokenized",
+    "width": 0,
+    "attended": 0,
+    "prompt": "",
+    "ids_head": []
+   }
+  },
+  "False": {
+   "construction": "accepted",
+   "construction_text": "",
+   "preflight": "accepted",
+   "prompt": {
+    "outcome": "tokenized",
+    "width": 0,
+    "attended": 0,
+    "prompt": "",
+    "ids_head": []
+   }
+  },
+  "True": {
+   "construction": "accepted",
+   "construction_text": "",
+   "preflight": "accepted",
+   "prompt": {
+    "outcome": "tokenized",
+    "width": 1,
+    "attended": 1,
+    "prompt": "pick",
+    "ids_head": [
+     29245
+    ]
+   }
+  },
+  "None": {
+   "construction": "accepted",
+   "construction_text": "",
+   "preflight": "accepted",
+   "prompt": {
+    "outcome": "tokenized",
+    "width": 262144,
+    "attended": 11,
+    "prompt": "pick up the red block and place it in the bowl",
+    "ids_head": [
+     29245,
+     705,
+     279,
+     2518,
+     2504,
+     323,
+     1992,
+     432,
+     304,
+     279,
+     19212,
+     151643
+    ]
+   }
+  },
+  "-5": {
+   "construction": "accepted",
+   "construction_text": "",
+   "preflight": "accepted",
+   "prompt": {
+    "outcome": "raised",
+    "detail": "OverflowError: can't convert negative int to unsigned"
+   }
+  },
+  "2.7": {
+   "construction": "accepted",
+   "construction_text": "",
+   "preflight": "accepted",
+   "prompt": {
+    "outcome": "raised",
+    "detail": "TypeError: argument 'max_length': 'float' object cannot be interpreted as an inte"
+   }
+  }
+ }
+}
