@@ -1,0 +1,80 @@
+{
+  "tree": "/tmp/robots-mine",
+  "resolvers": {
+    "60 (usable)": {
+      "core": 60.0,
+      "security": 60.0,
+      "bridge": 60.0,
+      "session": 60.0
+    },
+    "abc": {
+      "core": 60.0,
+      "security": 60.0,
+      "bridge": 120.0,
+      "session": "fallback"
+    },
+    "-5": {
+      "core": 60.0,
+      "security": 60.0,
+      "bridge": 120.0,
+      "session": -5.0
+    },
+    "nan": {
+      "core": 60.0,
+      "security": 60.0,
+      "bridge": 120.0,
+      "session": "fallback"
+    },
+    "inf": {
+      "core": 60.0,
+      "security": 60.0,
+      "bridge": 120.0,
+      "session": "fallback"
+    },
+    "1e999": {
+      "core": 60.0,
+      "security": 60.0,
+      "bridge": 120.0,
+      "session": "fallback"
+    }
+  },
+  "consequence": {
+    "60 (usable)": {
+      "window": 60.0,
+      "skew": 60.0,
+      "presence_year_dropped": true,
+      "presence_fresh_accepted": true,
+      "stale_replay_survivors": 0,
+      "backoff": 60.0,
+      "cooldown_engages": true,
+      "cooldown_expires": true
+    },
+    "nan": {
+      "window": 60.0,
+      "skew": 5.0,
+      "presence_year_dropped": true,
+      "presence_fresh_accepted": true,
+      "stale_replay_survivors": 0,
+      "backoff": 30.0,
+      "cooldown_engages": true,
+      "cooldown_expires": true
+    },
+    "inf": {
+      "window": 60.0,
+      "skew": 5.0,
+      "presence_year_dropped": true,
+      "presence_fresh_accepted": true,
+      "stale_replay_survivors": 0,
+      "backoff": 30.0,
+      "cooldown_engages": true,
+      "cooldown_expires": true
+    }
+  },
+  "unchanged": {
+    "core_admits_zero": 0.0,
+    "security_refuses_zero": 60.0,
+    "core_usable_45_5": 45.5,
+    "bridge_usable_45_5": 45.5,
+    "int_resolver_nan": 4096
+  }
+}
