@@ -625,6 +625,44 @@ hatch run format            # ruff check --fix, ruff format
    about meaning. This is cheap: the check that would have caught the above was
    one `pytest` invocation on two files.
 
+   **One field says whether a composition exists at all, and the overlap read
+   does not.** File overlap says two pull requests touched the same file; it does
+   not say either one landed outside the other's ancestry, which is the thing
+   that makes a pair of changes never compiled together:
+
+   ```
+   GET /repos/{owner}/{repo}/compare/main...<head>  ->  .behind_by
+   ```
+
+   `behind_by: 0` means the head already contains every commit on `main`, so the
+   tree CI tested **is** the merge result. The two cases separate exactly, each
+   compared against `main` as it stood when that pull request merged:
+
+   | branch | `compare/<main then>...<head>` | composition |
+   |---|---|---|
+   | #1763, which broke `main` | `diverged  ahead_by=2  behind_by=1` | owed |
+   | #2012, which raised the same alarm | `ahead  ahead_by=3  behind_by=0` | none exists |
+
+   #2012 edited `strands_robots/policies/vera/provider.py`, which #1992 had
+   touched earlier the same day, so it met the trigger condition verbatim - but
+   #1992 sat 13 commits back in the branch's own ancestry
+   (`compare/<#1992 squash>...<head>` -> `ahead  behind_by=0`) rather than
+   landing beside it. Following the rule as written would have spent a clone and
+   two suite runs to rediscover that, and it would not have looked like a
+   mistake; it would have looked like diligence.
+
+   Read the field in the same direction as the decode rule below. **A
+   `behind_by` of `0` proves nothing needs composing, and a `behind_by` above
+   zero does not prove a conflict exists** - it is the precondition that makes
+   the overlap heuristic worth spending a run on, since a semantic conflict need
+   not share a file at all. Two properties make it safe to lean on. The counts
+   are totals rather than page counts, so distance does not weaken them:
+   `compare/v0.4.1...5757c1a2` reports `ahead_by=877` beside a `commits` array
+   truncated to 250, and the reverse direction reports `behind_by=877` beside an
+   **empty** one, so deriving the answer from `commits` is itself a false safe.
+   And a head that cannot be compared - a force-pushed fork sha, a `404` - is
+   not a `0`: run the composition.
+
    Read that run as a **delta, not an absolute**. The environment you verify in
    is almost never the one CI uses, and a partial one fails tests for reasons
    that have nothing to do with the merge. Composing #1786 and #1804 - both
@@ -647,6 +685,23 @@ hatch run format            # ruff check --fix, ruff format
    ties your local run to `main`; and on a batch, where only the tip's
    `call-test-lint` survives the concurrency group above, it is the sole evidence
    the intermediate commits were ever compiled together.
+
+   **Comparing the two commits' tree shas is the same claim without the clone,
+   and a stronger one.** That `git diff` needs the local composition to still
+   exist, and it is path-scoped, so a change under `changelog.d/`,
+   `pyproject.toml` or a workflow is invisible to it:
+
+   ```
+   GET /repos/{owner}/{repo}/commits/{sha}  ->  .commit.tree.sha
+
+   0fcdd015cb3f  tree=e174201b7ccf...   # #2012 head, call-test-lint SUCCESS
+   763305edf1d4  tree=e174201b7ccf...   # its squash on `main`
+   ```
+
+   Equal trees say the bytes CI went green on are the bytes on `main` - the whole
+   tree rather than two prefixes - and each commit in a batch can be checked that
+   way without a suite, which is what the batching case above otherwise has no
+   evidence for.
 
    Fixing forward beats reverting here - the two production changes were both
    correct, and only an assertion and its justification were stale. Prefer a
