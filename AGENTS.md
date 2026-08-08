@@ -115,6 +115,28 @@ hatch run format            # ruff check --fix, ruff format
    `createPullRequest` takes the base repository as `repositoryId` and the fork
    as a separate `headRepositoryId`. Step 5 already says "from your fork"; step 1
    is where that stops being a preference.
+
+   Before you start, check that no open pull request already claims the issue:
+
+   ```
+   python3 scripts/check_duplicate_claim.py --issue <N>
+   ```
+
+   A duplicate claim is invisible to every other check here, because they all read
+   one pull request at a time and this is a property of the *set* of open ones. It
+   is an intake failure rather than a drift: measured over the last 100 pull
+   requests, three pairs claimed one issue each and **all three opened inside one
+   ~35-minute window**. Three of the six were abandoned and every one of those had
+   already been **approved**, so what a duplicate spends is a review approval on a
+   change that could never ship - and review is the scarcest resource here (#1905).
+   Two of the three pairs also carried a real `git merge-tree` content conflict, so
+   they could not both have landed.
+
+   One query, reading the same `closingIssuesReferences` field the closing-keyword
+   gate reads. Asking it here prevents the authoring rather than capping it, which
+   is why it belongs at step 1 and not at review. If a competing implementation is
+   wanted on purpose, exactly one should claim the close and the other should
+   cross-reference (`per #N`, `towards #N`) instead.
 2. Make changes, run `hatch run format && hatch run lint && hatch run test`
 3. Record the change as a news fragment: `changelog.d/<pr-number>-<slug>.md`
    (see [`changelog.d/README.md`](changelog.d/README.md)). **Never append to
