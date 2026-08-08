@@ -120,13 +120,25 @@ class _Sidecar:
     transport cannot show it.
     """
 
-    def __init__(self, encode: Any) -> None:
+    def __init__(self, encode: Any, port: int | None = None) -> None:
+        """Start answering on ``port``, or on a free port of its own choosing.
+
+        Args:
+            encode: Serialiser for the reply payload.
+            port: Bind to this port instead of an arbitrary free one. For a
+                test that first needs the endpoint to be *unreachable* and
+                only then answering, which a random port cannot express.
+        """
         self._encode = encode
         self._stop = threading.Event()
         self._ctx = zmq.Context()
         self._sock = self._ctx.socket(zmq.REP)
         self._sock.setsockopt(zmq.LINGER, 0)
-        self.port = self._sock.bind_to_random_port("tcp://127.0.0.1")
+        if port is None:
+            self.port = self._sock.bind_to_random_port("tcp://127.0.0.1")
+        else:
+            self._sock.bind(f"tcp://127.0.0.1:{port}")
+            self.port = port
         self._thread = threading.Thread(target=self._serve, daemon=True)
         self._thread.start()
 
@@ -143,6 +155,25 @@ class _Sidecar:
         self._thread.join(timeout=5)
         self._sock.close()
         self._ctx.term()
+
+
+def _free_port() -> int:
+    """A port with nothing bound on it, found by binding and releasing one.
+
+    Discovered through ZMQ rather than the stdlib ``socket`` module, which is
+    the name of the fixture below - and which this file otherwise never needs.
+
+    Returns:
+        A loopback port that is unbound on return, so a request sent to it
+        cannot be answered until something binds it.
+    """
+    context = zmq.Context()
+    sock = context.socket(zmq.REP)
+    try:
+        return sock.bind_to_random_port("tcp://127.0.0.1")
+    finally:
+        sock.close()
+        context.term()
 
 
 def _encoder_for(cls: type) -> Any:
@@ -431,12 +462,20 @@ class TestZmqStillTreatsTheseValuesAsMeasured:
         reinstates on the request path the unbounded hang that ``LINGER = 0``
         exists to prevent on teardown - and ``ping()``, whose contract is to
         answer ``True`` or ``False``, could then never answer.
+
+        The wait is ended by answering the request rather than by leaving the
+        thread parked in ``recv``. A ZMQ socket may be used by one thread only,
+        so the fixture's ``close`` ran on a socket a second thread was still
+        inside, which is undefined and aborted the interpreter. Answering also
+        measures strictly more than abandoning does: the recv completes, so it
+        was blocked for want of a reply rather than for being unusable.
         """
         socket.setsockopt(zmq.RCVTIMEO, -1)
         assert socket.getsockopt(zmq.RCVTIMEO) == -1
 
-        # Nothing is bound on this port, so a blocking recv cannot complete.
-        socket.connect("tcp://127.0.0.1:1")
+        # Nothing is bound here yet, so the request cannot be answered.
+        port = _free_port()
+        socket.connect(f"tcp://127.0.0.1:{port}")
         socket.send(b"ping")
         returned = threading.Event()
 
@@ -447,8 +486,20 @@ class TestZmqStillTreatsTheseValuesAsMeasured:
                 pass
             returned.set()
 
-        threading.Thread(target=blocking_recv, daemon=True).start()
+        recv_thread = threading.Thread(target=blocking_recv, daemon=True)
+        recv_thread.start()
+        # A finite budget would have raised zmq.Again well inside this window.
         assert not returned.wait(timeout=1.5), "a -1 timeout is expected to block"
+
+        # REQ redelivers the queued request as soon as a peer appears, so the
+        # recv that was blocking completes and the thread leaves the socket.
+        server = _Sidecar(lambda payload: msgpack.packb(payload, use_bin_type=True), port=port)
+        try:
+            assert returned.wait(timeout=30), "the blocked recv did not complete once answered"
+        finally:
+            server.close()
+        recv_thread.join(timeout=5)
+        assert not recv_thread.is_alive(), "no thread may outlive the socket it is using"
 
     def test_below_minus_one_is_an_invalid_argument(self, socket: Any) -> None:
         """So it never reached a verdict; it raised ``ZMQError`` naming nothing."""
