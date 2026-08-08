@@ -1,0 +1,39 @@
+{
+ "tree": "/tmp/wt-main-1104627",
+ "grid": {
+  "value_loss_coef": {
+   "nan": "accepted",
+   "inf": "accepted",
+   "-inf": "accepted",
+   "True": "accepted",
+   "'1.0'": "accepted",
+   "None": "accepted",
+   "[1.0]": "accepted",
+   "0.0": "accepted",
+   "-0.5": "accepted",
+   "1.0": "accepted"
+  },
+  "entropy_coef": {
+   "nan": "accepted",
+   "inf": "accepted",
+   "-inf": "accepted",
+   "True": "accepted",
+   "'1.0'": "accepted",
+   "None": "accepted",
+   "[1.0]": "accepted",
+   "0.0": "accepted",
+   "-0.5": "accepted",
+   "1.0": "accepted"
+  }
+ },
+ "control": {
+  "status": "success",
+  "checkpoints": 1,
+  "fingerprint": {
+   "n": 34715,
+   "nan": 0,
+   "absmax": "60.0000000000000000",
+   "sum": "140.6023186540351162"
+  }
+ }
+}

@@ -1,0 +1,52 @@
+{
+ "control": {
+  "preflight_problems": [],
+  "status": "success",
+  "message": "ppo: 3 iterations x 20 steps complete",
+  "checkpoints": 1,
+  "fingerprint": {
+   "n": 34715,
+   "nan": 0,
+   "inf": 0,
+   "absmax": "60.0000000000000000",
+   "sum": "140.6023186540351162"
+  }
+ },
+ "value_loss_coef=nan": {
+  "preflight_problems": [],
+  "status": "RAISED ValueError",
+  "message": "Expected parameter loc (Tensor of shape (5, 6)) of distribution Normal(loc: torch.Size([5, 6]), scale: torch.Size([5, 6])) to satisfy the constraint R",
+  "checkpoints": 0
+ },
+ "entropy_coef=nan": {
+  "preflight_problems": [],
+  "status": "RAISED ValueError",
+  "message": "Expected parameter loc (Tensor of shape (5, 6)) of distribution Normal(loc: torch.Size([5, 6]), scale: torch.Size([5, 6])) to satisfy the constraint R",
+  "checkpoints": 0
+ },
+ "value_loss_coef=inf": {
+  "preflight_problems": [],
+  "status": "RAISED ValueError",
+  "message": "Expected parameter loc (Tensor of shape (5, 6)) of distribution Normal(loc: torch.Size([5, 6]), scale: torch.Size([5, 6])) to satisfy the constraint R",
+  "checkpoints": 0
+ },
+ "entropy_coef=True": {
+  "preflight_problems": [],
+  "status": "success",
+  "message": "ppo: 3 iterations x 20 steps complete",
+  "checkpoints": 1,
+  "fingerprint": {
+   "n": 34715,
+   "nan": 0,
+   "inf": 0,
+   "absmax": "60.0000000000000000",
+   "sum": "140.6158002523716277"
+  }
+ },
+ "value_loss_coef='1.0'": {
+  "preflight_problems": [],
+  "status": "RAISED TypeError",
+  "message": "only integer tensors of a single element can be converted to an index",
+  "checkpoints": 0
+ }
+}
