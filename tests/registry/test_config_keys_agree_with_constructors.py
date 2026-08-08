@@ -98,11 +98,20 @@ def _parameters_or_skip(provider: str) -> Any:
     fails naming the provider and the import error, which is the non-vacuity
     assertion decision 2 of #2022 asks for.  Skipping only keeps a missing
     dependency from presenting as a registry disagreement.
+
+    The single ``return`` is deliberate.  Returning from inside the ``try`` left
+    the ``except`` branch reaching the end of the function implicitly, which is
+    ``py/mixed-returns`` - a note-severity CodeQL alert, and one this repository
+    does not filter (it is open on ``main`` as alert #823).  ``pytest.skip``
+    raises, so the two shapes behave identically; only this one is legible to a
+    reader who cannot see that.
     """
     try:
-        return _signature_parameters(_providers()[provider])
+        config = _providers()[provider]
+        parameters = _signature_parameters(config)
     except Exception as exc:  # noqa: BLE001 - reported by the coverage test
         pytest.skip(f"{provider} is not importable here: {type(exc).__name__}: {exc}")
+    return parameters
 
 
 def _config_key_cases() -> list[tuple[str, str]]:
