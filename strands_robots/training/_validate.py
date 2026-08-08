@@ -96,10 +96,19 @@ entropy temperature - and passes each straight to
 :func:`learning_rate_problems` documents apply to the second field verbatim.
 It is a separate gate for the same reason as :func:`gae_lambda_problems`: only
 the off-policy backend tunes a temperature.
+
+:func:`gradient_clip_problems` is the twelfth, on the same *optimization* axis:
+``max_grad_norm``, the norm the on-policy update clips every gradient to before
+stepping. It is scoped like :func:`gae_lambda_problems` - only the on-policy
+backend clips, so FastSAC must not report on a field it never reads - and it is
+the one coefficient of that group whose zero reading *is* settled, by
+``torch.nn.utils.clip_grad_norm_`` itself: see that gate for the measurement.
 """
 
 from __future__ import annotations
 
+import math
+import numbers
 import re
 from typing import TYPE_CHECKING, Any
 
@@ -552,16 +561,16 @@ def discount_factor_problems(spec: TrainSpec, *, context: str) -> list[str]:
     than left to the arithmetic that consumes it.
 
     ``lam``, the other factor of the trace-decay product, has its own gate for
-    that same scoping reason - see :func:`gae_lambda_problems`, and
-    ``num_learning_epochs`` likewise in :func:`optimization_epochs_problems`.
+    that same scoping reason - see :func:`gae_lambda_problems`,
+    ``num_learning_epochs`` likewise in :func:`optimization_epochs_problems`,
+    and ``max_grad_norm`` in :func:`gradient_clip_problems`.
     The remaining PPO coefficients (``clip_param``, ``entropy_coef``,
-    ``value_loss_coef``, ``max_grad_norm``, ``init_noise_std``) are out of scope
-    in all three: they weight loss terms and bound gradients rather than the
-    return, and for each of them zero has a candidate reading as a *disabled
-    mode* that this repository has not settled - ``entropy_coef`` is shipped
-    defaulting to ``0.0``, so zero is already a supported configuration;
-    ``max_grad_norm=0`` reads as "no clipping" in several RL codebases; and
-    ``init_noise_std=0`` is refused by ``torch`` itself, which rejects a
+    ``value_loss_coef``, ``init_noise_std``) are out of scope in all four: they
+    weight loss terms and initialize the action distribution rather than
+    discounting the return, and for each of them zero has a candidate reading as
+    a *disabled mode* that this repository has not settled - ``entropy_coef`` is
+    shipped defaulting to ``0.0``, so zero is already a supported configuration,
+    and ``init_noise_std=0`` is refused by ``torch`` itself, which rejects a
     ``Normal`` of zero scale. Those are contract questions rather than defects,
     so they are left to a gate that settles them.
 
@@ -772,4 +781,102 @@ def temperature_learning_rate_problems(spec: TrainSpec, *, context: str) -> list
     if not getattr(spec, "autotune_alpha", False):
         return []
     error = positive_finite_number_error(getattr(spec, "alpha_lr", 3e-4), "alpha_lr", context)
+    return [error] if error is not None else []
+
+
+def _gradient_clip_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when *value* is not a gradient-norm clip ``clip_grad_norm_`` honors.
+
+    The whole of this function's own contribution is that positive **infinity is
+    also accepted**; every other decision - numeric-ness, ``bool`` rejection,
+    the positivity floor and the message text - is delegated to the shared
+    :func:`~strands_robots.utils.positive_finite_number_error` domain, so those
+    refusals read identically to every other positive-scalar field's.
+
+    Infinity is carved out because the consumer honors it. ``clip_grad_norm_``
+    scales a gradient by ``max_norm / total_norm`` only when that ratio is below
+    one, so an infinite bound leaves every gradient untouched - measured on a
+    parameter whose gradient norm is 5, ``inf`` returns it as ``[3.0, 4.0]``
+    unchanged. That is the only spelling of "do not clip" the field has, and a
+    guard that refused a value its own consumer applies coherently would be
+    narrower than the code it protects.
+
+    Args:
+        value: The caller-supplied value.
+        param: Field name for the message.
+        context: Caller label the message is prefixed with.
+
+    Returns:
+        The error text, or None when *value* is a positive real number (finite
+        or positive infinity).
+    """
+    if isinstance(value, numbers.Real) and not isinstance(value, bool) and float(value) == math.inf:
+        return None
+    return positive_finite_number_error(value, param, context)
+
+
+def gradient_clip_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return gradient-clip problems for an on-policy RL :class:`TrainSpec`.
+
+    ``max_grad_norm`` is the last thing that touches a gradient before the
+    optimizer steps - the on-policy update ends every mini-batch with
+    ``clip_grad_norm_(self.actor_critic.parameters(), spec.max_grad_norm)`` -
+    and nothing judged it. ``clip_grad_norm_`` does not either: it multiplies
+    every gradient by ``max_norm / total_norm`` whenever that ratio is below
+    one, and that expression is defined for values no caller can have meant.
+    Measured on this backend, over a seeded 60-step run whose parameter sum
+    starts at ``17.9251941755865118``:
+
+    ======================  =========================================
+    ``max_grad_norm``       Outcome
+    ======================  =========================================
+    ``1.0`` (the default)   trains; parameter sum ``17.9833114612``
+    ``inf``                 trains, unclipped; sum ``17.9604155714``
+    ``0`` / ``0.0``         **succeeds having learned nothing**
+    ``-1.0`` / ``-0.5``     **trains in the opposite direction**
+    ``True``               a silent clip of one
+    ``"1.0"``              silently accepted
+    ``nan``                 raises mid-update, from inside ``torch``
+    ``None`` / ``[1.0]``    raises mid-update, from inside ``torch``
+    ======================  =========================================
+
+    The two silent rows are the reason this is a gate rather than a lint:
+
+    * **Zero scales every gradient to zero**, so the optimizer steps with no
+      information. The run collects its rollouts, reports ``success`` and writes
+      a deployable checkpoint whose parameters are *bit-identical* to a
+      never-trained control - the parameter delta is exactly ``0.0000000000``.
+      This is the same shape as :func:`optimization_epochs_problems`, reached
+      through a different field.
+    * **A negative bound negates the ratio**, so every gradient is flipped and
+      scaled: the same parameter whose gradient is ``[3.0, 4.0]`` comes out of
+      ``clip_grad_norm_(-1.0)`` as ``[-0.6, -0.8]``. The update is therefore
+      gradient *ascent* on the loss - the seeded run above moves its parameter
+      sum to ``17.8211606460`` while the honored run moves it to
+      ``17.9833114612``, i.e. away from the objective, silently, under a
+      successful run.
+
+    Zero is **not** the "no clipping" spelling, which is the one reading that
+    might have made it a contract question rather than a defect: infinity is,
+    and it is accepted (see :func:`_gradient_clip_error`). So the domain is a
+    positive real, finite or infinite, with no undecided endpoint.
+
+    Only the on-policy backend clips gradients - ``grep`` finds
+    ``clip_grad_norm_`` in ``rl/ppo.py`` and nowhere else - so this is scoped
+    like :func:`gae_lambda_problems` rather than
+    :func:`learning_rate_problems`: a backend that does not clip MUST NOT call
+    it, because per :class:`TrainSpec` a backend ignores the fields it does not
+    support and reporting on one would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``max_grad_norm`` cannot be honored; empty
+        otherwise.
+    """
+    error = _gradient_clip_error(getattr(spec, "max_grad_norm", 1.0), "max_grad_norm", context)
     return [error] if error is not None else []

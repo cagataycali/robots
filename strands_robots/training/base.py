@@ -547,6 +547,41 @@ class Trainer(ABC):
 
         return temperature_learning_rate_problems(spec, context=self.provider_name)
 
+    def _gradient_clip_problems(self, spec: TrainSpec) -> list[str]:
+        """Gradient-clip preflight for a backend that clips before it steps.
+
+        Returns a problem when :attr:`RLTrainSpec.max_grad_norm` is not a
+        positive real number. Positive infinity is inside the domain: it is the
+        field's only spelling of "do not clip", and ``clip_grad_norm_`` honors
+        it by leaving every gradient untouched.
+
+        Zero and negative values are not degenerate spellings of that, which is
+        why this is a positivity test rather than a non-negative one. Zero
+        scales every gradient to zero, so the optimizer steps with no
+        information and the run writes a checkpoint bit-identical to a
+        never-trained one; a negative bound negates the scaling ratio, so the
+        update becomes gradient *ascent* on the loss. Both report success.
+
+        Only a backend that clips may call this: like
+        :meth:`_gae_lambda_problems`, and unlike
+        :meth:`_learning_rate_problems`, a backend that does not read the field
+        MUST NOT report on it, because per :class:`TrainSpec` a backend ignores
+        the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the module import graph one-way.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when the field cannot be honored; empty
+            otherwise.
+        """
+        from strands_robots.training._validate import gradient_clip_problems
+
+        return gradient_clip_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 

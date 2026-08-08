@@ -159,6 +159,10 @@ class PpoTrainer(BaseRLAlgo):
         # num_learning_epochs is the loop bound of the whole optimizer step, so a
         # non-positive value takes no gradient step while the run still succeeds.
         problems.extend(self._optimization_epochs_problems(spec))
+        # max_grad_norm scales every gradient before the optimizer steps: zero
+        # scales them all to zero and a negative bound negates them, so neither
+        # takes the step the caller asked for while the run still succeeds.
+        problems.extend(self._gradient_clip_problems(spec))
         if spec.total_timesteps <= 0:
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:
