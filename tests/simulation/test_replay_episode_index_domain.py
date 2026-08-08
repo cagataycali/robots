@@ -114,6 +114,29 @@ class _FakeDataset:
         return {"episode_index": ep}
 
 
+def superseded_non_negative_test(episode: object) -> bool:
+    """The guard this change replaces: ``if episode < 0: raise``.
+
+    Reproduced as a function so the premise class below *measures* what that
+    comparison did with each probe value. Written inline as
+    ``assert (True < 0) is False`` the same claim is decided when it is typed:
+    it restates an outcome instead of measuring one, which is the shape
+    ``tests/test_no_vacuous_comparisons.py`` refuses across the repository.
+    Taking the value as a parameter is what makes the comparison a measurement.
+
+    Args:
+        episode: The value a caller supplied as an episode index.
+
+    Returns:
+        Whether the superseded comparison refused ``episode``.
+
+    Raises:
+        TypeError: If ``episode`` cannot be ordered against an int at all,
+            which is itself one of the three outcomes the premise records.
+    """
+    return bool(episode < 0)  # type: ignore[operator]
+
+
 @pytest.fixture
 def fake_lerobot(monkeypatch):
     """Install a fake ``lerobot`` so the loader runs with no hub round-trip."""
@@ -156,6 +179,24 @@ ACCEPTED = [
 ]
 
 
+# The three outcomes the superseded ``episode < 0`` produced, split by what that
+# comparison *did* rather than by what the value looks like. Referenced by probe
+# id so the values are never spelled twice, and covered exhaustively by
+# ``TestThePremise.test_the_premise_covers_every_probe_value``.
+_UNUSABLE_BY_ID = {param.id: param.values[0] for param in UNUSABLE}
+
+_PREMISE_GROUPS = {
+    "passed": ("True", "False", "np.True_", "2.5", "nan", "inf", "np.float64(1.5)"),
+    "refused": ("-1", "-1.0", "-inf"),
+    "unorderable": ("str", "list", "None", "dict"),
+}
+
+
+def _premise_values(group: str) -> list[object]:
+    """The probe values in ``group``, resolved through their ids."""
+    return [_UNUSABLE_BY_ID[pid] for pid in _PREMISE_GROUPS[group]]
+
+
 # ── the premise, measured rather than asserted ──────────────────────
 
 
@@ -163,28 +204,39 @@ class TestThePremise:
     """Why a bare ``< 0`` test could not refuse these values.
 
     Measured against the language and NumPy themselves, so the mechanism is a
-    measurement rather than a claim about one.
+    measurement rather than a claim about one: every probe value is pushed
+    through :func:`superseded_non_negative_test`, the comparison this change
+    replaces, and grouped by what that comparison actually did with it. The
+    grouping is exhaustive over ``UNUSABLE`` -- asserted below, so a probe value
+    added later cannot silently escape the premise.
     """
 
-    def test_a_bool_passes_a_non_negative_test(self):
-        assert (True < 0) is False
-        assert (False < 0) is False
+    @pytest.mark.parametrize("value", _premise_values("passed"), ids=_PREMISE_GROUPS["passed"])
+    def test_the_superseded_comparison_did_not_refuse_these(self, value):
+        assert superseded_non_negative_test(value) is False
+
+    @pytest.mark.parametrize("value", _premise_values("refused"), ids=_PREMISE_GROUPS["refused"])
+    def test_the_superseded_comparison_did_refuse_these(self, value):
+        # These the old comparison caught, which is why the shared rule reports
+        # them with the same message rather than a new one.
+        assert superseded_non_negative_test(value) is True
+
+    @pytest.mark.parametrize("value", _premise_values("unorderable"), ids=_PREMISE_GROUPS["unorderable"])
+    def test_the_superseded_comparison_raised_instead_of_refusing(self, value):
+        with pytest.raises(TypeError):
+            superseded_non_negative_test(value)
+
+    def test_the_premise_covers_every_probe_value(self):
+        """Guard: no ``UNUSABLE`` entry escapes the premise, and none is claimed twice."""
+        grouped = [pid for ids in _PREMISE_GROUPS.values() for pid in ids]
+        assert len(grouped) == len(set(grouped)), "a probe value is claimed by two groups"
+        assert sorted(grouped) == sorted(_UNUSABLE_BY_ID)
 
     def test_a_bool_then_indexes_a_list_as_an_int(self):
         # The mechanism: ``episode_data_index["from"][True]`` is element 1.
         table = [_Cell(0), _Cell(10), _Cell(30)]
         assert table[True].item() == 10
         assert table[False].item() == 0
-
-    def test_a_non_integral_and_a_nan_pass_a_non_negative_test(self):
-        assert (2.5 < 0) is False
-        assert (math.nan < 0) is False
-        assert (math.inf < 0) is False
-
-    def test_a_str_list_none_raise_on_the_comparison_itself(self):
-        for value in ("0", [0], None):
-            with pytest.raises(TypeError):
-                _ = value < 0  # type: ignore[operator]
 
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_the_shared_rule_refuses_every_probe(self, value):
