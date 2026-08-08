@@ -653,8 +653,24 @@ hatch run format            # ruff check --fix, ruff format
    that makes a pair of changes never compiled together:
 
    ```
-   GET /repos/{owner}/{repo}/compare/main...<head>  ->  .behind_by
+   GET /repos/{owner}/{repo}/compare/main...{head_owner}:{head_repo}:{head_branch}
+     ->  .behind_by
    ```
+
+   **Qualify the head with its owner and repository.** Step 1 mandates that the
+   branch live on a fork, and an unqualified fork ref does not resolve in the base
+   repository, so the form a reader reaches for `404`s on every pull request here -
+   same head, same instant:
+
+   | ref | result |
+   |---|---|
+   | `main...feat/ackermann-ros-robot` | `404 Not Found` |
+   | `main...Vivek0712:robots:feat/ackermann-ros-robot` | `diverged  ahead_by=11  behind_by=116` |
+
+   Resolve the three parts from `pullRequest { headRepository { nameWithOwner } }`
+   and `headRefName` rather than assuming them. The qualified form is also correct
+   for a branch in the base repository - `main...strands-labs:robots:main` ->
+   `identical` - so there is one form to remember rather than a choice to make.
 
    `behind_by: 0` means the head already contains every commit on `main`, so the
    tree CI tested **is** the merge result. The two cases separate exactly, each
@@ -682,8 +698,12 @@ hatch run format            # ruff check --fix, ruff format
    `compare/v0.4.1...5757c1a2` reports `ahead_by=877` beside a `commits` array
    truncated to 250, and the reverse direction reports `behind_by=877` beside an
    **empty** one, so deriving the answer from `commits` is itself a false safe.
-   And a head that cannot be compared - a force-pushed fork sha, a `404` - is
-   not a `0`: run the composition.
+   And a head that cannot be compared is not a `0`: run the composition. That
+   case is narrower than a `404`, which has two causes wanting opposite actions -
+   an unqualified fork ref is a query to re-issue, while only a head sha that is
+   genuinely gone (a force-push, a deleted fork) is uncomparable - and the status
+   code does not separate them. Qualify first, then read a `404` on the
+   *qualified* form as the uncomparable one.
 
    Read that run as a **delta, not an absolute**. The environment you verify in
    is almost never the one CI uses, and a partial one fails tests for reasons
@@ -724,6 +744,24 @@ hatch run format            # ruff check --fix, ruff format
    tree rather than two prefixes - and each commit in a batch can be checked that
    way without a suite, which is what the batching case above otherwise has no
    evidence for.
+
+   **That equivalence is scoped to `behind_by == 0`, and it is the field above
+   that says so.** When the branch is behind, the squash tree necessarily
+   incorporates the intervening commits, so the trees differ for a perfectly
+   correct merge. The control and the counterexample:
+
+   | pull request | `behind_by` | head tree | squash tree |
+   |---|---|---|---|
+   | #2012 | `0` | `e174201b7ccf` | `e174201b7ccf` |
+   | #2024 | `1` | `4af91f210d09` | `8b3e7e8a3434` |
+
+   #2024's `main` went green on all four checks afterwards, so the inequality was
+   not drift. Read unequal trees as a question rather than a verdict: at
+   `behind_by: 0` they are the evidence this paragraph claims, and above zero the
+   check does not apply at all, leaving the path-scoped `git diff` against the
+   local composition as the only form that does. An unqualified "equal trees or
+   else" invites reading a correct merge as a broken one, which is the same
+   expensive-in-the-diligent-direction shape as the advisory-`CodeQL` case above.
 
    Fixing forward beats reverting here - the two production changes were both
    correct, and only an assertion and its justification were stale. Prefer a
