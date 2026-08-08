@@ -23,7 +23,9 @@ the environment, the networks and a full rollout had been built.
 
 `PpoTrainer.validate` now reports the field through a shared
 `gradient_clip_problems` gate, so `train()` fails closed before any rollout is
-collected. `inf` stays inside the domain: it is the field's only spelling of "do
+collected. The preflight stays read-only and reports rather than raises for every
+value, including a real no float64 stands for (`10**400`) and a `numbers.Real`
+registration with no working `__float__`. `inf` stays inside the domain: it is the field's only spelling of "do
 not clip" and the consumer honors it by leaving every gradient untouched. Only
 the on-policy backend clips, so FastSAC and the mock backend stay silent about a
 field they never read.

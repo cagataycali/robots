@@ -801,6 +801,18 @@ def _gradient_clip_error(value: Any, param: str, context: str) -> str | None:
     guard that refused a value its own consumer applies coherently would be
     narrower than the code it protects.
 
+    Nothing raises out of here, for any input. The carve-out asks the
+    *conversion* - that is what the consumer performs, ``clip_grad_norm_``
+    reading its bound through ``float()`` - and it wraps that conversion, so a
+    real past the float64 range and a :class:`numbers.Real` registration with
+    no working ``__float__`` are delegated rather than raised on. ``10**400``
+    is a registered real that is neither a ``bool`` nor convertible, and
+    ``Fraction(10**400, 3)`` overflows identically; the shared domain already
+    names that boundary and answers each with a reason of its own. Raising
+    here would fail on the one path that exists to answer an unusable value
+    with a message rather than an exception - the contract every caller of
+    this gate documents.
+
     Args:
         value: The caller-supplied value.
         param: Field name for the message.
@@ -810,8 +822,19 @@ def _gradient_clip_error(value: Any, param: str, context: str) -> str | None:
         The error text, or None when *value* is a positive real number (finite
         or positive infinity).
     """
-    if isinstance(value, numbers.Real) and not isinstance(value, bool) and float(value) == math.inf:
-        return None
+    if isinstance(value, numbers.Real) and not isinstance(value, bool):
+        try:
+            is_no_clip = float(value) == math.inf
+        except Exception:
+            # Decline to answer rather than raise. A ``numbers.Real``
+            # registration owes this function no working ``__float__``, and a
+            # real past the float64 range raises ``OverflowError`` from the
+            # conversion - ``10**400`` and ``Fraction(10**400, 3)`` both do.
+            # Neither is the no-clip spelling, and the shared domain below
+            # answers each with a reason of its own.
+            is_no_clip = False
+        if is_no_clip:
+            return None
     return positive_finite_number_error(value, param, context)
 
 

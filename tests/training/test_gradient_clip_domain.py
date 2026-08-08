@@ -31,6 +31,11 @@ the reading which, had it belonged to zero, would have made this a contract
 question rather than a defect - so the domain is a positive real, finite or
 infinite, with no undecided endpoint.
 
+The preflight is read-only, so it reports rather than raises for every value -
+including a real no float64 stands for (``10**400``, ``Fraction(10**400, 3)``)
+and a :class:`numbers.Real` registration with no working ``__float__``. Those
+reach the shared domain, which answers each with a reason of its own.
+
 Scoped to the on-policy backend: ``clip_grad_norm_`` appears in ``rl/ppo.py``
 and nowhere else, so a backend that does not clip must not report on a field it
 never reads. Every domain test here reaches the real ``validate`` entry point,
@@ -42,7 +47,9 @@ from __future__ import annotations
 import ast
 import inspect
 import math
+import numbers
 import pathlib
+from fractions import Fraction
 from typing import Any
 
 import numpy as np
@@ -74,13 +81,49 @@ NOT_A_CLIP: list[Any] = [
     float("nan"),
     float("-inf"),
     "1.0",
+    "inf",
     None,
     [1.0],
     {"max_grad_norm": 1.0},
     np.bool_(True),
 ]
 
-UNUSABLE: list[Any] = [*NO_GRADIENT_STEP, *INVERTED_GRADIENT, *NOT_A_CLIP]
+# Reals no float64 stands for. Positive and finite, so ``must be > 0`` would be a
+# false statement about them - the shared domain answers them with a reason of its
+# own, and the carve-out has to reach it rather than raising on the conversion.
+BEYOND_FLOAT_RANGE: list[Any] = [10**400, -(10**400), Fraction(10**400, 3)]
+
+
+class _RealWithNoFloat:
+    """A :class:`numbers.Real` registration that can be read as no number at all.
+
+    ``numbers.Real`` is a registration rather than an inheritance, so a value that
+    satisfies the type test owes a guard nothing else - neither a working
+    ``__float__`` nor a working ``__eq__``. Both raise here, so a carve-out that
+    converted *or* compared without wrapping it would fail on this value.
+    """
+
+    def __float__(self) -> float:
+        raise RuntimeError("this real cannot be read as a float")
+
+    def __eq__(self, other: object) -> bool:
+        raise RuntimeError("this real cannot be compared")
+
+    def __hash__(self) -> int:
+        return 0
+
+    def __repr__(self) -> str:
+        return "<a real with no float>"
+
+
+numbers.Real.register(_RealWithNoFloat)
+
+UNREADABLE_REAL: list[Any] = [_RealWithNoFloat()]
+
+# Every unusable value whose refusal is the shared domain's ``must be > 0``.
+PLAIN_REFUSAL: list[Any] = [*NO_GRADIENT_STEP, *INVERTED_GRADIENT, *NOT_A_CLIP, *UNREADABLE_REAL]
+
+UNUSABLE: list[Any] = [*PLAIN_REFUSAL, *BEYOND_FLOAT_RANGE]
 
 # The silent half: these reach a full run and report success.
 SILENT: list[Any] = [*NO_GRADIENT_STEP, *INVERTED_GRADIENT, True, "1.0"]
@@ -120,13 +163,23 @@ class TestTheOnPolicyBackendRefusesAnUnusableGradientClip:
         spec.max_grad_norm = value
         assert _clip_problems(ON_POLICY, spec), f"ppo accepted max_grad_norm={value!r}"
 
-    @pytest.mark.parametrize("value", UNUSABLE)
+    @pytest.mark.parametrize("value", PLAIN_REFUSAL)
     def test_the_problem_names_the_field_the_domain_and_the_value(self, spec: RLTrainSpec, value: Any) -> None:
         spec.max_grad_norm = value
         (problem,) = _clip_problems(ON_POLICY, spec)
         assert "max_grad_norm" in problem
         assert "must be > 0" in problem
         assert repr(value) in problem, problem
+
+    @pytest.mark.parametrize("value", BEYOND_FLOAT_RANGE)
+    def test_a_value_past_the_float64_range_is_refused_with_its_own_reason(self, spec: RLTrainSpec, value: Any) -> None:
+        """It is positive and finite, so ``must be > 0`` would be false of it."""
+        spec.max_grad_norm = value
+        (problem,) = _clip_problems(ON_POLICY, spec)
+        assert "max_grad_norm" in problem
+        assert "must be within the range of a 64-bit float" in problem
+        assert "must be > 0" not in problem
+        assert repr(value) in problem
 
     @pytest.mark.parametrize("value", UNUSABLE)
     def test_the_problem_names_the_backend_that_refused_it(self, spec: RLTrainSpec, value: Any) -> None:
@@ -185,6 +238,16 @@ class TestInfinityIsTheOnlyDifferenceFromTheSharedRule:
 
     def test_negative_infinity_is_not_carved_out(self) -> None:
         assert _gradient_clip_error(float("-inf"), "max_grad_norm", "ppo") is not None
+
+    @pytest.mark.parametrize("value", [*BEYOND_FLOAT_RANGE, *UNREADABLE_REAL])
+    def test_the_carve_out_declines_rather_than_raising(self, value: Any) -> None:
+        """A value the carve-out cannot read is delegated, never raised on."""
+        assert isinstance(_gradient_clip_error(value, "max_grad_norm", "ppo"), str)
+
+    def test_a_string_spelling_of_infinity_is_not_carved_out(self) -> None:
+        """``float("inf")`` is the carve-out's value, so the type test carries it."""
+        assert float("inf") == math.inf  # the premise the type test guards
+        assert _gradient_clip_error("inf", "max_grad_norm", "ppo") is not None
 
 
 class TestTheBackendsThatDoNotClipStaySilent:
