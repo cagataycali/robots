@@ -21,6 +21,7 @@ hatch run lint                       # ruff check + ruff format --check + mypy
 hatch run format                     # ruff fix + format
 mkdocs serve                         # docs at http://localhost:8000
 mkdocs build --strict                # CI gate
+python3 scripts/check_lockfile_parity.py  # uv.lock still resolves pyproject.toml
 ```
 
 CI runs `hatch run test -x --strict-markers`.
@@ -34,6 +35,8 @@ CI runs `hatch run test -x --strict-markers`.
 **No host paths** - `/Users/...` is CI-blocked. Use `tmp_path`, `~/.cache`, or env vars.
 
 **JSON registries** - new robots and policies are JSON edits + tests. No hardcoded lookups in `.py` files.
+
+**Lockfile** - `uv.lock` must resolve `pyproject.toml`. Change a dependency and `uv lock` in the same commit. Enforced by `tests/test_lockfile_parity.py`; check it locally with `python3 scripts/check_lockfile_parity.py`.
 
 **Tool errors return, don't raise:**
 ```python
