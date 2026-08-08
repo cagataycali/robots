@@ -165,14 +165,25 @@ spelling still falls back to `None`, as it does for the ports.
 
 ### IK conversion knobs
 
-Two keyword-only numbers shape every joint target the eef-delta path produces,
-and both are checked where they are supplied because both are *applied* rather
-than forwarded — nothing downstream can refuse them:
+Three keyword-only numbers shape every joint target the eef-delta path produces,
+and each is checked where it is supplied because each is *applied* rather than
+forwarded — nothing downstream can refuse them usefully:
 
 | kwarg | surface | domain |
 |-------|---------|--------|
+| `rotation_dim` | `set_ik_target(...)`, `decode_vera_delta_chunk_to_targets(...)` | `3` (axis-angle) or `6` (rot6d) — the encodings the decoder implements (`None` on the setter keeps the embodiment's convention) |
 | `translation_scale` | `set_ik_target(...)`, `decode_vera_delta_chunk_to_targets(...)` | a positive finite number (`None` on the setter leaves the current value) |
 | `ik_smoothing` | `VeraPolicy(...)` | `[0, 1)` — `0` disables the smoothing |
+
+`rotation_dim` is an enumeration rather than a range: `delta_to_matrix` implements
+axis-angle and rot6d and raises for any other width, so there is no third encoding
+to ask for. It is refused at the surface that receives it because it is not refused
+usefully later — `0`/`2`/`4` reach that dispatch *mid-rollout*, inside
+`get_actions`, after the server handshake and the IK bridge build; a fractional or
+non-numeric width reaches the per-step slice `step[3 : 3 + rotation_dim]` and
+raises `TypeError: slice indices must be integers`, naming neither the parameter
+nor the surface. An integral float (`3.0`, what a config read produces) is accepted
+and normalized, since the width has to arrive at that slice as an index.
 
 `translation_scale` multiplies every translation delta on top of the OSC position
 scale, so `0` discards the translation half of each action and returns a

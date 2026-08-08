@@ -30,7 +30,7 @@ import numpy as np
 
 from strands_robots.simulation.ik import MinkIKBridge as _SharedMinkIKBridge
 from strands_robots.simulation.ik import resolve_qp_solver
-from strands_robots.utils import positive_finite_number_error
+from strands_robots.utils import finite_number_error, positive_finite_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -91,13 +91,75 @@ def axis_angle_to_matrix(aa: np.ndarray) -> np.ndarray:
     return np.eye(3) + np.sin(theta) * K + (1.0 - np.cos(theta)) * (K @ K)
 
 
+#: The rotation-delta encodings :func:`delta_to_matrix` implements, as the width
+#: of the rotation block: 3 for an axis-angle delta, 6 for rot6d. Single owner of
+#: that vocabulary - both the dispatch's refusal and
+#: :func:`coerce_rotation_dim` are built from it, so the guard and the dispatch
+#: cannot describe different sets.
+ROTATION_DIMS: tuple[int, int] = (3, 6)
+
+
+def coerce_rotation_dim(value: Any, param: str, context: str) -> tuple[int | None, str | None]:
+    """Validate a rotation-delta encoding width and normalize it to an ``int``.
+
+    The accepted set is an *enumeration* rather than an interval, and a closed
+    one: :func:`delta_to_matrix` implements exactly the two encodings in
+    :data:`ROTATION_DIMS` and raises for every other width, so there is no third
+    parameterization a caller could ask for and no endpoint left to decide.
+
+    Every other value is refused where it is supplied, because none of them is
+    refused usefully further down:
+
+    * ``0``, ``-3``, ``2`` and ``4`` reach the dispatch and raise there - which
+      on the policy path means mid-rollout, inside ``get_actions``, after the
+      server handshake and the IK bridge build rather than at the call that
+      supplied them.
+    * ``2.7`` and ``True`` were truncated by an ``int()`` coercion first, so that
+      refusal named ``2`` and ``1``: a width the caller never supplied.
+    * a numeric string, a non-integral float and ``nan`` reach the per-step
+      rotation slice ``step[3 : 3 + rotation_dim]`` and raise ``TypeError: slice
+      indices must be integers``, naming neither the parameter nor the surface,
+      and ``inf`` reports needing ``>= inf`` pose dims.
+
+    Normalizing is load-bearing rather than cosmetic: the width indexes that
+    slice, so an integral float - what a JSON or YAML config read produces, and
+    which the dispatch accepts - has to arrive there as an index. Validation
+    decides whether the value can be honored; the conversion makes the honored
+    one consumable.
+
+    Numeric-ness, ``bool`` rejection, finiteness and the float64 range are
+    :func:`~strands_robots.utils.finite_number_error`'s, whose domain this is a
+    finite subset of; only membership is decided here.
+
+    Args:
+        value: The caller-supplied encoding width.
+        param: The parameter it came from, used in the message.
+        context: Message prefix identifying the surface that received it -
+            normally the public method or function name.
+
+    Returns:
+        ``(width, None)`` when usable, else ``(None, message)``.
+    """
+    if (err := finite_number_error(value, param, context)) is not None:
+        return None, err
+    numeric = float(value)
+    if numeric != int(numeric) or int(numeric) not in ROTATION_DIMS:
+        accepted = " or ".join(
+            f"{dim} ({label})" for dim, label in zip(ROTATION_DIMS, ("axis-angle", "rot6d"), strict=True)
+        )
+        return None, f"{context}: {param} must be {accepted}, got {value!r}."
+    return int(numeric), None
+
+
 def delta_to_matrix(rot_delta: np.ndarray, rotation_dim: int) -> np.ndarray:
     """Map a rotation delta (``rotation_dim`` ∈ {3 axis-angle, 6 rot6d}) -> (3,3)."""
     if rotation_dim == 6:
         return rot6d_to_matrix(rot_delta)
     if rotation_dim == 3:
         return axis_angle_to_matrix(rot_delta)
-    raise ValueError(f"unsupported rotation_dim {rotation_dim!r}; use 3 (axis-angle) or 6 (rot6d)")
+    raise ValueError(
+        f"unsupported rotation_dim {rotation_dim!r}; use {ROTATION_DIMS[0]} (axis-angle) or {ROTATION_DIMS[1]} (rot6d)"
+    )
 
 
 class MinkIKBridge(_SharedMinkIKBridge):
@@ -137,7 +199,9 @@ def decode_vera_delta_chunk_to_targets(
         action_chunk: ``[T, D]`` VERA action chunk (per-step EE delta + gripper).
         ik_bridge: A :class:`MinkIKBridge` over the target arm's MuJoCo model.
         q_init: Seed joint config (length ``model.nq``) - the robot's current pose.
-        rotation_dim: 3 (axis-angle) or 6 (rot6d) rotation delta encoding.
+        rotation_dim: 3 (axis-angle) or 6 (rot6d) rotation delta encoding -
+            the two the decoder implements. Any other width is refused up
+            front; see the ``Raises`` section.
         has_gripper: Whether the chunk carries a trailing gripper column.
         gripper_dim_index: Index of the gripper column (``-1`` => last when
             ``has_gripper``); the value is passed through (binarized by caller).
@@ -147,8 +211,14 @@ def decode_vera_delta_chunk_to_targets(
 
     Raises:
         ValueError: If ``action_chunk`` is not ``[T, D]``, if it carries too
-            few pose dims, or if ``translation_scale`` is not a positive
-            finite number. The scale multiplies every translation delta in
+            few pose dims, if ``rotation_dim`` is not one of the encodings
+            :func:`delta_to_matrix` implements, or if ``translation_scale`` is
+            not a positive finite number. An unusable ``rotation_dim`` is
+            refused here for the same reason the scale is: it indexes the
+            rotation block of every step, so a non-integral or non-numeric
+            width raised ``TypeError: slice indices must be integers`` out of
+            that slice - naming neither the parameter nor this function - and
+            ``inf`` reported needing ``>= inf`` pose dims. The scale multiplies every translation delta in
             the chunk, so an unusable one is not refused by anything
             downstream: ``0`` discards the translation half of every action
             and returns only the rotation, a negative value inverts it, and
@@ -171,6 +241,14 @@ def decode_vera_delta_chunk_to_targets(
         )
     ) is not None:
         raise ValueError(err)
+    # Same place, same reason: the width indexes the rotation block of every
+    # step, so an unusable one is not refused downstream - it slices the wrong
+    # columns out of the pose, or fails to slice at all. Normalizing to ``int``
+    # is what lets an integral float reach that slice, which needs an index.
+    dim, dim_err = coerce_rotation_dim(rotation_dim, "rotation_dim", "decode_vera_delta_chunk_to_targets")
+    if dim is None:
+        raise ValueError(dim_err)
+    rotation_dim = dim
     action_chunk = np.asarray(action_chunk, dtype=np.float64)
     if action_chunk.ndim != 2:
         raise ValueError(f"action_chunk must be [T, D]; got {action_chunk.shape}")

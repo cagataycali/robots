@@ -323,8 +323,12 @@ class VeraPolicy(Policy):
             mj_model: The arm's ``mujoco.MjModel``.
             ee_frame_name: End-effector frame the IK tracks (e.g. ``"hand"``).
             ee_frame_type: ``"body"`` | ``"site"`` | ``"geom"``.
-            rotation_dim: Override the delta rotation encoding (3=axis-angle,
-                6=rot6d). Defaults to the embodiment's convention.
+            rotation_dim: Override the delta rotation encoding. ``None`` (the
+                default) keeps the embodiment's convention; a supplied one must
+                be 3 (axis-angle) or 6 (rot6d), the two encodings the decoder
+                implements. Any other width is refused here rather than stored:
+                it reaches the decoder mid-rollout, inside ``get_actions``, long
+                after this call returned.
             translation_scale: Multiplier on the translation delta, composed
                 on top of the OSC position scale. ``None`` (the default)
                 leaves the current value; a supplied one must be a positive
@@ -333,6 +337,22 @@ class VeraPolicy(Policy):
         """
         # Validate before mutating any state, so a refused call leaves the
         # policy untouched (guard-before-mutation discipline).
+        #
+        # The width selects which rotation parameterization the decoder reads out
+        # of each delta, and it implements exactly two. An unusable one is not
+        # refused here-and-now by anything downstream: it is stored, then raises
+        # from inside ``get_actions`` on the first inference - after the server
+        # handshake and the IK bridge build - and an ``int()`` coercion truncated
+        # a fractional value first, so that refusal named a width the caller
+        # never supplied. Imported here rather than at module scope, matching the
+        # other :mod:`~strands_robots.policies.vera.sim_ik` uses in this class.
+        from .sim_ik import coerce_rotation_dim
+
+        resolved_rotation_dim: int | None = None
+        if rotation_dim is not None:
+            resolved_rotation_dim, dim_err = coerce_rotation_dim(rotation_dim, "rotation_dim", "set_ik_target")
+            if resolved_rotation_dim is None:
+                raise ValueError(dim_err)
         if translation_scale is not None:
             if (
                 err := positive_finite_number_error(translation_scale, "translation_scale", "set_ik_target")
@@ -341,8 +361,8 @@ class VeraPolicy(Policy):
         self._mj_model = mj_model
         self._ee_frame_name = ee_frame_name
         self._ee_frame_type = ee_frame_type
-        if rotation_dim is not None:
-            self._rotation_dim = int(rotation_dim)
+        if resolved_rotation_dim is not None:
+            self._rotation_dim = resolved_rotation_dim
         if translation_scale is not None:
             self._translation_scale = float(translation_scale)
         self._ik_bridge = None  # force rebuild
