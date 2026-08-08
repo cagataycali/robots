@@ -127,9 +127,17 @@ class TestWhyAnUnusablePeriodCannotPaceALoop:
             threading.Event().wait(float("inf"))
 
     def test_a_boolean_period_is_a_silent_one_second_cadence(self) -> None:
-        """``bool`` is an ``int`` subclass, so a bare positivity test admits it."""
-        assert float(True) == 1.0
-        assert True > 0
+        """``bool`` is an ``int`` subclass, so a bare positivity test admits it.
+
+        The value is bound rather than written into the comparison as a
+        literal: a comparison between two literals is decided when it is
+        typed, so it would state this premise without measuring it.
+        """
+        period: Any = True
+        assert float(period) == 1.0
+        assert period > 0
+        # What replaced that comparison does see it.
+        assert positive_finite_number_error(period, "poll_period", "HardwareRtpsBridge") is not None
 
     def test_a_numpy_float32_period_cannot_be_waited_on(self) -> None:
         """Why the ``float()`` conversion after the guard is load-bearing.

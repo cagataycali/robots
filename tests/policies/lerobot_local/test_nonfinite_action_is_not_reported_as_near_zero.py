@@ -266,9 +266,30 @@ class TestTheFloorIsTheWholeLocalContribution:
             refused = True
         assert refused == shared_refuses
 
-    def test_the_premise_the_bare_comparisons_missed(self):
-        """Why a comparison cannot express either domain."""
-        assert not (NAN < 0) and not (INF < 0)
-        assert not (NAN < 1) and not (INF < 1)
-        assert isinstance(True, int) and not (True < 1)
+    @pytest.mark.parametrize("value", [NAN, INF, True], ids=repr)
+    def test_the_premise_the_bare_comparisons_missed(self, value):
+        """Why a comparison cannot express either domain.
+
+        The pre-fix guards were ``threshold < 0`` and ``patience < 1``, and
+        both are ``False`` for every value here, so every one of them was
+        stored: ``nan`` and ``inf`` because any comparison against them is
+        ``False``, and ``True`` because it reaches a numeric comparison as the
+        ``int`` ``1``.
+
+        The value under test is a parameter rather than a literal. A
+        comparison written between two literals is decided when it is typed,
+        so it would state this premise without measuring it.
+        """
+        assert not (value < 0.0)
+        assert not (value < 1)
+
+    def test_what_replaced_the_comparisons_refuses_all_three(self):
+        """Finiteness sees ``nan``/``inf``; only an explicit test sees ``bool``."""
         assert not math.isfinite(NAN) and not math.isfinite(INF)
+        # A ``bool`` is finite, so a finiteness test alone does not see it. The
+        # shared rules reject it explicitly, which is why they cover all three
+        # where neither a comparison nor finiteness alone does.
+        assert isinstance(True, int) and math.isfinite(True)
+        for value in (NAN, INF, True):
+            assert finite_number_error(value, "threshold", "ZeroActionMonitor") is not None
+            assert positive_whole_number_error(value, "patience", "ZeroActionMonitor") is not None
