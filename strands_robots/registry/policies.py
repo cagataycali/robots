@@ -250,10 +250,18 @@ def build_policy_kwargs(
         server_address: Full server address host:port (grpc:// URLs, remote providers).
         policy_type: Sub-type (pi0, act, smolvla, ...).
         data_config: Data configuration for groot.
-        **extra: Any additional provider-specific kwargs.
+        **extra: Any additional provider-specific kwargs.  A key declared in
+            the provider's ``config_keys`` is forwarded; any other key is
+            dropped, which is what ``config_keys`` exists to decide.
 
     Returns:
         Dict of kwargs ready for create_policy(provider, **kwargs).
+
+        Where two sources name the same key, the more explicit one wins:
+        a provider-specific value in ``extra`` beats the generic parameter
+        that maps onto it (``host`` beats ``policy_host``), and both beat the
+        provider's registry default.  A default only ever fills a key the
+        caller left unset.
     """
     config = get_policy_provider(provider) or {}
     allowed_keys = set(config.get("config_keys", []))
@@ -275,16 +283,26 @@ def build_policy_kwargs(
         "policy_type": policy_type,
     }
 
+    # Precedence: a value the caller supplied under the provider's own key in
+    # ``extra`` wins over the generic parameter that maps onto the same key,
+    # which in turn wins over the registry default.  ``resolve_policy`` applies
+    # the same rule with its trailing ``kwargs.update(extra_kwargs)``.
+    #
+    # The order of these three loops is the contract.  Applying ``extra`` last
+    # while skipping keys already in ``kwargs`` inverts it: the defaults loop
+    # inserts the default first, so the ``key not in kwargs`` guard then sees
+    # that default and discards a value the caller did supply -- the same
+    # silent fallback to a default that #317 fixed for URL-parsed host/port.
+    for key, value in extra.items():
+        if key in allowed_keys:
+            kwargs[key] = value
+
     for key, value in param_map.items():
-        if value is not None and key in allowed_keys:
+        if value is not None and key in allowed_keys and key not in kwargs:
             kwargs[key] = value
 
     for key, default_val in defaults.items():
         if key not in kwargs:
             kwargs[key] = default_val
-
-    for key, value in extra.items():
-        if key in allowed_keys and key not in kwargs:
-            kwargs[key] = value
 
     return kwargs
