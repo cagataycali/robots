@@ -168,6 +168,12 @@ class PpoTrainer(BaseRLAlgo):
         # weight poisons every parameter and surfaces as a torch error naming
         # neither field, and a bool lands as a silently different coefficient.
         problems.extend(self._loss_weight_problems(spec))
+        # clip_param is the half-width of the trust region the surrogate is clipped
+        # to, and also clips the value loss. torch.clamp judges it not at all: a
+        # nan half-width routes the gradient to the unclipped branch, so the run
+        # trains bit-identically to an unclipped one while every reported loss is
+        # nan, and a negative half-width inverts the bounds into a constant.
+        problems.extend(self._clip_range_problems(spec))
         if spec.total_timesteps <= 0:
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:

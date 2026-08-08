@@ -56,7 +56,7 @@ import numpy as np
 import pytest
 
 from strands_robots.training import create_trainer
-from strands_robots.training._validate import _gradient_clip_error, gradient_clip_problems
+from strands_robots.training._validate import _clip_bound_error, gradient_clip_problems
 from strands_robots.training.base import Trainer
 from strands_robots.training.rl import RLTrainSpec
 from strands_robots.utils import positive_finite_number_error
@@ -254,22 +254,22 @@ class TestInfinityIsTheOnlyDifferenceFromTheSharedRule:
 
     @pytest.mark.parametrize("value", [*USABLE, *UNUSABLE])
     def test_it_agrees_with_the_shared_positive_finite_rule(self, value: Any) -> None:
-        mine = _gradient_clip_error(value, "max_grad_norm", "ppo")
+        mine = _clip_bound_error(value, "max_grad_norm", "ppo")
         shared = positive_finite_number_error(value, "max_grad_norm", "ppo")
         assert mine == shared, f"diverged on {value!r}: {mine!r} vs {shared!r}"
 
     @pytest.mark.parametrize("value", NO_CLIPPING)
     def test_infinity_is_the_carve_out(self, value: Any) -> None:
-        assert _gradient_clip_error(value, "max_grad_norm", "ppo") is None
+        assert _clip_bound_error(value, "max_grad_norm", "ppo") is None
         assert positive_finite_number_error(value, "max_grad_norm", "ppo") is not None
 
     def test_negative_infinity_is_not_carved_out(self) -> None:
-        assert _gradient_clip_error(float("-inf"), "max_grad_norm", "ppo") is not None
+        assert _clip_bound_error(float("-inf"), "max_grad_norm", "ppo") is not None
 
     @pytest.mark.parametrize("value", [*BEYOND_FLOAT_RANGE, *UNREADABLE_REAL])
     def test_the_carve_out_declines_rather_than_raising(self, value: Any) -> None:
         """A value the carve-out cannot read is delegated, never raised on."""
-        assert isinstance(_gradient_clip_error(value, "max_grad_norm", "ppo"), str)
+        assert isinstance(_clip_bound_error(value, "max_grad_norm", "ppo"), str)
 
     def test_the_unreadable_probes_span_the_prescribed_conversion_errors(self) -> None:
         """Non-vacuity for the wrapper, and a guard against the probes drifting.
@@ -290,7 +290,7 @@ class TestInfinityIsTheOnlyDifferenceFromTheSharedRule:
     def test_a_string_spelling_of_infinity_is_not_carved_out(self) -> None:
         """``float("inf")`` is the carve-out's value, so the type test carries it."""
         assert float("inf") == math.inf  # the premise the type test guards
-        assert _gradient_clip_error("inf", "max_grad_norm", "ppo") is not None
+        assert _clip_bound_error("inf", "max_grad_norm", "ppo") is not None
 
 
 class TestTheBackendsThatDoNotClipStaySilent:

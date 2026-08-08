@@ -622,6 +622,50 @@ class Trainer(ABC):
 
         return loss_weight_problems(spec, context=self.provider_name)
 
+    def _clip_range_problems(self, spec: TrainSpec) -> list[str]:
+        """Trust-region preflight for a backend that clips a policy ratio.
+
+        Returns a problem when :attr:`RLTrainSpec.clip_param` is not a positive
+        real number. It is the half-width of the trust region the on-policy
+        surrogate is clipped to, read twice per mini-batch - once for the policy
+        ratio and once for the value loss - and ``torch.clamp`` judges it not at
+        all, so every unusable value below produced a finite, successful,
+        deployable run whose objective was not the configured one. A ``nan``
+        half-width is the sharpest: both clipped terms become ``nan``, the
+        gradient of ``torch.max`` flows to the *unclipped* branch because every
+        comparison against ``nan`` is false, and the resulting checkpoint is
+        bit-identical to an unclipped run while every reported loss is ``nan`` -
+        the trust region silently gone with no signal a caller can act on. A
+        negative half-width inverts the clamp bounds so they return a constant,
+        a ``bool`` is a silent half-width of one, and a string, ``None`` or a
+        list raises ``TypeError`` mid-update.
+
+        Positive infinity is inside the domain: it is the field's only spelling
+        of *do not clip*, and ``clamp(ratio, -inf, inf)`` honors it by returning
+        the ratio unchanged. That is the same endpoint, for the same reason, as
+        the sibling bound :meth:`_gradient_clip_problems`, so the two share one
+        domain helper rather than carrying a copy each.
+
+        Only a backend that clips a policy ratio may call this: like
+        :meth:`_gradient_clip_problems`, and unlike
+        :meth:`_learning_rate_problems`, a backend that does not read the field
+        MUST NOT report on it, because per :class:`TrainSpec` a backend ignores
+        the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the module import graph one-way.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            A single-element list when ``clip_param`` cannot be honored; empty
+            otherwise.
+        """
+        from strands_robots.training._validate import clip_range_problems
+
+        return clip_range_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 

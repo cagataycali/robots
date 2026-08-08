@@ -244,6 +244,32 @@ sign, and `validate()` reports it like any other unusable bound instead of
 raising: Python integers are arbitrary-precision, so `10**400` is one request
 away.
 
+`clip_param` must be a positive number too, checked by the same `validate()` on
+the on-policy backend only (`spec.clip_param` appears in `rl/ppo.py` and nowhere
+else). It is the half-width of the trust region PPO is named for, read twice per
+mini-batch - once to clip the policy ratio and once to clip the value loss - and
+`torch.clamp` judges it not at all, so every unusable value produced a finite,
+successful, deployable run whose objective was not the configured one:
+
+- `nan` **silently removes the trust region.** Both clipped terms become `nan`,
+  so `torch.max(surrogate, surrogate_clipped)` returns `nan` - but its gradient
+  flows to the *unclipped* branch, because every comparison against `nan` is
+  false. Measured over a seeded 60-step run, the resulting checkpoint is
+  bit-identical to an unclipped one (parameter sum `140.1735330768706262`) while
+  `surrogate_loss`, `value_loss` and `latest_loss` are all reported as `nan`.
+- A **negative** half-width is not a window: `1 - c` exceeds `1 + c`, so the
+  clamp bounds are inverted and it returns a constant regardless of the ratio,
+  and the reported surrogate loss changes sign. `0` is the same failure at the
+  boundary - the value clip becomes `clamp(-0, 0)`, so `value_clipped` is exactly
+  `old_values` and the critic's clipped branch is a constant.
+- `True` was a silent half-width of one, five times the shipped `0.2`, and
+  `"0.2"`, `None` and a list raised `TypeError` from inside the update loop.
+
+`inf` is inside this field's domain for the same reason as `max_grad_norm`'s -
+`clamp(ratio, -inf, inf)` returns the ratio unchanged, so it is the field's only
+spelling of *do not clip* - and the two bounds share one domain helper rather
+than a copy each.
+
 ## Worked example
 
 `examples/training/train_ppo_reach.py` (on-policy) and `examples/training/train_fastsac_reach.py`

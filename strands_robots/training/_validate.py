@@ -111,6 +111,15 @@ on-policy objective. It is scoped like :func:`gradient_clip_problems` - only the
 on-policy backend composes that objective - and it bounds the *domain* rather than
 the floor: zero and negative are real configurations for both fields, while a
 non-finite or non-numeric weight is a value no reading makes usable.
+
+:func:`clip_range_problems` is the fourteenth, and the second of the two clip
+bounds on that same *optimization* axis: ``clip_param``, the half-width of the
+trust region the on-policy surrogate is clipped to, which also clips the value
+loss. It shares :func:`_clip_bound_error` with :func:`gradient_clip_problems`
+because the two bounds have one domain for one reason - a clip bound is a
+positive width, and positive infinity is each field's only spelling of "do not
+clip". It is scoped like :func:`gae_lambda_problems`: ``spec.clip_param`` is read
+in ``rl/ppo.py`` and nowhere else.
 """
 
 from __future__ import annotations
@@ -576,13 +585,14 @@ def discount_factor_problems(spec: TrainSpec, *, context: str) -> list[str]:
     now have their own gate too, in :func:`loss_weight_problems`, on the domain
     rather than on the endpoint this docstring called undecided: their zero
     readings are still unsettled and still accepted, but a non-finite weight has
-    no reading at all. ``clip_param`` and ``init_noise_std`` remain out of scope
-    in all five, and for measured reasons rather than by omission: ``clip_param``
-    is a clip *bound* whose ``inf`` is coherently honored as "do not clip"
-    (``clamp(ratio, -inf, inf)`` returns ``ratio`` unchanged), so it needs the
-    endpoint decision :func:`gradient_clip_problems` records for the sibling
-    bound; and every non-finite ``init_noise_std`` is refused by ``torch``, which
-    rejects a ``Normal`` of non-positive or non-finite scale.
+    no reading at all. ``clip_param`` now has its own gate too, in
+    :func:`clip_range_problems`: this docstring left it out because it needed the
+    endpoint decision :func:`gradient_clip_problems` records for the sibling clip
+    bound, and that decision is now shared rather than duplicated - both read
+    :func:`_clip_bound_error`. ``init_noise_std`` remains out of scope in all
+    six, for a measured reason rather than by omission: every non-finite value is
+    refused by ``torch``, which rejects a ``Normal`` of non-positive or
+    non-finite scale.
 
     Args:
         spec: The spec to check.
@@ -794,8 +804,13 @@ def temperature_learning_rate_problems(spec: TrainSpec, *, context: str) -> list
     return [error] if error is not None else []
 
 
-def _gradient_clip_error(value: Any, param: str, context: str) -> str | None:
-    """Error text when *value* is not a gradient-norm clip ``clip_grad_norm_`` honors.
+def _clip_bound_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when *value* is not a clip bound its consumer honors.
+
+    Shared by the two on-policy clip bounds, which have the same domain for the
+    same reason: ``max_grad_norm`` (see :func:`gradient_clip_problems`) and
+    ``clip_param`` (see :func:`clip_range_problems`). One rule, one home - a
+    second copy of it would be free to drift from this one.
 
     The whole of this function's own contribution is that positive **infinity is
     also accepted**; every other decision - numeric-ness, ``bool`` rejection,
@@ -803,12 +818,19 @@ def _gradient_clip_error(value: Any, param: str, context: str) -> str | None:
     :func:`~strands_robots.utils.positive_finite_number_error` domain, so those
     refusals read identically to every other positive-scalar field's.
 
-    Infinity is carved out because the consumer honors it. ``clip_grad_norm_``
-    scales a gradient by ``max_norm / total_norm`` only when that ratio is below
-    one, so an infinite bound leaves every gradient untouched - measured on a
-    parameter whose gradient norm is 5, ``inf`` returns it as ``[3.0, 4.0]``
-    unchanged. That is the only spelling of "do not clip" the field has, and a
-    guard that refused a value its own consumer applies coherently would be
+    Infinity is carved out because both consumers honor it, and it is the only
+    spelling of "do not clip" either field has:
+
+    * ``clip_grad_norm_`` scales a gradient by ``max_norm / total_norm`` only
+      when that ratio is below one, so an infinite bound leaves every gradient
+      untouched - measured on a parameter whose gradient norm is 5, ``inf``
+      returns it as ``[3.0, 4.0]`` unchanged.
+    * ``torch.clamp(ratio, 1 - clip_param, 1 + clip_param)`` becomes
+      ``clamp(ratio, -inf, inf)``, which returns ``ratio`` unchanged, so the
+      surrogate and value clips both fall away and the update descends the
+      unclipped objective - a coherent, finite run.
+
+    A guard that refused a value its own consumer applies coherently would be
     narrower than the code it protects.
 
     Nothing raises out of here, for any input. The carve-out asks the
@@ -891,7 +913,7 @@ def gradient_clip_problems(spec: TrainSpec, *, context: str) -> list[str]:
 
     Zero is **not** the "no clipping" spelling, which is the one reading that
     might have made it a contract question rather than a defect: infinity is,
-    and it is accepted (see :func:`_gradient_clip_error`). So the domain is a
+    and it is accepted (see :func:`_clip_bound_error`). So the domain is a
     positive real, finite or infinite, with no undecided endpoint.
 
     Only the on-policy backend clips gradients - ``grep`` finds
@@ -911,7 +933,7 @@ def gradient_clip_problems(spec: TrainSpec, *, context: str) -> list[str]:
         A single-element list when ``max_grad_norm`` cannot be honored; empty
         otherwise.
     """
-    error = _gradient_clip_error(getattr(spec, "max_grad_norm", 1.0), "max_grad_norm", context)
+    error = _clip_bound_error(getattr(spec, "max_grad_norm", 1.0), "max_grad_norm", context)
     return [error] if error is not None else []
 
 
@@ -996,3 +1018,78 @@ def loss_weight_problems(spec: TrainSpec, *, context: str) -> list[str]:
         if error is not None:
             problems.append(error)
     return problems
+
+
+def clip_range_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return trust-region problems for an on-policy RL :class:`TrainSpec`.
+
+    ``clip_param`` is the half-width of the trust region PPO is named for. The
+    on-policy update reads it twice, in the two expressions that clip::
+
+        surrogate_clipped = -adv * torch.clamp(ratio, 1.0 - spec.clip_param, 1.0 + spec.clip_param)
+        value_clipped = old_values + (value - old_values).clamp(-spec.clip_param, spec.clip_param)
+
+    Nothing judged it, and ``torch.clamp`` cannot: it is defined for every value
+    below, and each one produces a *finite, successful, deployable* run whose
+    objective is not the one the caller configured. Measured on this backend over
+    a seeded 60-step run, against a never-trained control whose checkpoint
+    parameter sum is ``139.8929914773252676``:
+
+    ==========================  =====================================================
+    ``clip_param``              Outcome (checkpoint parameter sum)
+    ==========================  =====================================================
+    ``0.2`` (shipped default)   clips; ``140.1741519418580992``
+    ``inf``                     no clip, finite losses; ``140.1735330768706262``
+    ``nan``                     **bit-identical to the unclipped run**, all losses ``nan``
+    ``True``                    silent half-width of one; ``140.1735330768706262``
+    ``-0.2``                    inverted bounds; ``140.1913412402318500``
+    ``0``                       degenerate window; ``140.2282075245283863``
+    ``-inf``                    trains on ``inf`` losses; ``140.0613218537641842``
+    ``"0.2"`` / ``None`` / ``[0.2]``  raise ``TypeError`` mid-update, from ``rl/ppo.py``
+    ==========================  =====================================================
+
+    Three of those rows are why this is a gate rather than a lint:
+
+    * **A ``nan`` half-width silently removes the trust region.** Both clipped
+      terms become ``nan``, so ``torch.max(surrogate, surrogate_clipped)``
+      returns ``nan`` - but its gradient flows to the *unclipped* branch, because
+      every comparison against ``nan`` is false. The run therefore descends the
+      unclipped objective and its checkpoint is bit-identical to the ``inf`` run,
+      while ``surrogate_loss``, ``value_loss`` and ``latest_loss`` are all
+      reported as ``nan``. PPO's defining mechanism is off and the only signal
+      that anything happened is a metric a caller cannot act on.
+    * **A negative half-width is not a window.** ``1 - c`` exceeds ``1 + c``, so
+      the clamp bounds are inverted and it returns a constant regardless of the
+      ratio - measured, ``clamp([0.7, 1.0, 1.4], 1.2, 0.8)`` is
+      ``[0.8, 0.8, 0.8]`` - and the reported surrogate loss changes sign, from
+      ``-0.008662`` to ``+0.081992``. Zero is the same failure at the boundary:
+      the value clip becomes ``clamp(-0, 0)``, so ``value_clipped`` is exactly
+      ``old_values`` and the critic's clipped branch is a constant.
+    * **A ``bool`` is a silently different trust region.** ``bool`` is an ``int``
+      subclass, so ``clip_param=True`` is a half-width of one - five times the
+      shipped ``0.2`` - written by a value that reads as a flag.
+
+    So the domain is a *positive* real, with positive infinity accepted as the
+    field's only spelling of "do not clip". That is the same rule and the same
+    reason as the sibling bound ``max_grad_norm``, so both read
+    :func:`_clip_bound_error` rather than carrying a copy each.
+
+    Only the on-policy backend clips a policy ratio - ``grep`` finds
+    ``spec.clip_param`` in ``rl/ppo.py`` and nowhere else - so this is scoped
+    like :func:`gae_lambda_problems` rather than :func:`learning_rate_problems`:
+    a backend that does not clip MUST NOT call this, because per
+    :class:`TrainSpec` a backend ignores the fields it does not support and
+    reporting on one would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``clip_param`` cannot be honored; empty
+        otherwise.
+    """
+    error = _clip_bound_error(getattr(spec, "clip_param", 0.2), "clip_param", context)
+    return [error] if error is not None else []
