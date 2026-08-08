@@ -1,0 +1,102 @@
+{
+  "tree": "/tmp/wt-main-h1",
+  "streams": [
+    {
+      "label": "dead policy: 0.0 x 6",
+      "truth": "near-zero",
+      "reported": "near-zero",
+      "message": "lerobot_local: Policy emitted near-zero actions (max abs < 0.001) for 10 consecutive steps: the robot will not move. This usually means the observation never reached the model -- check the embodiment's obs_rename / camera keys and that observation.state is populated.",
+      "n_warnings": 1
+    },
+    {
+      "label": "poisoned: nan x 6",
+      "truth": "non-finite",
+      "reported": "near-zero",
+      "message": "lerobot_local: Policy emitted near-zero actions (max abs < 0.001) for 10 consecutive steps: the robot will not move. This usually means the observation never reached the model -- check the embodiment's obs_rename / camera keys and that observation.state is populated.",
+      "n_warnings": 1
+    },
+    {
+      "label": "poisoned: inf x 6",
+      "truth": "non-finite",
+      "reported": "silent",
+      "message": "",
+      "n_warnings": 0
+    },
+    {
+      "label": "one nan, five real commands",
+      "truth": "non-finite",
+      "reported": "near-zero",
+      "message": "lerobot_local: Policy emitted near-zero actions (max abs < 0.001) for 10 consecutive steps: the robot will not move. This usually means the observation never reached the model -- check the embodiment's obs_rename / camera keys and that observation.state is populated.",
+      "n_warnings": 1
+    },
+    {
+      "label": "healthy: 0.9 x 6",
+      "truth": "silent",
+      "reported": "silent",
+      "message": "",
+      "n_warnings": 0
+    }
+  ],
+  "ctor": [
+    {
+      "label": "threshold=nan",
+      "verdict": "accepted",
+      "detail": "warns on a MOVING arm: 1   warns on a DEAD policy: 1"
+    },
+    {
+      "label": "threshold=inf",
+      "verdict": "accepted",
+      "detail": "warns on a MOVING arm: 1   warns on a DEAD policy: 1"
+    },
+    {
+      "label": "threshold=True",
+      "verdict": "accepted",
+      "detail": "warns on a MOVING arm: 1   warns on a DEAD policy: 1"
+    },
+    {
+      "label": "patience=nan",
+      "verdict": "accepted",
+      "detail": "warns on a MOVING arm: 0   warns on a DEAD policy: 0"
+    },
+    {
+      "label": "patience=inf",
+      "verdict": "accepted",
+      "detail": "warns on a MOVING arm: 0   warns on a DEAD policy: 0"
+    },
+    {
+      "label": "patience=2.7",
+      "verdict": "accepted",
+      "detail": "warns on a MOVING arm: 0   warns on a DEAD policy: 1"
+    },
+    {
+      "label": "threshold=1e-3 (default)",
+      "verdict": "accepted",
+      "detail": "warns on a MOVING arm: 0   warns on a DEAD policy: 1"
+    },
+    {
+      "label": "patience=10 (default)",
+      "verdict": "accepted",
+      "detail": "warns on a MOVING arm: 0   warns on a DEAD policy: 1"
+    }
+  ],
+  "rollout": {
+    "emitted_action": {
+      "1": 0.5235987901687622,
+      "2": 0.5235987901687622,
+      "3": 0.5235987901687622,
+      "4": 0.5235987901687622,
+      "5": 0.5235987901687622,
+      "6": 0.7850000262260437
+    },
+    "joints_after": {
+      "1": 0.416432040147,
+      "2": 0.318871623417,
+      "3": 0.424670272798,
+      "4": 0.513331818008,
+      "5": 0.513493111513,
+      "6": 0.770153186072
+    },
+    "max_delta_deg": 44.126527,
+    "png_bytes": 104289
+  }
+}
