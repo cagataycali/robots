@@ -232,7 +232,6 @@
         "text_prompt",
         "ckpt_root",
         "auto_launch_server",
-        "n_action_steps",
         "dynamics_run_id",
         "tracker_backend",
         "motion_plan_scale",

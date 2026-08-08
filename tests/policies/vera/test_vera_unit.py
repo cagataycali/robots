@@ -75,7 +75,6 @@ class TestConfig:
         monkeypatch.setenv("VERA_VIS_PORT", "xyz")
         monkeypatch.setenv("VERA_RENDER_WIDTH", "wide")
         monkeypatch.setenv("VERA_SAMPLE_STEPS", "ten")
-        monkeypatch.setenv("VERA_N_ACTION_STEPS", "")
         monkeypatch.setenv("VERA_MOTION_PLAN_SCALE", "fast")
 
         c = VeraConfig(embodiment="pusht")
@@ -86,7 +85,6 @@ class TestConfig:
         assert c.render_width == 252  # pusht per-embodiment default
         # Non-numeric optional knobs stay unset (planner yaml decides).
         assert c.sample_steps is None
-        assert c.n_action_steps is None
         assert c.motion_plan_scale is None
 
 

@@ -144,7 +144,6 @@ class VeraConfig:
             ``VERA_CKPT_ROOT`` for the server subprocess.
         sample_steps: WAN denoise steps (deploy default is 10; ``None`` uses the
             planner yaml's value).
-        n_action_steps: Deploy chunk size (actions executed per infer).
         tracker_backend: IDM point tracker backend override.
         motion_plan_scale: IDM motion-plan scale override (live-tunable).
         teacache: Enable the near-lossless DiT teacache speedup (default True).
@@ -167,7 +166,6 @@ class VeraConfig:
     ckpt_root: Path | None = None
     wan_ckpt_root: Path | None = None  # frozen Wan2.1-T2V-1.3B base (mimicgen/omni); env VERA_WAN_CKPT_ROOT
     sample_steps: int | None = None
-    n_action_steps: int | None = None
     tracker_backend: str | None = None
     motion_plan_scale: float | None = None
     teacache: bool = True
@@ -260,8 +258,6 @@ class VeraConfig:
             self.wan_ckpt_root = Path(wr) if wr else None
         if self.sample_steps is None:
             self.sample_steps = _env_int("VERA_SAMPLE_STEPS")
-        if self.n_action_steps is None:
-            self.n_action_steps = _env_int("VERA_N_ACTION_STEPS")
         if self.tracker_backend is None:
             self.tracker_backend = _env("VERA_TRACKER_BACKEND")
         if self.motion_plan_scale is None:

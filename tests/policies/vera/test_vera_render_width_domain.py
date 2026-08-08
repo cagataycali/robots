@@ -391,12 +391,17 @@ class TestNeighbouringWidthAxesStayOutOfScope:
         req = _run(8)
         assert req["context_rgb"].shape[1:3] == (8, 8)
 
-    def test_n_action_steps_is_still_read_by_nothing(self):
-        """``VeraConfig.n_action_steps`` is documented as the deploy chunk size
-        and is consumed by no code on any path - the chunk length comes from the
-        server's response. It is therefore neither validated nor honored, and
-        deciding between implementing and deleting it is a separate question
-        (tracked as its own issue) rather than part of a width domain.
+    def test_n_action_steps_is_gone_rather_than_unvalidated(self):
+        """The neighbouring ``n_action_steps`` was documented as the deploy chunk
+        size and read by nothing, so it was deleted rather than given a domain.
+
+        This replaces the boundary pin that asserted the old behaviour
+        (``n_action_steps=-7`` accepted and ignored). A domain here would have
+        refused ``-7`` and then still honored nothing, which is a worse contract
+        than an unvalidated knob, not a better one - so this axis is settled by
+        removal. The full account, including the fourth spelling in the policy
+        registry, lives in ``test_vera_n_action_steps_removed.py``; asserted here
+        so the width domain cannot silently re-acquire an inert neighbour.
         """
-        cfg = _config(embodiment="mimicgen", n_action_steps=-7)
-        assert cfg.n_action_steps == -7  # accepted, and read by nothing
+        with pytest.raises(TypeError, match="n_action_steps"):
+            _config(embodiment="mimicgen", n_action_steps=-7)

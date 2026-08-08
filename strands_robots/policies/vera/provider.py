@@ -163,7 +163,6 @@ class VeraPolicy(Policy):
         text_prompt: Optional text conditioning for the video planner.
         ckpt_root: Root of downloaded VERA checkpoints (``VERA_CKPT_ROOT``).
         auto_launch_server: Launch + manage the server subprocess on first use.
-        n_action_steps: Deploy chunk size (actions per infer).
         dynamics_run_id: Jacobian/IDM checkpoint id (per-embodiment default).
         tracker_backend: IDM point-tracker backend override.
         motion_plan_scale: IDM motion-plan scale (applied live via ``configure``).
@@ -197,7 +196,6 @@ class VeraPolicy(Policy):
         text_prompt: str | None = None,
         ckpt_root: Any = None,
         auto_launch_server: bool = True,
-        n_action_steps: int | None = None,
         dynamics_run_id: str | None = None,
         tracker_backend: str | None = None,
         motion_plan_scale: float | None = None,
@@ -234,7 +232,6 @@ class VeraPolicy(Policy):
             text_prompt=text_prompt,
             ckpt_root=ckpt_root,
             auto_launch_server=auto_launch_server,
-            n_action_steps=n_action_steps,
             dynamics_run_id=dynamics_run_id,
             tracker_backend=tracker_backend,
             motion_plan_scale=motion_plan_scale,
