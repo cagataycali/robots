@@ -517,6 +517,36 @@ class Trainer(ABC):
 
         return optimization_epochs_problems(spec, context=self.provider_name)
 
+    def _temperature_learning_rate_problems(self, spec: TrainSpec) -> list[str]:
+        """Entropy-temperature learning-rate preflight, for backends that tune one.
+
+        Returns a problem when a spec asking for an automatically tuned
+        temperature carries an :attr:`RLTrainSpec.alpha_lr` that is not a positive
+        finite number. A :meth:`validate` implementation that builds a temperature
+        optimizer MUST call this **in addition to**
+        :meth:`_learning_rate_problems`: the two fields are separate learning
+        rates on separate optimizers, so guarding the one that drives the actor
+        and critics leaves the temperature's own rate unchecked. ``alpha_lr=0``
+        freezes the temperature at ``init_alpha`` for the whole run - the
+        requested automatic tuning silently does not happen - and ``alpha_lr=inf``
+        writes a checkpoint holding non-finite parameters, both under a
+        successful result.
+
+        Only the off-policy backend tunes a temperature, so unlike
+        :meth:`_learning_rate_problems` a backend that does not read the field
+        MUST NOT call this: per :class:`TrainSpec` a backend ignores the fields it
+        does not support, so reporting on one it never reads would be a false
+        rejection. For the same reason the check is inert unless the spec's
+        ``autotune_alpha`` is set, since that is the only branch that constructs a
+        temperature optimizer.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import temperature_learning_rate_problems
+
+        return temperature_learning_rate_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 

@@ -86,6 +86,16 @@ so a non-positive value takes no gradient step at all while the run still
 collects its rollouts, writes a deployable checkpoint and reports success. It is
 scoped like :func:`gae_lambda_problems`: only the on-policy backend has an epoch
 loop, so FastSAC must not report on a field it never reads.
+
+:func:`temperature_learning_rate_problems` is the eleventh, on the same
+*optimization* axis as :func:`learning_rate_problems` and for its sibling
+field. FastSAC builds *two* optimizers from two separate learning-rate fields -
+``learning_rate`` for the actor and both critics, and ``alpha_lr`` for the
+entropy temperature - and passes each straight to
+``torch.optim.Adam(..., lr=...)``, so the failure modes
+:func:`learning_rate_problems` documents apply to the second field verbatim.
+It is a separate gate for the same reason as :func:`gae_lambda_problems`: only
+the off-policy backend tunes a temperature.
 """
 
 from __future__ import annotations
@@ -693,4 +703,73 @@ def optimization_epochs_problems(spec: TrainSpec, *, context: str) -> list[str]:
         empty otherwise.
     """
     error = positive_count_error(getattr(spec, "num_learning_epochs", 1), "num_learning_epochs", context)
+    return [error] if error is not None else []
+
+
+def temperature_learning_rate_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return entropy-temperature learning-rate problems for a :class:`TrainSpec`.
+
+    ``alpha_lr`` is documented on :class:`~strands_robots.training.rl.RLTrainSpec`
+    as the "Learning rate for the temperature optimizer (SAC)", and FastSAC hands
+    it to the same constructor as the already-guarded ``learning_rate`` two lines
+    above it::
+
+        self.actor_optimizer = torch.optim.Adam(actor_params, lr=spec.learning_rate)
+        self.critic_optimizer = torch.optim.Adam(critic_params, lr=spec.learning_rate)
+        ...
+        self.alpha_optimizer = torch.optim.Adam([self.log_alpha], lr=spec.alpha_lr)
+
+    So every failure mode :func:`learning_rate_problems` documents applies to it
+    unchanged, and each was measured on a 40-timestep FastSAC run whose
+    temperature starts at ``init_alpha=1.0``:
+
+    * ``0`` (and ``0.0``, and ``False``, which is ``0`` to the optimizer) builds
+      the optimizer and moves ``log_alpha`` by nothing, so the temperature stays
+      at ``init_alpha`` for the whole run. ``autotune_alpha=True`` then behaves
+      exactly like ``autotune_alpha=False`` while reporting the automatic
+      temperature it was asked for - the "runs the full work and updates no
+      weight" pathology, on the one parameter whose job is to adapt.
+    * ``inf`` also builds, and the first step sends ``log_alpha`` to an infinity.
+      Because ``alpha`` multiplies the log-probability in the *actor* loss, the
+      damage is not confined to the temperature: the run finished with
+      ``status="success"`` and a checkpoint whose largest parameter magnitude was
+      ``inf``.
+    * ``True`` is a silent learning rate of ``1.0``, over three thousand times
+      the ``3e-4`` default, and moved the temperature 407x further in the same
+      40 steps.
+    * A negative value and ``nan`` *are* refused, by ``torch.optim.Adam``
+      (``ValueError: Invalid learning rate``), and a ``str`` / ``None`` /
+      ``list`` raises a bare ``TypeError: '<=' not supported between instances of
+      'float' and 'str'`` naming neither the field nor the value. Both arrive in
+      :meth:`~strands_robots.training.rl.base_algo.BaseRLAlgo.setup`, after the
+      env and both networks are built - past the point :meth:`Trainer.validate`
+      documents itself as running before.
+
+    Unlike ``learning_rate`` there is no ``None`` sentinel to exempt: the field is
+    annotated ``float`` with a concrete ``3e-4`` default, so ``None`` is a value
+    the temperature optimizer cannot take rather than a request for a default.
+
+    The value is read only when ``autotune_alpha`` is set, which is the only
+    branch that constructs a temperature optimizer, so a spec that tunes no
+    temperature is not reported on - refusing a field that call path never reads
+    would be a false rejection. A plain :class:`TrainSpec` has no
+    ``autotune_alpha`` at all and is likewise silent.
+
+    Only the off-policy backend tunes a temperature, so this is scoped like
+    :func:`gae_lambda_problems` rather than :func:`learning_rate_problems`: a
+    backend that does not read the field MUST NOT call this.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when a tuned temperature's ``alpha_lr`` cannot be
+        honored; empty when it is usable or no temperature is being tuned.
+    """
+    if not getattr(spec, "autotune_alpha", False):
+        return []
+    error = positive_finite_number_error(getattr(spec, "alpha_lr", 3e-4), "alpha_lr", context)
     return [error] if error is not None else []

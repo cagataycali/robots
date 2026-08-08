@@ -142,6 +142,10 @@ class FastSacTrainer(BaseRLAlgo):
         # gamma discounts the return this backend optimizes; the arithmetic that
         # consumes it never judges it, so the shared interval domain does.
         problems.extend(self._discount_factor_problems(spec))
+        # alpha_lr is a second learning rate on a second optimizer: the actor
+        # and critics take spec.learning_rate, the entropy temperature takes
+        # this one, and only the first is covered above.
+        problems.extend(self._temperature_learning_rate_problems(spec))
         if spec.total_timesteps <= 0:
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:

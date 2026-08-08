@@ -213,6 +213,17 @@ because the update averages its accumulators through `max(1, n_updates)`. `True`
 is likewise a silent single epoch, and a non-integer raises a bare `TypeError`
 out of `range()` after the environment and the networks are already built.
 
+FastSAC builds two optimizers from two learning-rate fields - `learning_rate`
+for the actor and both critics, `alpha_lr` for the entropy temperature - so
+when `autotune_alpha` is set `alpha_lr` must be a positive finite number too,
+checked by the same `validate()`. `alpha_lr=0` builds the temperature
+optimizer and never moves it, so the temperature stays at `init_alpha` and the
+automatic tuning the spec asked for silently does not happen; `inf` sends it
+to an infinity on the first step, and because the temperature multiplies the
+log-probability in the actor loss the resulting checkpoint holds non-finite
+parameters. Both previously reported success. It is inert when
+`autotune_alpha=False`, which builds no temperature optimizer.
+
 ## Worked example
 
 `examples/training/train_ppo_reach.py` (on-policy) and `examples/training/train_fastsac_reach.py`
