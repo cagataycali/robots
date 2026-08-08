@@ -53,6 +53,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from strands_robots.utils import positive_finite_number_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -294,6 +296,34 @@ class IotMqttTransport:
     -------------
     The ``awscrt`` library calls handlers on its own IO thread. We protect
     the subscription dict with a small lock; ``put`` is lock-free.
+
+    Args:
+        thing_name: AWS IoT Thing name, which MUST equal the cert's CN and the
+            :class:`~strands_robots.mesh.core.Mesh` peer_id. Falls back to
+            ``STRANDS_IOT_THING_NAME``.
+        endpoint: The AWS IoT Core ATS endpoint. Falls back to
+            ``STRANDS_IOT_ENDPOINT``.
+        cert_dir: Directory holding the cert, private key and root CA. Falls
+            back to ``STRANDS_IOT_CERT_DIR``, then ``~/.strands_robots/iot``.
+        ca_file: Path to the root CA file. Falls back to
+            ``STRANDS_IOT_CA_FILE``, then ``AmazonRootCA1.pem`` in ``cert_dir``.
+        connect_timeout: Seconds :meth:`connect` waits for CONNACK before
+            reporting the broker unreachable. Only a positive finite number can
+            be honored, and the value is refused here rather than at the wait:
+            :meth:`connect` spends it on ``threading.Event.wait``, which returns
+            ``False`` at once for ``0``, a negative and ``nan`` - so a broker
+            that is connecting normally is reported as having "timed out", and
+            its client is torn down. ``inf`` and a numeric string instead raise
+            ``OverflowError`` / ``TypeError`` out of a method documented to
+            return ``bool``, after the MQTT5 client has been started and with
+            nothing left to stop it. ``None`` is not a spelling for an unbounded
+            wait: ``Event.wait(None)`` blocks forever while :meth:`connect`
+            holds the instance lock, so :meth:`close` can never run. This is the
+            domain the two remote-inference clients already apply to the
+            parameter of the same name (#1984).
+
+    Raises:
+        ValueError: If ``connect_timeout`` is not a positive finite number.
     """
 
     def __init__(
@@ -304,6 +334,16 @@ class IotMqttTransport:
         ca_file: str | None = None,
         connect_timeout: float = 15.0,
     ) -> None:
+        # Refuse a wait budget that names no budget while the caller still holds
+        # the value. ``connect()`` spends it on ``Event.wait``, whose reaction to
+        # an unusable one is indistinguishable from an unreachable broker: it
+        # returns ``False`` immediately, and ``connect()`` then logs "timed out
+        # after 0.0s" and stops a client that was connecting fine. Placed here,
+        # and not beside the wait, so the refusal also precedes the ``awsiot``
+        # import inside ``connect()`` - the same mistake then reports identically
+        # with and without the [mesh-iot] extra installed.
+        if error := positive_finite_number_error(connect_timeout, "connect_timeout", type(self).__name__):
+            raise ValueError(error)
         self._thing_name = thing_name or os.getenv("STRANDS_IOT_THING_NAME", "")
         self._endpoint = endpoint or os.getenv("STRANDS_IOT_ENDPOINT", "")
         self._cert_dir = Path(cert_dir or os.getenv("STRANDS_IOT_CERT_DIR") or Path.home() / ".strands_robots" / "iot")
