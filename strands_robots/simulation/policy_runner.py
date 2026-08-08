@@ -49,6 +49,7 @@ from strands_robots.dataset_recorder import RecordingFrameError
 from strands_robots.policies.base import resolve_chunk_length
 from strands_robots.utils import (
     positive_count_error,
+    positive_finite_number_error,
     positive_whole_number_error,
     process_rss_mb,
     require_optional,
@@ -1157,6 +1158,18 @@ class PolicyRunner:
 
         if seed_error := randomization_seed_error(seed, "PolicyRunner.run", max_seed=MAX_EVAL_SEED):
             raise ValueError(seed_error)
+        # Same shared domain the facade one layer up enforces, raised rather
+        # than returned because raising is this layer's contract: PolicyRunner is
+        # drivable directly and a direct caller has no envelope to read a refusal
+        # from. A deadline outside the domain makes the seam swap's own
+        # "policy inference is stuck" diagnosis false - see
+        # SimEngine._validate_rtc_inference_timeout for the measured failure modes.
+        if rtc_inference_timeout_s is not None and (
+            timeout_error := positive_finite_number_error(
+                rtc_inference_timeout_s, "rtc_inference_timeout_s", "PolicyRunner.run"
+            )
+        ):
+            raise ValueError(timeout_error)
         if seed is not None:
             set_eval_seed(seed)
             try:
@@ -2258,6 +2271,18 @@ class PolicyRunner:
 
         if seed_error := randomization_seed_error(seed, "PolicyRunner.evaluate", max_seed=MAX_EVAL_SEED):
             raise ValueError(seed_error)
+        # Same shared domain the facade one layer up enforces, raised rather
+        # than returned because raising is this layer's contract: PolicyRunner is
+        # drivable directly and a direct caller has no envelope to read a refusal
+        # from. A deadline outside the domain makes the seam swap's own
+        # "policy inference is stuck" diagnosis false - see
+        # SimEngine._validate_rtc_inference_timeout for the measured failure modes.
+        if rtc_inference_timeout_s is not None and (
+            timeout_error := positive_finite_number_error(
+                rtc_inference_timeout_s, "rtc_inference_timeout_s", "PolicyRunner.evaluate"
+            )
+        ):
+            raise ValueError(timeout_error)
         if spec is not None and success_fn is not None:
             return {
                 "status": "error",

@@ -1901,6 +1901,63 @@ class SimEngine(ABC):
             return {"status": "error", "content": [{"text": error}]}
         return None
 
+    @staticmethod
+    def _validate_rtc_inference_timeout(rtc_inference_timeout_s: Any, method: str) -> dict[str, Any] | None:
+        """Reject an async-RTC prefetch deadline the runner cannot wait out.
+
+        ``rtc_inference_timeout_s`` is the async-RTC chunk pipeline's hard
+        per-chunk deadline: the seam swap does
+        ``future.result(timeout=rtc_inference_timeout_s)`` and converts a
+        ``concurrent.futures.TimeoutError`` into "policy inference is stuck.
+        Raise the timeout or check the policy/server." That message is only true
+        of a deadline a healthy inference could have met, and every value
+        outside the accepted domain makes it false:
+
+        * ``0`` / a negative value / ``nan`` make ``Future.result`` raise
+          immediately - ``nan`` because every comparison against it is false, so
+          the deadline is never considered met - and the rollout is reported as
+          ``status="error"`` blaming a policy that answered on time. The value
+          the caller supplied is quoted back in a sentence accusing the model.
+        * ``inf`` cannot be honored either: it reaches ``time_t`` arithmetic and
+          raises ``OverflowError: timestamp out of range for platform time_t``,
+          which names neither the parameter nor the method. ``None`` - not
+          ``inf`` - is this parameter's documented "wait without a deadline"
+          spelling, so refusing ``inf`` costs no capability.
+        * ``True`` is an ``int`` subclass and acts as a silent 1-second budget.
+        * A string or a list reaches the same comparison and leaks
+          ``TypeError: '>' not supported between instances of 'str' and 'int'``.
+
+        The accepted domain is
+        :func:`~strands_robots.utils.positive_finite_number_error` - the same
+        rule as :meth:`_validate_duration` and
+        :meth:`_validate_positive_frequency`, the other wall-clock knobs of a
+        rollout - plus ``None``, which this parameter documents as "no deadline"
+        and which is its default.
+
+        Validated unconditionally rather than only when the async path is
+        active. Whether that path runs is not knowable here: ``async_rtc=None``
+        (the default) auto-resolves from the policy's own chunk-emitting shape
+        one layer down, after the policy has been constructed. Gating the check
+        on the flag would therefore leave the dominant path - every
+        chunk-emitting VLA - unguarded, and give one value two answers depending
+        on a resolution the caller cannot see. Checking here instead costs a bad
+        deadline no weight download and no frame.
+
+        Args:
+            rtc_inference_timeout_s: The caller-supplied value to validate.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None`` when the
+            value is valid (including when it is ``None``).
+        """
+        if rtc_inference_timeout_s is None:
+            return None
+        error = positive_finite_number_error(rtc_inference_timeout_s, "rtc_inference_timeout_s", method)
+        if error:
+            return {"status": "error", "content": [{"text": error}]}
+        return None
+
     def _validate_recording_rate(self, control_frequency: float, method: str) -> dict[str, Any] | None:
         """Reject a rollout whose rate the active dataset recording cannot describe.
 
@@ -2342,6 +2399,8 @@ class SimEngine(ABC):
         if err := self._validate_action_horizon(action_horizon, "run_policy"):
             return err
         if err := self._validate_control_substeps(control_substeps, "run_policy"):
+            return err
+        if err := self._validate_rtc_inference_timeout(rtc_inference_timeout_s, "run_policy"):
             return err
         # Both rates are known only here: the dataset rate was fixed by
         # start_recording one call earlier. Checked before any policy is
@@ -3287,6 +3346,8 @@ class SimEngine(ABC):
         if err := self._validate_positive_frequency(control_frequency, "eval_policy"):
             return err
         if err := self._validate_control_substeps(control_substeps, "eval_policy"):
+            return err
+        if err := self._validate_rtc_inference_timeout(rtc_inference_timeout_s, "eval_policy"):
             return err
         # Both rates are known only here: the dataset rate was fixed by
         # start_recording one call earlier. Checked before any policy is
