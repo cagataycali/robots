@@ -88,37 +88,64 @@ NOT_A_CLIP: list[Any] = [
     np.bool_(True),
 ]
 
-# Reals no float64 stands for. Positive and finite, so ``must be > 0`` would be a
-# false statement about them - the shared domain answers them with a reason of its
-# own, and the carve-out has to reach it rather than raising on the conversion.
-BEYOND_FLOAT_RANGE: list[Any] = [10**400, -(10**400), Fraction(10**400, 3)]
-
 
 class _RealWithNoFloat:
-    """A :class:`numbers.Real` registration that can be read as no number at all.
+    """A :class:`numbers.Real` registration whose conversion refuses.
 
-    ``numbers.Real`` is a registration rather than an inheritance, so a value that
-    satisfies the type test owes a guard nothing else - neither a working
-    ``__float__`` nor a working ``__eq__``. Both raise here, so a carve-out that
-    converted *or* compared without wrapping it would fail on this value.
+    ``numbers.Real`` is a registration rather than an inheritance, so a value
+    that satisfies the type test owes a guard no working ``__float__``. The
+    carve-out converts, so this is the shape that reaches its wrapper: without
+    one, the conversion's own exception escapes ``validate``.
+
+    The exception is supplied per instance rather than fixed, because the
+    handler is deliberately broader than any single type - a probe that raised
+    only one would let an ``except`` clause narrowed to it keep passing. Each
+    type used is one the data model prescribes for a conversion that cannot be
+    performed, which is also what keeps these probes out of a merge gate: the
+    ``py/unexpected-raise-in-special-method`` CodeQL rule reports a special
+    method that always raises an exception unexpected for it, an alert opens a
+    review thread, and thread resolution is required to merge - so a
+    ``RuntimeError`` here would block the PR it is testing. Suppression is not
+    the alternative: the filter set is deliberately exactly two rule ids, pinned
+    by ``tests/test_codeql_query_filters.py``.
     """
 
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
     def __float__(self) -> float:
-        raise RuntimeError("this real cannot be read as a float")
-
-    def __eq__(self, other: object) -> bool:
-        raise RuntimeError("this real cannot be compared")
-
-    def __hash__(self) -> int:
-        return 0
+        raise self._error
 
     def __repr__(self) -> str:
-        return "<a real with no float>"
+        return f"<a real whose float raises {type(self._error).__name__}>"
 
 
 numbers.Real.register(_RealWithNoFloat)
 
-UNREADABLE_REAL: list[Any] = [_RealWithNoFloat()]
+#: The exceptions the data model prescribes for a conversion that cannot be
+#: performed: ``TypeError`` for an unsupported operand, and the two ``float()``
+#: itself raises for a value it cannot represent.
+PRESCRIBED_CONVERSION_ERRORS = (TypeError, ValueError, OverflowError)
+
+# A registration the conversion cannot read at all. Neither reason the shared
+# domain has for a *number* is true of it, so it earns the positivity message,
+# the same as every other value that is not a usable positive real.
+UNREADABLE_REAL: list[Any] = [
+    _RealWithNoFloat(TypeError("this real cannot be read as a float")),
+    _RealWithNoFloat(ValueError("this real has no float value")),
+]
+
+# A registration whose conversion *overflows* is beyond the float range by the
+# shared helper's own definition - ``_beyond_float_range`` asks the conversion,
+# not the type - so it earns the range reason and belongs with ``10**400``
+# rather than with the values above. Keeping it in the right family is what
+# makes the two refusal-reason tests below mean anything.
+OVERFLOWING_REAL: list[Any] = [_RealWithNoFloat(OverflowError("this real is past the float range"))]
+
+# Reals no float64 stands for. Positive and finite, so ``must be > 0`` would be a
+# false statement about them - the shared domain answers them with a reason of its
+# own, and the carve-out has to reach it rather than raising on the conversion.
+BEYOND_FLOAT_RANGE: list[Any] = [10**400, -(10**400), Fraction(10**400, 3), *OVERFLOWING_REAL]
 
 # Every unusable value whose refusal is the shared domain's ``must be > 0``.
 PLAIN_REFUSAL: list[Any] = [*NO_GRADIENT_STEP, *INVERTED_GRADIENT, *NOT_A_CLIP, *UNREADABLE_REAL]
@@ -243,6 +270,22 @@ class TestInfinityIsTheOnlyDifferenceFromTheSharedRule:
     def test_the_carve_out_declines_rather_than_raising(self, value: Any) -> None:
         """A value the carve-out cannot read is delegated, never raised on."""
         assert isinstance(_gradient_clip_error(value, "max_grad_norm", "ppo"), str)
+
+    def test_the_unreadable_probes_span_the_prescribed_conversion_errors(self) -> None:
+        """Non-vacuity for the wrapper, and a guard against the probes drifting.
+
+        The wrapper is broad on purpose, so the probes have to be broader than
+        one exception or an ``except`` clause narrowed to it would still pass.
+        They also have to stay *prescribed*: a special method that always raises
+        an exception the data model does not expect for it is a CodeQL alert, and
+        an alert opens a review thread that blocks the merge.
+        """
+        raised = []
+        for probe in [*UNREADABLE_REAL, *OVERFLOWING_REAL]:
+            with pytest.raises(PRESCRIBED_CONVERSION_ERRORS) as excinfo:
+                float(probe)
+            raised.append(excinfo.type)
+        assert set(raised) == set(PRESCRIBED_CONVERSION_ERRORS)
 
     def test_a_string_spelling_of_infinity_is_not_carved_out(self) -> None:
         """``float("inf")`` is the carve-out's value, so the type test carries it."""
