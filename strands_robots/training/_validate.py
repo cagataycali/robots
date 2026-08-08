@@ -77,6 +77,15 @@ estimates an advantage trace, so per :class:`TrainSpec` FastSAC must not report
 on a field it never reads. They are nonetheless one contract: the trace decays
 by the *product* ``gamma * lam``, so bounding one factor does not bound the
 trace.
+
+:func:`optimization_epochs_problems` is the tenth, on the *optimization* axis:
+``num_learning_epochs``, the number of passes the on-policy update makes over
+each rollout batch. It is the loop bound of the entire optimizer step
+(``for _ in range(spec.num_learning_epochs)`` wraps every ``optimizer.step()``),
+so a non-positive value takes no gradient step at all while the run still
+collects its rollouts, writes a deployable checkpoint and reports success. It is
+scoped like :func:`gae_lambda_problems`: only the on-policy backend has an epoch
+loop, so FastSAC must not report on a field it never reads.
 """
 
 from __future__ import annotations
@@ -533,12 +542,18 @@ def discount_factor_problems(spec: TrainSpec, *, context: str) -> list[str]:
     than left to the arithmetic that consumes it.
 
     ``lam``, the other factor of the trace-decay product, has its own gate for
-    that same scoping reason - see :func:`gae_lambda_problems`. The remaining PPO
-    coefficients (``clip_param``, ``num_learning_epochs``, ``entropy_coef``,
+    that same scoping reason - see :func:`gae_lambda_problems`, and
+    ``num_learning_epochs`` likewise in :func:`optimization_epochs_problems`.
+    The remaining PPO coefficients (``clip_param``, ``entropy_coef``,
     ``value_loss_coef``, ``max_grad_norm``, ``init_noise_std``) are out of scope
-    here and there: they weight loss terms and bound gradients rather than the
-    return, and each carries its own undecided question about whether zero is a
-    disabled mode, so they belong in a gate on that axis.
+    in all three: they weight loss terms and bound gradients rather than the
+    return, and for each of them zero has a candidate reading as a *disabled
+    mode* that this repository has not settled - ``entropy_coef`` is shipped
+    defaulting to ``0.0``, so zero is already a supported configuration;
+    ``max_grad_norm=0`` reads as "no clipping" in several RL codebases; and
+    ``init_noise_std=0`` is refused by ``torch`` itself, which rejects a
+    ``Normal`` of zero scale. Those are contract questions rather than defects,
+    so they are left to a gate that settles them.
 
     Args:
         spec: The spec to check.
@@ -611,4 +626,71 @@ def gae_lambda_problems(spec: TrainSpec, *, context: str) -> list[str]:
         A single-element list when ``lam`` cannot be honored; empty otherwise.
     """
     error = _closed_unit_interval_error(getattr(spec, "lam", 0.0), "lam", context)
+    return [error] if error is not None else []
+
+
+def optimization_epochs_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return optimization-epoch problems for an on-policy RL :class:`TrainSpec`.
+
+    ``num_learning_epochs`` is the number of passes the update makes over each
+    rollout batch, and it is consumed as a bare loop bound around the whole
+    optimizer step - ``for _ in range(spec.num_learning_epochs)`` encloses every
+    ``optimizer.step()`` in the PPO update. So the field does not merely scale
+    how much optimization happens; a non-positive value removes *all* of it, and
+    nothing downstream notices:
+
+    ==========================  =========  ==============  ==============
+    ``num_learning_epochs``     verdict    optimizer       reported
+                                           steps taken     losses
+    ==========================  =========  ==============  ==============
+    5 (the shipped default)     honored    24              real values
+    0                           accepted   **0**           all ``0.0``
+    -3                          accepted   **0**           all ``0.0``
+    ==========================  =========  ==============  ==============
+
+    Measured on this backend over a 60-step run: ``0`` and ``-3`` both report
+    ``status="success"``, take **zero** gradient steps, and write a checkpoint
+    whose parameters are bit-identical to each other - the untrained
+    initialisation. The losses read ``0.0`` rather than blank because the update
+    averages its accumulators through ``max(1, n_updates)``, so an epoch count
+    that ran no minibatch reports plausible metrics for a run that learned
+    nothing. A caller therefore gets a deployable-looking checkpoint, a
+    successful result and a metrics dict, with no signal anywhere that the
+    optimizer never ran.
+
+    The remaining values outside the domain fail in two further ways:
+
+    * ``True`` is a silent single epoch, because ``range(True)`` is
+      ``range(1)`` - the same run takes 12 optimizer steps instead of 24. That
+      is a different amount of optimization from the one requested, reported as
+      success.
+    * ``2.7``/``nan``/``inf``/``"5"``/``None`` raise a bare ``TypeError:
+      'float' object cannot be interpreted as an integer`` out of ``range()``,
+      naming neither the field nor the run, and only after the environment, the
+      networks and a full rollout have been built - exactly the deep stack trace
+      a read-only preflight exists to replace. No checkpoint is written at all.
+
+    The domain is therefore a positive integer, checked by
+    :func:`~strands_robots.utils.positive_count_error`, which is already the
+    domain this repository uses for a value consumed as a ``range()`` bound: an
+    integral float is not usable there (``range(2.0)`` raises) and ``bool`` must
+    be rejected rather than silently read as one.
+
+    Unlike ``gamma`` this is read by the on-policy backend only - FastSAC
+    optimizes per gradient step from a replay buffer and has no epoch loop over a
+    rollout batch - so it is scoped like :func:`gae_lambda_problems`: per
+    :class:`TrainSpec` a backend ignores the fields it does not support, so
+    reporting on one it never reads would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        A single-element list when ``num_learning_epochs`` cannot be honored;
+        empty otherwise.
+    """
+    error = positive_count_error(getattr(spec, "num_learning_epochs", 1), "num_learning_epochs", context)
     return [error] if error is not None else []

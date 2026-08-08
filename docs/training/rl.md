@@ -204,6 +204,15 @@ endpoints are inside the domain: `gamma=1` is the undiscounted episodic return
 and `gamma=0` a myopic agent that optimizes the immediate reward only. The
 FastSAC `tau` is bounded the same way, in `(0, 1]`.
 
+`num_learning_epochs` must be a positive integer, checked by `validate()` on the
+on-policy backend only (FastSAC optimizes per gradient step from a replay buffer
+and has no epoch loop). It is the loop bound of the entire optimizer step, so a
+non-positive value takes *no* gradient step while the run still collects its
+rollouts, writes a checkpoint and reports success - with losses of `0.0`,
+because the update averages its accumulators through `max(1, n_updates)`. `True`
+is likewise a silent single epoch, and a non-integer raises a bare `TypeError`
+out of `range()` after the environment and the networks are already built.
+
 ## Worked example
 
 `examples/training/train_ppo_reach.py` (on-policy) and `examples/training/train_fastsac_reach.py`

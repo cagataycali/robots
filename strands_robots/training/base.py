@@ -488,6 +488,35 @@ class Trainer(ABC):
 
         return gae_lambda_problems(spec, context=self.provider_name)
 
+    def _optimization_epochs_problems(self, spec: TrainSpec) -> list[str]:
+        """Optimization-epoch preflight for a backend with an epoch loop.
+
+        Returns a problem when :attr:`RLTrainSpec.num_learning_epochs` is not a
+        positive integer. A :meth:`validate` implementation whose update makes
+        ``num_learning_epochs`` passes over each rollout batch MUST call this,
+        because the field is the loop bound of the whole optimizer step: a
+        non-positive value takes no gradient step at all, and the run still
+        collects its rollouts, writes a checkpoint and reports success with
+        losses of ``0.0`` (the update averages through ``max(1, n_updates)``).
+        ``True`` is likewise a silent single epoch, and a non-integer raises a
+        bare ``TypeError`` out of ``range()`` after the environment and the
+        networks have been built.
+
+        Only a backend that loops over a rollout batch reads the field - an
+        off-policy backend optimizes per gradient step from a replay buffer - so
+        like :meth:`_gae_lambda_problems`, and unlike
+        :meth:`_discount_factor_problems`, a backend that does not read it MUST
+        NOT call this: per :class:`TrainSpec` a backend ignores the fields it
+        does not support, so reporting on one it never reads would be a false
+        rejection.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the ``base -> _validate`` import one-way at runtime.
+        """
+        from strands_robots.training._validate import optimization_epochs_problems
+
+        return optimization_epochs_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 
