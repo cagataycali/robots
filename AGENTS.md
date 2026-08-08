@@ -119,8 +119,17 @@ hatch run format            # ruff check --fix, ruff format
    Before you start, check that no open pull request already claims the issue:
 
    ```
-   python3 scripts/check_duplicate_claim.py --issue <N>
+   python3 scripts/check_duplicate_claim.py --repo strands-labs/robots --issue <N>
    ```
+
+   Name the repository rather than leaving it to be inferred. `$GITHUB_REPOSITORY`
+   is where the command is *running*, which for a scheduled agent need not be a
+   checkout of this one, and an intake check that reads a different repository's
+   open pull requests reports `unique-claim` and exits `0` -- a wrong answer shaped
+   exactly like the right one, and one an issue number alone gives the script no way
+   to detect afterwards. Intake mode refuses an inferred repository for that reason;
+   the `--pr` mode keeps the default, because a workflow reviewing a pull request
+   runs where that pull request lives.
 
    A duplicate claim is invisible to every other check here, because they all read
    one pull request at a time and this is a property of the *set* of open ones. It

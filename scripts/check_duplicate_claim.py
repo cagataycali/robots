@@ -120,12 +120,15 @@ work from being done twice, and it is complete as shipped.
 
 Usage
 -----
-``--repo``    ``owner/name`` (default: ``$GITHUB_REPOSITORY``).
+``--repo``    ``owner/name``. Required in intake mode; in ``--pr`` mode it
+              defaults to ``$GITHUB_REPOSITORY``. See
+              :func:`inferred_repository_refusal` for why the two modes differ.
 ``--issue``   an issue number, asked at intake. Mutually exclusive with ``--pr``.
 ``--pr``      a pull request number (default: ``$PR_NUMBER``).
 ``--token``   API token (default: ``$GITHUB_TOKEN``). Needs ``pull-requests: read``.
 
-Exit status is ``1`` for ``duplicate-claim``, else ``0``.
+Exit status is ``1`` for ``duplicate-claim``, else ``0``. A usage error, including an
+intake question whose repository was left to be inferred, exits ``2``.
 """
 
 from __future__ import annotations
@@ -478,18 +481,59 @@ def render(verdict: Verdict, repo: str, pr: int | None = None, issue: int | None
     return "\n".join(lines)
 
 
+def inferred_repository_refusal(inferred: str) -> str:
+    """Return why an inferred repository cannot answer an intake question.
+
+    ``$GITHUB_REPOSITORY`` names the repository a command is *running in*. For the
+    ``--pr`` mode that is the right answer by construction -- a workflow reviewing a
+    pull request runs in the repository the pull request lives in, which is why the
+    default is kept there. Intake runs *before* any pull request exists, so it is a
+    local invocation by whoever is about to do the work, and nothing ties their
+    working directory to the repository the issue belongs to.
+
+    The failure that follows is silent rather than loud, which is why this is a
+    refusal rather than a warning. The check reads a different repository's open
+    pull requests, finds none of them claiming that number, and reports
+    ``unique-claim`` with exit ``0``. Nothing in that report distinguishes it from
+    the answer to the question that was meant, and it only misleads in the
+    reassuring direction: a spurious collision would be investigated and found
+    nonexistent, whereas a missed one is invisible.
+
+    Nor can the substitution be detected after the fact. An issue number alone does
+    not name a repository, so there is no second source to compare the resolved one
+    against, and issue numbers are dense enough that an unrelated repository very
+    often has one at the same number -- which is also why confirming the issue
+    *exists* would not be a reliable substitute for naming the repository, on top of
+    reversing this script's deliberate decision not to read the issue at all.
+    """
+    return (
+        "intake mode must name the repository: pass --repo owner/name. The environment "
+        f"infers {inferred!r}, which is where this command is running rather than "
+        "necessarily the repository the issue belongs to, and an intake check that reads "
+        "the wrong repository reports no duplicate."
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
+    # ``None`` rather than the environment value, so "was it supplied?" stays
+    # answerable after parsing -- the intake refusal below turns on that, not on
+    # what the repository resolves to.
+    parser.add_argument("--repo", default=None)
     parser.add_argument("--pr", default=os.environ.get("PR_NUMBER", ""))
     parser.add_argument("--issue", default="")
     parser.add_argument("--token", default=os.environ.get("GITHUB_TOKEN", ""))
     args = parser.parse_args(argv)
 
-    if not args.repo:
+    inferred = os.environ.get("GITHUB_REPOSITORY", "")
+    repo = inferred if args.repo is None else args.repo
+
+    if not repo:
         parser.error("--repo is required (or set GITHUB_REPOSITORY)")
     if bool(args.pr) == bool(args.issue):
         parser.error("pass exactly one of --pr (review a pull request) and --issue (intake)")
+    if args.repo is None and args.issue:
+        parser.error(inferred_repository_refusal(repo))
     if not args.token:
         parser.error("--token is required (or set GITHUB_TOKEN)")
 
@@ -501,14 +545,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         # In intake mode the "claim" is the issue being considered, and nothing is
         # excluded from the comparison because no pull request for it exists yet.
-        claimed = (issue,) if issue is not None else resolve_claim(args.repo, int(args.pr), args.token)
-        others = resolve_open_claims(args.repo, args.token, pr) if claimed else {}
+        claimed = (issue,) if issue is not None else resolve_claim(repo, int(args.pr), args.token)
+        others = resolve_open_claims(repo, args.token, pr) if claimed else {}
     except (ClaimSetUnreadable, urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError) as exc:
         claimed, others, detail = None, None, str(exc)
         print(f"check_duplicate_claim: {detail}", file=sys.stderr)
 
     verdict = classify(claimed, others, detail)
-    report = render(verdict, args.repo, pr, issue)
+    report = render(verdict, repo, pr, issue)
     print(report)
 
     summary_path = os.environ.get("GITHUB_STEP_SUMMARY")

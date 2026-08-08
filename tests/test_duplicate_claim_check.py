@@ -65,6 +65,30 @@ _MEASURED_PAIRS: tuple[tuple[int, int, int, int], ...] = (
 )
 
 
+#: Check scripts that can infer their repository from the environment, derived
+#: rather than listed: a script that never reads ``$GITHUB_REPOSITORY`` (the local
+#: git ones) has nothing to infer and so nothing to be given.
+_INFERS_REPOSITORY: tuple[str, ...] = tuple(
+    sorted(
+        path.name
+        for path in sorted((_ROOT / "scripts").glob("check_*.py"))
+        if "GITHUB_REPOSITORY" in path.read_text(encoding="utf-8")
+    )
+)
+
+
+def _documented_intake_argv(issue: int) -> list[str]:
+    """Return the intake command step 1 prints, as an ``argv`` list."""
+    found = re.findall(r"python3 scripts/check_duplicate_claim\.py([^\n`]*)", _AGENTS.read_text(encoding="utf-8"))
+    assert len(found) == 1, found
+    return [part.replace("<N>", str(issue)) for part in found[0].split()]
+
+
+def _documented_check_invocations() -> list[tuple[str, str]]:
+    """Return ``(script, remaining argv)`` for every check AGENTS.md invokes."""
+    return re.findall(r"python3 scripts/(check_[a-z_]+\.py)([^\n`]*)", _AGENTS.read_text(encoding="utf-8"))
+
+
 def _pair_ids() -> list[str]:
     return [f"#{issue}" for issue, _, _, _ in _MEASURED_PAIRS]
 
@@ -497,7 +521,9 @@ class TestTheGuidanceRecordsTheIntakeCheck:
             "every one of those had",
             "property of the *set* of open ones",
             "closingIssuesReferences",
-            "check_duplicate_claim.py --issue",
+            "check_duplicate_claim.py --repo strands-labs/robots --issue",
+            "where the command is *running*",
+            "refuses an inferred repository",
             "prevents the authoring rather than capping it",
         ],
     )
@@ -509,3 +535,120 @@ class TestTheGuidanceRecordsTheIntakeCheck:
         step_one = self._step_one()
         assert "exactly one should claim the close" in step_one
         assert re.search(r"per #N|towards #N", step_one)
+
+
+class TestIntakeModeMustNameTheRepository:
+    """``$GITHUB_REPOSITORY`` names where a command runs, not what an issue belongs to.
+
+    Intake is the mode that runs *before* any pull request exists, so it is a local
+    invocation whose working directory says nothing about the target repository. The
+    ``--pr`` mode is the opposite: a workflow reviewing a pull request runs in the
+    repository that pull request lives in, so inference is right by construction
+    there and the default is kept.
+
+    Refused rather than warned about because the failure is silent and only misleads
+    in the reassuring direction. Measured on this script with ``huggingface/lerobot``
+    as the ambient repository, ``--issue 2029`` compared **405** unrelated open pull
+    requests and reported ``unique-claim`` with exit ``0``; naming the repository
+    compared 4. Both said no duplicate, so nothing in the report distinguished them.
+    """
+
+    def test_an_inferred_repository_is_refused_at_intake(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setenv("GITHUB_REPOSITORY", "someone/elsewhere")
+        with pytest.raises(SystemExit) as excinfo:
+            mod.main(["--issue", "2029", "--token", "t"])
+        assert excinfo.value.code == 2, excinfo.value.code
+        err = capsys.readouterr().err
+        assert "--repo owner/name" in err
+        assert "'someone/elsewhere'" in err, err
+        assert "reports no duplicate" in err
+
+    def test_the_refusal_is_about_inference_not_the_value(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The very same repository, named explicitly, is accepted."""
+        monkeypatch.setenv("GITHUB_REPOSITORY", "o/n")
+        monkeypatch.setattr(mod, "resolve_open_claims", lambda *_a, **_k: {})
+        assert mod.main(["--repo", "o/n", "--issue", "2029", "--token", "t"]) == 0
+        assert "| issue | o/n#2029 |" in capsys.readouterr().out
+
+    def test_the_review_mode_keeps_the_inferred_default(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The asymmetry, asserted rather than implied by the intake tests."""
+        monkeypatch.setenv("GITHUB_REPOSITORY", "o/n")
+        monkeypatch.setattr(mod, "resolve_claim", lambda *_a, **_k: (7,))
+        monkeypatch.setattr(mod, "resolve_open_claims", lambda *_a, **_k: {})
+        assert mod.main(["--pr", "5", "--token", "t"]) == 0
+        assert "| pull request | o/n#5 |" in capsys.readouterr().out
+
+    def test_the_refusal_precedes_every_lookup(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A refused invocation reads nothing -- not even to decide it is refused."""
+
+        def fatal(*_a: object, **_k: object) -> object:
+            raise AssertionError("the refused invocation reached the API")
+
+        monkeypatch.setenv("GITHUB_REPOSITORY", "someone/elsewhere")
+        monkeypatch.setattr(mod, "_post", fatal)
+        monkeypatch.setattr(mod, "resolve_open_claims", fatal)
+        monkeypatch.setattr(mod, "resolve_claim", fatal)
+        with pytest.raises(SystemExit):
+            mod.main(["--issue", "2029", "--token", "t"])
+
+    def test_nothing_to_infer_still_names_the_flag(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """With no ambient repository the original precondition is what fires."""
+        monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+        with pytest.raises(SystemExit):
+            mod.main(["--issue", "2029", "--token", "t"])
+        assert "--repo is required" in capsys.readouterr().err
+
+    def test_the_reason_names_what_was_inferred_and_what_follows(self) -> None:
+        """A refusal that named neither would send the reader to the wrong place."""
+        reason = mod.inferred_repository_refusal("someone/elsewhere")
+        assert "--repo owner/name" in reason
+        assert "'someone/elsewhere'" in reason
+        assert "where this command is running" in reason
+        assert "reports no duplicate" in reason
+
+    def test_the_documented_command_is_accepted(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """The invocation step 1 prints must survive this script's own preconditions.
+
+        Pins guidance and code together from the guidance side: shortening the
+        documented command back to an inferred repository fails here, and so does
+        adding the refusal without updating the command it refuses.
+        """
+        monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+        monkeypatch.setattr(mod, "resolve_open_claims", lambda *_a, **_k: {})
+        assert mod.main([*_documented_intake_argv(2029), "--token", "t"]) == 0
+        assert "| issue | strands-labs/robots#2029 |" in capsys.readouterr().out
+
+
+class TestNoDocumentedInvocationLeavesTheRepositoryInferred:
+    """The defect was a documented command, so the durable pin is on the guidance.
+
+    Measured over the check scripts AGENTS.md invokes, exactly one omitted ``--repo``.
+    ``check_last_push_approval.py`` names it in both of its invocations, and
+    ``check_closing_reference.py`` has no local invocation at all -- its workflow calls
+    it with no arguments, where the environment is correct by construction. Scoped to
+    the scripts that can *infer* a repository, since the local-git checks have nothing
+    to infer and requiring a flag of them would be a false rejection.
+    """
+
+    def test_the_inferring_scripts_are_the_ones_measured(self) -> None:
+        """Non-vacuity: the scope is a real set, and this script is in it."""
+        assert "check_duplicate_claim.py" in _INFERS_REPOSITORY, _INFERS_REPOSITORY
+        assert len(_INFERS_REPOSITORY) == 3, _INFERS_REPOSITORY
+
+    def test_every_documented_invocation_names_the_repository(self) -> None:
+        invocations = _documented_check_invocations()
+        assert len(invocations) >= 3, invocations
+        inferring = [(script, rest) for script, rest in invocations if script in _INFERS_REPOSITORY]
+        assert inferring, invocations
+        missing = [f"{script}{rest}" for script, rest in inferring if "--repo" not in rest]
+        assert not missing, missing
