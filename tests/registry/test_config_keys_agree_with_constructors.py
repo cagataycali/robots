@@ -81,6 +81,28 @@ def _signature_parameters(cfg: dict[str, Any]) -> Any:
     return inspect.signature(cls.__init__).parameters
 
 
+def _resolve_signatures() -> tuple[dict[str, Any], dict[str, str]]:
+    """Import every declared provider once, and record what failed.
+
+    Resolved at module scope rather than per test: importing a provider pulls in
+    its optional dependencies, and the per-key tests below ask for the same
+    signature 100+ times.  Doing it once also makes the coverage test and the
+    per-key tests read the *same* map, so they cannot disagree about which
+    providers were available.
+    """
+    signatures: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    for name, cfg in _providers().items():
+        try:
+            signatures[name] = _signature_parameters(cfg)
+        except Exception as exc:  # noqa: BLE001 - surfaced by the coverage test
+            errors[name] = f"{type(exc).__name__}: {exc}"
+    return signatures, errors
+
+
+_SIGNATURES, _IMPORT_ERRORS = _resolve_signatures()
+
+
 def _orphans(keys: list[str], parameters: Any) -> list[str]:
     """The registry keys that name no explicit constructor parameter.
 
@@ -99,19 +121,19 @@ def _parameters_or_skip(provider: str) -> Any:
     assertion decision 2 of #2022 asks for.  Skipping only keeps a missing
     dependency from presenting as a registry disagreement.
 
-    The single ``return`` is deliberate.  Returning from inside the ``try`` left
-    the ``except`` branch reaching the end of the function implicitly, which is
-    ``py/mixed-returns`` - a note-severity CodeQL alert, and one this repository
-    does not filter (it is open on ``main`` as alert #823).  ``pytest.skip``
-    raises, so the two shapes behave identically; only this one is legible to a
-    reader who cannot see that.
+    Reads the map resolved at import rather than importing here, so this is a
+    dict lookup with no ``try`` around it.  That is also what keeps the helper
+    free of the two CodeQL rules the earlier shapes tripped: returning from
+    inside a ``try`` whose ``except`` falls off the end is ``py/mixed-returns``,
+    and assigning in the ``try`` to return afterwards is
+    ``py/uninitialized-local-variable``.  Both are artefacts of hiding the
+    control flow in an exception handler, because ``pytest.skip`` raises and no
+    static analysis here can know that.  With the import already done there is
+    no handler to hide anything in.
     """
-    try:
-        config = _providers()[provider]
-        parameters = _signature_parameters(config)
-    except Exception as exc:  # noqa: BLE001 - reported by the coverage test
-        pytest.skip(f"{provider} is not importable here: {type(exc).__name__}: {exc}")
-    return parameters
+    if provider in _IMPORT_ERRORS:
+        pytest.skip(f"{provider} is not importable here: {_IMPORT_ERRORS[provider]}")
+    return _SIGNATURES[provider]
 
 
 def _config_key_cases() -> list[tuple[str, str]]:
@@ -190,17 +212,11 @@ def test_every_declared_provider_was_read() -> None:
     statement about coverage rather than about the environment.
     """
     providers = _providers()
-    unreadable = {}
-    for name, cfg in providers.items():
-        try:
-            _signature_parameters(cfg)
-        except Exception as exc:  # noqa: BLE001 - the failure being reported
-            unreadable[name] = f"{type(exc).__name__}: {exc}"
-
-    assert unreadable == {}, (
-        f"read {len(providers) - len(unreadable)} of {len(providers)} provider signatures; "
-        f"the guard is vacuous for the rest, install the full extras: {unreadable}"
+    assert _IMPORT_ERRORS == {}, (
+        f"read {len(_SIGNATURES)} of {len(providers)} provider signatures; "
+        f"the guard is vacuous for the rest, install the full extras: {_IMPORT_ERRORS}"
     )
+    assert set(_SIGNATURES) == set(providers), "the resolved map and the registry disagree"
 
 
 def test_the_guard_covers_every_provider_that_declares_keys() -> None:
@@ -286,14 +302,11 @@ def test_a_provider_without_var_keyword_rejects_an_unknown_kwarg() -> None:
     becomes silent instead of loud - but this premise should be revisited rather
     than deleted.
     """
-    without_var_keyword = []
-    for name, cfg in _providers().items():
-        try:
-            parameters = _signature_parameters(cfg)
-        except Exception:  # noqa: BLE001 - reported by the coverage test
-            continue
-        if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()):
-            without_var_keyword.append(name)
+    without_var_keyword = [
+        name
+        for name, parameters in _SIGNATURES.items()
+        if not any(p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values())
+    ]
 
     assert without_var_keyword, "every provider now takes **kwargs, so an orphan is silent everywhere"
 
