@@ -153,6 +153,16 @@ differently by each of them. `vis_port = 0` is the one exception and disables th
 live viewer (`--vis-port` is omitted). The `VERA_*_PORT` overrides go through the
 same check.
 
+`motion_plan_scale` takes the same domain as the two IK scales below: a positive
+finite number, or `None` to leave the server's own scale alone. `0` is not the
+opt-out — it scales the plan to nothing — so `None` is the off switch and `0` is
+refused. It is checked on the config, not where it is used, because where it is
+used cannot refuse it: `_ensure_started` applies it after the server handshake
+with a best-effort `configure` call whose failure is logged at INFO and does not
+stop the rollout, so a value `float()` cannot convert is neither applied nor
+reported. `VERA_MOTION_PLAN_SCALE` goes through the same check; an unparsable
+spelling still falls back to `None`, as it does for the ports.
+
 ### IK conversion knobs
 
 Two keyword-only numbers shape every joint target the eef-delta path produces,

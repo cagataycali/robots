@@ -18,7 +18,11 @@ import os
 from pathlib import Path
 from typing import Any, Literal
 
-from strands_robots.utils import positive_whole_number_error, tcp_port_error
+from strands_robots.utils import (
+    positive_finite_number_error,
+    positive_whole_number_error,
+    tcp_port_error,
+)
 
 Embodiment = Literal["pusht", "mimicgen", "allegro", "droid"]
 # "mimicgen" is the working, faithful embodiment end-to-end (eef-delta -> IK
@@ -146,6 +150,10 @@ class VeraConfig:
             planner yaml's value).
         tracker_backend: IDM point tracker backend override.
         motion_plan_scale: IDM motion-plan scale override (live-tunable).
+            ``None`` - the default, and what an unset ``VERA_MOTION_PLAN_SCALE``
+            resolves to - leaves the server's own scale alone. Any other value
+            must be a positive finite number, because it multiplies the motion
+            plan the IDM turns into actions.
         teacache: Enable the near-lossless DiT teacache speedup (default True).
         teacache_thresh: teacache rel_l1 threshold (>0.15 hits a quality cliff).
         auto_launch_server: Launch + manage the server subprocess on first use.
@@ -262,6 +270,37 @@ class VeraConfig:
             self.tracker_backend = _env("VERA_TRACKER_BACKEND")
         if self.motion_plan_scale is None:
             self.motion_plan_scale = _env_float("VERA_MOTION_PLAN_SCALE")
+        # Checked here, on the effective value, for the reason the two ports and
+        # ``render_width`` above are: this is the one funnel every caller passes
+        # through, and the only place the ``VERA_MOTION_PLAN_SCALE`` override just
+        # applied can still be refused. ``_env_float`` returns whatever ``float()``
+        # accepts, so ``nan``, ``inf``, ``1e999`` and a negative all reach the field
+        # from the environment; the field was checked nowhere, so a ``str`` or a
+        # ``list`` reached it from a keyword too.
+        #
+        # It is the third scale in this package and takes the domain the other two
+        # already take (``translation_scale``, ``ik_smoothing``): a multiplier on a
+        # motion plan has no usable non-positive or non-finite value. ``None`` stays
+        # valid because it is the documented opt-out - it gates the ``configure``
+        # call away entirely, so "leave the server's scale alone" and "scale the
+        # plan to nothing" stay different requests.
+        #
+        # Leaving it to be refused downstream is not an option, because nothing
+        # downstream refuses it: ``_ensure_started`` sends the value with
+        # ``self._client.configure(...)`` inside a best-effort ``except Exception``
+        # that logs at INFO and marks the policy started regardless. A value
+        # ``float()`` cannot convert is therefore neither applied nor reported -
+        # the rollout proceeds at whatever scale the server already had while the
+        # config says otherwise.
+        if self.motion_plan_scale is not None:
+            if (
+                err := positive_finite_number_error(self.motion_plan_scale, "motion_plan_scale", type(self).__name__)
+            ) is not None:
+                raise ValueError(err)
+            # Normalized for the reason ``render_width`` is: the shared domain admits
+            # any real scalar, so an ``int`` 1 or a ``np.float64`` passes it, while
+            # the field is declared ``float``.
+            self.motion_plan_scale = float(self.motion_plan_scale)
         if self.python_executable is None:
             self.python_executable = _env("VERA_PYTHON")
         _sm = _env("VERA_SERVER_MODE")
