@@ -163,6 +163,11 @@ class PpoTrainer(BaseRLAlgo):
         # scales them all to zero and a negative bound negates them, so neither
         # takes the step the caller asked for while the run still succeeds.
         problems.extend(self._gradient_clip_problems(spec))
+        # value_loss_coef and entropy_coef weight the two terms of the objective
+        # the update descends; the multiplication judges neither, so a non-finite
+        # weight poisons every parameter and surfaces as a torch error naming
+        # neither field, and a bool lands as a silently different coefficient.
+        problems.extend(self._loss_weight_problems(spec))
         if spec.total_timesteps <= 0:
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:

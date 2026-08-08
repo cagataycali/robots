@@ -103,6 +103,14 @@ stepping. It is scoped like :func:`gae_lambda_problems` - only the on-policy
 backend clips, so FastSAC must not report on a field it never reads - and it is
 the one coefficient of that group whose zero reading *is* settled, by
 ``torch.nn.utils.clip_grad_norm_`` itself: see that gate for the measurement.
+
+:func:`loss_weight_problems` is the thirteenth, on the same *optimization* axis
+and the last of that group whose endpoints are not the question: ``value_loss_coef``
+and ``entropy_coef``, the two scalars that weight the terms of the composed
+on-policy objective. It is scoped like :func:`gradient_clip_problems` - only the
+on-policy backend composes that objective - and it bounds the *domain* rather than
+the floor: zero and negative are real configurations for both fields, while a
+non-finite or non-numeric weight is a value no reading makes usable.
 """
 
 from __future__ import annotations
@@ -564,15 +572,17 @@ def discount_factor_problems(spec: TrainSpec, *, context: str) -> list[str]:
     that same scoping reason - see :func:`gae_lambda_problems`,
     ``num_learning_epochs`` likewise in :func:`optimization_epochs_problems`,
     and ``max_grad_norm`` in :func:`gradient_clip_problems`.
-    The remaining PPO coefficients (``clip_param``, ``entropy_coef``,
-    ``value_loss_coef``, ``init_noise_std``) are out of scope in all four: they
-    weight loss terms and initialize the action distribution rather than
-    discounting the return, and for each of them zero has a candidate reading as
-    a *disabled mode* that this repository has not settled - ``entropy_coef`` is
-    shipped defaulting to ``0.0``, so zero is already a supported configuration,
-    and ``init_noise_std=0`` is refused by ``torch`` itself, which rejects a
-    ``Normal`` of zero scale. Those are contract questions rather than defects,
-    so they are left to a gate that settles them.
+    The two *loss weights* named there - ``entropy_coef`` and ``value_loss_coef`` -
+    now have their own gate too, in :func:`loss_weight_problems`, on the domain
+    rather than on the endpoint this docstring called undecided: their zero
+    readings are still unsettled and still accepted, but a non-finite weight has
+    no reading at all. ``clip_param`` and ``init_noise_std`` remain out of scope
+    in all five, and for measured reasons rather than by omission: ``clip_param``
+    is a clip *bound* whose ``inf`` is coherently honored as "do not clip"
+    (``clamp(ratio, -inf, inf)`` returns ``ratio`` unchanged), so it needs the
+    endpoint decision :func:`gradient_clip_problems` records for the sibling
+    bound; and every non-finite ``init_noise_std`` is refused by ``torch``, which
+    rejects a ``Normal`` of non-positive or non-finite scale.
 
     Args:
         spec: The spec to check.
@@ -903,3 +913,86 @@ def gradient_clip_problems(spec: TrainSpec, *, context: str) -> list[str]:
     """
     error = _gradient_clip_error(getattr(spec, "max_grad_norm", 1.0), "max_grad_norm", context)
     return [error] if error is not None else []
+
+
+def loss_weight_problems(spec: TrainSpec, *, context: str) -> list[str]:
+    """Return loss-weight problems for an on-policy RL :class:`TrainSpec`.
+
+    ``value_loss_coef`` and ``entropy_coef`` are the two scalars that weight the
+    terms of the objective the on-policy update descends. They are read in
+    exactly one place - the single expression that composes it::
+
+        loss = surrogate_loss + spec.value_loss_coef * value_loss - spec.entropy_coef * entropy
+
+    Nothing judged either of them, and the multiplication cannot: it is defined
+    for values no caller can have meant, and every one of them reaches the
+    backward pass. Measured on this backend, over a seeded 60-step run whose
+    checkpoint parameter sum is ``140.6023186540351162`` when both weights are
+    honored:
+
+    =========================  =========================================
+    Weight                     Outcome
+    =========================  =========================================
+    defaults (``1.0`` / ``0.0``)  trains; sum ``140.6023186540``
+    ``True``                   **trains with a different coefficient**
+    ``nan``                    raises mid-update, from inside ``torch``
+    ``inf`` / ``-inf``         raises mid-update, from inside ``torch``
+    ``"1.0"``                  raises mid-update, from inside ``torch``
+    ``None`` / ``[1.0]``       raises mid-update, from inside ``torch``
+    =========================  =========================================
+
+    Both rows are what make this a gate rather than a lint:
+
+    * **A boolean is a silently different coefficient.** ``bool`` is an ``int``
+      subclass, so ``entropy_coef=True`` is an entropy bonus at full weight where
+      the field ships defaulting to ``0.0`` - exploration is turned on by a value
+      that reads as a flag. The run reports ``success`` and writes a checkpoint
+      whose parameter sum is ``140.6158002523716277`` against the honored run's
+      ``140.6023186540351162``, so it demonstrably trained differently rather
+      than harmlessly.
+    * **Everything non-finite or non-numeric raises out of ``train()``**, which
+      is documented to return a terminal ``TrainResult`` and to fail closed on
+      :meth:`~strands_robots.training.base.Trainer.validate` first. A ``nan``
+      weight makes the loss ``nan``, the optimizer writes ``nan`` into every
+      parameter, and the *next* rollout samples the action distribution from
+      them: ``ValueError: Expected parameter loc ... of distribution Normal ...
+      to satisfy the constraint Real()`` - a torch message that names neither the
+      field nor the value, raised after the env, the networks and a full rollout
+      have been built. A string raises ``TypeError: only integer tensors of a
+      single element can be converted to an index`` from the same depth. That is
+      exactly the "deep stack trace" a read-only preflight exists to replace.
+
+    **The floor is deliberately not decided here.** Zero and negative are inside
+    the domain for both fields, because both have a real reading:
+    ``entropy_coef=0.0`` is the shipped default, a negative entropy weight is a
+    penalty that drives the policy deterministic, and ``value_loss_coef=0`` stops
+    training the critic. So the domain is a *finite real* - the one property no
+    reading of either field can want without - checked through
+    :func:`~strands_robots.utils.finite_number_error`, which also refuses the
+    ``bool`` a bare comparison against zero would accept. This is the narrower
+    counterpart of :func:`gradient_clip_problems`, whose endpoint *is* settled by
+    ``clip_grad_norm_`` and which therefore tests positivity.
+
+    Only the on-policy backend composes this objective - ``grep`` finds
+    ``spec.value_loss_coef`` and ``spec.entropy_coef`` in ``rl/ppo.py`` and
+    nowhere else - so this is scoped like :func:`gae_lambda_problems` rather than
+    :func:`learning_rate_problems`: a backend that does not compose it MUST NOT
+    call this, because per :class:`TrainSpec` a backend ignores the fields it does
+    not support and reporting on one would be a false rejection.
+
+    Args:
+        spec: The spec to check.
+        context: Caller identity for the message prefix - the backend's
+            :attr:`~strands_robots.training.base.Trainer.provider_name`, so a
+            problem names the backend that refused the value.
+
+    Returns:
+        One problem per weight that cannot be honored; empty when both can.
+    """
+    defaults = {"value_loss_coef": 1.0, "entropy_coef": 0.0}
+    problems = []
+    for param, default in defaults.items():
+        error = finite_number_error(getattr(spec, param, default), param, context)
+        if error is not None:
+            problems.append(error)
+    return problems

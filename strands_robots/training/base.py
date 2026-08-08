@@ -582,6 +582,46 @@ class Trainer(ABC):
 
         return gradient_clip_problems(spec, context=self.provider_name)
 
+    def _loss_weight_problems(self, spec: TrainSpec) -> list[str]:
+        """Loss-weight preflight for a backend that composes a weighted objective.
+
+        Returns a problem per weight when :attr:`RLTrainSpec.value_loss_coef` or
+        :attr:`RLTrainSpec.entropy_coef` is not a finite real number. Both are
+        multiplied into the loss the update descends, and the multiplication
+        judges nothing: a ``nan`` weight makes the loss ``nan``, the optimizer
+        writes ``nan`` into every parameter, and the next rollout raises from
+        inside ``torch`` naming neither field nor value - after the env, the
+        networks and a full rollout have been built.
+
+        The floor is deliberately *not* tested. Zero and negative are inside the
+        domain for both: ``entropy_coef`` ships defaulting to ``0.0``, a negative
+        entropy weight is a determinism penalty, and ``value_loss_coef=0`` stops
+        training the critic. That is what distinguishes this from
+        :meth:`_gradient_clip_problems`, whose endpoint is settled by
+        ``clip_grad_norm_`` and which therefore tests positivity. A ``bool`` is
+        refused here, because it reads as a flag and lands as a coefficient of
+        one - turning the entropy bonus on at full weight where the field's
+        default is off.
+
+        Only a backend that composes this objective may call this: like
+        :meth:`_gradient_clip_problems`, and unlike
+        :meth:`_learning_rate_problems`, a backend that does not read the fields
+        MUST NOT report on them, because per :class:`TrainSpec` a backend ignores
+        the fields it does not support.
+
+        Imported lazily for the same reason as :meth:`_security_problems` - to
+        keep the module import graph one-way.
+
+        Args:
+            spec: The spec to preflight.
+
+        Returns:
+            One problem per weight that cannot be honored; empty when both can.
+        """
+        from strands_robots.training._validate import loss_weight_problems
+
+        return loss_weight_problems(spec, context=self.provider_name)
+
     def prepare(self, spec: TrainSpec) -> None:
         """Optional one-time setup before :meth:`train`. Default no-op.
 
