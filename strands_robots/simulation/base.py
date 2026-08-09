@@ -1431,15 +1431,25 @@ class SimEngine(ABC):
 
         ``n_steps`` (primary) or the legacy ``max_steps`` alias specify the
         rollout length as a step count; ``duration = n_steps / control_frequency``.
-        ``n_steps`` wins when both are passed. The inputs are validated before
-        the division so a non-positive horizon or frequency is reported as a
-        caller error rather than silently producing a no-op, a negative
-        duration, or a ``ZeroDivisionError``.
+        ``n_steps`` wins when both are passed. The effective horizon is validated
+        before the division against the shared positive-count domain
+        (:func:`~strands_robots.utils.positive_count_error`) - the same domain
+        :meth:`_validate_positive_int` already applies to ``eval_policy``'s
+        ``max_steps`` and to ``n_episodes`` / ``action_horizon`` /
+        ``control_substeps`` - so a horizon that is not a whole number of steps
+        is reported as a caller error rather than silently truncated. A bare
+        ``<= 0`` test only saw the sign: ``n_steps=2.7`` ran two steps and
+        ``n_steps=True`` ran one, both reported as a successful rollout of a
+        horizon the caller never asked for, while the identically-named
+        ``eval_policy`` budget refused both.
 
         Args:
-            n_steps: Primary step-count horizon, or ``None``.
+            n_steps: Primary step-count horizon, or ``None``. Must be a
+                positive integer when given.
             max_steps: Legacy alias, normalized to ``n_steps`` when ``n_steps``
-                is ``None``.
+                is ``None``, and validated under its own name so a caller who
+                wrote ``max_steps`` is not pointed at a parameter they never
+                passed. Same domain as ``n_steps``.
             control_frequency: Target control-loop frequency in Hz.
             duration: Fallback wall-clock duration used when no step horizon
                 is given. Returned unchanged when no horizon is given, so the
@@ -1454,18 +1464,19 @@ class SimEngine(ABC):
             wall-clock duration (recomputed from the horizon when one was
             given) and ``n_steps`` is the normalized step count (or ``None``).
         """
-        if n_steps is None and max_steps is not None:
-            n_steps = int(max_steps)
         if n_steps is not None:
-            if n_steps <= 0:
-                return (
-                    duration,
-                    n_steps,
-                    {
-                        "status": "error",
-                        "content": [{"text": f"{method}: n_steps must be > 0, got {n_steps}."}],
-                    },
-                )
+            if error := positive_count_error(n_steps, "n_steps", method):
+                return duration, n_steps, {"status": "error", "content": [{"text": error}]}
+        elif max_steps is not None:
+            # Validate the alias under its OWN name: the caller wrote
+            # ``max_steps``, so a refusal naming ``n_steps`` points them at a
+            # parameter they never passed. The normalization below is then exact
+            # (an ``int()`` coercion here would be a second, weaker contract
+            # that silently truncated the value the domain just accepted).
+            if error := positive_count_error(max_steps, "max_steps", method):
+                return duration, max_steps, {"status": "error", "content": [{"text": error}]}
+            n_steps = max_steps
+        if n_steps is not None:
             # control_frequency is validated as a positive number at the public
             # entry points (run_policy / start_policy / eval_policy) via
             # _validate_positive_frequency before this helper runs, so the
@@ -2169,6 +2180,36 @@ class SimEngine(ABC):
                 dataset recording), backends plug into
                 ``PolicyRunner.run``'s ``on_frame`` hook via
                 :meth:`_make_run_policy_hook`.
+            policy_object: Already-constructed
+                :class:`~strands_robots.policies.Policy` to drive the rollout,
+                bypassing ``create_policy`` entirely (``policy_provider`` /
+                ``policy_config`` are then unused). Reuse one instance across
+                calls so the checkpoint is not reloaded per rollout - the
+                ``policy_load_cache_hit`` field below reports when a caller
+                rebuilt it instead. ``None`` (default) builds the policy from
+                ``policy_provider`` / ``policy_config``.
+            n_steps: Exact control-step horizon. When given it REPLACES
+                ``duration``, which is recomputed as
+                ``n_steps / control_frequency``, and it bypasses the lossy
+                ``int(duration * control_frequency)`` conversion so the rollout
+                executes exactly this many control steps. Must be a positive
+                integer; ``0``, a negative value, a bool, or a fractional or
+                non-numeric value is reported as a structured caller error
+                rather than truncated to a horizon the caller never asked for.
+                ``None`` (default) falls back to ``max_steps``, then to
+                ``duration``.
+            max_steps: Legacy alias for ``n_steps``, kept for callers written
+                against the older name. Consulted only when ``n_steps`` is
+                ``None`` - ``n_steps`` wins when both are passed - and refused
+                under its own name on the same domain.
+            max_onframe_failures: Maximum *consecutive* ``on_frame``-hook
+                exceptions tolerated before the rollout aborts the episode. That
+                hook is where a backend attaches dataset recording and video
+                capture, so a broken recorder otherwise fills an empty dataset
+                behind a successful-looking rollout. ``None`` (default) uses the
+                runner's own limit (currently ``5``); non-consecutive failures
+                reset the counter. Forwarded verbatim to
+                :meth:`~strands_robots.simulation.policy_runner.PolicyRunner.run`.
             seed: Optional master RNG seed for a reproducible single rollout.
                 When set, reseeds Python / NumPy / torch / cuDNN and forwards
                 ``policy.reset(seed=...)`` so a stochastic policy (VLA action-

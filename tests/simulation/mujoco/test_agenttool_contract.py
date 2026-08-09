@@ -693,7 +693,7 @@ class TestPolicyHorizonUnification:
         # Either n_steps validation fires first, or robot-not-found; both are
         # acceptable error paths - we just want NO silent success.
         text = r["content"][0]["text"]
-        assert ("n_steps" in text and "> 0" in text) or "Robot" in text
+        assert ("n_steps" in text and "positive integer" in text) or "Robot" in text
 
     def test_run_policy_negative_n_steps_errors(self, sim):
         r = sim._dispatch_action("run_policy", {"robot_name": "ghost", "n_steps": -10})
