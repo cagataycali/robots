@@ -1002,6 +1002,11 @@ class PolicyRunner:
                 open-loop chunk replay never has its chunk truncated
                 below N (the effective horizon is
                 ``max(action_horizon, policy.actions_per_step)``).
+                Must be a positive integer: a value outside that domain is
+                either clamped to 1 - running a re-query interval the caller
+                never asked for - or leaks a bare conversion error out of the
+                first inference, so it is refused here exactly as
+                ``run_policy`` refuses it.
             fast_mode: If True, skip real-time ``time.sleep`` between steps.
             video: Optional :class:`VideoConfig` - set ``video.path`` to enable
                 MP4 recording via :meth:`SimEngine.render`.
@@ -1195,6 +1200,18 @@ class PolicyRunner:
             limit_error := positive_count_error(max_onframe_failures, "max_onframe_failures", "PolicyRunner.run")
         ):
             raise ValueError(limit_error)
+        # Same shared domain the facade one layer up enforces, raised for the
+        # same reason: PolicyRunner is drivable directly and a direct caller has
+        # no envelope to read a refusal from. A horizon outside the domain is
+        # silently clamped to 1 by resolve_chunk_length - so the rollout runs a
+        # re-query interval the caller never asked for - or, when int() cannot
+        # convert it, leaks a bare conversion error out of the FIRST inference
+        # naming neither the parameter nor this method. Unconditional, exactly as
+        # the entry point is: whether the policy carries cross-chunk RTC state
+        # (and so ignores the horizon) is a property of the policy rather than of
+        # the caller's request. See SimEngine._validate_action_horizon.
+        if horizon_error := positive_count_error(action_horizon, "action_horizon", "PolicyRunner.run"):
+            raise ValueError(horizon_error)
         if seed is not None:
             set_eval_seed(seed)
             try:
@@ -2243,6 +2260,7 @@ class PolicyRunner:
             action_horizon: Max actions consumed per policy call before
                 requerying the observation, as in :meth:`run`. Clamped up to the
                 policy's own chunk length when it emits more.
+                Must be a positive integer, refused as in :meth:`run`.
             on_frame: Optional ``(step, observation, action) -> None`` hook
                 fired per applied control step on the eval thread, after
                 ``sim.send_action``. Forwarded on BOTH the ``spec=`` and the
@@ -2349,6 +2367,13 @@ class PolicyRunner:
             )
         ):
             raise ValueError(timeout_error)
+        # Same shared domain, raised for the same reason as in run(): a horizon
+        # outside it is clamped to 1 or leaks a bare conversion error from the
+        # first inference. Checked before the spec delegation below so the
+        # benchmark path cannot reach _evaluate_with_spec with a value the
+        # entry point would have refused.
+        if horizon_error := positive_count_error(action_horizon, "action_horizon", "PolicyRunner.evaluate"):
+            raise ValueError(horizon_error)
         if spec is not None and success_fn is not None:
             return {
                 "status": "error",
