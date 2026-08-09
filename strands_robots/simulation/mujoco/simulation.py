@@ -289,6 +289,18 @@ class MuJoCoSimEngine(
             peer_id: Stable identifier the mesh transport uses to
                 address this Simulation. Opaque to MuJoCo itself; only
                 consulted when ``mesh`` is truthy.
+            ros2_bridge: When True, publish per-robot ``joint_states`` and
+                camera ``image_raw`` on a ROS 2 domain every ``step``, so
+                external ROS 2 nodes can subscribe to the running simulation.
+                Requires ``rclpy`` (system ROS 2 / the official docker image);
+                an :class:`ImportError` is raised here if it is missing.
+                Defaults to False - the sim never touches ROS 2.
+            ros2_domain: ROS 2 domain id (``ROS_DOMAIN_ID``) to publish on.
+                Only an ``int`` in ``[0, 232]`` names a domain - the RTPS port
+                map has no room above that - and a value outside it is refused
+                with a :class:`ValueError` during construction whether or not
+                ``ros2_bridge`` is set, so a backend that only publishes later
+                still rejects it up front. Defaults to ``0``.
             **kwargs: Accepted and ignored, for cross-backend forward
                 compatibility. The shared ``create_simulation`` / ``Robot``
                 factory forwards one superset of keyword arguments to whichever
@@ -2666,6 +2678,20 @@ class MuJoCoSimEngine(
                 True; other shapes default to dynamic.
             mesh_path: Mesh asset path; required and only used when
                 ``shape="mesh"``.
+            material: Optional MuJoCo material for the object's geom, given as
+                a mapping of material attribute to value. The accepted keys are
+                ``builtin``, ``reflectance``, ``rgb1``, ``rgb2``, ``shininess``,
+                ``specular``, ``texdim``, ``texrepeat`` and ``texture``
+                (:data:`~strands_robots.simulation.mujoco.spec_builder.MATERIAL_KEYS`
+                is the single source of truth). A key outside that vocabulary is
+                refused - with a "did you mean" suggestion and the accepted list
+                - rather than dropped, and so is ``material={}``, which would
+                otherwise report success having compiled the default material.
+                ``rgb1`` / ``rgb2`` / ``texdim`` only colour or size a
+                procedural texture, so passing one without ``builtin`` is
+                refused too: the texture they configure would never be
+                generated. ``None`` (default) leaves the geom on the flat
+                ``color`` rgba.
 
         Returns:
             Agent-tool status dict. ``{"status": "success", ...}`` on success;

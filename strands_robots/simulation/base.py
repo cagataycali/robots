@@ -1031,6 +1031,19 @@ class SimEngine(ABC):
         Args:
             robot_name: Which robot to observe. If ``None`` and exactly one
                 robot exists, that robot is used; otherwise returns ``{}``.
+            skip_images: Skip camera rendering and return joint state only.
+                Rendering dominates the per-step cost, so every consumer that
+                reads joint values alone passes ``True`` - the predicate /
+                reward DSL (:mod:`~strands_robots.simulation.predicates`), the
+                LIBERO adapter's state reads, and the ROS 2 bridge when it
+                publishes ``joint_states`` without ``image_raw``. Camera keys
+                are then absent from the result rather than present and empty,
+                so a caller must not read a missing frame as a render failure.
+                A backend overrides a ``True`` here while a dataset recording is
+                active - the recorded frames must carry the camera images the
+                schema declared - so this is a hint, not a guarantee that
+                nothing renders. Defaults to False (render every attached
+                camera).
 
         Returns:
             Observation dict per schema above. Returns ``{}`` if the world
@@ -2169,6 +2182,36 @@ class SimEngine(ABC):
                 dataset recording), backends plug into
                 ``PolicyRunner.run``'s ``on_frame`` hook via
                 :meth:`_make_run_policy_hook`.
+            policy_object: Already-constructed
+                :class:`~strands_robots.policies.Policy` to drive the rollout,
+                bypassing ``create_policy`` entirely (``policy_provider`` /
+                ``policy_config`` are then unused). Reuse one instance across
+                calls so the checkpoint is not reloaded per rollout - the
+                ``policy_load_cache_hit`` field below reports when a caller
+                rebuilt it instead. ``None`` (default) builds the policy from
+                ``policy_provider`` / ``policy_config``.
+            n_steps: Exact control-step horizon. When given it REPLACES
+                ``duration``, which is recomputed as
+                ``n_steps / control_frequency``, and it bypasses the lossy
+                ``int(duration * control_frequency)`` conversion so the rollout
+                executes exactly this many control steps. Must be a positive
+                integer; ``0``, a negative value, a bool, or a fractional or
+                non-numeric value is reported as a structured caller error
+                rather than truncated to a horizon the caller never asked for.
+                ``None`` (default) falls back to ``max_steps``, then to
+                ``duration``.
+            max_steps: Legacy alias for ``n_steps``, kept for callers written
+                against the older name. Consulted only when ``n_steps`` is
+                ``None`` - ``n_steps`` wins when both are passed - and refused
+                under its own name on the same domain.
+            max_onframe_failures: Maximum *consecutive* ``on_frame``-hook
+                exceptions tolerated before the rollout aborts the episode. That
+                hook is where a backend attaches dataset recording and video
+                capture, so a broken recorder otherwise fills an empty dataset
+                behind a successful-looking rollout. ``None`` (default) uses the
+                runner's own limit (currently ``5``); non-consecutive failures
+                reset the counter. Forwarded verbatim to
+                :meth:`~strands_robots.simulation.policy_runner.PolicyRunner.run`.
             seed: Optional master RNG seed for a reproducible single rollout.
                 When set, reseeds Python / NumPy / torch / cuDNN and forwards
                 ``policy.reset(seed=...)`` so a stochastic policy (VLA action-

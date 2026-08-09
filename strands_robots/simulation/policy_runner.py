@@ -1026,6 +1026,18 @@ class PolicyRunner:
                 broken recording hook otherwise silently produces empty
                 datasets - see GH #117. Non-consecutive failures reset the
                 counter.
+            control_substeps: Physics steps advanced per applied action. ``None``
+                (default) derives the count from ``control_frequency`` and the
+                backend's physics timestep, so a position-servo arm integrates
+                over the full control period instead of a single physics ``dt``.
+                An explicit value must be a positive integer: ``0``, a negative
+                value, a bool or a float raises :class:`ValueError` rather than
+                being clamped, because a clamped ``0`` reinstates the exact
+                under-integration the derivation exists to prevent - the arm
+                then covers a fraction of the way to each target before the next
+                action overwrites it, and the rollout looks like a no-op. The
+                public entry points refuse such a value with a structured error
+                before it reaches the runner.
             seed: Optional master RNG seed for a reproducible single rollout.
                 When set, ``set_eval_seed`` reseeds Python / NumPy / torch /
                 cuDNN and ``policy.reset(seed=...)`` is forwarded so the
@@ -2216,6 +2228,9 @@ class PolicyRunner:
             seed: Master RNG seed. Each episode derives a child RNG from it,
                 so evaluations are reproducible within a process. Only used
                 when ``spec`` is provided.
+            action_horizon: Max actions consumed per policy call before
+                requerying the observation, as in :meth:`run`. Clamped up to the
+                policy's own chunk length when it emits more.
             on_frame: Optional ``(step, observation, action) -> None`` hook
                 fired per applied control step on the eval thread, after
                 ``sim.send_action``. Forwarded on BOTH the ``spec=`` and the
@@ -2230,6 +2245,18 @@ class PolicyRunner:
                 from the script main (e.g. Strands ``Agent`` tool dispatch
                 under asyncio) - see #191 and
                 :meth:`~strands_robots.simulation.mujoco.simulation.Simulation.start_cameras_recording_synchronous`.
+            control_frequency: Target Hz for ``policy.get_actions`` calls, as in
+                :meth:`run`. Also sets the wall-clock period each applied action
+                is integrated over, via the ``control_substeps`` derivation
+                below, so an eval steps physics for the same period per action
+                that :meth:`run` does.
+            control_substeps: Physics steps advanced per applied action, with
+                the same contract as :meth:`run`: ``None`` (default) derives the
+                count from ``control_frequency`` and the backend's physics
+                timestep, and an explicit value must be a positive integer or
+                :class:`ValueError` is raised rather than the value being
+                clamped. Passing ``1`` here is what made eval rollouts look
+                like a policy no-op before the derivation existed.
             async_rtc: Opt-in overlap of policy inference with action-chunk
                 execution on the legacy ``success_fn`` path, mirroring
                 :meth:`run`. Defaults to ``False`` (synchronous): the world is
