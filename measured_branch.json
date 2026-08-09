@@ -1,0 +1,93 @@
+{
+  "tree": "/tmp/robots-src",
+  "estop": [
+    {
+      "label": "True",
+      "verdict": "provisioned",
+      "policy": "strands-robot",
+      "grants_estop": true,
+      "statements": 7,
+      "touched": true
+    },
+    {
+      "label": "False",
+      "verdict": "provisioned",
+      "policy": "strands-robot-no-estop",
+      "grants_estop": false,
+      "statements": 6,
+      "touched": true
+    },
+    {
+      "label": "\"false\"",
+      "verdict": "refused",
+      "detail": "provision_robot: allow_estop_publish must be a boolean, got 'false'. It selects a posture rather than scaling a quantity",
+      "touched": false
+    },
+    {
+      "label": "\"no\"",
+      "verdict": "refused",
+      "detail": "provision_robot: allow_estop_publish must be a boolean, got 'no'. It selects a posture rather than scaling a quantity, s",
+      "touched": false
+    },
+    {
+      "label": "\"off\"",
+      "verdict": "refused",
+      "detail": "provision_robot: allow_estop_publish must be a boolean, got 'off'. It selects a posture rather than scaling a quantity, ",
+      "touched": false
+    },
+    {
+      "label": "\"0\"",
+      "verdict": "refused",
+      "detail": "provision_robot: allow_estop_publish must be a boolean, got '0'. It selects a posture rather than scaling a quantity, so",
+      "touched": false
+    },
+    {
+      "label": "1",
+      "verdict": "refused",
+      "detail": "provision_robot: allow_estop_publish must be a boolean, got 1. It selects a posture rather than scaling a quantity, so i",
+      "touched": false
+    },
+    {
+      "label": "nan",
+      "verdict": "refused",
+      "detail": "provision_robot: allow_estop_publish must be a boolean, got nan. It selects a posture rather than scaling a quantity, so",
+      "touched": false
+    }
+  ],
+  "boot": [
+    {
+      "label": "confirm=True, dry_run=False",
+      "verdict": "ENTERED CREATE PATH",
+      "entered_create": true
+    },
+    {
+      "label": "confirm=False, dry_run=False",
+      "verdict": "refused",
+      "detail": "bootstrap_account() creates persistent AWS resources. Pass confirm=True to proceed, or keep dry_run=",
+      "entered_create": false
+    },
+    {
+      "label": "confirm=\"false\", dry_run=False",
+      "verdict": "refused",
+      "detail": "bootstrap_account: confirm must be a boolean, got 'false'. It selects a posture rather than scaling ",
+      "entered_create": false
+    },
+    {
+      "label": "confirm=\"no\", dry_run=False",
+      "verdict": "refused",
+      "detail": "bootstrap_account: confirm must be a boolean, got 'no'. It selects a posture rather than scaling a q",
+      "entered_create": false
+    },
+    {
+      "label": "dry_run=True (default)",
+      "verdict": "previewed",
+      "entered_create": false
+    },
+    {
+      "label": "dry_run=\"false\", confirm=False",
+      "verdict": "refused",
+      "detail": "bootstrap_account: dry_run must be a boolean, got 'false'. It selects a posture rather than scaling ",
+      "entered_create": false
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "tree": "/tmp/wt-main-1745955",
+  "estop": [
+    {
+      "label": "True",
+      "verdict": "provisioned",
+      "policy": "strands-robot",
+      "grants_estop": true,
+      "statements": 7,
+      "touched": true
+    },
+    {
+      "label": "False",
+      "verdict": "provisioned",
+      "policy": "strands-robot-no-estop",
+      "grants_estop": false,
+      "statements": 6,
+      "touched": true
+    },
+    {
+      "label": "\"false\"",
+      "verdict": "provisioned",
+      "policy": "strands-robot",
+      "grants_estop": true,
+      "statements": 7,
+      "touched": true
+    },
+    {
+      "label": "\"no\"",
+      "verdict": "provisioned",
+      "policy": "strands-robot",
+      "grants_estop": true,
+      "statements": 7,
+      "touched": true
+    },
+    {
+      "label": "\"off\"",
+      "verdict": "provisioned",
+      "policy": "strands-robot",
+      "grants_estop": true,
+      "statements": 7,
+      "touched": true
+    },
+    {
+      "label": "\"0\"",
+      "verdict": "provisioned",
+      "policy": "strands-robot",
+      "grants_estop": true,
+      "statements": 7,
+      "touched": true
+    },
+    {
+      "label": "1",
+      "verdict": "provisioned",
+      "policy": "strands-robot",
+      "grants_estop": true,
+      "statements": 7,
+      "touched": true
+    },
+    {
+      "label": "nan",
+      "verdict": "provisioned",
+      "policy": "strands-robot",
+      "grants_estop": true,
+      "statements": 7,
+      "touched": true
+    }
+  ],
+  "boot": [
+    {
+      "label": "confirm=True, dry_run=False",
+      "verdict": "ENTERED CREATE PATH",
+      "entered_create": true
+    },
+    {
+      "label": "confirm=False, dry_run=False",
+      "verdict": "refused",
+      "detail": "bootstrap_account() creates persistent AWS resources. Pass confirm=True to proceed, or keep dry_run=",
+      "entered_create": false
+    },
+    {
+      "label": "confirm=\"false\", dry_run=False",
+      "verdict": "ENTERED CREATE PATH",
+      "entered_create": true
+    },
+    {
+      "label": "confirm=\"no\", dry_run=False",
+      "verdict": "ENTERED CREATE PATH",
+      "entered_create": true
+    },
+    {
+      "label": "dry_run=True (default)",
+      "verdict": "previewed",
+      "entered_create": false
+    },
+    {
+      "label": "dry_run=\"false\", confirm=False",
+      "verdict": "previewed",
+      "entered_create": false
+    }
+  ]
+}
