@@ -501,6 +501,48 @@ Both mistakes used to be accepted and only surfaced in the recorded data:
 `robot_features` / `action_features`, or from `joint_names` for the action
 columns.
 
+### Camera frame shape must be a usable pixel count
+
+`camera_dims` and the `video_width` / `video_height` pair are one quantity in two
+spellings: the recorder declares each camera at
+`camera_dims.get(camera, (video_height, video_width))`, so the mapping sets the
+shape of the cameras it covers and the pair sets the shape of every other one.
+Note the order - `camera_dims` is `(height, width)`, the reverse of the pair.
+
+It is a **declaration, not a resize** - the recorder rescales nothing - so
+whatever is given goes straight into the LeRobot feature as `(3, height, width)`.
+`create()` refuses a shape it cannot honor, on the same shared domain and in the
+same place as the column names above:
+
+```python
+DatasetRecorder.create(repo_id="user/d", camera_keys=["image"],
+                       camera_dims={"imagee": (240, 320)})   # ValueError: not a declared camera
+DatasetRecorder.create(repo_id="user/d", camera_keys=["image"],
+                       camera_dims={"image": (240,)})        # ValueError: not a (height, width) pair
+DatasetRecorder.create(repo_id="user/d", camera_keys=["image"],
+                       video_width=0)                        # ValueError: must be a positive integer
+```
+
+Three mistakes used to be accepted, and none was reported near the parameter that
+caused it:
+
+- A key `camera_keys` does not declare is **never looked up**, so the camera it
+  was meant for silently took the global pair instead. A camera streaming
+  240x320 declared as `camera_dims={"imagee": (240, 320)}` against
+  `camera_keys=["image"]` was declared `(3, 480, 640)` from the defaults -
+  nothing logged, dataset created, and the mismatch surfacing later against
+  `add_frame`.
+- A component that is **not a positive integer** was written in as given, so the
+  schema declared `(3, 480, nan)` or `(3, 480, '640')` and no frame could match
+  it. A pixel count is written into `meta/info.json`, so it has to be a true
+  `int`: an integral float would be declared as `480.0`, and a NumPy integer is
+  not JSON-serializable.
+- A value that is **not a two-element sequence** unpacked as a bare `TypeError`,
+  and a non-mapping `camera_dims` as a bare `AttributeError` from the lookup.
+
+`camera_dims=None` and `{}` still mean "not supplied" - every camera then takes
+the global pair. Passing the shape as a list rather than a tuple is accepted.
+
 ### Re-recording into an existing `repo_id`
 
 `DatasetRecorder.create()` builds a **fresh** dataset. If the resolved dataset

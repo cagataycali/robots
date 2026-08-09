@@ -21,6 +21,7 @@ Usage:
     recorder.push_to_hub()
 """
 
+import difflib
 import importlib.util
 import json
 import logging
@@ -32,7 +33,13 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import lerobot_version, name_list_error, non_negative_whole_number_error
+from strands_robots.utils import (
+    lerobot_version,
+    name_list_error,
+    non_negative_whole_number_error,
+    positive_count_error,
+    sequence_length,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -668,6 +675,105 @@ def unrecordable_action_columns_error(
     )
 
 
+def _frame_shape_error(
+    camera_dims: Any,
+    camera_keys: Sequence[str] | None,
+    video_width: Any,
+    video_height: Any,
+    context: str = "DatasetRecorder.create",
+) -> str | None:
+    """Error text when the declared camera frame shape cannot be honored.
+
+    ``camera_dims`` and the ``video_width`` / ``video_height`` pair are one
+    quantity in two spellings. :meth:`DatasetRecorder._build_features` reads
+    ``camera_dims.get(camera, (video_height, video_width))`` once per declared
+    camera, so the pair is the shape of every camera the mapping does not
+    cover. Both spellings are checked here on the same domain: a value refused
+    through one and accepted through the other would let the same unusable
+    shape into the schema by choosing where to write it.
+
+    The shape is a declaration rather than a resize - the recorder rescales
+    nothing - so it goes straight into the LeRobot feature as ``(3, height,
+    width)`` and is not compared against a real frame until the first
+    ``add_frame``. Three mistakes could not be honored as written and were
+    reported nowhere near the parameter that caused them:
+
+    * A key ``camera_keys`` does not declare is dropped by that ``.get``, so
+      the camera it was meant for silently takes the global pair instead and
+      the schema declares a shape that camera does not stream. This is the
+      quiet one: nothing is logged, the dataset is created, and the mismatch
+      surfaces later against ``add_frame``.
+    * A component that is not a positive integer is written into the feature
+      as given - ``(3, 480, nan)``, ``(3, 480, '640')`` - so the schema
+      declares a shape no frame can match.
+    * A value that is not a two-element sequence unpacks as a bare
+      ``TypeError`` / ``ValueError``, and a non-mapping ``camera_dims`` as a
+      bare ``AttributeError`` from the ``.get`` - none of which names this
+      parameter.
+
+    :func:`~strands_robots.utils.positive_count_error` owns the component
+    domain because a pixel count here is written into ``meta/info.json``: it
+    has to be a true ``int``. An integral float lands in the schema as
+    ``480.0``, and a ``numpy`` integer raises ``TypeError: Object of type
+    int64 is not JSON serializable`` from the metadata write, so the wider
+    whole-number domain would accept values this consumer refuses.
+
+    Args:
+        camera_dims: Per-camera ``{name: (height, width)}`` mapping, or None.
+        camera_keys: The camera names the schema declares. Authoritative: it is
+            the only source of camera names, and where it is empty no image
+            feature is built, so neither spelling is read.
+        video_width: Fallback frame width for every camera not covered above.
+        video_height: Fallback frame height for every camera not covered above.
+        context: Caller name for the message prefix.
+
+    Returns:
+        The first problem found, or None when the declared shape is usable.
+    """
+    declared = list(camera_keys or ())
+
+    # The pair is read exactly where ``_build_features`` reads it - per declared
+    # camera - so with no camera declared it decides nothing and is left alone.
+    if declared:
+        for value, param in ((video_width, "video_width"), (video_height, "video_height")):
+            if text := positive_count_error(value, param, context):
+                return text
+
+    if camera_dims is None:
+        return None
+    if not isinstance(camera_dims, Mapping):
+        return (
+            f"{context}: camera_dims must be a mapping of camera name to a "
+            f"(height, width) pair, got {type(camera_dims).__name__}. Its entries are "
+            f"read per declared camera, so a non-mapping cannot be looked up at all."
+        )
+    if camera_dims and not declared:
+        return (
+            f"{context}: camera_dims declares a frame shape for "
+            f"{sorted(map(str, camera_dims))} but no camera is declared. Pass the same "
+            f"names as camera_keys, or drop camera_dims - with no camera_keys no image "
+            f"feature is built, so every entry would be ignored."
+        )
+    for name, dims in camera_dims.items():
+        if name not in declared:
+            hint = difflib.get_close_matches(str(name), declared, n=1, cutoff=0.6)
+            suggestion = f" Did you mean {hint[0]!r}?" if hint else ""
+            return (
+                f"{context}: camera_dims key {name!r} is not a declared camera."
+                f"{suggestion} Declared cameras: {declared}. An entry keyed by any other "
+                f"name is never looked up, so that camera would be declared at the global "
+                f"video_height/video_width instead of the shape given here."
+            )
+        if isinstance(dims, str | bytes | Mapping) or sequence_length(dims) != 2:
+            return (
+                f"{context}: camera_dims[{name!r}] must be a (height, width) pair of positive integers, got {dims!r}."
+            )
+        for value, axis in zip(dims, ("height", "width"), strict=True):
+            if text := positive_count_error(value, f"camera_dims[{name!r}] {axis}", context):
+                return text
+    return None
+
+
 class RecordingFrameError(RuntimeError):
     """A frame the dataset recorder could not write, in fail-fast mode.
 
@@ -803,12 +909,20 @@ class DatasetRecorder:
                 here is declared at its own shape rather than the global one; a
                 camera absent from the mapping (or ``None``, the default) takes
                 ``(video_height, video_width)``.
+                Every key has to be a name ``camera_keys`` declares: an entry
+                keyed by anything else is never looked up, so that camera would
+                be declared at the global pair instead of the shape given here.
+                Each value is a two-element ``(height, width)`` of positive
+                integers.
             video_width/video_height: Declared frame shape for every camera
                 ``camera_dims`` does not cover. A declaration rather than a
                 resize - the recorder rescales nothing - so a camera streaming
                 another size is declared at a shape it does not have. This is why
                 the backends pass ``camera_dims`` read from the live cameras
                 instead of relying on this pair.
+                Each is a positive integer - a pixel count is written into
+                ``meta/info.json``, so an integral float would be declared as
+                ``480.0`` and a ``numpy`` integer is not JSON-serializable.
             joint_names: List of DISTINCT joint names (alternative to
                 robot_features for sim). These become the ``observation.state``
                 column names, and add_frame reads each one out of the
@@ -863,9 +977,14 @@ class DatasetRecorder:
         Raises:
             ValueError: ``camera_keys``, ``joint_names`` or ``action_names`` is
                 not a list of distinct non-blank names (a bare string, a
-                mapping, or a repeated name). Refused before the on-disk target
-                is touched, so an ``overwrite=True`` call that is refused leaves
-                an existing dataset intact.
+                mapping, or a repeated name); or the declared camera frame shape
+                cannot be honored - ``camera_dims`` is not a mapping, is keyed by
+                a name ``camera_keys`` does not declare, or holds anything but a
+                ``(height, width)`` pair of positive integers, or
+                ``video_width`` / ``video_height`` is not a positive integer.
+                Refused before the on-disk target is touched, so an
+                ``overwrite=True`` call that is refused leaves an existing
+                dataset intact.
             FileExistsError: The resolved dataset directory already holds a
                 dataset and ``overwrite`` is False.
         """
@@ -896,6 +1015,18 @@ class DatasetRecorder:
         ):
             if value and (text := name_list_error(value, param, "DatasetRecorder.create")):
                 raise ValueError(text)
+        # ``camera_dims`` and the ``video_width`` / ``video_height`` pair are the
+        # other half of the same schema declaration: they set the frame shape of
+        # every declared camera. Checked on the same shared domain, in the same
+        # place and for the same two reasons as the names above - before the
+        # lerobot extra is probed, so one caller mistake reports identically on
+        # every install, and before the on-disk target is touched, because
+        # ``overwrite=True`` removes an existing dataset and a refusal arriving
+        # after that would already have destroyed it. Runs after the loop above
+        # so ``camera_keys`` is known to be a list of distinct names before it is
+        # used as the authoritative set of camera names.
+        if text := _frame_shape_error(camera_dims, camera_keys, video_width, video_height):
+            raise ValueError(text)
 
         # Lazy import - this is where we actually need lerobot
         LeRobotDatasetCls = _get_lerobot_dataset_class()
