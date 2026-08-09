@@ -1,0 +1,61 @@
+{
+  "tree": "/tmp/robots-mine",
+  "rows": [
+    {
+      "label": "declared_as_list",
+      "construction": "accepted",
+      "message": "",
+      "declared": [
+        "panda"
+      ],
+      "list_benchmarks": "\u2022 declared_as_list: DeclarativeBenchmark (robots=['panda'], default=panda, max_steps=120)",
+      "eval_status": "success",
+      "eval_text": "Benchmark: DeclarativeBenchmark | policy MockPolicy on 'panda'\nEpisodes: 1 | Success: 0 | Failure: 0 (0.0% success)\nAvg reward: 0.00 | Avg steps: 120/120",
+      "joints": {
+        "joint1": -0.454613,
+        "joint1.vel": -0.34217,
+        "joint2": 0.463945,
+        "joint2.vel": 0.440986,
+        "joint3": -0.453463,
+        "joint3.vel": -0.460579,
+        "joint4": -0.075085,
+        "joint4.vel": 0.01867,
+        "joint5": -0.43388,
+        "joint5.vel": -0.330094,
+        "joint6": 0.429498,
+        "joint6.vel": 0.040724,
+        "joint7": -0.385693,
+        "joint7.vel": -0.075743
+      },
+      "png_home": "/tmp/art/branch/declared_as_list_png_home.png",
+      "png_after": "/tmp/art/branch/declared_as_list_png_after.png"
+    },
+    {
+      "label": "declared_as_bare_string",
+      "construction": "REFUSED",
+      "message": "DeclarativeBenchmark: supported_robots must be a list of names, not a single string, got 'panda'. A string is iterable per character, so this would be read as ['p', 'a', 'n', 'd', 'a'] (5 name(s)). Wrap it in a list: ['panda'].",
+      "declared": null,
+      "list_benchmarks": "(never registered)",
+      "eval_status": "(not reached)",
+      "eval_text": "(not reached - construction refused)",
+      "joints": {
+        "joint1": 0.0,
+        "joint1.vel": 0.0,
+        "joint2": 0.0,
+        "joint2.vel": 0.0,
+        "joint3": 0.0,
+        "joint3.vel": 0.0,
+        "joint4": 0.0,
+        "joint4.vel": 0.0,
+        "joint5": 0.0,
+        "joint5.vel": 0.0,
+        "joint6": 0.0,
+        "joint6.vel": 0.0,
+        "joint7": 0.0,
+        "joint7.vel": 0.0
+      },
+      "png_home": "/tmp/art/branch/declared_as_bare_string_png_home.png",
+      "png_after": "/tmp/art/branch/declared_as_bare_string_png_after.png"
+    }
+  ]
+}
