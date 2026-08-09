@@ -2248,9 +2248,16 @@ class PolicyRunner:
             robot_name: Robot to evaluate.
             policy: Already-constructed ``Policy`` instance.
             instruction: Instruction forwarded to the policy.
-            n_episodes: Number of reset → rollout episodes.
+            n_episodes: Number of reset → rollout episodes. Must be a
+                positive integer: it bounds the episode loop on both paths, so
+                a value outside that domain runs no episode yet still reports a
+                completed evaluation.
             max_steps: Cap per episode. Ignored when ``spec`` is provided
-                (``spec.max_steps`` wins).
+                (``spec.max_steps`` wins, refused at its read in
+                :meth:`_evaluate_with_spec`). Must be a positive integer when
+                it is the effective horizon: a value outside that domain either
+                runs episodes of zero length and reports a 0% success rate over
+                them, or - for ``inf`` - never terminates.
             success_fn: Legacy success predicate (see above).
             spec: :class:`BenchmarkProtocol` to drive the eval. When
                 provided, overrides the ``success_fn`` path.
@@ -2374,6 +2381,38 @@ class PolicyRunner:
         # entry point would have refused.
         if horizon_error := positive_count_error(action_horizon, "action_horizon", "PolicyRunner.evaluate"):
             raise ValueError(horizon_error)
+        # The two bounds of this method's own episode loop, in the same shared
+        # domain both of its entry points already apply (``eval_policy`` checks
+        # both counts, ``evaluate_benchmark`` checks ``n_episodes``), raised
+        # rather than returned because raising is this layer's contract for a
+        # caller driving PolicyRunner directly.
+        #
+        # These two are not knobs whose misuse degrades the evaluation - they
+        # remove it while still reporting one. ``success_rate`` is
+        # ``n_success / max(n_completed, 1)``, so the guard on the division also
+        # turns "nothing ran" into a clean ``0.0``, and ``success_measured`` is
+        # derived from whether a criterion was *supplied* rather than evaluated -
+        # so ``n_episodes=0`` and ``max_steps=0`` both returned
+        # ``status="success"`` with ``success_rate: 0.0`` AND
+        # ``success_measured: true`` over zero applied actions, a payload
+        # indistinguishable from a policy that genuinely failed every episode.
+        # ``max_steps=inf`` did not report a wrong number at all: ``while steps <
+        # max_steps`` has no false case, so the first episode never returns.
+        #
+        # Before ``sim.reset()``, ``set_eval_seed`` (which reseeds the
+        # process-global RNG) and the first inference, so a refused eval costs
+        # nothing and leaves no global side effect.
+        if episodes_error := positive_count_error(n_episodes, "n_episodes", "PolicyRunner.evaluate"):
+            raise ValueError(episodes_error)
+        # Scoped to the path that reads the value. With a ``spec`` the
+        # per-episode horizon is ``spec.max_steps`` - validated where it is read,
+        # because a spec's horizon has no parameter of its own - and this
+        # parameter is documented as ignored, so refusing it there would reject a
+        # value that changes nothing about the rollout. Same scoping
+        # ``SimEngine.run_policy`` takes for ``duration`` ("validate the value
+        # the rollout will actually run on, and only then").
+        if spec is None and (steps_error := positive_count_error(max_steps, "max_steps", "PolicyRunner.evaluate")):
+            raise ValueError(steps_error)
         if spec is not None and success_fn is not None:
             return {
                 "status": "error",
@@ -2775,8 +2814,9 @@ class PolicyRunner:
         # The per-episode horizon is read off the benchmark, so it is the one
         # rollout count with no parameter of its own to validate: every other
         # bound of this nested loop (``n_episodes``, ``action_horizon``,
-        # ``control_substeps``) is checked by the public entry point before it
-        # gets here. Check it at the read instead. That covers every way a
+        # ``control_substeps``) is checked by ``evaluate`` before it delegates
+        # here - and by the public entry point above that - so a direct caller
+        # of the runner is covered too. Check it at the read instead. That covers every way a
         # benchmark can come by its horizon - ``DeclarativeBenchmark.from_dict``,
         # direct construction, a plain ``BenchmarkProtocol`` subclass setting the
         # documented ``max_steps`` attribute, or an assignment to it after
