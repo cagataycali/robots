@@ -1,0 +1,271 @@
+{
+  "tree": "/tmp/robots-mine-2046687",
+  "modes": {
+    "record": {
+      "true_token": "true",
+      "false_token": "false",
+      "identical_argv": false,
+      "argv_off": [
+        "python",
+        "-m",
+        "lerobot.scripts.lerobot_record",
+        "--robot.type",
+        "so101_follower",
+        "--robot.port",
+        "/dev/ttyACM1",
+        "--teleop.type",
+        "so101_leader",
+        "--teleop.port",
+        "/dev/ttyACM0",
+        "--dataset.repo_id",
+        "user/pick",
+        "--dataset.num_episodes",
+        "50",
+        "--dataset.single_task",
+        "pick the cube",
+        "--dataset.fps",
+        "30",
+        "--dataset.episode_time_s",
+        "60",
+        "--dataset.reset_time_s",
+        "60",
+        "--dataset.root",
+        "/home/cagatay/.cache/huggingface/lerobot/user/pick",
+        "--dataset.push_to_hub",
+        "false",
+        "--dataset.video",
+        "true",
+        "--play_sounds",
+        "false"
+      ]
+    },
+    "replay": {
+      "true_token": "true",
+      "false_token": "false",
+      "identical_argv": false,
+      "argv_off": [
+        "python",
+        "-m",
+        "lerobot.scripts.lerobot_replay",
+        "--robot.type",
+        "so101_follower",
+        "--robot.port",
+        "/dev/ttyACM1",
+        "--dataset.repo_id",
+        "user/pick",
+        "--dataset.episode",
+        "0",
+        "--dataset.fps",
+        "30",
+        "--play_sounds",
+        "false"
+      ]
+    },
+    "dagger": {
+      "true_token": "true",
+      "false_token": "false",
+      "identical_argv": false,
+      "argv_off": [
+        "python",
+        "-m",
+        "lerobot.scripts.lerobot_rollout",
+        "--robot.type",
+        "so101_follower",
+        "--robot.port",
+        "/dev/ttyACM1",
+        "--teleop.type",
+        "so101_leader",
+        "--teleop.port",
+        "/dev/ttyACM0",
+        "--policy.path",
+        "lerobot/act_so101",
+        "--strategy.type",
+        "dagger",
+        "--strategy.input_device",
+        "keyboard",
+        "--dataset.repo_id",
+        "user/pick",
+        "--dataset.num_episodes",
+        "50",
+        "--dataset.fps",
+        "30",
+        "--dataset.push_to_hub",
+        "false",
+        "--dataset.video",
+        "true",
+        "--fps",
+        "60",
+        "--play_sounds",
+        "false"
+      ]
+    },
+    "teleoperate": {
+      "true_token": null,
+      "false_token": null,
+      "identical_argv": true,
+      "argv_off": [
+        "python",
+        "-m",
+        "lerobot.scripts.lerobot_teleoperate",
+        "--robot.type",
+        "so101_follower",
+        "--robot.port",
+        "/dev/ttyACM1",
+        "--teleop.type",
+        "so101_leader",
+        "--teleop.port",
+        "/dev/ttyACM0",
+        "--fps",
+        "60"
+      ]
+    }
+  },
+  "grid": {
+    "record": {
+      "true(bool)": [
+        "emitted",
+        "true"
+      ],
+      "false(bool)": [
+        "emitted",
+        "false"
+      ],
+      "\"false\"": [
+        "refused",
+        true
+      ],
+      "\"off\"": [
+        "refused",
+        true
+      ],
+      "None": [
+        "refused",
+        true
+      ],
+      "[]": [
+        "refused",
+        true
+      ],
+      "0": [
+        "refused",
+        true
+      ],
+      "1": [
+        "refused",
+        true
+      ]
+    },
+    "replay": {
+      "true(bool)": [
+        "emitted",
+        "true"
+      ],
+      "false(bool)": [
+        "emitted",
+        "false"
+      ],
+      "\"false\"": [
+        "refused",
+        true
+      ],
+      "\"off\"": [
+        "refused",
+        true
+      ],
+      "None": [
+        "refused",
+        true
+      ],
+      "[]": [
+        "refused",
+        true
+      ],
+      "0": [
+        "refused",
+        true
+      ],
+      "1": [
+        "refused",
+        true
+      ]
+    },
+    "dagger": {
+      "true(bool)": [
+        "emitted",
+        "true"
+      ],
+      "false(bool)": [
+        "emitted",
+        "false"
+      ],
+      "\"false\"": [
+        "refused",
+        true
+      ],
+      "\"off\"": [
+        "refused",
+        true
+      ],
+      "None": [
+        "refused",
+        true
+      ],
+      "[]": [
+        "refused",
+        true
+      ],
+      "0": [
+        "refused",
+        true
+      ],
+      "1": [
+        "refused",
+        true
+      ]
+    },
+    "teleoperate": {
+      "true(bool)": [
+        "accepted-inert",
+        null
+      ],
+      "false(bool)": [
+        "accepted-inert",
+        null
+      ],
+      "\"false\"": [
+        "accepted-inert",
+        null
+      ],
+      "\"off\"": [
+        "accepted-inert",
+        null
+      ],
+      "None": [
+        "accepted-inert",
+        null
+      ],
+      "[]": [
+        "accepted-inert",
+        null
+      ],
+      "0": [
+        "accepted-inert",
+        null
+      ],
+      "1": [
+        "accepted-inert",
+        null
+      ]
+    }
+  },
+  "roundtrip": {
+    "record:True": true,
+    "record:False": false,
+    "replay:True": true,
+    "replay:False": false,
+    "dagger:True": null,
+    "dagger:False": null,
+    "teleoperate:True": null,
+    "teleoperate:False": null
+  }
+}
