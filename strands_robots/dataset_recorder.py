@@ -34,6 +34,7 @@ from typing import Any
 import numpy as np
 
 from strands_robots.utils import (
+    boolean_flag_error,
     lerobot_version,
     name_list_error,
     non_negative_whole_number_error,
@@ -162,6 +163,17 @@ def sync_dataset_to_bucket(
     path is agent-reachable via ``stop_recording(bucket=, run_id=)``. A
     rejected value returns ``{"status": "error", ...}`` without running ``hf``.
 
+    ``create``, ``private`` and ``delete`` select *postures* rather than
+    scaling a quantity, so each is checked against
+    :func:`~strands_robots.utils.boolean_flag_error` before the ``hf`` CLI is
+    even located - the same domain the mesh provisioning entry points apply to
+    their own capability flags. Read by truthiness they fail toward the
+    permissive posture in *both* directions, because every non-empty string is
+    truthy and every falsy non-boolean takes the other branch:
+    ``delete="false"`` - the spelling an operator reaches for when opting out -
+    appends ``--delete`` and mirror-deletes remote files absent locally, while
+    ``private=0`` drops ``--private`` and creates the bucket *public*.
+
     The shard layout is already Xet/bucket-friendly at lerobot's defaults
     (100 MB data parquet / 200 MB video MP4 shards), and ``meta/`` MUST
     ship or downstream loses normalization stats.
@@ -173,15 +185,25 @@ def sync_dataset_to_bucket(
         run_id: Subpath inside the bucket; defaults to the dataset directory
             name (``Path(root).name``).
         create: Create the bucket first (pre-existing bucket is not an error).
+            Must be a boolean.
         private: Create the bucket as private (only used with ``create=True``).
+            Must be a boolean.
         delete: Forward ``--delete`` to ``hf sync`` (mirror semantics -
-            remove remote files absent locally).
+            remove remote files absent locally). Must be a boolean.
 
     Returns:
         ``{"status": "success", "bucket_uri": ...}`` or
         ``{"status": "error", "message": ...}``. Never raises on ``hf``
-        failure; errors are surfaced in the result dict.
+        failure; errors are surfaced in the result dict. A flag outside its
+        domain is reported the same way, without locating or running the CLI.
     """
+    # Before the CLI probe so the same caller mistake reports identically
+    # whether or not `hf` is installed, and so a refused posture flag can
+    # never reach `hf buckets create` or `hf sync`.
+    for flag_name, flag_value in (("create", create), ("private", private), ("delete", delete)):
+        if flag_error := boolean_flag_error(flag_value, flag_name, "sync_dataset_to_bucket"):
+            return {"status": "error", "message": flag_error}
+
     import subprocess
 
     hf = _hf_executable()
@@ -1659,7 +1681,7 @@ class DatasetRecorder:
 
         Args:
             tags: Optional tags for the dataset
-            private: Upload as private dataset
+            private: Upload as private dataset. Must be a boolean.
 
         Refuses to publish an empty dataset (no frames written or no episode
         saved). Pushing then would create a Hub repo containing only
@@ -1671,7 +1693,20 @@ class DatasetRecorder:
         Returns:
             Dict with push status. ``status="error"`` (no Hub call made) when
             the dataset is empty.
+
+        ``private`` selects the published repository's visibility, so it is
+        checked against :func:`~strands_robots.utils.boolean_flag_error`
+        ahead of the empty-dataset state check and any Hub call: the flag is
+        a property of this call rather than of the recorder, so the same
+        mistake reports identically whether or not the dataset happens to be
+        empty. It is otherwise forwarded verbatim to LeRobot, whose own
+        parameter is ``bool | None`` where ``None`` means *use the namespace
+        default* - a third visibility this signature's ``bool`` does not
+        describe, and one a caller reading ``private: bool = False`` would not
+        expect to select.
         """
+        if flag_error := boolean_flag_error(private, "private", "push_to_hub"):
+            return {"status": "error", "message": flag_error}
         if self.frame_count == 0 or self.episode_count == 0:
             msg = (
                 f"refusing to push empty dataset {self.dataset.repo_id} "
