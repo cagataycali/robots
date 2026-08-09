@@ -1,0 +1,131 @@
+{
+ "tree": "/tmp/ctrl-1702701",
+ "rows": {
+  "true": {
+   "argument": {
+    "posture": "insecure",
+    "refused": false
+   },
+   "environment": {
+    "posture": "insecure",
+    "refused": false
+   }
+  },
+  "1": {
+   "argument": {
+    "posture": "insecure",
+    "refused": false
+   },
+   "environment": {
+    "posture": "insecure",
+    "refused": false
+   }
+  },
+  "yes": {
+   "argument": {
+    "posture": "insecure",
+    "refused": false
+   },
+   "environment": {
+    "posture": "insecure",
+    "refused": false
+   }
+  },
+  "false": {
+   "argument": {
+    "posture": "insecure",
+    "refused": false
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "no": {
+   "argument": {
+    "posture": "insecure",
+    "refused": false
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "0": {
+   "argument": {
+    "posture": "insecure",
+    "refused": false
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "off": {
+   "argument": {
+    "posture": "insecure",
+    "refused": false
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "on": {
+   "argument": {
+    "posture": "insecure",
+    "refused": false
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "enabled": {
+   "argument": {
+    "posture": "insecure",
+    "refused": false
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  }
+ },
+ "entry": {
+  "'false'": {
+   "outcome": "started",
+   "runtime_setting": "'false'",
+   "real_bool": false,
+   "insecure_warning": true
+  },
+  "True": {
+   "outcome": "started",
+   "runtime_setting": "True",
+   "real_bool": true,
+   "insecure_warning": true
+  },
+  "False": {
+   "outcome": "started",
+   "runtime_setting": "False",
+   "real_bool": true,
+   "insecure_warning": false
+  },
+  "None": {
+   "outcome": "started",
+   "runtime_setting": "False",
+   "real_bool": true,
+   "insecure_warning": false
+  }
+ },
+ "numpy": {
+  "np.True_": {
+   "returned": "bool",
+   "real_bool": false
+  },
+  "np.array(False)": {
+   "returned": "ndarray",
+   "real_bool": false
+  }
+ }
+}

@@ -1,0 +1,141 @@
+{
+ "tree": "/tmp/rmine",
+ "rows": {
+  "true": {
+   "argument": {
+    "posture": "refused",
+    "refused": true,
+    "message": "allow_insecure must be a bool or None, got 'true'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+   },
+   "environment": {
+    "posture": "insecure",
+    "refused": false
+   }
+  },
+  "1": {
+   "argument": {
+    "posture": "refused",
+    "refused": true,
+    "message": "allow_insecure must be a bool or None, got '1'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+   },
+   "environment": {
+    "posture": "insecure",
+    "refused": false
+   }
+  },
+  "yes": {
+   "argument": {
+    "posture": "refused",
+    "refused": true,
+    "message": "allow_insecure must be a bool or None, got 'yes'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+   },
+   "environment": {
+    "posture": "insecure",
+    "refused": false
+   }
+  },
+  "false": {
+   "argument": {
+    "posture": "refused",
+    "refused": true,
+    "message": "allow_insecure must be a bool or None, got 'false'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "no": {
+   "argument": {
+    "posture": "refused",
+    "refused": true,
+    "message": "allow_insecure must be a bool or None, got 'no'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "0": {
+   "argument": {
+    "posture": "refused",
+    "refused": true,
+    "message": "allow_insecure must be a bool or None, got '0'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "off": {
+   "argument": {
+    "posture": "refused",
+    "refused": true,
+    "message": "allow_insecure must be a bool or None, got 'off'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "on": {
+   "argument": {
+    "posture": "refused",
+    "refused": true,
+    "message": "allow_insecure must be a bool or None, got 'on'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  },
+  "enabled": {
+   "argument": {
+    "posture": "refused",
+    "refused": true,
+    "message": "allow_insecure must be a bool or None, got 'enabled'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+   },
+   "environment": {
+    "posture": "secure",
+    "refused": false
+   }
+  }
+ },
+ "entry": {
+  "'false'": {
+   "outcome": "refused",
+   "runtime_setting": "-",
+   "real_bool": null,
+   "insecure_warning": false,
+   "message": "allow_insecure must be a bool or None, got 'false'. A string spelling is read only from DEVICE_CONNECT_ALLOW_INSECURE, where ('true', '1', 'yes') opt in and anything else is secure; passed as this argument a non-empty string is truthy, so 'false' would enable insecure transport rather than refuse it."
+  },
+  "True": {
+   "outcome": "started",
+   "runtime_setting": "True",
+   "real_bool": true,
+   "insecure_warning": true
+  },
+  "False": {
+   "outcome": "started",
+   "runtime_setting": "False",
+   "real_bool": true,
+   "insecure_warning": false
+  },
+  "None": {
+   "outcome": "started",
+   "runtime_setting": "False",
+   "real_bool": true,
+   "insecure_warning": false
+  }
+ },
+ "numpy": {
+  "np.True_": {
+   "returned": "bool",
+   "real_bool": true
+  },
+  "np.array(False)": {
+   "returned": "bool",
+   "real_bool": true
+  }
+ }
+}
