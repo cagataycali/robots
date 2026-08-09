@@ -1,0 +1,127 @@
+{
+  "tree": "/tmp/robots-mine-1935204",
+  "rows": {
+    "dataset_push_to_hub": {
+      "false": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: dataset_push_to_hub must be a boolean, got 'false'"
+      },
+      "no": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: dataset_push_to_hub must be a boolean, got 'no'"
+      },
+      "off": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: dataset_push_to_hub must be a boolean, got 'off'"
+      },
+      "0": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: dataset_push_to_hub must be a boolean, got '0'"
+      }
+    },
+    "dataset_video": {
+      "false": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: dataset_video must be a boolean, got 'false'"
+      },
+      "no": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: dataset_video must be a boolean, got 'no'"
+      },
+      "off": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: dataset_video must be a boolean, got 'off'"
+      },
+      "0": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: dataset_video must be a boolean, got '0'"
+      }
+    },
+    "display_data": {
+      "false": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: display_data must be a boolean, got 'false'"
+      },
+      "no": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: display_data must be a boolean, got 'no'"
+      },
+      "off": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: display_data must be a boolean, got 'off'"
+      },
+      "0": {
+        "outcome": "refused",
+        "detail": "build_lerobot_command: display_data must be a boolean, got '0'"
+      }
+    }
+  },
+  "honored": {
+    "opt_out_false": [
+      "python",
+      "-m",
+      "lerobot.scripts.lerobot_record",
+      "--robot.type",
+      "so101_follower",
+      "--robot.port",
+      "/dev/ttyACM0",
+      "--teleop.type",
+      "so101_leader",
+      "--teleop.port",
+      "/dev/ttyACM1",
+      "--dataset.repo_id",
+      "user/ds",
+      "--dataset.num_episodes",
+      "50",
+      "--dataset.single_task",
+      "pick the cube",
+      "--dataset.fps",
+      "30",
+      "--dataset.episode_time_s",
+      "60",
+      "--dataset.reset_time_s",
+      "60",
+      "--dataset.root",
+      "/home/cagatay/.cache/huggingface/lerobot/user/ds",
+      "--dataset.push_to_hub",
+      "false",
+      "--dataset.video",
+      "true"
+    ],
+    "opt_in_true": [
+      "python",
+      "-m",
+      "lerobot.scripts.lerobot_record",
+      "--robot.type",
+      "so101_follower",
+      "--robot.port",
+      "/dev/ttyACM0",
+      "--teleop.type",
+      "so101_leader",
+      "--teleop.port",
+      "/dev/ttyACM1",
+      "--dataset.repo_id",
+      "user/ds",
+      "--dataset.num_episodes",
+      "50",
+      "--dataset.single_task",
+      "pick the cube",
+      "--dataset.fps",
+      "30",
+      "--dataset.episode_time_s",
+      "60",
+      "--dataset.reset_time_s",
+      "60",
+      "--dataset.root",
+      "/home/cagatay/.cache/huggingface/lerobot/user/ds",
+      "--dataset.push_to_hub",
+      "true",
+      "--dataset.video",
+      "true"
+    ]
+  },
+  "schema": {
+    "auto_accept_calibration": "Whether to answer the follower's calibration prompt automatically for a backgr",
+    "dagger_record_autonomous": "For ``dagger``, whether to record the autonomous (uncorrected) episodes alongs"
+  }
+}

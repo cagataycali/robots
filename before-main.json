@@ -1,0 +1,127 @@
+{
+  "tree": "/tmp/wt-main-1939234",
+  "rows": {
+    "dataset_push_to_hub": {
+      "false": {
+        "outcome": "emitted",
+        "detail": "--dataset.push_to_hub true"
+      },
+      "no": {
+        "outcome": "emitted",
+        "detail": "--dataset.push_to_hub true"
+      },
+      "off": {
+        "outcome": "emitted",
+        "detail": "--dataset.push_to_hub true"
+      },
+      "0": {
+        "outcome": "emitted",
+        "detail": "--dataset.push_to_hub true"
+      }
+    },
+    "dataset_video": {
+      "false": {
+        "outcome": "emitted",
+        "detail": "--dataset.video true"
+      },
+      "no": {
+        "outcome": "emitted",
+        "detail": "--dataset.video true"
+      },
+      "off": {
+        "outcome": "emitted",
+        "detail": "--dataset.video true"
+      },
+      "0": {
+        "outcome": "emitted",
+        "detail": "--dataset.video true"
+      }
+    },
+    "display_data": {
+      "false": {
+        "outcome": "emitted",
+        "detail": "--display_data true"
+      },
+      "no": {
+        "outcome": "emitted",
+        "detail": "--display_data true"
+      },
+      "off": {
+        "outcome": "emitted",
+        "detail": "--display_data true"
+      },
+      "0": {
+        "outcome": "emitted",
+        "detail": "--display_data true"
+      }
+    }
+  },
+  "honored": {
+    "opt_out_false": [
+      "python",
+      "-m",
+      "lerobot.scripts.lerobot_record",
+      "--robot.type",
+      "so101_follower",
+      "--robot.port",
+      "/dev/ttyACM0",
+      "--teleop.type",
+      "so101_leader",
+      "--teleop.port",
+      "/dev/ttyACM1",
+      "--dataset.repo_id",
+      "user/ds",
+      "--dataset.num_episodes",
+      "50",
+      "--dataset.single_task",
+      "pick the cube",
+      "--dataset.fps",
+      "30",
+      "--dataset.episode_time_s",
+      "60",
+      "--dataset.reset_time_s",
+      "60",
+      "--dataset.root",
+      "/home/cagatay/.cache/huggingface/lerobot/user/ds",
+      "--dataset.push_to_hub",
+      "false",
+      "--dataset.video",
+      "true"
+    ],
+    "opt_in_true": [
+      "python",
+      "-m",
+      "lerobot.scripts.lerobot_record",
+      "--robot.type",
+      "so101_follower",
+      "--robot.port",
+      "/dev/ttyACM0",
+      "--teleop.type",
+      "so101_leader",
+      "--teleop.port",
+      "/dev/ttyACM1",
+      "--dataset.repo_id",
+      "user/ds",
+      "--dataset.num_episodes",
+      "50",
+      "--dataset.single_task",
+      "pick the cube",
+      "--dataset.fps",
+      "30",
+      "--dataset.episode_time_s",
+      "60",
+      "--dataset.reset_time_s",
+      "60",
+      "--dataset.root",
+      "/home/cagatay/.cache/huggingface/lerobot/user/ds",
+      "--dataset.push_to_hub",
+      "true",
+      "--dataset.video",
+      "true"
+    ]
+  },
+  "schema": {
+    "auto_accept_calibration": "Parameter auto_accept_calibration",
+    "dagger_record_autonomous": "Parameter dagger_record_autonomous"
+  }
+}
