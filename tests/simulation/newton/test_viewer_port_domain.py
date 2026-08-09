@@ -333,19 +333,41 @@ class TestNoSimulationSurfaceShipsAnUnguardedPort:
         assert _calls_the_shared_domain(functions[0])
 
 
-class TestNeighbouringViewerAxesStayOutOfScope:
-    """``width`` / ``height`` are a different domain and are not settled here.
+class TestTheNeighbouringWindowSizeIsSettledElsewhere:
+    """``width`` / ``height`` are a different domain, and it is now applied.
 
-    They are pixel counts read only by the ``"gl"`` window, not an index into
-    the TCP port space, so they belong to the ``positive_whole_number_error``
-    family this module says nothing about. Pinned rather than omitted so the
-    boundary is a stated scope decision, and so this reads as the premise to
-    replace if that axis is taken up - not as an oversight.
+    This class replaces the premise it used to hold - that an unusable ``"gl"``
+    window size was accepted and forwarded verbatim - because that axis has since
+    been taken up. They are pixel counts, so they belong to
+    :func:`~strands_robots.utils.positive_count_error`, the floor this backend's
+    ``add_camera`` and render family already share (an integral float is refused
+    there rather than coerced, because a dimension is consumed directly as an
+    array bound - which is why it is that domain and not the looser
+    ``positive_whole_number_error`` used for frame rates).
+
+    The behavioural coverage lives with the rest of that quantity, in
+    ``tests/simulation/test_camera_pixel_count_domain.py``, so this file stays
+    about the port. What is kept here is the property the two guards share and
+    which this module's own measurement established: each is applied only on the
+    branch that reads it.
     """
 
     @pytest.mark.parametrize("bad", (0, -1, 1280.5, NAN, True, "1280", None))
-    def test_an_unusable_gl_window_size_is_still_accepted(self, bad: Any) -> None:
+    def test_an_unusable_gl_window_size_is_refused_on_the_branch_that_reads_it(self, bad: Any) -> None:
         stub = _viewer_stub(has_display=True)
         result = NewtonSimEngine.open_viewer(stub, "gl", width=bad, height=bad)
+        assert result["status"] == "error", (bad, result)
+        assert stub.built == []
+
+    @pytest.mark.parametrize("bad", (0, -1, 1280.5, NAN, True, "1280", None))
+    def test_the_viser_branch_ignores_it_and_so_does_not_check_it(self, bad: Any) -> None:
+        """The mirror image of the port scoping this module measures.
+
+        ``ViewerViser`` is never handed a width, so refusing one for it would be
+        a false rejection - exactly the reason ``port`` is checked only when the
+        viser branch is the one that will bind it.
+        """
+        stub = _viewer_stub(has_display=True)
+        result = NewtonSimEngine.open_viewer(stub, "viser", port=8080, width=bad, height=bad)
         assert result["status"] == "success", (bad, result)
-        assert stub.built == [("gl", {"width": bad, "height": bad})]
+        assert stub.built == [("viser", {"port": 8080})]

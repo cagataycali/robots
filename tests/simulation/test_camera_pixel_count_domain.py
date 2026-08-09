@@ -5,9 +5,10 @@
 ``width`` / ``height`` reach two surfaces on every simulation backend - the
 ``add_camera`` that fixes a camera's resolution, and the render family
 (``render`` / ``get_frame`` / ``get_camera_params``) that can override it per
-call. MuJoCo validated both through ``_validate_render_dims``; Newton and Isaac
-validated neither, and coerced with a bare ``int(...)`` that refuses nothing
-useful. Coercion is validation only when the coercion rejects.
+call - and a third on Newton alone, ``open_viewer``, which sizes the ``"gl"``
+window. MuJoCo validated the first two through ``_validate_render_dims``;
+Newton and Isaac validated neither, and coerced with a bare ``int(...)`` that
+refuses nothing useful. Coercion is validation only when the coercion rejects.
 
 Measured on both backends before the fix:
 
@@ -35,7 +36,20 @@ Measured on both backends before the fix:
   echoed the caller's raw value (``"Camera 'cam' added (2.7x480, ...)"`` /
   ``"(Truex480, ...)"``) - reporting a resolution that was never registered.
 
-The fix routes all four surfaces through
+* **One quantity, two contracts, decided by which method was called.** Newton's
+  ``open_viewer`` sized its ``"gl"`` window from the same "how many pixels"
+  value and applied no domain at all, so 12 of the 13 dimensions below were
+  refused by ``render`` and forwarded verbatim into ``ViewerGL`` on the same
+  engine, in the same session. The consequence is the one the neighbouring
+  ``port`` guard already states in its own comment: the engine holds a single
+  viewer slot, so ``open_viewer("gl", width=0, height=0)`` returned
+  ``status="success"``, built a zero-pixel window and filled the slot - after
+  which the obvious recovery, calling ``open_viewer`` again with a usable size,
+  was answered ``"Viewer already open (gl)."`` under ``status="success"`` and
+  built nothing. The caller was left with the window they did not ask for and
+  no way to replace it.
+
+The fix routes all five surfaces through
 :func:`~strands_robots.utils.positive_count_error`, the domain MuJoCo's floor
 already implements: a true ``int`` (``bool`` refused - it is an ``int`` subclass
 whose ``True`` would act as a silent 1) that is ``>= 1``. A pixel dimension is
@@ -55,8 +69,11 @@ already establish exercise it in every environment.
 
 from __future__ import annotations
 
+import ast
+import inspect
 import types
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -68,6 +85,7 @@ from strands_robots.utils import positive_count_error
 
 from .isaac.test_add_camera_numeric_validation import _engine as _isaac_engine
 from .newton.test_add_camera_numeric_validation import _engine_stub
+from .newton.test_viewer_port_domain import _viewer_stub
 
 #: Pixel dimensions no camera can be built or rendered at. Each was accepted or
 #: raised past the tool-result contract on both backends before the fix.
@@ -280,6 +298,248 @@ class TestNewtonRenderFamily:
         result = NewtonSimEngine.render(stub, camera_name="default", width=0)  # type: ignore[arg-type]
         assert result["status"] == "error", result
         assert "width must be a positive integer" in result["content"][0]["text"]
+
+
+# --------------------------------------------------------------------------- #
+# Newton: the interactive viewer window                                       #
+# --------------------------------------------------------------------------- #
+def _newton_open_viewer(stub: Any, **kwargs: Any) -> dict[str, Any]:
+    """``open_viewer`` with arguments deliberately outside its annotations.
+
+    Same ``**kwargs: Any`` boundary as ``_newton_add_camera`` above, and for the
+    same reason: the contract under test is what happens at runtime to a value
+    an agent dispatching this tool can pass, not what a type checker it never
+    runs would have said.
+    """
+    return NewtonSimEngine.open_viewer(stub, **kwargs)  # type: ignore[arg-type]
+
+
+class TestNewtonViewerDimensions:
+    """The ``"gl"`` window size is the same floor as a frame's.
+
+    ``_viewer_stub(has_display=True)`` is the sibling port-domain file's stand-in
+    ``self``: it records every viewer it constructs, so these tests assert a
+    refusal built *nothing* rather than only that it reported an error. The guard
+    precedes the lock and every viewer construction, so none of this needs
+    ``newton`` / ``warp`` or a display.
+    """
+
+    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("param", ["width", "height"])
+    def test_unusable_dimension_is_refused(self, param, bad):
+        stub = _viewer_stub(has_display=True)
+        result = _newton_open_viewer(stub, viewer="gl", **{param: bad})
+        assert result["status"] == "error", (param, bad, result)
+        assert param in result["content"][0]["text"]
+
+    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("param", ["width", "height"])
+    def test_a_refused_dimension_constructs_no_viewer(self, param, bad):
+        """Nothing is built, so nothing occupies the single viewer slot."""
+        stub = _viewer_stub(has_display=True)
+        _newton_open_viewer(stub, viewer="gl", **{param: bad})
+        assert stub.built == []
+        assert stub._viewer is None
+
+    @pytest.mark.parametrize("param", ["width", "height"])
+    def test_the_retry_after_a_refusal_still_opens(self, param):
+        """The recovery a forwarded value denied: refuse, then open normally.
+
+        This is the property the defect removed. Pre-fix the refused call built a
+        zero-pixel window and took the slot, so this second call returned
+        ``"Viewer already open"`` - a success result for a window the caller
+        never asked for, with no way to replace it.
+        """
+        stub = _viewer_stub(has_display=True)
+        assert _newton_open_viewer(stub, viewer="gl", **{param: 0})["status"] == "error"
+        retry = _newton_open_viewer(stub, viewer="gl", width=1280, height=720)
+        assert retry["status"] == "success", retry
+        assert stub.built == [("gl", {"width": 1280, "height": 720})]
+
+    @pytest.mark.parametrize("good", _GOOD_DIMS)
+    def test_a_usable_dimension_is_forwarded_exactly(self, good):
+        """A floor, not a tightening - and the value reaches ``ViewerGL`` unchanged."""
+        stub = _viewer_stub(has_display=True)
+        result = _newton_open_viewer(stub, viewer="gl", width=good, height=good)
+        assert result["status"] == "success", result
+        assert stub.built == [("gl", {"width": good, "height": good})]
+
+    def test_the_defaults_are_unchanged(self):
+        stub = _viewer_stub(has_display=True)
+        assert _newton_open_viewer(stub, viewer="gl")["status"] == "success"
+        assert stub.built == [("gl", {"width": 1280, "height": 720})]
+
+    def test_auto_resolving_to_gl_is_checked_too(self):
+        """``"auto"`` becomes ``"gl"`` when a display is present, so it is the gl branch."""
+        stub = _viewer_stub(has_display=True)
+        assert _newton_open_viewer(stub, viewer="auto", width=0)["status"] == "error"
+        assert stub.built == []
+
+    def test_the_missing_display_is_still_reported_first(self):
+        """A headless host's more fundamental problem keeps naming itself.
+
+        Ordering matters: without a display no window of any size can open, so
+        that refusal is the actionable one and the dimension guard must not
+        shadow it.
+        """
+        stub = _viewer_stub(has_display=False)
+        result = _newton_open_viewer(stub, viewer="gl", width=0)
+        assert result["status"] == "error"
+        assert "no display server" in result["content"][0]["text"]
+
+
+class TestOnlyTheGlBranchReadsTheDimensions:
+    """The domain is applied where the value is read, as ``port``'s already is.
+
+    ``"viser"`` and ``"null"`` never pass ``width`` / ``height`` to a viewer, so
+    refusing a dimension for them would be a false rejection - the same scoping
+    the sibling ``port`` guard takes by checking only the viser branch.
+    """
+
+    @pytest.mark.parametrize("kind", ["viser", "null"])
+    @pytest.mark.parametrize("bad", (0, -1, 2.7, "big", None))
+    def test_a_branch_that_ignores_the_size_still_opens(self, kind, bad):
+        stub = _viewer_stub(has_display=True)
+        result = _newton_open_viewer(stub, viewer=kind, width=bad, height=bad)
+        assert result["status"] == "success", (kind, bad, result)
+        assert [built_kind for built_kind, _ in stub.built] == [kind]
+
+    def test_the_port_domain_still_applies_to_viser(self):
+        """Non-vacuity for the scoping above: viser is checked, on its own knob."""
+        stub = _viewer_stub(has_display=True)
+        result = _newton_open_viewer(stub, viewer="viser", port=0)
+        assert result["status"] == "error", result
+        assert "port" in result["content"][0]["text"]
+        assert stub.built == []
+
+
+def _render_dims_verdict(param: str, value: Any) -> str:
+    """``"refused"`` / ``"accepted"`` for the funnel the render surfaces share.
+
+    ``_resolve_camera_view`` is where ``render`` / ``get_frame`` /
+    ``get_camera_params`` apply the domain, and it *raises* ``ValueError`` -
+    ``render`` converts that into an envelope. It is used here rather than
+    ``render`` itself because the newton-free stub cannot rasterize a frame, so a
+    *usable* dimension would come back as a renderer error and read as a
+    refusal. The funnel is the layer that answers the question this parity is
+    about, and it is the same one ``TestNewtonRenderFamily`` above asserts on.
+    """
+    try:
+        _newton_resolve(_newton_stub(), "default", **{param: value})
+    except ValueError:
+        return "refused"
+    return "accepted"
+
+
+class TestTheViewerAgreesWithTheRenderFamily:
+    """One engine, one pixel quantity: the two surfaces cannot disagree.
+
+    This is the assertion that fails pre-fix for every unusable row - the render
+    family refused each of them and ``open_viewer`` accepted it, in the same
+    session - and the reason the viewer belongs to this file rather than to a
+    domain of its own.
+    """
+
+    @pytest.mark.parametrize("bad", _BAD_DIMS)
+    @pytest.mark.parametrize("param", ["width", "height"])
+    def test_a_dimension_the_render_family_refuses_is_refused_by_the_viewer(self, param, bad):
+        render_verdict = _render_dims_verdict(param, bad)
+        viewer_verdict = _verdict(
+            lambda: _newton_open_viewer(_viewer_stub(has_display=True), viewer="gl", **{param: bad})
+        )
+        assert render_verdict == viewer_verdict == "refused", (
+            f"{param}={bad!r}: render={render_verdict}, open_viewer={viewer_verdict}"
+        )
+
+    @pytest.mark.parametrize("good", _GOOD_DIMS)
+    @pytest.mark.parametrize("param", ["width", "height"])
+    def test_a_usable_dimension_is_accepted_by_both(self, param, good):
+        """A floor, not a tightening, on both surfaces at once."""
+        render_verdict = _render_dims_verdict(param, good)
+        viewer_verdict = _verdict(
+            lambda: _newton_open_viewer(_viewer_stub(has_display=True), viewer="gl", **{param: good})
+        )
+        assert render_verdict == viewer_verdict == "accepted", (
+            f"{param}={good!r}: render={render_verdict}, open_viewer={viewer_verdict}"
+        )
+
+    def test_the_shared_rule_is_a_floor_and_not_a_ceiling(self):
+        """A ray tracer has no framebuffer to overflow, so a huge size is legal.
+
+        Pinned because ``_GOOD_DIMS`` already carries ``5000`` for the same
+        reason: it makes the parity above a statement about the floor rather
+        than about refusal in general.
+        """
+        huge = 10**9
+        assert _render_dims_verdict("width", huge) == "accepted"
+        assert (
+            _verdict(lambda: _newton_open_viewer(_viewer_stub(has_display=True), viewer="gl", width=huge)) == "accepted"
+        )
+
+
+class TestNoNewtonDimensionSurfaceDrifts:
+    """Every public Newton surface taking a pixel dimension reaches the domain.
+
+    Structural rather than behavioural, because the defect this closes was a
+    surface nobody had connected to a rule the module already applied twice. A
+    method satisfies the guard by calling the shared helper itself or by handing
+    the value to ``_resolve_camera_view``, the funnel the render family shares -
+    so a fourth render entry point costs nothing, while a new one that sizes
+    something of its own has to say why.
+    """
+
+    _FUNNEL = "_resolve_camera_view"
+    _GUARD = "positive_count_error"
+    #: The public surfaces taking a pixel dimension today. Pinned exactly so a
+    #: mis-rooted scan reporting a clean sweep over nothing fails instead.
+    _EXPECTED = frozenset({"add_camera", "render", "get_frame", "get_camera_params", "open_viewer"})
+
+    @staticmethod
+    def _classify(src: str) -> dict[str, str]:
+        """Map each public dimension-taking method to how it reaches the domain."""
+        found: dict[str, str] = {}
+        for cls in ast.walk(ast.parse(src)):
+            if not isinstance(cls, ast.ClassDef):
+                continue
+            for fn in ast.iter_child_nodes(cls):
+                if not isinstance(fn, ast.FunctionDef | ast.AsyncFunctionDef) or fn.name.startswith("_"):
+                    continue
+                args = fn.args
+                names = {a.arg for a in args.posonlyargs + args.args + args.kwonlyargs}
+                if not {"width", "height"} & names:
+                    continue
+                calls = {
+                    n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+                    for n in ast.walk(fn)
+                    if isinstance(n, ast.Call)
+                }
+                if TestNoNewtonDimensionSurfaceDrifts._GUARD in calls:
+                    found[fn.name] = "guards"
+                elif TestNoNewtonDimensionSurfaceDrifts._FUNNEL in calls:
+                    found[fn.name] = "forwards"
+                else:
+                    found[fn.name] = "adrift"
+        return found
+
+    @property
+    def _source(self) -> str:
+        return Path(inspect.getfile(NewtonSimEngine)).read_text()
+
+    def test_the_expected_surfaces_are_the_ones_found(self):
+        assert set(self._classify(self._source)) == set(self._EXPECTED)
+
+    def test_no_surface_is_adrift(self):
+        adrift = sorted(name for name, how in self._classify(self._source).items() if how == "adrift")
+        assert not adrift, f"{adrift} take a pixel dimension without reaching {self._GUARD}"
+
+    def test_the_scan_detects_a_planted_surface(self):
+        """Without this the sweep above could pass by matching nothing."""
+        planted = self._source + (
+            "\n\nclass _Planted:\n"
+            "    def open_window(self, *, width: int = 1, height: int = 1) -> None:\n"
+            "        self._build(width, height)\n"
+        )
+        assert self._classify(planted).get("open_window") == "adrift"
 
 
 # --------------------------------------------------------------------------- #

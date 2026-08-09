@@ -210,9 +210,13 @@ Viewer kinds (the `viewer` argument):
 - `"auto"` (default) - opens the `"gl"` window when a display server is
   present (`DISPLAY` / `WAYLAND_DISPLAY` set), otherwise falls back to
   `"viser"` so headless hosts still get a live view.
-- `"gl"` - `newton.viewer.ViewerGL` native OpenGL window. Requires a display;
-  on a headless host `open_viewer("gl")` returns a structured error pointing at
-  `"viser"` or `render(...)` instead of crashing.
+- `"gl"` - `newton.viewer.ViewerGL` native OpenGL window, sized by `width` /
+  `height` (default `1280x720`). Requires a display; on a headless host
+  `open_viewer("gl")` returns a structured error pointing at `"viser"` or
+  `render(...)` instead of crashing. The window size is a pixel count on the
+  same floor `add_camera` and `render(...)` apply - a positive `int` - so a
+  resolution this backend refuses for a frame is refused for a window too, and
+  a refused size leaves the single viewer slot free for the retry.
 - `"viser"` - `newton.viewer.ViewerViser` browser dashboard served at
   `http://localhost:<port>` (default `8080`). Works headless - no display
   required - which makes it the right choice for live inspection on a remote

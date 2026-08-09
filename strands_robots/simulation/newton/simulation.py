@@ -1813,8 +1813,14 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
                 than forwarded as an ephemeral-bind request, because this
                 surface advertises the requested port in the dashboard URL
                 instead of reading the assigned one back.
-            width: Window width in pixels for the ``"gl"`` viewer.
-            height: Window height in pixels for the ``"gl"`` viewer.
+            width: Window width in pixels for the ``"gl"`` viewer, an
+                ``int`` ``>= 1`` on the same shared floor
+                (:func:`~strands_robots.utils.positive_count_error`) that
+                ``add_camera`` and the render family apply, so one pixel
+                count cannot be refused for a frame and accepted for a
+                window. Read only by the ``"gl"`` branch, so ``"viser"``
+                and ``"null"`` ignore it.
+            height: Window height in pixels, same domain as ``width``.
 
         Returns:
             Agent-tool ``status``/``content`` dict. On success the ``content``
@@ -1859,6 +1865,20 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         # retry with a usable port is refused as "Viewer already open".
         if kind == "viser" and (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
             return {"status": "error", "content": [{"text": port_error}]}
+        # Only the gl branch reads ``width`` / ``height``, so the domain is
+        # applied on that branch alone, exactly as ``port`` is applied on the
+        # viser branch above. The floor is the one ``add_camera`` and the
+        # render family already share, so a resolution this backend refuses
+        # for a frame is not accepted for a window. Before the lock for the
+        # same single-slot reason: a value forwarded verbatim that happens not
+        # to raise inside ``ViewerGL`` fills the one viewer slot, and the
+        # retry with a usable size is then answered "Viewer already open"
+        # under ``status="success"`` - so the caller is left with the window
+        # they did not ask for and no way to replace it.
+        if kind == "gl":
+            for _param, _value in (("width", width), ("height", height)):
+                if (dim_error := positive_count_error(_value, _param, "open_viewer")) is not None:
+                    return {"status": "error", "content": [{"text": dim_error}]}
         with self._lock:
             try:
                 vmod = self._nt.viewer
