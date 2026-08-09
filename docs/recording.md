@@ -391,6 +391,23 @@ the output path still returned. `encode_clip` also raises `RuntimeError` when th
 encoder wrote no clip despite accepting the frames, so a returned path always
 names a clip that exists.
 
+`encode_clip`'s `quality` is a finite number in `[1, 10]` (higher is better), and
+that domain holds for both containers even though only the MP4 writer reads the
+value - so one call does not become valid by changing the output extension. The
+bound is the encoder's own: `0` is refused despite older documentation offering
+`0-10`, and `True` is refused rather than acting as a silent quality of `1`, the
+lowest offered. A NumPy real such as `np.int64(8)` is accepted and converted,
+since the ffmpeg writer only recognises a plain `int`/`float`. The refusal is a
+`ValueError` from `encode_clip` rather than the encoder's own `assert`, so it
+does not disappear when Python runs with `-O`:
+
+```python
+from strands_robots.rendering import encode_clip
+
+encode_clip(frames, "clip.mp4", fps=30, quality=9)   # a usable quality
+encode_clip(frames, "clip.mp4", fps=30, quality=0)   # ValueError: quality must be between 1 and 10
+```
+
 ## Video codec (H.264 default, AV1 opt-in)
 
 `start_recording` (and `DatasetRecorder.create`/`resume`) default to
