@@ -1,0 +1,70 @@
+{
+  "tree": "/tmp/wt-main-art",
+  "requested_reference": 120,
+  "reference": {
+    "requested": "120",
+    "status": "success",
+    "text": "Policy complete on 'arm1' RampPolicy |  0.5s | 120 steps | sim_t=2.400s",
+    "steps": 120,
+    "policy_calls": 120,
+    "joints": {
+      "Elbow": 1.551654,
+      "Elbow.vel": 0.65465,
+      "Jaw": 1.158665,
+      "Jaw.vel": 0.491455,
+      "Pitch": -1.527098,
+      "Pitch.vel": -0.662698,
+      "Rotation": 1.152333,
+      "Rotation.vel": 0.492506,
+      "Wrist_Pitch": 0.869983,
+      "Wrist_Pitch.vel": 0.368033,
+      "Wrist_Roll": 1.158809,
+      "Wrist_Roll.vel": 0.491478
+    },
+    "travel": 10.5794
+  },
+  "bool_horizon": {
+    "requested": "True",
+    "status": "success",
+    "text": "Policy complete on 'arm1' RampPolicy |  0.1s | 1 steps | sim_t=0.020s",
+    "steps": 1,
+    "policy_calls": 1,
+    "joints": {
+      "Elbow": 0.001598,
+      "Elbow.vel": 0.12634,
+      "Jaw": 0.000662,
+      "Jaw.vel": 0.051922,
+      "Pitch": 9.5e-05,
+      "Pitch.vel": 0.009745,
+      "Rotation": 0.000528,
+      "Rotation.vel": 0.042274,
+      "Wrist_Pitch": 0.000628,
+      "Wrist_Pitch.vel": 0.049781,
+      "Wrist_Roll": 0.00067,
+      "Wrist_Roll.vel": 0.052596
+    },
+    "travel": 0.3368
+  },
+  "fractional_horizon": {
+    "requested": "2.7",
+    "status": "success",
+    "text": "Policy complete on 'arm1' RampPolicy |  0.1s | 2 steps | sim_t=0.040s",
+    "steps": 2,
+    "policy_calls": 2,
+    "joints": {
+      "Elbow": 0.005722,
+      "Elbow.vel": 0.248546,
+      "Jaw": 0.002725,
+      "Jaw.vel": 0.130935,
+      "Pitch": -0.000341,
+      "Pitch.vel": -0.038059,
+      "Rotation": 0.002221,
+      "Rotation.vel": 0.109338,
+      "Wrist_Pitch": 0.002446,
+      "Wrist_Pitch.vel": 0.113299,
+      "Wrist_Roll": 0.00275,
+      "Wrist_Roll.vel": 0.131872
+    },
+    "travel": 0.7883
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "tree": "/tmp/robots-mine",
+  "requested_reference": 120,
+  "reference": {
+    "requested": "120",
+    "status": "success",
+    "text": "Policy complete on 'arm1' RampPolicy |  0.5s | 120 steps | sim_t=2.400s",
+    "steps": 120,
+    "policy_calls": 120,
+    "joints": {
+      "Elbow": 1.551654,
+      "Elbow.vel": 0.65465,
+      "Jaw": 1.158665,
+      "Jaw.vel": 0.491455,
+      "Pitch": -1.527098,
+      "Pitch.vel": -0.662698,
+      "Rotation": 1.152333,
+      "Rotation.vel": 0.492506,
+      "Wrist_Pitch": 0.869983,
+      "Wrist_Pitch.vel": 0.368033,
+      "Wrist_Roll": 1.158809,
+      "Wrist_Roll.vel": 0.491478
+    },
+    "travel": 10.5794
+  },
+  "bool_horizon": {
+    "requested": "True",
+    "status": "error",
+    "text": "run_policy: n_steps must be a positive integer, got True.",
+    "steps": null,
+    "policy_calls": 0,
+    "joints": {
+      "Elbow": 0.0,
+      "Elbow.vel": 0.0,
+      "Jaw": 0.0,
+      "Jaw.vel": 0.0,
+      "Pitch": 0.0,
+      "Pitch.vel": 0.0,
+      "Rotation": 0.0,
+      "Rotation.vel": 0.0,
+      "Wrist_Pitch": 0.0,
+      "Wrist_Pitch.vel": 0.0,
+      "Wrist_Roll": 0.0,
+      "Wrist_Roll.vel": 0.0
+    },
+    "travel": 0.0
+  },
+  "fractional_horizon": {
+    "requested": "2.7",
+    "status": "error",
+    "text": "run_policy: n_steps must be a positive integer, got 2.7.",
+    "steps": null,
+    "policy_calls": 0,
+    "joints": {
+      "Elbow": 0.0,
+      "Elbow.vel": 0.0,
+      "Jaw": 0.0,
+      "Jaw.vel": 0.0,
+      "Pitch": 0.0,
+      "Pitch.vel": 0.0,
+      "Rotation": 0.0,
+      "Rotation.vel": 0.0,
+      "Wrist_Pitch": 0.0,
+      "Wrist_Pitch.vel": 0.0,
+      "Wrist_Roll": 0.0,
+      "Wrist_Roll.vel": 0.0
+    },
+    "travel": 0.0
+  }
+}
