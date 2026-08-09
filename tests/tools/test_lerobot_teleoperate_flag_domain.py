@@ -27,11 +27,19 @@ The flags are checked against the shared
 the requested mode actually emits: refusing a flag a mode never puts on the argv
 would be a false rejection, which is the same scoping rule the numeric knobs use
 (``tests/tools/test_lerobot_teleoperate_numeric_domain.py``).
+
+``lerobot_teleoperate``'s own ``background`` and ``auto_accept_calibration`` were
+read by truthiness for the same reason and are refused by the *tool*, since
+neither is a builder parameter and no argv records them - they select an
+execution posture. That half is #2074, and the last class here is where its
+scope, its ordering and the boundary between the two checks are pinned.
 """
 
 from __future__ import annotations
 
 import inspect
+import io
+import subprocess
 from typing import Any
 
 import numpy as np
@@ -168,6 +176,58 @@ def _dagger(**overrides: Any) -> list[str]:
 def _token(argv: list[str], flag: str) -> str | None:
     """The token following ``flag``, or ``None`` when the flag is absent."""
     return argv[argv.index(flag) + 1] if flag in argv else None
+
+
+def _text(result: dict[str, Any]) -> str:
+    """The joined text blocks of a tool envelope."""
+    return "\n".join(item["text"] for item in result["content"] if "text" in item)
+
+
+def _never(label: str) -> Any:
+    """A stand-in that fails the test if the tool ever reaches it."""
+
+    def _call(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError(f"{label} must not be reached for a refused call")
+
+    return _call
+
+
+class _FakePopen:
+    """A launched process, without launching one."""
+
+    pid = 4321
+
+    def __init__(self) -> None:
+        self.stdin = io.StringIO()
+
+
+def _record_popen(calls: list[str]) -> Any:
+    """A ``subprocess.Popen`` stand-in recording the kwargs the tool chose.
+
+    Whether ``stdin`` is passed at all is the observable
+    ``auto_accept_calibration`` decision - the newlines themselves are written by
+    a daemon thread two seconds later, which no test should wait for.
+    """
+
+    class _Recorder:
+        kwargs: dict[str, Any] = {}
+
+        def __call__(self, *args: Any, **kwargs: Any) -> Any:
+            calls.append("Popen")
+            self.kwargs = kwargs
+            return _FakePopen()
+
+    return _Recorder()
+
+
+def _record_run(calls: list[str]) -> Any:
+    """A ``subprocess.run`` stand-in reporting a clean exit."""
+
+    def _call(*args: Any, **kwargs: Any) -> Any:
+        calls.append("run")
+        return subprocess.CompletedProcess(args=list(args[0]) if args else [], returncode=0, stdout="", stderr="")
+
+    return _call
 
 
 class TestAnUnattendedRecordingCannotBeTalkedIntoUploading:
@@ -447,28 +507,228 @@ class TestTheSharedDomainIsTheOneApplied:
             _record(dataset_video="false")
 
 
-class TestTheToolsOwnExecutionFlagsStayOutOfScope:
-    """``background`` and ``auto_accept_calibration`` are not builder flags.
+class TestTheToolsOwnExecutionFlagsAreRefusedByTheToolInstead:
+    """``background`` and ``auto_accept_calibration`` select an execution posture.
 
-    Neither reaches an argv: they choose how ``lerobot_teleoperate`` runs the
-    command it built - detached with a log file, and whether a newline is written
-    to the child's stdin to accept a calibration prompt. They are parameters of
-    the tool alone, have no per-mode table to be scoped by, and are read after
-    the builder has returned. Pinned rather than assumed, so this boundary is
-    measured; tracked separately.
+    Neither reaches an argv, so :data:`_MODE_FLAG_OPTIONS` has no entry to scope
+    them by: they choose how ``lerobot_teleoperate`` *runs* the command the
+    builder returned - detached with a log file and a persisted session, and
+    whether two newlines are written into the child's stdin to accept whatever
+    calibration prompt the robot is showing. Both were read as ``if <flag>:``, so
+    every non-empty string selected the affirmative posture:
+
+    * ``background="false"`` detached the session, rather than running the
+      foreground one that was asked for;
+    * ``auto_accept_calibration="false"`` accepted a calibration no operator saw.
+
+    The second is the sharper of the two: ``background``'s resulting posture is at
+    least *reported* - the envelope carries ``"background": True``, a pid and a
+    log file - while nothing anywhere reports that stdin was written to.
+
+    So they are refused by the tool, at the top of the ``start`` / ``dagger``
+    branch, against the same shared domain the builder flags use. The class this
+    replaces pinned the boundary while they were out of scope; the structural half
+    of it is kept below, because "not a builder flag" is still what makes a
+    tool-level check the right place for them.
     """
+
+    def _start(self, **overrides: Any) -> dict[str, Any]:
+        """A ``start`` call through the tool, with a named session."""
+        kwargs: dict[str, Any] = {
+            "action": "start",
+            "session_name": "exec-flag",
+            "robot_type": "so101_follower",
+            "robot_port": "/dev/ttyACM1",
+            "teleop_type": "so101_leader",
+            "teleop_port": "/dev/ttyACM0",
+        }
+        kwargs.update(overrides)
+        return _run_tool(**kwargs)
+
+    # -- the refusal ------------------------------------------------------
+
+    @pytest.mark.parametrize("flag", ["background", "auto_accept_calibration"])
+    @pytest.mark.parametrize("value", NOT_A_BOOLEAN)
+    def test_an_unusable_execution_flag_is_refused(
+        self, flag: str, value: Any, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nothing may be launched or persisted for a refused call.
+
+        Both branches are barred, not just the detaching one: ``background=0`` is
+        falsy and would previously have reached ``subprocess.run`` in the
+        foreground, which is a posture nobody declared either.
+        """
+        monkeypatch.setattr(tele_mod.subprocess, "Popen", _never("subprocess.Popen"))
+        monkeypatch.setattr(tele_mod.subprocess, "run", _never("subprocess.run"))
+
+        result = self._start(**{flag: value})
+
+        assert result["status"] == "error"
+        assert flag in _text(result)
+        assert tele_mod.SessionManager().get_session("exec-flag") is None
+
+    @pytest.mark.parametrize("flag", ["background", "auto_accept_calibration"])
+    def test_dagger_refuses_it_without_the_rollout_entry_point(
+        self, flag: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The same caller mistake must report the same way on any lerobot.
+
+        The check precedes the builder, and therefore the lerobot-version
+        preflight inside it, so an unusable flag is named rather than masked by an
+        upgrade hint on an install that has no rollout entry point.
+        """
+        monkeypatch.setattr(tele_mod.importlib.util, "find_spec", lambda *a, **k: None)
+        monkeypatch.setattr(tele_mod.subprocess, "Popen", _never("subprocess.Popen"))
+
+        result = self._start(action="dagger", policy_path="lerobot/act_so101", **{flag: "false"})
+
+        assert result["status"] == "error"
+        assert flag in _text(result)
+
+    def test_the_refusal_precedes_the_argv_build(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A refused call must not build a command line at all."""
+        monkeypatch.setattr(tele_mod, "build_lerobot_command", _never("build_lerobot_command"))
+
+        result = self._start(background="false")
+
+        assert result["status"] == "error"
+        assert "background" in _text(result)
+
+    def test_the_refusal_precedes_the_duplicate_session_check(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The flag is named, not the session, when both would be reported."""
+        monkeypatch.setattr(tele_mod.subprocess, "Popen", _never("subprocess.Popen"))
+        tele_mod.SessionManager().add_session("exec-flag", {"pid": 1})
+
+        result = self._start(background="false")
+
+        assert result["status"] == "error"
+        text = _text(result)
+        assert "background" in text
+        assert "already exists" not in text
+
+    def test_the_refusal_is_an_error_envelope_and_not_a_raise(self) -> None:
+        """Matching every other refusal on this surface; the tool returns."""
+        result = self._start(auto_accept_calibration="false")
+        assert result["status"] == "error"
+        assert result["content"][0]["text"]
+
+    # -- the shared domain ------------------------------------------------
+
+    def test_the_message_is_the_shared_domains_message(self) -> None:
+        expected = boolean_flag_error("false", "background", "lerobot_teleoperate")
+        assert expected is not None
+        assert _text(self._start(background="false")) == expected
+
+    def test_the_message_names_the_tool_and_not_the_builder(self) -> None:
+        """These are the tool's own parameters, so the context must say so."""
+        text = _text(self._start(auto_accept_calibration="false"))
+        assert "lerobot_teleoperate" in text
+        assert "build_lerobot_command" not in text
+
+    def test_the_message_explains_why_it_is_not_parsed(self) -> None:
+        assert "checked rather than parsed" in _text(self._start(background="off"))
+
+    # -- the postures a usable flag still selects -------------------------
+
+    @pytest.mark.parametrize("value, expected", A_BOOLEAN)
+    def test_a_usable_background_still_selects_its_posture(
+        self, value: Any, expected: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``np.False_`` must still reach the foreground run, not be refused."""
+        calls: list[str] = []
+        monkeypatch.setattr(tele_mod.subprocess, "Popen", _record_popen(calls))
+        monkeypatch.setattr(tele_mod.subprocess, "run", _record_run(calls))
+
+        result = self._start(background=value)
+
+        assert result["status"] == "success"
+        assert calls == ["Popen" if expected else "run"]
+
+    @pytest.mark.parametrize("value, expected", A_BOOLEAN)
+    def test_a_usable_auto_accept_still_selects_its_posture(
+        self, value: Any, expected: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The stdin pipe is the decision; ``np.False_`` must withhold it."""
+        calls: list[str] = []
+        popen = _record_popen(calls)
+        monkeypatch.setattr(tele_mod.subprocess, "Popen", popen)
+
+        assert self._start(auto_accept_calibration=value)["status"] == "success"
+        assert ("stdin" in popen.kwargs) is expected
+
+    # -- scope ------------------------------------------------------------
+
+    @pytest.mark.parametrize("flag", ["background", "auto_accept_calibration"])
+    def test_an_action_that_reads_neither_flag_refuses_nothing(self, flag: str) -> None:
+        """Refusing a flag an action never reads would be a false rejection."""
+        assert _run_tool(action="list", **{flag: "false"})["status"] == "success"
+
+    @pytest.mark.parametrize("flag", ["background", "auto_accept_calibration"])
+    def test_replay_is_out_of_scope_because_it_reads_neither(self, flag: str, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Replay runs in the foreground unconditionally and answers no prompt."""
+        calls: list[str] = []
+        monkeypatch.setattr(tele_mod.subprocess, "run", _record_run(calls))
+
+        result = _run_tool(
+            action="replay",
+            robot_type="so101_follower",
+            robot_port="/dev/ttyACM1",
+            dataset_repo_id="user/pick",
+            **{flag: "false"},
+        )
+
+        assert result["status"] == "success"
+        assert calls == ["run"]
 
     @pytest.mark.parametrize("flag", ["background", "auto_accept_calibration"])
     def test_they_are_tool_parameters_and_not_builder_parameters(self, flag: str) -> None:
+        """The reason there is no per-mode table to route them through."""
         assert flag in inspect.signature(lerobot_teleoperate).parameters
         assert flag not in inspect.signature(build_lerobot_command).parameters
 
     @pytest.mark.parametrize("flag", ["background", "auto_accept_calibration"])
-    def test_the_builder_neither_reads_nor_refuses_them(self, flag: str) -> None:
-        """They arrive in ``**kwargs`` and are ignored, as they were before."""
+    def test_the_builder_still_neither_reads_nor_refuses_them(self, flag: str) -> None:
+        """They arrive in ``**kwargs`` and are ignored, as they always were."""
         assert _record(**{flag: "false"}) == _record()
 
-    @pytest.mark.parametrize("flag", ["background", "auto_accept_calibration"])
-    def test_they_are_not_in_the_flag_table(self, flag: str) -> None:
-        named = {name for names in tele_mod._MODE_FLAG_OPTIONS.values() for name in names}
-        assert flag not in named
+    # -- the two checks cannot drift into each other ----------------------
+
+    def test_the_execution_flags_are_named_by_no_mode(self) -> None:
+        """A flag is a posture of the tool or of the argv, never both."""
+        emitted = {flag for flags in tele_mod._MODE_FLAG_OPTIONS.values() for flag in flags}
+        numeric = {knob for knobs in tele_mod._MODE_NUMERIC_OPTIONS.values() for knob in knobs}
+        assert not set(tele_mod._EXECUTION_FLAGS) & (emitted | numeric)
+
+    def test_every_execution_flag_is_a_bool_parameter_of_the_tool(self) -> None:
+        params = inspect.signature(lerobot_teleoperate).parameters
+        adrift = sorted(
+            flag
+            for flag in tele_mod._EXECUTION_FLAGS
+            if flag not in params or params[flag].annotation not in (bool, "bool")
+        )
+        assert not adrift, f"_EXECUTION_FLAGS names non-bool non-parameters: {adrift}"
+
+    def test_no_execution_flag_is_left_unchecked(self) -> None:
+        """Both are checked, and the check is reached through the shared domain."""
+        usable = dict.fromkeys(tele_mod._EXECUTION_FLAGS, True)
+        assert tele_mod._execution_flag_error(usable) is None
+        for flag in tele_mod._EXECUTION_FLAGS:
+            error = tele_mod._execution_flag_error({**usable, flag: "false"})
+            assert error == boolean_flag_error("false", flag, "lerobot_teleoperate")
+
+    def test_every_boolean_the_tool_refuses_is_described_to_the_model(self) -> None:
+        """A model choosing whether to withhold a flag reads this string.
+
+        The generated placeholder ``"Parameter <name>"`` says nothing about the
+        posture it selects, and a flag that is now refused for being mis-spelled
+        is one an agent needs the description of.
+        """
+        params = inspect.signature(lerobot_teleoperate).parameters
+        schema = lerobot_teleoperate.tool_spec["inputSchema"]["json"]["properties"]
+        undocumented = sorted(
+            name
+            for name, param in params.items()
+            if param.annotation in (bool, "bool")
+            and schema[name].get("description", "").startswith(f"Parameter {name}")
+        )
+        assert not undocumented, f"boolean flags with a placeholder description: {undocumented}"

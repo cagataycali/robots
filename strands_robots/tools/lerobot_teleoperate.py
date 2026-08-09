@@ -174,6 +174,58 @@ def _flag_error(mode: str, supplied: dict[str, Any]) -> str | None:
     return None
 
 
+# The two flags the per-mode table above cannot scope, because neither is a
+# parameter of :func:`build_lerobot_command`: no mode emits them and no argv
+# records them. They choose how :func:`lerobot_teleoperate` *runs* the command it
+# has already built - ``background`` gates the detach, log file and session
+# persistence, and ``auto_accept_calibration`` gates a thread writing two
+# newlines into the child's stdin ~2s in, which accepts whatever calibration
+# prompt the robot is showing.
+#
+# Both were read as ``if <flag>:``, and every non-empty string is truthy, so an
+# opt-out selected the affirmative posture (#2074, measured on ``3ce3da7``):
+#
+#   background="false"               ->  detached, not the foreground run asked for
+#   auto_accept_calibration="false"  ->  a calibration accepted by no operator
+#
+# ``auto_accept_calibration`` is the sharper of the two. The posture
+# ``background`` reaches is at least reported - the returned envelope carries
+# ``"background": True``, a pid and a log file, so a caller who asked for the
+# foreground can see it did not get it - while nothing anywhere reports that
+# stdin was written to.
+#
+# A flat tuple rather than a per-mode map: both are read unconditionally for a
+# ``start`` / ``dagger`` call, so the effectiveness question
+# :data:`_MODE_FLAG_OPTIONS` answers does not arise for them. They are read by no
+# other action, which is why the check is scoped to that branch rather than to
+# the whole tool - refusing ``background`` for an ``action="list"`` that never
+# reads it would be a false rejection.
+_EXECUTION_FLAGS: tuple[str, ...] = ("background", "auto_accept_calibration")
+
+
+def _execution_flag_error(supplied: dict[str, Any]) -> str | None:
+    """Error text for the first execution-posture flag the tool cannot honor.
+
+    The same shared :func:`~strands_robots.utils.boolean_flag_error` domain
+    :func:`_flag_error` applies to the argv flags, so a posture flag is refused
+    identically wherever it is supplied rather than merely equivalently. Only the
+    context differs: these are refused by the tool and not by the builder, and
+    the message says so.
+
+    Args:
+        supplied: Every flag named in :data:`_EXECUTION_FLAGS`, as supplied by
+            the caller.
+
+    Returns:
+        An error message naming the flag and its domain, or ``None`` when both
+        can be honoured.
+    """
+    for param in _EXECUTION_FLAGS:
+        if error := boolean_flag_error(supplied[param], param, "lerobot_teleoperate"):
+            return error
+    return None
+
+
 class SessionManager:
     """Manage teleoperation sessions with persistence."""
 
@@ -721,7 +773,11 @@ def lerobot_teleoperate(
     Args:
         action: Action to perform (start, stop, list, status, replay)
         session_name: Session identifier (auto-generated for start, required for stop/status)
-        background: Run session in background with logging (default: True)
+        background: Run session in background with logging (default: True).
+            Must be a boolean: it selects an execution posture rather than
+            scaling a quantity, so a truthy spelling of off such as
+            ``"false"`` is refused rather than detaching the session it reads
+            as declining to detach.
 
         robot_type: Robot type identifier
         robot_port: Serial port for single-arm robots
@@ -763,6 +819,17 @@ def lerobot_teleoperate(
         fps: Teleoperation control loop frequency
         teleop_time_s: Session duration limit
         play_sounds: Enable audio feedback
+        auto_accept_calibration: Answer the calibration prompt on the session's
+            behalf, by writing two newlines into the process's stdin shortly
+            after it starts. Withhold it (``False``) to answer the prompt
+            yourself; nothing reports that stdin was written to, so an
+            unintended acceptance is not visible afterwards. Must be a boolean,
+            on the same reasoning as ``background``.
+
+        dagger_record_autonomous: Record the autonomous rollout episodes into the
+            corrections dataset as well, rather than only the teleoperated
+            takeovers. Must be a boolean; a truthy spelling of off would
+            otherwise land autonomous episodes in a corrections dataset.
 
     Returns:
         Dict with operation status and results:
@@ -783,6 +850,14 @@ def lerobot_teleoperate(
 
     try:
         if action in ("start", "dagger"):
+            # Before anything is named, recorded or launched: a refused call must
+            # leave no session behind and start no process (see
+            # :data:`_EXECUTION_FLAGS`).
+            if error := _execution_flag_error(
+                {"background": background, "auto_accept_calibration": auto_accept_calibration}
+            ):
+                return {"status": "error", "content": [{"text": error}]}
+
             # Generate session name if not provided
             if not session_name:
                 session_name = f"teleop_{int(time.time())}"
