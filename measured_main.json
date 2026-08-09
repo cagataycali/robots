@@ -1,0 +1,550 @@
+{
+ "tree": "/tmp/wt-main-2422205",
+ "rows": {
+  "sync:create:'false'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "'false'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:create:'no'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "'no'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:create:'off'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "'off'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:create:'0'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "'0'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:create:1": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "1",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:create:nan": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "nan",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:create:0": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "0",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:''": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "''",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:None": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "None",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:[]": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "[]",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:'false'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "'false'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:private:'no'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "'no'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:private:'off'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "'off'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:private:'0'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "'0'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:private:1": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "1",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:private:nan": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "nan",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:private:0": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "0",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": false
+  },
+  "sync:private:''": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "''",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": false
+  },
+  "sync:private:None": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "None",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": false
+  },
+  "sync:private:[]": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "[]",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": false
+  },
+  "sync:delete:'false'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "'false'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1 --delete"
+   ],
+   "mirror_deleted": true,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:delete:'no'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "'no'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1 --delete"
+   ],
+   "mirror_deleted": true,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:delete:'off'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "'off'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1 --delete"
+   ],
+   "mirror_deleted": true,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:delete:'0'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "'0'",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1 --delete"
+   ],
+   "mirror_deleted": true,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:delete:1": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "1",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1 --delete"
+   ],
+   "mirror_deleted": true,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:delete:nan": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "nan",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1 --delete"
+   ],
+   "mirror_deleted": true,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:delete:0": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "0",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:delete:''": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "''",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:delete:None": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "None",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "sync:delete:[]": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "[]",
+   "status": "success",
+   "msg": "",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ],
+   "mirror_deleted": false,
+   "created": true,
+   "private_flag": true
+  },
+  "push:private:'false'": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "'false'",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "'false'"
+  },
+  "push:private:'no'": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "'no'",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "'no'"
+  },
+  "push:private:'off'": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "'off'",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "'off'"
+  },
+  "push:private:'0'": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "'0'",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "'0'"
+  },
+  "push:private:1": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "1",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "1"
+  },
+  "push:private:nan": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "nan",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "nan"
+  },
+  "push:private:0": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "0",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "0"
+  },
+  "push:private:''": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "''",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "''"
+  },
+  "push:private:None": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "None",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "None"
+  },
+  "push:private:[]": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "[]",
+   "status": "success",
+   "msg": "",
+   "argv": [],
+   "published": true,
+   "published_as": "[]"
+  }
+ },
+ "controls": {
+  "defaults": {
+   "status": "success",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ]
+  },
+  "delete=True": {
+   "status": "success",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1 --delete"
+   ]
+  },
+  "private=False": {
+   "status": "success",
+   "argv": [
+    "hf buckets create acme/robotdata",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ]
+  },
+  "create=False": {
+   "status": "success",
+   "argv": [
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ]
+  }
+ }
+}

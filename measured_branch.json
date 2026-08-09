@@ -1,0 +1,464 @@
+{
+ "tree": "/tmp/robots-mine-2419834",
+ "rows": {
+  "sync:create:'false'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "'false'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got 'false'. It selects a posture rather than scaling a quantity, so i",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:'no'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "'no'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got 'no'. It selects a posture rather than scaling a quantity, so it i",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:'off'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "'off'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got 'off'. It selects a posture rather than scaling a quantity, so it ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:'0'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "'0'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got '0'. It selects a posture rather than scaling a quantity, so it is",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:1": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "1",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got 1. It selects a posture rather than scaling a quantity, so it is c",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:nan": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "nan",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got nan. It selects a posture rather than scaling a quantity, so it is",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:0": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "0",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got 0. It selects a posture rather than scaling a quantity, so it is c",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:''": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "''",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got ''. It selects a posture rather than scaling a quantity, so it is ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:None": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "None",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got None. It selects a posture rather than scaling a quantity, so it i",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:create:[]": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "create",
+   "value": "[]",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: create must be a boolean, got []. It selects a posture rather than scaling a quantity, so it is ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:'false'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "'false'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got 'false'. It selects a posture rather than scaling a quantity, so ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:'no'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "'no'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got 'no'. It selects a posture rather than scaling a quantity, so it ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:'off'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "'off'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got 'off'. It selects a posture rather than scaling a quantity, so it",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:'0'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "'0'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got '0'. It selects a posture rather than scaling a quantity, so it i",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:1": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "1",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got 1. It selects a posture rather than scaling a quantity, so it is ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:nan": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "nan",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got nan. It selects a posture rather than scaling a quantity, so it i",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:0": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "0",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got 0. It selects a posture rather than scaling a quantity, so it is ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:''": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "''",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got ''. It selects a posture rather than scaling a quantity, so it is",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:None": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "None",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got None. It selects a posture rather than scaling a quantity, so it ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:private:[]": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "private",
+   "value": "[]",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: private must be a boolean, got []. It selects a posture rather than scaling a quantity, so it is",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:'false'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "'false'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got 'false'. It selects a posture rather than scaling a quantity, so i",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:'no'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "'no'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got 'no'. It selects a posture rather than scaling a quantity, so it i",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:'off'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "'off'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got 'off'. It selects a posture rather than scaling a quantity, so it ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:'0'": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "'0'",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got '0'. It selects a posture rather than scaling a quantity, so it is",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:1": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "1",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got 1. It selects a posture rather than scaling a quantity, so it is c",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:nan": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "nan",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got nan. It selects a posture rather than scaling a quantity, so it is",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:0": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "0",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got 0. It selects a posture rather than scaling a quantity, so it is c",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:''": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "''",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got ''. It selects a posture rather than scaling a quantity, so it is ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:None": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "None",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got None. It selects a posture rather than scaling a quantity, so it i",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "sync:delete:[]": {
+   "surface": "sync_dataset_to_bucket",
+   "flag": "delete",
+   "value": "[]",
+   "status": "error",
+   "msg": "sync_dataset_to_bucket: delete must be a boolean, got []. It selects a posture rather than scaling a quantity, so it is ",
+   "argv": [],
+   "mirror_deleted": false,
+   "created": false,
+   "private_flag": false
+  },
+  "push:private:'false'": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "'false'",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got 'false'. It selects a posture rather than scaling a quantity, so it is check",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  },
+  "push:private:'no'": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "'no'",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got 'no'. It selects a posture rather than scaling a quantity, so it is checked ",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  },
+  "push:private:'off'": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "'off'",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got 'off'. It selects a posture rather than scaling a quantity, so it is checked",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  },
+  "push:private:'0'": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "'0'",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got '0'. It selects a posture rather than scaling a quantity, so it is checked r",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  },
+  "push:private:1": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "1",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got 1. It selects a posture rather than scaling a quantity, so it is checked rat",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  },
+  "push:private:nan": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "nan",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got nan. It selects a posture rather than scaling a quantity, so it is checked r",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  },
+  "push:private:0": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "0",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got 0. It selects a posture rather than scaling a quantity, so it is checked rat",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  },
+  "push:private:''": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "''",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got ''. It selects a posture rather than scaling a quantity, so it is checked ra",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  },
+  "push:private:None": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "None",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got None. It selects a posture rather than scaling a quantity, so it is checked ",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  },
+  "push:private:[]": {
+   "surface": "push_to_hub",
+   "flag": "private",
+   "value": "[]",
+   "status": "error",
+   "msg": "push_to_hub: private must be a boolean, got []. It selects a posture rather than scaling a quantity, so it is checked ra",
+   "argv": [],
+   "published": false,
+   "published_as": null
+  }
+ },
+ "controls": {
+  "defaults": {
+   "status": "success",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ]
+  },
+  "delete=True": {
+   "status": "success",
+   "argv": [
+    "hf buckets create acme/robotdata --private",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1 --delete"
+   ]
+  },
+  "private=False": {
+   "status": "success",
+   "argv": [
+    "hf buckets create acme/robotdata",
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ]
+  },
+  "create=False": {
+   "status": "success",
+   "argv": [
+    "hf sync /tmp/art_ds hf://buckets/acme/robotdata/run1"
+   ]
+  }
+ }
+}
