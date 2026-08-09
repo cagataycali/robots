@@ -2248,9 +2248,14 @@ class PolicyRunner:
             robot_name: Robot to evaluate.
             policy: Already-constructed ``Policy`` instance.
             instruction: Instruction forwarded to the policy.
-            n_episodes: Number of reset → rollout episodes.
+            n_episodes: Number of reset → rollout episodes. Must be a
+                positive integer, refused as in :meth:`run`: a bound outside
+                that domain does not shorten the evaluation, it removes it
+                while still reporting a ``success_rate`` over it.
             max_steps: Cap per episode. Ignored when ``spec`` is provided
-                (``spec.max_steps`` wins).
+                (``spec.max_steps`` wins), and validated on the same domain as
+                ``n_episodes`` only when it is the horizon actually read - so a
+                ``spec=`` call is not refused for a value it never reads.
             success_fn: Legacy success predicate (see above).
             spec: :class:`BenchmarkProtocol` to drive the eval. When
                 provided, overrides the ``success_fn`` path.
@@ -2374,6 +2379,32 @@ class PolicyRunner:
         # entry point would have refused.
         if horizon_error := positive_count_error(action_horizon, "action_horizon", "PolicyRunner.evaluate"):
             raise ValueError(horizon_error)
+        # The two bounds of this method's own episode loop, on the same shared
+        # domain and raised for the same reason. A horizon outside the domain
+        # degrades a rollout; a LOOP BOUND outside it removes the evaluation
+        # while still reporting one. ``n_episodes=0`` returns status="success"
+        # over zero episodes and ``max_steps=0`` over two episodes of zero
+        # length - both with ``success_rate: 0.0`` and ``success_measured:
+        # True``, the flag that exists so a 0.0 cannot be read as a
+        # measurement, and with no action ever applied. ``max_steps=inf`` is
+        # worse than degenerate: ``while steps < max_steps`` has no false case,
+        # so the episode never ends. Refused here, before ``sim.reset()``,
+        # ``set_eval_seed`` (which reseeds the process-global RNG) and the first
+        # inference, so a rejected eval costs nothing and leaves no global side
+        # effect. This is also what makes ``_evaluate_with_spec``'s claim that
+        # "every other bound of this nested loop is checked by the public entry
+        # point before it gets here" true for a direct caller of this method.
+        if episodes_error := positive_count_error(n_episodes, "n_episodes", "PolicyRunner.evaluate"):
+            raise ValueError(episodes_error)
+        # ``max_steps`` is only read on the legacy ``success_fn`` path: the
+        # ``spec=`` path takes its horizon off the benchmark
+        # (``spec.max_steps``, checked at its read below) and this parameter is
+        # not forwarded there at all, so refusing it for a ``spec=`` call would
+        # reject a value that call never reads. Effectiveness is a property of
+        # the request here - ``spec`` is a parameter of this signature - so the
+        # check can be gated on it without guessing.
+        if spec is None and (steps_error := positive_count_error(max_steps, "max_steps", "PolicyRunner.evaluate")):
+            raise ValueError(steps_error)
         if spec is not None and success_fn is not None:
             return {
                 "status": "error",
