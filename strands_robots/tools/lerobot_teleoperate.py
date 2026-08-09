@@ -24,6 +24,7 @@ import psutil
 from strands import tool
 
 from strands_robots.utils import (
+    boolean_flag_error,
     non_negative_whole_number_error,
     positive_finite_number_error,
     positive_whole_number_error,
@@ -108,6 +109,67 @@ def _numeric_option_error(mode: str, supplied: dict[str, Any]) -> str | None:
         if value is None and param in _OPTIONAL_OPTIONS:
             continue
         if error := check(value, param, "build_lerobot_command"):
+            return error
+    return None
+
+
+# The boolean flags each command mode actually puts on the lerobot argv, in the
+# order that argv emits them. Each selects a posture rather than scaling a
+# quantity - ``dataset_video`` picks the literal ``"true"`` or ``"false"``, while
+# ``record_resume`` decides whether ``--resume true`` appears at all - and both
+# spellings were read by truthiness, where every non-empty string is truthy. So
+# the words an operator reaches for when opting out selected the *opposite*
+# posture from the one they read as, on a command line the supplying call cannot
+# read a failure back from. Measured on ``3ce3da7``:
+#
+#   dataset_push_to_hub="false"   ->  --dataset.push_to_hub true
+#   record_resume="false"         ->  --resume true
+#   dagger_record_autonomous="off"->  --strategy.record_autonomous true
+#
+# The first uploads an unattended recording to the Hub, the second appends into
+# an existing dataset instead of creating the fresh one that was asked for, and
+# the third records autonomous episodes into a corrections dataset. ``None`` and
+# ``[]`` took the other branch just as silently, without ever being a declared
+# spelling of it.
+#
+# ``replay`` is absent because it emits no flag at all - its argv is unchanged by
+# every flag in this module, so refusing one there would be a false rejection,
+# the same scoping rule :data:`_MODE_NUMERIC_OPTIONS` encodes. ``play_sounds`` is
+# in no tuple for that same reason: nothing reads it anywhere (#2072), so it is
+# excluded here by construction rather than by an exemption.
+_MODE_FLAG_OPTIONS: dict[str, tuple[str, ...]] = {
+    "record": ("record_resume", "dataset_push_to_hub", "dataset_video", "display_data"),
+    "teleoperate": ("display_data",),
+    "dagger": ("dagger_record_autonomous", "dataset_push_to_hub", "dataset_video", "display_data"),
+}
+
+
+def _flag_error(mode: str, supplied: dict[str, Any]) -> str | None:
+    """Error text for the first boolean flag ``mode`` emits but cannot honor.
+
+    Each flag is checked against the shared
+    :func:`~strands_robots.utils.boolean_flag_error` domain - the one the mesh
+    provisioning entry points already apply - so a posture flag is refused
+    identically wherever it is supplied rather than merely equivalently.
+
+    No coercion follows the check, unlike
+    :func:`~strands_robots.mesh.iot.bootstrap.bootstrap_account`: every reader
+    here either selects a literal or gates a ``cmd.extend``, and the numpy
+    booleans ``boolean_flag_error`` also accepts drive both correctly.
+
+    Args:
+        mode: A key of :data:`_MODE_FLAG_OPTIONS`; decides which flags are
+            effective. A mode absent from that map emits none of them and is
+            never refused here.
+        supplied: Every flag named in :data:`_MODE_FLAG_OPTIONS`, as supplied by
+            the caller.
+
+    Returns:
+        An error message naming the flag and its domain, or ``None`` when every
+        flag this mode emits is usable.
+    """
+    for param in _MODE_FLAG_OPTIONS.get(mode, ()):
+        if error := boolean_flag_error(supplied[param], param, "build_lerobot_command"):
             return error
     return None
 
@@ -320,9 +382,10 @@ def build_lerobot_command(
 
     Raises:
         ValueError: If ``action`` is unknown, ``replay`` is requested without
-            ``dataset_repo_id``, or a numeric knob the requested mode emits
-            cannot be honored (see :data:`_OPTION_DOMAINS`). The refusal
-            precedes the argv, so no subprocess is launched.
+            ``dataset_repo_id``, or a numeric knob (see :data:`_OPTION_DOMAINS`)
+            or boolean flag (see :data:`_MODE_FLAG_OPTIONS`) the requested mode
+            emits cannot be honored. The refusal precedes the argv, so no
+            subprocess is launched.
     """
     # Every numeric knob below is interpolated into a detached subprocess's
     # command line, which is not a channel this call can read a failure back
@@ -336,6 +399,16 @@ def build_lerobot_command(
         "fps": fps,
         "replay_episode": replay_episode,
         "teleop_time_s": teleop_time_s,
+    }
+    # The boolean flags reach that same command line, but as a posture rather
+    # than a magnitude, so an unusable value does not fail there - it selects the
+    # other posture and reports success. Same per-mode scoping.
+    flag_options: dict[str, Any] = {
+        "record_resume": record_resume,
+        "dataset_push_to_hub": dataset_push_to_hub,
+        "dataset_video": dataset_video,
+        "display_data": display_data,
+        "dagger_record_autonomous": dagger_record_autonomous,
     }
     if action == "replay":
         if not dataset_repo_id:
@@ -356,6 +429,8 @@ def build_lerobot_command(
         if dataset_repo_id:
             # Recording mode -> lerobot-record (pure data collection via teleop).
             if error := _numeric_option_error("record", numeric_options):
+                raise ValueError(error)
+            if error := _flag_error("record", flag_options):
                 raise ValueError(error)
             from strands_robots.dataset_recorder import resolve_dataset_dir
 
@@ -391,6 +466,8 @@ def build_lerobot_command(
         # Simple teleoperation mode -> lerobot-teleoperate.
         if error := _numeric_option_error("teleoperate", numeric_options):
             raise ValueError(error)
+        if error := _flag_error("teleoperate", flag_options):
+            raise ValueError(error)
         cmd = ["python", "-m", "lerobot.scripts.lerobot_teleoperate"]
         cmd.extend(
             _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
@@ -423,6 +500,8 @@ def build_lerobot_command(
         # Before the lerobot-version preflight below, so the same caller mistake
         # reports identically whether or not the rollout entry point is present.
         if error := _numeric_option_error("dagger", numeric_options):
+            raise ValueError(error)
+        if error := _flag_error("dagger", flag_options):
             raise ValueError(error)
 
         # lerobot.scripts.lerobot_rollout (the DAgger entry point) landed in
