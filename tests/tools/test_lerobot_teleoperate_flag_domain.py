@@ -37,6 +37,8 @@ scope, its ordering and the boundary between the two checks are pinned.
 
 from __future__ import annotations
 
+import contextlib
+import importlib
 import inspect
 import io
 import re
@@ -430,6 +432,42 @@ class TestPlaySoundsReachesTheArgv:
         with pytest.raises(ValueError) as excinfo:
             _replay(play_sounds="false")
         assert str(excinfo.value) == boolean_flag_error("false", "play_sounds", "build_lerobot_command")
+
+    @pytest.mark.parametrize(("supplied", "expected"), A_BOOLEAN)
+    def test_a_numpy_boolean_is_honored_like_a_python_one(self, supplied: Any, expected: bool) -> None:
+        """The shared domain accepts a numpy boolean, so the emitter must render one.
+
+        ``boolean_flag_error`` admits ``np.True_`` and ``np.False_`` because a
+        posture read off an array-shaped config or a NumPy comparison arrives that
+        way. A value the check accepts has to reach the argv as one of the two
+        literals the CLI parses, not as ``np.False_``'s ``repr``.
+        """
+        assert _token(_record(play_sounds=supplied), "--play_sounds") == ("true" if expected else "false")
+
+    @pytest.mark.parametrize(("builder", "config"), [(_record, "RecordConfig"), (_replay, "ReplayConfig")])
+    @pytest.mark.parametrize("supplied", [True, False])
+    def test_lerobot_parses_the_emitted_argv_back_to_the_requested_value(
+        self, builder: Any, config: str, supplied: bool
+    ) -> None:
+        """The round trip, through the real CLI parser rather than a stub.
+
+        Every other test here asserts what this module *emits*. This one asserts
+        what lerobot *reads*, which is the half that decides whether the flag is
+        spelled correctly: a token the parser silently ignores, or nests, or reads
+        as its opposite would satisfy an emission assertion and still leave the
+        session running the posture nobody asked for. Parsing the argv back with
+        ``draccus`` - the parser ``@parser.wrap()`` uses - closes that gap, and it
+        is also what pins the flag as top level rather than under ``--dataset.*``.
+        """
+        draccus = pytest.importorskip("draccus")
+        pytest.importorskip("lerobot")
+        importlib.import_module("lerobot.policies")  # registers the policy choices
+        module = "lerobot.scripts." + ("lerobot_record" if config == "RecordConfig" else "lerobot_replay")
+        config_class = getattr(importlib.import_module(module), config)
+        argv = builder(play_sounds=supplied)[3:]  # drop ["python", "-m", <module>]
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            parsed = draccus.parse(config_class=config_class, args=argv)
+        assert parsed.play_sounds is supplied
 
 
 class TestTheToolForwardsPlaySoundsOnEveryModeThatEmitsIt:
