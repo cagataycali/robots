@@ -119,6 +119,7 @@ robot.stop_teleop()   # stop all sessions
 | Reset | `reset()` rewinds to t=0 | Holds current pose |
 | Randomization | `randomize(...)` | N/A |
 | Policy execution | `run_policy()` / `start_policy()` | `start_task()` / `execute` action |
+| Rollout horizon | `duration` **or** `n_steps` (`n_steps` supersedes it) | `duration` **and** `n_steps` (ANDed, so `duration` always bounds it) |
 
 ## See also
 

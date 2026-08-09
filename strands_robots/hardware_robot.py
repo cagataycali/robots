@@ -1369,7 +1369,9 @@ class Robot(TeleopMixin, AgentTool):
         ``duration`` / ``n_steps`` comes first. The two conditions are ANDed,
         so ``duration`` bounds the rollout even with a step cap - it is
         validated at every public entry point rather than only when it is the
-        sole horizon.
+        sole horizon. ``n_steps`` is validated there too: a cap the
+        ``step_count < n_steps`` comparison cannot be made against never
+        reaches this loop.
 
         Either way the policy's per-episode state is reset before the rollout,
         so a task never begins from the state the previous task left behind.
@@ -1586,6 +1588,49 @@ class Robot(TeleopMixin, AgentTool):
             return {"status": "error", "content": [{"text": error}]}
         return None
 
+    @staticmethod
+    def _n_steps_error(n_steps: Any, method: str) -> dict[str, Any] | None:
+        """Reject a task ``n_steps`` cap the control loop cannot count against.
+
+        ``n_steps`` is the optional step cap the loop compares the applied-action
+        count against (``n_steps is None or step_count < n_steps``), ANDed with
+        the wall-clock budget :meth:`_duration_error` bounds. ``None`` is the
+        documented "no cap" spelling and leaves ``duration`` the sole horizon;
+        every other value has to be a count that comparison can be made against.
+
+        A cap ``<= 0`` (and ``nan``, which is never ``<= 0`` but fails every
+        comparison it reaches) makes the condition false on its first
+        evaluation, so the task reported ``status="success"`` and "Policy
+        rollout completed: 0 steps" for a rollout that never queried the policy
+        and never commanded a servo - the same false ``completed`` an unusable
+        ``duration`` used to produce. ``inf`` is never false, so the requested
+        cap silently vanishes and the rollout runs to the ``duration`` budget
+        instead. ``True`` reads as a silent cap of one. A float cap applies a
+        count the caller never named: ``2.7`` stops after three applied
+        actions. A non-numeric cap reached the comparison intact and surfaced a
+        bare ``TypeError`` naming a comparison internal ("'<' not supported
+        between instances of 'int' and 'str'") rather than the parameter.
+
+        The accepted domain is
+        :func:`~strands_robots.utils.positive_count_error`, already shared with
+        this loop's ``action_horizon`` and with the simulation's ``run_policy``
+        step horizon, so the same cap cannot be refused for a digital twin and
+        accepted for the arm it mirrors.
+
+        Args:
+            n_steps: The caller-supplied cap to validate, or ``None`` for no cap.
+            method: Public entry point name, used to prefix the message.
+
+        Returns:
+            A tool-shaped error dict naming ``n_steps``, or ``None`` when the
+            cap can be honored (including when no cap was requested).
+        """
+        if n_steps is None:
+            return None
+        if error := positive_count_error(n_steps, "n_steps", method):
+            return {"status": "error", "content": [{"text": error}]}
+        return None
+
     def _shutdown_error(self, method: str) -> dict[str, Any] | None:
         """Refuse a rollout on a robot whose ``cleanup()`` has already run.
 
@@ -1713,6 +1758,8 @@ class Robot(TeleopMixin, AgentTool):
         if err := self._shutdown_error("execute_task"):
             return err
         if err := self._duration_error(duration, "execute_task"):
+            return err
+        if err := self._n_steps_error(n_steps, "execute_task"):
             return err
         if err := self._claim_task(instruction):
             return err
@@ -1945,7 +1992,13 @@ class Robot(TeleopMixin, AgentTool):
                 commanded nothing.
             n_steps: Optional cap on applied actions (mirrors the sim
                 ``run_policy`` parameter); the loop stops at whichever of
-                ``duration`` / ``n_steps`` comes first.
+                ``duration`` / ``n_steps`` comes first. ``None`` (the
+                default) requests no cap and leaves ``duration`` the sole
+                horizon. Any other value must be a positive integer, the
+                domain the sim horizon and this loop's ``action_horizon``
+                already share: the loop bounds the rollout by
+                ``step_count < n_steps``, so a cap it cannot count against
+                is refused rather than spent on the arm.
 
         Returns:
             Tool-shaped result: a text summary plus a ``{"json": ...}`` block
@@ -1961,6 +2014,8 @@ class Robot(TeleopMixin, AgentTool):
         if err := self._shutdown_error("run_policy"):
             return err
         if err := self._duration_error(duration, "run_policy"):
+            return err
+        if err := self._n_steps_error(n_steps, "run_policy"):
             return err
         if err := self._claim_task(instruction):
             return err
