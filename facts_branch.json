@@ -1,0 +1,54 @@
+{
+ "tree": "/tmp/robots-mine-2378691",
+ "ramp": 500,
+ "scenarios": {
+  "reference": {
+   "label": "reference",
+   "status": "success",
+   "msg": "",
+   "steps": 120,
+   "stopped_reason": "budget",
+   "inferences": 120,
+   "home_png": "/tmp/art_branch/reference_home.png",
+   "after_png": "/tmp/art_branch/reference_after.png",
+   "joints": {
+    "Rotation": 0.2981,
+    "Rotation.vel": 0.1283,
+    "Pitch": -0.3256,
+    "Pitch.vel": -0.1478,
+    "Elbow": 0.4478,
+    "Elbow.vel": 0.1867,
+    "Wrist_Pitch": 0.0019,
+    "Wrist_Pitch.vel": 0.0003,
+    "Wrist_Roll": 0.0,
+    "Wrist_Roll.vel": 0.0,
+    "Jaw": 0.2765,
+    "Jaw.vel": 0.1179
+   }
+  },
+  "zero": {
+   "label": "zero",
+   "status": "raised",
+   "msg": "PolicyRunner.run: n_steps must be a positive integer, got 0.",
+   "steps": null,
+   "stopped_reason": null,
+   "inferences": 0,
+   "home_png": "/tmp/art_branch/zero_home.png",
+   "after_png": "/tmp/art_branch/zero_after.png",
+   "joints": {
+    "Rotation": 0.0,
+    "Rotation.vel": 0.0,
+    "Pitch": 0.0,
+    "Pitch.vel": 0.0,
+    "Elbow": 0.0,
+    "Elbow.vel": 0.0,
+    "Wrist_Pitch": 0.0,
+    "Wrist_Pitch.vel": 0.0,
+    "Wrist_Roll": 0.0,
+    "Wrist_Roll.vel": 0.0,
+    "Jaw": 0.0,
+    "Jaw.vel": 0.0
+   }
+  }
+ }
+}

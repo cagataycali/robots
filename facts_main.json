@@ -1,0 +1,54 @@
+{
+ "tree": "/tmp/ctrl-main-2381276",
+ "ramp": 500,
+ "scenarios": {
+  "reference": {
+   "label": "reference",
+   "status": "success",
+   "msg": "",
+   "steps": 120,
+   "stopped_reason": "budget",
+   "inferences": 120,
+   "home_png": "/tmp/art_main/reference_home.png",
+   "after_png": "/tmp/art_main/reference_after.png",
+   "joints": {
+    "Rotation": 0.2981,
+    "Rotation.vel": 0.1283,
+    "Pitch": -0.3256,
+    "Pitch.vel": -0.1478,
+    "Elbow": 0.4478,
+    "Elbow.vel": 0.1867,
+    "Wrist_Pitch": 0.0019,
+    "Wrist_Pitch.vel": 0.0003,
+    "Wrist_Roll": 0.0,
+    "Wrist_Roll.vel": 0.0,
+    "Jaw": 0.2765,
+    "Jaw.vel": 0.1179
+   }
+  },
+  "zero": {
+   "label": "zero",
+   "status": "success",
+   "msg": "",
+   "steps": 500,
+   "stopped_reason": "budget",
+   "inferences": 500,
+   "home_png": "/tmp/art_main/zero_home.png",
+   "after_png": "/tmp/art_main/zero_after.png",
+   "joints": {
+    "Rotation": 1.2861,
+    "Rotation.vel": 0.1281,
+    "Pitch": -1.4729,
+    "Pitch.vel": -0.149,
+    "Elbow": 1.8911,
+    "Elbow.vel": 0.1867,
+    "Wrist_Pitch": 0.0023,
+    "Wrist_Pitch.vel": -0.0,
+    "Wrist_Roll": 0.0,
+    "Wrist_Roll.vel": 0.0,
+    "Jaw": 1.1885,
+    "Jaw.vel": 0.118
+   }
+  }
+ }
+}
