@@ -145,6 +145,27 @@ def _sync_via_recorder(recorder: recorder_mod.DatasetRecorder, **kwargs: Any) ->
     return recorder.sync_to_bucket("acme/robotdata", run_id="run1", **kwargs)
 
 
+class TestTheDoubleIsARealRecorder:
+    """The surface under test is driven on the production class, not a stand-in.
+
+    A hand-written ``__init__`` sets whichever attributes the methods under test
+    happen to read today - three of the thirteen
+    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.__init__` sets - so
+    ``push_to_hub`` and ``sync_to_bucket`` would be read off a recorder
+    production cannot build, and the omission would be silent because neither
+    method reads the other ten. Comparing the double's attributes against a
+    reference recorder's is what keeps the stand-in from coming back.
+    """
+
+    def test_the_double_carries_every_attribute_production_sets(self) -> None:
+        reference = recorder_mod.DatasetRecorder(_FakeHubDataset())
+        assert set(vars(_recorder(_FakeHubDataset()))) == set(vars(reference))
+
+    def test_the_double_reports_the_counts_it_was_given(self) -> None:
+        recorder = _recorder(_FakeHubDataset(), frames=7, episodes=3)
+        assert (recorder.frame_count, recorder.episode_count) == (7, 3)
+
+
 class TestTheDomainIsTheSharedOne:
     """The values below are refused by the shared posture domain, not locally."""
 
