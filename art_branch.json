@@ -1,0 +1,67 @@
+{
+  "tree": "/tmp/robots-mine-2632672",
+  "params": {
+    "gr00t_inference.hf_repo": {
+      "text": "HuggingFace dataset/model id (e.g., ``\"nvidia/GR00T-N1.7-LIBERO\"``). Required for ``download_checkpoint``. Read by ``download_checkpoint`` and by ``lifecycle=\"full\"``.",
+      "placeholder": false
+    },
+    "gr00t_inference.hf_subfolder": {
+      "text": "Subfolder pattern within the HF repo (e.g., ``\"libero_spatial\"``). When set, only files matching ``<subfolder>/*`` are downloaded.",
+      "placeholder": false
+    },
+    "gr00t_inference.hf_local_dir": {
+      "text": "Where to download the checkpoint. Defaults to ``$STRANDS_BASE_DIR/checkpoints/<basename(hf_repo)>``. Also the host side of the ``/data/checkpoints`` bind mount, so it is confined to the base directory rather than accepted anywhere on the host.",
+      "placeholder": false
+    },
+    "gr00t_inference.hf_token": {
+      "text": "HuggingFace API token, for gated repos. Falls back to the ``HF_TOKEN`` / ``HUGGING_FACE_HUB_TOKEN`` env vars, which is the preferred way to supply it - a token passed here travels through the tool call.",
+      "placeholder": false
+    },
+    "gr00t_inference.lifecycle": {
+      "text": "Which phase ``action=\"lifecycle\"`` runs: ``\"full\"`` (default - chain ``build_image`` \u2192 ``download_checkpoint`` \u2192 ``start_container`` \u2192 ``start`` and wait for the port) or ``\"teardown\"`` (remove the container). Ignored by every other action.",
+      "placeholder": false
+    },
+    "gr00t_inference.remove_volumes": {
+      "text": "Under ``lifecycle=\"teardown\"``, also remove the container's docker volumes. Default ``False``, which preserves the checkpoint and HuggingFace-cache mounts; passing ``True`` discards downloaded checkpoints, so a later ``lifecycle=\"full\"`` re-downloads.",
+      "placeholder": false
+    },
+    "gr00t_inference.force": {
+      "text": "Override the idempotence of the setup steps - rebuild the image, re-download the checkpoint, or recreate the container even when the artefact is already present. Default ``False``, which makes a re-run after a crash resume rather than repeat work.",
+      "placeholder": false
+    },
+    "lerobot_teleoperate.policy_path": {
+      "text": "Checkpoint the ``dagger`` action rolls out autonomously between human takeovers. Required for ``dagger``; ignored by every other action.",
+      "placeholder": false
+    },
+    "lerobot_teleoperate.dagger_input_device": {
+      "text": "How the operator seizes control during a ``dagger`` rollout - ``\"keyboard\"`` (default) or ``\"pedal\"``. Any other value is refused.",
+      "placeholder": false
+    },
+    "lerobot_teleoperate.dagger_num_episodes": {
+      "text": "Cap on the corrections collected in one ``dagger`` session. A positive whole number, or None for no cap.",
+      "placeholder": false
+    },
+    "train_policy.lora_r": {
+      "text": "LoRA adapter rank, read only when ``method=\"lora\"``. A positive integer, or None to keep peft's default. It is the denominator of the ``lora_alpha / lora_r`` scaling, so anything else is refused by preflight.",
+      "placeholder": false
+    },
+    "train_policy.lora_alpha": {
+      "text": "Numerator of the LoRA ``lora_alpha / lora_r`` scaling, read only when ``method=\"lora\"``. A positive integer, or None to keep peft's default. Zero trains an adapter whose scaling is ``0.0`` and which therefore cannot change the model, so it is refused rather than run.",
+      "placeholder": false
+    },
+    "train_policy.lora_target_modules": {
+      "text": "Comma-separated module names the LoRA adapters are attached to, read only when ``method=\"lora\"``. Omit to keep the backend's default target set.",
+      "placeholder": false
+    }
+  },
+  "totals": {
+    "tools": 16,
+    "placeholder": 0,
+    "phantom": 0
+  },
+  "description": {
+    "host RCE": true,
+    "STRANDS_GR00T_REPO_URL_ALLOW": true,
+    "chars": 8650
+  }
+}

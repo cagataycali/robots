@@ -1,0 +1,67 @@
+{
+  "tree": "/tmp/ctrl-2666084",
+  "params": {
+    "gr00t_inference.hf_repo": {
+      "text": "Parameter hf_repo",
+      "placeholder": true
+    },
+    "gr00t_inference.hf_subfolder": {
+      "text": "Parameter hf_subfolder",
+      "placeholder": true
+    },
+    "gr00t_inference.hf_local_dir": {
+      "text": "Parameter hf_local_dir",
+      "placeholder": true
+    },
+    "gr00t_inference.hf_token": {
+      "text": "Parameter hf_token",
+      "placeholder": true
+    },
+    "gr00t_inference.lifecycle": {
+      "text": "Parameter lifecycle",
+      "placeholder": true
+    },
+    "gr00t_inference.remove_volumes": {
+      "text": "Parameter remove_volumes",
+      "placeholder": true
+    },
+    "gr00t_inference.force": {
+      "text": "Parameter force",
+      "placeholder": true
+    },
+    "lerobot_teleoperate.policy_path": {
+      "text": "Parameter policy_path",
+      "placeholder": true
+    },
+    "lerobot_teleoperate.dagger_input_device": {
+      "text": "Parameter dagger_input_device",
+      "placeholder": true
+    },
+    "lerobot_teleoperate.dagger_num_episodes": {
+      "text": "Parameter dagger_num_episodes",
+      "placeholder": true
+    },
+    "train_policy.lora_r": {
+      "text": "Parameter lora_r",
+      "placeholder": true
+    },
+    "train_policy.lora_alpha": {
+      "text": "Parameter lora_alpha",
+      "placeholder": true
+    },
+    "train_policy.lora_target_modules": {
+      "text": "Parameter lora_target_modules",
+      "placeholder": true
+    }
+  },
+  "totals": {
+    "tools": 16,
+    "placeholder": 13,
+    "phantom": 1
+  },
+  "description": {
+    "host RCE": false,
+    "STRANDS_GR00T_REPO_URL_ALLOW": false,
+    "chars": 7833
+  }
+}
