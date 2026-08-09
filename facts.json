@@ -1,0 +1,26 @@
+{
+  "as_written": {
+    "add_camera_param": "camera_name",
+    "add_status": "error",
+    "add_text": "Unknown parameter 'camera_name' for action 'add_camera'. Valid: ['fov', 'height', 'name', 'parent_body', 'position', 'ta",
+    "image_keys": [
+      "default"
+    ],
+    "camera_served_to_policy": "default",
+    "front_camera_exists": false,
+    "saturation": 0.9835416666666666
+  },
+  "fixed": {
+    "add_camera_param": "name",
+    "add_status": "success",
+    "add_text": "Camera 'front' added at [0.5, 0.0, 0.5]",
+    "image_keys": [
+      "default",
+      "front"
+    ],
+    "camera_served_to_policy": "front",
+    "front_camera_exists": true,
+    "saturation": 0.93181640625
+  },
+  "diff_fraction": 0.753232421875
+}
