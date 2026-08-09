@@ -1,0 +1,93 @@
+{
+  "tree": "/tmp/ctrl-2161812",
+  "rows": {
+    "5555": {
+      "start_status": "success",
+      "start_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+      "submitted": true,
+      "connects": 1,
+      "commands": 0,
+      "final_status": "error",
+      "final_error": "Operation cannot be accomplished in current state",
+      "refused_for_port": false
+    },
+    "0": {
+      "start_status": "success",
+      "start_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+      "submitted": true,
+      "connects": 1,
+      "commands": 0,
+      "final_status": "error",
+      "final_error": "policy_port is required for robot operation",
+      "refused_for_port": true
+    },
+    "-1": {
+      "start_status": "success",
+      "start_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+      "submitted": true,
+      "connects": 1,
+      "commands": 0,
+      "final_status": "error",
+      "final_error": "Gr00tPolicy: invalid port: -1 (expected 1-65535)",
+      "refused_for_port": false
+    },
+    "99999": {
+      "start_status": "success",
+      "start_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+      "submitted": true,
+      "connects": 1,
+      "commands": 0,
+      "final_status": "error",
+      "final_error": "Gr00tPolicy: invalid port: 99999 (expected 1-65535)",
+      "refused_for_port": false
+    },
+    "nan": {
+      "start_status": "success",
+      "start_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+      "submitted": true,
+      "connects": 1,
+      "commands": 0,
+      "final_status": "error",
+      "final_error": "Gr00tPolicy: invalid port: nan (expected 1-65535)",
+      "refused_for_port": false
+    },
+    "True": {
+      "start_status": "success",
+      "start_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+      "submitted": true,
+      "connects": 1,
+      "commands": 0,
+      "final_status": "error",
+      "final_error": "Gr00tPolicy: invalid port: True (expected 1-65535)",
+      "refused_for_port": false
+    },
+    "'5555'": {
+      "start_status": "success",
+      "start_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+      "submitted": true,
+      "connects": 1,
+      "commands": 0,
+      "final_status": "error",
+      "final_error": "Gr00tPolicy: invalid port: '5555' (expected 1-65535)",
+      "refused_for_port": false
+    },
+    "None": {
+      "start_status": "success",
+      "start_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+      "submitted": true,
+      "connects": 1,
+      "commands": 0,
+      "final_status": "error",
+      "final_error": "policy_port is required for robot operation",
+      "refused_for_port": true
+    }
+  },
+  "denial": {
+    "first_status": "success",
+    "first_text": "Task started: 'bad port'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+    "second_status": "error",
+    "second_text": "Task already running: bad port\nso101_follower drives one rollout at a time - the arm has a single command bus. Wait for it to finish or call action='stop' first.",
+    "connects": 1,
+    "commands": 0
+  }
+}

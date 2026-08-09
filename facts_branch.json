@@ -1,0 +1,93 @@
+{
+  "tree": "/tmp/robots-mine-2157858",
+  "rows": {
+    "5555": {
+      "start_status": "success",
+      "start_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+      "submitted": true,
+      "connects": 1,
+      "commands": 0,
+      "final_status": "error",
+      "final_error": "Operation cannot be accomplished in current state",
+      "refused_for_port": false
+    },
+    "0": {
+      "start_status": "error",
+      "start_text": "start_task: invalid policy_port: 0 (expected 1-65535)",
+      "submitted": false,
+      "connects": 0,
+      "commands": 0,
+      "final_status": "idle",
+      "final_error": "",
+      "refused_for_port": true
+    },
+    "-1": {
+      "start_status": "error",
+      "start_text": "start_task: invalid policy_port: -1 (expected 1-65535)",
+      "submitted": false,
+      "connects": 0,
+      "commands": 0,
+      "final_status": "idle",
+      "final_error": "",
+      "refused_for_port": true
+    },
+    "99999": {
+      "start_status": "error",
+      "start_text": "start_task: invalid policy_port: 99999 (expected 1-65535)",
+      "submitted": false,
+      "connects": 0,
+      "commands": 0,
+      "final_status": "idle",
+      "final_error": "",
+      "refused_for_port": true
+    },
+    "nan": {
+      "start_status": "error",
+      "start_text": "start_task: invalid policy_port: nan (expected 1-65535)",
+      "submitted": false,
+      "connects": 0,
+      "commands": 0,
+      "final_status": "idle",
+      "final_error": "",
+      "refused_for_port": true
+    },
+    "True": {
+      "start_status": "error",
+      "start_text": "start_task: invalid policy_port: True (expected 1-65535)",
+      "submitted": false,
+      "connects": 0,
+      "commands": 0,
+      "final_status": "idle",
+      "final_error": "",
+      "refused_for_port": true
+    },
+    "'5555'": {
+      "start_status": "error",
+      "start_text": "start_task: invalid policy_port: '5555' (expected 1-65535)",
+      "submitted": false,
+      "connects": 0,
+      "commands": 0,
+      "final_status": "idle",
+      "final_error": "",
+      "refused_for_port": true
+    },
+    "None": {
+      "start_status": "error",
+      "start_text": "start_task: policy_port is required to build a policy (pass the port of the policy server, or use run_policy with a pre-built policy_object).",
+      "submitted": false,
+      "connects": 0,
+      "commands": 0,
+      "final_status": "idle",
+      "final_error": "",
+      "refused_for_port": true
+    }
+  },
+  "denial": {
+    "first_status": "error",
+    "first_text": "start_task: invalid policy_port: 99999 (expected 1-65535)",
+    "second_status": "success",
+    "second_text": "Task started: 'pick up the cube'\nRobot: so101_follower\nUse action='status' to check progress\nUse action='stop' to interrupt",
+    "connects": 1,
+    "commands": 0
+  }
+}
