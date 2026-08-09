@@ -21,6 +21,7 @@ import argparse
 import asyncio
 import logging
 import time
+from typing import Any
 
 from strands_robots import Robot
 from strands_robots.policies import create_policy
@@ -29,6 +30,23 @@ logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("molmoact2_sim")
 
 REPO = "allenai/MolmoAct2-SO100_101"
+
+
+def _must(sim: Any, action: str, params: dict[str, Any]) -> Any:
+    """Dispatch a sim action and fail loud on error.
+
+    The dispatch router reports a bad parameter by RETURNING
+    ``{"status": "error", ...}`` rather than raising. Discarding that result lets
+    scene setup silently no-op: an ``add_camera`` that never ran leaves the world
+    holding only the default camera, so the policy is handed an observation
+    without the view it was trained on and fails much later complaining about
+    missing image keys -- pointing at the policy rather than at the call that was
+    refused. Per AGENTS.md ("no silent defaults on error"), surface it here.
+    """
+    result = sim._dispatch_action(action, params)
+    if isinstance(result, dict) and result.get("status") == "error":
+        raise RuntimeError(f"sim action {action!r} failed: {result.get('content', result)}")
+    return result
 
 
 def main():
@@ -46,10 +64,14 @@ def main():
     log.info("Simulation world created: %s", sim.tool_name)
 
     # Add a camera to the sim world for visual observations.
-    sim._dispatch_action(
+    _must(
+        sim,
         "add_camera",
         {
-            "camera_name": "front",
+            # ``add_camera`` names the new camera with ``name``. ``camera_name``
+            # is the render-side spelling (render / render_depth / get_frame /
+            # get_camera_params / get_world_point); the router rejects it here.
+            "name": "front",
             "position": [0.5, 0.0, 0.5],
             "target": [0.0, 0.0, 0.1],
             "width": 640,
@@ -67,21 +89,24 @@ def main():
     policy.reset()
 
     # Retrieve initial sim state to verify observation keys.
-    state = sim._dispatch_action("get_state", {})
+    state = _must(sim, "get_state", {})
     log.info("Sim state keys: %s", list(state.keys()) if isinstance(state, dict) else "N/A")
 
     async def run():
         period = 1.0 / args.hz
         for step in range(args.steps):
             # In sim mode, observations come from MuJoCo rendering.
-            obs_result = sim._dispatch_action("get_observation", {"camera_name": "front"})
+            # ``get_observation`` takes ``robot_name`` / ``skip_images`` and
+            # returns EVERY attached camera, so there is no per-call camera
+            # selector to pass here.
+            obs_result = _must(sim, "get_observation", {})
             t = time.time()
             actions = await policy.get_actions(obs_result, args.task)
             dt = time.time() - t
             a = actions[0]
             log.info("step %d infer=%.2fs action=%s", step, dt, {k: round(v, 1) for k, v in a.items()})
             if not args.dry_run:
-                sim._dispatch_action("set_joint_positions", {"positions": a})
+                _must(sim, "set_joint_positions", {"positions": a})
             await asyncio.sleep(max(0, period - dt))
 
     try:
