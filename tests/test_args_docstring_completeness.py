@@ -1,23 +1,30 @@
 """A documented parameter is the only discovery surface a caller has.
 
-Several simulation parameters carry a real, enforced domain: ``ros2_domain``
-must be an ``int`` in ``[0, 232]`` or construction raises, ``control_substeps``
-must be a positive integer or the runner raises, and ``add_object``'s
-``material`` mapping is refused for any key outside
-:data:`~strands_robots.simulation.mujoco.spec_builder.MATERIAL_KEYS`. When such
-a parameter has no ``Args:`` entry, a caller can be *refused for a parameter the
-docstring never mentions* - the guard reports a name the reader cannot look up,
-so the remedy is to read the source. That is the same shape as a knob whose
-accepted domain is undiscoverable, and it went unnoticed on six surfaces at once
-because nothing compared a signature against its own ``Args:`` block.
+Parameters across this package carry real, enforced domains and real
+consequences: ``ros2_domain`` must be an ``int`` in ``[0, 232]`` or construction
+raises, ``control_substeps`` must be a positive integer or the runner raises,
+``add_object``'s ``material`` mapping is refused for any key outside
+:data:`~strands_robots.simulation.mujoco.spec_builder.MATERIAL_KEYS`, and
+``DatasetRecorder.create``'s ``camera_dims`` decides the shape every camera
+column is declared with. When such a parameter has no ``Args:`` entry, a caller
+can be *refused for - or silently governed by - a parameter the docstring never
+mentions*, so the only remedy is to read the source. It went unnoticed on six
+simulation surfaces at once, and on four more outside that subtree, because
+nothing compared a signature against its own ``Args:`` block.
 
 These tests pin the comparison for every public method of every public class in
-:mod:`strands_robots.simulation` (backend subpackages included) whose docstring
-*already* has an ``Args:`` section: adding a parameter without documenting it -
-or documenting one the signature no longer takes - fails here. A docstring with
-no ``Args:`` section at all is out of scope: this guard checks a block that
-exists for completeness rather than demanding one, which is
-``test_public_member_docstrings.py``'s job for the docstring itself.
+:mod:`strands_robots` (backend and provider subpackages included) whose
+docstring *already* has an ``Args:`` section: adding a parameter without
+documenting it - or documenting one the signature no longer takes - fails here.
+A docstring with no ``Args:`` section at all is out of scope: this guard checks a
+block that exists for completeness rather than demanding one, which is the
+``*_public_member_docstrings.py`` guards' job for the docstring itself.
+
+The root is the whole package rather than one subtree because nothing about this
+drift is subtree-specific. Rooted at :mod:`strands_robots.simulation` the scan
+compared 345 parameters over 82 surfaces; rooted here it compares 629 over 172,
+and the four surfaces the widening found (#2056) were undiscoverable in exactly
+the way the original six were.
 
 Combined entry labels are honoured deliberately. Google style is used loosely in
 this package for parameters that share one description, so
@@ -28,9 +35,9 @@ raw label would demand entries that already exist - so labels are split on
 ``/``, ``,`` and ``or`` before comparing. :class:`TestCombinedEntryLabelsCount`
 pins that calibration against the two real surfaces that rely on it.
 
-The scan walks modules by AST, so it needs none of the optional simulation
-backends installed, and :class:`TestTheScanIsNonVacuous` fails if a mis-rooted
-scan reports a clean sweep over nothing.
+The scan walks modules by AST, so it needs none of the optional backends or
+policy providers installed, and :class:`TestTheScanIsNonVacuous` fails if a
+mis-rooted or re-narrowed scan reports a clean sweep over less than the package.
 """
 
 from __future__ import annotations
@@ -42,11 +49,11 @@ from pathlib import Path
 
 import pytest
 
-import strands_robots.simulation as simulation_pkg
+import strands_robots as package
 
 # Derived from an imported symbol rather than a path literal, so a moved package
 # cannot leave this scanning an empty tree while reporting success.
-_PACKAGE_ROOT = Path(inspect.getfile(simulation_pkg)).parent
+_PACKAGE_ROOT = Path(inspect.getfile(package)).parent
 
 _SECTION_HEADERS = ("Args:", "Arguments:", "Parameters:")
 
@@ -176,27 +183,47 @@ def test_no_args_entry_names_a_parameter_the_signature_lacks(
 class TestTheScanIsNonVacuous:
     """A mis-rooted or over-filtered scan must fail rather than sweep nothing."""
 
-    def test_the_scan_root_is_the_simulation_package(self) -> None:
-        assert _PACKAGE_ROOT.name == "simulation"
-        assert (_PACKAGE_ROOT / "base.py").is_file()
+    def test_the_scan_root_is_the_whole_package(self) -> None:
+        """Replaces the simulation-rooted assertion this guard shipped with.
+
+        Kept as an assertion rather than dropped: a root narrowed back to one
+        subtree is the failure mode that reports a clean sweep over half the
+        package, which is what #2056 measured.
+        """
+        assert _PACKAGE_ROOT.name == "strands_robots"
+        assert (_PACKAGE_ROOT / "simulation" / "base.py").is_file()
+        assert (_PACKAGE_ROOT / "dataset_recorder.py").is_file()
 
     def test_enough_surfaces_are_scanned_to_be_meaningful(self) -> None:
-        assert len(_SURFACES) >= 70, f"only {len(_SURFACES)} surfaces scanned"
+        assert len(_SURFACES) >= 150, f"only {len(_SURFACES)} surfaces scanned"
+
+    def test_the_scan_reaches_past_the_simulation_subtree(self) -> None:
+        """A count alone cannot tell a wide root from a large subtree."""
+        outside = [surface for surface, _, _ in _SURFACES if not surface.startswith("strands_robots/simulation/")]
+        assert len(outside) >= 60, f"only {len(outside)} surfaces outside the simulation subtree"
 
     @pytest.mark.parametrize(
         "expected",
         [
-            "simulation/base.py::SimEngine.get_observation",
-            "simulation/base.py::SimEngine.run_policy",
-            "simulation/policy_runner.py::PolicyRunner.run",
-            "simulation/policy_runner.py::PolicyRunner.evaluate",
-            "simulation/mujoco/simulation.py::MuJoCoSimEngine.__init__",
-            "simulation/mujoco/simulation.py::MuJoCoSimEngine.add_object",
+            "strands_robots/simulation/base.py::SimEngine.get_observation",
+            "strands_robots/simulation/base.py::SimEngine.run_policy",
+            "strands_robots/simulation/policy_runner.py::PolicyRunner.run",
+            "strands_robots/simulation/policy_runner.py::PolicyRunner.evaluate",
+            "strands_robots/simulation/mujoco/simulation.py::MuJoCoSimEngine.__init__",
+            "strands_robots/simulation/mujoco/simulation.py::MuJoCoSimEngine.add_object",
+            "strands_robots/dataset_recorder.py::DatasetRecorder.create",
+            "strands_robots/policies/cosmos3/policy.py::Cosmos3Policy.get_actions",
+            "strands_robots/policies/lerobot_local/policy.py::LerobotLocalPolicy.get_actions",
+            "strands_robots/benchmarks/libero/adapter.py::LiberoAdapter.__init__",
         ],
         ids=lambda expected: expected.rsplit("::", 1)[-1],
     )
     def test_a_known_surface_is_in_scope(self, expected: str) -> None:
-        """The six surfaces this guard was written for must actually be walked."""
+        """The ten surfaces this guard was written for must actually be walked.
+
+        Six from the simulation subtree it started in, four from outside it, so
+        a root that loses either half fails here rather than sweeping clean.
+        """
         assert any(surface == expected for surface, _, _ in _SURFACES), expected
 
 
@@ -241,7 +268,7 @@ class TestTheScannerDetectsAPlantedDefect:
     """An empty result must mean clean sources, not a scanner that matches nothing."""
 
     def _scan(self, tmp_path: Path, source: str) -> list[tuple[str, list[str], frozenset[str]]]:
-        pkg = tmp_path / "simulation"
+        pkg = tmp_path / "package"
         pkg.mkdir()
         (pkg / "planted.py").write_text(source, encoding="utf-8")
         return documented_surfaces(pkg)

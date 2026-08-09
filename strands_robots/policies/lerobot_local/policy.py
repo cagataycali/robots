@@ -2070,6 +2070,15 @@ class LerobotLocalPolicy(Policy):
         Args:
             observation_dict: Robot observation (cameras + state).
             instruction: Natural language instruction.
+            **kwargs: Accepted and not read. This provider's runtime selectors
+                are bound once at construction and forwarded on every step as
+                ``inference_kwargs`` (to ``predict_action_chunk`` on the chunking
+                path, ``select_action`` otherwise), so a per-call keyword is
+                discarded rather than honored - pass it as
+                ``inference_kwargs=`` when creating the policy instead. Ignoring
+                an unknown keyword rather than raising is what the ABC requires
+                (:meth:`~strands_robots.policies.base.Policy.get_actions`), so
+                the parameter stays in the signature.
 
         Returns:
             List of action dicts for robot execution.

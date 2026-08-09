@@ -350,6 +350,20 @@ class LiberoAdapter(BenchmarkProtocol):
                 is ``"finger_joint1"``. The Menagerie Panda's two-finger
                 MJCF equality constraint mirrors the value to the second
                 finger, so reading just one is sufficient.
+            state_gripper_joint_names: Ordered finger joint names read for the
+                LIBERO ``state.gripper`` vector, in the order the trained state
+                vector uses. ``None`` (default) auto-derives
+                ``["<scene_gripper_prefix>finger_joint1",
+                "<scene_gripper_prefix>finger_joint2"]`` - see
+                :attr:`state_gripper_joint_names`, which exposes the resolved
+                list. The number of names is the width of ``state.gripper``:
+                :meth:`_read_gripper_qpos` reads one ``qpos`` per name, so a list
+                that is not 2 long disagrees with ``state_gripper_signs``, which
+                IS arity-checked to 2 at construction. That disagreement is not
+                refused - the signs are skipped with a warning and
+                ``state.gripper`` is recorded unsigned, which is the
+                out-of-distribution state #168 exists to prevent - so keep the
+                two the same length when overriding either.
             state_gripper_signs: Optional 2-element sign/scale vector
                 multiplied elementwise onto the ``state.gripper``
                 2-vector, whatever source produced it. RoboSuite's

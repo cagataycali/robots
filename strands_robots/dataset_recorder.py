@@ -794,6 +794,21 @@ class DatasetRecorder:
             camera_keys: List of DISTINCT camera names (images become video
                 features). One name per camera, in schema order; a single name
                 still has to be a one-element list.
+            camera_dims: Per-camera declared frame shape as
+                ``{camera_key: (height, width)}``, keyed by the same names
+                ``camera_keys`` declares. Note the order: ``(height, width)``,
+                the reverse of the ``video_width`` / ``video_height`` pair it
+                falls back to on this same call. Every backend that supplies it
+                reads the camera's real render resolution, so a camera present
+                here is declared at its own shape rather than the global one; a
+                camera absent from the mapping (or ``None``, the default) takes
+                ``(video_height, video_width)``.
+            video_width/video_height: Declared frame shape for every camera
+                ``camera_dims`` does not cover. A declaration rather than a
+                resize - the recorder rescales nothing - so a camera streaming
+                another size is declared at a shape it does not have. This is why
+                the backends pass ``camera_dims`` read from the live cameras
+                instead of relying on this pair.
             joint_names: List of DISTINCT joint names (alternative to
                 robot_features for sim). These become the ``observation.state``
                 column names, and add_frame reads each one out of the

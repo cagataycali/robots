@@ -382,6 +382,16 @@ class Cosmos3Policy(Policy):
             observation_dict: Flat robots observation (joint floats + camera
                 ndarrays), per the ``SimEngine.get_observation`` schema.
             instruction: Natural-language task instruction.
+            **kwargs: Extra inference options, honored on the ``diffusers``
+                backend only - they are forwarded verbatim to the world model's
+                ``infer`` call. The ``service`` backend calls the remote client
+                without them, so the same keyword is silently dropped there; the
+                ABC requires a provider to ignore what it cannot honor rather
+                than raise (:meth:`~strands_robots.policies.base.Policy.get_actions`),
+                and this provider's answer depends on the ``backend`` it was
+                constructed with. None of the well-known keys the ABC lists
+                (``target_pose``, ``target_joints``, ``world_update``) is read by
+                either backend.
 
         Returns:
             ``list[dict]`` - one action dict per predicted timestep.
