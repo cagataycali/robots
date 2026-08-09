@@ -343,8 +343,8 @@ class TestOnlyTheFlagsAModeEmitsAreChecked:
         "flag",
         ["record_resume", "dataset_push_to_hub", "dataset_video", "display_data", "dagger_record_autonomous"],
     )
-    def test_replay_refuses_no_flag_and_its_argv_is_unchanged(self, flag: str) -> None:
-        """``lerobot-replay`` emits no boolean flag at all."""
+    def test_replay_refuses_no_other_mode_s_flag(self, flag: str) -> None:
+        """``lerobot-replay`` emits none of these; ``play_sounds`` is its only flag."""
         assert _replay(**{flag: "false"}) == _replay()
 
     @pytest.mark.parametrize(
@@ -363,35 +363,92 @@ class TestOnlyTheFlagsAModeEmitsAreChecked:
         assert _dagger(record_resume="false") == _dagger()
 
 
-class TestPlaySoundsIsExcludedByConstruction:
-    """No mode emits ``play_sounds``, so no mode may refuse a value for it.
+class TestPlaySoundsReachesTheArgv:
+    """``play_sounds`` is emitted for the entry points that declare it (#2072).
 
-    The parameter is declared, documented and forwarded, and then read by
-    nothing - so giving it a domain here would be a false rejection for an option
-    that has no effect either way. It is absent from the table for the same
-    reason ``replay`` is, rather than by an exemption. Whether it should be
-    emitted or removed is #2072; this class pins the state that issue describes,
-    so it fails the day the answer lands and the exclusion stops being true.
+    It was previously declared, documented, forwarded - and read by nothing, so
+    the documented option did nothing at all and a caller who set it was told
+    nothing. Where it goes is decided by lerobot rather than by symmetry, measured
+    against ``lerobot==0.6.1`` (the floor of this package's ``[lerobot]`` extra):
+
+    * ``RecordConfig.play_sounds`` (``lerobot_record.py:188``);
+    * ``ReplayConfig.play_sounds`` (``lerobot_replay.py:99``);
+    * ``RolloutConfig.play_sounds`` (``rollout/configs.py:256``);
+    * ``TeleoperateConfig`` - **no such field**, and the entry point makes no
+      ``log_say`` call, so plain teleoperation has no audio to suppress.
+
+    All three are fields of the top-level ``@parser.wrap()`` config, so the flag
+    is spelled ``--play_sounds`` and not nested under ``--dataset.*``. The
+    teleoperate exclusion is therefore not an oversight to be tidied up later: the
+    flag there would be an unrecognized argument, which is the failure mode the
+    module docstring records for the removed pre-0.5 flat flags.
+
+    The first test is the one #2072 named as failing before this landed.
     """
 
-    def test_no_mode_emits_it(self) -> None:
-        for name, tuple_ in tele_mod._MODE_FLAG_OPTIONS.items():
-            assert "play_sounds" not in tuple_, f"mode {name!r} now emits play_sounds; give it a domain"
+    @pytest.mark.parametrize("builder", [_record, _replay])
+    def test_the_argv_differs_between_true_and_false(self, builder: Any) -> None:
+        """The assertion #2072 asked for: the flag has to reach the command line."""
+        assert builder(play_sounds=True) != builder(play_sounds=False)
 
-    @pytest.mark.parametrize("builder", [_record, _teleop, _replay])
-    def test_the_argv_is_identical_either_way(self, builder: Any) -> None:
-        assert builder(play_sounds=True) == builder(play_sounds=False)
+    def test_the_dagger_argv_differs_between_true_and_false(self, _rollout_entry_point: None) -> None:
+        assert _dagger(play_sounds=True) != _dagger(play_sounds=False)
 
-    def test_the_dagger_argv_is_identical_either_way(self, _rollout_entry_point: None) -> None:
-        assert _dagger(play_sounds=True) == _dagger(play_sounds=False)
+    @pytest.mark.parametrize("builder", [_record, _replay])
+    def test_both_postures_are_explicit_literals(self, builder: Any) -> None:
+        """Omission cannot express the opt-out, because lerobot defaults it to ``True``.
 
-    def test_no_argv_carries_a_sound_token(self) -> None:
-        for argv in (_record(), _teleop(), _replay()):
-            assert [token for token in argv if "sound" in token.lower()] == []
+        This is why ``play_sounds`` is emitted unconditionally, like
+        ``dataset_video``, rather than only when set, like ``display_data``: for a
+        flag upstream already defaults to ``True``, absence says ``True`` too, so
+        ``False`` has exactly one spelling that reaches the CLI.
+        """
+        assert _token(builder(play_sounds=True), "--play_sounds") == "true"
+        assert _token(builder(play_sounds=False), "--play_sounds") == "false"
 
-    def test_a_non_boolean_is_consequently_not_refused(self) -> None:
-        """Not an oversight: nothing reads it, so nothing can misread it."""
-        assert _record(play_sounds="false") == _record()
+    def test_the_dagger_postures_are_explicit_literals(self, _rollout_entry_point: None) -> None:
+        assert _token(_dagger(play_sounds=True), "--play_sounds") == "true"
+        assert _token(_dagger(play_sounds=False), "--play_sounds") == "false"
+
+    @pytest.mark.parametrize("builder", [_record, _replay])
+    def test_the_flag_is_not_nested_under_dataset(self, builder: Any) -> None:
+        """``play_sounds`` is a top-level config field, not a ``DatasetRecordConfig`` one."""
+        assert "--dataset.play_sounds" not in builder(play_sounds=False)
+
+    def test_the_modes_that_emit_it_are_exactly_the_ones_that_declare_it(self) -> None:
+        emitting = {name for name, tuple_ in tele_mod._MODE_FLAG_OPTIONS.items() if "play_sounds" in tuple_}
+        assert emitting == {"record", "replay", "dagger"}
+
+    @pytest.mark.parametrize("value", ["false", "off", None, [], 0, 1])
+    def test_a_non_boolean_is_now_refused(self, value: Any) -> None:
+        """The domain follows the emission: a flag that reaches an argv is checked."""
+        with pytest.raises(ValueError, match="play_sounds must be a boolean"):
+            _record(play_sounds=value)
+
+    def test_the_refusal_names_the_shared_domain(self) -> None:
+        with pytest.raises(ValueError) as excinfo:
+            _replay(play_sounds="false")
+        assert str(excinfo.value) == boolean_flag_error("false", "play_sounds", "build_lerobot_command")
+
+
+class TestPlainTeleoperationIsUnaffected:
+    """The over-reach control for #2072, in both directions.
+
+    ``lerobot-teleoperate`` declares no ``play_sounds``, so it must neither emit
+    the flag - that would be an unrecognized argument, not a harmless no-op - nor
+    refuse a value for it, which would be a false rejection of the same shape the
+    per-mode scoping exists to prevent.
+    """
+
+    def test_it_emits_no_sound_flag(self) -> None:
+        assert [token for token in _teleop() if "sound" in token.lower()] == []
+
+    def test_its_argv_is_identical_either_way(self) -> None:
+        assert _teleop(play_sounds=True) == _teleop(play_sounds=False)
+
+    @pytest.mark.parametrize("value", ["false", None, []])
+    def test_it_refuses_no_value_for_a_flag_it_ignores(self, value: Any) -> None:
+        assert _teleop(play_sounds=value) == _teleop()
 
 
 class TestTheRefusalPrecedesEverythingItWouldOtherwiseReach:
@@ -459,9 +516,14 @@ class TestTheFlagTableCannotDriftFromTheBuilder:
     def test_every_mode_in_the_table_is_one_the_builder_dispatches(self) -> None:
         assert set(tele_mod._MODE_FLAG_OPTIONS) <= set(tele_mod._MODE_NUMERIC_OPTIONS)
 
-    def test_replay_is_absent_because_it_emits_no_flag(self) -> None:
-        """Absence is the assertion, so a flag added to replay fails here."""
-        assert "replay" not in tele_mod._MODE_FLAG_OPTIONS
+    def test_replay_emits_exactly_one_flag(self) -> None:
+        """The tuple is the assertion, so a flag added to replay fails here.
+
+        ``replay`` was absent from this table until #2072: ``ReplayConfig`` does
+        declare ``play_sounds``, and it is the only flag in this module that entry
+        point accepts.
+        """
+        assert tele_mod._MODE_FLAG_OPTIONS["replay"] == ("play_sounds",)
         assert "replay" in tele_mod._MODE_NUMERIC_OPTIONS
 
     def test_no_mode_names_a_flag_the_supplied_dict_cannot_answer(self) -> None:
@@ -473,7 +535,14 @@ class TestTheFlagTableCannotDriftFromTheBuilder:
             assert tele_mod._flag_error(mode, every_flag_usable) is None
 
     def test_a_mode_absent_from_the_table_refuses_nothing(self) -> None:
-        assert tele_mod._flag_error("replay", {}) is None
+        """The ``.get(mode, ())`` default, not a mode that happens to be missing.
+
+        Every mode the builder dispatches now carries at least one flag, so this
+        asserts the lookup's own default rather than a property of the table -
+        which is what kept it meaningful when ``replay`` joined it in #2072.
+        """
+        assert "no-such-mode" not in tele_mod._MODE_FLAG_OPTIONS
+        assert tele_mod._flag_error("no-such-mode", {}) is None
 
     def test_the_flags_are_reported_in_the_order_the_argv_emits_them(self) -> None:
         """Two unusable flags in one call must report deterministically."""

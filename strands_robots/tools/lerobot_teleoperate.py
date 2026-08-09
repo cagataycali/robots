@@ -132,15 +132,49 @@ def _numeric_option_error(mode: str, supplied: dict[str, Any]) -> str | None:
 # ``[]`` took the other branch just as silently, without ever being a declared
 # spelling of it.
 #
-# ``replay`` is absent because it emits no flag at all - its argv is unchanged by
-# every flag in this module, so refusing one there would be a false rejection,
-# the same scoping rule :data:`_MODE_NUMERIC_OPTIONS` encodes. ``play_sounds`` is
-# in no tuple for that same reason: nothing reads it anywhere (#2072), so it is
-# excluded here by construction rather than by an exemption.
+# ``teleoperate`` carries only ``display_data`` because lerobot's
+# ``TeleoperateConfig`` declares no other field this module offers: refusing a
+# flag a mode never puts on its argv would be a false rejection, the same scoping
+# rule :data:`_MODE_NUMERIC_OPTIONS` encodes.
+#
+# ``play_sounds`` is scoped by that same table rather than exempted from it. It
+# was previously in no tuple because no mode emitted it at all - declared,
+# documented and forwarded, and then read by nothing (#2072), so a domain would
+# have refused values for an option that had no effect either way. It is now
+# emitted for the three entry points that accept it, which is what makes the
+# domain honest rather than decorative. Measured against ``lerobot==0.6.1``, the
+# version this package's ``[lerobot]`` extra floors:
+#
+#   lerobot/scripts/lerobot_record.py:188   RecordConfig.play_sounds  = True
+#   lerobot/scripts/lerobot_replay.py:99    ReplayConfig.play_sounds  = True
+#   lerobot/rollout/configs.py:256          RolloutConfig.play_sounds = True
+#   lerobot/scripts/lerobot_teleoperate.py  TeleoperateConfig - absent
+#
+# All three are fields of the top-level ``@parser.wrap()`` config, so the flag is
+# spelled ``--play_sounds`` rather than nested. ``teleoperate`` is excluded
+# because that entry point never speaks - it holds no ``log_say`` call and no
+# such field - so emitting the flag there would not be a silent no-op but an
+# unrecognized argument, which is the failure the class docstring above warns the
+# removed pre-0.5 flat flags cause.
+#
+# ``play_sounds`` is emitted *unconditionally* as an explicit literal, like
+# ``dataset_video`` and ``dataset_push_to_hub``, rather than only when set, like
+# ``display_data`` and ``record_resume``. That split is not a style choice: it
+# follows the upstream default. A flag lerobot defaults to ``False`` is expressed
+# by its presence, so omitting it says "false" exactly; a flag lerobot defaults
+# to ``True`` cannot express an opt-out by omission at all, so the only spelling
+# of ``play_sounds=False`` that reaches the CLI is the explicit literal.
 _MODE_FLAG_OPTIONS: dict[str, tuple[str, ...]] = {
-    "record": ("record_resume", "dataset_push_to_hub", "dataset_video", "display_data"),
+    "record": ("record_resume", "dataset_push_to_hub", "dataset_video", "display_data", "play_sounds"),
     "teleoperate": ("display_data",),
-    "dagger": ("dagger_record_autonomous", "dataset_push_to_hub", "dataset_video", "display_data"),
+    "replay": ("play_sounds",),
+    "dagger": (
+        "dagger_record_autonomous",
+        "dataset_push_to_hub",
+        "dataset_video",
+        "display_data",
+        "play_sounds",
+    ),
 }
 
 
@@ -428,6 +462,12 @@ def build_lerobot_command(
             (resolved from ``dataset_repo_id``) so lerobot HEAD's repo_id
             timestamp-stamping never relocates the on-disk dataset.
         replay_episode: Episode index to replay (``--dataset.episode``).
+        play_sounds: Emit ``--play_sounds true|false`` for the modes whose lerobot
+            entry point declares the field - ``record``, ``replay`` and
+            ``dagger``. Always explicit, because lerobot defaults it to ``True``
+            and an opt-out therefore cannot be expressed by omitting the flag.
+            Plain teleoperation ignores it: ``TeleoperateConfig`` has no such
+            field, so emitting it there would be an unrecognized argument.
 
     Returns:
         The argv list, beginning with ``["python", "-m", "lerobot.scripts...."]``.
@@ -461,11 +501,14 @@ def build_lerobot_command(
         "dataset_video": dataset_video,
         "display_data": display_data,
         "dagger_record_autonomous": dagger_record_autonomous,
+        "play_sounds": play_sounds,
     }
     if action == "replay":
         if not dataset_repo_id:
             raise ValueError("dataset_repo_id is required for replay action")
         if error := _numeric_option_error("replay", numeric_options):
+            raise ValueError(error)
+        if error := _flag_error("replay", flag_options):
             raise ValueError(error)
         cmd = ["python", "-m", "lerobot.scripts.lerobot_replay"]
         cmd.extend(
@@ -475,6 +518,7 @@ def build_lerobot_command(
         if dataset_root:
             cmd.extend(["--dataset.root", dataset_root])
         cmd.extend(["--dataset.fps", str(int(dataset_fps))])
+        cmd.extend(["--play_sounds", "true" if play_sounds else "false"])
         return cmd
 
     if action == "start":
@@ -513,6 +557,7 @@ def build_lerobot_command(
             cmd.extend(["--dataset.video", "true" if dataset_video else "false"])
             if display_data:
                 cmd.extend(["--display_data", "true"])
+            cmd.extend(["--play_sounds", "true" if play_sounds else "false"])
             return cmd
 
         # Simple teleoperation mode -> lerobot-teleoperate.
@@ -533,6 +578,11 @@ def build_lerobot_command(
             cmd.extend(["--teleop_time_s", str(teleop_time_s)])
         if display_data:
             cmd.extend(["--display_data", "true"])
+        # No ``--play_sounds`` here, and deliberately not for symmetry's sake:
+        # lerobot's ``TeleoperateConfig`` declares no such field and the entry
+        # point makes no ``log_say`` call, so the flag would be an unrecognized
+        # argument rather than an accepted no-op. Plain teleoperation has no
+        # audio to suppress; see the note on :data:`_MODE_FLAG_OPTIONS`.
         return cmd
 
     if action == "dagger":
@@ -593,6 +643,7 @@ def build_lerobot_command(
         cmd.extend(["--fps", str(int(fps))])
         if display_data:
             cmd.extend(["--display_data", "true"])
+        cmd.extend(["--play_sounds", "true" if play_sounds else "false"])
         return cmd
 
     raise ValueError(f"Unknown action: {action}")
@@ -818,7 +869,11 @@ def lerobot_teleoperate(
         display_data: Show live camera feeds and telemetry
         fps: Teleoperation control loop frequency
         teleop_time_s: Session duration limit
-        play_sounds: Enable audio feedback
+        play_sounds: Enable lerobot's spoken event announcements ("Recording
+            episode 3", "Stop recording"). Effective for recording, replay and
+            dagger; plain teleoperation emits no audio and ignores it. Must be a
+            boolean - a string such as ``"false"`` is refused rather than read by
+            truthiness, since every non-empty string is truthy.
         auto_accept_calibration: Answer the calibration prompt on the session's
             behalf, by writing two newlines into the process's stdin shortly
             after it starts. Withhold it (``False``) to answer the prompt
