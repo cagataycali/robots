@@ -1025,7 +1025,11 @@ class PolicyRunner:
                 ``_MAX_CONSECUTIVE_ONFRAME_FAILURES`` (currently ``5``). A
                 broken recording hook otherwise silently produces empty
                 datasets - see GH #117. Non-consecutive failures reset the
-                counter.
+                counter. Must otherwise be a positive integer
+                (:func:`~strands_robots.utils.positive_count_error`), raised
+                rather than returned because raising is this layer's contract:
+                a value the counter cannot be compared against would disable
+                the abort above instead of resizing it.
             control_substeps: Physics steps advanced per applied action. ``None``
                 (default) derives the count from ``control_frequency`` and the
                 backend's physics timestep, so a position-servo arm integrates
@@ -1183,6 +1187,14 @@ class PolicyRunner:
             )
         ):
             raise ValueError(timeout_error)
+        # Same shared domain, raised for the same reason: a limit outside it
+        # silences the consecutive-failure abort this runner owns, and the
+        # warning that would report the hook - see
+        # SimEngine._validate_onframe_failure_limit for the measured failure modes.
+        if max_onframe_failures is not None and (
+            limit_error := positive_count_error(max_onframe_failures, "max_onframe_failures", "PolicyRunner.run")
+        ):
+            raise ValueError(limit_error)
         if seed is not None:
             set_eval_seed(seed)
             try:

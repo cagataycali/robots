@@ -1982,6 +1982,59 @@ class SimEngine(ABC):
             return {"status": "error", "content": [{"text": error}]}
         return None
 
+    @staticmethod
+    def _validate_onframe_failure_limit(max_onframe_failures: Any, method: str) -> dict[str, Any] | None:
+        """Reject an ``on_frame`` failure tolerance the watchdog cannot count against.
+
+        ``max_onframe_failures`` is the consecutive-failure ceiling that stops a
+        broken ``on_frame`` hook from producing an empty capture behind a
+        successful-looking rollout (GH #117). The runner counts failures into a
+        plain ``int`` and compares ``consecutive_onframe_failures >= limit``, so a
+        value outside the accepted domain does not merely mis-size the tolerance -
+        it silences the mechanism whose own abort text reads "aborting episode to
+        avoid silent dataset corruption":
+
+        * ``nan`` and ``inf`` make that comparison false for every counter value,
+          so the abort never fires. Measured on a 100-step rollout whose hook
+          raises on every step: 100 of 100 frames lost and
+          ``status="success"``. Both values also break the per-failure warning
+          that would otherwise report the hook - it interpolates the limit with
+          ``%d``, and ``"%d" % nan`` raises ``ValueError`` while ``"%d" % inf``
+          raises ``OverflowError``, so ``logging`` emits its own error instead of
+          the warning and the operator is told nothing at all.
+        * ``0`` is a duplicate spelling of ``1`` carrying a false message. The
+          counter is incremented before the comparison, so a limit of ``1``
+          already aborts on the first failure; ``0`` aborts on the same failure
+          and reports "failed 0 times in a row" when one failure occurred.
+          Refusing it costs no capability, and ``-5`` is the same abort with a
+          message that names a negative count.
+        * ``2.7`` tolerates two failures and aborts on the third while reporting
+          "failed 2.7 times in a row" - a tolerance the caller never asked for.
+          ``True`` is an ``int`` subclass and reports "failed True times in a row".
+        * A string or a list reaches the same comparison and leaks
+          ``TypeError: '>=' not supported between instances of 'int' and 'str'``
+          from inside the hook's own exception handler - and only once the hook
+          first fails, so the value is accepted and inert until then.
+
+        The accepted domain is :meth:`_validate_positive_int`
+        (:func:`~strands_robots.utils.positive_count_error`) - the same rule this
+        method already applies to ``n_steps``, ``max_steps`` and ``n_episodes``,
+        the other step counts of the same signature - plus ``None``, which this
+        parameter documents as "use the runner's own limit" and which is its
+        default.
+
+        Args:
+            max_onframe_failures: The caller-supplied value to validate.
+            method: Public method name, used to prefix the error message.
+
+        Returns:
+            An error dict naming the offending parameter, or ``None`` when the
+            value is valid (including when it is ``None``).
+        """
+        if max_onframe_failures is None:
+            return None
+        return SimEngine._validate_positive_int(max_onframe_failures, "max_onframe_failures", method)
+
     def _validate_recording_rate(self, control_frequency: float, method: str) -> dict[str, Any] | None:
         """Reject a rollout whose rate the active dataset recording cannot describe.
 
@@ -2221,7 +2274,16 @@ class SimEngine(ABC):
                 capture, so a broken recorder otherwise fills an empty dataset
                 behind a successful-looking rollout. ``None`` (default) uses the
                 runner's own limit (currently ``5``); non-consecutive failures
-                reset the counter. Forwarded verbatim to
+                reset the counter. Must otherwise be a positive integer - the
+                same domain as ``n_steps`` and ``n_episodes`` above, since the
+                runner compares it against a plain integer counter. ``nan`` and
+                ``inf`` make that comparison false forever and so disable the
+                abort entirely; ``0`` aborts on the first failure exactly as
+                ``1`` does while reporting a count of zero. Both are reported as
+                a structured caller error rather than silencing the watchdog -
+                see
+                :meth:`~strands_robots.simulation.base.SimEngine._validate_onframe_failure_limit`.
+                Forwarded verbatim to
                 :meth:`~strands_robots.simulation.policy_runner.PolicyRunner.run`.
             seed: Optional master RNG seed for a reproducible single rollout.
                 When set, reseeds Python / NumPy / torch / cuDNN and forwards
@@ -2455,6 +2517,8 @@ class SimEngine(ABC):
         if err := self._validate_control_substeps(control_substeps, "run_policy"):
             return err
         if err := self._validate_rtc_inference_timeout(rtc_inference_timeout_s, "run_policy"):
+            return err
+        if err := self._validate_onframe_failure_limit(max_onframe_failures, "run_policy"):
             return err
         # Both rates are known only here: the dataset rate was fixed by
         # start_recording one call earlier. Checked before any policy is
