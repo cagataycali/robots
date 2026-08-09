@@ -44,6 +44,17 @@ build_lerobot_command = tele_mod.build_lerobot_command
 lerobot_teleoperate = tele_mod.lerobot_teleoperate
 
 
+def _run_tool(**kwargs: Any) -> dict[str, Any]:
+    """Call the agent tool through one funnel.
+
+    The flag value under test is deliberately outside the declared ``bool``,
+    which is the point; mypy does not narrow a splatted ``dict[str, Any]``, so
+    routing the call through here states that once rather than suppressing it at
+    the call site.
+    """
+    return dict(lerobot_teleoperate(**kwargs))
+
+
 @pytest.fixture(autouse=True)
 def _isolate_session_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
     """Keep the module-level session store inside the test's temp dir."""
@@ -331,7 +342,7 @@ class TestTheRefusalPrecedesEverythingItWouldOtherwiseReach:
             raise AssertionError("subprocess.Popen must not be reached for a refused call")
 
         monkeypatch.setattr(tele_mod.subprocess, "Popen", _never)
-        result = lerobot_teleoperate(
+        result = _run_tool(
             action="start",
             robot_type="so101_follower",
             robot_port="/dev/ttyACM1",
