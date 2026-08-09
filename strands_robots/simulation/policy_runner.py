@@ -990,11 +990,18 @@ class PolicyRunner:
                 construction so tests can inject mocks trivially.
             instruction: Natural-language instruction forwarded to the policy.
             duration: Wall-clock seconds to run (interpreted as control steps
-                via ``control_frequency``). Used only when ``n_steps`` is None.
+                via ``control_frequency``). Used only when ``n_steps`` is None,
+                and validated only then: a finite positive number, the domain
+                :meth:`~strands_robots.simulation.base.SimEngine._validate_duration`
+                applies at the facade. Raises ``ValueError`` otherwise.
             n_steps: Explicit integer step-count horizon resolved by the caller
-                from ``n_steps`` / the legacy ``max_steps`` alias. When set (and
-                > 0) it is the exact number of control steps executed, bypassing
-                the lossy ``int(duration * control_frequency)`` recomputation.
+                from ``n_steps`` / the legacy ``max_steps`` alias. When given it
+                is the exact number of control steps executed, bypassing the
+                lossy ``int(duration * control_frequency)`` recomputation. Must
+                be a positive integer - the domain
+                :meth:`~strands_robots.simulation.base.SimEngine._resolve_horizon`
+                applies at the facade - and a value outside it raises
+                ``ValueError`` rather than deferring the horizon to ``duration``.
             control_frequency: Target Hz for ``policy.get_actions`` calls.
             action_horizon: Max actions consumed per policy call before
                 requerying observation. Clamped up to the policy's own
@@ -1212,6 +1219,30 @@ class PolicyRunner:
         # the caller's request. See SimEngine._validate_action_horizon.
         if horizon_error := positive_count_error(action_horizon, "action_horizon", "PolicyRunner.run"):
             raise ValueError(horizon_error)
+        # The horizon is a PAIR, and it is resolved here, so both halves are
+        # validated here. ``n_steps`` whenever it is given: that is the exact
+        # condition SimEngine._resolve_horizon refuses it on, so a step count
+        # refused for a rollout through the facade cannot be accepted for the
+        # same rollout driven directly. Without it, a value outside the domain
+        # did not fail - the ``> 0`` test below handed the horizon to the OTHER
+        # knob, so ``n_steps=0`` ran ``duration``'s 10.0s default (500 steps and
+        # 500 applied actions nobody asked for), while ``2.7``/``True``
+        # truncated to a horizon nobody typed.
+        if n_steps is not None:
+            if steps_error := positive_count_error(n_steps, "n_steps", "PolicyRunner.run"):
+                raise ValueError(steps_error)
+        # ``duration`` only when no step count was given, because that is the
+        # only case in which it sets the horizon - the same ``if n_steps is
+        # None`` gate SimEngine.run_policy applies around _validate_duration,
+        # so neither layer reports on a parameter the rollout will not read.
+        # Unvalidated, ``0``/``-5`` returned status=success with zero steps and
+        # ``stopped_reason="budget"`` - the field an agent reads to decide
+        # whether to retry, asserting a horizon was exhausted when there was
+        # none - and ``nan``/``inf``/a string leaked a bare conversion or
+        # operand error out of the arithmetic below, naming neither the
+        # parameter nor this method.
+        elif duration_error := positive_finite_number_error(duration, "duration", "PolicyRunner.run"):
+            raise ValueError(duration_error)
         if seed is not None:
             set_eval_seed(seed)
             try:
@@ -1327,8 +1358,8 @@ class PolicyRunner:
             # n_steps / control_frequency`` truncates on any frequency that does
             # not divide evenly (e.g. n_steps=1 @ 49 Hz -> 0 steps reported as
             # success). Forwarding the count verbatim keeps the horizon exact.
-            if n_steps is not None and n_steps > 0:
-                total_steps = int(n_steps)
+            if n_steps is not None:
+                total_steps = n_steps
             else:
                 total_steps = int(duration * control_frequency)
             action_sleep = 1.0 / control_frequency
