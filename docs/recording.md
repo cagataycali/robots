@@ -152,6 +152,19 @@ When `root` already contains a LeRobotDataset (a `meta/` directory),
 LeRobotDataset, and is **not empty** is left untouched and reported as an error
 rather than clobbered - pass `overwrite=True` or choose a new/empty `root`.
 
+`overwrite` and `push_to_hub` select a **posture**, so both must be booleans and
+are checked before anything is created, resumed, wiped or published. Neither is
+read by truthiness: every non-empty string is truthy, so `overwrite="false"` -
+the spelling an operator reaches for when opting out - used to reach the wipe
+branch and delete the dataset it was meant to append to, and
+`push_to_hub="false"` used to publish it at `stop_recording`. Both now report the
+flag instead:
+
+```python
+sim.start_recording(repo_id="user/my_dataset", root=root, fps=30, overwrite="false")
+# -> error: "start_recording: overwrite must be a boolean, got 'false'. ..."
+```
+
 A resume inherits the existing dataset's schema, so `fps` must match the rate it
 was created at - a resume cannot change it. Requesting a different rate is
 refused, naming the on-disk value, rather than appending frames timestamped on

@@ -16,6 +16,7 @@ from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujo
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     dataset_recording_option_error,
+    dataset_recording_posture_error,
 )
 from strands_robots.utils import name_list_error
 
@@ -118,7 +119,9 @@ class RecordingMixin(DatasetRecordingMixin):
                 the ``repo_id`` resolution above rather than being joined to it.
                 See :func:`~strands_robots.dataset_recorder.resolve_dataset_dir`
                 for the full precedence.
-            push_to_hub: Publish to the Hub at ``stop_recording``.
+            push_to_hub: Publish to the Hub at ``stop_recording``. Must be a
+                boolean - a publication posture is not read by truthiness
+                (:func:`~strands_robots.simulation.recording.dataset_recording_posture_error`).
             overwrite: When True, wipe any existing dataset at the resolved
                 directory and record from scratch. When False (default) an
                 existing dataset is RESUMED (episodes appended), a pre-existing
@@ -126,6 +129,9 @@ class RecordingMixin(DatasetRecordingMixin):
                 recorded into, and a non-empty non-dataset directory is reported
                 as an error rather than clobbered - the four outcomes of
                 :meth:`~strands_robots.simulation.recording.DatasetRecordingMixin._prepare_dataset_target`.
+                Must be a boolean: a truthy non-boolean opt-out reached the
+                wipe branch and deleted the dataset it was meant to append
+                to (:func:`~strands_robots.simulation.recording.dataset_recording_posture_error`).
             vcodec: Video codec for the per-camera MP4 streams. Defaults to
                 "h264" (H.264), which decodes everywhere - including OpenCV's
                 VideoCapture, used by many downstream VLM video readers - so a
@@ -162,6 +168,17 @@ class RecordingMixin(DatasetRecordingMixin):
         # which optional extras this install has.
         if error := dataset_recording_option_error("start_recording", fps):
             return error
+        # ``push_to_hub`` and ``overwrite`` select postures, not quantities, so
+        # each is checked on the shared boolean-flag domain before any dataset is
+        # created, resumed or wiped - and before the lerobot-extra probe, so the
+        # same caller mistake reports the same way on every install. Read by
+        # truthiness both failed toward the branch the caller was opting out of:
+        # ``overwrite="false"`` deleted the dataset it was meant to append to,
+        # and ``push_to_hub="false"`` published it (see
+        # dataset_recording_posture_error).
+        for _flag, _value in (("push_to_hub", push_to_hub), ("overwrite", overwrite)):
+            if error := dataset_recording_posture_error("start_recording", _flag, _value):
+                return error
         # ``cameras`` names an ordered list of DISTINCT camera names, so it is
         # refused on the shared name-list domain before any dataset is created. Neither
         # mistake this catches could be honored as written: a single name passed
