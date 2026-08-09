@@ -1,0 +1,60 @@
+{
+ "tree": "/tmp/rm-mine",
+ "optimized": false,
+ "rows": {
+  "8": {
+   "outcome": "encoded",
+   "size": 197371,
+   "md5": "346dab35d295",
+   "frames": 24,
+   "psnr": 41.89,
+   "path": "/tmp/art_branch/q_8.mp4"
+  },
+  "1": {
+   "outcome": "encoded",
+   "size": 8923,
+   "md5": "ac2e0a354302",
+   "frames": 24,
+   "psnr": 31.91,
+   "path": "/tmp/art_branch/q_1.mp4"
+  },
+  "True": {
+   "outcome": "ValueError",
+   "message": "encode_clip: quality must be a finite number, got True.",
+   "file_left": false
+  },
+  "0": {
+   "outcome": "ValueError",
+   "message": "encode_clip: quality must be between 1 and 10, got 0.",
+   "file_left": false
+  },
+  "-5": {
+   "outcome": "ValueError",
+   "message": "encode_clip: quality must be between 1 and 10, got -5.",
+   "file_left": false
+  },
+  "500": {
+   "outcome": "ValueError",
+   "message": "encode_clip: quality must be between 1 and 10, got 500.",
+   "file_left": false
+  },
+  "nan": {
+   "outcome": "ValueError",
+   "message": "encode_clip: quality must be a finite number, got nan.",
+   "file_left": false
+  },
+  "'8'": {
+   "outcome": "ValueError",
+   "message": "encode_clip: quality must be a finite number, got '8'.",
+   "file_left": true
+  },
+  "np.int64(8)": {
+   "outcome": "encoded",
+   "size": 197371,
+   "md5": "346dab35d295",
+   "frames": 24,
+   "psnr": 41.89,
+   "path": "/tmp/art_branch/q_np_int648.mp4"
+  }
+ }
+}

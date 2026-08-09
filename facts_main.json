@@ -1,0 +1,60 @@
+{
+ "tree": "/tmp/wt-main-1519412",
+ "optimized": false,
+ "rows": {
+  "8": {
+   "outcome": "encoded",
+   "size": 197371,
+   "md5": "346dab35d295",
+   "frames": 24,
+   "psnr": 41.89,
+   "path": "/tmp/art_main/q_8.mp4"
+  },
+  "1": {
+   "outcome": "encoded",
+   "size": 8923,
+   "md5": "ac2e0a354302",
+   "frames": 24,
+   "psnr": 31.91,
+   "path": "/tmp/art_main/q_1.mp4"
+  },
+  "True": {
+   "outcome": "encoded",
+   "size": 8923,
+   "md5": "ac2e0a354302",
+   "frames": 24,
+   "psnr": 31.91,
+   "path": "/tmp/art_main/q_True.mp4"
+  },
+  "0": {
+   "outcome": "AssertionError",
+   "message": "quality must be between 1 and 10 inclusive",
+   "file_left": false
+  },
+  "-5": {
+   "outcome": "AssertionError",
+   "message": "quality must be between 1 and 10 inclusive",
+   "file_left": false
+  },
+  "500": {
+   "outcome": "AssertionError",
+   "message": "quality must be between 1 and 10 inclusive",
+   "file_left": false
+  },
+  "nan": {
+   "outcome": "AssertionError",
+   "message": "quality must be between 1 and 10 inclusive",
+   "file_left": false
+  },
+  "'8'": {
+   "outcome": "AssertionError",
+   "message": "quality must be float",
+   "file_left": true
+  },
+  "np.int64(8)": {
+   "outcome": "AssertionError",
+   "message": "quality must be float",
+   "file_left": false
+  }
+ }
+}

@@ -1,0 +1,69 @@
+{
+ "tree": "/tmp/wt-main-1519412",
+ "optimized": true,
+ "rows": {
+  "8": {
+   "outcome": "encoded",
+   "size": 197371,
+   "md5": "346dab35d295",
+   "frames": 24,
+   "psnr": 41.89,
+   "path": "/tmp/art_main_O/q_8.mp4"
+  },
+  "1": {
+   "outcome": "encoded",
+   "size": 8923,
+   "md5": "ac2e0a354302",
+   "frames": 24,
+   "psnr": 31.91,
+   "path": "/tmp/art_main_O/q_1.mp4"
+  },
+  "True": {
+   "outcome": "encoded",
+   "size": 8923,
+   "md5": "ac2e0a354302",
+   "frames": 24,
+   "psnr": 31.91,
+   "path": "/tmp/art_main_O/q_True.mp4"
+  },
+  "0": {
+   "outcome": "encoded",
+   "size": 6688,
+   "md5": "fbefab6f2707",
+   "frames": 24,
+   "psnr": 28.42,
+   "path": "/tmp/art_main_O/q_0.mp4"
+  },
+  "-5": {
+   "outcome": "encoded",
+   "size": 6688,
+   "md5": "fbefab6f2707",
+   "frames": 24,
+   "psnr": 28.42,
+   "path": "/tmp/art_main_O/q_-5.mp4"
+  },
+  "500": {
+   "outcome": "OSError",
+   "message": "[Errno 32] Broken pipe\n\nFFMPEG COMMAND:\n/home/cagatay/actions-runner-harness-4/_work/robots-harness/robots-harness/.venv/lib/python3.13/site-packages/",
+   "file_left": true
+  },
+  "nan": {
+   "outcome": "ValueError",
+   "message": "cannot convert float NaN to integer",
+   "file_left": false
+  },
+  "'8'": {
+   "outcome": "TypeError",
+   "message": "unsupported operand type(s) for /: 'str' and 'float'",
+   "file_left": true
+  },
+  "np.int64(8)": {
+   "outcome": "encoded",
+   "size": 197371,
+   "md5": "346dab35d295",
+   "frames": 24,
+   "psnr": 41.89,
+   "path": "/tmp/art_main_O/q_np_int648.mp4"
+  }
+ }
+}
