@@ -208,24 +208,36 @@ class TestABenchmarkCannotExcludeItsOwnDefaultRobot:
         assert bench.default_robot == "aloha"
 
 
-class TestNeighbouringFieldsStayOutOfScope:
-    """``from_dict`` also checks ``name`` / ``scene`` / ``instruction`` as
-    strings, and those mirrors are a separate question: they need a string
-    domain this module does not have, and each fails loudly at its consumer
-    rather than silently widening the robot set. Pinned so the boundary of this
-    change is measured rather than assumed."""
+class TestNeighbouringFieldsAreMirroredToo:
+    """``name`` / ``default_robot`` / ``scene`` / ``instruction`` are mirrored now.
 
-    def test_a_non_string_name_is_still_accepted_directly(self) -> None:
-        assert _refuses(_make, name=7) is None
+    This class previously pinned the opposite - that a non-string in any of the
+    four was still accepted by ``__init__`` - and scoped the boundary of the
+    ``supported_robots`` change. Its stated reason was that each "fails loudly
+    at its consumer rather than silently widening the robot set", and that turned
+    out to hold for one value of one field: a truthy non-string ``scene`` fails
+    in ``load_scene``. ``instruction=42`` was handed to the policy verbatim as
+    its task command and ``scene=[]`` was skipped by a truthiness test, both
+    under ``status="success"``.
 
-    def test_a_non_string_scene_is_still_accepted_directly(self) -> None:
-        assert _refuses(_make, scene=42) is None
+    Kept as the pointer to where those four now live, so the boundary this file
+    draws stays measured: ``supported_robots`` is the name-list domain, and the
+    string fields are the module's own string domain, pinned in
+    ``test_benchmark_string_field_domains``.
+    """
 
-    def test_a_non_string_instruction_is_still_accepted_directly(self) -> None:
-        assert _refuses(_make, instruction=42) is None
+    @pytest.mark.parametrize("field", ["name", "default_robot", "scene", "instruction"])
+    def test_a_non_string_is_refused_directly(self, field: str) -> None:
+        assert _refuses(_make, **{field: 42}) is not None
 
     def test_max_steps_keeps_its_own_mirrored_domain(self) -> None:
-        """The one mirror that already existed, unchanged by this."""
+        """The one mirror that predated both changes, unchanged by either."""
         text = _refuses(_make, max_steps=2.7)
         assert text is not None
         assert "max_steps" in text, text
+
+    def test_supported_robots_keeps_the_name_list_domain(self) -> None:
+        """The mirror this file is about, unchanged by the string domain."""
+        text = _refuses(_make, supported_robots="panda")
+        assert text is not None
+        assert "supported_robots" in text, text
