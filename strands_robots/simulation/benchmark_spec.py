@@ -12,7 +12,7 @@ Spec schema (top-level keys)::
 
     name: string                          # required
     max_steps: int                        # default 300
-    supported_robots: list[str]           # default [] (any)
+    supported_robots: list[str]           # default [] (any); must contain default_robot
     default_robot: string                 # required - registry data_config
     scene: string                         # optional MJCF/URDF path for sim.load_scene()
     instruction: string                   # optional natural-language task command
@@ -68,7 +68,7 @@ from strands_robots.simulation.benchmark import (
     register_benchmark,
 )
 from strands_robots.simulation.predicates import PREDICATE_REGISTRY, make_predicate, predicate_kind
-from strands_robots.utils import positive_count_error, require_optional
+from strands_robots.utils import name_list_error, positive_count_error, require_optional
 
 if TYPE_CHECKING:
     import random
@@ -333,6 +333,30 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         instruction: str = "",
     ):
         self._name = name
+        # Mirrors the two checks ``from_dict`` runs on this value, for the
+        # reason the ``max_steps`` mirror below states: a directly constructed
+        # benchmark must not carry a robot set the evaluation loop has to
+        # refuse later. ``list()`` alone read a single name passed as a bare
+        # string one character at a time, so ``supported_robots="panda"``
+        # became five one-letter robots, ``list_benchmarks`` advertised them,
+        # and the evaluation then refused the benchmark's own ``default_robot``
+        # by naming them.
+        #
+        # Shape first: on a bare string the membership check below would report
+        # ``'panda' not in ['p', 'a', 'n', 'd', 'a']``, which describes the
+        # symptom rather than the mistake. Ungated, unlike the callers that
+        # derive the list when it is falsy - an empty list is this parameter's
+        # documented "any robot" spelling and ``name_list_error`` accepts it,
+        # while ``""`` is a mistyped name that would otherwise widen the
+        # benchmark to every robot silently.
+        if error := name_list_error(supported_robots, "supported_robots", type(self).__name__):
+            raise ValueError(error)
+        if supported_robots and default_robot not in supported_robots:
+            raise ValueError(
+                f"{type(self).__name__}: default_robot={default_robot!r} not in "
+                f"supported_robots={list(supported_robots)}; either add it to "
+                "supported_robots or leave supported_robots empty for any-robot benchmarks"
+            )
         self._supported_robots = list(supported_robots)
         self._default_robot = default_robot
         # Mirrors the check ``from_dict`` runs on the raw spec value, so a
@@ -364,6 +388,13 @@ class DeclarativeBenchmark(BenchmarkProtocol):
         Implements :attr:`BenchmarkProtocol.supported_robots`. Returns a fresh
         copy so callers cannot mutate the compiled spec. An empty list (the
         spec omitted the key) means "any robot".
+
+        The constructor holds this to the shared
+        :func:`~strands_robots.utils.name_list_error` domain: several distinct
+        non-blank names, as a list or tuple rather than a single bare string,
+        and containing :attr:`default_robot` whenever it is non-empty. So the
+        names read back here are the names that were asked for, and a benchmark
+        cannot declare a robot set that its own default robot is outside of.
         """
         return list(self._supported_robots)
 
@@ -472,8 +503,13 @@ class DeclarativeBenchmark(BenchmarkProtocol):
             raise ValueError("spec.default_robot: required non-empty string")
 
         supported_robots = spec.get("supported_robots", [])
-        if not isinstance(supported_robots, list) or not all(isinstance(r, str) for r in supported_robots):
-            raise ValueError("spec.supported_robots: must be a list of strings")
+        # Shared name-list domain, so the key a spec file sets and the keyword a
+        # direct construction passes cannot drift apart on what they accept -
+        # the same reason ``max_steps`` below shares its count domain. The
+        # hand-rolled check this replaces accepted a repeated name and a blank
+        # one, neither of which names a robot the registry can resolve.
+        if error := name_list_error(supported_robots, "supported_robots", "spec"):
+            raise ValueError(error)
 
         # default_robot should be in supported_robots (unless list is empty = any)
         if supported_robots and default_robot not in supported_robots:
