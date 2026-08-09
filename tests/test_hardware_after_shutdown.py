@@ -373,7 +373,13 @@ class TestAHealthyRolloutIsUnaffected:
         assert bus.connect_calls == 1
 
     def test_start_task_before_cleanup_still_submits(self, hw: HwRobot, bus: Bus):
-        result = hw.start_task("healthy")
+        """A well-formed start still submits; the shutdown guard is the only refusal.
+
+        The port is explicit because ``start_task`` now judges it before the
+        submit: an absent ``policy_port`` is refused on its own terms (no policy
+        can be built from it), which would mask the property under test here.
+        """
+        result = hw.start_task("healthy", policy_port=5555)
 
         assert result["status"] == "success"
         assert "Task started" in _text(result)
