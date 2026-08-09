@@ -1,0 +1,51 @@
+{
+ "tree": "/tmp/wt-main-1559283",
+ "runs": {
+  "honored": {
+   "cap": "120",
+   "status": "success",
+   "msg": "Policy rollout completed: 120 steps in 0.5s (_RampPolicy on so100_arm)",
+   "steps": 120,
+   "task": "completed",
+   "commands": 120,
+   "inferences": 120,
+   "joints": {
+    "Rotation": 1.2978,
+    "Pitch": -1.4863,
+    "Elbow": 1.9066,
+    "Jaw": 1.1979
+   }
+  },
+  "fractional": {
+   "cap": "2.7",
+   "status": "success",
+   "msg": "Policy rollout completed: 3 steps in 0.0s (_RampPolicy on so100_arm)",
+   "steps": 3,
+   "task": "completed",
+   "commands": 3,
+   "inferences": 3,
+   "joints": {
+    "Rotation": 0.0304,
+    "Pitch": -0.0164,
+    "Elbow": 0.0549,
+    "Jaw": 0.0279
+   }
+  },
+  "zero": {
+   "cap": "0",
+   "status": "success",
+   "msg": "Policy rollout completed: 0 steps in 0.0s (_RampPolicy on so100_arm)",
+   "steps": 0,
+   "task": "completed",
+   "commands": 0,
+   "inferences": 0,
+   "joints": {
+    "Rotation": -0.0,
+    "Pitch": 0.0172,
+    "Elbow": 0.0079,
+    "Jaw": -0.0
+   }
+  }
+ },
+ "total": 120
+}
