@@ -1,0 +1,36 @@
+{
+ "tree": "/tmp/robots-mine-2558329",
+ "seed": {
+  "start_status": "success",
+  "start_text": "Recording to LeRobotDataset: local/posture_art\n1 joints, 2 cameras @ 30fps\nCodec: h264 | Task: (set per policy)\nRun policies to capture frames, then stop_recording to save episode",
+  "rollout": "success",
+  "stop_status": "success"
+ },
+ "before": {
+  "episodes": 1,
+  "frames": 8
+ },
+ "second": {
+  "start_status": "error",
+  "start_text": "start_recording: overwrite must be a boolean, got 'false'. It selects a posture rather than scaling a quantity, so it is checked rather than parsed - a truthy spelling of off, such as 'false', would otherwise select the opposite posture from the one it reads as."
+ },
+ "after": {
+  "episodes": 1,
+  "frames": 8
+ },
+ "remedy": {
+  "result": {
+   "start_status": "success",
+   "start_text": "Recording to LeRobotDataset: local/posture_art\n1 joints, 2 cameras @ 30fps\nCodec: h264 | Task: (set per policy)\nRun policies to capture frames, then stop_recording to save episode",
+   "rollout": "success",
+   "stop_status": "success"
+  },
+  "state": {
+   "episodes": 2,
+   "frames": 20
+  }
+ },
+ "mp4_count": 4,
+ "strip_len": 3,
+ "dataset_exists": true
+}
