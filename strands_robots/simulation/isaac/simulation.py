@@ -17,8 +17,11 @@ Thread safety:
     - ``step()`` must not run concurrently with ``add_robot()``
 
 Environment variables:
-    - STRANDS_ISAAC_HEADLESS: Override headless mode (true/false)
-    - STRANDS_ISAAC_RTX_PATHTRACING: Enable RTX pathtracing (true/false)
+    - STRANDS_ISAAC_HEADLESS: Override headless mode. On (1/true/yes/on) forces
+      headless, off (0/false/no/off) forces windowed, unset or empty keeps the
+      ``IsaacConfig`` field, and any other spelling is refused
+    - STRANDS_ISAAC_RTX_PATHTRACING: Enable RTX pathtracing, same vocabulary;
+      its off side leaves ``render_mode`` alone rather than selecting a mode
     - STRANDS_ISAAC_NUCLEUS_URL: Override Nucleus asset server URL
 """
 

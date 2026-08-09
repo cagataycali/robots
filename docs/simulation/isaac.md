@@ -156,13 +156,32 @@ rejected eagerly. The commonly used fields:
 ### Environment variables
 
 The Isaac backend reads three `STRANDS_ISAAC_*` variables (resolved when
-`IsaacConfig` is constructed). An explicit kwarg always wins over the env var.
+`IsaacConfig` is constructed). `STRANDS_ISAAC_NUCLEUS_URL` is read only when
+`nucleus_url` is not passed, so there the kwarg wins; the two switches override
+their field whenever they are set. Which of those two directions the switches
+*should* have is [#2062](https://github.com/strands-labs/robots/issues/2062).
+
+Both switches accept four symmetric pairs, case-insensitively and ignoring
+surrounding whitespace:
+
+| on | off |
+|----|-----|
+| `1` | `0` |
+| `true` | `false` |
+| `yes` | `no` |
+| `on` | `off` |
+
+Unset -- or set to an empty value, which is what an undefined `${{ vars.* }}`
+interpolation in a GitHub Actions `env:` block produces -- leaves the field
+alone. Any other spelling raises `ValueError` naming both vocabularies, rather
+than falling through to the off side: `STRANDS_ISAAC_HEADLESS=enabled` used to
+open a window.
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRANDS_ISAAC_NUCLEUS_URL` | Override the Omniverse Nucleus server URL when `nucleus_url` is not passed | unset (Isaac defaults) |
-| `STRANDS_ISAAC_HEADLESS` | Truthy (`1`/`true`/`yes`) forces `headless`; falsy forces windowed | unset (uses `headless` kwarg) |
-| `STRANDS_ISAAC_RTX_PATHTRACING` | Truthy forces `render_mode="rtx_pathtracing"` | unset |
+| `STRANDS_ISAAC_HEADLESS` | On forces `headless`; off forces windowed | unset (uses `headless` kwarg) |
+| `STRANDS_ISAAC_RTX_PATHTRACING` | On forces `render_mode="rtx_pathtracing"`; off leaves `render_mode` alone | unset |
 
 ## Capabilities and parity
 
