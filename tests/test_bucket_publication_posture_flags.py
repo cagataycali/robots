@@ -121,21 +121,26 @@ class _FakeHubDataset:
         self.pushed.append(private)
 
 
-class _Recorder(recorder_mod.DatasetRecorder):
-    """A recorder with a chosen frame/episode count, built without LeRobot."""
+def _recorder(dataset: _FakeHubDataset, *, frames: int = 10, episodes: int = 1) -> recorder_mod.DatasetRecorder:
+    """A recorder with a chosen frame/episode count, built without LeRobot.
 
-    def __init__(self, dataset: _FakeHubDataset, *, frames: int = 10, episodes: int = 1) -> None:
-        self.dataset = dataset  # type: ignore[assignment]
-        self.frame_count = frames
-        self.episode_count = episodes
+    ``DatasetRecorder.__init__`` only records the dataset handed to it, so the
+    fake above constructs the shipped class fully; the counts are then set to
+    the state under test. Constructing the real class rather than subclassing it
+    keeps the methods exercised here the shipped ones.
+    """
+    recorder = recorder_mod.DatasetRecorder(dataset)
+    recorder.frame_count = frames
+    recorder.episode_count = episodes
+    return recorder
 
 
-def _push(recorder: _Recorder, **kwargs: Any) -> dict[str, Any]:
+def _push(recorder: recorder_mod.DatasetRecorder, **kwargs: Any) -> dict[str, Any]:
     """Funnel so deliberately off-type flags need no per-call suppression."""
     return recorder.push_to_hub(**kwargs)
 
 
-def _sync_via_recorder(recorder: _Recorder, **kwargs: Any) -> dict[str, Any]:
+def _sync_via_recorder(recorder: recorder_mod.DatasetRecorder, **kwargs: Any) -> dict[str, Any]:
     """Funnel for the delegate, for the same reason as :func:`_push`."""
     return recorder.sync_to_bucket("acme/robotdata", run_id="run1", **kwargs)
 
@@ -155,7 +160,7 @@ class TestTheDomainIsTheSharedOne:
         assert result["message"] == boolean_flag_error("false", flag, "sync_dataset_to_bucket")
 
     def test_the_push_message_is_the_shared_one_verbatim(self) -> None:
-        result = _push(_Recorder(_FakeHubDataset()), private="false")
+        result = _push(_recorder(_FakeHubDataset()), private="false")
         assert result["message"] == boolean_flag_error("false", "private", "push_to_hub")
 
 
@@ -219,13 +224,13 @@ class TestTheRefusalPrecedesEveryProbeAndSideEffect:
 
     def test_the_push_refusal_reaches_no_hub_call(self) -> None:
         dataset = _FakeHubDataset()
-        result = _push(_Recorder(dataset), private="false")
+        result = _push(_recorder(dataset), private="false")
         assert result["status"] == "error"
         assert dataset.pushed == [], "the refused call published to the Hub"
 
     def test_the_push_refusal_does_not_depend_on_the_recorder_being_non_empty(self) -> None:
         """An empty recorder still reports the flag, not its own state."""
-        empty = _Recorder(_FakeHubDataset(), frames=0, episodes=0)
+        empty = _recorder(_FakeHubDataset(), frames=0, episodes=0)
         result = _push(empty, private="false")
         assert "private" in result["message"]
         assert "empty dataset" not in result["message"]
@@ -237,7 +242,7 @@ class TestThePushVisibilityFlagIsChecked:
     @pytest.mark.parametrize("value", UNUSABLE, ids=IDS)
     def test_an_unusable_visibility_is_refused(self, value: Any) -> None:
         dataset = _FakeHubDataset()
-        result = _push(_Recorder(dataset), private=value)
+        result = _push(_recorder(dataset), private=value)
         assert result["status"] == "error"
         assert "private" in result["message"]
         assert dataset.pushed == []
@@ -245,7 +250,7 @@ class TestThePushVisibilityFlagIsChecked:
     @pytest.mark.parametrize("value", [True, False], ids=["private", "public"])
     def test_a_boolean_visibility_is_forwarded_verbatim(self, value: bool) -> None:
         dataset = _FakeHubDataset()
-        result = _push(_Recorder(dataset), private=value)
+        result = _push(_recorder(dataset), private=value)
         assert result["status"] == "success"
         assert dataset.pushed == [value]
 
@@ -257,7 +262,7 @@ class TestTheDelegateInheritsTheRule:
     def test_the_recorder_method_refuses_the_same_value(
         self, wire: _RecordingSubprocess, finalized: pathlib.Path, flag: str
     ) -> None:
-        recorder = _Recorder(_FakeHubDataset(root=str(finalized)))
+        recorder = _recorder(_FakeHubDataset(root=str(finalized)))
         result = _sync_via_recorder(recorder, **{flag: "false"})
         assert result["status"] == "error"
         assert flag in result["message"]
@@ -267,7 +272,7 @@ class TestTheDelegateInheritsTheRule:
         self, wire: _RecordingSubprocess, finalized: pathlib.Path
     ) -> None:
         """The delegation clause is not satisfied by a delegate that never runs."""
-        recorder = _Recorder(_FakeHubDataset(root=str(finalized)))
+        recorder = _recorder(_FakeHubDataset(root=str(finalized)))
         result = _sync_via_recorder(recorder, delete=True)
         assert result["status"] == "success"
         assert wire.mirror_deleted
