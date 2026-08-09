@@ -1,0 +1,73 @@
+{
+  "tree": "/tmp/robots-mine-2197751",
+  "steps": 96,
+  "rows": [
+    {
+      "tag": "honored",
+      "horizon": "8",
+      "tree": "/tmp/robots-mine-2197751",
+      "outcome": "success",
+      "text": "Policy complete on 'so100'\nMockPolicy | \n0.0s | 96 steps | sim_t=1.920s ",
+      "inferences": 12,
+      "joints": {
+        "Elbow": 0.231394,
+        "Elbow.vel": -1.58351,
+        "Jaw": -0.168892,
+        "Jaw.vel": -0.059366,
+        "Pitch": -0.037945,
+        "Pitch.vel": 1.349011,
+        "Rotation": -0.129103,
+        "Rotation.vel": -0.889939,
+        "Wrist_Pitch": -0.353278,
+        "Wrist_Pitch.vel": 1.455101,
+        "Wrist_Roll": 0.437915,
+        "Wrist_Roll.vel": -0.864345
+      },
+      "png": "honored.png"
+    },
+    {
+      "tag": "clamped",
+      "horizon": "0",
+      "tree": "/tmp/robots-mine-2197751",
+      "outcome": "raised ValueError",
+      "text": "PolicyRunner.run: action_horizon must be a positive integer, got 0.",
+      "inferences": 0,
+      "joints": {
+        "Elbow": 0.0,
+        "Elbow.vel": 0.0,
+        "Jaw": 0.0,
+        "Jaw.vel": 0.0,
+        "Pitch": 0.0,
+        "Pitch.vel": 0.0,
+        "Rotation": 0.0,
+        "Rotation.vel": 0.0,
+        "Wrist_Pitch": 0.0,
+        "Wrist_Pitch.vel": 0.0,
+        "Wrist_Roll": 0.0,
+        "Wrist_Roll.vel": 0.0
+      }
+    },
+    {
+      "tag": "nonfinite",
+      "horizon": "nan",
+      "tree": "/tmp/robots-mine-2197751",
+      "outcome": "raised ValueError",
+      "text": "PolicyRunner.run: action_horizon must be a positive integer, got nan.",
+      "inferences": 0,
+      "joints": {
+        "Elbow": 0.0,
+        "Elbow.vel": 0.0,
+        "Jaw": 0.0,
+        "Jaw.vel": 0.0,
+        "Pitch": 0.0,
+        "Pitch.vel": 0.0,
+        "Rotation": 0.0,
+        "Rotation.vel": 0.0,
+        "Wrist_Pitch": 0.0,
+        "Wrist_Pitch.vel": 0.0,
+        "Wrist_Roll": 0.0,
+        "Wrist_Roll.vel": 0.0
+      }
+    }
+  ]
+}

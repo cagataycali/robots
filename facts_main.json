@@ -1,0 +1,74 @@
+{
+  "tree": "/tmp/ctrl-2202515",
+  "steps": 96,
+  "rows": [
+    {
+      "tag": "honored",
+      "horizon": "8",
+      "tree": "/tmp/ctrl-2202515",
+      "outcome": "success",
+      "text": "Policy complete on 'so100'\nMockPolicy | \n0.0s | 96 steps | sim_t=1.920s ",
+      "inferences": 12,
+      "joints": {
+        "Elbow": 0.231394,
+        "Elbow.vel": -1.58351,
+        "Jaw": -0.168892,
+        "Jaw.vel": -0.059366,
+        "Pitch": -0.037945,
+        "Pitch.vel": 1.349011,
+        "Rotation": -0.129103,
+        "Rotation.vel": -0.889939,
+        "Wrist_Pitch": -0.353278,
+        "Wrist_Pitch.vel": 1.455101,
+        "Wrist_Roll": 0.437915,
+        "Wrist_Roll.vel": -0.864345
+      },
+      "png": "honored.png"
+    },
+    {
+      "tag": "clamped",
+      "horizon": "0",
+      "tree": "/tmp/ctrl-2202515",
+      "outcome": "success",
+      "text": "Policy complete on 'so100'\nMockPolicy | \n0.1s | 96 steps | sim_t=1.920s ",
+      "inferences": 96,
+      "joints": {
+        "Elbow": 0.066186,
+        "Elbow.vel": 1.847858,
+        "Jaw": 0.027036,
+        "Jaw.vel": -0.585608,
+        "Pitch": 0.071667,
+        "Pitch.vel": -0.508536,
+        "Rotation": 0.089586,
+        "Rotation.vel": 1.398635,
+        "Wrist_Pitch": -0.005785,
+        "Wrist_Pitch.vel": -1.295073,
+        "Wrist_Roll": -0.0417,
+        "Wrist_Roll.vel": 0.728289
+      },
+      "png": "clamped.png"
+    },
+    {
+      "tag": "nonfinite",
+      "horizon": "nan",
+      "tree": "/tmp/ctrl-2202515",
+      "outcome": "error",
+      "text": "Policy failed: cannot convert float NaN to integer ",
+      "inferences": 1,
+      "joints": {
+        "Elbow": 0.0,
+        "Elbow.vel": 0.0,
+        "Jaw": 0.0,
+        "Jaw.vel": 0.0,
+        "Pitch": 0.0,
+        "Pitch.vel": 0.0,
+        "Rotation": 0.0,
+        "Rotation.vel": 0.0,
+        "Wrist_Pitch": 0.0,
+        "Wrist_Pitch.vel": 0.0,
+        "Wrist_Roll": 0.0,
+        "Wrist_Roll.vel": 0.0
+      }
+    }
+  ]
+}
