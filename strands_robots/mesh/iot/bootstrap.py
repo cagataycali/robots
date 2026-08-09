@@ -46,6 +46,8 @@ from dataclasses import dataclass, field
 from io import BytesIO
 from typing import Any
 
+from strands_robots.utils import boolean_flag_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -972,9 +974,27 @@ def bootstrap_account(
         was created vs skipped.
 
     Raises:
-        ValueError: If confirm=False and dry_run=False, or if account_id_expected
+        ValueError: If any of *confirm*, *dry_run* or *force_update* is not a
+            boolean, if confirm=False and dry_run=False, or if account_id_expected
             does not match the resolved account.
     """
+    # Checked before the confirmation gate below, so that gate reads real
+    # booleans: a truthy spelling of off such as confirm="false" would
+    # otherwise leave ``not confirm`` False and provision the whole account,
+    # and dry_run="false" would stay in preview while reading as a request to
+    # leave it.
+    for flag_name, flag_value in (
+        ("confirm", confirm),
+        ("dry_run", dry_run),
+        ("force_update", force_update),
+    ):
+        if flag_error := boolean_flag_error(flag_value, flag_name, "bootstrap_account"):
+            raise ValueError(flag_error)
+    # Normalised so every downstream reader - the gate, the preview branch and
+    # _ensure_estop_lambda's ``force_update`` - sees the ``bool`` it is
+    # annotated for; is_boolean also accepts a numpy boolean.
+    confirm, dry_run, force_update = bool(confirm), bool(dry_run), bool(force_update)
+
     if not dry_run and not confirm:
         raise ValueError(
             "bootstrap_account() creates persistent AWS resources. "

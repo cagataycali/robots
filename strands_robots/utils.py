@@ -2322,3 +2322,62 @@ def validation_split_error(val_episodes: int, total_tasks: Any, context: str) ->
         "e.g. extra_flags={'dataset.eval_split': 0.1, 'eval_steps': 1000}, and "
         "the split will hold out a tenth of each task."
     )
+
+
+def boolean_flag_error(value: Any, param: str, context: str) -> str | None:
+    """Return an error message unless *value* is a python or numpy boolean.
+
+    The domain for a flag whose two values select two *postures* rather than
+    scaling a quantity: an IoT policy that grants a capability or withholds it
+    (:func:`~strands_robots.mesh.iot.provision.provision_robot`'s
+    ``allow_estop_publish``), a confirmation gate in front of a destructive
+    action, or a preview mode
+    (:func:`~strands_robots.mesh.iot.bootstrap.bootstrap_account`'s ``confirm``,
+    ``dry_run`` and ``force_update``).
+
+    Reading such a flag by truthiness is what this refuses. Every non-empty
+    string is truthy, so ``"false"``, ``"no"``, ``"off"`` and ``"0"`` - the
+    spellings an operator reaches for when opting out - select the *permissive*
+    posture: a security opt-out that fails open, and a confirmation gate that
+    confirms. A non-zero number and ``math.nan`` read the same way, and ``None``
+    or ``[]`` silently take the other branch without ever being a declared
+    spelling of it.
+
+    There is no vocabulary to parse as a fallback either. A flag arrives already
+    typed, unlike an environment variable whose only shape is a string, so the
+    honest answer is to check it. Parsing would only move which spellings invert:
+    ``"on"``, ``"enabled"`` and ``"y"`` are absent from every such vocabulary in
+    this package, and each would then resolve to the *restrictive* posture while
+    reading as an opt-in.
+
+    It lives here rather than beside one of its callers because the flags sit in
+    more than one module, and the accepted domain must not diverge: a spelling
+    one provisioning entry point refuses cannot be honoured by the next. It is
+    also the inverse of the numeric domains above - those reject a boolean
+    through :func:`is_boolean` because ``bool`` is an ``int`` subclass that would
+    pass as a silent ``1``, while this one requires the boolean they turn away.
+
+    Distinct from
+    :func:`~strands_robots.device_connect.resolve_allow_insecure`, which answers
+    a related question and is not a caller of this: it resolves one setting from
+    two sources, so its domain is ``bool | None`` - ``None`` is the documented
+    spelling for *fall through to the environment variable* - and its refusal
+    names that variable's own opt-in vocabulary. This domain has one source and
+    no such sentinel, so it refuses ``None`` along with every other non-boolean.
+
+    Args:
+        value: The flag as supplied.
+        param: Parameter name, for the message.
+        context: Caller label the message is prefixed with.
+
+    Returns:
+        The error text, or None when *value* is a boolean and can be honoured.
+    """
+    if is_boolean(value):
+        return None
+    return (
+        f"{context}: {param} must be a boolean, got {_refusal_repr(value)}. "
+        "It selects a posture rather than scaling a quantity, so it is checked "
+        "rather than parsed - a truthy spelling of off, such as 'false', would "
+        "otherwise select the opposite posture from the one it reads as."
+    )
