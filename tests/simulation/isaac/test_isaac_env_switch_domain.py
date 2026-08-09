@@ -2,7 +2,8 @@
 
 ``STRANDS_ISAAC_HEADLESS`` and ``STRANDS_ISAAC_RTX_PATHTRACING`` are both
 documented as two-sided switches -- ``docs/simulation/isaac.md`` and the README
-each say "Truthy (``1``/``true``/``yes``) forces headless; falsy forces a
+each said, until the change this module tests rewrote them to enumerate the four
+pairs below, "Truthy (``1``/``true``/``yes``) forces headless; falsy forces a
 window" -- but only the truthy side was enumerated. Everything else fell through
 to the falsy branch, so a spelling that means *on* forced the outcome the
 variable exists to prevent:
@@ -260,10 +261,11 @@ class TestNeighbouringSurfacesStayOutOfScope:
     """Boundary pins. Replace rather than delete these if the scope moves."""
 
     def test_the_environment_still_outranks_the_field(self, monkeypatch):
-        """Precedence is untouched here. ``docs/simulation/isaac.md`` says an
-        explicit kwarg always wins while the README also says this variable
-        overrides ``IsaacConfig(headless=...)``, and the two cannot both hold --
-        that contradiction is a contract decision, not this vocabulary defect."""
+        """Precedence is untouched here. The documentation no longer contradicts
+        itself about it -- ``docs/simulation/isaac.md`` and both README tables
+        now state it per variable and link #2062 -- but *which* direction the two
+        switches should have is still the open contract decision there, so this
+        is pinned rather than resolved."""
         monkeypatch.setenv("STRANDS_ISAAC_HEADLESS", "false")
         assert _config(headless=True).headless is False
 
@@ -273,6 +275,27 @@ class TestNeighbouringSurfacesStayOutOfScope:
         monkeypatch.setenv("STRANDS_ISAAC_NUCLEUS_URL", "omniverse://from-env")
         assert _config().nucleus_url == "omniverse://from-env"
         assert _config(nucleus_url="omniverse://explicit").nucleus_url == "omniverse://explicit"
+
+    def test_the_pathtracing_switch_also_outranks_its_field(self, monkeypatch):
+        """The third variable, and the one whose precedence nothing pinned.
+
+        Its *off* side is already held against an explicit field by
+        ``TestThePathtracingSwitchIsHeldToTheSameVocabulary``. The *on* side was
+        only ever exercised against the default ``render_mode``, so this switch
+        was the one of the three that could reverse to field-wins undetected --
+        measured on ``24766c3`` by gating the assignment on
+        ``self.render_mode == "headless"``: all 406 tests under
+        ``tests/simulation/isaac`` still passed, as did every test module that
+        mentions ``render_mode`` at all.
+
+        Stated over the whole enumeration rather than one representative value:
+        no mode a caller can pass explicitly survives the switch.
+        """
+        from strands_robots.simulation.isaac.config import RENDER_MODES
+
+        monkeypatch.setenv("STRANDS_ISAAC_RTX_PATHTRACING", "on")
+        for mode in RENDER_MODES:
+            assert _config(render_mode=mode).render_mode == "rtx_pathtracing", mode
 
     def test_the_headless_field_itself_is_not_type_checked(self):
         """A non-bool passed directly is still accepted. That is the argument
