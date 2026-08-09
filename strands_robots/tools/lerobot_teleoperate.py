@@ -894,6 +894,14 @@ def lerobot_teleoperate(
             corrections dataset as well, rather than only the teleoperated
             takeovers. Must be a boolean; a truthy spelling of off would
             otherwise land autonomous episodes in a corrections dataset.
+        policy_path: Checkpoint the ``dagger`` action rolls out autonomously
+            between human takeovers. Required for ``dagger``; ignored by every
+            other action.
+        dagger_input_device: How the operator seizes control during a ``dagger``
+            rollout - ``"keyboard"`` (default) or ``"pedal"``. Any other value
+            is refused.
+        dagger_num_episodes: Cap on the corrections collected in one ``dagger``
+            session. A positive whole number, or None for no cap.
 
     Returns:
         Dict with operation status and results:

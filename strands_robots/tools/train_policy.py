@@ -124,12 +124,18 @@ def train_policy(
         method: Tuning strategy - ``"full"`` | ``"lora"`` | ``"expert_only"`` |
             ``"frozen_backbone"``. ``lora`` and ``expert_only`` are mutually
             exclusive.
-        lora_r / lora_alpha / lora_target_modules: LoRA hyperparameters, read
-            only when ``method="lora"``. ``lora_r`` is the adapter rank and
-            ``lora_alpha`` the numerator of its ``lora_alpha / lora_r`` scaling,
-            so each must be a positive integer; omit one to keep peft's default.
-            A zero alpha trains an adapter whose scaling is ``0.0`` and which
-            therefore cannot change the model, so it is refused rather than run.
+        lora_r: LoRA adapter rank, read only when ``method="lora"``. A positive
+            integer, or None to keep peft's default. It is the denominator of
+            the ``lora_alpha / lora_r`` scaling, so anything else is refused by
+            preflight.
+        lora_alpha: Numerator of the LoRA ``lora_alpha / lora_r`` scaling, read
+            only when ``method="lora"``. A positive integer, or None to keep
+            peft's default. Zero trains an adapter whose scaling is ``0.0`` and
+            which therefore cannot change the model, so it is refused rather
+            than run.
+        lora_target_modules: Comma-separated module names the LoRA adapters are
+            attached to, read only when ``method="lora"``. Omit to keep the
+            backend's default target set.
         tune: Fine-grained component toggles for GR00T
             (``{"llm","visual","projector","diffusion"}``).
         val_episodes: Hold out the LAST N episodes for validation; the run

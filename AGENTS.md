@@ -100,6 +100,21 @@ hatch run format            # ruff check --fix, ruff format
     transitive; move the bound there if it ever becomes direct. Pinned by
     tests/test_dependency_audit.py.
 
+13. **Every parameter an agent tool exposes needs its own `Args:` entry** - a
+    `@tool` function's input schema is derived from its docstring by
+    `docstring_parser`, and the decorator substitutes the placeholder
+    `"Parameter <name>"` for any parameter it cannot find there. The model
+    driving the tool reads that schema and nothing else, so a placeholder makes
+    the parameter undiscoverable however carefully the source explains it.
+    Three spellings produce one, and the last two read as documentation in the
+    source, which is what makes the loss silent: the entry is absent; the entry
+    sits under a section header other than `Args:`, which the parser discards
+    entirely (prose reaches the tool description only when it appears *before*
+    `Args:`); or one entry names several parameters at once (`a / b: ...`),
+    which is read as a single parameter literally named `"a / b"` and therefore
+    describes neither. Pinned by
+    tests/tools/test_agent_tool_parameter_descriptions.py.
+
 ## PR Workflow
 
 1. Create the feature branch **on your fork**. Branch creation in the base

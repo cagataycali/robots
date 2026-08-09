@@ -595,6 +595,19 @@ def gr00t_inference(
         The default stays ``"n1.5"`` for back-compat. N1.7 users must opt in
         explicitly: ``gr00t_inference(action="start", ..., protocol="n1.7")``.
 
+    Operator-configured, not agent parameters:
+        The build source repo/tag/clone-dir, the container image, bind-mount
+        volumes, and the container command are operator-config-driven: an
+        agent-supplied git URL would clone an attacker tree and ``bash
+        docker/build.sh`` it (host RCE). ``build_image`` clones
+        ``$STRANDS_GR00T_REPO_URL`` (allowlisted; default the canonical NVIDIA
+        repo) at ``$STRANDS_GR00T_REPO_TAG`` into ``$STRANDS_BASE_DIR/Isaac-GR00T``;
+        the image is resolved from ``STRANDS_GR00T_IMAGE`` and validated against
+        ``STRANDS_GR00T_IMAGE_ALLOW``. Extend the URL allowlist for private
+        mirrors via ``STRANDS_GR00T_REPO_URL_ALLOW``. The container is started
+        with ``hf_local_dir`` → ``/data/checkpoints`` and
+        ``~/.cache/huggingface`` → ``/root/.cache/huggingface`` mounted.
+
     Args:
         action: Action to perform (see Actions above).
         checkpoint_path: Path to model checkpoint directory (required for ``start``/``restart``).
@@ -648,35 +661,32 @@ def gr00t_inference(
             deterministic-algorithms mode) by forwarding them into the
             container. Default ``False`` - byte-identical to the previous
             behavior.
-
-    Container lifecycle args (used by ``build_image``, ``download_checkpoint``,
-    ``start_container``, ``lifecycle``):
-        (The build source repo/tag/clone-dir, the container image, bind-mount
-        volumes, and the container command are operator-config-driven, NOT
-        agent parameters: an agent-supplied git URL would clone an attacker
-        tree and ``bash docker/build.sh`` it (host RCE). ``build_image`` clones
-        ``$STRANDS_GR00T_REPO_URL`` (allowlisted; default the canonical NVIDIA
-        repo) at ``$STRANDS_GR00T_REPO_TAG`` into ``$STRANDS_BASE_DIR/Isaac-GR00T``;
-        the image is resolved from ``STRANDS_GR00T_IMAGE`` and validated against
-        ``STRANDS_GR00T_IMAGE_ALLOW``. Extend the URL allowlist for private
-        mirrors via ``STRANDS_GR00T_REPO_URL_ALLOW``.)
         hf_repo: HuggingFace dataset/model id (e.g., ``"nvidia/GR00T-N1.7-LIBERO"``).
-            Required for ``download_checkpoint``.
+            Required for ``download_checkpoint``. Read by ``download_checkpoint``
+            and by ``lifecycle="full"``.
         hf_subfolder: Subfolder pattern within the HF repo (e.g.,
             ``"libero_spatial"``). When set, only files matching
             ``<subfolder>/*`` are downloaded.
         hf_local_dir: Where to download the checkpoint. Defaults to
-            ``$STRANDS_BASE_DIR/checkpoints/<basename(hf_repo)>``.
-        hf_token: HuggingFace API token (gated repos). Falls back to
-            ``HF_TOKEN`` / ``HUGGING_FACE_HUB_TOKEN`` env vars.
-            Defaults to mounting ``hf_local_dir`` → ``/data/checkpoints`` and
-            ``~/.cache/huggingface`` → ``/root/.cache/huggingface``.
-        lifecycle: ``"full"`` (default - chain build → download → start_container
-            → start) or ``"teardown"`` (rm container + volumes).
-        remove_volumes: When ``lifecycle="teardown"``, also remove docker volumes
-            (default: ``False`` to preserve checkpoint mounts).
-        force: For idempotent steps - rebuild image, redownload checkpoint, or
-            recreate container even when the artefact is already present.
+            ``$STRANDS_BASE_DIR/checkpoints/<basename(hf_repo)>``. Also the host
+            side of the ``/data/checkpoints`` bind mount, so it is confined to
+            the base directory rather than accepted anywhere on the host.
+        hf_token: HuggingFace API token, for gated repos. Falls back to the
+            ``HF_TOKEN`` / ``HUGGING_FACE_HUB_TOKEN`` env vars, which is the
+            preferred way to supply it - a token passed here travels through the
+            tool call.
+        lifecycle: Which phase ``action="lifecycle"`` runs: ``"full"`` (default -
+            chain ``build_image`` → ``download_checkpoint`` → ``start_container``
+            → ``start`` and wait for the port) or ``"teardown"`` (remove the
+            container). Ignored by every other action.
+        remove_volumes: Under ``lifecycle="teardown"``, also remove the
+            container's docker volumes. Default ``False``, which preserves the
+            checkpoint and HuggingFace-cache mounts; passing ``True`` discards
+            downloaded checkpoints, so a later ``lifecycle="full"`` re-downloads.
+        force: Override the idempotence of the setup steps - rebuild the image,
+            re-download the checkpoint, or recreate the container even when the
+            artefact is already present. Default ``False``, which makes a
+            re-run after a crash resume rather than repeat work.
 
     Returns:
         Dict with operation results. Common fields:
