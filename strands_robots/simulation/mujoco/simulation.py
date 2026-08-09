@@ -115,6 +115,7 @@ from strands_robots.utils import (
     finite_vector_error,
     non_negative_whole_number_error,
     pose_vector_error,
+    positive_finite_number_error,
     positive_whole_number_error,
     reserved_camera_name_error,
     sequence_length,
@@ -210,6 +211,55 @@ def _validated_mesh_handle(mesh: Any) -> Any:
         "resolves the STRANDS_MESH kill switch and attaches a client; or attach one "
         "yourself after construction: sim.mesh = init_mesh(sim, peer_id=...)."
     )
+
+
+def _resolve_policy_stop_timeout(policy_stop_timeout: float | None, default: float) -> float:
+    """Seconds :meth:`MuJoCoSimEngine.cleanup` waits per live policy future.
+
+    ``None`` is the documented "no preference" spelling and resolves to
+    ``default``. A value outside the domain
+    :func:`strands_robots.utils.positive_finite_number_error` accepts cannot
+    express a preference either, so it resolves to ``default`` as well and the
+    reason is logged against the parameter it came from.
+
+    Only a positive finite budget can be honored.
+    ``concurrent.futures.Future.result`` measures its wait as
+    ``time.monotonic() + timeout``, so ``0``, a negative value and ``nan``
+    expire it before the first check, and ``inf`` - the spelling that reads as
+    "wait as long as it takes" - raises ``OverflowError`` out of that
+    arithmetic. Each of those abandons a policy worker that may still be inside
+    ``mj_step`` on the world ``cleanup`` is about to free, which is the
+    stale-pointer window the bounded join exists to close; a non-real budget
+    additionally makes the ``%.1f`` in the join's own warning raise, so the
+    record that would have reported the skipped wait is dropped. Resolving to
+    ``default`` keeps the join, so a budget the join cannot measure costs the
+    caller the faster teardown they asked for rather than the protection.
+
+    Returning a plain ``float`` is load-bearing rather than cosmetic: the shared
+    guard accepts any real scalar, and ``Future.result`` raises ``TypeError``
+    for a ``np.float32`` budget read out of a config array.
+
+    Args:
+        policy_stop_timeout: Caller-supplied budget in seconds, or ``None``.
+        default: Budget to use when none was supplied, or when the supplied one
+            is outside the domain the join can measure.
+
+    Returns:
+        Seconds to wait per live policy future - always a positive finite
+        ``float``.
+    """
+    if policy_stop_timeout is None:
+        return float(default)
+    reason = positive_finite_number_error(policy_stop_timeout, "policy_stop_timeout", "cleanup")
+    if reason is None:
+        return float(policy_stop_timeout)
+    logger.warning(
+        "%s Waiting the default %.1fs instead, so the bounded join that keeps a live policy "
+        "worker's pointers out of the freed world still happens.",
+        reason,
+        default,
+    )
+    return float(default)
 
 
 # Actions consumed open-loop from each policy's chunk before it is re-queried,
@@ -5116,10 +5166,18 @@ class MuJoCoSimEngine(
              landing inside one of its control ticks.
 
         Args:
-            policy_stop_timeout: Seconds to wait per active policy future.
-                ``None`` (default) uses
-                ``_DEFAULT_POLICY_STOP_TIMEOUT`` (5s). Set to a small value
-                in tests that want fast teardown.
+            policy_stop_timeout: Seconds to wait per active policy future - a
+                positive finite number, validated by the same rule every other
+                span of time is (:func:`strands_robots.utils.positive_finite_number_error`).
+                ``None`` (default) uses ``_DEFAULT_POLICY_STOP_TIMEOUT`` (5s).
+                Set to a small value in tests that want fast teardown. A budget
+                the join cannot measure - ``0``, a negative value, ``nan``,
+                ``inf`` or a non-real - is reported and resolved to that same
+                default rather than refused: every one of them expires the wait
+                before its first check, and abandoning a live worker is the
+                stale-pointer window step 2 exists to close, so the safe budget
+                is the honest reading of "no usable preference". Teardown always
+                completes; see :func:`_resolve_policy_stop_timeout`.
         """
         # Detach from the mesh network first (if attached). A truthy
         # ``self.mesh`` is any object exposing ``.stop()``; falsy values
@@ -5164,7 +5222,7 @@ class MuJoCoSimEngine(
             finally:
                 self.mesh = None
 
-        timeout = policy_stop_timeout if policy_stop_timeout is not None else self._DEFAULT_POLICY_STOP_TIMEOUT
+        timeout = _resolve_policy_stop_timeout(policy_stop_timeout, self._DEFAULT_POLICY_STOP_TIMEOUT)
 
         # Step 1 + 2: cooperative stop + bounded join BEFORE nulling world.
         # The ``policy_running`` flag is read by the MuJoCo-specific
