@@ -168,7 +168,6 @@ class TestTheAcceptanceMirrorAgreesWithTheRouter:
             ("get_world_point", "camera_name", True),
             ("run_policy", "camera_name", True),  # folded into video.camera
         ],
-        ids=lambda v: str(v),
     )
     def test_mirror_verdict(self, action: str, param: str, accepted: bool) -> None:
         allowed = _accepted_params(action)
