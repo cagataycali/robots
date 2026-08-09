@@ -1,0 +1,92 @@
+{
+  "tree": "/tmp/robots-mine",
+  "rows": [
+    {
+      "label": "<omitted>",
+      "waited_s": 0.0197,
+      "worker_abandoned": false,
+      "world_released": true,
+      "reported": false,
+      "dropped_records": 0,
+      "raised": null
+    },
+    {
+      "label": "2.0",
+      "waited_s": 0.0219,
+      "worker_abandoned": false,
+      "world_released": true,
+      "reported": false,
+      "dropped_records": 0,
+      "raised": null
+    },
+    {
+      "label": "inf",
+      "waited_s": 0.027,
+      "worker_abandoned": false,
+      "world_released": true,
+      "reported": true,
+      "dropped_records": 0,
+      "raised": null
+    },
+    {
+      "label": "nan",
+      "waited_s": 0.0198,
+      "worker_abandoned": false,
+      "world_released": true,
+      "reported": true,
+      "dropped_records": 0,
+      "raised": null
+    },
+    {
+      "label": "0.0",
+      "waited_s": 0.0162,
+      "worker_abandoned": false,
+      "world_released": true,
+      "reported": true,
+      "dropped_records": 0,
+      "raised": null
+    },
+    {
+      "label": "-1.0",
+      "waited_s": 0.0189,
+      "worker_abandoned": false,
+      "world_released": true,
+      "reported": true,
+      "dropped_records": 0,
+      "raised": null
+    },
+    {
+      "label": "True",
+      "waited_s": 0.019,
+      "worker_abandoned": false,
+      "world_released": true,
+      "reported": true,
+      "dropped_records": 0,
+      "raised": null
+    },
+    {
+      "label": "'5'",
+      "waited_s": 0.0195,
+      "worker_abandoned": false,
+      "world_released": true,
+      "reported": true,
+      "dropped_records": 0,
+      "raised": null
+    },
+    {
+      "label": "np.float32(0.25)",
+      "waited_s": 0.0317,
+      "worker_abandoned": false,
+      "world_released": true,
+      "reported": false,
+      "dropped_records": 0,
+      "raised": null
+    }
+  ],
+  "reference_joints": {
+    "shoulder": -0.109839,
+    "shoulder.vel": -0.008202,
+    "elbow": -0.370664,
+    "elbow.vel": -0.774128
+  }
+}
