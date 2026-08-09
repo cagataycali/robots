@@ -469,6 +469,15 @@ def build_lerobot_command(
             Plain teleoperation ignores it: ``TeleoperateConfig`` has no such
             field, so emitting it there would be an unrecognized argument.
 
+            Every caller reaching a mode that emits it must forward it. Making
+            the builder honor a flag is only half the fix, because the tool spec
+            sits on :func:`lerobot_teleoperate` rather than here: the ``replay``
+            dispatch omitted this kwarg, so the builder's default won whatever
+            the agent asked for, and the argv read ``--play_sounds true`` on the
+            only model-reachable path to replay. Pinned at the tool level, not
+            just here, since a builder-level test cannot observe a dropped
+            forward.
+
     Returns:
         The argv list, beginning with ``["python", "-m", "lerobot.scripts...."]``.
 
@@ -1233,6 +1242,7 @@ def lerobot_teleoperate(
                     dataset_repo_id=dataset_repo_id,
                     replay_episode=replay_episode,
                     display_data=display_data,
+                    play_sounds=play_sounds,
                 )
             except Exception as e:
                 return {"status": "error", "content": [{"text": f"Replay command build failed: {str(e)}"}]}

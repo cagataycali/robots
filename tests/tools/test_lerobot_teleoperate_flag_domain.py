@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import inspect
 import io
+import re
 import subprocess
 from typing import Any
 
@@ -429,6 +430,95 @@ class TestPlaySoundsReachesTheArgv:
         with pytest.raises(ValueError) as excinfo:
             _replay(play_sounds="false")
         assert str(excinfo.value) == boolean_flag_error("false", "play_sounds", "build_lerobot_command")
+
+
+class TestTheToolForwardsPlaySoundsOnEveryModeThatEmitsIt:
+    """A flag the builder honors is still dropped if a dispatch omits it.
+
+    The tool spec is on :func:`lerobot_teleoperate`, not on
+    ``build_lerobot_command``, so the model-reachable surface is the tool. The
+    ``replay`` dispatch built its argv without forwarding ``play_sounds``, so the
+    builder's ``True`` default won whatever the caller asked for and the argv read
+    ``--play_sounds true`` - the #2072 defect exactly, surviving for one of the
+    three modes that emit the flag, while the builder's own tests passed.
+
+    Every assertion here is therefore made through the tool, which is the only
+    level at which a dropped forward is observable at all.
+    """
+
+    @staticmethod
+    def _replay_argv(monkeypatch: pytest.MonkeyPatch, **overrides: Any) -> list[str]:
+        """The argv the tool's ``replay`` dispatch actually hands to lerobot."""
+        seen: list[list[str]] = []
+
+        def _run(*args: Any, **kwargs: Any) -> Any:
+            seen.append(list(args[0]))
+            return subprocess.CompletedProcess(args=list(args[0]), returncode=0, stdout="", stderr="")
+
+        monkeypatch.setattr(tele_mod.subprocess, "run", _run)
+        kwargs: dict[str, Any] = {
+            "action": "replay",
+            "robot_type": "so101_follower",
+            "robot_port": "/dev/ttyACM1",
+            "dataset_repo_id": "user/pick",
+        }
+        kwargs.update(overrides)
+        assert _run_tool(**kwargs)["status"] == "success"
+        assert len(seen) == 1
+        return seen[0]
+
+    def test_the_replay_dispatch_forwards_the_opt_out(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Fails on pre-fix code, where the argv read ``--play_sounds true``."""
+        assert _token(self._replay_argv(monkeypatch, play_sounds=False), "--play_sounds") == "false"
+
+    def test_the_replay_dispatch_forwards_the_opt_in(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        assert _token(self._replay_argv(monkeypatch, play_sounds=True), "--play_sounds") == "true"
+
+    def test_the_replay_dispatch_defaults_to_sounds_on(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Omitting it keeps lerobot's own default rather than silently muting."""
+        assert _token(self._replay_argv(monkeypatch), "--play_sounds") == "true"
+
+    def test_the_replay_dispatch_reports_a_non_boolean(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The domain must be reachable through the tool, not only the builder."""
+
+        def _forbidden(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError("a refused replay must not launch lerobot")
+
+        monkeypatch.setattr(tele_mod.subprocess, "run", _forbidden)
+        result = _run_tool(
+            action="replay",
+            robot_type="so101_follower",
+            robot_port="/dev/ttyACM1",
+            dataset_repo_id="user/pick",
+            play_sounds="false",
+        )
+        assert result["status"] == "error"
+        assert "play_sounds must be a boolean" in " ".join(
+            block["text"] for block in result["content"] if "text" in block
+        )
+
+    def test_every_mode_that_emits_the_flag_is_forwarded_it(self) -> None:
+        """The drift guard: a new dispatch that emits it must forward it too.
+
+        Reads the source of every ``build_lerobot_command(`` call in the module
+        and requires each one whose action can emit the flag to name it. A
+        builder-level table cannot express this - the omission is at the call
+        site - so the call sites are the thing asserted.
+        """
+        source = inspect.getsource(tele_mod)
+        # ``def build_lerobot_command(`` is the definition, not a call site; its
+        # own signature names the parameter and would pass vacuously.
+        call_sites = [
+            match for match in re.finditer(r"(?<!def )\bbuild_lerobot_command\(", source) if match.start() > 0
+        ]
+        assert call_sites, "no build_lerobot_command call sites found; the guard has gone blind"
+        dropped = []
+        for match in call_sites:
+            argument_list = source[match.end() : source.index(")", match.end())]
+            if "play_sounds=play_sounds" not in argument_list:
+                line = source[: match.start()].count("\n") + 1
+                dropped.append(line)
+        assert not dropped, f"build_lerobot_command call(s) not forwarding play_sounds, at line(s): {dropped}"
 
 
 class TestPlainTeleoperationIsUnaffected:

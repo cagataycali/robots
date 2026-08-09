@@ -38,3 +38,10 @@ the only spelling of the opt-out that can reach the CLI at all.
 
 This supersedes the note in the previous entry that `replay` emits no boolean
 flag: it now emits exactly one.
+
+Both halves were needed. The tool spec sits on `lerobot_teleoperate` rather than
+on `build_lerobot_command`, and the tool's `replay` dispatch built its argv
+without forwarding `play_sounds` - so making the builder honor the flag left the
+argv reading `--play_sounds true` on the only model-reachable path to replay, and
+a non-boolean was not refused there either. The dispatch now forwards it, pinned
+at the tool level, since a builder-level test cannot observe a dropped forward.
