@@ -1,0 +1,60 @@
+{
+  "tree": "/tmp/robots-mine-31385597170",
+  "tag": "branch",
+  "before": {
+    "cameras": [
+      "default",
+      "fixed",
+      "watch",
+      "plate_cam"
+    ],
+    "ncam": 4,
+    "verdicts": {
+      "watch": {
+        "listed": true,
+        "resolvable": true,
+        "message": ""
+      },
+      "plate_cam": {
+        "listed": true,
+        "resolvable": true,
+        "message": ""
+      },
+      "fixed": {
+        "listed": true,
+        "resolvable": true,
+        "message": ""
+      }
+    }
+  },
+  "remove_object": {
+    "status": "success",
+    "text": "'crate' removed."
+  },
+  "after": {
+    "cameras": [
+      "default",
+      "fixed",
+      "plate_cam"
+    ],
+    "ncam": 3,
+    "verdicts": {
+      "watch": {
+        "listed": false,
+        "resolvable": false,
+        "message": "Camera 'watch' not found. Available: ['default', 'fixed', 'plate_cam']"
+      },
+      "plate_cam": {
+        "listed": true,
+        "resolvable": true,
+        "message": ""
+      },
+      "fixed": {
+        "listed": true,
+        "resolvable": true,
+        "message": ""
+      }
+    },
+    "watch_render_error": "Camera 'watch' not found. Available: ['default', 'fixed', 'plate_cam']"
+  }
+}
