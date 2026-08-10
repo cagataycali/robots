@@ -37,6 +37,7 @@ mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco import scene_ops  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
 
 
 @pytest.fixture
@@ -123,11 +124,13 @@ class TestTheSceneIsLeftAsItWasFound:
         assert _model_cameras(sim) == model_before
 
     def test_every_consumer_still_resolves_the_camera(self, sim: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        """The registry, the intrinsics and the renderer give the same answer.
+        """The registry and the intrinsics give the same answer.
 
         Pre-fix ``list_cameras`` stopped naming the camera while
-        ``get_camera_params`` and ``render`` - which resolve it from the model -
-        both went on succeeding.
+        ``get_camera_params`` - which resolves it from the model - went on
+        succeeding. Both consumers read the scene without a GL context, so this
+        pin holds on every host; the renderer is the third consumer and is
+        pinned separately because it additionally needs one.
         """
         _refuse_recompiles(monkeypatch)
         assert sim.remove_camera("watch")["status"] == "error"
@@ -135,6 +138,22 @@ class TestTheSceneIsLeftAsItWasFound:
 
         assert "watch" in sim.list_cameras()
         assert sim.get_camera_params(camera_name="watch") is not None
+
+    @requires_gl
+    def test_the_renderer_still_resolves_the_camera(self, sim: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+        """``render`` is the consumer that also needs a GL context.
+
+        Kept apart from the registry/intrinsics pin above rather than folded in
+        with it: ``render`` returns ``{'status': 'error'}`` on a host with no
+        EGL/OSMesa for a reason that has nothing to do with resolving the
+        camera, so asserting success unconditionally would fail off-CI with a
+        bare ``'error' != 'success'`` naming neither GL nor the camera. Gating
+        only this case keeps the two GL-free consumers verified everywhere.
+        """
+        _refuse_recompiles(monkeypatch)
+        assert sim.remove_camera("watch")["status"] == "error"
+        monkeypatch.undo()
+
         assert sim.render(camera_name="watch", width=64, height=48)["status"] == "success"
 
     def test_the_removal_does_not_land_at_a_later_unrelated_mutation(
