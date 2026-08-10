@@ -58,7 +58,7 @@ from strands.tools.tools import AgentTool
 from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
-from strands_robots.simulation.base import SimEngine, reject_setup_kwargs
+from strands_robots.simulation.base import SimEngine, close_match_hint, reject_setup_kwargs
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
@@ -1174,25 +1174,21 @@ class MuJoCoSimEngine(
         msg += " Use action='list_urdfs' to see all available robots."
         return msg
 
-    def _unknown_object_msg(self, requested: str) -> str:
+    def _unknown_object_msg(self, requested: object) -> str:
         """Actionable 'object not found' message: name it, offer a close-match,
         and point at the discovery surface - consistent with the camera
         render/record error paths and ``_unknown_model_msg`` (#1299) rather
         than a dead-end "Object 'X' not found."."""
         known = list(self._world.objects.keys()) if self._world is not None else []
         msg = f"Object '{requested}' not found."
-        if known and isinstance(requested, str):
-            import difflib
-
-            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
-            if matches:
-                msg += " Did you mean: " + ", ".join(matches) + "?"
+        if known:
+            msg += close_match_hint(requested, known)
             msg += f" Available objects: {known}. Use action='list_objects' to see all."
         else:
             msg += " No objects in the scene; add one with action='add_object'."
         return msg
 
-    def _unknown_camera_msg(self, requested: str) -> str:
+    def _unknown_camera_msg(self, requested: object) -> str:
         """Actionable 'camera not found' message for ``remove_camera`` - lists the
         renderable cameras (like the render/record error paths already do) plus a
         close-match, so a typo is fixable in-place without a discovery round-trip.
@@ -1204,16 +1200,12 @@ class MuJoCoSimEngine(
         teaches, mirroring the ``list_objects`` hint in ``_unknown_object_msg``."""
         known = self._list_camera_names()
         msg = f"Camera '{requested}' not found."
-        if known and isinstance(requested, str):
-            import difflib
-
-            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
-            if matches:
-                msg += " Did you mean: " + ", ".join(matches) + "?"
+        if known:
+            msg += close_match_hint(requested, known)
             msg += f" Available: {known}. Use action='list_cameras' to see all."
         return msg
 
-    def _unknown_robot_msg(self, requested: str) -> str:
+    def _unknown_robot_msg(self, requested: object) -> str:
         """Actionable 'robot not found' message: name it, offer a close-match,
         and list the robots in the world - consistent with ``_unknown_object_msg`` /
         ``_unknown_camera_msg`` / ``_unknown_model_msg`` (#1299/#1303) rather than a
@@ -1221,12 +1213,8 @@ class MuJoCoSimEngine(
         into a discovery round-trip on every typo."""
         known = list(self._world.robots.keys()) if self._world is not None else []
         msg = f"Robot '{requested}' not found."
-        if known and isinstance(requested, str):
-            import difflib
-
-            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
-            if matches:
-                msg += " Did you mean: " + ", ".join(matches) + "?"
+        if known:
+            msg += close_match_hint(requested, known)
             msg += f" Available robots: {known}. Use action='list_robots' to see all."
         else:
             msg += " No robots in the scene; add one with action='add_robot'."

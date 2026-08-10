@@ -105,6 +105,41 @@ def reject_setup_kwargs(kwargs: Mapping[str, Any]) -> None:
     )
 
 
+def close_match_hint(requested: object, known: Sequence[str]) -> str:
+    """The ``" Did you mean: a, b?"`` fragment of an unknown-entity message.
+
+    Returns ``""`` when there is no usable suggestion, so a caller can append
+    it unconditionally.
+
+    This is the *only* part of an unknown-entity message that needs
+    ``requested`` to be a :class:`str`: :func:`difflib.get_close_matches`
+    compares character sequences, and a name of another type has none. What is
+    registered - and the discovery action that lists it - is a property of the
+    world alone, so it must not be gated on the requested name's type. Owning
+    that distinction here is what keeps the two from being conflated again: one
+    ``isinstance`` test guarding both suppressed the whole listing for every
+    non-``str`` name, and such a name is exactly what
+    :func:`strands_robots.simulation.models.registered` routes to these
+    messages - it is total so an unhashable name is reported rather than
+    raising, and the report it hands off to has to be usable.
+
+    Args:
+        requested: Caller-supplied entity name, of any type.
+        known: Entity names that are registered.
+
+    Returns:
+        A leading-space ``" Did you mean: ...?"`` fragment, or ``""`` when
+        ``requested`` is not a string, nothing is registered, or no registered
+        name is close enough to suggest.
+    """
+    if not isinstance(requested, str) or not known:
+        return ""
+    matches = difflib.get_close_matches(requested, list(known), n=3, cutoff=0.4)
+    if not matches:
+        return ""
+    return " Did you mean: " + ", ".join(matches) + "?"
+
+
 def unknown_kwargs_error(method: str, kwargs: Mapping[str, Any], accepted: Sequence[str]) -> dict[str, Any] | None:
     """Return a tool-envelope error for keyword arguments a method cannot use.
 
@@ -658,7 +693,7 @@ class SimEngine(ABC):
             raise ValueError("No robots registered in the simulation. Add a robot first (add_robot or Robot factory).")
         raise ValueError(f"Multiple robots registered; specify robot_name. Available: {names}")
 
-    def _unknown_robot_msg(self, requested: str) -> str:
+    def _unknown_robot_msg(self, requested: object) -> str:
         """Actionable 'robot not found' message for the backend-agnostic facade.
 
         Keeps the "Robot 'X' not found." prefix (the consistent error shape the
@@ -669,13 +704,19 @@ class SimEngine(ABC):
         :meth:`list_robots` primitive, so every backend inherits it; the MuJoCo
         engine overrides with a ``self._world.robots``-backed variant. Mirrors the
         ``_unknown_object_msg`` / ``_unknown_camera_msg`` pattern (#1299/#1303/#1306).
+
+        ``requested`` is typed ``object`` because a name of any type reaches here:
+        :func:`~strands_robots.simulation.models.registered` is total, so a name
+        that cannot be a registry key resolves to "no such entity" and is
+        reported rather than raising. Only the close match needs a string (see
+        :func:`close_match_hint`); what is registered is a fact about the world,
+        so it is listed for every name type instead of being replaced by an
+        "empty scene" claim that would be false.
         """
         known = self.list_robots()
         msg = f"Robot '{requested}' not found."
-        if known and isinstance(requested, str):
-            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
-            if matches:
-                msg += " Did you mean: " + ", ".join(matches) + "?"
+        if known:
+            msg += close_match_hint(requested, known)
             msg += f" Available robots: {known}. Use action='list_robots' to see all."
         else:
             msg += " No robots in the scene; add one with action='add_robot'."

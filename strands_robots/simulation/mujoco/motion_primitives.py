@@ -140,7 +140,7 @@ class MotionPrimitivesMixin:
         def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
             """Provided by ``Simulation``; declared here for type-checkers."""
 
-        def _unknown_robot_msg(self, requested: str) -> str:
+        def _unknown_robot_msg(self, requested: object) -> str:
             """Provided by ``Simulation``; declared here for type-checkers."""
 
         def _resolve_single_robot(self, robot_name: str | None) -> str:

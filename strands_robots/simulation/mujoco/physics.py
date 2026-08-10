@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
-from strands_robots.simulation.base import _BOOLEAN_STATE_REASON
+from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, close_match_hint
+from strands_robots.simulation.models import registered
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _ensure_mujoco,
@@ -471,7 +472,7 @@ class PhysicsMixin:
         def _require_world(self) -> dict[str, Any] | None:
             """Refuse a call made before ``create_world``."""
 
-        def _unknown_robot_msg(self, requested: str) -> str:
+        def _unknown_robot_msg(self, requested: object) -> str:
             """Build the "robot not found" message with close-match hints."""
 
         def _validate_mass(self, mass: Any, method: str, param: str = "mass") -> dict[str, Any] | None:
@@ -562,7 +563,7 @@ class PhysicsMixin:
             return err
 
         checkpoints = getattr(self._world, "_checkpoints", {})
-        if name not in checkpoints:
+        if not registered(checkpoints, name):
             available = list(checkpoints.keys()) if checkpoints else ["none"]
             return {
                 "status": "error",
@@ -814,7 +815,7 @@ class PhysicsMixin:
                     return int(mid)
         return -1
 
-    def _unknown_mj_entity_msg(self, kind: str, requested: str) -> str:
+    def _unknown_mj_entity_msg(self, kind: str, requested: object) -> str:
         """Actionable "<kind> not found" message for the physics/introspection
         lookups (``get_body_state`` / ``get_jacobian`` / ``set_body_properties`` /
         ``set_geom_properties`` / ``get_sensor_data`` ...): name the entity, offer
@@ -829,6 +830,13 @@ class PhysicsMixin:
         error shape (T15 in ``test_agenttool_contract``) is unaffected.
 
         ``kind`` is one of ``"Body" | "Site" | "Geom" | "Sensor" | "Joint"``.
+
+        ``requested`` is typed ``object``: a name of any type reaches here, and
+        only the close match needs a string (see
+        :func:`~strands_robots.simulation.base.close_match_hint`). The
+        available-entity listing is a fact about the compiled model, so it is
+        emitted for every name type rather than being suppressed into a bare
+        ``"<Kind> 'X' not found."`` dead end.
         """
         import mujoco as _mj
 
@@ -844,12 +852,8 @@ class PhysicsMixin:
             "Joint": (_mj.mjtObj.mjOBJ_JOINT, model.njnt),
         }[kind]
         known = [nm for i in range(int(count)) if (nm := _mj.mj_id2name(model, obj_type, i)) and nm != "world"]
-        if known and isinstance(requested, str):
-            import difflib
-
-            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
-            if matches:
-                msg += " Did you mean: " + ", ".join(matches) + "?"
+        if known:
+            msg += close_match_hint(requested, known)
             shown = known if len(known) <= 30 else known[:30] + ["..."]
             plural = {
                 "Body": "bodies",
@@ -1617,7 +1621,7 @@ class PhysicsMixin:
                 "type": int(model.sensor_type[i]),
             }
 
-        if sensor_name and sensor_name not in sensors:
+        if sensor_name and not registered(sensors, sensor_name):
             return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Sensor", sensor_name)}]}
 
         lines = [f"Sensors ({len(sensors)}/{model.nsensor}):"]
