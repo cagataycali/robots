@@ -1,0 +1,290 @@
+[
+ {
+  "param": "control_frequency",
+  "value": "0.0",
+  "status": "error",
+  "summary": "run_policy: control_frequency must be > 0, got 0.0.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "control_frequency",
+  "value": "-5.0",
+  "status": "error",
+  "summary": "run_policy: control_frequency must be > 0, got -5.0.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "control_frequency",
+  "value": "nan",
+  "status": "error",
+  "summary": "run_policy: control_frequency must be > 0, got nan.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "control_frequency",
+  "value": "inf",
+  "status": "error",
+  "summary": "run_policy: control_frequency must be > 0, got inf.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "control_frequency",
+  "value": "True",
+  "status": "error",
+  "summary": "run_policy: control_frequency must be > 0, got True.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "control_frequency",
+  "value": "'30'",
+  "status": "error",
+  "summary": "run_policy: control_frequency must be > 0, got '30'.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "control_frequency",
+  "value": "None",
+  "status": "error",
+  "summary": "run_policy: control_frequency must be > 0, got None.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "control_frequency",
+  "value": "[30]",
+  "status": "error",
+  "summary": "run_policy: control_frequency must be > 0, got [30].",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "action_horizon",
+  "value": "0",
+  "status": "error",
+  "summary": "run_policy: action_horizon must be a positive integer, got 0.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "action_horizon",
+  "value": "-5",
+  "status": "error",
+  "summary": "run_policy: action_horizon must be a positive integer, got -5.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "action_horizon",
+  "value": "2.7",
+  "status": "error",
+  "summary": "run_policy: action_horizon must be a positive integer, got 2.7.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "action_horizon",
+  "value": "nan",
+  "status": "error",
+  "summary": "run_policy: action_horizon must be a positive integer, got nan.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "action_horizon",
+  "value": "True",
+  "status": "error",
+  "summary": "run_policy: action_horizon must be a positive integer, got True.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "action_horizon",
+  "value": "'8'",
+  "status": "error",
+  "summary": "run_policy: action_horizon must be a positive integer, got '8'.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "action_horizon",
+  "value": "None",
+  "status": "error",
+  "summary": "run_policy: action_horizon must be a positive integer, got None.",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ },
+ {
+  "param": "action_horizon",
+  "value": "[8]",
+  "status": "error",
+  "summary": "run_policy: action_horizon must be a positive integer, got [8].",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "destroyed": false,
+  "ep0_text": ""
+ }
+]

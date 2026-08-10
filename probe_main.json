@@ -1,0 +1,290 @@
+[
+ {
+  "param": "control_frequency",
+  "value": "0.0",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: control_frequency must be > 0, got 0.0."
+ },
+ {
+  "param": "control_frequency",
+  "value": "-5.0",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: control_frequency must be > 0, got -5.0."
+ },
+ {
+  "param": "control_frequency",
+  "value": "nan",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: control_frequency must be > 0, got nan."
+ },
+ {
+  "param": "control_frequency",
+  "value": "inf",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: control_frequency must be > 0, got inf."
+ },
+ {
+  "param": "control_frequency",
+  "value": "True",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: control_frequency must be > 0, got True."
+ },
+ {
+  "param": "control_frequency",
+  "value": "'30'",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: control_frequency must be > 0, got '30'."
+ },
+ {
+  "param": "control_frequency",
+  "value": "None",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: control_frequency must be > 0, got None."
+ },
+ {
+  "param": "control_frequency",
+  "value": "[30]",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: control_frequency must be > 0, got [30]."
+ },
+ {
+  "param": "action_horizon",
+  "value": "0",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: action_horizon must be a positive integer, got 0."
+ },
+ {
+  "param": "action_horizon",
+  "value": "-5",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: action_horizon must be a positive integer, got -5."
+ },
+ {
+  "param": "action_horizon",
+  "value": "2.7",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: action_horizon must be a positive integer, got 2.7."
+ },
+ {
+  "param": "action_horizon",
+  "value": "nan",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: action_horizon must be a positive integer, got nan."
+ },
+ {
+  "param": "action_horizon",
+  "value": "True",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: action_horizon must be a positive integer, got True."
+ },
+ {
+  "param": "action_horizon",
+  "value": "'8'",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: action_horizon must be a positive integer, got '8'."
+ },
+ {
+  "param": "action_horizon",
+  "value": "None",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: action_horizon must be a positive integer, got None."
+ },
+ {
+  "param": "action_horizon",
+  "value": "[8]",
+  "status": "error",
+  "summary": "run_policy: 0/1 episodes ok | parquet-truth: total_episodes=0, total_frames=0 | warnings=1",
+  "before": {
+   "present": true,
+   "eps": 1,
+   "frames": 4
+  },
+  "after": {
+   "present": true,
+   "eps": 0,
+   "frames": 0
+  },
+  "destroyed": true,
+  "ep0_text": "run_policy: action_horizon must be a positive integer, got [8]."
+ }
+]
