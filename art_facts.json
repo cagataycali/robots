@@ -1,0 +1,112 @@
+{
+  "tree": "/tmp/robots-mine-31440126023",
+  "cov_before": {
+    "stmts": 152,
+    "missing": 6,
+    "pct": 96.1,
+    "missing_lines": [
+      29,
+      30,
+      230,
+      231,
+      286,
+      287
+    ]
+  },
+  "cov_after": {
+    "stmts": 152,
+    "missing": 0,
+    "pct": 100.0,
+    "missing_lines": []
+  },
+  "imu": {
+    "after_malformed": [],
+    "after_good": [
+      {
+        "accel": [
+          0,
+          0,
+          9.8
+        ]
+      }
+    ]
+  },
+  "ws_readable": {
+    "additional_headers": {
+      "Authorization": "Bearer secret-token"
+    },
+    "extra_headers": null
+  },
+  "ws_unreadable": {
+    "additional_headers": null,
+    "extra_headers": {
+      "Authorization": "Bearer secret-token"
+    }
+  },
+  "host": {
+    "resolvable": "10.1.2.3",
+    "unresolvable": "reachy-mini.local"
+  },
+  "mutations": [
+    {
+      "id": "M1",
+      "label": "drop the IMU malformed-frame tolerance",
+      "new": {
+        "failed": true,
+        "n_failed": 2
+      },
+      "old": {
+        "failed": false,
+        "n_failed": 0
+      }
+    },
+    {
+      "id": "M2",
+      "label": "IMU wrapper forwards to the joints consumer",
+      "new": {
+        "failed": true,
+        "n_failed": 1
+      },
+      "old": {
+        "failed": true,
+        "n_failed": 1
+      }
+    },
+    {
+      "id": "M3",
+      "label": "drop the resolve_host lookup-failure fallback",
+      "new": {
+        "failed": true,
+        "n_failed": 1
+      },
+      "old": {
+        "failed": false,
+        "n_failed": 0
+      }
+    },
+    {
+      "id": "M4",
+      "label": "header fallback drops the headers (unauthenticated)",
+      "new": {
+        "failed": true,
+        "n_failed": 1
+      },
+      "old": {
+        "failed": false,
+        "n_failed": 0
+      }
+    },
+    {
+      "id": "M5",
+      "label": "header fallback uses the modern keyword on legacy",
+      "new": {
+        "failed": true,
+        "n_failed": 1
+      },
+      "old": {
+        "failed": false,
+        "n_failed": 0
+      }
+    }
+  ]
+}
