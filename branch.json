@@ -1,0 +1,56 @@
+{
+ "tree": "/tmp/robots-mine-3211657",
+ "messages": {
+  "Robot (facade)": {
+   "ok": true,
+   "text": "Robot '['front']' not found. Available robots: ['arm']. Use action='list_robots' to see all."
+  },
+  "Robot (MuJoCo)": {
+   "ok": true,
+   "text": "Robot '['front']' not found. Available robots: ['arm']. Use action='list_robots' to see all."
+  },
+  "Object": {
+   "ok": true,
+   "text": "Object '['front']' not found. Available objects: ['crate']. Use action='list_objects' to see all."
+  },
+  "Camera": {
+   "ok": true,
+   "text": "Camera '['front']' not found. Available: ['default', 'look']. Use action='list_cameras' to see all."
+  },
+  "Body": {
+   "ok": true,
+   "text": "Body '['front']' not found. Available bodies: ['arm/base', 'arm/link', 'crate']. Use action='list_bodies' to see all."
+  },
+  "Joint": {
+   "ok": true,
+   "text": "Joint '['front']' not found. Available joints: ['arm/pan', 'crate_joint']. Use action='robot_joint_names' to see one robot's joints."
+  },
+  "Sensor": {
+   "ok": true,
+   "text": "Sensor '['front']' not found. Available sensors: ['arm/tcp_pos']."
+  }
+ },
+ "reached": {
+  "get_sensor_data": {
+   "ok": true,
+   "status": "error",
+   "text": "Sensor '['front']' not found. Available sensors: ['arm/tcp_pos']."
+  },
+  "load_state": {
+   "ok": true,
+   "status": "error",
+   "text": "Checkpoint '['front']' not found. Available: ['cp1']"
+  }
+ },
+ "str_typo": {
+  "Robot (MuJoCo)": "Robot 'arm0' not found. Did you mean: arm? Available robots: ['arm']. Use action='list_robots' to see all.",
+  "Object": "Object 'crat' not found. Did you mean: crate? Available objects: ['crate']. Use action='list_objects' to see all.",
+  "Body": "Body 'arm/bas' not found. Did you mean: arm/base, arm/link? Available bodies: ['arm/base', 'arm/link', 'crate']. Use action='list_bodies' to see all."
+ },
+ "joint": [
+  0.0,
+  0.0,
+  0.11
+ ],
+ "tag": "branch"
+}

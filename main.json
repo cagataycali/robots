@@ -1,0 +1,56 @@
+{
+ "tree": "/tmp/ctrl-3255843",
+ "messages": {
+  "Robot (facade)": {
+   "ok": true,
+   "text": "Robot '['front']' not found. No robots in the scene; add one with action='add_robot'."
+  },
+  "Robot (MuJoCo)": {
+   "ok": true,
+   "text": "Robot '['front']' not found. No robots in the scene; add one with action='add_robot'."
+  },
+  "Object": {
+   "ok": true,
+   "text": "Object '['front']' not found. No objects in the scene; add one with action='add_object'."
+  },
+  "Camera": {
+   "ok": true,
+   "text": "Camera '['front']' not found."
+  },
+  "Body": {
+   "ok": true,
+   "text": "Body '['front']' not found."
+  },
+  "Joint": {
+   "ok": true,
+   "text": "Joint '['front']' not found."
+  },
+  "Sensor": {
+   "ok": true,
+   "text": "Sensor '['front']' not found."
+  }
+ },
+ "reached": {
+  "get_sensor_data": {
+   "ok": false,
+   "status": "RAISED",
+   "text": "TypeError: unhashable type: 'list'"
+  },
+  "load_state": {
+   "ok": false,
+   "status": "RAISED",
+   "text": "TypeError: unhashable type: 'list'"
+  }
+ },
+ "str_typo": {
+  "Robot (MuJoCo)": "Robot 'arm0' not found. Did you mean: arm? Available robots: ['arm']. Use action='list_robots' to see all.",
+  "Object": "Object 'crat' not found. Did you mean: crate? Available objects: ['crate']. Use action='list_objects' to see all.",
+  "Body": "Body 'arm/bas' not found. Did you mean: arm/base, arm/link? Available bodies: ['arm/base', 'arm/link', 'crate']. Use action='list_bodies' to see all."
+ },
+ "joint": [
+  0.0,
+  0.0,
+  0.11
+ ],
+ "tag": "main"
+}
