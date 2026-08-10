@@ -95,7 +95,9 @@
       "type": "array",
       "items": {
         "type": "number"
-      }
+      },
+      "minItems": 3,
+      "maxItems": 3
     },
     "ground_plane": {
       "type": "boolean"
@@ -142,13 +144,18 @@
       "type": "array",
       "items": {
         "type": "number"
-      }
+      },
+      "minItems": 3,
+      "maxItems": 3
     },
     "orientation": {
       "type": "array",
       "items": {
         "type": "number"
-      }
+      },
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "Orientation as a unit quaternion in [w, x, y, z] order - scalar first, MuJoCo's convention. Applied verbatim to the body quat, so an [x, y, z, w] vector has the same accepted length and is silently used as a different rotation."
     },
     "size": {
       "type": "array",
@@ -162,6 +169,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 4,
       "description": "Colour in 0..1: [r, g, b] (opaque alpha added) or [r, g, b, a]. Any other component count, including an empty list, is rejected - omit color entirely for the default mid-grey."
     },
     "mass": {
@@ -194,6 +203,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Camera target point"
     },
     "parent_body": {
@@ -371,6 +382,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Force vector [fx, fy, fz] in Newtons"
     },
     "torque_vec": {
@@ -378,6 +391,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Torque vector [tx, ty, tz] in N\u00b7m"
     },
     "point": {
@@ -385,6 +400,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Point of force application [x, y, z]"
     },
     "origin": {
@@ -392,6 +409,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Ray origin [x, y, z]"
     },
     "direction": {
@@ -399,6 +418,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Ray direction [dx, dy, dz]"
     },
     "directions": {
