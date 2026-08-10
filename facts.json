@@ -1,0 +1,35 @@
+{
+  "honored": {
+    "status": "success",
+    "text": "Policy started on 'arm' (async)"
+  },
+  "start_policy": {
+    "status": "error",
+    "text": "start_policy: the active recording declares 30 fps but this rollout captures at control_frequency=50 Hz. The dataset recorder writes one frame per control step with no decimation, so frames captured 0.0200s apart would be timestamped 0.0333s apart - a 1.667x distortion of the episode duration, which a policy trains on as its control period and which replay_episode reproduces at the wrong speed. Align the two rates: pass control_frequency=30 to start_policy(), or record at the rollout's rate (stop_recording(), then start_recording(fps=50, overwrite=True)).",
+    "policy_running": false,
+    "threads": 0,
+    "recorder_frames": 0,
+    "frames_on_disk": 0,
+    "envelope_verbatim": true
+  },
+  "run_multi_policy": {
+    "status": "error",
+    "text": "run_multi_policy: the active recording declares 30 fps but this rollout captures at control_frequency=50 Hz. The dataset recorder writes one frame per control step with no decimation, so frames captured 0.0200s apart would be timestamped 0.0333s apart - a 1.667x distortion of the episode duration, which a policy trains on as its control period and which replay_episode reproduces at the wrong speed. Align the two rates: pass control_frequency=30 to run_multi_policy(), or record at the rollout's rate (stop_recording(), then start_recording(fps=50, overwrite=True)).",
+    "policy_running": [
+      false,
+      false
+    ],
+    "threads": 0,
+    "recorder_frames": 0,
+    "frames_on_disk": 0,
+    "envelope_verbatim": true
+  },
+  "relations": {
+    "honored_moved_frac": 0.2177,
+    "refused_max_pixel_delta": 1,
+    "refused_changed_pixels_over_threshold": 0,
+    "total_pixels": 434000,
+    "joints_identical_across_the_refusals": true,
+    "home_sat_frac": 0.8112
+  }
+}
