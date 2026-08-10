@@ -647,6 +647,143 @@ def test_every_backend_start_recording_checks_the_running_rollout_rate(module):
     )
 
 
+class TestTheAsyncEntryPointRefusesBeforeItReportsStarted:
+    """``start_policy`` returns while its rollout continues, so it must refuse synchronously.
+
+    Seven surfaces check the recording rate. Five had returned the refusal at
+    least once; the two that exist only on the MuJoCo backend - ``start_policy``
+    and ``run_multi_policy`` - had not, and were pinned only by the structural
+    sweep below on the stated grounds that a driver may need "a checkpoint, a
+    benchmark registration or a live background thread to reach". Neither of
+    these needs one: the rate guard sits above ``self._executor.submit``, so the
+    refusal is returned on the caller's own thread with no worker in existence.
+
+    That placement is the whole point of the guard here, in ``start_policy``'s
+    own words - "a refusal after submit would report 'started' to a caller whose
+    rollout cannot be recorded correctly". A structural pin cannot see it: it
+    proves the guard is *called*, never that its refusal is *returned*, so
+    discarding the ``return`` while keeping the call satisfies it.
+    """
+
+    def _start(self, sim, control_frequency: float):  # noqa: ANN001, ANN202
+        """Start a long rollout on ``arm``; the horizon outlives any single case."""
+        return sim.start_policy(
+            robot_name="arm",
+            policy_object=_Hold(list(sim.robot_action_keys("arm"))),
+            duration=60.0,
+            control_frequency=control_frequency,
+        )
+
+    def test_the_library_defaults_are_refused(self, sim, tmp_path):
+        _record(sim, tmp_path, fps=30)
+        assert self._start(sim, 50.0)["status"] == "error"
+
+    def test_the_refusal_names_both_rates_and_the_distortion(self, sim, tmp_path):
+        _record(sim, tmp_path, fps=30)
+        text = self._start(sim, 50.0)["content"][0]["text"]
+        assert text.startswith("start_policy: ")
+        assert "declares 30 fps" in text
+        assert "control_frequency=50 Hz" in text
+        assert "1.667x" in text
+
+    def test_the_refusal_names_both_remedies(self, sim, tmp_path):
+        _record(sim, tmp_path, fps=30)
+        text = self._start(sim, 50.0)["content"][0]["text"]
+        assert "control_frequency=30" in text
+        assert "start_recording(fps=50, overwrite=True)" in text
+
+    def test_the_envelope_is_the_shared_helper_verbatim(self, sim, tmp_path):
+        """One rule, one wording: the entry point adds nothing but its own name."""
+        _record(sim, tmp_path, fps=30)
+        assert self._start(sim, 50.0) == dataset_rate_mismatch_error("start_policy", sim._active_recorder(), 50.0)
+
+    def test_no_rollout_is_started(self, sim, tmp_path):
+        """The refusal must not be a false "started": no worker, no running flag."""
+        _record(sim, tmp_path, fps=30)
+        assert self._start(sim, 50.0)["status"] == "error"
+        assert sim._world.robots["arm"].policy_running is False
+        assert sim._policy_threads == {}
+
+    def test_no_frame_is_written(self, sim, tmp_path):
+        root = _record(sim, tmp_path, fps=30)
+        self._start(sim, 50.0)
+        assert sim._active_recorder().frame_count == 0
+        assert _frames_on_disk(root) == 0
+
+    def test_a_matching_rate_still_starts_the_rollout(self, sim, tmp_path):
+        """Control: an aligned rate must still reach the executor and run."""
+        _record(sim, tmp_path, fps=50, name="aligned_async")
+        with _running_rollout(sim, "arm", 50.0):
+            assert sim._world.robots["arm"].policy_running is True
+
+    def test_a_rollout_with_no_recording_open_is_never_refused(self, sim):
+        """Control: the two rates are only comparable while a recording is open."""
+        with _running_rollout(sim, "arm", 50.0):
+            assert sim._world.robots["arm"].policy_running is True
+
+
+class TestTheMultiRobotEntryPointRefusesTheSameDisagreement:
+    """``run_multi_policy`` writes one merged frame per step into the same recording.
+
+    It is the recommended path for capturing two robots into a single dataset, so
+    a rate it cannot honor mislabels the merged episode exactly as the
+    single-robot path does - and it reaches the guard with nothing more than two
+    robots, no checkpoint and no thread.
+    """
+
+    def _policies(self, sim):  # noqa: ANN001, ANN202
+        return {name: _Hold(list(sim.robot_action_keys(name))) for name in ("armA", "armB")}
+
+    def _run(self, sim, control_frequency: float):  # noqa: ANN001, ANN202
+        return sim.run_multi_policy(
+            policies=self._policies(sim),
+            n_steps=10,
+            control_frequency=control_frequency,
+        )
+
+    def test_the_library_defaults_are_refused(self, two_arm_sim, tmp_path):
+        _record(two_arm_sim, tmp_path, fps=30, name="multi_ds")
+        assert self._run(two_arm_sim, 50.0)["status"] == "error"
+
+    def test_the_refusal_names_the_method_both_rates_and_the_distortion(self, two_arm_sim, tmp_path):
+        _record(two_arm_sim, tmp_path, fps=30, name="multi_named")
+        text = self._run(two_arm_sim, 50.0)["content"][0]["text"]
+        assert text.startswith("run_multi_policy: ")
+        assert "declares 30 fps" in text
+        assert "control_frequency=50 Hz" in text
+        assert "1.667x" in text
+
+    def test_the_envelope_is_the_shared_helper_verbatim(self, two_arm_sim, tmp_path):
+        _record(two_arm_sim, tmp_path, fps=30, name="multi_verbatim")
+        assert self._run(two_arm_sim, 50.0) == dataset_rate_mismatch_error(
+            "run_multi_policy", two_arm_sim._active_recorder(), 50.0
+        )
+
+    def test_no_frame_is_written(self, two_arm_sim, tmp_path):
+        root = _record(two_arm_sim, tmp_path, fps=30, name="multi_frames")
+        self._run(two_arm_sim, 50.0)
+        assert two_arm_sim._active_recorder().frame_count == 0
+        assert _frames_on_disk(root) == 0
+
+    def test_no_rollout_is_left_running(self, two_arm_sim, tmp_path):
+        """The refusal precedes every per-robot rollout, so neither arm is driven."""
+        _record(two_arm_sim, tmp_path, fps=30, name="multi_idle")
+        self._run(two_arm_sim, 50.0)
+        assert two_arm_sim._policy_threads == {}
+        assert [two_arm_sim._world.robots[n].policy_running for n in ("armA", "armB")] == [False, False]
+
+    def test_a_matching_rate_still_records_both_robots(self, two_arm_sim, tmp_path):
+        """Control: at an aligned rate the merged capture is unaffected."""
+        root = _record(two_arm_sim, tmp_path, fps=50, name="multi_aligned")
+        assert self._run(two_arm_sim, 50.0)["status"] == "success"
+        assert two_arm_sim.stop_recording()["status"] == "success"
+        assert _frames_on_disk(root) == 10
+
+    def test_a_rollout_with_no_recording_open_is_never_refused(self, two_arm_sim):
+        """Control: with nothing to disagree with, any rate is usable."""
+        assert self._run(two_arm_sim, 50.0)["status"] == "success"
+
+
 _ENTRY_POINTS = {
     "strands_robots/simulation/base.py": ("run_policy", "eval_policy", "evaluate_benchmark"),
     "strands_robots/simulation/mujoco/simulation.py": ("start_policy", "run_multi_policy"),
@@ -678,9 +815,10 @@ def _self_calls(module: str, method: str) -> set[str]:
 def test_every_rollout_entry_point_checks_the_recording_rate(module, method):
     """No rollout driver may capture into a dataset it disagrees with.
 
-    Pinned structurally rather than behaviourally so a driver that needs a
-    checkpoint, a benchmark registration or a live background thread to reach
-    is still covered - and so a newly added driver cannot quietly skip the
+    Every driver in the table also returns its refusal in a behavioural case
+    above, because a structural pin proves only that the guard is *called*:
+    discarding the ``return`` while keeping the call still satisfies this sweep.
+    What it is for is the next driver - one added later cannot quietly skip the
     guard the way ``run_multi_policy`` once skipped ``_validate_action_horizon``.
     """
     assert "_validate_recording_rate" in _self_calls(module, method), (
