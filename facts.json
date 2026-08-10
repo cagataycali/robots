@@ -1,0 +1,19 @@
+{
+  "honored": {
+    "start": "success",
+    "steps": 120
+  },
+  "refused": {
+    "start": "error",
+    "text": "start_policy: policy_kwargs must be a dict of per-call kwargs forwarded to policy.get_actions, e.g. policy_kwargs={'target_pose': [...]}; got list (['target_pose=[0, 0, 0]']).",
+    "futures_at_refusal": [],
+    "policy_running": false,
+    "retry": "success"
+  },
+  "metrics": {
+    "home_vs_honored_diff_frac": 0.1627,
+    "home_vs_refused_changed_px": 0,
+    "home_vs_refused_maxdelta": 1,
+    "total_px": 471200
+  }
+}
