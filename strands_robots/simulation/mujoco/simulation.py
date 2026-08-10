@@ -5002,10 +5002,10 @@ class MuJoCoSimEngine(
         callable as ``sim(action="...")`` from Python. That breadth is intended,
         but until it was declared it was also unmeasured - a newly added public
         method became agent-dispatchable-but-unadvertised, and no test could tell
-        that apart from a deliberate omission. ``_PYTHON_ONLY_ACTIONS`` in
-        ``tests/simulation/mujoco/test_tool_spec.py`` is that declaration, so a
-        new public method now fails there until it is either published in the enum
-        or recorded as Python-only. Whether the router should instead refuse a
+        that apart from a deliberate omission.
+        :data:`~tests.simulation.mujoco.test_tool_spec._PYTHON_ONLY_ACTIONS` is
+        that declaration, so a new public method now fails there until it is
+        either published in the enum or recorded as Python-only. Whether the router should instead refuse a
         non-enum action, making behaviour match the advertised contract, is the
         open question in #2093; this states today's contract without settling it.
         """
