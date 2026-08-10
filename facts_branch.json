@@ -1,0 +1,178 @@
+{
+  "tree": "/tmp/robots-mine-31426564432",
+  "tag": "branch",
+  "verdicts": {
+    "3-short|position": [
+      "error",
+      "add_camera: 'position' must be a 3-element vector, got 2 ([0.5, 0.3])",
+      false
+    ],
+    "3-short|target": [
+      "error",
+      "add_camera: 'target' must be a 3-element vector, got 2 ([0.5, 0.3])",
+      false
+    ],
+    "4-long|position": [
+      "error",
+      "add_camera: 'position' must be a 3-element vector, got 4 ([0.5, 0.3, 0.2, 0.1])",
+      false
+    ],
+    "4-long|target": [
+      "error",
+      "add_camera: 'target' must be a 3-element vector, got 4 ([0.5, 0.3, 0.2, 0.1])",
+      false
+    ],
+    "empty|position": [
+      "error",
+      "add_camera: 'position' must be a 3-element vector, got 0 ([])",
+      false
+    ],
+    "empty|target": [
+      "error",
+      "add_camera: 'target' must be a 3-element vector, got 0 ([])",
+      false
+    ],
+    "string|position": [
+      "error",
+      "add_camera: 'position' elements must be numbers, got 'abc'",
+      false
+    ],
+    "string|target": [
+      "error",
+      "add_camera: 'target' elements must be numbers, got 'abc'",
+      false
+    ],
+    "scalar|position": [
+      "error",
+      "add_camera: 'position' must be a list/tuple of 3 numbers, got 3",
+      false
+    ],
+    "scalar|target": [
+      "error",
+      "add_camera: 'target' must be a list/tuple of 3 numbers, got 3",
+      false
+    ],
+    "bool|position": [
+      "error",
+      "add_camera: 'position' must be a list/tuple of 3 numbers, got True",
+      false
+    ],
+    "bool|target": [
+      "error",
+      "add_camera: 'target' must be a list/tuple of 3 numbers, got True",
+      false
+    ],
+    "nan|position": [
+      "error",
+      "add_camera: 'position' must contain finite numbers (no nan/inf), got [nan, 0.0, 0.0]",
+      false
+    ],
+    "nan|target": [
+      "error",
+      "add_camera: 'target' must contain finite numbers (no nan/inf), got [nan, 0.0, 0.0]",
+      false
+    ],
+    "inf|position": [
+      "error",
+      "add_camera: 'position' must contain finite numbers (no nan/inf), got [inf, 0.0, 0.0]",
+      false
+    ],
+    "inf|target": [
+      "error",
+      "add_camera: 'target' must contain finite numbers (no nan/inf), got [inf, 0.0, 0.0]",
+      false
+    ],
+    "non-numeric|position": [
+      "error",
+      "add_camera: 'position' elements must be numbers, got ['a', 1.0, 2.0]",
+      false
+    ],
+    "non-numeric|target": [
+      "error",
+      "add_camera: 'target' elements must be numbers, got ['a', 1.0, 2.0]",
+      false
+    ],
+    "mapping|position": [
+      "error",
+      "add_camera: 'position' must be a 3-element vector, got 1 ({'x': 1})",
+      false
+    ],
+    "mapping|target": [
+      "error",
+      "add_camera: 'target' must be a 3-element vector, got 1 ({'x': 1})",
+      false
+    ],
+    "beyond float64|position": [
+      "error",
+      "add_camera: 'position' must contain numbers within the range of a 64-bit float, got [10000000000000000000000000000000000000000000000000000000000000000",
+      false
+    ],
+    "beyond float64|target": [
+      "error",
+      "add_camera: 'target' must contain numbers within the range of a 64-bit float, got [1000000000000000000000000000000000000000000000000000000000000000000",
+      false
+    ],
+    "0-d array|position": [
+      "error",
+      "add_camera: 'position' must be a list/tuple of 3 numbers, got array(1.)",
+      false
+    ],
+    "0-d array|target": [
+      "error",
+      "add_camera: 'target' must be a list/tuple of 3 numbers, got array(1.)",
+      false
+    ],
+    "list (usable)|position": [
+      "success",
+      "Camera 'cam' added at [0.42, -0.38, 0.3]",
+      true
+    ],
+    "list (usable)|target": [
+      "error",
+      "add_camera: 'position' and 'target' are identical ([0.42, -0.38, 0.3]); camera has no look direction.",
+      false
+    ],
+    "NumPy (usable)|position": [
+      "success",
+      "Camera 'cam' added at [0.42, -0.38, 0.3]",
+      true
+    ],
+    "NumPy (usable)|target": [
+      "error",
+      "add_camera: 'position' and 'target' are identical ([0.42, -0.38, 0.3]); camera has no look direction.",
+      false
+    ],
+    "omitted|position": [
+      "success",
+      "Camera 'cam' added at [1.0, 1.0, 1.0]",
+      true
+    ],
+    "omitted|target": [
+      "success",
+      "Camera 'cam' added at [0.42, -0.38, 0.3]",
+      true
+    ]
+  },
+  "neuter": {
+    "applications": 2,
+    "names": [
+      "coerce_pose_vector"
+    ]
+  },
+  "add_status": "success",
+  "stored_position": [
+    0.42,
+    -0.38,
+    0.3
+  ],
+  "stored_types": [
+    "float"
+  ],
+  "degenerate_status": "error",
+  "degenerate_text": "add_camera: 'position' and 'target' are identical ([0.0, 0.0, 0.0]); camera has no look direction.",
+  "render_shape": [
+    560,
+    680,
+    3
+  ]
+}
