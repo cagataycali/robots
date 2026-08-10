@@ -766,7 +766,17 @@ def inject_camera_into_scene(world: SimWorld, cam: SimCamera) -> bool:
 
 
 def eject_body_from_scene(world: SimWorld, body_name: str) -> bool:
-    """Remove a body (by short name) and recompile."""
+    """Remove a body (by short name) and recompile.
+
+    A camera mounted on that body (``SimCamera.parent_body == body_name``) goes
+    with it. The recompile drops the camera element -- it is a child of the body
+    being deleted -- so a surviving registry entry would advertise a camera no
+    consumer can resolve: ``list_cameras`` offers it while ``render`` refuses it
+    as unknown and names it in the same breath as an available alternative. Such
+    entries are dropped with a warning naming the camera and its parent, the same
+    treatment :func:`eject_robot_from_scene` gives a camera whose parent belonged
+    to the robot being removed.
+    """
     spec = _get_spec(world)
     if spec is None or world._model is None:
         logger.error("eject_body: no spec or model in world")
@@ -777,6 +787,21 @@ def eject_body_from_scene(world: SimWorld, body_name: str) -> bool:
         # Matching legacy behaviour: return True so scene state stays consistent
         # (caller has already popped the Python-side dict entry).
         return True
+
+    # Cameras mounted on this body lose the frame their pose is expressed in.
+    # The recompile below drops the camera element with its parent, so the
+    # registry entry has to go too: a stale entry lingers and confuses
+    # observation code, which is the same reason eject_robot_from_scene drops
+    # the cameras of the robot it is ejecting. Keyed by registry name, not
+    # ``cam.name``, because a URDF-discovered camera stores its namespaced
+    # MuJoCo name there.
+    for cam_key in [key for key, cam in world.cameras.items() if cam.parent_body == body_name]:
+        logger.warning(
+            "eject_body: dropping camera %r - it was mounted on the removed body %r.",
+            cam_key,
+            body_name,
+        )
+        del world.cameras[cam_key]
 
     # Objects added at runtime register a mesh asset named f"mesh_{name}".
     # Delete it too so the name is fully reusable and unused assets do not

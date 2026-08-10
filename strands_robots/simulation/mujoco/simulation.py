@@ -2952,6 +2952,13 @@ class MuJoCoSimEngine(
         MjSpec, recompiling the model while preserving the state of the
         remaining bodies.
 
+        A camera mounted on the object (``add_camera(parent_body=name)``) is
+        removed with it: its pose is expressed in that body's frame, so the
+        recompile drops the camera element and the registry entry goes too.
+        ``list_cameras`` therefore never advertises a camera the renderer
+        cannot resolve. Each dropped camera is named in a warning, matching
+        :meth:`remove_robot`.
+
         Args:
             name: The object name (as passed to ``add_object``).
 
