@@ -36,6 +36,7 @@
         "set_gravity",
         "set_timestep",
         "randomize",
+        "set_obs_noise",
         "start_recording",
         "stop_recording",
         "get_recording_status",
@@ -267,6 +268,18 @@
     "seed": {
       "type": "integer",
       "description": "Random seed"
+    },
+    "joint_pos_std": {
+      "type": "number",
+      "description": "set_obs_noise: std (radians) of Gaussian noise added to joint positions in get_observation and get_robot_state. Zero (the default) disables it. Must be finite and non-negative."
+    },
+    "joint_vel_std": {
+      "type": "number",
+      "description": "set_obs_noise: std (rad/s) of Gaussian noise added to per-joint velocities. Zero (the default) disables it. Must be finite and non-negative."
+    },
+    "camera_jitter_px": {
+      "type": "number",
+      "description": "set_obs_noise: max pixel shift applied to rendered frames, uniform in [-px, px] per axis. Zero (the default) disables it. Must be finite and non-negative."
     },
     "repo_id": {
       "type": "string",
