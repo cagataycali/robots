@@ -114,7 +114,6 @@ from strands_robots.utils import (
     entity_name_error,
     finite_vector_error,
     non_negative_whole_number_error,
-    pose_vector_error,
     positive_finite_number_error,
     positive_whole_number_error,
     reserved_camera_name_error,
@@ -3250,17 +3249,12 @@ class MuJoCoSimEngine(
         target, _terr = coerce_pose_vector("add_camera", "target", target, 3)
         if _terr is not None:
             return {"status": "error", "content": [{"text": _terr}]}
+        # ``coerce_pose_vector`` above owns the pose rule for both parameters:
+        # anything reaching here is either a validated 3-vector of plain floats or
+        # ``None``, so the defaults below - and the element-wise comparison after
+        # them - operate on numbers that are already known to be finite.
         pos = [1.0, 1.0, 1.0] if position is None else position
         tgt = [0.0, 0.0, 0.0] if target is None else target
-        for _lbl, _vec in (("position", pos), ("target", tgt)):
-            # Validate shape AND finiteness up front. The degenerate-orientation
-            # check below does ``abs(pos[i] - tgt[i])`` element-wise, so a
-            # non-numeric element (e.g. ["a", ...]) would otherwise raise a bare
-            # TypeError there, and a nan/inf slips silently into the camera's
-            # baked xyaxes (fwd /= flen divides by nan -> a degenerate camera
-            # that renders garbage while reporting success). NumPy scalars ok.
-            if (e := pose_vector_error("add_camera", _lbl, _vec, 3)) is not None:
-                return {"status": "error", "content": [{"text": e}]}
         # Degenerate orientation: position == target means no well-defined look direction.
         if all(abs(pos[i] - tgt[i]) < 1e-9 for i in range(3)):
             return {
