@@ -85,6 +85,11 @@ _MAX_RULE_CHARS = 2000
 _MAX_RULES_PER_KIND = 1000
 _MAX_TRACE_ENTRIES = 2000
 _MAX_TRACE_BYTES = 5 * 1024 * 1024  # serialized JSONL budget per task
+# Budget for the summary as stored, which is the caller's payload plus the
+# provenance block ``save_trace`` injects. Accounting for the stored payload
+# at both ends is what keeps every summary a save accepts loadable: the load
+# path re-validates the file, so a save-side budget over the caller's payload
+# alone would admit a summary ``load_trace`` then refuses.
 _MAX_SUMMARY_BYTES = 64 * 1024
 
 _TRACE_SUFFIX = ".trace.jsonl"
@@ -212,6 +217,11 @@ def _validate_trace(trace: Any) -> list[dict[str, Any]]:
 def _validate_summary(summary: Any) -> dict[str, Any]:
     """Validate a summary: a JSON object within the size budget.
 
+    Applied to the payload as stored -- :meth:`HarnessMemory.save_trace`
+    passes the caller's summary plus its provenance block, and
+    :meth:`HarnessMemory.load_trace` passes the file it read back -- so both
+    ends account for the same bytes.
+
     Args:
         summary: Untrusted summary payload from the agent.
 
@@ -324,6 +334,13 @@ class HarnessMemory:
         failed save never leaves a torn trace/summary pair or an orphaned
         trace (a summary-less trace would be listed by ``list_tasks`` but
         never loadable by ``load_trace``).
+
+        Raises:
+            ValueError: If the summary as stored -- the caller's payload plus
+                the provenance block written beside it -- exceeds
+                ``_MAX_SUMMARY_BYTES``. Checked here rather than on the
+                caller's payload alone so that every summary a save accepts
+                is one :meth:`load_trace` can read back.
         """
         self._ensure_dirs()
         provenance = {
@@ -334,6 +351,12 @@ class HarnessMemory:
         }
         stored_summary = dict(summary)
         stored_summary["provenance"] = provenance
+        # The budget covers the payload that is stored, not the one passed
+        # in: ``load_trace`` re-validates the file, which carries this
+        # provenance block, so checking the caller's summary alone accepts a
+        # summary the store cannot read back -- and the "delete and re-save"
+        # remedy that failure names reproduces it byte for byte.
+        _validate_summary(stored_summary)
         trace_path = self._trace_path(task)
         summary_path = self._summary_path(task)
         trace_lines = "".join(json.dumps(entry, sort_keys=True) + "\n" for entry in trace)
