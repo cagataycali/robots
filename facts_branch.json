@@ -1,0 +1,24 @@
+{
+  "tree": "/tmp/robots-mine-31421700515",
+  "ref": {
+    "neq": 1,
+    "cube_z": 0.4996
+  },
+  "refused_detach": {
+    "status": "error",
+    "text": "detach_bodies: failed to remove weld constraint for 'cube' (see logs).",
+    "spec_equalities": [
+      "attach_weld_carrier__cube"
+    ],
+    "model_neq": 1
+  },
+  "retry_detach": {
+    "status": "success",
+    "text": "'cube' detached from 'carrier'."
+  },
+  "after_unrelated": {
+    "model_neq": 1,
+    "attachment_involving_cube": "cube",
+    "cube_z": 0.4996
+  }
+}
