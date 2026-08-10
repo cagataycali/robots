@@ -138,6 +138,45 @@ class TestRolloutRejectsUnsplattablePolicyMapping:
         assert started["status"] == "success", started
         sim_with_arm.stop_policy(robot_name="arm1")
 
+    def test_start_policy_reports_a_policy_kwargs_error_instead_of_a_false_started(self, sim_with_arm):
+        """The last unexercised cell of this guard's refusal matrix.
+
+        ``_validate_policy_mapping`` guards two keyword bags across four rollout
+        entry points. Seven of those eight ``(surface, parameter)`` refusals were
+        returned by some case in the suite; ``start_policy``'s ``policy_kwargs``
+        was the one that never had - and it is the cell whose consequence the
+        guard exists for. Both bags are splatted on the worker thread
+        (``policy_config`` by ``create_policy``, ``policy_kwargs`` one control
+        step later by ``get_actions``), so without the pre-flight the caller is
+        told a policy started for a rollout that never produces an action. The
+        sibling case above pins that for ``policy_config`` only, and a guard
+        whose refusal is never returned cannot be told from one whose ``return``
+        was dropped.
+        """
+        bad = ["target_pose=[0, 0, 0]"]
+        result = sim_with_arm.start_policy(
+            robot_name="arm1",
+            policy_provider="mock",
+            policy_kwargs=bad,
+            n_steps=4,
+            control_frequency=30.0,
+        )
+        assert result["status"] == "error", result
+        # Verbatim: the entry point adds nothing but its own name to the shared
+        # message, so the two bags cannot drift apart in how they are reported.
+        assert result["content"][0]["text"] == f"start_policy: {policy_mapping_error(bad, 'policy_kwargs')}"
+        # Refused above ``self._executor.submit``, so no worker was ever created
+        # and the robot is not marked running...
+        assert sim_with_arm._policy_threads == {}
+        assert sim_with_arm._world.robots["arm1"].policy_running is False
+        # ...which means the rejected call never consumed the per-robot slot: an
+        # otherwise identical start is still accepted.
+        started = sim_with_arm.start_policy(
+            robot_name="arm1", policy_provider="mock", n_steps=2, control_frequency=30.0
+        )
+        assert started["status"] == "success", started
+        sim_with_arm.stop_policy(robot_name="arm1")
+
     def test_eval_policy_rejects_policy_config_before_running_episodes(self, sim_with_arm):
         result = sim_with_arm.eval_policy(
             robot_name="arm1",
