@@ -1,0 +1,88 @@
+{
+ "tree": "/tmp/robots-mine-31390564558",
+ "honored_status": "success",
+ "honored_text": "Benchmark: DeclarativeBenchmark | policy MockPolicy on 'so100'\nEpisodes: 1 | Success: 0 | Failure: 0 (0.0% success)\nAvg reward: 0.00 | Avg steps: 150/150",
+ "moved_frac_home_vs_honored": 0.1169,
+ "max_delta_base_vs_after_refusals": 1,
+ "refusals": [
+  [
+   "video={'filename': ...}",
+   "error",
+   "evaluate_benchmark: video: unknown key 'filename'. Accepted keys: camera, camera_name, fps, height, output_path, path, record_video, video_camera, vid"
+  ],
+  [
+   "video={'path':..., 'fps': 0}",
+   "error",
+   "evaluate_benchmark: video: fps must be a positive whole number, got 0."
+  ],
+  [
+   "policy_config='host=1'",
+   "error",
+   "evaluate_benchmark: policy_config must be a dict of provider kwargs forwarded to create_policy, e.g. policy_config={'host': '127.0.0.1', 'port': 5555}"
+  ],
+  [
+   "policy_kwargs=[1]",
+   "error",
+   "evaluate_benchmark: policy_kwargs must be a dict of per-call kwargs forwarded to policy.get_actions, e.g. policy_kwargs={'target_pose': [...]}; got li"
+  ]
+ ],
+ "home_joints": {
+  "Rotation": 0.0,
+  "Rotation.vel": 0.0,
+  "Pitch": 0.0,
+  "Pitch.vel": 0.0,
+  "Elbow": 0.0,
+  "Elbow.vel": 0.0,
+  "Wrist_Pitch": 0.0,
+  "Wrist_Pitch.vel": 0.0,
+  "Wrist_Roll": 0.0,
+  "Wrist_Roll.vel": 0.0,
+  "Jaw": 0.0,
+  "Jaw.vel": 0.0
+ },
+ "honored_joints": {
+  "Rotation": -0.369956,
+  "Rotation.vel": 0.611364,
+  "Pitch": 0.098908,
+  "Pitch.vel": -1.035971,
+  "Elbow": 0.223093,
+  "Elbow.vel": 1.597881,
+  "Wrist_Pitch": -0.422986,
+  "Wrist_Pitch.vel": -1.002032,
+  "Wrist_Roll": 0.459314,
+  "Wrist_Roll.vel": -0.41724,
+  "Jaw": -0.167396,
+  "Jaw.vel": 0.340668
+ },
+ "after_joints": {
+  "Rotation": 0.0,
+  "Rotation.vel": 0.0,
+  "Pitch": 0.0,
+  "Pitch.vel": 0.0,
+  "Elbow": 0.0,
+  "Elbow.vel": 0.0,
+  "Wrist_Pitch": 0.0,
+  "Wrist_Pitch.vel": 0.0,
+  "Wrist_Roll": 0.0,
+  "Wrist_Roll.vel": 0.0,
+  "Jaw": 0.0,
+  "Jaw.vel": 0.0
+ },
+ "base_joints": {
+  "Rotation": 0.0,
+  "Rotation.vel": 0.0,
+  "Pitch": 0.0,
+  "Pitch.vel": 0.0,
+  "Elbow": 0.0,
+  "Elbow.vel": 0.0,
+  "Wrist_Pitch": 0.0,
+  "Wrist_Pitch.vel": 0.0,
+  "Wrist_Roll": 0.0,
+  "Wrist_Roll.vel": 0.0,
+  "Jaw": 0.0,
+  "Jaw.vel": 0.0
+ },
+ "joints_identical_after_refusals": true,
+ "changed_px_base_vs_after": 0,
+ "total_px": 516800
+}
