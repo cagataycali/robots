@@ -177,6 +177,77 @@ class MinkIKBridge(_SharedMinkIKBridge):
     _LOG_LABEL: ClassVar[str] = "VERA MinkIKBridge"
 
 
+#: The ``gripper_dim_index`` value meaning "whichever column is last". VERA's
+#: server metadata uses it as the default, so it is a wire-level sentinel rather
+#: than a convenience: an explicit index and this sentinel are the only two
+#: things a caller can mean. Single owner of that vocabulary -
+#: :func:`coerce_gripper_dim_index` and the resolution in
+#: :func:`decode_vera_delta_chunk_to_targets` are both built from it.
+GRIPPER_INDEX_LAST: int = -1
+
+
+def coerce_gripper_dim_index(value: Any, param: str, context: str) -> tuple[int | None, str | None]:
+    """Validate a gripper-column index and normalize it to an ``int``.
+
+    The accepted set is :data:`GRIPPER_INDEX_LAST` (the trailing column) or a
+    column index ``>= 0``. It is closed for the same reason the encoding width's
+    is: the value selects one column of the action chunk, so there is no third
+    thing it could mean, and no endpoint left to decide.
+
+    Every other value is refused where it is supplied, because none of them is
+    refused usefully further down - the index reaches
+    ``action_chunk[:, gidx]`` and ``np.delete(action_chunk, gidx, axis=1)``:
+
+    * a negative other than the sentinel - ``-5``, ``-99`` - and ``nan`` all fail
+      the ``>= 0`` test the resolution used, so each was answered with the
+      *default*: the trailing column, exactly as if the sentinel had been
+      supplied. A request no column satisfies became the documented default with
+      nothing logged and nothing returned to say so, which is the one outcome a
+      caller cannot detect - the value they meant and the value that was used
+      differ, and both calls report the same clean joint targets.
+    * a non-integral float, ``inf``, ``True`` and a numeric string reach the
+      index itself and raise ``IndexError: only integers, slices ...`` or
+      ``ValueError: boolean array argument obj to delete ...``, naming neither
+      the parameter nor the surface.
+    * ``None`` and a list fail the ``>= 0`` comparison with ``TypeError: '>='
+      not supported between instances of ...``, which is not the ``ValueError``
+      channel this function documents.
+
+    Normalizing is load-bearing rather than cosmetic, exactly as for
+    :func:`coerce_rotation_dim`: the value indexes a column, so an integral
+    float - what a JSON or YAML config read produces, and what
+    ``int(meta["gripper_dim_index"])`` produced on the provider path - has to
+    arrive there as an index. Validation decides whether the value can be
+    honored; the conversion makes the honored one consumable.
+
+    Numeric-ness, ``bool`` rejection, finiteness and the float64 range are
+    :func:`~strands_robots.utils.finite_number_error`'s, whose domain this is a
+    subset of; only the sentinel and the sign are decided here. Whether an
+    in-range index actually addresses a column of *this* chunk needs the chunk's
+    width, so it is checked by
+    :func:`decode_vera_delta_chunk_to_targets` where that width is known.
+
+    Args:
+        value: The caller-supplied gripper-column index.
+        param: The parameter it came from, used in the message.
+        context: Message prefix identifying the surface that received it -
+            normally the public method or function name.
+
+    Returns:
+        ``(index, None)`` when usable, else ``(None, message)``.
+    """
+    if (err := finite_number_error(value, param, context)) is not None:
+        return None, err
+    numeric = float(value)
+    index = int(numeric)
+    if numeric != index or (index < 0 and index != GRIPPER_INDEX_LAST):
+        return None, (
+            f"{context}: {param} must be {GRIPPER_INDEX_LAST} (the trailing column) "
+            f"or a column index >= 0, got {value!r}."
+        )
+    return index, None
+
+
 def decode_vera_delta_chunk_to_targets(
     action_chunk: np.ndarray,
     ik_bridge: MinkIKBridge,
@@ -203,8 +274,11 @@ def decode_vera_delta_chunk_to_targets(
             the two the decoder implements. Any other width is refused up
             front; see the ``Raises`` section.
         has_gripper: Whether the chunk carries a trailing gripper column.
-        gripper_dim_index: Index of the gripper column (``-1`` => last when
-            ``has_gripper``); the value is passed through (binarized by caller).
+        gripper_dim_index: Index of the gripper column, or
+            :data:`GRIPPER_INDEX_LAST` for the trailing one; the value read out
+            of it is passed through (binarized by caller). Read only when
+            ``has_gripper``, and then it must address a column of this chunk;
+            see the ``Raises`` section.
         translation_scale: Multiplier on the translation delta, composed on
             top of the OSC position scale (units match). Must be a positive
             finite number; see the ``Raises`` section for why.
@@ -212,8 +286,10 @@ def decode_vera_delta_chunk_to_targets(
     Raises:
         ValueError: If ``action_chunk`` is not ``[T, D]``, if it carries too
             few pose dims, if ``rotation_dim`` is not one of the encodings
-            :func:`delta_to_matrix` implements, or if ``translation_scale`` is
-            not a positive finite number. An unusable ``rotation_dim`` is
+            :func:`delta_to_matrix` implements, if ``translation_scale`` is
+            not a positive finite number, or if ``gripper_dim_index`` names no
+            column of the chunk - see :func:`coerce_gripper_dim_index` for why
+            an index outside that set is not refused by anything downstream. An unusable ``rotation_dim`` is
             refused here for the same reason the scale is: it indexes the
             rotation block of every step, so a non-integral or non-numeric
             width raised ``TypeError: slice indices must be integers`` out of
@@ -249,6 +325,18 @@ def decode_vera_delta_chunk_to_targets(
     if dim is None:
         raise ValueError(dim_err)
     rotation_dim = dim
+    # Third of the three, same place, same reason: the index selects the gripper
+    # column of every step. Checked only when a gripper column is claimed, since
+    # ``has_gripper=False`` means nothing reads it - refusing a value this call
+    # never consumes would be a false rejection. Whether an in-range index
+    # addresses a column of *this* chunk needs ``D``, so that half is below.
+    if has_gripper:
+        gidx_value, gidx_err = coerce_gripper_dim_index(
+            gripper_dim_index, "gripper_dim_index", "decode_vera_delta_chunk_to_targets"
+        )
+        if gidx_value is None:
+            raise ValueError(gidx_err)
+        gripper_dim_index = gidx_value
     action_chunk = np.asarray(action_chunk, dtype=np.float64)
     if action_chunk.ndim != 2:
         raise ValueError(f"action_chunk must be [T, D]; got {action_chunk.shape}")
@@ -258,7 +346,13 @@ def decode_vera_delta_chunk_to_targets(
     gripper = None
     pose_block = action_chunk
     if has_gripper:
-        gidx = gripper_dim_index if gripper_dim_index >= 0 else D - 1
+        gidx = D - 1 if gripper_dim_index == GRIPPER_INDEX_LAST else gripper_dim_index
+        if gidx >= D:
+            raise ValueError(
+                f"decode_vera_delta_chunk_to_targets: gripper_dim_index {gripper_dim_index} "
+                f"addresses no column of a {D}-wide action chunk (columns 0..{D - 1}, "
+                f"or {GRIPPER_INDEX_LAST} for the trailing one)."
+            )
         gripper = action_chunk[:, gidx].copy()
         pose_block = np.delete(action_chunk, gidx, axis=1)
 
