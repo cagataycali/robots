@@ -1,0 +1,43 @@
+{
+  "tree": "/tmp/robots-mine-31435898987",
+  "fresh_process_lerobot_in_sys_modules": "False",
+  "cov_before": {
+    "missing": 45,
+    "percent": 92,
+    "probe_lines_listed": true
+  },
+  "cov_after": {
+    "missing": 41,
+    "percent": 93,
+    "probe_lines_listed": false
+  },
+  "subset_before": "155 passed in 9.35s",
+  "subset_after": "166 passed in 9.71s",
+  "probe_span": [
+    398,
+    410
+  ],
+  "mutations": [
+    {
+      "label": "M1  the try/except is dropped",
+      "new": "3 failed, 8 passed in 0.25s",
+      "old": "155 passed in 4.03s"
+    },
+    {
+      "label": "M2  an import replaces the spec lookup",
+      "new": "6 failed, 5 passed in 0.27s",
+      "old": "155 passed in 3.54s"
+    },
+    {
+      "label": "M3  the lookup outcome is ignored",
+      "new": "5 failed, 6 passed in 0.26s",
+      "old": "155 passed in 3.54s"
+    },
+    {
+      "label": "M4  the swallow drops ValueError",
+      "new": "2 failed, 9 passed in 0.25s",
+      "old": "155 passed in 3.55s"
+    }
+  ],
+  "restored_byte_identical": true
+}
