@@ -19,9 +19,12 @@ import pytest
 # Skip the whole module if mujoco isn't available (dev env without [sim-mujoco]).
 pytest.importorskip("mujoco")
 
+import inspect
 import json
 import re
 from pathlib import Path
+
+from strands.types.tools import AgentTool  # noqa: E402
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
@@ -446,3 +449,166 @@ class TestTheSchemaPublishesTheArityTheRouterEnforces:
             "orientation must publish the scalar-first component order; an [x, y, z, w] "
             f"vector is otherwise indistinguishable to a caller. Got: {description!r}"
         )
+
+
+# Router-vs-enum breadth contract
+#
+# ``_dispatch_action`` resolves an action with ``getattr(self, name)`` and no
+# allowlist, so every public method is dispatchable while the ``action`` enum
+# advertises a curated subset. The enum -> method direction is already pinned
+# above (``test_every_tool_spec_action_has_a_public_method_or_documented_alias``);
+# this section pins the direction that was never measured, which is the one that
+# drifts silently. Adding a public method to the engine or any mixin made it
+# agent-dispatchable-but-unadvertised, and nothing could tell that apart from a
+# deliberate omission - so the omissions and the accidents looked identical.
+#
+# Membership in ``_PYTHON_ONLY_ACTIONS`` means "dispatchable from Python,
+# deliberately not advertised to a model". It does NOT mean "must stay
+# unadvertised": publishing any of these is a curation judgement, and whether the
+# router should instead refuse a non-enum action is the open question in #2093.
+# This guard settles neither. It only makes the set unable to change in silence -
+# a new public method fails here until someone writes down which side it is on.
+#
+# Nothing is asserted about the count, deliberately: a number in an assertion
+# message is stale the first time the set legitimately changes, and the failure
+# names the methods either way.
+
+# Grouped by declaring class, which is the unit a reviewer checks against.
+_PYTHON_ONLY_ACTIONS = frozenset(
+    {
+        # MuJoCoSimEngine - lifecycle and introspection, plus the two
+        # move-the-robot paths the motion primitives and run_policy front.
+        "bind_policy_sim_context",
+        "cleanup",
+        "describe",
+        "get_observation",
+        "physics_timestep",
+        "robot_action_keys",
+        "robot_joint_names",
+        "run_multi_policy",
+        "send_action",
+        # RenderingMixin - return arrays / camera intrinsics rather than text.
+        "get_camera_params",
+        "get_frame",
+        "start_cameras_recording_synchronous",
+        # DatasetRecordingMixin
+        "save_episode",
+        "stream_dataset",
+        # SimEngine
+        "verify_dataset_episodes",
+        # ManipulationMixin
+        "attachment_involving",
+        # TeleopMixin - drives real hardware from a host input device.
+        "attach_teleop",
+        "detach_teleop",
+        "get_teleoperate_status",
+        "list_teleops",
+        "stop_teleoperate",
+        "teleoperate",
+        "tool_name_label",
+    }
+)
+
+
+def _dispatchable_public_methods(cls: type = Simulation) -> set[str]:
+    """Names ``_dispatch_action`` will resolve on ``cls``.
+
+    Mirrors the router's own reachability rule rather than restating it: it takes
+    ``getattr`` then ``inspect.signature``, so a public *callable* is the unit,
+    and the leading-underscore names it refuses are excluded here too.
+    """
+    return {name for name, _value in inspect.getmembers(cls, callable) if not name.startswith("_")}
+
+
+def _framework_surface() -> set[str]:
+    """The tool framework's own public surface, which is not a sim capability.
+
+    ``get_display_properties`` / ``mark_dynamic`` / ``stream`` reach the engine by
+    inheriting from ``AgentTool``, so listing them as deliberate sim omissions
+    would be wrong twice: they are not capabilities anyone curated, and a
+    strands-agents upgrade that adds a protocol method would fail the inventory
+    below for a reason that has nothing to do with this schema. Derived from the
+    live base class so that upgrade is absorbed instead of reported.
+    """
+    return {name for name in dir(AgentTool) if not name.startswith("_")}
+
+
+def _enum_targets() -> set[str]:
+    """Every method name the enum reaches, directly or through an action alias."""
+    enum = _tool_spec_properties()["action"]["enum"]
+    return set(enum) | {_LIVE_ALIASES.get(action, action) for action in enum}
+
+
+class TestTheRouterDispatchesOnlyPublishedOrDeclaredActions:
+    """The gap between what dispatches and what is advertised is declared."""
+
+    @staticmethod
+    def _unaccounted(cls: type = Simulation) -> set[str]:
+        return _dispatchable_public_methods(cls) - _enum_targets() - _framework_surface() - _PYTHON_ONLY_ACTIONS
+
+    def test_every_dispatchable_method_is_published_or_declared_python_only(self) -> None:
+        """A public method is either in the enum or named as Python-only.
+
+        This is the forcing function, and the reason it is an equality rather
+        than a subset check is in the companion test below: a method that is
+        quietly deleted should also fail, or the inventory decays into a list of
+        names that no longer mean anything.
+        """
+        unaccounted = self._unaccounted()
+        assert not unaccounted, (
+            "these methods are dispatchable via sim(action=...) but neither advertised in the "
+            "tool_spec enum nor declared in _PYTHON_ONLY_ACTIONS - publish the ones an agent "
+            f"should reach and add the rest to the inventory: {sorted(unaccounted)}"
+        )
+
+    def test_the_inventory_names_only_methods_that_still_exist(self) -> None:
+        """A renamed or removed method leaves the inventory, rather than rotting.
+
+        Without this, the set accumulates names that pin nothing: the test above
+        passes on a subset, so a stale entry is invisible there, and the next
+        reader cannot tell a live deliberate omission from a dead one.
+        """
+        stale = _PYTHON_ONLY_ACTIONS - _dispatchable_public_methods()
+        assert not stale, f"_PYTHON_ONLY_ACTIONS names methods that no longer exist: {sorted(stale)}"
+
+    def test_the_inventory_never_names_an_action_the_enum_publishes(self) -> None:
+        """The two sets are disjoint, so neither can mask the other.
+
+        An entry that is also in the enum would be a contradiction the first test
+        cannot report - subtracting the inventory would hide a published action
+        from the accounting, and the schema would be describing something the
+        inventory calls Python-only.
+        """
+        both = _PYTHON_ONLY_ACTIONS & _enum_targets()
+        assert not both, f"an action cannot be both published and declared Python-only: {sorted(both)}"
+
+    def test_the_framework_surface_hides_no_published_action(self) -> None:
+        """Excluding ``AgentTool``'s surface must not exempt a real capability.
+
+        ``_framework_surface`` is subtracted before the accounting, so a
+        framework method that ever shares a name with a published action would
+        stop being checked here without any test failing. Pinned as an emptiness
+        claim about the overlap so that collision is a failure, not a silence.
+        """
+        collision = _framework_surface() & _enum_targets()
+        assert not collision, (
+            "a tool_spec action shares a name with the AgentTool protocol surface, so the "
+            f"breadth accounting would skip it: {sorted(collision)}"
+        )
+
+    def test_a_newly_added_public_method_is_reported(self) -> None:
+        """Planted-defect meta-test: the accounting is not vacuous.
+
+        Every assertion above is that a set is empty, which is exactly the shape
+        that passes when the measurement silently finds nothing. A subclass
+        carrying one new public method is the condition the first test exists to
+        catch, so it must be reported for that subclass and absent for the real
+        one.
+        """
+
+        class _EngineWithANewCapability(Simulation):
+            def teleport_everything(self) -> dict[str, Any]:
+                raise NotImplementedError
+
+        assert self._unaccounted(_EngineWithANewCapability) == {"teleport_everything"}
+        assert not self._unaccounted(), "the real engine must stay accounted for"

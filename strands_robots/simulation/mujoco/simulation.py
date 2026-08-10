@@ -4995,6 +4995,19 @@ class MuJoCoSimEngine(
 
         Policy-provider kwargs are nested under ``policy_config`` (never
         top-level) so the dispatcher stays backend-agnostic.
+
+        Resolution is ``getattr`` by name with no allowlist, so the router is
+        deliberately wider than ``tool_spec.json``'s ``action`` enum: the enum is
+        the curated agent-facing subset, and a public method absent from it stays
+        callable as ``sim(action="...")`` from Python. That breadth is intended,
+        but until it was declared it was also unmeasured - a newly added public
+        method became agent-dispatchable-but-unadvertised, and no test could tell
+        that apart from a deliberate omission. ``_PYTHON_ONLY_ACTIONS`` in
+        ``tests/simulation/mujoco/test_tool_spec.py`` is that declaration, so a
+        new public method now fails there until it is either published in the enum
+        or recorded as Python-only. Whether the router should instead refuse a
+        non-enum action, making behaviour match the advertised contract, is the
+        open question in #2093; this states today's contract without settling it.
         """
         method_name = self._ACTION_ALIASES.get(action, action)
         method = getattr(self, method_name, None)
