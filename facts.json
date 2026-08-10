@@ -1,0 +1,125 @@
+{
+  "tree": "/tmp/robots-mine-31411566846",
+  "providers": {
+    "cosmos3": {
+      "path": "strands_robots/policies/cosmos3/policy.py",
+      "line": 341,
+      "before": false,
+      "after": true
+    },
+    "curobo": {
+      "path": "strands_robots/policies/curobo/policy.py",
+      "line": 399,
+      "before": false,
+      "after": true
+    },
+    "groot": {
+      "path": "strands_robots/policies/groot/policy.py",
+      "line": 687,
+      "before": false,
+      "after": true
+    },
+    "lerobot_async": {
+      "path": "strands_robots/policies/lerobot_async/policy.py",
+      "line": 312,
+      "before": false,
+      "after": true
+    },
+    "lerobot_local": {
+      "path": "strands_robots/policies/lerobot_local/policy.py",
+      "line": 781,
+      "before": false,
+      "after": true
+    },
+    "moveit2": {
+      "path": "strands_robots/policies/moveit2/policy.py",
+      "line": 179,
+      "before": false,
+      "after": true
+    },
+    "vera": {
+      "path": "strands_robots/policies/vera/provider.py",
+      "line": 303,
+      "before": false,
+      "after": true
+    }
+  },
+  "mutations": [
+    {
+      "style": "discard the raise, keep the call",
+      "provider": "cosmos3",
+      "new_failed": 3,
+      "new_passed": 26,
+      "old_failed": 0,
+      "old_passed": 35
+    },
+    {
+      "style": "discard the raise, keep the call",
+      "provider": "curobo",
+      "new_failed": 3,
+      "new_passed": 26,
+      "old_failed": 0,
+      "old_passed": 35
+    },
+    {
+      "style": "discard the raise, keep the call",
+      "provider": "groot",
+      "new_failed": 3,
+      "new_passed": 26,
+      "old_failed": 0,
+      "old_passed": 35
+    },
+    {
+      "style": "discard the raise, keep the call",
+      "provider": "lerobot_async",
+      "new_failed": 3,
+      "new_passed": 26,
+      "old_failed": 0,
+      "old_passed": 35
+    },
+    {
+      "style": "discard the raise, keep the call",
+      "provider": "lerobot_local",
+      "new_failed": 3,
+      "new_passed": 26,
+      "old_failed": 0,
+      "old_passed": 35
+    },
+    {
+      "style": "discard the raise, keep the call",
+      "provider": "moveit2",
+      "new_failed": 3,
+      "new_passed": 26,
+      "old_failed": 0,
+      "old_passed": 35
+    },
+    {
+      "style": "discard the raise, keep the call",
+      "provider": "vera",
+      "new_failed": 3,
+      "new_passed": 26,
+      "old_failed": 0,
+      "old_passed": 35
+    },
+    {
+      "style": "re-word the message locally",
+      "provider": "cosmos3",
+      "new_failed": 1,
+      "new_passed": 28,
+      "old_failed": 0,
+      "old_passed": 35
+    },
+    {
+      "style": "delete the whole guard",
+      "provider": "cosmos3",
+      "new_failed": 3,
+      "new_passed": 26,
+      "old_failed": 1,
+      "old_passed": 34
+    }
+  ],
+  "counts": {
+    "before_tests": 35,
+    "after_tests": 64
+  }
+}
