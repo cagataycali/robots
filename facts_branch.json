@@ -1,0 +1,37 @@
+{
+  "tree": "/tmp/robots-mine-31396282703",
+  "tag": "branch",
+  "reference_render": "/tmp/art-31396282703/branch_A_reference.png",
+  "reference_cams": [
+    "default",
+    "watch"
+  ],
+  "remove_status": "error",
+  "remove_text": "Camera 'watch' was not removed: the scene would not recompile without it. The camera is still registered and the scene is unchanged; the compiler's reason is logged.",
+  "after_remove_registry": [
+    "default",
+    "watch"
+  ],
+  "after_remove_model_cams": [
+    "default",
+    "watch"
+  ],
+  "after_remove_spec_cams": [
+    "default",
+    "watch"
+  ],
+  "after_remove_render_status": "success",
+  "after_remove_render": "/tmp/art-31396282703/branch_B_after_remove.png",
+  "later_add_status": "success",
+  "after_add_registry": [
+    "default",
+    "watch"
+  ],
+  "after_add_model_cams": [
+    "default",
+    "watch"
+  ],
+  "after_add_render_status": "success",
+  "after_add_render_text": "",
+  "after_add_render": "/tmp/art-31396282703/branch_C_after_later_add.png"
+}
