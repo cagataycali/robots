@@ -23,6 +23,10 @@ needs no exemption list.
 Three gating forms are accepted, all of which stop the assertion from running
 without a context: the probe's marker on the test function, the same marker on
 its class, or an in-function ``gl_available()`` skip. All three are in use.
+
+The rule's own non-vacuity pin is keyed on modules, never on a count of
+assertions: splitting one render call into its own gated case is what the remedy
+below asks for, and must not move a number a contributor then has to chase.
 """
 
 from __future__ import annotations
@@ -166,6 +170,18 @@ def survey(root: pathlib.Path) -> tuple[dict[str, list[int]], dict[str, list[int
     return ungated, gated, other_backend
 
 
+def unaccounted_modules(gated: dict[str, list[int]], expected: frozenset[str]) -> tuple[set[str], set[str]]:
+    """Return (in-scope modules with no gated assertion, gated modules not expected).
+
+    Both sides are keyed on modules. A count of gated assertions is a different
+    quantity from a count of modules: splitting one render assertion into its own
+    case -- exactly what this guard's remedy text asks a contributor to do -- moves
+    the first and not the second, so comparing them would fail a diff that did
+    precisely the right thing, with no pin left to update.
+    """
+    return set(expected) - set(gated), set(gated) - set(expected)
+
+
 class TestEveryMuJoCoRenderAssertionIsGated:
     def test_no_module_asserts_a_render_succeeded_without_the_probe(self) -> None:
         ungated, _, _ = survey(_tests_root())
@@ -177,14 +193,22 @@ class TestEveryMuJoCoRenderAssertionIsGated:
             f"tests.simulation.mujoco._gl_probe and split the render assertion into its own case."
         )
 
-    def test_the_survey_covers_the_modules_it_is_meant_to(self) -> None:
-        """Non-vacuity: a scan that found nothing must not read as a clean sweep."""
-        ungated, gated, _ = survey(_tests_root())
-        assert set(ungated) | set(gated) == EXPECTED_IN_SCOPE
+    def test_every_module_the_survey_covers_contributes_a_gated_assertion(self) -> None:
+        """Non-vacuity: a scan that found nothing must not read as a clean sweep.
 
-    def test_every_in_scope_assertion_is_accounted_for(self) -> None:
+        Keyed on modules in both directions, which is also the module-set check
+        this replaces: a module whose assertion stopped being gated leaves
+        ``gated`` and is reported here by name, and a scan rooted somewhere
+        unexpected reports every entry as missing.
+        """
         _, gated, _ = survey(_tests_root())
-        assert sum(len(lines) for lines in gated.values()) == len(EXPECTED_IN_SCOPE)
+        missing, unexpected = unaccounted_modules(gated, EXPECTED_IN_SCOPE)
+        assert not missing and not unexpected, (
+            f"the survey no longer accounts for EXPECTED_IN_SCOPE: {sorted(missing)} contribute no "
+            f"gated render assertion, and {sorted(unexpected)} are not listed. Add or drop the "
+            f"module path. Adding a second gated assertion to a module already listed is not a "
+            f"change to this pin."
+        )
 
 
 class TestTheScopeIsTheMujocoRequirement:
@@ -221,6 +245,25 @@ def test_planted(sim):
 """
 
 
+_PLANTED_TWO_GATED = """
+import pytest
+
+mujoco = pytest.importorskip("mujoco")
+
+from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
+
+
+@requires_gl
+def test_planted_one(sim):
+    assert sim.render(camera_name="default")["status"] == "success"
+
+
+@requires_gl
+def test_planted_two(sim):
+    assert sim.render_depth(camera_name="default")["status"] == "success"
+"""
+
+
 class TestTheSurveyDetectsWhatItClaimsTo:
     """A scanner that silently matched nothing would look like a clean tree."""
 
@@ -249,3 +292,47 @@ class TestTheSurveyDetectsWhatItClaimsTo:
         """The rule is about rendering, not about every envelope in the suite."""
         tree = ast.parse('assert sim.step(n_steps=5)["status"] == "success"\n')
         assert render_success_assertions(tree) == []
+
+
+class TestThePinIsKeyedOnModulesNotOnAnAssertionCount:
+    """Splitting a render assertion into its own case must need no pin updated.
+
+    That split is what this guard's remedy text instructs, so a pin that moved
+    with the number of assertions would turn the required check red on a diff
+    that complied with it -- and report only two bare integers.
+    """
+
+    def test_a_second_gated_assertion_in_a_listed_module_is_accounted_for(self, tmp_path: pathlib.Path) -> None:
+        root = tmp_path / "tests"
+        root.mkdir()
+        (root / "test_planted.py").write_text(_PLANTED_TWO_GATED, encoding="utf-8")
+        ungated, gated, _ = survey(root)
+        assert not ungated
+        assert unaccounted_modules(gated, frozenset({"tests/test_planted.py"})) == (set(), set())
+
+    def test_the_module_and_assertion_counts_are_different_quantities(self, tmp_path: pathlib.Path) -> None:
+        """One module, two gated assertions: why a count cannot stand in for a set."""
+        root = tmp_path / "tests"
+        root.mkdir()
+        (root / "test_planted.py").write_text(_PLANTED_TWO_GATED, encoding="utf-8")
+        _, gated, _ = survey(root)
+        assert set(gated) == {"tests/test_planted.py"}
+        assert sum(len(lines) for lines in gated.values()) == 2
+
+    def test_a_listed_module_contributing_nothing_gated_is_reported(self, tmp_path: pathlib.Path) -> None:
+        root = tmp_path / "tests"
+        root.mkdir()
+        (root / "test_planted.py").write_text(_PLANTED_UNGATED, encoding="utf-8")
+        _, gated, _ = survey(root)
+        missing, unexpected = unaccounted_modules(gated, frozenset({"tests/test_planted.py"}))
+        assert missing == {"tests/test_planted.py"}
+        assert not unexpected
+
+    def test_a_module_that_is_not_listed_is_reported(self, tmp_path: pathlib.Path) -> None:
+        root = tmp_path / "tests"
+        root.mkdir()
+        (root / "test_planted.py").write_text(_PLANTED_GATED, encoding="utf-8")
+        _, gated, _ = survey(root)
+        missing, unexpected = unaccounted_modules(gated, frozenset())
+        assert not missing
+        assert unexpected == {"tests/test_planted.py"}
