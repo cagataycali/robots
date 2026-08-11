@@ -1,0 +1,37 @@
+{
+  "tree": "/tmp/robots-mine-31493809724",
+  "records": [
+    {
+      "label": "healthy",
+      "tree": "/tmp/robots-mine-31493809724",
+      "home_png": "/tmp/art-31493809724/branch_healthy_home.png",
+      "ctor_ok": true,
+      "ctor_error": "",
+      "applied": 26,
+      "refused": 0,
+      "after_png": "/tmp/art-31493809724/branch_healthy_after.png",
+      "envelope": "(applied)",
+      "ee_z": 0.0,
+      "joints": [
+        0.0005,
+        0.926624,
+        -0.000265,
+        -0.075244,
+        -0.000365,
+        0.218432,
+        -0.090958
+      ]
+    },
+    {
+      "label": "posinf",
+      "tree": "/tmp/robots-mine-31493809724",
+      "home_png": "/tmp/art-31493809724/branch_posinf_home.png",
+      "ctor_ok": false,
+      "ctor_error": "ValueError: IsaacDeltaEEFController: pos_scale must be > 0, got inf.",
+      "applied": 0,
+      "refused": 0,
+      "after_png": "/tmp/art-31493809724/branch_posinf_after.png",
+      "envelope": "(no controller was built -- no action was issued)"
+    }
+  ]
+}

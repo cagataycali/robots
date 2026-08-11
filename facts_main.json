@@ -1,0 +1,47 @@
+{
+  "tree": "/tmp/wt-main-31493809724",
+  "records": [
+    {
+      "label": "healthy",
+      "tree": "/tmp/wt-main-31493809724",
+      "home_png": "/tmp/art-31493809724/main_healthy_home.png",
+      "ctor_ok": true,
+      "ctor_error": "",
+      "applied": 26,
+      "refused": 0,
+      "after_png": "/tmp/art-31493809724/main_healthy_after.png",
+      "envelope": "(applied)",
+      "ee_z": 0.0,
+      "joints": [
+        0.0005,
+        0.926624,
+        -0.000265,
+        -0.075244,
+        -0.000365,
+        0.218432,
+        -0.090958
+      ]
+    },
+    {
+      "label": "posinf",
+      "tree": "/tmp/wt-main-31493809724",
+      "home_png": "/tmp/art-31493809724/main_posinf_home.png",
+      "ctor_ok": true,
+      "ctor_error": "",
+      "applied": 0,
+      "refused": 26,
+      "after_png": "/tmp/art-31493809724/main_posinf_after.png",
+      "envelope": "send_action: action value for key 'panda_joint1' must be finite (no nan/inf), got nan.",
+      "ee_z": 0.0,
+      "joints": [
+        -7.8e-05,
+        0.082936,
+        -0.000125,
+        -0.299548,
+        -0.000234,
+        0.232847,
+        -0.101713
+      ]
+    }
+  ]
+}
