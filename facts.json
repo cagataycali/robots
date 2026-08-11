@@ -1,0 +1,194 @@
+{
+  "tree": "/tmp/robots-mine-31535422217",
+  "matrix": [
+    {
+      "contract": "start_recording: a failed recorder creation resets `recording`",
+      "backends": {
+        "isaac": {
+          "line": 401,
+          "before": false,
+          "after": true
+        },
+        "newton": {
+          "line": 371,
+          "before": true,
+          "after": true
+        }
+      }
+    },
+    {
+      "contract": "start_recording: an existing dataset resumes (appends)",
+      "backends": {
+        "isaac": {
+          "line": 371,
+          "before": false,
+          "after": true
+        },
+        "newton": {
+          "line": 340,
+          "before": true,
+          "after": true
+        }
+      }
+    },
+    {
+      "contract": "capture hook: no-op when the recorder is absent",
+      "backends": {
+        "isaac": {
+          "line": 561,
+          "before": false,
+          "after": true
+        },
+        "newton": {
+          "line": 495,
+          "before": true,
+          "after": true
+        }
+      }
+    },
+    {
+      "contract": "capture hook: no-op when recording has stopped",
+      "backends": {
+        "isaac": {
+          "line": 558,
+          "before": false,
+          "after": true
+        },
+        "newton": {
+          "line": 492,
+          "before": false,
+          "after": true
+        }
+      }
+    }
+  ],
+  "coverage": {
+    "strands_robots/simulation/isaac/recording.py": {
+      "stmts": 165,
+      "before_miss": 15,
+      "after_miss": 5,
+      "before_pct": 90.9090909090909,
+      "after_pct": 96.96969696969697,
+      "closed": [
+        368,
+        369,
+        370,
+        371,
+        400,
+        401,
+        402,
+        403,
+        558,
+        561
+      ],
+      "remaining": [
+        256,
+        338,
+        420,
+        484,
+        485
+      ]
+    },
+    "strands_robots/simulation/newton/recording.py": {
+      "stmts": 155,
+      "before_miss": 2,
+      "after_miss": 1,
+      "before_pct": 98.70967741935483,
+      "after_pct": 99.35483870967742,
+      "closed": [
+        492
+      ],
+      "remaining": [
+        187
+      ]
+    }
+  },
+  "mutations": [
+    {
+      "label": "(unmutated control)",
+      "new": {
+        "failed": 0,
+        "passed": 5
+      },
+      "old": {
+        "failed": 0,
+        "passed": 38
+      }
+    },
+    {
+      "label": "M1  isaac: drop the recording-flag early-out",
+      "new": {
+        "failed": 1,
+        "passed": 4
+      },
+      "old": {
+        "failed": 0,
+        "passed": 38
+      }
+    },
+    {
+      "label": "M2  isaac: keep the flag check, discard its return",
+      "new": {
+        "failed": 1,
+        "passed": 4
+      },
+      "old": {
+        "failed": 0,
+        "passed": 38
+      }
+    },
+    {
+      "label": "M3  isaac: drop the recorder-absent early-out",
+      "new": {
+        "failed": 1,
+        "passed": 4
+      },
+      "old": {
+        "failed": 0,
+        "passed": 38
+      }
+    },
+    {
+      "label": "M4  isaac: a failed create no longer resets the flag",
+      "new": {
+        "failed": 1,
+        "passed": 4
+      },
+      "old": {
+        "failed": 0,
+        "passed": 38
+      }
+    },
+    {
+      "label": "M5  isaac: the resume result is never attached",
+      "new": {
+        "failed": 1,
+        "passed": 4
+      },
+      "old": {
+        "failed": 0,
+        "passed": 38
+      }
+    },
+    {
+      "label": "M6  newton: drop the recording-flag early-out",
+      "new": {
+        "failed": 1,
+        "passed": 4
+      },
+      "old": {
+        "failed": 0,
+        "passed": 38
+      }
+    }
+  ],
+  "suite": {
+    "before": 28174,
+    "after": 28179,
+    "skipped": 257
+  },
+  "totals": {
+    "before_miss": 1834,
+    "after_miss": 1822
+  }
+}
