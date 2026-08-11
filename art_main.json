@@ -1,0 +1,24 @@
+{
+ "tree": "/tmp/ctrl-31515130155",
+ "split": {
+  "recorder_modules": {
+   "resolves": 65,
+   "inspects": 64
+  },
+  "teleoperate_tool": {
+   "resolves": 52,
+   "inspects": 0
+  }
+ },
+ "clean": {
+  "failed": 0,
+  "passed": 333,
+  "file_exists_error": false
+ },
+ "planted": {
+  "failed": 64,
+  "passed": 269,
+  "file_exists_error": true
+ },
+ "cleanup_verified": true
+}
