@@ -1,0 +1,43 @@
+{
+  "tree": "/tmp/wt-base-31463334079",
+  "pytest_render": "assert <[AttributeError(\"'RosBridgedRobot' object has no attribute 'node_name'\") raised in repr()] RosBridgedRobot object at 0xffff86c0c590> is None",
+  "refusal": "invalid node_name: 'bad name!' (expected a ROS 2 graph name like /turtle1/cmd_vel)",
+  "survey": {
+    "DatasetRecorder": "raises: AttributeError: 'DatasetRecorder' object has no attribute 'dataset'",
+    "HardwareRtpsBridge": "raises: AttributeError: 'HardwareRtpsBridge' object has no attribute '_robot_name'",
+    "Mesh": "raises: AttributeError: 'Mesh' object has no attribute '_running'",
+    "InputPublisher": "raises: AttributeError: 'InputPublisher' object has no attribute '_running'",
+    "InputReceiver": "raises: AttributeError: 'InputReceiver' object has no attribute '_running'",
+    "RosBridgedRobot": "raises: AttributeError: 'RosBridgedRobot' object has no attribute 'node_name'",
+    "RosbridgeRobot": "raises: AttributeError: 'RosbridgeRobot' object has no attribute 'node_name'",
+    "RtpsRobot": "raises: AttributeError: 'RtpsRobot' object has no attribute 'node_name'",
+    "PeerInfo": "raises: AttributeError: 'PeerInfo' object has no attribute 'peer_id'",
+    "ProcessorBridge": "raises: AttributeError: 'ProcessorBridge' object has no attribute '_preprocessor'",
+    "IsaacSimulation": "ok: IsaacSimulation(partially constructed, id=0xfffebece16a0)"
+  },
+  "built": {
+    "RosBridgedRobot": "RosBridgedRobot(node_name='/turtle1', cmd_vel_topic='/cmd_vel', odom_topic='/odom', scan_topic=None)",
+    "RosbridgeRobot": "RosbridgeRobot(node_name='/turtle1', ws://127.0.0.1:9090, cmd_vel_topic='/cmd_vel', odom_topic='/odom')",
+    "RtpsRobot": "RtpsRobot(node_name='/arm', cmd_vel_topic='/cmd_vel', cmd_vel_type='geometry_msgs/msg/Twist')",
+    "Mesh": "Mesh(peer_id='arm', type='robot', stopped)",
+    "PeerInfo": "PeerInfo(peer_id='arm', type='robot'",
+    "DatasetRecorder": "DatasetRecorder(repo_id=user/dataset, episodes=0, frames=0)",
+    "InputPublisher": "InputPublisher(device='leader', method='arm', stopped)",
+    "InputReceiver": "InputReceiver(source='peer', device='leader', stopped)",
+    "ProcessorBridge": "ProcessorBridge(pre=None, post=None)"
+  },
+  "digests": {
+    "dataset_recorder.py": "c5fc51afca495574",
+    "hardware_rtps_bridge.py": "b00c6bc7db4671ee",
+    "mesh/core.py": "04ef7e7fa97b683f",
+    "mesh/input.py": "6369c40021b246c9",
+    "mesh/ros_bridge.py": "4c80d4f7ddde2347",
+    "mesh/rosbridge_robot.py": "7b3aa78aa7ae8d3b",
+    "mesh/rtps_robot.py": "6abb20526df47ea2",
+    "mesh/session.py": "2c19dda5911761e7",
+    "policies/lerobot_local/processor.py": "a85c5483a944f195",
+    "simulation/isaac/simulation.py": "a3e7592ba6a0a2a0"
+  },
+  "frame": "/tmp/art-base-31463334079_frame.png",
+  "sim_status": "success"
+}
