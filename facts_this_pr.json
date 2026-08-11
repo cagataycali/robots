@@ -1,0 +1,31 @@
+{
+  "tree": "/tmp/robots-mine-31484409863",
+  "runs": [
+    {
+      "label": "healthy",
+      "z_start": 0.618824418991844,
+      "applied": 26,
+      "action_errors": 0,
+      "png_start": "healthy_start.png",
+      "install": "accepted",
+      "install_error": null,
+      "adapter_error": null,
+      "controller_installed": true,
+      "z_end": 0.36034185591304324,
+      "png_end": "healthy_end.png"
+    },
+    {
+      "label": "broken_obs",
+      "z_start": 0.618824418991844,
+      "applied": 0,
+      "action_errors": 0,
+      "png_start": "broken_obs_start.png",
+      "install": "refused",
+      "install_error": "Isaac delta-EEF controller cannot read the arm joint state of 'panda': Observation for robot 'panda' is missing arm joint 'panda_joint4'; observation keys: ['panda_finger_joint1', 'panda_finger_joint2', 'panda_joint1', 'panda_joint2', 'panda_joint3', 'panda_joint5', 'panda_joint6', 'panda_joint7'].",
+      "adapter_error": "Isaac delta-EEF controller cannot read the arm joint state of 'panda': Observation for robot 'panda' is missing arm joint 'panda_joint4'; observation keys: ['panda_finger_joint1', 'panda_finger_joint2', 'panda_joint1', 'panda_joint2', 'panda_joint3', 'panda_joint5', 'panda_joint6', 'panda_joint7']. GR00T actions would no-op without the Isaac delta-EEF action controller.",
+      "controller_installed": false,
+      "z_end": 0.6177732406738309,
+      "png_end": "broken_obs_end.png"
+    }
+  ]
+}

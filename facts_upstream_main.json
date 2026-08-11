@@ -1,0 +1,31 @@
+{
+  "tree": "/tmp/wt-main-31484409863",
+  "runs": [
+    {
+      "label": "healthy",
+      "z_start": 0.618824418991844,
+      "applied": 26,
+      "action_errors": 0,
+      "png_start": "healthy_start.png",
+      "install": "accepted",
+      "install_error": null,
+      "adapter_error": null,
+      "controller_installed": true,
+      "z_end": 0.36034185591304324,
+      "png_end": "healthy_end.png"
+    },
+    {
+      "label": "broken_obs",
+      "z_start": 0.618824418991844,
+      "applied": 0,
+      "action_errors": 26,
+      "png_start": "broken_obs_start.png",
+      "install": "accepted",
+      "install_error": null,
+      "adapter_error": null,
+      "controller_installed": true,
+      "z_end": 0.6177732406738309,
+      "png_end": "broken_obs_end.png"
+    }
+  ]
+}
