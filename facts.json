@@ -1,0 +1,12 @@
+{
+  "tree": "/tmp/robots-mine-31454817661",
+  "refused_status": "error",
+  "refused_text": "Body 'None' not found. Available bodies: ['crate']. Use action='list_bodies' to see all.",
+  "render_status": "success",
+  "frame_shape": [
+    560,
+    760,
+    3
+  ],
+  "saturated_frac": 0.7914
+}
