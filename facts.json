@@ -1,0 +1,100 @@
+{
+ "tree": "/tmp/robots-mine-31475525465",
+ "shadowing": [
+  {
+   "descriptor": "non-data (__get__ only)",
+   "reads": 0,
+   "shadowed": true,
+   "assertion_passes": true,
+   "branch": "plain cache hit (L214-215)"
+  },
+  {
+   "descriptor": "data (__get__ + __set__)",
+   "reads": 3,
+   "shadowed": false,
+   "assertion_passes": true,
+   "branch": "wait loop (L217-219)"
+  }
+ ],
+ "cov": {
+  "before": {
+   "missing": [
+    209,
+    219,
+    345,
+    408
+   ],
+   "pct": 97.7
+  },
+  "after": {
+   "missing": [
+    345,
+    408
+   ],
+   "pct": 98.85
+  }
+ },
+ "states": [
+  [
+   "new connection, run() raised",
+   204
+  ],
+  [
+   "new connection, ready but connector down",
+   209
+  ],
+  [
+   "new connection, connected",
+   213
+  ],
+  [
+   "cached, connected",
+   215
+  ],
+  [
+   "cached, dropped, recovers during wait",
+   219
+  ],
+  [
+   "cached, dropped, never recovers",
+   221
+  ]
+ ],
+ "mutations": [
+  {
+   "m": "M1 delete the ready-without-connection guard",
+   "new_failed": 4,
+   "new": 33,
+   "old_failed": 0,
+   "old": 33
+  },
+  {
+   "m": "M2 give it the raised-dial wording (indistinguishable)",
+   "new_failed": 1,
+   "new": 36,
+   "old_failed": 0,
+   "old": 33
+  },
+  {
+   "m": "M3 wait loop never returns early",
+   "new_failed": 1,
+   "new": 36,
+   "old_failed": 0,
+   "old": 33
+  },
+  {
+   "m": "M4 do not cache a not-yet-connected entry",
+   "new_failed": 5,
+   "new": 32,
+   "old_failed": 4,
+   "old": 29
+  },
+  {
+   "m": "M5 revert __set__ (non-data descriptor again)",
+   "new_failed": 1,
+   "new": 36,
+   "old_failed": "n/a",
+   "old": "n/a"
+  }
+ ]
+}
