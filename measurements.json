@@ -1,0 +1,67 @@
+{
+  "tree": "/tmp/robots-mine-31530588280",
+  "present": {
+    "main": {
+      "passed": 37,
+      "skipped": 0,
+      "failed": 0
+    },
+    "branch": {
+      "passed": 39,
+      "skipped": 0,
+      "failed": 0
+    }
+  },
+  "blocked": {
+    "main": {
+      "passed": 26,
+      "skipped": 11,
+      "failed": 0
+    },
+    "branch": {
+      "passed": 39,
+      "skipped": 0,
+      "failed": 0
+    }
+  },
+  "nine_cells_blocked": {
+    "main": {
+      "passed": 6,
+      "skipped": 3,
+      "failed": 0
+    },
+    "branch": {
+      "passed": 9,
+      "skipped": 0,
+      "failed": 0
+    }
+  },
+  "mutation_blocked": {
+    "main": {
+      "passed": 26,
+      "skipped": 11,
+      "failed": 0
+    },
+    "branch": {
+      "passed": 37,
+      "skipped": 0,
+      "failed": 2
+    }
+  },
+  "recording": {
+    "start": "success",
+    "rollout": "success",
+    "stop": "success",
+    "episodes": 1,
+    "frames": 24,
+    "fps": 20,
+    "mp4_bytes": 55841,
+    "decoded_frames": 24,
+    "frame_shape": [
+      480,
+      640,
+      3
+    ],
+    "saturated_frac": 0.8801529947916666
+  }
+}
