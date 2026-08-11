@@ -637,6 +637,15 @@ class LerobotLocalPolicy(Policy):
         # their model index, and the degradation is surfaced rather than
         # silent (mirrors _resolve_state_order's all-missing guard).
         self._state_missing_keys_warned: bool = False
+        # Warn at most once per policy when relative-action RTC re-anchoring is
+        # enabled but the leftover cannot be converted to absolute coordinates.
+        # The consequence is the one _resolve_rtc_rebase_steps warns about for a
+        # missing LeRobot helper - a stale-frame chunk-seam prefix - so it is
+        # surfaced the same way instead of degrading silently behind that
+        # method's "re-anchoring enabled" INFO line. Per-policy, not per-episode
+        # (the bridge's postprocessor shape does not change across a reset), so
+        # reset() deliberately leaves it latched.
+        self._rtc_reanchor_degraded_warned: bool = False
         # Telemetry parallel to generic_state_keys_used: flipped True the
         # first time a resolved state key is missing from the observation
         # so run_policy / eval_policy can surface a machine-checkable signal.
@@ -1861,18 +1870,60 @@ class LerobotLocalPolicy(Policy):
         full chunk then slicing.
 
         Returns ``None`` (disabling re-anchoring this step, falling back to the
-        model-space leftover) when the policy is not relative-action or the
-        postprocessor does not yield a plain action tensor.
+        model-space leftover) in three cases, only the first of which is benign:
+
+        - The policy is not relative-action (``_rtc_relative_step`` unset). Its
+          frame does not move, so there is nothing to re-anchor and nothing to
+          report.
+        - The processor bridge has no postprocessor.
+        - The postprocessor does not yield a plain action tensor.
+
+        The last two are degradations rather than no-ops: the policy *is*
+        relative-action, so every following chunk blends a stale-frame prefix -
+        exactly the outcome :meth:`_resolve_rtc_rebase_steps` warns about when
+        the LeRobot re-anchor helper is unavailable. Both therefore warn once per
+        policy instead of degrading silently behind that method's
+        "re-anchoring enabled" INFO line.
+
+        A postprocessor that *raises* is out of scope here: ``postprocess``
+        documents ``RuntimeError``, and propagating it keeps a broken pipeline
+        fatal rather than downgrading it to a silent frame shift.
         """
         if self._rtc_relative_step is None:
             return None
         bridge = self._processor_bridge
         if bridge is None or not bridge.has_postprocessor:
+            self._warn_reanchor_degraded("the processor bridge has no postprocessor")
             return None
         absolute = bridge.postprocess(leftover_model.clone())
         if not isinstance(absolute, torch.Tensor):
+            self._warn_reanchor_degraded(f"the postprocessor returned {type(absolute).__name__}, not a tensor")
             return None
         return absolute.detach()
+
+    def _warn_reanchor_degraded(self, reason: str) -> None:
+        """Report a relative-action leftover that could not be re-anchored, once.
+
+        Mirrors the wording :meth:`_resolve_rtc_rebase_steps` uses for the same
+        consequence when the LeRobot re-anchor helper is missing, so the two
+        routes to a stale-frame chunk seam read alike. Latched per policy: this
+        is a pipeline-shape problem that will recur on every inference, and
+        :meth:`_absolute_rtc_leftover` runs once per chunk.
+
+        Args:
+            reason: Why the absolute conversion was unavailable, interpolated
+                into the warning so the cause is named alongside the effect.
+        """
+        if self._rtc_reanchor_degraded_warned:
+            return
+        logger.warning(
+            "Relative-action RTC re-anchoring is enabled for '%s' but the chunk leftover "
+            "could not be converted to absolute coordinates (%s); the chunk-seam prefix "
+            "will be carried in a STALE coordinate frame.",
+            type(self._policy).__name__,
+            reason,
+        )
+        self._rtc_reanchor_degraded_warned = True
 
     def _predict_with_rtc(self, batch: dict[str, Any]) -> torch.Tensor:
         """Run inference using predict_action_chunk with RTC kwargs.
