@@ -1,0 +1,74 @@
+{
+  "tree": "/tmp/robots-mine-31471303820",
+  "entry_points": [
+    {
+      "surface": "teleoperate(publish=True)  [mixin]",
+      "outcome": "refused: teleoperate: hz must be > 0, got 0.",
+      "driven_before": true,
+      "note": "validates hz, then forwards it on"
+    },
+    {
+      "surface": "Robot.start_teleop_publish  [hardware]",
+      "outcome": "refused: start_teleop_publish: hz must be > 0, got 0.",
+      "driven_before": false,
+      "note": "the only guard a direct caller passes"
+    },
+    {
+      "surface": "InputPublisher(hz=...)  [constructor]",
+      "outcome": "raises ValueError: InputPublisher: hz must be > 0, got 0.",
+      "driven_before": true,
+      "note": "raises; a tool caller cannot use it"
+    }
+  ],
+  "mutations": [
+    {
+      "label": "M1  delete the hz guard",
+      "new": 26,
+      "old": 0
+    },
+    {
+      "label": "M2  move the guard below the teardown",
+      "new": 1,
+      "old": 0
+    },
+    {
+      "label": "M3  keep the call, discard the refusal",
+      "new": 26,
+      "old": 0
+    },
+    {
+      "label": "M4  hand-rolled guard replaces the domain",
+      "new": 24,
+      "old": 0
+    },
+    {
+      "label": "M5  delete the replacement teardown",
+      "new": 1,
+      "old": 1
+    }
+  ],
+  "coverage": {
+    "file": "strands_robots/hardware_robot.py",
+    "missing_before": 243,
+    "missing_after": 242,
+    "line": 2650
+  },
+  "stub": {
+    "class": "tests.test_teleop.FakePublishHost.start_teleop_publish",
+    "status": "success",
+    "validates": false
+  },
+  "ordering_refused": {
+    "status": "error",
+    "live_stopped": false
+  },
+  "ordering_accepted": {
+    "status": "success",
+    "live_stopped": true,
+    "replaced": true
+  },
+  "suite_arms": {
+    "new_cases": 30,
+    "preexisting_cases": 254
+  }
+}
