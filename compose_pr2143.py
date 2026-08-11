@@ -8,7 +8,7 @@ import numpy as np
 from PIL import Image
 
 A = json.loads(pathlib.Path("/tmp/art_main.json").read_text())   # pristine e059fc5
-B = json.loads(pathlib.Path("/tmp/art_branch.json").read_text())  # this branch
+B = json.loads(pathlib.Path("/tmp/art_theirs.json").read_text())  # PR #2143
 assert A["tree"] != B["tree"], "both dumps came from the same tree"
 assert A["cleanup_verified"] and B["cleanup_verified"]
 
@@ -43,14 +43,14 @@ fig.suptitle(
 )
 fig.text(
     0.5, 0.938,
-    "Four recorder test modules, measured on the same machine minutes apart. "
-    "Tests only - no library behaviour changes.",
+    "Independent verification of PR #2143. Four recorder modules, same machine, "
+    "real mujoco / torch / lerobot installed.",
     ha="center", fontsize=11, color=GREY,
 )
 
 # ---------- row 1: what one stray dataset does to the four modules ----------
 for col, (label, facts, colour) in enumerate(
-    [("main (e059fc5)", A, RED), ("this branch", B, GREEN)]
+    [("main (9e0b77b9)", A, RED), ("PR #2143", B, GREEN)]
 ):
     ax = fig.add_subplot(gs[0, col])
     ax.set_xlim(0, 1); ax.set_ylim(0, 1); ax.axis("off")
@@ -127,7 +127,7 @@ lines = [
     "identical on both trees - the guard says nothing about resolving",
     "pre-fix proof: reverting the four modules while keeping the guard fails exactly "
     f"{A['planted']['failed']} tests, each naming root as the remedy",
-    "gate: 28079 passed / 257 skipped / 0 failed; ruff clean; mypy unchanged vs the pristine base",
+    "gate on c9a2e57: 28046 passed / 257 skipped / 0 failed; ruff clean; mypy identical to the base",
 ]
 top, last = 0.86, 0.10
 step = (top - last) / (len(lines) - 1)
@@ -146,7 +146,7 @@ for ax_, yy, is_axes in placed:
         lo, hi = ax_.get_ylim()
         assert lo - 0.05 <= yy <= hi + 0.07, (yy, lo, hi)
 
-out = pathlib.Path("/tmp/shared_cache_isolation.png")
+out = pathlib.Path("/tmp/pr2143_verification.png")
 fig.savefig(out, bbox_inches="tight", pad_inches=0.3, facecolor="white")
 plt.close(fig)
 
