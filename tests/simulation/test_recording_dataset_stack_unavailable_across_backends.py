@@ -33,16 +33,26 @@ above it are owned by
 the rate refusal between them is provably unreachable on Newton and Isaac for
 the reason that module records.
 
-The Isaac and Newton skeletons are the ones that module already builds with
-``__new__``; this block runs before either backend's lock, so neither the Isaac
-Sim Kit runtime nor the Newton/Warp stack is needed. Only the MuJoCo cells need
-a compiled model, so that factory alone is gated.
+All three engines are skeletons built with ``__new__`` - the Isaac and Newton
+ones are the pair that module already builds. This block runs before every
+backend's lock and before any solver call, so none of the three needs its own
+stack, and the MuJoCo cells need no compiled model either: the pre-flight reads
+a world sentinel and the two rollout maps, nothing more. That matters because
+the install most likely to be missing the lerobot extra is also the one most
+likely to be missing a simulator, and a cell that skips there is not pinning a
+contract the sibling MuJoCo class states must "hold in every environment".
+:class:`TestEveryCellRunsWithoutAnOptionalBackend` keeps it that way.
 """
 
 from __future__ import annotations
 
+import ast
 import contextlib
 import inspect
+import pathlib
+import subprocess
+import sys
+import threading
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -51,9 +61,15 @@ import pytest
 
 from strands_robots import dataset_recorder
 from strands_robots.simulation.isaac.simulation import IsaacSimulation
+from strands_robots.simulation.models import SimRobot, SimWorld
+from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 from strands_robots.simulation.newton.simulation import NewtonSimEngine
 
-from .test_recording_preflight_refusals_across_backends import _isaac_engine, _newton_engine
+from .test_recording_preflight_refusals_across_backends import (
+    _SO100_JOINTS,
+    _isaac_engine,
+    _newton_engine,
+)
 
 # Verbatim copy of the diagnosis ``lerobot_dataset_import_error`` produces when
 # the extra is missing, so the "surfaced verbatim" assertions below compare
@@ -107,17 +123,28 @@ CAUSES = [
 
 
 @contextlib.contextmanager
-def _mujoco_engine() -> Iterator[Any]:
-    """A real MuJoCo engine over an empty world - the only cell needing a model."""
-    pytest.importorskip("mujoco")
-    from strands_robots.simulation.mujoco.simulation import Simulation
+def _mujoco_skeleton() -> Iterator[Any]:
+    """A ``MuJoCoSimEngine`` over a hand-built world, with no ``mujoco`` import.
 
-    sim = Simulation(tool_name="dataset_stack_probe", mesh=False)
-    sim.create_world()
-    try:
-        yield sim
-    finally:
-        sim.cleanup()
+    The block under test runs before the lock and before any MuJoCo call, so the
+    engine needs only what the pre-flight reads: a world carrying the "created"
+    sentinels and one robot, plus the two rollout maps ``_active_rollout_rates``
+    prunes. Nothing here compiles a model, so these three cells run on an
+    install that has no ``mujoco`` at all - and no runtime was started, so there
+    is nothing to release.
+    """
+    world = SimWorld()
+    world._model = object()  # non-None sentinel: "world created"
+    world._data = object()
+    world.robots["so100"] = SimRobot(
+        name="so100", urdf_path="so100.xml", data_config="so100", joint_names=list(_SO100_JOINTS)
+    )
+    engine = MuJoCoSimEngine.__new__(MuJoCoSimEngine)
+    engine._world = world
+    engine._lock = threading.RLock()
+    engine._policy_threads = {}
+    engine._policy_rates = {}
+    yield engine
 
 
 @contextlib.contextmanager
@@ -133,7 +160,7 @@ def _isaac_skeleton() -> Iterator[Any]:
 
 
 BACKENDS = [
-    pytest.param(_mujoco_engine, id="mujoco"),
+    pytest.param(_mujoco_skeleton, id="mujoco"),
     pytest.param(_newton_skeleton, id="newton"),
     pytest.param(_isaac_skeleton, id="isaac"),
 ]
@@ -279,3 +306,36 @@ class TestARefusedStartRecordsNothing:
             assert engine._active_recorder() is None
 
         assert not root.exists()
+
+
+class TestEveryCellRunsWithoutAnOptionalBackend:
+    """The nine cells must not need the stacks whose absence they report on.
+
+    The report exists for a partially provisioned install, so a cell that only
+    runs where a simulator happens to be importable is not pinning it there.
+    Every engine above is a ``__new__`` skeleton, and importing the three engine
+    classes must stay free of the heavy modules - so this fails if a factory
+    grows a real runtime, an ``importorskip`` or an eager backend import.
+    """
+
+    def test_importing_the_three_engine_classes_pulls_no_heavy_module(self) -> None:
+        program = (
+            "import sys\n"
+            "from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine\n"
+            "from strands_robots.simulation.newton.simulation import NewtonSimEngine\n"
+            "from strands_robots.simulation.isaac.simulation import IsaacSimulation\n"
+            "heavy = ('mujoco', 'lerobot', 'newton', 'warp', 'isaacsim', 'omni', 'torch')\n"
+            "print(sorted(m for m in heavy if m in sys.modules))\n"
+        )
+        out = subprocess.run([sys.executable, "-c", program], capture_output=True, text=True, check=True, timeout=180)
+        assert out.stdout.strip().endswith("[]"), out.stdout
+
+    def test_no_engine_factory_asks_for_an_optional_package(self) -> None:
+        """``importorskip`` in a factory is what made three cells skip before."""
+        source = pathlib.Path(__file__).read_text()
+        tree = ast.parse(source)
+        factories = {"_mujoco_skeleton", "_newton_skeleton", "_isaac_skeleton"}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name in factories:
+                body = ast.get_source_segment(source, node) or ""
+                assert "importorskip" not in body, f"{node.name} gates on an optional package"
