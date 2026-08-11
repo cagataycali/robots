@@ -381,6 +381,47 @@ hatch run format            # ruff check --fix, ruff format
      minutes after the preceding close, because independent contributors read
      the same PR and reached opposite conclusions. Its extraction plan and
      terminal state live in #1723; do not flip #1667 again.
+
+     **Count the `nodes`, never `totalCount`.** An `itemTypes` argument narrows
+     `nodes` and nothing else: on a filtered connection `totalCount` is the count
+     of the *whole* timeline - commits, reviews, comments, project status changes
+     - so it answers a question nobody asked, and it answers it in the direction
+     that looks like caution. It invents a flip history where there is none. Four
+     pull requests, one query each:
+
+     | pull request | state | filtered `totalCount` | matching `nodes` |
+     |---|---|---|---|
+     | #2144 | open, **never closed once** | **2** | **0** |
+     | #2143 | merged | 13 | 1, and it is the squash |
+     | #1987 | merged, one deliberate flip | 25 | 3 |
+     | #1667 | the flip war above | 119 | **45** |
+
+     Asking for a type that cannot be there settles the mechanism, so no re-read
+     helps: `itemTypes: [CONVERT_TO_DRAFT_EVENT]` on #2143 returns `totalCount:
+     13` beside an **empty** `nodes`. The number is not stale, it is unrelated -
+     and it is not even stable. #1667 has been closed and retired since
+     2026-07-30, and two reads twenty minutes apart returned `119` then `120` with
+     its 45 close/reopen events unchanged: the new item is a `CrossReferencedEvent`
+     from #2146, the issue reporting this. Writing *about* a pull request raises
+     its apparent flip count, so a cached count drifts upward and the drift reads
+     as somebody flipping it again.
+
+     What the misread costs is the flip, which is not optional - the close/reopen
+     below is the *only* remedy for a head commit that spawned no check suite, and
+     re-running and re-pushing are both unavailable there. On such a pull request
+     `totalCount` reports a two-digit alternating run where the truth is zero, and
+     declining then looks exactly like following this rule, leaving it `BLOCKED`
+     forever and reported as reviewer bandwidth - the presentation #1905 and #1917
+     each record for their own cause. On a genuine flip war both readings say "do
+     not flip", so their agreement is never evidence the count is sound.
+
+     Read the tail, not the head. `nodes` is ordered oldest-first while what makes
+     a flip unsafe is what happened *last*, and on #1667 `first: 3` and `last: 3`
+     are disjoint windows five days apart - so use `last: N`. A merge also writes a
+     `ClosedEvent`, which is why #2143's single node is its own squash rather than
+     someone undoing you: a distinction the node list draws and a count cannot,
+     since it counts neither closes nor reopens. Pinned by
+     tests/test_timeline_filter_count_is_unfiltered.py.
    - *After.* A `mergePullRequest` mutation can report `Pull Request is not
      mergeable` on a merge that in fact landed - observed on #1756, where the
      mutation returned that error and the squash was already on `main`. Confirm
