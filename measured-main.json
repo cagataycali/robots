@@ -1,0 +1,59 @@
+{
+  "tree": "/tmp/ctrl-31509911318",
+  "session": [
+    {
+      "step": "drive_rover(linear=0.5)",
+      "tool": "drive_rover",
+      "published": [
+        {
+          "linear_x": 0.5,
+          "count": 1
+        }
+      ]
+    },
+    {
+      "step": "halt: no stop tool in the surface",
+      "tool": null,
+      "published": []
+    }
+  ],
+  "transports": {
+    "ROS 2 (rclpy)": {
+      "tools": [
+        "drive_rover",
+        "get_pose_rover"
+      ],
+      "stop_tool": false,
+      "stop_method": true
+    },
+    "rosbridge (websocket)": {
+      "tools": [
+        "drive_rover",
+        "get_pose_rover",
+        "stop_rover"
+      ],
+      "stop_tool": true,
+      "stop_method": true
+    },
+    "RTPS (cyclonedds)": {
+      "tools": [
+        "drive_rover",
+        "stop_rover"
+      ],
+      "stop_tool": true,
+      "stop_method": true
+    }
+  },
+  "ros2_tools": [
+    "drive_rover",
+    "get_pose_rover"
+  ],
+  "has_stop_tool": false,
+  "halt_tool": null,
+  "stop_method_wire": [
+    {
+      "linear_x": 0.0,
+      "count": 1
+    }
+  ]
+}
