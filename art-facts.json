@@ -1,0 +1,99 @@
+{
+  "tree": "/tmp/robots-mine-31457386593",
+  "with_guard": {
+    "send": {
+      "outcome": "RuntimeError: send reached its handler without pre-validation -- validate-before-HIT",
+      "wire": "-- not called --",
+      "dispatched": false,
+      "audited_success": []
+    },
+    "broadcast": {
+      "outcome": "RuntimeError: broadcast reached its handler without pre-validation -- validate-befor",
+      "wire": "-- not called --",
+      "dispatched": false,
+      "audited_success": []
+    }
+  },
+  "without_guard": {
+    "send": {
+      "outcome": "AttributeError: 'NoneType' object has no attribute 'get'",
+      "wire": "send('peer-b', None)",
+      "dispatched": true,
+      "audited_success": []
+    },
+    "broadcast": {
+      "outcome": "AttributeError: 'NoneType' object has no attribute 'get'",
+      "wire": "broadcast(None)",
+      "dispatched": true,
+      "audited_success": []
+    }
+  },
+  "control": {
+    "new": {
+      "failed": 0,
+      "passed": 13
+    },
+    "old": {
+      "failed": 0,
+      "passed": 275
+    }
+  },
+  "mutations": [
+    {
+      "label": "delete the send guard",
+      "new": {
+        "failed": 4,
+        "passed": 9
+      },
+      "old": {
+        "failed": 0,
+        "passed": 275
+      }
+    },
+    {
+      "label": "delete the broadcast guard",
+      "new": {
+        "failed": 4,
+        "passed": 9
+      },
+      "old": {
+        "failed": 0,
+        "passed": 275
+      }
+    },
+    {
+      "label": "send guard -> assert (-O strippable)",
+      "new": {
+        "failed": 5,
+        "passed": 8
+      },
+      "old": {
+        "failed": 0,
+        "passed": 275
+      }
+    },
+    {
+      "label": "broadcast guard reads wrong sentinel",
+      "new": {
+        "failed": 2,
+        "passed": 11
+      },
+      "old": {
+        "failed": 7,
+        "passed": 268
+      }
+    },
+    {
+      "label": "broadcast guard test inverted",
+      "new": {
+        "failed": 5,
+        "passed": 8
+      },
+      "old": {
+        "failed": 7,
+        "passed": 268
+      }
+    }
+  ],
+  "n_old_files": 7
+}
