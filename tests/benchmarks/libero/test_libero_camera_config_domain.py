@@ -33,6 +33,7 @@ from typing import Any
 import pytest
 
 from strands_robots.benchmarks.libero.adapter import camera_config_error
+from tests.simulation.mujoco._gl_probe import requires_gl
 
 from .test_libero_camera_install_resilience import (
     PICK_CUBE_BDDL,
@@ -295,7 +296,7 @@ class TestOnTheRealMuJoCoBackend:
         listed = msg.split("Accepted keys:")[1]
         assert declared and all(key in listed for key in declared)
 
-    def test_a_usable_config_installs_and_renders(self):
+    def test_a_usable_config_installs(self):
         sim = self._engine("libero_cam_domain_good")
         try:
             adapter = _adapter()
@@ -305,6 +306,23 @@ class TestOnTheRealMuJoCoBackend:
             assert "image" in sim._world.cameras
             entry = sim._world.cameras["image"]
             assert (entry.width, entry.height) == (320, 320)
+        finally:
+            sim.cleanup()
+
+    @requires_gl
+    def test_a_usable_config_renders(self):
+        """The installed camera is renderable, which needs a host GL context.
+
+        Split from the install case so the resolution the domain governs is
+        still pinned on a headless host without EGL/OSMesa, where ``render``
+        reports an error for a reason unrelated to the camera config.
+        """
+        sim = self._engine("libero_cam_domain_render")
+        try:
+            adapter = _adapter()
+            adapter._cameras = {"image": dict(GOOD)}
+            adapter._install_libero_cameras(sim)
+
             assert sim.render(camera_name="image", width=64, height=64)["status"] == "success"
         finally:
             sim.cleanup()

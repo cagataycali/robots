@@ -30,6 +30,7 @@ from strands_robots.simulation.models import SimRobot, SimWorld, registered, reg
 mj = pytest.importorskip("mujoco")
 
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
+from tests.simulation.mujoco._gl_probe import requires_gl  # noqa: E402
 
 # A name that cannot key a registry, one per unhashable builtin a caller might
 # plausibly pass by mistake (a single-element list is what wrapping a name in
@@ -211,6 +212,16 @@ def test_a_registered_name_is_unaffected(sim):
     """Guarding the lookup must not cost the lookups that resolve."""
     assert sim.move_object(name="crate", position=[0.25, 0.0, 0.2])["status"] == "success"
     assert sim.get_robot_state(robot_name="arm")["status"] == "success"
+
+
+@requires_gl
+def test_a_registered_camera_name_still_renders(sim):
+    """The camera half of the same contract, which needs a host GL context.
+
+    Split from the case above so its GL-free assertions keep running on a
+    headless host without EGL/OSMesa, where ``render`` reports an error for a
+    reason that has nothing to do with how a name was resolved.
+    """
     assert sim.render(camera_name="look", width=64, height=48)["status"] == "success"
 
 
