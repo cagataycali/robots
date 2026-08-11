@@ -1,0 +1,41 @@
+{
+  "tree": "/tmp/robots-mine-31443844629",
+  "frames": {
+    "entity_name": {
+      "file": "frame_entity_name.png",
+      "shape": [
+        340,
+        420,
+        3
+      ],
+      "saturated_frac": 0.9867
+    },
+    "unhashable_name": {
+      "file": "frame_unhashable_name.png",
+      "shape": [
+        340,
+        420,
+        3
+      ],
+      "saturated_frac": 0.793
+    },
+    "libero_camera": {
+      "file": "frame_libero_camera.png",
+      "shape": [
+        340,
+        420,
+        3
+      ],
+      "saturated_frac": 0.8255
+    }
+  },
+  "installed_dims": [
+    320,
+    320
+  ],
+  "host_matrix": {
+    "gl_present": "126 passed in 4.18s",
+    "gl_free": "123 passed, 3 skipped in 2.29s"
+  },
+  "guard": "10 passed in 8.75s"
+}
