@@ -1,0 +1,158 @@
+{
+  "tree": "/tmp/robots-mine-31452202385",
+  "branches": [
+    {
+      "fn": "get_valid_actions",
+      "trigger": "the tool spec carries no `action` enum",
+      "reason": "malformed simulation tool spec at <spec>: 'enum'",
+      "lines": [
+        142,
+        143
+      ],
+      "kind": "refuse",
+      "missing_before": [
+        142,
+        143
+      ],
+      "missing_after": []
+    },
+    {
+      "fn": "_validate_trace",
+      "trigger": "a trace entry cannot be serialized",
+      "reason": "trace[1] is not JSON-serializable: Object of type object is not JSON serializable",
+      "lines": [
+        205,
+        206
+      ],
+      "kind": "refuse",
+      "missing_before": [
+        205,
+        206
+      ],
+      "missing_after": []
+    },
+    {
+      "fn": "_validate_summary",
+      "trigger": "a summary cannot be serialized",
+      "reason": "summary is not JSON-serializable: Object of type object is not JSON serializable",
+      "lines": [
+        239,
+        240
+      ],
+      "kind": "refuse",
+      "missing_before": [
+        239,
+        240
+      ],
+      "missing_after": []
+    },
+    {
+      "fn": "_version_string",
+      "trigger": "the distribution metadata is absent",
+      "reason": "returns 'unknown'",
+      "lines": [
+        277,
+        278
+      ],
+      "kind": "degrade",
+      "missing_before": [
+        277,
+        278
+      ],
+      "missing_after": []
+    },
+    {
+      "fn": "HarnessMemory._read_rules",
+      "trigger": "a rule store is not valid UTF-8",
+      "reason": "rule store at success_rules.txt is not valid UTF-8 ('utf-8' codec can't decode byte 0xff in position 3: invalid start byte)",
+      "lines": [
+        490,
+        491
+      ],
+      "kind": "refuse",
+      "missing_before": [
+        490,
+        491
+      ],
+      "missing_after": []
+    }
+  ],
+  "cov_before": {
+    "missing": [
+      142,
+      143,
+      205,
+      206,
+      239,
+      240,
+      277,
+      278,
+      490,
+      491
+    ],
+    "pct": 96
+  },
+  "cov_after": {
+    "missing": [],
+    "pct": 100
+  },
+  "healthy_kind_readable": [
+    "a grasp that does not move the object is empty"
+  ],
+  "mutations": [
+    [
+      "M1 malformed-spec handler dropped",
+      1,
+      1,
+      4,
+      12,
+      0,
+      71
+    ],
+    [
+      "M2 trace serializability handler dropped",
+      1,
+      1,
+      3,
+      13,
+      0,
+      71
+    ],
+    [
+      "M3 summary serializability handler dropped",
+      1,
+      1,
+      3,
+      13,
+      0,
+      71
+    ],
+    [
+      "M4 version fallback dropped",
+      1,
+      1,
+      2,
+      14,
+      0,
+      71
+    ],
+    [
+      "M5 non-UTF-8 handler dropped",
+      1,
+      1,
+      4,
+      12,
+      0,
+      71
+    ],
+    [
+      "M6 load_rules swallows per kind (silent partial)",
+      1,
+      1,
+      3,
+      13,
+      0,
+      71
+    ]
+  ]
+}
