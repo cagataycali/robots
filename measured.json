@@ -1,0 +1,105 @@
+{
+  "tree": "/tmp/robots-mine-31447881420",
+  "base": "99cb7f7d2fc456a323b51140d7f095706a4fa723",
+  "mutations": [
+    {
+      "tag": "M1",
+      "label": "delete the policy_host post-check",
+      "pr": {
+        "failed": 8,
+        "passed": 98
+      },
+      "main": {
+        "failed": 0,
+        "passed": 93
+      }
+    },
+    {
+      "tag": "M2",
+      "label": "drop O_NOFOLLOW from the open flags",
+      "pr": {
+        "failed": 1,
+        "passed": 105
+      },
+      "main": {
+        "failed": 0,
+        "passed": 93
+      }
+    },
+    {
+      "tag": "M3",
+      "label": "narrow the ELOOP handler so the race escapes",
+      "pr": {
+        "failed": 1,
+        "passed": 105
+      },
+      "main": {
+        "failed": 0,
+        "passed": 93
+      }
+    },
+    {
+      "tag": "M4",
+      "label": "delete _coerce_int's finite guard",
+      "pr": {
+        "failed": 1,
+        "passed": 105
+      },
+      "main": {
+        "failed": 0,
+        "passed": 93
+      }
+    },
+    {
+      "tag": "M5",
+      "label": "delete the static is_symlink check",
+      "pr": {
+        "failed": 1,
+        "passed": 105
+      },
+      "main": {
+        "failed": 0,
+        "passed": 93
+      }
+    }
+  ],
+  "clean": {
+    "pr": {
+      "failed": 0,
+      "passed": 106
+    },
+    "main": {
+      "failed": 0,
+      "passed": 93
+    }
+  },
+  "coverage": {
+    "strands_robots/mesh/security.py": {
+      "main_missing": [
+        732,
+        733,
+        880
+      ],
+      "pr_missing": [
+        732,
+        733
+      ],
+      "main_pct": 99.34497816593887,
+      "pr_pct": 99.56331877729258
+    },
+    "strands_robots/mesh/_acl_config.py": {
+      "main_missing": [
+        157,
+        159,
+        604,
+        607
+      ],
+      "pr_missing": [
+        604,
+        607
+      ],
+      "main_pct": 98.4375,
+      "pr_pct": 99.21875
+    }
+  }
+}
