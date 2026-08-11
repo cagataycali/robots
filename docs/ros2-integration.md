@@ -306,7 +306,7 @@ print(turtle.get_pose())                 # one odom/pose sample
 turtle.stop()
 
 # Or hand the robot to an agent - its capabilities become named tools
-# (drive_turtlesim, get_pose_turtlesim, ...):
+# (drive_turtlesim, stop_turtlesim, get_pose_turtlesim, ...):
 agent = Agent(tools=turtle.tools)
 agent("drive forward for two seconds, then tell me the pose")
 ```

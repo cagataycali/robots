@@ -332,12 +332,24 @@ class RosBridgedRobot:
         The returned tools are bound to this instance and uniquely named with
         the ``node_name`` suffix so multiple bridged robots can coexist in a
         single ``Agent(tools=[...])`` call without name collisions.
+
+        ``drive`` and ``stop`` are always both present: a velocity command with
+        no ``duration`` latches until another command arrives, so a caller that
+        can start motion must be able to end it without knowing that a
+        zero-velocity drive is the halt idiom.
         """
         suffix = self.node_name.strip("/").replace("/", "_")
 
         @tool(name=f"drive_{suffix}", description=f"Drive the {self.node_name} robot (linear/angular velocity).")
         def drive(linear: float = 0.0, angular: float = 0.0, duration: float | None = None) -> dict[str, Any]:
             return self.drive(linear=linear, angular=angular, duration=duration)
+
+        @tool(
+            name=f"stop_{suffix}",
+            description=f"Immediately stop the {self.node_name} robot (zero velocity).",
+        )
+        def stop() -> dict[str, Any]:
+            return self.stop()
 
         @tool(name=f"get_pose_{suffix}", description=f"Read the current pose/odometry of the {self.node_name} robot.")
         def get_pose() -> dict[str, Any]:
@@ -357,7 +369,7 @@ class RosBridgedRobot:
         def navigate(x: float, y: float, yaw: float = 0.0, timeout: float = 120.0) -> dict[str, Any]:
             return self.navigate_to(x=x, y=y, yaw=yaw, timeout=timeout)
 
-        agent_tools: list[AgentTool] = [drive, get_pose]
+        agent_tools: list[AgentTool] = [drive, stop, get_pose]
         if self.scan_topic:
             agent_tools.append(get_scan)
         if self.nav_action:
