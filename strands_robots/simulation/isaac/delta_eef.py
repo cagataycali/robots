@@ -49,6 +49,8 @@ from typing import Any
 
 import numpy as np
 
+from strands_robots.utils import finite_number_error, positive_finite_number_error
+
 logger = logging.getLogger(__name__)
 
 __all__ = ["IsaacDeltaEEFController", "TASK_SPACE_ACTION_KEYS"]
@@ -121,17 +123,22 @@ class IsaacDeltaEEFController:
         ``arm_joint_names`` order (PhysX row convention).
     joint_limits : array-like or None
         Optional ``(len(arm_joint_names), 2)`` lower/upper position limits;
-        targets are clipped into them. ``None`` disables clipping.
+        targets are clipped into them. ``None`` disables clipping. Every
+        bound must be finite -- a non-finite one clips every target to
+        ``nan``.
     pos_scale, rot_scale : float
         Metres / radians of task-space delta for a saturated (+/-1) input
-        channel. Defaults match robosuite ``OSC_POSE`` (#168).
+        channel. Defaults match robosuite ``OSC_POSE`` (#168). Both must
+        be positive and finite (:func:`~strands_robots.utils.positive_finite_number_error`).
     damping : float
-        DLS damping ``lambda`` (> 0). Keeps the solve bounded near
-        singularities.
+        DLS damping ``lambda``. Keeps the solve bounded near
+        singularities; must be positive and finite
+        (:func:`~strands_robots.utils.positive_finite_number_error`).
     gripper_open, gripper_close : float
         Joint position target written to every gripper joint for an
         open / close command. Defaults match the Franka USD's 0..0.04 m
-        prismatic fingers.
+        prismatic fingers. Either sign is usable, so only finiteness is
+        constrained (:func:`~strands_robots.utils.finite_number_error`).
 
     Concurrency: stateless between calls and does not touch the stage;
     safe to call from the thread driving ``send_action`` (which holds the
@@ -163,10 +170,23 @@ class IsaacDeltaEEFController:
             raise ValueError(f"arm and gripper joint names overlap: {sorted(overlap)}.")
         if not callable(joint_positions_fn) or not callable(jacobian_fn):
             raise TypeError("joint_positions_fn and jacobian_fn must be callables.")
-        if not (float(pos_scale) > 0.0 and float(rot_scale) > 0.0):
-            raise ValueError(f"pos_scale/rot_scale must be > 0, got {pos_scale!r}/{rot_scale!r}.")
-        if not float(damping) > 0.0:
-            raise ValueError(f"damping must be > 0, got {damping!r}.")
+        # Every numeric knob below is bounded by the shared scalar domain
+        # rather than by an order comparison. An order comparison cannot
+        # reject ``inf`` (``inf > 0`` is True), and each of these values
+        # multiplies or is added to the DLS solve, so an accepted ``inf``
+        # makes every joint target ``nan`` -- refused one action at a time
+        # by ``send_action``'s action-value domain, which names the joint it
+        # was handed and cannot know the value came from here.
+        for _param, _value in (("pos_scale", pos_scale), ("rot_scale", rot_scale), ("damping", damping)):
+            if error := positive_finite_number_error(_value, _param, "IsaacDeltaEEFController"):
+                raise ValueError(error)
+        # A gripper reference is a joint position, so both signs are
+        # legitimate and only finiteness is constrained. Unguarded, a
+        # non-finite one is latent: the controller runs healthy through
+        # every approach action and fails at the first grasp.
+        for _param, _value in (("gripper_open", gripper_open), ("gripper_close", gripper_close)):
+            if error := finite_number_error(_value, _param, "IsaacDeltaEEFController"):
+                raise ValueError(error)
 
         self.arm_joint_names = arm
         self.gripper_joint_names = grip
@@ -185,6 +205,15 @@ class IsaacDeltaEEFController:
             if limits.shape != (len(arm), 2):
                 raise ValueError(
                     f"joint_limits must have shape ({len(arm)}, 2) to match arm_joint_names, got {limits.shape}."
+                )
+            if not np.all(np.isfinite(limits)):
+                # Checked before the lower/upper comparison below, which
+                # cannot see a non-finite bound: ``nan > nan`` is False, so
+                # an all-nan table passes it and then clips every target to
+                # nan in ``compute_joint_targets``.
+                raise ValueError(
+                    "IsaacDeltaEEFController: joint_limits must be finite (no nan/inf); "
+                    "a non-finite bound clips every joint target to nan."
                 )
             if np.any(limits[:, 0] > limits[:, 1]):
                 raise ValueError("joint_limits has a lower bound above its upper bound.")
