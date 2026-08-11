@@ -1,0 +1,11 @@
+{
+  "arm_old_size": 290,
+  "rows": [
+    {"id": "M1", "what": "get_frame returns the envelope instead of raising", "new": 4, "old": 0},
+    {"id": "M2", "what": "get_frame drops the renderer-None guard", "new": 4, "old": 0},
+    {"id": "M3", "what": "get_frame loses the actionable install hint", "new": 3, "old": 0},
+    {"id": "M4", "what": "get_frame raises a message naming neither GL nor the fix", "new": 3, "old": 0},
+    {"id": "M5", "what": "get_world_point stops converting the raise to an envelope", "new": 1, "old": 0},
+    {"id": "M6", "what": "a fifth renderer consumer ships undecided", "new": 1, "old": 0}
+  ]
+}

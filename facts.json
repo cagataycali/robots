@@ -1,0 +1,55 @@
+{
+  "tree": "/tmp/robots-mine-31460195472",
+  "frame_shape": [
+    520,
+    640,
+    3
+  ],
+  "depth_shape": [
+    520,
+    640
+  ],
+  "saturated_frac": 0.9036,
+  "depth_min": 0.6121,
+  "depth_max": 50.0,
+  "unpack_hazard": {
+    "binds": [
+      "status",
+      "content"
+    ],
+    "asarray_shape": []
+  },
+  "consumers": {
+    "render": {
+      "kind": "envelope",
+      "status": "error",
+      "text": "Rendering unavailable (no OpenGL context). Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
+    },
+    "render_depth": {
+      "kind": "envelope",
+      "status": "error",
+      "text": "Depth rendering unavailable (no OpenGL context). Install EGL or OSMesa for offscreen rendering."
+    },
+    "get_frame": {
+      "kind": "raise",
+      "type": "RuntimeError",
+      "text": "Rendering unavailable (no OpenGL context). Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
+    },
+    "_get_sim_observation": {
+      "kind": "skip",
+      "text": "camera omitted, rest of the observation kept"
+    }
+  },
+  "extra": {
+    "HybridCompositor.render": {
+      "kind": "raise",
+      "type": "RuntimeError",
+      "text": "Rendering unavailable (no OpenGL context). Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
+    },
+    "get_world_point": {
+      "kind": "envelope",
+      "status": "error",
+      "text": "get_world_point failed to render camera frame: Rendering unavailable (no OpenGL context). Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
+    }
+  }
+}
