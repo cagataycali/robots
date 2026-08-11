@@ -291,7 +291,10 @@ def _flags_checked_by(source: str, function: str) -> set[str]:
     """Flag names passed to the shared posture guard inside *function*.
 
     Parsed by AST so backends whose optional dependencies (Isaac Sim, Newton)
-    are not installed are still checked.
+    are not installed are still checked. It proves the guard is *called*, never
+    that its refusal is *returned* - a copy that keeps the call and drops the
+    ``return`` satisfies it - so the returned refusal is driven per backend in
+    ``test_recording_preflight_refusals_across_backends.py``.
     """
     checked: set[str] = set()
     for node in ast.walk(ast.parse(source)):

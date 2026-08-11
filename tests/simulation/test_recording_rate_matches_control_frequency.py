@@ -637,10 +637,18 @@ _START_RECORDING_BACKENDS = (
 def test_every_backend_start_recording_checks_the_running_rollout_rate(module):
     """``start_recording`` is per backend, so each copy must reach the shared guard.
 
-    Pinned structurally rather than behaviourally because the Isaac and Newton
-    backends need their simulators installed to drive, and a backend that grows
-    an asynchronous rollout later must not inherit a ``start_recording`` that
-    silently skipped the check.
+    Structural rather than behavioural for a measured reason: this refusal is
+    unreachable on the Isaac and Newton backends. The guard compares against
+    :meth:`~strands_robots.simulation.base.SimEngine._active_rollout_rates`,
+    which only the MuJoCo backend overrides, so both of the others inherit an
+    empty mapping and it returns ``None`` for every ``fps``. Pinning the call
+    is what stops a backend that grows an asynchronous rollout later from
+    inheriting a ``start_recording`` that silently skipped the check.
+
+    The three sibling refusals that *are* reachable there - ``fps``, the
+    posture flags and ``cameras`` - are driven per backend in
+    ``test_recording_preflight_refusals_across_backends.py``, which also pins the
+    inherited empty mapping this reason rests on.
     """
     assert "_validate_recording_start_rate" in _self_calls(module, "start_recording"), (
         f"{module}::start_recording does not check the running rollout rate"
