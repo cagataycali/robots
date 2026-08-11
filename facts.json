@@ -1,0 +1,66 @@
+{
+  "tree": "/tmp/robots-mine-31480083966",
+  "bridge_before_first_inference": "None",
+  "bridge_after_first_inference": "MinkIKBridge",
+  "frame_name": "panda/hand",
+  "frame_type": "body",
+  "qp_solver": "daqp",
+  "infer_calls": 10,
+  "actions_applied": 40,
+  "hand_home": [
+    0.4041,
+    -0.0003,
+    0.8371
+  ],
+  "hand_driven": [
+    0.4094,
+    -0.0005,
+    0.7684
+  ],
+  "descent_cm": 6.87,
+  "moved_frac": 0.1544,
+  "arm_sat": 0.8183,
+  "coverage": {
+    "before": {
+      "missing": 7,
+      "pct": 98,
+      "lines": "725-727 (the build)"
+    },
+    "after": {
+      "missing": 5,
+      "pct": 99,
+      "lines": "none"
+    }
+  },
+  "suite": {
+    "before": 728,
+    "after": 733
+  },
+  "mutations": [
+    [
+      "M1  drop the cache guard (rebuild every inference)",
+      "1 failed / 4 pass",
+      "3 failed / 725 pass"
+    ],
+    [
+      "M2  swap the frame name and type arguments",
+      "4 failed / 1 pass",
+      "0 failed / 728 pass"
+    ],
+    [
+      "M3  hardcode the frame type as \"body\"",
+      "1 failed / 4 pass",
+      "0 failed / 728 pass"
+    ],
+    [
+      "M4  build without caching (return a fresh bridge)",
+      "4 failed / 1 pass",
+      "0 failed / 728 pass"
+    ],
+    [
+      "     (unmutated control)",
+      "0 failed / 5 pass",
+      "0 failed / 728 pass"
+    ]
+  ]
+}
