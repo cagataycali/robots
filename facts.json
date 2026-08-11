@@ -1,0 +1,187 @@
+{
+  "tree": "/tmp/robots-mine-31499622754",
+  "baseline": {
+    "new": {
+      "failed": 0,
+      "passed": 137
+    },
+    "pre_existing": {
+      "failed": 0,
+      "passed": 287
+    }
+  },
+  "mutations": [
+    {
+      "backend": "isaac",
+      "label": "DELETE the fps guard",
+      "new": {
+        "failed": 15,
+        "passed": 122
+      },
+      "pre_existing": {
+        "failed": 1,
+        "passed": 286
+      }
+    },
+    {
+      "backend": "isaac",
+      "label": "DISCARD the fps refusal",
+      "new": {
+        "failed": 15,
+        "passed": 122
+      },
+      "pre_existing": {
+        "failed": 0,
+        "passed": 287
+      }
+    },
+    {
+      "backend": "isaac",
+      "label": "DISCARD the posture refusal",
+      "new": {
+        "failed": 18,
+        "passed": 119
+      },
+      "pre_existing": {
+        "failed": 0,
+        "passed": 287
+      }
+    },
+    {
+      "backend": "isaac",
+      "label": "DISCARD the cameras refusal",
+      "new": {
+        "failed": 6,
+        "passed": 131
+      },
+      "pre_existing": {
+        "failed": 0,
+        "passed": 287
+      }
+    },
+    {
+      "backend": "newton",
+      "label": "DELETE the fps guard",
+      "new": {
+        "failed": 15,
+        "passed": 122
+      },
+      "pre_existing": {
+        "failed": 1,
+        "passed": 286
+      }
+    },
+    {
+      "backend": "newton",
+      "label": "DISCARD the fps refusal",
+      "new": {
+        "failed": 15,
+        "passed": 122
+      },
+      "pre_existing": {
+        "failed": 0,
+        "passed": 287
+      }
+    },
+    {
+      "backend": "newton",
+      "label": "DISCARD the posture refusal",
+      "new": {
+        "failed": 18,
+        "passed": 119
+      },
+      "pre_existing": {
+        "failed": 0,
+        "passed": 287
+      }
+    },
+    {
+      "backend": "newton",
+      "label": "DISCARD the cameras refusal",
+      "new": {
+        "failed": 6,
+        "passed": 131
+      },
+      "pre_existing": {
+        "failed": 0,
+        "passed": 287
+      }
+    }
+  ],
+  "driven": {
+    "before": {
+      "isaac": {
+        "fps": false,
+        "posture": false,
+        "cameras": false,
+        "rollout rate": false
+      },
+      "newton": {
+        "fps": false,
+        "posture": false,
+        "cameras": false,
+        "rollout rate": false
+      }
+    },
+    "after": {
+      "isaac": {
+        "fps": true,
+        "posture": true,
+        "cameras": true,
+        "rollout rate": false
+      },
+      "newton": {
+        "fps": true,
+        "posture": true,
+        "cameras": true,
+        "rollout rate": false
+      }
+    }
+  },
+  "cells": {
+    "isaac": {
+      "fps": 230,
+      "posture": 241,
+      "cameras": 249,
+      "rollout rate": 256
+    },
+    "newton": {
+      "fps": 161,
+      "posture": 172,
+      "cameras": 180,
+      "rollout rate": 187
+    }
+  },
+  "file_coverage": {
+    "pristine": {
+      "isaac": {
+        "miss": 22,
+        "pct": 86.7
+      },
+      "newton": {
+        "miss": 8,
+        "pct": 94.8
+      }
+    },
+    "branch": {
+      "isaac": {
+        "miss": 19,
+        "pct": 88.5
+      },
+      "newton": {
+        "miss": 5,
+        "pct": 96.8
+      }
+    }
+  },
+  "is_rate_unreachable": {
+    "isaac": {
+      "rates": {},
+      "guard": null
+    },
+    "newton": {
+      "rates": {},
+      "guard": null
+    }
+  }
+}
