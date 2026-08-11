@@ -1,0 +1,185 @@
+{
+  "tree": "/tmp/robots-mine-31467089439",
+  "table": [
+    {
+      "label": "AttributeError (the defect)",
+      "kind": "library",
+      "cells": [
+        {
+          "outcome": "verdict"
+        },
+        {
+          "outcome": "ESCAPES AttributeError"
+        },
+        {
+          "outcome": "verdict"
+        }
+      ]
+    },
+    {
+      "label": "TypeError in repr",
+      "kind": "library",
+      "cells": [
+        {
+          "outcome": "verdict"
+        },
+        {
+          "outcome": "ESCAPES TypeError"
+        },
+        {
+          "outcome": "verdict"
+        }
+      ]
+    },
+    {
+      "label": "RuntimeError in repr",
+      "kind": "library",
+      "cells": [
+        {
+          "outcome": "verdict"
+        },
+        {
+          "outcome": "ESCAPES RuntimeError"
+        },
+        {
+          "outcome": "verdict"
+        }
+      ]
+    },
+    {
+      "label": "repr hides its type",
+      "kind": "library",
+      "cells": [
+        {
+          "outcome": "verdict"
+        },
+        {
+          "outcome": "verdict"
+        },
+        {
+          "outcome": "verdict"
+        }
+      ]
+    },
+    {
+      "label": "repr is correct",
+      "kind": "library",
+      "cells": [
+        {
+          "outcome": "survives"
+        },
+        {
+          "outcome": "survives"
+        },
+        {
+          "outcome": "survives"
+        }
+      ]
+    },
+    {
+      "label": "KeyboardInterrupt",
+      "kind": "control",
+      "cells": [
+        {
+          "outcome": "verdict"
+        },
+        {
+          "outcome": "ESCAPES KeyboardInterrupt"
+        },
+        {
+          "outcome": "ESCAPES KeyboardInterrupt"
+        }
+      ]
+    },
+    {
+      "label": "SystemExit",
+      "kind": "control",
+      "cells": [
+        {
+          "outcome": "verdict"
+        },
+        {
+          "outcome": "ESCAPES SystemExit"
+        },
+        {
+          "outcome": "ESCAPES SystemExit"
+        }
+      ]
+    },
+    {
+      "label": "pytest.skip",
+      "kind": "control",
+      "cells": [
+        {
+          "outcome": "verdict"
+        },
+        {
+          "outcome": "ESCAPES Skipped"
+        },
+        {
+          "outcome": "ESCAPES Skipped"
+        }
+      ]
+    },
+    {
+      "label": "pytest.fail",
+      "kind": "control",
+      "cells": [
+        {
+          "outcome": "verdict"
+        },
+        {
+          "outcome": "ESCAPES Failed"
+        },
+        {
+          "outcome": "ESCAPES Failed"
+        }
+      ]
+    }
+  ],
+  "score": {
+    "except BaseException": {
+      "collected": 5,
+      "escaped": 0
+    },
+    "no handler": {
+      "collected": 2,
+      "escaped": 4
+    },
+    "except Exception": {
+      "collected": 5,
+      "escaped": 4
+    }
+  },
+  "variants": [
+    "except BaseException",
+    "no handler",
+    "except Exception"
+  ],
+  "mirror": {
+    "published_alert": [
+      124,
+      5,
+      33
+    ],
+    "before": [
+      [
+        124,
+        5,
+        33
+      ]
+    ],
+    "after": []
+  },
+  "prefix_proof": {
+    "failed": 4,
+    "passed": 3,
+    "of": 7
+  },
+  "suite": {
+    "passed": 27723,
+    "skipped": 257,
+    "failed": 0,
+    "seconds": 636
+  }
+}
