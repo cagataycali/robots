@@ -116,16 +116,36 @@ def _renders_a_half_built_instance(cls: type) -> str | None:
     ``__new__`` is called directly, and the class bound through ``Any`` to say so:
     skipping ``__init__`` is the point, because it produces the worst case of the
     state a refusal leaves behind - an instance on which no attribute exists yet.
+
+    The handler catches ``Exception`` and stops there. A failure inside ``repr``
+    is the answer being collected - it is the defect this module pins - so it has
+    to become a verdict rather than abort the survey. An interrupt is not an
+    answer about a ``repr``, though: swallowing ``BaseException`` would record an
+    operator's Ctrl-C as "this class cannot render a half-built instance", fail
+    the assertion naming the wrong cause, and carry on to the next class.
+    ``pytest``'s own ``skip`` and ``fail`` outcomes derive from ``BaseException``
+    for the same reason, so they have to reach the runner instead of becoming a
+    verdict about the class under survey.
     """
     factory: Any = cls
     obj = factory.__new__(factory)
     try:
         rendered = repr(obj)
-    except BaseException as exc:  # noqa: BLE001 - any failure here is the defect
+    except Exception as exc:  # noqa: BLE001 - a repr failure is a verdict, control flow is not
         return f"{type(exc).__name__}: {exc}"
     if cls.__name__ not in rendered:
         return f"does not identify its type: {rendered!r}"
     return None
+
+
+def _raising_repr(exc: BaseException) -> type:
+    """A class whose ``__repr__`` raises, so the classifier's handler width is observable."""
+
+    class _Raising:
+        def __repr__(self) -> str:
+            raise exc
+
+    return _Raising
 
 
 DISCOVERED = _classes_defining_repr()
@@ -369,3 +389,50 @@ class TestTheFallbackWordingHasOneOwner:
     def test_the_helper_is_the_only_definition_of_the_wording(self) -> None:
         source = textwrap.dedent(inspect.getsource(partial_construction_repr))
         assert FALLBACK_PHRASE in source
+
+
+class TestTheReprClassifierCollectsFailuresWithoutSwallowingControlFlow:
+    """``_renders_a_half_built_instance`` must catch a repr failure and only that.
+
+    The classifier turns "what did this class's ``repr`` do with a half-built
+    instance" into a verdict string so the survey above can compare every class
+    in the package. A raise is one of the answers it has to collect - the
+    escaping ``AttributeError`` is the defect this file pins - so a failure
+    inside ``repr`` cannot be allowed to abort the survey. An interrupt is not
+    an answer about a ``repr``, though: recording one as "this class cannot
+    render a half-built instance" would fail the assertion naming the wrong
+    cause and carry on to the next class. Both halves are pinned here because
+    the correct handler is the one that satisfies both.
+    """
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            AttributeError("'RosBridgedRobot' object has no attribute 'node_name'"),
+            TypeError("unsupported format string passed to NoneType.__format__"),
+            RuntimeError("Rendering unavailable (no OpenGL context)"),
+        ],
+        ids=["AttributeError", "TypeError", "RuntimeError"],
+    )
+    def test_a_repr_failure_is_collected_as_a_verdict(self, exc: Exception) -> None:
+        """The escape this file exists to pin must reach the survey, not the runner."""
+        problem = _renders_a_half_built_instance(_raising_repr(exc))
+        assert problem == f"{type(exc).__name__}: {exc}"
+
+    @pytest.mark.parametrize(
+        "exc",
+        [
+            KeyboardInterrupt(),
+            SystemExit(1),
+            pytest.skip.Exception("the optional dependency this repr reads is absent"),
+            pytest.fail.Exception("the fixture for this class is incomplete"),
+        ],
+        ids=["KeyboardInterrupt", "SystemExit", "pytest.skip", "pytest.fail"],
+    )
+    def test_control_flow_reaches_the_runner_instead_of_becoming_a_verdict(self, exc: BaseException) -> None:
+        # Executable premise: each of these derives from BaseException without
+        # deriving from Exception, which is the whole reason the handler width
+        # is observable at all.
+        assert not isinstance(exc, Exception), f"{type(exc).__name__} no longer tests the handler width"
+        with pytest.raises(type(exc)):
+            _renders_a_half_built_instance(_raising_repr(exc))
