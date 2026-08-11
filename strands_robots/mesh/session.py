@@ -41,6 +41,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+from strands_robots.utils import partial_construction_repr
+
 logger = logging.getLogger(__name__)
 
 
@@ -244,7 +246,10 @@ class PeerInfo:
         }
 
     def __repr__(self) -> str:
-        return f"PeerInfo(peer_id={self.peer_id!r}, type={self.peer_type!r}, age={self.age:.1f}s)"
+        try:
+            return f"PeerInfo(peer_id={self.peer_id!r}, type={self.peer_type!r}, age={self.age:.1f}s)"
+        except AttributeError:
+            return partial_construction_repr(self)
 
 
 # Peer registry - shared across all Mesh instances in the same process

@@ -51,6 +51,7 @@ from strands_robots.utils import (
     entity_name_error,
     name_list_error,
     non_negative_whole_number_error,
+    partial_construction_repr,
     positive_count_error,
     positive_whole_number_error,
     step_aborted_msg,
@@ -6309,4 +6310,4 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
                 f"world={'created' if self._world_created else 'none'})"
             )
         except AttributeError:
-            return f"IsaacSimulation(partially constructed, id=0x{id(self):x})"
+            return partial_construction_repr(self)

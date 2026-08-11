@@ -38,6 +38,7 @@ from strands_robots.utils import (
     lerobot_version,
     name_list_error,
     non_negative_whole_number_error,
+    partial_construction_repr,
     positive_count_error,
     positive_whole_number_error,
     sequence_length,
@@ -1772,7 +1773,10 @@ class DatasetRecorder:
         return str(self.dataset.root)
 
     def __repr__(self) -> str:
-        return f"DatasetRecorder(repo_id={self.repo_id}, episodes={self.episode_count}, frames={self.frame_count})"
+        try:
+            return f"DatasetRecorder(repo_id={self.repo_id}, episodes={self.episode_count}, frames={self.frame_count})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
 
 # Shared replay-episode helpers

@@ -2381,3 +2381,30 @@ def boolean_flag_error(value: Any, param: str, context: str) -> str | None:
         "rather than parsed - a truthy spelling of off, such as 'false', would "
         "otherwise select the opposite posture from the one it reads as."
     )
+
+
+def partial_construction_repr(obj: object) -> str:
+    """Describe an object whose ``__init__`` did not finish, naming no attribute.
+
+    ``repr`` is what a traceback, a debugger and a failing assertion render, so
+    it must not be the thing that hides a failure. A class that validates its
+    own arguments raises before it assigns the attributes its ``__repr__``
+    reads, and the raising frame keeps that half-built instance alive - so
+    rendering it reports ``[AttributeError ... raised in repr()]`` naming an
+    attribute that has nothing to do with the refusal under investigation.
+    Returning this instead reports the lifecycle fact that *is* relevant, and
+    deliberately names no attribute so nobody is sent chasing one.
+
+    The wording lives here rather than beside any one caller because those
+    callers sit in different layers - the ROS 2 / rosbridge / RTPS transport
+    bridges, the teleop input streams, the dataset recorder, the peer registry
+    and the simulation engines - and the phrase a reader learns to recognise in
+    a traceback must not diverge between them.
+
+    Args:
+        obj: The partially constructed object being rendered.
+
+    Returns:
+        ``"<ClassName>(partially constructed, id=0x...)"``.
+    """
+    return f"{type(obj).__name__}(partially constructed, id=0x{id(obj):x})"

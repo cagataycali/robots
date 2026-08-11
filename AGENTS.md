@@ -114,6 +114,18 @@ hatch run format            # ruff check --fix, ruff format
     which is read as a single parameter literally named `"a / b"` and therefore
     describes neither. Pinned by
     tests/tools/test_agent_tool_parameter_descriptions.py.
+14. **`__repr__` must not raise** - it is what a traceback, a debugger and a
+    failing assertion render, so it must not be the thing that hides a failure.
+    A class that validates its own arguments raises before it assigns the
+    attributes its `__repr__` reads, and the raising frame keeps that half-built
+    instance alive: rendering it reports `[AttributeError ... raised in repr()]`
+    naming an attribute that has nothing to do with the refusal under
+    investigation. Wrap the body in `try` / `except AttributeError` and return
+    `strands_robots.utils.partial_construction_repr(self)`, which reports the
+    lifecycle fact and deliberately names no attribute so nobody is sent
+    chasing one. That helper owns the wording, so the phrase a reader learns to
+    recognise cannot diverge between layers. Pinned by
+    tests/test_repr_survives_partial_construction.py.
 
 ## PR Workflow
 

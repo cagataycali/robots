@@ -46,6 +46,7 @@ from strands.types.tools import AgentTool
 from strands_robots.tools.use_ros import use_ros
 from strands_robots.utils import (
     finite_number_error,
+    partial_construction_repr,
     positive_finite_number_error,
     positive_whole_number_error,
 )
@@ -364,7 +365,10 @@ class RosBridgedRobot:
         return agent_tools
 
     def __repr__(self) -> str:
-        return (
-            f"RosBridgedRobot(node_name={self.node_name!r}, cmd_vel_topic={self.cmd_vel_topic!r}, "
-            f"odom_topic={self.odom_topic!r}, scan_topic={self.scan_topic!r})"
-        )
+        try:
+            return (
+                f"RosBridgedRobot(node_name={self.node_name!r}, cmd_vel_topic={self.cmd_vel_topic!r}, "
+                f"odom_topic={self.odom_topic!r}, scan_topic={self.scan_topic!r})"
+            )
+        except AttributeError:
+            return partial_construction_repr(self)

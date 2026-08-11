@@ -38,6 +38,7 @@ from strands_robots.mesh.ros_bridge import _check_topic
 from strands_robots.tools.use_rosbridge import _HOST_RE, _transport_port_error, use_rosbridge
 from strands_robots.utils import (
     finite_number_error,
+    partial_construction_repr,
     positive_finite_number_error,
     positive_whole_number_error,
     tcp_port_error,
@@ -319,7 +320,10 @@ class RosbridgeRobot:
         return agent_tools
 
     def __repr__(self) -> str:
-        return (
-            f"RosbridgeRobot(node_name={self.node_name!r}, ws://{self.host}:{self.port}, "
-            f"cmd_vel_topic={self.cmd_vel_topic!r}, odom_topic={self.odom_topic!r})"
-        )
+        try:
+            return (
+                f"RosbridgeRobot(node_name={self.node_name!r}, ws://{self.host}:{self.port}, "
+                f"cmd_vel_topic={self.cmd_vel_topic!r}, odom_topic={self.odom_topic!r})"
+            )
+        except AttributeError:
+            return partial_construction_repr(self)

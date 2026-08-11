@@ -17,7 +17,7 @@ Architecture:
 import logging
 from typing import Any
 
-from ...utils import require_optional
+from ...utils import partial_construction_repr, require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -890,9 +890,12 @@ class ProcessorBridge:
             self._postprocessor.reset()
 
     def __repr__(self) -> str:
-        pre = f"pre={len(self._preprocessor)}steps" if self._preprocessor else "pre=None"
-        post = f"post={len(self._postprocessor)}steps" if self._postprocessor else "post=None"
-        return f"ProcessorBridge({pre}, {post})"
+        try:
+            pre = f"pre={len(self._preprocessor)}steps" if self._preprocessor else "pre=None"
+            post = f"post={len(self._postprocessor)}steps" if self._postprocessor else "post=None"
+            return f"ProcessorBridge({pre}, {post})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     def get_info(self) -> dict[str, Any]:
         """Return a summary dict describing the processor bridge state.

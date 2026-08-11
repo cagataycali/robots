@@ -41,6 +41,7 @@ from strands_robots.mesh.session import (
 from strands_robots.mesh.session import (
     get_peers as _session_get_peers,
 )
+from strands_robots.utils import partial_construction_repr
 
 logger = logging.getLogger(__name__)
 
@@ -494,8 +495,11 @@ class Mesh(SensorLoopsMixin):
         self._safety_sn_lock = threading.Lock()
 
     def __repr__(self) -> str:
-        state = "alive" if self._running else "stopped"
-        return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
+        try:
+            state = "alive" if self._running else "stopped"
+            return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     def _refuse_under_permissive_default_acl(self) -> bool:
         """Refuse-to-start gate per issue #218.

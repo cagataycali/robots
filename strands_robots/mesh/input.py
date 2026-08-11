@@ -33,7 +33,7 @@ from strands_robots.mesh.security import (
     validate_mesh_identifier,
 )
 from strands_robots.mesh.session import hz_from_env
-from strands_robots.utils import positive_finite_number_error
+from strands_robots.utils import partial_construction_repr, positive_finite_number_error
 
 _log_safety_event: Callable[..., None] | None
 try:  # audit is best-effort; never let an import issue break teleop apply
@@ -166,8 +166,11 @@ class InputPublisher:
         self._start_time = 0.0
 
     def __repr__(self) -> str:
-        state = "running" if self._running else "stopped"
-        return f"InputPublisher(device={self.device_name!r}, method={self.method!r}, {state})"
+        try:
+            state = "running" if self._running else "stopped"
+            return f"InputPublisher(device={self.device_name!r}, method={self.method!r}, {state})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     @property
     def topic(self) -> str:
@@ -352,8 +355,11 @@ class InputReceiver:
         self._start_time = 0.0
 
     def __repr__(self) -> str:
-        state = "running" if self._running else "stopped"
-        return f"InputReceiver(source={self.source_peer_id!r}, device={self.device_name!r}, {state})"
+        try:
+            state = "running" if self._running else "stopped"
+            return f"InputReceiver(source={self.source_peer_id!r}, device={self.device_name!r}, {state})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     @property
     def topic(self) -> str:

@@ -44,7 +44,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.ros_telemetry import RosTelemetryBase
-from strands_robots.utils import dds_domain_id_error, positive_finite_number_error, require_optional
+from strands_robots.utils import (
+    dds_domain_id_error,
+    partial_construction_repr,
+    positive_finite_number_error,
+    require_optional,
+)
 
 if TYPE_CHECKING:
     import numpy as np
@@ -379,7 +384,10 @@ class HardwareRtpsBridge(RosTelemetryBase):
         self._participant = None
 
     def __repr__(self) -> str:
-        return (
-            f"HardwareRtpsBridge(robot={self._robot_name!r}, domain_id={self._domain_id}, "
-            f"enable_commands={self._enable_commands})"
-        )
+        try:
+            return (
+                f"HardwareRtpsBridge(robot={self._robot_name!r}, domain_id={self._domain_id}, "
+                f"enable_commands={self._enable_commands})"
+            )
+        except AttributeError:
+            return partial_construction_repr(self)
