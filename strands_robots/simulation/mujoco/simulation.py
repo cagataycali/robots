@@ -275,6 +275,12 @@ _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 with open(_TOOL_SPEC_PATH) as _f:
     _TOOL_SPEC_SCHEMA: dict[str, Any] = json.load(_f)
 
+# The actions the schema advertises to a model, derived from the schema rather
+# than restated beside it: a second list would be a second thing to keep true,
+# and the failure it produces - refusing an action the model was told to use -
+# is exactly what the guard below exists to prevent.
+_PUBLISHED_ACTIONS: frozenset[str] = frozenset(_TOOL_SPEC_SCHEMA["properties"]["action"]["enum"])
+
 
 class MuJoCoSimEngine(
     TeleopMixin,
@@ -3922,14 +3928,67 @@ class MuJoCoSimEngine(
 
     # AgentTool Interface
 
+    def _unpublished_action_error(self, action: str) -> dict[str, Any] | None:
+        """Refuse an action the tool schema does not advertise to a model.
+
+        The router (:meth:`_dispatch_action`) resolves by ``getattr`` with no
+        allowlist, so every public method stays callable from Python. That
+        breadth is deliberate, but it is a *Python* contract: a model is handed
+        the ``action`` enum and nothing else, so an action outside it is one
+        the model was never told exists, and dispatching it makes the tool's
+        behaviour wider than the contract it publishes (#2093).
+
+        Two verdicts, because a caller needs different things from them. A name
+        that resolves to no method is a typo. A name that resolves to a method
+        held back from the enum is a curation decision, and reporting that as
+        "unknown" sends a reader hunting for a misspelling that is not there -
+        the method is right where they left it.
+
+        Args:
+            action: The action name as the entry point received it.
+
+        Returns:
+            An error dict when the action is not published, else ``None`` to
+            let dispatch proceed. A non-string is not this guard's verdict to
+            give: the entry points already answer it, and ``__call__`` answers
+            it before reaching here.
+        """
+        if not isinstance(action, str) or action in _PUBLISHED_ACTIONS or action in self._ACTION_ALIASES:
+            return None
+
+        # Probe the class, never the instance: the type carries properties as
+        # well as methods, and evaluating one to word a refusal would run
+        # engine code on the error path.
+        target = self._ACTION_ALIASES.get(action, action)
+        if not action.startswith("_") and callable(getattr(type(self), target, None)):
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"Action '{action}' is not available to an agent. It exists on this "
+                            "simulation but is deliberately not published in tool_spec, so it is "
+                            "reachable from Python only. See tool_spec for the actions you can use."
+                        )
+                    }
+                ],
+            }
+        return {"status": "error", "content": [{"text": f"Unknown action: {action}"}]}
+
     def __call__(self, action: str = "", **kwargs: Any) -> dict[str, Any]:
         """Dispatch an action directly: ``sim(action="render", camera_name="topdown")``.
 
         This makes the Simulation usable as a plain callable in addition to
         being a Strands ``AgentTool``. It mirrors the agent-facing dispatch
-        path (``_dispatch_action``): the same validation, field-aliasing, and
-        per-action method routing apply, and the return value is the standard
-        ``{"status", "content"}`` dict.
+        path: the same validation, field-aliasing, and per-action method
+        routing apply, and the return value is the standard ``{"status",
+        "content"}`` dict.
+
+        Mirroring the *agent* path is what this form is for, so it is narrower
+        than ``_dispatch_action`` in exactly one way: an action the tool schema
+        does not publish is refused here rather than routed (#2093). Reaching a
+        deliberately Python-only capability is what its own method is for -
+        ``sim.get_observation(...)`` rather than ``sim(action=...)``.
 
         The README markets ``Robot("so100")`` as something you can drive with
         ``robot(action="...")``; without this method that contract raised
@@ -3958,7 +4017,11 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
-        return self._dispatch_action(action.strip(), kwargs)
+        requested = action.strip()
+        refusal = self._unpublished_action_error(requested)
+        if refusal is not None:
+            return refusal
+        return self._dispatch_action(requested, kwargs)
 
     @property
     def tool_name(self) -> str:
@@ -4141,7 +4204,8 @@ class MuJoCoSimEngine(
         try:
             tool_use_id = tool_use.get("toolUseId", "")
             input_data = tool_use.get("input", {})
-            result = self._dispatch_action(input_data.get("action", ""), input_data)
+            requested = input_data.get("action", "")
+            result = self._unpublished_action_error(requested) or self._dispatch_action(requested, input_data)
             yield ToolResultEvent(dict(toolUseId=tool_use_id, **result))  # type: ignore[typeddict-item]
         except Exception as e:
             yield ToolResultEvent(
@@ -5018,15 +5082,19 @@ class MuJoCoSimEngine(
         Resolution is ``getattr`` by name with no allowlist, so the router is
         deliberately wider than ``tool_spec.json``'s ``action`` enum: the enum is
         the curated agent-facing subset, and a public method absent from it stays
-        callable as ``sim(action="...")`` from Python. That breadth is intended,
-        and it is accounted for: every public method of this class is either
+        callable from Python through this method. That breadth is intended, and
+        it is accounted for: every public method of this class is either
         published in that enum or recorded as deliberately Python-only, and one
         that is neither fails the backend's tool-spec guards. So a newly added
-        method cannot become agent-dispatchable-but-unadvertised in silence, and
-        a deliberate omission stays distinguishable from an oversight. Whether
-        the router should instead refuse a non-enum action, making behaviour
-        match the advertised contract, is the open question in #2093; this states
-        today's contract without settling it.
+        method cannot become dispatchable-but-unadvertised in silence, and a
+        deliberate omission stays distinguishable from an oversight.
+
+        That width no longer reaches an agent. Both agent-facing entry points
+        (:meth:`__call__` and :meth:`stream`) refuse a non-enum action first,
+        via :meth:`_unpublished_action_error`, so what a model can invoke is
+        exactly what it was advertised - the resolution of #2093. Calling this
+        method directly bypasses that refusal deliberately: it is the Python
+        path, and the width is what makes it useful there.
         """
         method_name = self._ACTION_ALIASES.get(action, action)
         method = getattr(self, method_name, None)
