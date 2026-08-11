@@ -4117,7 +4117,7 @@ class MuJoCoSimEngine(
                 "[Motion primitives] move_to (Cartesian EE transport via IK; not collision-aware), "
                 "set_gripper (open/close set-point), rotate_wrist (wrist-yaw set-point holding position); "
                 "[Scene MJCF] replace_scene_mjcf, patch_scene_mjcf, raycast, multi_raycast; "
-                "[Recording] start_recording, save_episode, stop_recording, get_recording_status, "
+                "[Recording] start_recording, stop_recording, get_recording_status, "
                 "start_cameras_recording, stop_cameras_recording, get_cameras_recording_status; "
                 "[Randomize] randomize, set_obs_noise (additive Gaussian sensor noise on observations and rendered frames); "
                 "[Benchmark] list_benchmarks, register_benchmark_from_file, register_builtin_benchmarks, evaluate_benchmark; "

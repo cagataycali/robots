@@ -330,6 +330,133 @@ def test_tool_spec_description_action_count_matches_enum(sim: Simulation) -> Non
     )
 
 
+# The converse direction: a described action the enum does not publish
+#
+# The two checks above pin ``enum -> description``: every enum entry is named in
+# the text, and the stated count equals ``len(enum)``. Neither can observe the
+# other direction, and the description carried a name the enum never offered -
+# ``save_episode``, listed under ``[Recording]`` beside ``start_recording`` and
+# ``stop_recording`` while absent from the enum and declared deliberately
+# Python-only in ``_PYTHON_ONLY_ACTIONS`` below.
+#
+# Both existing checks passed throughout. The membership scan only ever asks
+# whether each *enum* entry appears in the text, so a surplus name is not a
+# value it iterates. The count check compared the stated ``77`` against
+# ``len(enum)``, which agreed - the sentence was consistent with the enum while
+# introducing a list of 78 names, so the one number that would have contradicted
+# it was the one nobody counted.
+#
+# The direction matters because the two failures are not symmetric. An enum entry
+# missing from the text is undiscoverable but selectable. A name in the text that
+# the enum lacks is the reverse: the model is told to use an action the
+# schema-constrained decoder cannot emit, so following the documentation produces
+# a rejected call.
+#
+# ``describe()`` is deliberately wider than both and is not checked here - it
+# lists 90 methods, 13 of them Python-only, because it is the developer-facing
+# inventory. The description is not: it enumerates the *action* surface under a
+# count, which is what makes a name in it that the enum lacks a defect rather
+# than breadth.
+
+
+def _described_actions(description: str) -> list[str]:
+    """The capability names the description's ``Actions (...)`` sentence lists.
+
+    Parsed structurally rather than by harvesting every identifier-shaped word.
+    The categories carry parenthesised asides holding prose and ``;``
+    (``move_to (Cartesian EE transport via IK; not collision-aware)``), and the
+    final category is followed by a closing sentence that names ``destroy()``
+    a second time, so a word-harvesting scan would read both as list items - and
+    would fail this for a prose word that happened to match a Python-only method
+    name, which is not a drift. Asides are stripped, the trailing sentence is
+    cut, and only a bare identifier standing alone as a list item counts.
+    """
+    tail = description[description.index("Actions (") :]
+    names: list[str] = []
+    for segment in re.findall(r"\[[^\]]+\]([^\[]*)", tail):
+        segment = re.sub(r"\([^()]*\)", "", segment)
+        segment = segment.split(". ")[0]
+        for item in re.split(r"[;,]", segment):
+            item = item.strip().rstrip(".").strip()
+            if re.fullmatch(r"[a-z_][a-z0-9_]*", item):
+                names.append(item)
+    return names
+
+
+def test_tool_spec_description_names_no_action_the_enum_omits(sim: Simulation) -> None:
+    """Prose may not promise an action the decoder cannot select.
+
+    This is the direction that broke. ``save_episode`` stays reachable from
+    Python and stays in ``_PYTHON_ONLY_ACTIONS``; what it may not do is appear in
+    the model-facing action list. ``run_policy(n_episodes=N)`` is the published
+    multi-episode path, so nothing an agent could reach was lost by dropping it.
+    """
+    described = set(_described_actions(sim.tool_spec["description"]))
+    enum = set(sim.tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"])
+
+    unpublished = sorted(described - enum)
+    assert not unpublished, (
+        "the tool_spec description lists these actions but the enum does not offer them, so a "
+        "model following the description emits a value the schema rejects; publish them in the "
+        f"enum or drop them from the description: {unpublished}"
+    )
+
+
+def test_tool_spec_description_action_count_matches_the_names_it_lists(sim: Simulation) -> None:
+    """``Actions (N total)`` is a claim about the list, not only about the enum.
+
+    The companion check above compares the same literal against ``len(enum)``.
+    Both are needed and neither implies the other: the stated count was ``77``
+    and the enum held 77, so that check passed while the sentence listed 78
+    names. Counting the list is what turns the literal into a claim that can
+    contradict the text carrying it.
+    """
+    description = sim.tool_spec["description"]
+    described = _described_actions(description)
+
+    m = re.search(r"Actions \((\d+) total\)", description)
+    assert m is not None, "tool_spec description must state 'Actions (N total)'"
+    stated = int(m.group(1))
+    assert stated == len(described), (
+        f"tool_spec description says {stated} actions but its category lists name {len(described)}: {sorted(described)}"
+    )
+
+
+def test_tool_spec_description_lists_no_action_twice(sim: Simulation) -> None:
+    """The count check compares lengths, so a repeat would mask an omission.
+
+    ``destroy`` appears twice in the description - once as a ``[World]`` action
+    and once in the closing ``Call destroy() at session end`` sentence - and if
+    the parser read the second occurrence the totals would still agree while one
+    action went unlisted. Pinned on the parser rather than on the text so the
+    sentence stays free to mention an action again in prose.
+    """
+    described = _described_actions(sim.tool_spec["description"])
+    repeated = sorted({name for name in described if described.count(name) > 1})
+    assert not repeated, f"the description's action lists name these more than once: {repeated}"
+
+
+def test_a_described_action_absent_from_the_enum_is_reported(sim: Simulation) -> None:
+    """Planted-defect meta-test: the parity check above is not vacuous.
+
+    It asserts a set is empty, which is the shape that also passes when the
+    parser finds nothing at all - and the parser is the part most likely to stop
+    matching if the description is reworded. A description carrying one extra
+    name must report exactly that name, and the real one must stay clean.
+    """
+    description = sim.tool_spec["description"]
+    enum = set(sim.tool_spec["inputSchema"]["json"]["properties"]["action"]["enum"])
+
+    assert len(_described_actions(description)) > 1, (
+        "the parser found no action list to check; the description's "
+        "'Actions (N total): [Category] a, b, c' shape has changed"
+    )
+
+    planted = description.replace("[Recording] start_recording,", "[Recording] teleport_everything, start_recording,")
+    assert set(_described_actions(planted)) - enum == {"teleport_everything"}
+    assert not set(_described_actions(description)) - enum, "the real description must stay published"
+
+
 # Vector-arity contract
 #
 # ``_validate_and_build_kwargs`` step 2 refuses any vector param whose component
