@@ -127,6 +127,26 @@ hatch run format            # ruff check --fix, ruff format
     recognise cannot diverge between layers. Pinned by
     tests/test_repr_survives_partial_construction.py.
 
+15. **A recording test names its own dataset root** - `DatasetRecorder.create`
+    and every backend's `start_recording` resolve a `repo_id` with no `root` to
+    `$HF_LEROBOT_HOME/{repo_id}`, i.e. `~/.cache/huggingface/lerobot/{repo_id}`
+    by default, and `_prepare_create_target` *inspects* that directory before
+    any injected fake dataset class is reached. So a unit test that writes
+    nothing to the shared cache still reads it, and its verdict depends on what
+    the developer's cache already holds. Measured across 39 such call sites: one
+    unrelated dataset planted at `local/probe` turned 133 passed into 22 failed,
+    every failure a `FileExistsError` naming a path in `$HOME` rather than the
+    test's own resolution - which is what makes it hard to attribute. Pass
+    `root=str(tmp_path / "dataset")`, including at the sites refused before the
+    root is resolved: requiring it of those too keeps the rule one line with no
+    exemptions, where the alternative has to model which guard fires first. Note
+    a `repo_id` is as often positional as keyword (`create("user/data", ...)`) and
+    the two forms are the same exposure. Rebinding the dataset home suite-wide
+    would close the class in one line and would also break the one test that
+    legitimately asserts the documented default, which is why the rule lives at
+    the call site. `tests_integ/` records real datasets and is out of scope.
+    Pinned by tests/test_recording_root_is_not_the_shared_cache.py.
+
 ## PR Workflow
 
 1. Create the feature branch **on your fork**. Branch creation in the base
