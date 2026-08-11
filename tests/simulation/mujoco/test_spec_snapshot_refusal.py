@@ -16,13 +16,18 @@ applied to the live spec with nothing to restore leaves an orphan behind, and an
 orphan makes every LATER scene mutation fail to recompile, bricking the whole
 world after one bad call.
 
-Three callers share the helper and each refuses through its OWN channel, which
-is why one test per surface is not one test three times:
+Five callers share the helper and each refuses through its OWN channel, which
+is why one test per surface is not one test five times:
 
 * ``add_robot`` -> ``inject_robot_into_scene`` returns ``False``, and the caller
   also unwinds the ``_world.robots`` registry entry it had already made,
 * ``actuate_robot`` -> ``actuate_robot_in_scene`` returns ``False``,
-* ``patch_scene_mjcf`` -> raises ``RuntimeError``, which the facade converts.
+* ``patch_scene_mjcf`` -> raises ``RuntimeError``, which the facade converts,
+* ``detach_bodies`` -> ``remove_equality_constraint`` returns ``False``, and the
+  weld it was about to delete is still holding the pair, so the attachment
+  ``attach_bodies`` recorded stays true,
+* ``remove_camera`` -> ``eject_camera_from_scene`` returns ``False``, and the
+  caller keeps the ``_world.cameras`` entry it had not dropped yet.
 
 Each test asserts the whole cost of the refusal rather than only its status: the
 compiled model is unchanged, the mutation's own element is absent, the scene is
@@ -222,3 +227,72 @@ class TestPatchSceneMjcfRefusesWithoutAWayBack:
         )
         assert sim.patch_scene_mjcf(ops)["status"] == "success"
         assert _body_id(sim, "marker") >= 0
+
+
+class TestDetachBodiesRefusesWithoutAWayBack:
+    def test_the_weld_removal_is_refused_and_the_pair_stays_attached(
+        self, sim: Simulation, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert sim._world is not None
+        for name, z in (("carrier", 0.6), ("cube", 0.45)):
+            assert (
+                sim.add_object(name=name, shape="box", size=[0.08, 0.08, 0.08], position=[0.0, 0.0, z])["status"]
+                == "success"
+            )
+        assert sim.attach_bodies("carrier", "cube", mode="weld")["status"] == "success"
+        neq_before = int(sim._world._model.neq)
+        assert neq_before == 1
+
+        _refuse_snapshots(monkeypatch)
+        refused = sim.detach_bodies("carrier", "cube")
+        monkeypatch.undo()
+
+        assert refused["status"] == "error"
+        assert "cube" in refused["content"][0]["text"]
+        # Nothing was deleted, so the recorded attachment is still true of the
+        # scene: the weld is on the live spec and in the compiled model.
+        spec = scene_ops._get_spec(sim._world)
+        assert spec is not None
+        assert "attach_weld_carrier__cube" in [eq.name for eq in spec.equalities]
+        assert int(sim._world._model.neq) == neq_before
+        assert sim.attachment_involving("cube") == "cube"
+
+        # The scene is still mutable and the identical detach succeeds once the
+        # copy failure clears. A delete applied with no way back would instead
+        # be refused here as "not found", and the add_object would apply it.
+        assert (
+            sim.add_object(name="crate", shape="box", size=[0.1, 0.1, 0.1], position=[0.4, 0, 0.05])["status"]
+            == "success"
+        )
+        assert int(sim._world._model.neq) == neq_before
+        assert sim.detach_bodies("carrier", "cube")["status"] == "success"
+        assert int(sim._world._model.neq) == 0
+        assert sim.attachment_involving("cube") is None
+
+
+class TestRemoveCameraRefusesWithoutAWayBack:
+    def test_the_camera_is_kept_and_the_refusal_costs_nothing(
+        self, sim: Simulation, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        assert sim._world is not None
+        assert sim.add_camera(name="watch", position=[0.7, -0.7, 0.5], target=[0, 0, 0.1])["status"] == "success"
+        ncam_before = int(sim._world._model.ncam)
+
+        _refuse_snapshots(monkeypatch)
+        refused = sim.remove_camera("watch")
+        monkeypatch.undo()
+
+        assert refused["status"] == "error"
+        assert "watch" in refused["content"][0]["text"]
+        # This caller had not dropped its registry entry yet, so refusing before
+        # the delete leaves nothing to unwind - the camera is simply still there.
+        assert "watch" in sim._world.cameras
+        assert int(sim._world._model.ncam) == ncam_before
+
+        assert (
+            sim.add_object(name="crate", shape="box", size=[0.1, 0.1, 0.1], position=[0.4, 0, 0.05])["status"]
+            == "success"
+        )
+        assert sim.remove_camera("watch")["status"] == "success"
+        assert "watch" not in sim._world.cameras
+        assert int(sim._world._model.ncam) == ncam_before - 1

@@ -90,6 +90,7 @@ from strands_robots.simulation.mujoco.recording import RecordingMixin
 from strands_robots.simulation.mujoco.rendering import RenderingMixin
 from strands_robots.simulation.mujoco.scene_ops import (
     eject_body_from_scene,
+    eject_camera_from_scene,
     eject_robot_from_scene,
     inject_camera_into_scene,
     inject_object_into_scene,
@@ -3353,9 +3354,26 @@ class MuJoCoSimEngine(
     def remove_camera(self, name: str) -> dict[str, Any]:
         """Remove a named camera from the live scene.
 
-        Pops the Python-side registry entry and then deletes the camera
-        from the MjSpec via :func:`SpecBuilder.remove_camera` so future
-        renders/compiles no longer see it.
+        Deletes the camera element from the MjSpec and recompiles so ``ncam`` in
+        the live model matches, then drops the Python-side registry entry.
+
+        The registry entry goes only once the recompile has been accepted. A
+        refused ``spec.recompile`` leaves the live model untouched, so dropping
+        the entry first would report a removal the model had not applied:
+        ``list_cameras`` would stop naming a camera ``render`` and
+        ``get_camera_params`` still resolve, and the delete would land later,
+        applied by whichever unrelated mutation next recompiles successfully.
+        This mirrors :meth:`add_camera`, which rolls a refused add back out and
+        reports it rather than claiming the camera exists.
+
+        Args:
+            name: The camera name (as passed to ``add_camera``).
+
+        Returns:
+            A ``{status, content}`` tool result. ``status`` is ``"error"`` when
+            no world exists, ``name`` is unknown, a policy is running, or the
+            scene would not recompile without the camera -- in that last case
+            the camera is still registered and the scene is unchanged.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -3363,26 +3381,26 @@ class MuJoCoSimEngine(
             return {"status": "error", "content": [{"text": self._unknown_camera_msg(name)}]}
         if err := self._require_no_running_policy("remove_camera"):
             return err
-        cam = self._world.cameras.pop(name)
+        cam = self._world.cameras[name]
 
-        spec = self._world._backend_state.get("spec")
-        if spec is not None:
+        if self._world._backend_state.get("spec") is not None:
             # Use the namespaced MuJoCo name if we have it (camera came from
             # a robot's URDF), else the short name.
-            mj_name = cam.name or name
-            SpecBuilder.remove_camera(spec, mj_name)
-            # Recompile so nbody/ncam in _model match the new spec.
-            try:
-                new_model, new_data = spec.recompile(self._world._model, self._world._data)
-                install_compiled_model(self._world, new_model, new_data)
-                try:
-                    with filter_mujoco_attach_noise():
-                        self._world._backend_state["xml"] = spec.to_xml()
-                except Exception:
-                    pass
-            except (ValueError, RuntimeError) as e:
-                logger.warning("remove_camera recompile failed: %s", e)
+            if not eject_camera_from_scene(self._world, cam.name or name):
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"Camera '{name}' was not removed: the scene would not "
+                                "recompile without it. The camera is still registered and "
+                                "the scene is unchanged; the compiler's reason is logged."
+                            )
+                        }
+                    ],
+                }
 
+        del self._world.cameras[name]
         return {"status": "success", "content": [{"text": f"Camera '{name}' removed."}]}
 
     # Simulation Control

@@ -551,10 +551,12 @@ class TestWeldEqualityConstraintRoundTrip:
 class TestSpecSurgeryFailureRecovery:
     """Spec surgery that fails at recompile must leave the live spec exactly as
     it was, never a half-applied edit. ``add_weld_constraint`` deletes the
-    equality it just appended; ``actuate_robot_in_scene`` restores its
-    pre-surgery XML snapshot. Both return a clean ``False``. The invariant that
+    equality it just appended, ``remove_equality_constraint`` restores a
+    pre-delete snapshot, and ``actuate_robot_in_scene`` restores its
+    pre-surgery snapshot. All three return a clean ``False``. The invariant that
     matters is that a *subsequent* scene mutation still succeeds - a failed edit
-    must not poison later ops.
+    must not poison later ops - and, for the two that are each other's inverse,
+    that the identical call succeeds once the refusal clears.
     """
 
     @pytest.fixture
@@ -573,6 +575,44 @@ class TestSpecSurgeryFailureRecovery:
         world = sim._world
         assert world is not None
         return world
+
+    def test_equality_removal_recompile_failure_restores_the_constraint(
+        self, sim: Simulation, two_body_world: SimWorld, monkeypatch
+    ) -> None:
+        orig_recompile = scene_ops._recompile_preserving_state
+        assert (
+            scene_ops.add_weld_constraint(
+                two_body_world,
+                name="held_weld",
+                parent="anchor",
+                child="cube",
+                relpos=[0.0, 0.0, 0.1],
+                relquat=[1.0, 0.0, 0.0, 0.0],
+            )
+            is True
+        )
+        neq_before = int(two_body_world._model.neq)
+        spec = scene_ops._get_spec(two_body_world)
+        assert spec is not None
+        assert "held_weld" in [eq.name for eq in spec.equalities]
+
+        # Force the post-delete recompile to fail. The deletion must be rolled
+        # back: without that, the constraint is gone from the live spec while
+        # the compiled model still holds it, so the caller is told the removal
+        # failed and the next unrelated recompile applies it anyway.
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", lambda *a, **k: False)
+        assert scene_ops.remove_equality_constraint(two_body_world, "held_weld") is False
+        spec_after = scene_ops._get_spec(two_body_world)
+        assert spec_after is not None
+        assert "held_weld" in [eq.name for eq in spec_after.equalities]
+        assert int(two_body_world._model.neq) == neq_before
+
+        # Not poisoned, and not a permanent refusal: the identical removal
+        # succeeds once the recompile works again. A spec that had already lost
+        # the constraint would report "not found" here instead.
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", orig_recompile)
+        assert scene_ops.remove_equality_constraint(two_body_world, "held_weld") is True
+        assert int(two_body_world._model.neq) == neq_before - 1
 
     def test_weld_recompile_failure_removes_equality_and_leaves_spec_usable(
         self, sim: Simulation, two_body_world: SimWorld, monkeypatch
