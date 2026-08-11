@@ -1,0 +1,250 @@
+{
+  "tree": "/tmp/robots-mine-31520244237",
+  "before": {
+    "passed": 80,
+    "cells": [
+      {
+        "backend": "mujoco",
+        "method": "randomize",
+        "guard": "finite_non_negative_error",
+        "line": 163,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "randomize",
+        "guard": "randomization_range_error",
+        "line": 161,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "randomize",
+        "guard": "randomization_seed_error",
+        "line": 165,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "randomize",
+        "guard": "unknown_kwargs_error",
+        "line": 140,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "set_obs_noise",
+        "guard": "finite_non_negative_error",
+        "line": 312,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "set_obs_noise",
+        "guard": "randomization_seed_error",
+        "line": 317,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "set_obs_noise",
+        "guard": "unknown_kwargs_error",
+        "line": 305,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "randomize",
+        "guard": "randomization_range_error",
+        "line": 176,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "randomize",
+        "guard": "randomization_seed_error",
+        "line": 181,
+        "covered": false
+      },
+      {
+        "backend": "newton",
+        "method": "randomize",
+        "guard": "unknown_kwargs_error",
+        "line": 151,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "set_obs_noise",
+        "guard": "finite_non_negative_error",
+        "line": 325,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "set_obs_noise",
+        "guard": "randomization_seed_error",
+        "line": 330,
+        "covered": false
+      },
+      {
+        "backend": "newton",
+        "method": "set_obs_noise",
+        "guard": "unknown_kwargs_error",
+        "line": 318,
+        "covered": true
+      }
+    ],
+    "file": {
+      "pct": 98.4,
+      "missing": 2,
+      "statements": 123
+    }
+  },
+  "after": {
+    "passed": 126,
+    "cells": [
+      {
+        "backend": "mujoco",
+        "method": "randomize",
+        "guard": "finite_non_negative_error",
+        "line": 163,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "randomize",
+        "guard": "randomization_range_error",
+        "line": 161,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "randomize",
+        "guard": "randomization_seed_error",
+        "line": 165,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "randomize",
+        "guard": "unknown_kwargs_error",
+        "line": 140,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "set_obs_noise",
+        "guard": "finite_non_negative_error",
+        "line": 312,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "set_obs_noise",
+        "guard": "randomization_seed_error",
+        "line": 317,
+        "covered": true
+      },
+      {
+        "backend": "mujoco",
+        "method": "set_obs_noise",
+        "guard": "unknown_kwargs_error",
+        "line": 305,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "randomize",
+        "guard": "randomization_range_error",
+        "line": 176,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "randomize",
+        "guard": "randomization_seed_error",
+        "line": 181,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "randomize",
+        "guard": "unknown_kwargs_error",
+        "line": 151,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "set_obs_noise",
+        "guard": "finite_non_negative_error",
+        "line": 325,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "set_obs_noise",
+        "guard": "randomization_seed_error",
+        "line": 330,
+        "covered": true
+      },
+      {
+        "backend": "newton",
+        "method": "set_obs_noise",
+        "guard": "unknown_kwargs_error",
+        "line": 318,
+        "covered": true
+      }
+    ],
+    "file": {
+      "pct": 100.0,
+      "missing": 0,
+      "statements": 123
+    }
+  },
+  "mutations": [
+    {
+      "id": "M1",
+      "what": "randomize: delete the seed guard",
+      "new": 18,
+      "old": 1
+    },
+    {
+      "id": "M2",
+      "what": "randomize: call the guard, discard the verdict",
+      "new": 18,
+      "old": 0
+    },
+    {
+      "id": "M3",
+      "what": "set_obs_noise: delete the seed guard",
+      "new": 18,
+      "old": 1
+    },
+    {
+      "id": "M4",
+      "what": "set_obs_noise: call the guard, discard the verdict",
+      "new": 18,
+      "old": 0
+    },
+    {
+      "id": "M5",
+      "what": "randomize: reword the reason locally",
+      "new": 9,
+      "old": 0
+    },
+    {
+      "id": "M6",
+      "what": "randomize: copy the rollout ceiling onto this path",
+      "new": 2,
+      "old": 0
+    },
+    {
+      "id": "M7",
+      "what": "set_obs_noise: copy the rollout ceiling onto this path",
+      "new": 2,
+      "old": 0
+    }
+  ],
+  "old_arm_total": 80
+}
