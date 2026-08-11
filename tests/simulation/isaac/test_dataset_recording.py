@@ -128,16 +128,16 @@ def _drive_episode(engine: IsaacSimulation, robot_name: str, instruction: str, n
 # --- guards (no lerobot required) -------------------------------------------
 
 
-def test_start_recording_without_world_errors() -> None:
+def test_start_recording_without_world_errors(tmp_path) -> None:
     engine = _make_engine(robots={"so100": _robot()})
     engine._world_created = False
-    result = engine.start_recording(repo_id="local/nope")
+    result = engine.start_recording(repo_id="local/nope", root=str(tmp_path / "dataset"))
     assert result["status"] == "error"
     assert "No world" in result["content"][0]["text"]
 
 
-def test_start_recording_without_robots_errors() -> None:
-    result = _make_engine().start_recording(repo_id="local/nope")
+def test_start_recording_without_robots_errors(tmp_path) -> None:
+    result = _make_engine().start_recording(repo_id="local/nope", root=str(tmp_path / "dataset"))
     assert result["status"] == "error"
     assert "add_robot" in result["content"][0]["text"]
 

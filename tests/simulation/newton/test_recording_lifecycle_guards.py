@@ -50,14 +50,14 @@ def _world_with_robot(name: str = "so100") -> SimWorld:
 
 
 class TestStartRecordingGuards:
-    def test_missing_lerobot_extra_returns_actionable_error(self, monkeypatch):
+    def test_missing_lerobot_extra_returns_actionable_error(self, monkeypatch, tmp_path):
         # When the lerobot extra is absent, start_recording must not dead-end in
         # dataset creation - it returns an error that names the install extra.
         reason = "lerobot is not installed (ModuleNotFoundError: No module named 'lerobot'). Install lerobot >= 0.6.0 with: pip install 'strands-robots[lerobot]'"
         monkeypatch.setattr(dataset_recorder, "lerobot_dataset_import_error", lambda: reason)
         engine = _make_engine(_world_with_robot())
 
-        result = engine.start_recording(repo_id="local/sim_recording")
+        result = engine.start_recording(repo_id="local/sim_recording", root=str(tmp_path / "dataset"))
 
         assert result["status"] == "error"
         text = result["content"][0]["text"]
@@ -65,12 +65,12 @@ class TestStartRecordingGuards:
         assert reason in text
         assert "strands-robots[lerobot]" in text
 
-    def test_no_world_returns_error(self):
+    def test_no_world_returns_error(self, tmp_path):
         engine = NewtonSimEngine.__new__(NewtonSimEngine)
         engine._world = None
         engine._model = None
 
-        result = engine.start_recording(repo_id="local/sim_recording")
+        result = engine.start_recording(repo_id="local/sim_recording", root=str(tmp_path / "dataset"))
 
         assert result["status"] == "error"
         assert "create_world" in result["content"][0]["text"]

@@ -123,10 +123,10 @@ class TestUnusableNameListsAreRefused:
     @pytest.mark.parametrize("param", NAME_LIST_PARAMS)
     @pytest.mark.parametrize(("label", "value", "expected"), UNUSABLE, ids=[c[0] for c in UNUSABLE])
     def test_refused_with_the_mistake_named(
-        self, no_lerobot: None, param: str, label: str, value: Any, expected: str
+        self, no_lerobot: None, param: str, label: str, value: Any, expected: str, tmp_path: Path
     ) -> None:
         with pytest.raises(ValueError) as excinfo:
-            _create(repo_id="local/probe", **{param: value})
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), **{param: value})
         text = str(excinfo.value)
         assert expected in text, text
         assert param in text, text
@@ -135,10 +135,10 @@ class TestUnusableNameListsAreRefused:
     @pytest.mark.parametrize("param", NAME_LIST_PARAMS)
     @pytest.mark.parametrize(("label", "value"), USABLE, ids=[c[0] for c in USABLE])
     def test_usable_name_lists_still_reach_the_dataset(
-        self, fake_lerobot: type[_FakeLeRobotDataset], param: str, label: str, value: Any
+        self, fake_lerobot: type[_FakeLeRobotDataset], param: str, label: str, value: Any, tmp_path: Path
     ) -> None:
         """``None`` / ``[]`` still mean "not supplied"; distinct names are accepted."""
-        _create(repo_id="local/probe", **{param: value})
+        _create(repo_id="local/probe", root=str(tmp_path / "dataset"), **{param: value})
         assert len(fake_lerobot.calls) == 1
 
 
@@ -191,11 +191,12 @@ class TestTheDomainCannotDriftFromTheSharedRule:
         param: str,
         label: str,
         value: Any,
+        tmp_path: Path,
     ) -> None:
         """A value the shared domain refuses is refused here, and vice versa."""
         shared_refuses = bool(value) and name_list_error(value, param, "x") is not None
         try:
-            _create(repo_id="local/probe", **{param: value})
+            _create(repo_id="local/probe", root=str(tmp_path / "dataset"), **{param: value})
             create_refuses = False
         except ValueError:
             create_refuses = True

@@ -49,19 +49,19 @@ class TestStartRecordingErrorWithoutLerobot:
     fallback was never covered.
     """
 
-    def test_extra_absent_points_to_start_cameras_recording(self, sim, monkeypatch):
+    def test_extra_absent_points_to_start_cameras_recording(self, sim, monkeypatch, tmp_path):
         import strands_robots.dataset_recorder as dr
 
         reason = "lerobot is not installed (ModuleNotFoundError: No module named 'lerobot'). Install lerobot >= 0.6.0 with: pip install 'strands-robots[lerobot]'"
         monkeypatch.setattr(dr, "lerobot_dataset_import_error", lambda: reason)
-        result = sim.start_recording(repo_id="local/test_rec")
+        result = sim.start_recording(repo_id="local/test_rec", root=str(tmp_path / "dataset"))
         assert result["status"] == "error"
         text = result["content"][0]["text"]
         assert "start_cameras_recording" in text
         # Surfaced verbatim, so the caller sees which dependency is missing.
         assert reason in text
 
-    def test_broken_import_falls_through_to_structured_error(self, sim, monkeypatch):
+    def test_broken_import_falls_through_to_structured_error(self, sim, monkeypatch, tmp_path):
         import strands_robots.dataset_recorder as dr
 
         # Simulate a partial/broken lerobot install: the symbol is gone, so the
@@ -69,7 +69,7 @@ class TestStartRecordingErrorWithoutLerobot:
         # which must be swallowed into the same actionable error rather than
         # propagating a traceback out of the tool call.
         monkeypatch.delattr(dr, "DatasetRecorder", raising=False)
-        result = sim.start_recording(repo_id="local/test_rec")
+        result = sim.start_recording(repo_id="local/test_rec", root=str(tmp_path / "dataset"))
         assert result["status"] == "error"
         text = result["content"][0]["text"]
         assert "start_cameras_recording" in text
