@@ -1183,6 +1183,8 @@ def robot_mesh(
         # Parse + validation already happened in the pre-interrupt pass
         # above (so the operator approves the validated form). Reuse that
         # result rather than re-parsing the LLM string a second time.
+        # Explicit raise, not assert -- see the broadcast handler below for
+        # why the sentinel check must survive ``python -O``.
         if validated_send_cmd is None:
             raise RuntimeError(
                 "send reached its handler without pre-validation -- validate-before-HITL contract broken"
@@ -1200,9 +1202,11 @@ def robot_mesh(
     if action == "broadcast":
         # Pre-validated above before the HITL interrupt fired, so
         # the cmd here is already a clean validated dict.
-        # Use explicit raise (not assert) -- assert is stripped under
-        # ``python -O`` / ``PYTHONOPTIMIZE=1`` which would silently send
-        # an unvalidated cmd to mesh.broadcast.
+        # Use explicit raise (not assert): assert is stripped under
+        # ``python -O`` / ``PYTHONOPTIMIZE=1``, and with the check gone the
+        # handler dispatches the unset sentinel -- mesh.broadcast(None) is
+        # issued fleet-wide, and the cmd.get(...) on the audit line below
+        # then raises, so the dispatch that did happen is never recorded.
         if validated_broadcast_cmd is None:
             raise RuntimeError(
                 "broadcast reached its handler without pre-validation -- validate-before-HITL contract broken"
