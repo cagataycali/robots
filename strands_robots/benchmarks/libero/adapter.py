@@ -2813,8 +2813,9 @@ class LiberoAdapter(BenchmarkProtocol):
         Raises:
             _ControllerInstallError: The engine IS an Isaac engine but the
                 setup is broken - zero or multiple robots, missing Franka
-                joints, unreadable Jacobian, or a rejected install. These are
-                fixable setup bugs, so the caller applies the same
+                joints, an unreadable or malformed Jacobian, an arm joint
+                state the observation cannot supply, or a rejected install.
+                These are fixable setup bugs, so the caller applies the same
                 strict/non-strict policy as the MuJoCo path.
         """
         # Typed ``Any``: SimEngine's base surface declares none of these
@@ -2864,21 +2865,58 @@ class LiberoAdapter(BenchmarkProtocol):
                     f"observation keys: {sorted(obs)}"
                 ) from missing_joint
 
-        # Probe the Jacobian once at install time so a broken kinematics
-        # read surfaces as a loud install error at episode start (where the
+        # Probe BOTH kinematics reads once at install time so a broken read
+        # surfaces as a loud install error at episode start (where the
         # strict/non-strict policy applies) instead of as one error
         # envelope per action mid-eval. The physics tensor view exists by
         # now: the runner's warm-up and the scene load have stepped the
         # world.
+        #
+        # The properties asserted here are exactly the preconditions
+        # ``IsaacDeltaEEFController._solve_arm_targets`` re-checks on every
+        # action - the shape and the finiteness of the Jacobian and of the
+        # arm joint state - so a controller that installs cannot fail the
+        # solver on its first action. Probing the joint state is not implied
+        # by the Jacobian probe: the joint check above reads
+        # ``robot_joint_names`` (the articulation DOFs) while the solver
+        # reads ``get_observation``, and an engine whose observation omits or
+        # renames an arm joint satisfies the first and not the second.
         try:
             probe = jacobian_fn()
-        except RuntimeError as e:
+        except Exception as e:
+            # Translation path, not a swallow: the documented contract is that
+            # any broken setup lands as _ControllerInstallError so the caller's
+            # strict/non-strict policy applies. A malformed Jacobian payload
+            # raises whatever numpy makes of it - measured IndexError (too few
+            # columns), ValueError (ragged rows) and KeyError (no "jacp") - so
+            # an enumerated tuple cannot be complete, and each of those would
+            # otherwise escape this method's Raises: contract. The OSC install
+            # path above translates an unexpected failure class the same way.
             raise _ControllerInstallError(
                 f"Isaac delta-EEF controller cannot read the '{_ISAAC_FRANKA_EEF_LINK}' Jacobian: {e}"
             ) from e
         if probe.shape != (6, len(arm_joints)):
             raise _ControllerInstallError(
                 f"Isaac Jacobian probe returned shape {probe.shape}; expected (6, {len(arm_joints)})"
+            )
+        if not np.all(np.isfinite(probe)):
+            raise _ControllerInstallError(
+                f"Isaac Jacobian probe for '{_ISAAC_FRANKA_EEF_LINK}' returned non-finite values; "
+                "the differential-IK solve refuses to solve on those"
+            )
+        try:
+            q_probe = np.asarray(joint_positions_fn(), dtype=np.float64)
+        except Exception as e:
+            # Same translation, same reason: a KeyError naming the arm joint
+            # the observation lacks is a setup bug, and it is the read the
+            # Jacobian probe cannot vouch for.
+            raise _ControllerInstallError(
+                f"Isaac delta-EEF controller cannot read the arm joint state of '{robot_name}': {e}"
+            ) from e
+        if not np.all(np.isfinite(q_probe)):
+            raise _ControllerInstallError(
+                f"Isaac joint-state probe for '{robot_name}' returned non-finite values; "
+                "the differential-IK solve refuses to solve on those"
             )
 
         controller = IsaacDeltaEEFController(
