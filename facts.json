@@ -1,0 +1,84 @@
+{
+  "tree": "/tmp/robots-mine-31525473327",
+  "diagnoses": {
+    "mujoco": {
+      "absent-lerobot-extra": {
+        "status": "error",
+        "marker": "lerobot is not installed (ModuleNotFoundError: No module named 'lerobot'). Install lerobot >= 0.6.0 with: pip install 'strands-robots[lerobot]'",
+        "fallback": "start_cameras_recording",
+        "session_open": false,
+        "root_created": false
+      },
+      "module-did-not-import": {
+        "status": "error",
+        "marker": "strands_robots.dataset_recorder is unavailable (cannot import name 'DatasetRecorder' from 'strands_robots.dataset_recorder' (/tmp/robots-mine-31525473327/strands_robots/dataset_recorder.py)).",
+        "fallback": "start_cameras_recording",
+        "session_open": false,
+        "root_created": false
+      },
+      "module-supplied-no-recorder": {
+        "status": "error",
+        "marker": "strands_robots.dataset_recorder did not provide DatasetRecorder.",
+        "fallback": "start_cameras_recording",
+        "session_open": false,
+        "root_created": false
+      }
+    },
+    "newton": {
+      "absent-lerobot-extra": {
+        "status": "error",
+        "marker": "lerobot is not installed (ModuleNotFoundError: No module named 'lerobot'). Install lerobot >= 0.6.0 with: pip install 'strands-robots[lerobot]'",
+        "fallback": "run_policy(video=...)",
+        "session_open": false,
+        "root_created": false
+      },
+      "module-did-not-import": {
+        "status": "error",
+        "marker": "strands_robots.dataset_recorder is unavailable (cannot import name 'DatasetRecorder' from 'strands_robots.dataset_recorder' (/tmp/robots-mine-31525473327/strands_robots/dataset_recorder.py)).",
+        "fallback": "run_policy(video=...)",
+        "session_open": false,
+        "root_created": false
+      },
+      "module-supplied-no-recorder": {
+        "status": "error",
+        "marker": "strands_robots.dataset_recorder did not provide DatasetRecorder.",
+        "fallback": "run_policy(video=...)",
+        "session_open": false,
+        "root_created": false
+      }
+    },
+    "isaac": {
+      "absent-lerobot-extra": {
+        "status": "error",
+        "marker": "lerobot is not installed (ModuleNotFoundError: No module named 'lerobot'). Install lerobot >= 0.6.0 with: pip install 'strands-robots[lerobot]'",
+        "fallback": "start_cameras_recording",
+        "session_open": false,
+        "root_created": false
+      },
+      "module-did-not-import": {
+        "status": "error",
+        "marker": "strands_robots.dataset_recorder is unavailable (cannot import name 'DatasetRecorder' from 'strands_robots.dataset_recorder' (/tmp/robots-mine-31525473327/strands_robots/dataset_recorder.py)).",
+        "fallback": "start_cameras_recording",
+        "session_open": false,
+        "root_created": false
+      },
+      "module-supplied-no-recorder": {
+        "status": "error",
+        "marker": "strands_robots.dataset_recorder did not provide DatasetRecorder.",
+        "fallback": "start_cameras_recording",
+        "session_open": false,
+        "root_created": false
+      }
+    }
+  },
+  "honored": {
+    "start_status": "success",
+    "rollout_status": "success",
+    "stop_status": "success",
+    "episodes": 1,
+    "frames": 24,
+    "fps": 20,
+    "mp4_count": 2,
+    "decoded_frames": 24
+  }
+}
