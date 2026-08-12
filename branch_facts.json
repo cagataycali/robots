@@ -1,0 +1,31 @@
+{
+  "tree": "/tmp/robots-mine-31609652280",
+  "servo": 1,
+  "torque": 0,
+  "runs": [
+    {
+      "run": 1,
+      "status": "success",
+      "applies": 100,
+      "biastypes_during_apply": [
+        0
+      ],
+      "drove_torque_actuators": true,
+      "controllers": 1,
+      "registered_after": false,
+      "pelvis_z": 0.7482
+    },
+    {
+      "run": 2,
+      "status": "success",
+      "applies": 100,
+      "biastypes_during_apply": [
+        0
+      ],
+      "drove_torque_actuators": true,
+      "controllers": 1,
+      "registered_after": false,
+      "pelvis_z": 0.7481
+    }
+  ]
+}

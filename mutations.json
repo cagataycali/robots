@@ -1,0 +1,70 @@
+{
+  "rows": [
+    {
+      "label": "M1 revert: uninstall drops only the gains",
+      "in_fn": 1,
+      "in_file": 1,
+      "new_failed": 4,
+      "new_passed": 9,
+      "old_failed": 0,
+      "old_passed": 490
+    },
+    {
+      "label": "M2 drop the identity guard (clobber any controller)",
+      "in_fn": 1,
+      "in_file": 1,
+      "new_failed": 1,
+      "new_passed": 12,
+      "old_failed": 0,
+      "old_passed": 490
+    },
+    {
+      "label": "M3 from_sim stops threading the world through",
+      "in_fn": 1,
+      "in_file": 1,
+      "new_failed": 4,
+      "new_passed": 9,
+      "old_failed": 0,
+      "old_passed": 490
+    },
+    {
+      "label": "M4 hook ignores the position-servo predicate",
+      "in_fn": 1,
+      "in_file": 1,
+      "new_failed": 1,
+      "new_passed": 12,
+      "old_failed": 0,
+      "old_passed": 490
+    },
+    {
+      "label": "M5 hook ignores an already-registered controller",
+      "in_fn": 1,
+      "in_file": 1,
+      "new_failed": 0,
+      "new_passed": 13,
+      "old_failed": 1,
+      "old_passed": 489
+    },
+    {
+      "label": "M6 hook stops honouring the missing-world guard",
+      "in_fn": 1,
+      "in_file": 1,
+      "new_failed": 0,
+      "new_passed": 13,
+      "old_failed": 0,
+      "old_passed": 490
+    },
+    {
+      "label": "control (unmutated)",
+      "in_fn": 0,
+      "in_file": 0,
+      "new_failed": 0,
+      "new_passed": 13,
+      "old_failed": 0,
+      "old_passed": 490
+    }
+  ],
+  "caught_new": 4,
+  "caught_old": 1,
+  "n": 6
+}

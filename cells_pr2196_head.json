@@ -1,0 +1,10 @@
+{
+  "tree": "/tmp/wt-theirs-31609652280",
+  "cells": {
+    "manual_install_then_uninstall_releases": false,
+    "auto_hook_cleanup_releases": true,
+    "manual_uninstall_spares_a_newer_controller": true,
+    "auto_cleanup_spares_a_newer_controller": true,
+    "auto_releases_registry_even_if_uninstall_raises": true
+  }
+}
