@@ -1949,29 +1949,10 @@ class MuJoCoSimEngine(
             robot_name,
         )
 
-        def _cleanup() -> None:
-            """Undo both halves of the auto-install: the registry, then the gains.
-
-            :func:`~strands_robots.policies.wbc.install_wbc_torque_control` does
-            two things - flips the driven actuators to torque and registers the
-            controller for :meth:`_apply_sim_action` to dispatch to - while
-            :meth:`~strands_robots.policies.wbc.WBCTorqueController.uninstall`
-            only restores the gains. Restoring the gains alone would leave the
-            controller registered and still dispatching PD torques into
-            actuators this cleanup has just turned back into position servos,
-            and would make the "a manually-installed controller wins" check
-            above decline to install on the next :meth:`run_policy` - so the
-            second rollout on a sim would silently run without the shim the
-            first one needed. The registry entry goes first so a failure in
-            ``uninstall`` cannot leave a controller dispatching into restored
-            actuators.
-            """
-            state = getattr(world, "_backend_state", None)
-            if isinstance(state, dict) and state.get("action_controller") is controller:
-                del state["action_controller"]
-            controller.uninstall()
-
-        return _cleanup
+        # ``uninstall`` releases both halves of the install - the registration it
+        # made and the actuator gains - so the caller of the *documented manual*
+        # API gets the same teardown this hook does, from one implementation.
+        return controller.uninstall
 
     def list_robots_info(self) -> dict[str, Any]:
         """Agent-tool action: pretty-printed robot listing.

@@ -19,6 +19,13 @@ removes the registry entry it wrote - and only that entry, so a manual
 installation registered in the meantime survives - before restoring the gains,
 which keeps the second rollout as steady as the first (0.0259 m).
 
+The release now lives in `WBCTorqueController.uninstall` itself rather than in a
+cleanup the hook wraps around it, so the *documented manual* pair -
+`controller = install_wbc_torque_control(...)` then `controller.uninstall()` -
+hands the world back just as completely. That path leaked the registration too,
+and the docstring of `install_wbc_torque_control` names `uninstall` as its
+counterpart, so one implementation now covers both callers.
+
 The hook's five no-op conditions are now all driven. Three had never executed -
 no `[wbc]` extra, no compiled world, and `wbc_uses_position_servo` reporting no
 position-servo actuator - and its docstring, which listed four of the five and
