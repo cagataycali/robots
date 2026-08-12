@@ -1,0 +1,59 @@
+{
+ "rows": [
+  {
+   "label": "M1 delete the teardown entirely",
+   "new": [
+    3,
+    1
+   ],
+   "old": [
+    0,
+    175
+   ]
+  },
+  {
+   "label": "M2 keep the lookup, drop the .stop()",
+   "new": [
+    3,
+    1
+   ],
+   "old": [
+    0,
+    175
+   ]
+  },
+  {
+   "label": "M3 tear down BEFORE validating",
+   "new": [
+    0,
+    4
+   ],
+   "old": [
+    0,
+    175
+   ]
+  },
+  {
+   "label": "M4 key on device_name alone",
+   "new": [
+    3,
+    1
+   ],
+   "old": [
+    0,
+    175
+   ]
+  },
+  {
+   "label": "M5 never register the replacement",
+   "new": [
+    3,
+    1
+   ],
+   "old": [
+    0,
+    175
+   ]
+  }
+ ]
+}
