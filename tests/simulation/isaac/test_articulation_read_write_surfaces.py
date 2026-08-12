@@ -36,6 +36,9 @@ world/robot resolution guards and the Kit-pump threading marshal.
 
 from __future__ import annotations
 
+import ast
+import inspect
+import pathlib
 from typing import Any
 
 import numpy as np
@@ -235,6 +238,9 @@ class TestLimitsResolveFromEitherDocumentedSource:
         art = _LimitSourceArticulation(
             ARM_JOINTS, REAL_LIMITS, source="fallback", view_shaped=view_shaped, as_tensor=as_tensor
         )
+        # Without this the spans below are equally true of the authoritative
+        # source, so the case would pass while measuring the wrong surface.
+        assert not hasattr(art, "dof_properties")
         assert _limits(art, len(ARM_JOINTS)) == REAL_LIMITS
 
     def test_an_unreadable_authoritative_source_falls_through_to_the_fallback(self):
@@ -419,3 +425,85 @@ class TestThePrimitivesReportAFailedReadOrWrite:
         assert "none match a joint on the articulation" in text
         assert "stale for this robot" in text
         assert art.applied == []
+
+
+# ---------------------------------------------------------------------------
+# The limit-source fake composes the articulation rather than inheriting it.
+# ---------------------------------------------------------------------------
+
+
+def _self_assigned(cls: ast.ClassDef) -> dict[str, list[int]]:
+    """``{attribute: [line, ...]}`` for every ``self.<attr> = ...`` in *cls*."""
+    found: dict[str, list[int]] = {}
+    for node in ast.walk(cls):
+        if not isinstance(node, ast.Assign):
+            continue
+        for target in node.targets:
+            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
+                found.setdefault(target.attr, []).append(node.lineno)
+    return found
+
+
+def _classes(path: pathlib.Path) -> dict[str, ast.ClassDef]:
+    return {n.name: n for n in ast.walk(ast.parse(path.read_text())) if isinstance(n, ast.ClassDef)}
+
+
+def _base_owned_assignments(module: pathlib.Path, base_module: pathlib.Path) -> dict[str, list[tuple[int, str]]]:
+    """``{subclass: [(line, attribute), ...]}`` per class in *module* based in *base_module*.
+
+    A key with an empty list is a subclass assigning nothing its base assigns;
+    the key set is what proves the base was resolved at all.
+    """
+    bases = _classes(base_module)
+    out: dict[str, list[tuple[int, str]]] = {}
+    for name, cls in _classes(module).items():
+        inherited: set[str] = set()
+        resolved = False
+        for base in cls.bases:
+            if isinstance(base, ast.Name) and base.id in bases:
+                resolved = True
+                inherited |= set(_self_assigned(bases[base.id]))
+        if not resolved:
+            continue
+        out[name] = sorted(
+            (line, attr) for attr, lines in _self_assigned(cls).items() if attr in inherited for line in lines
+        )
+    return out
+
+
+class TestTheLimitSourceFakeComposesRatherThanInherits:
+    """What this module varies is state ``_FakeArticulation``'s own ``__init__`` writes.
+
+    A subclass can only vary that by deleting and re-assigning what its base
+    just set, which ties the fake to *how* the base stores the attribute - an
+    instance-dict entry it can pop - rather than to what the articulation
+    exposes. Exposure is all :meth:`_articulation_dof_limits` can see: it probes
+    both limit surfaces with ``getattr``. Composing states each surface once and
+    leaves the base the sole owner of what it builds.
+    """
+
+    def test_the_limit_source_fake_does_not_inherit_the_fake_it_wraps(self):
+        assert not issubclass(_LimitSourceArticulation, _FakeArticulation)
+        art = _LimitSourceArticulation(ARM_JOINTS, REAL_LIMITS, source="fallback")
+        assert isinstance(art._inner, _FakeArticulation)
+
+    def test_every_other_articulation_surface_delegates_to_the_wrapped_fake(self):
+        """Only the two limit surfaces are stated here; the rest is the fake's."""
+        art = _LimitSourceArticulation(ARM_JOINTS, REAL_LIMITS, source="fallback")
+        assert art.servo_rate == art._inner.servo_rate
+        assert art.applied is art._inner.applied  # the write log the cases above read
+        assert np.asarray(art.positions).tolist() == np.asarray(art._inner.positions).tolist()
+
+    def test_a_fake_that_does_subclass_assigns_nothing_its_base_builds(self):
+        found = _base_owned_assignments(pathlib.Path(__file__), pathlib.Path(inspect.getfile(_FakeArticulation)))
+        assert set(found) == {"_FailingIoArticulation"}, f"unexpected subclasses of the fake: {sorted(found)}"
+        offenders = {name: hits for name, hits in found.items() if hits}
+        assert offenders == {}, f"these assignments overwrite state _FakeArticulation owns: {offenders}"
+
+    def test_the_scan_detects_a_planted_overwrite(self, tmp_path):
+        planted = tmp_path / "planted.py"
+        planted.write_text(
+            "class _Planted(_FakeArticulation):\n    def __init__(self):\n        self.dof_properties = None\n"
+        )
+        found = _base_owned_assignments(planted, pathlib.Path(inspect.getfile(_FakeArticulation)))
+        assert found == {"_Planted": [(3, "dof_properties")]}
