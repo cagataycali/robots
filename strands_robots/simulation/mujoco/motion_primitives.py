@@ -439,6 +439,15 @@ class MotionPrimitivesMixin:
     ) -> tuple[np.ndarray, np.ndarray]:
         """World position + wxyz quaternion of a site/body frame from live data.
 
+        For ``frame_type="body"`` this reads the body's FRAME ORIGIN
+        (``data.xpos`` / ``data.xquat``), not its inertial/CoM frame
+        (``data.xipos``) - the two are distinct whenever the body's mass is not
+        centred on its origin. mink optimizes the frame origin, and
+        :meth:`move_to` decides ``reached`` by comparing this readback against
+        the same target the solver was given, so reading the inertial frame here
+        would leave the solver and the convergence check measuring points that
+        are metres-scale apart on some models and never converge.
+
         Callers must have run a kinematics pass so ``xpos``/``xmat`` are
         current, and must hold ``self._lock``.
         """
