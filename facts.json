@@ -1,0 +1,97 @@
+{
+  "tree": "/tmp/robots-mine-31589768006",
+  "before": {
+    "missing": [
+      342,
+      343,
+      402,
+      403
+    ],
+    "pct": 97.3,
+    "passed": 178
+  },
+  "after": {
+    "missing": [],
+    "pct": 100.0,
+    "passed": 189
+  },
+  "lines": [
+    {
+      "line": 255,
+      "fn": "_load_pipeline",
+      "decision": "refuse"
+    },
+    {
+      "line": 286,
+      "fn": "_import_condition_cls",
+      "decision": "refuse"
+    },
+    {
+      "line": 343,
+      "fn": "_as_action_tensor",
+      "decision": "refuse"
+    },
+    {
+      "line": 403,
+      "fn": "_to_numpy",
+      "decision": "degrade"
+    }
+  ],
+  "behaviour": {
+    "policy_mode": {
+      "outcome": "completed",
+      "shape": [
+        4,
+        10
+      ],
+      "dtype": "float32",
+      "chunk_exact": true
+    },
+    "forward_dynamics": {
+      "outcome": "refused",
+      "is_shared_hint": true
+    },
+    "policy_mode_torch_present": {
+      "outcome": "completed",
+      "shape": [
+        4,
+        10
+      ],
+      "chunk_exact": true
+    }
+  },
+  "hint_names_extra": true,
+  "hint_names_service": true,
+  "mutations": [
+    {
+      "label": "M1 _as_action_tensor degrades instead of refusing",
+      "new_failed": 4,
+      "old_failed": 0
+    },
+    {
+      "label": "M2 _as_action_tensor rewords the remedy locally",
+      "new_failed": 4,
+      "old_failed": 0
+    },
+    {
+      "label": "M3 _as_action_tensor drops the cause chaining",
+      "new_failed": 1,
+      "old_failed": 0
+    },
+    {
+      "label": "M4 _to_numpy refuses instead of degrading",
+      "new_failed": 3,
+      "old_failed": 0
+    },
+    {
+      "label": "M5 _to_numpy drops the half-precision up-cast",
+      "new_failed": 0,
+      "old_failed": 1
+    },
+    {
+      "label": "M6 a fourth install-hint site ships undriven",
+      "new_failed": 1,
+      "old_failed": 0
+    }
+  ]
+}
