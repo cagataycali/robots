@@ -3718,10 +3718,10 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
 
         Args:
             camera_name: a camera previously added via ``add_camera``.
-            width: must be ``None`` or the camera's native render width --
-                Isaac RTX cameras render at the resolution fixed at
-                ``add_camera`` time; a mismatch raises rather than silently
-                dropping the requested size.
+            width: must be ``None`` or the camera's native render width, and
+                a positive integer when supplied -- Isaac RTX cameras render at
+                the resolution fixed at ``add_camera`` time; a mismatch raises
+                rather than silently dropping the requested size.
             height: same contract as ``width``.
 
         Returns:
@@ -3731,8 +3731,8 @@ class IsaacSimulation(IsaacRecordingMixin, SimEngine):
             RuntimeError: no world, headless render mode, camera without an
                 RTX handle, or an RTX render failure.
             KeyError: unknown camera name.
-            ValueError: ``width``/``height`` differ from the camera's native
-                render resolution.
+            ValueError: ``width``/``height`` is not a positive integer, or
+                differs from the camera's native render resolution.
         """
         with self._lock:
             if not self._world_created:
