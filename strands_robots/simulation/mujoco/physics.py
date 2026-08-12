@@ -31,6 +31,7 @@ from strands_robots.simulation.mujoco.backend import (
     mj_name_to_id,
 )
 from strands_robots.simulation.mujoco.scene_ops import (
+    fromto_fixed_size_components,
     persist_body_mass,
     persist_geom_properties,
     refresh_body_inertial_from_geometry,
@@ -1780,6 +1781,10 @@ class PhysicsMixin:
           2 for a capsule/cylinder, 3 for a box/ellipsoid/plane. Mesh, height
           field and SDF geoms take their extent from asset data and define no
           ``geom_size`` component, so ``size`` is refused for them.
+          A geom declared with ``<fromto>`` has the compiler fix its extent
+          along that axis (and a box's / ellipsoid's cross-section), so a
+          change to one of those components is refused - pass the value the
+          compiler produces to resize the components it leaves alone.
 
         All numeric inputs are validated before any model write: ``color``,
         ``friction`` and ``size`` must contain only finite numbers (``nan`` /
@@ -1890,6 +1895,40 @@ class PhysicsMixin:
             )
             if err:
                 return err
+
+            # A geom declared with <fromto> has part of its geom_size fixed by
+            # the compiler rather than read from ``size``, and re-derived on
+            # every compile. Writing such a component would report a resize the
+            # next scene recompile discards, and would leave the body's inertial
+            # row - re-derived below from the spec, which the endpoints still
+            # govern - describing the old extent while the model collided as the
+            # requested one. Refused for the same reason an asset-defined extent
+            # is above; the components the fromto leaves alone still apply.
+            # ``_coerce_finite_vector`` returns a value whenever it reports no
+            # error, so the cast carries that proof rather than re-testing it.
+            requested = cast("list[float]", size)
+            for index, (component, follows) in sorted(fromto_fixed_size_components(self._world, gid).items()):
+                if index >= len(requested):
+                    continue
+                expected = float(requested[follows]) if follows is not None else float(model.geom_size[gid][index])
+                if float(requested[index]) == expected:
+                    continue
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"set_geom_properties: geom '{geom_name or gid}' declares a <fromto>, "
+                                f"so the compiler fixes its {component} (size component {index + 1} of "
+                                f"a {gtype}) rather than reading it from 'size'. A change to it cannot "
+                                f"be recorded durably: the next scene recompile restores {expected}. "
+                                f"Pass {expected} for that component to resize the ones the fromto "
+                                f"leaves alone, edit the fromto to resize along its axis, or declare "
+                                f"the geom with an explicit size, pos and quat."
+                            )
+                        }
+                    ],
+                }
 
         label = geom_name or f"geom_{gid}"
         changes = []

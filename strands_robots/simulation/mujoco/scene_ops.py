@@ -23,6 +23,8 @@ Public API:
   under ``{robot_name}/``, then recompile.
 * :func:`refresh_body_inertial_from_geometry` - re-derive a body's mass /
   center of mass / inertia after one of its geoms was resized at runtime.
+* :func:`fromto_fixed_size_components` - which ``geom_size`` components a geom's
+  ``<fromto>`` fixes, so a resize of one can be refused rather than reported.
 
 Every function takes a ``SimWorld`` whose ``_backend_state["spec"]`` holds the
 live ``MjSpec``. They return ``True`` on success, ``False`` on failure (matching
@@ -33,6 +35,7 @@ from __future__ import annotations
 
 import difflib
 import logging
+import math
 from collections.abc import Callable, Mapping
 from typing import Any
 
@@ -378,6 +381,11 @@ def persist_geom_properties(
             supplied are written, matching the model write: the unused tail of
             the spec's 3-wide row keeps its declared value.
 
+    A ``size`` component the geom's ``<fromto>`` fixes cannot be made durable by
+    writing this row at all; :func:`fromto_fixed_size_components` reports those
+    and the caller refuses such a change before reaching here, so what is written
+    below is what the next compile reproduces.
+
     Returns:
         ``None`` once the value is recorded, otherwise the reason it could not be.
     """
@@ -395,6 +403,57 @@ def persist_geom_properties(
     if size is not None:
         spec_geom.size[: len(size)] = size
     return None
+
+
+def fromto_fixed_size_components(world: SimWorld, geom_id: int) -> dict[int, tuple[str, int | None]]:
+    """Return the ``geom_size`` components a geom's ``<fromto>`` fixes.
+
+    ``fromto`` gives a geom's extent along its own axis as two endpoints, and the
+    compiler then FIXES part of its ``geom_size`` row rather than reading it from
+    ``size``: the axis extent comes from the endpoints, and for a box or ellipsoid
+    the cross-section is additionally made square by copying the first component.
+    Those components are re-derived on every compile, so a value written into the
+    spec's ``size`` row never reaches the model - the resize is reported and then
+    discarded by the next scene recompile, and an inertial row re-derived from the
+    spec (see :func:`refresh_body_inertial_from_geometry`) describes the extent the
+    endpoints still declare rather than the requested one.
+
+    Only the fixed components are affected. A capsule's or cylinder's radius still
+    comes from ``size``, so a caller can resize it and have the change recorded
+    durably; callers use this mapping to refuse a change to the rest instead of
+    reporting it.
+
+    Args:
+        world: The scene holding the live spec.
+        geom_id: Compiled geom index, already resolved by the caller.
+
+    Returns:
+        ``{index: (name, follows)}`` for each fixed component, where ``follows``
+        is the ``size`` index whose value that component copies, or ``None`` when
+        the segment endpoints fix it. Empty when nothing is fixed - which covers a
+        geom with no ``fromto``, a geom type ``fromto`` cannot be used with, and a
+        spec that cannot resolve ``geom_id``.
+    """
+    mj = _ensure_mujoco()
+    spec = _get_spec(world)
+    if spec is None:
+        return {}
+    spec_geom, _reason = _spec_element_by_id(spec.geoms, geom_id, "geom")
+    if spec_geom is None:
+        return {}
+    # MuJoCo marks an unset spec field with NaN in its first element, so a
+    # ``fromto`` only describes this geom when it was actually declared.
+    fromto = spec_geom.fromto
+    if fromto is None or math.isnan(float(fromto[0])):
+        return {}
+    geom = mj.mjtGeom
+    fixed: dict[int, dict[int, tuple[str, int | None]]] = {
+        int(geom.mjGEOM_CAPSULE): {1: ("half-length", None)},
+        int(geom.mjGEOM_CYLINDER): {1: ("half-length", None)},
+        int(geom.mjGEOM_BOX): {1: ("y half-extent", 0), 2: ("z half-extent", None)},
+        int(geom.mjGEOM_ELLIPSOID): {1: ("y semi-axis", 0), 2: ("z semi-axis", None)},
+    }
+    return fixed.get(int(spec_geom.type), {})
 
 
 def refresh_body_inertial_from_geometry(world: SimWorld, geom_id: int) -> str | None:
