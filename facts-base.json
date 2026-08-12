@@ -1,0 +1,26 @@
+{
+  "tree": "/tmp/wtbase-31625251227",
+  "tag": "base",
+  "script": {
+    "exit": null,
+    "timed_out": true,
+    "wall_s": 30.1
+  },
+  "attrs": {
+    "factory_sets_mesh": true,
+    "example_reads": "_mesh",
+    "read_returns_none": true
+  },
+  "threads": {
+    "surviving_non_daemon": 6,
+    "names": [
+      "Thread-1 (pyo3-closure)",
+      "Thread-2 (pyo3-closure)",
+      "Thread-3 (pyo3-closure)",
+      "Thread-4 (pyo3-closure)"
+    ]
+  },
+  "render": {
+    "bytes": 52420
+  }
+}

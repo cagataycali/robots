@@ -1,0 +1,21 @@
+{
+  "tree": "/tmp/robots-mine-31625251227",
+  "tag": "branch",
+  "script": {
+    "exit": 0,
+    "timed_out": false,
+    "wall_s": 1.5
+  },
+  "attrs": {
+    "factory_sets_mesh": true,
+    "example_reads": "mesh",
+    "read_returns_none": false
+  },
+  "threads": {
+    "surviving_non_daemon": 0,
+    "names": []
+  },
+  "render": {
+    "bytes": 52406
+  }
+}
