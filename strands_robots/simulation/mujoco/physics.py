@@ -1906,10 +1906,13 @@ class PhysicsMixin:
             # is above; the components the fromto leaves alone still apply.
             # ``_coerce_finite_vector`` returns a value whenever it reports no
             # error, so the cast carries that proof rather than re-testing it.
+            # It also fixed the length at this geom type's exact component count,
+            # and every component a fromto fixes falls inside that count - 1 of a
+            # capsule's / cylinder's 2, 1 and 2 of a box's / ellipsoid's 3 - so
+            # each index below is in range. A bounds check here would stand in
+            # for that proof while reading as though a short vector could arrive.
             requested = cast("list[float]", size)
             for index, (component, follows) in sorted(fromto_fixed_size_components(self._world, gid).items()):
-                if index >= len(requested):
-                    continue
                 expected = float(requested[follows]) if follows is not None else float(model.geom_size[gid][index])
                 if float(requested[index]) == expected:
                     continue

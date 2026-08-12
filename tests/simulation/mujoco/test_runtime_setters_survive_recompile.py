@@ -34,6 +34,7 @@ from strands_robots.simulation.mujoco.scene_ops import (
 mujoco = pytest.importorskip("mujoco")
 
 from strands_robots import Simulation  # noqa: E402
+from strands_robots.simulation.mujoco.physics import _GEOM_SIZE_LAYOUTS  # noqa: E402
 
 # Two bodies covering both ways MuJoCo derives an inertial: "explicit" declares
 # its own <inertial> (explicitinertial, as every menagerie robot link does),
@@ -360,6 +361,35 @@ class TestFromtoFixedSizeIsRefused:
 
         world._backend_state.pop("spec")
         assert fromto_fixed_size_components(world, _geom(model, "cap")) == {}
+
+    def test_every_fixed_component_is_within_the_accepted_size_length(self, fromto_sim):
+        """The refusal indexes the caller's ``size`` on this, so nothing guards it.
+
+        ``set_geom_properties`` requires a size of the geom type's exact component
+        count and then indexes that vector at every component the helper reports -
+        including the one a square cross-section copies from. Both indices have to
+        fall inside the accepted count for each type a ``fromto`` governs, which is
+        a property of the two tables together rather than of either alone, and the
+        reason the refusal needs no bounds check to stand in for it.
+        """
+        world = fromto_sim._world
+        model = world._model
+
+        for geom_name, gtype, *_rest in FROMTO_CASES:
+            fixed = fromto_fixed_size_components(world, _geom(model, geom_name))
+            assert fixed, f"{gtype} declares a fromto, so the helper must report what it fixes"
+            assert gtype in _GEOM_SIZE_LAYOUTS, f"{gtype} accepts no size, so it cannot be resized at all"
+            accepted = _GEOM_SIZE_LAYOUTS[gtype][0]
+
+            for index, (_component, follows) in fixed.items():
+                assert 0 <= index < accepted, f"{gtype} fixes component {index} of an accepted {accepted}"
+                if follows is None:
+                    continue
+                assert 0 <= follows < accepted, f"{gtype} copies component {follows} of an accepted {accepted}"
+                # The remedy is "pass the value the compiler produces", so the
+                # component a fixed one copies must itself be settable - if it
+                # were fixed too, no size could satisfy both.
+                assert follows not in fixed, f"{gtype} component {index} copies a component that is fixed too"
 
 
 class TestRefusedWhenTheChangeCannotBeRecorded:
