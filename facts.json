@@ -1,0 +1,123 @@
+{
+  "tree": "/tmp/robots-mine-31640090496",
+  "joints": [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow",
+    "wrist_roll",
+    "jaw"
+  ],
+  "limits": [
+    [
+      -3.1,
+      3.1
+    ],
+    [
+      -1.8,
+      1.8
+    ],
+    [
+      -2.4,
+      2.4
+    ],
+    [
+      -1.7,
+      1.7
+    ],
+    [
+      -0.2,
+      1.5
+    ]
+  ],
+  "runs": {
+    "props:close": {
+      "source": "props",
+      "state": "close",
+      "status": "success",
+      "targets": {
+        "jaw": -0.2
+      },
+      "setpoint_sources": {
+        "jaw": "articulation dof limits"
+      },
+      "final_positions": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -0.19980469047732186
+      ]
+    },
+    "props:open": {
+      "source": "props",
+      "state": "open",
+      "status": "success",
+      "targets": {
+        "jaw": 1.5
+      },
+      "setpoint_sources": {
+        "jaw": "articulation dof limits"
+      },
+      "final_positions": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.49853515625
+      ]
+    },
+    "fallback:close": {
+      "source": "fallback",
+      "state": "close",
+      "status": "success",
+      "targets": {
+        "jaw": -0.2
+      },
+      "setpoint_sources": {
+        "jaw": "articulation dof limits"
+      },
+      "final_positions": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        -0.19980469047732186
+      ]
+    },
+    "fallback:open": {
+      "source": "fallback",
+      "state": "open",
+      "status": "success",
+      "targets": {
+        "jaw": 1.5
+      },
+      "setpoint_sources": {
+        "jaw": "articulation dof limits"
+      },
+      "final_positions": [
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        1.49853515625
+      ]
+    },
+    "none:close": {
+      "source": "none",
+      "state": "close",
+      "status": "error",
+      "text": "set_gripper: joint 'jaw' has no usable open/close set-points - the articulation reports no finite joint limits for it. Drive it directly with action='send_action'."
+    },
+    "none:open": {
+      "source": "none",
+      "state": "open",
+      "status": "error",
+      "text": "set_gripper: joint 'jaw' has no usable open/close set-points - the articulation reports no finite joint limits for it. Drive it directly with action='send_action'."
+    }
+  },
+  "render": {
+    "arm_closed": 0.4735783410138249,
+    "arm_opened": 0.37429032258064515,
+    "differing_fraction": 0.18188940092165898
+  }
+}
