@@ -1,0 +1,133 @@
+{
+ "tree": "/tmp/robots-mine-31599073624",
+ "reachable": [
+  0.2,
+  0.1,
+  0.2
+ ],
+ "cam": {
+  "position": [
+   0.36,
+   -0.38,
+   0.34
+  ],
+  "target": [
+   0.08,
+   0.05,
+   0.22
+  ],
+  "fov": 30
+ },
+ "home": {},
+ "short": {
+  "status": "error",
+  "text": "move_to: 'arm' did not reach [0.2, 0.1, 0.2] within tol=0.02 m after max_steps=2 (residual 0.1815 m; IK residual was 0.0017 m). The servo may need more steps, or the pose fights joint limits/contacts.",
+  "reached": false,
+  "steps": 2,
+  "position_error_m": 0.1815215021804488,
+  "ik_residual_m": 0.0016565434142910625,
+  "ee_position": [
+   0.3493713783264512,
+   0.006521732853318166,
+   0.2435896852702156
+  ],
+  "ee_orientation_wxyz": [
+   0.9994276586915763,
+   -0.00030052264598834827,
+   0.03251563735554483,
+   0.009327274831150343
+  ],
+  "frame": "arm/ee_site",
+  "frame_type": "site"
+ },
+ "conv": {
+  "status": "success",
+  "text": "move_to: 'arm' EE (site 'arm/ee_site') reached [0.2, 0.1, 0.2] within 0.02 m in 41 steps (error 0.0197 m).",
+  "reached": true,
+  "steps": 41,
+  "position_error_m": 0.019738044759580475,
+  "ik_residual_m": 0.0015739150759326785,
+  "ee_position": [
+   0.20209605010484716,
+   0.09572105846635427,
+   0.18084568862525166
+  ],
+  "ee_orientation_wxyz": [
+   0.8588668474387811,
+   -0.1039844465549541,
+   0.4628837537405883,
+   0.193063729810267
+  ],
+  "frame": "arm/ee_site",
+  "frame_type": "site"
+ },
+ "diff_home_short": 0.12092902711323764,
+ "diff_short_conv": 0.2521311802232855,
+ "diff_home_conv": 0.2543201754385965,
+ "sat_home": 0.6303488835725678,
+ "coverage": {
+  "file": "strands_robots/simulation/motion_primitives_base.py",
+  "before_missing": [
+   207,
+   304,
+   380
+  ],
+  "after_missing": [],
+  "before_pct": 97,
+  "after_pct": 100,
+  "stmts": 114
+ },
+ "mutations": {
+  "rows": [
+   {
+    "label": "M1 move_to: not-reached half regressed to success",
+    "new_failed": 2,
+    "old_failed": 0
+   },
+   {
+    "label": "M2 move_to: refusal drops the json payload",
+    "new_failed": 4,
+    "old_failed": 0
+   },
+   {
+    "label": "M3 move_to: the two residuals collapse into one",
+    "new_failed": 3,
+    "old_failed": 1
+   },
+   {
+    "label": "M4 rotate_wrist: not-reached half regressed to success",
+    "new_failed": 2,
+    "old_failed": 0
+   },
+   {
+    "label": "M5 rotate_wrist: refusal drops the json payload",
+    "new_failed": 3,
+    "old_failed": 0
+   },
+   {
+    "label": "M6 default registry seam stops resolving",
+    "new_failed": 1,
+    "old_failed": 0
+   },
+   {
+    "label": "M7 set_gripper: payload drops setpoint_sources",
+    "new_failed": 1,
+    "old_failed": 5
+   }
+  ],
+  "control_new": [
+   0,
+   16
+  ],
+  "control_old": [
+   0,
+   232
+  ]
+ },
+ "suite": {
+  "base": 28535,
+  "branch": 28551,
+  "skipped": 257,
+  "new_cases": 16
+ }
+}
