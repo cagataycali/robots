@@ -1,0 +1,210 @@
+{
+  "tree": "/tmp/robots-mine-31556894159",
+  "matrix": {
+    "0": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    },
+    "-8": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    },
+    "True": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    },
+    "2.7": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    },
+    "64.0": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    },
+    "nan": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    },
+    "inf": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    },
+    "'64'": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    },
+    "[64]": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    },
+    "np.int64(64)": {
+      "add_camera": true,
+      "render": true,
+      "get_frame": true,
+      "get_camera_params": true
+    }
+  },
+  "surfaces": [
+    "add_camera",
+    "render",
+    "get_frame",
+    "get_camera_params"
+  ],
+  "driven_before": {
+    "add_camera": true,
+    "render": true,
+    "get_frame": false,
+    "get_camera_params": false
+  },
+  "reads_after_refusal": [],
+  "reads_after_usable": [
+    "rgba",
+    "depth"
+  ],
+  "readback": {
+    "rgb_shape": [
+      48,
+      64,
+      3
+    ],
+    "rgb_dtype": "uint8",
+    "depth_shape": [
+      48,
+      64
+    ],
+    "depth_dtype": "float32",
+    "native": [
+      64,
+      48
+    ],
+    "prim_to_gl": [
+      [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0
+      ]
+    ],
+    "prim_to_gl_expected": [
+      [
+        0.0,
+        0.0,
+        -1.0
+      ],
+      [
+        -1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0
+      ]
+    ]
+  },
+  "mutations": [
+    {
+      "label": "M1 get_frame: delete the pixel-floor guard",
+      "new_failed": 27,
+      "old_failed": 0
+    },
+    {
+      "label": "M2 get_frame: keep the call, drop the raise",
+      "new_failed": 25,
+      "old_failed": 0
+    },
+    {
+      "label": "M3 get_camera_params: delete the guard",
+      "new_failed": 27,
+      "old_failed": 0
+    },
+    {
+      "label": "M4 get_camera_params: keep the call, drop the raise",
+      "new_failed": 25,
+      "old_failed": 0
+    },
+    {
+      "label": "M5 get_frame: reword the refusal locally",
+      "new_failed": 25,
+      "old_failed": 0
+    },
+    {
+      "label": "M6 get_frame: widen the floor to the integral-real domain",
+      "new_failed": 27,
+      "old_failed": 0
+    },
+    {
+      "label": "M7 get_camera_params: drop the prim->GL basis correction",
+      "new_failed": 1,
+      "old_failed": 0
+    },
+    {
+      "label": "M8 get_frame: silently drop the depth buffer",
+      "new_failed": 1,
+      "old_failed": 0
+    }
+  ],
+  "mujoco": {
+    "K": [
+      [
+        900.305372079505,
+        0.0,
+        380.0
+      ],
+      [
+        0.0,
+        900.305372079505,
+        310.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "wh": [
+      760,
+      620
+    ],
+    "refusals": {
+      "0": true,
+      "-8": true,
+      "True": true,
+      "2.7": true,
+      "64.0": true,
+      "nan": true,
+      "inf": true,
+      "'64'": true,
+      "[64]": true,
+      "np.int64(64)": true
+    }
+  }
+}
