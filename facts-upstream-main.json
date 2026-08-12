@@ -1,0 +1,82 @@
+{
+  "tree": "/tmp/ctrl-31548184506",
+  "declared": {
+    "geom_size": [
+      0.05,
+      0.15,
+      0.0
+    ],
+    "mass": 2.303835,
+    "inertia": [
+      0.027515,
+      0.027515,
+      0.002775
+    ]
+  },
+  "resize": {
+    "status": "success",
+    "text": "Geom 'cap': size \u2192 [0.05, 0.3, 0.0]"
+  },
+  "after_set": {
+    "geom_size": [
+      0.05,
+      0.3,
+      0.0
+    ],
+    "mass": 2.303835,
+    "inertia": [
+      0.027515,
+      0.027515,
+      0.002775
+    ]
+  },
+  "after_recompile": {
+    "geom_size": [
+      0.05,
+      0.15,
+      0.0
+    ],
+    "mass": 2.303835,
+    "inertia": [
+      0.027515,
+      0.027515,
+      0.002775
+    ]
+  },
+  "thicken": {
+    "status": "success",
+    "text": "Geom 'cap': size \u2192 [0.09, 0.15, 0.0]"
+  },
+  "thicken_after_set": {
+    "geom_size": [
+      0.09,
+      0.15,
+      0.0
+    ],
+    "mass": 8.550159,
+    "inertia": [
+      0.145786,
+      0.145786,
+      0.032649
+    ]
+  },
+  "thicken_after_recompile": {
+    "geom_size": [
+      0.09,
+      0.15,
+      0.0
+    ],
+    "mass": 8.550159,
+    "inertia": [
+      0.145786,
+      0.145786,
+      0.032649
+    ]
+  },
+  "diff_pct": {
+    "declared_vs_after_set": 5.25,
+    "after_set_vs_after_recompile": 5.25,
+    "declared_vs_after_recompile": 0.0,
+    "declared_vs_thicken": 11.25
+  }
+}
