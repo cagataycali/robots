@@ -26,6 +26,8 @@ load is untouched.
 No GPU and no weights: the pipeline is injected through the ``sys.modules``
 seam the safety-checker tests use, and a parameter stand-in only needs a
 ``.device.type``, so the matrix runs with neither torch nor diffusers installed.
+Running torch-less costs one explicit argument, ``dtype=_SERVED_DTYPE`` -- see
+that constant.
 """
 
 import sys
@@ -39,6 +41,23 @@ from strands_robots.policies.cosmos3.policy_diffusers import (
     _checkpoint_mismatch_hint,
     _unloaded_checkpoint_tensors,
 )
+
+# ``_load_pipeline`` resolves its dtype string against the imported torch module.
+# The backend defaults to ``"bfloat16"``, which the numpy-backed torch stand-in
+# ``conftest`` installs when real torch is absent deliberately does *not* serve -
+# ``float16`` and ``bfloat16`` are both pinned as reaches past its subset in
+# ``tests/test_torch_stand_in_serves_or_skips.py``. That stand-in's serve-or-skip
+# contract is defeated here by the three-argument ``getattr(torch_mod, dtype,
+# None)`` the resolver uses: the default swallows the ``AttributeError`` half,
+# and with it the skip, so an unserved dtype arrives as ``None`` and is reported
+# as ``ValueError: Unknown torch dtype 'bfloat16'`` -- a message about the
+# caller's dtype string, on a run whose actual shortfall is the absent extra.
+#
+# So these cases name a dtype the stand-in serves. They pin the checkpoint scan,
+# not dtype resolution, and the dtype reaches only the injected fake pipeline's
+# ``from_pretrained`` kwargs. Dropping the argument passes under real torch and
+# fails in the torch-less environment the module docstring above promises.
+_SERVED_DTYPE = "float32"
 
 
 def _param(device_type):
@@ -162,7 +181,12 @@ class TestLoadPipelineRefusesAMismatchedCheckpoint:
         pipe = _mismatched_pipe()
         _install_fake_diffusers(monkeypatch, pipe)
         with pytest.raises(RuntimeError, match="was not fully loaded"):
-            Cosmos3DiffusersBackend(embodiment=get_embodiment("umi"), model="nvidia/Cosmos3-Edge", device="cpu")
+            Cosmos3DiffusersBackend(
+                embodiment=get_embodiment("umi"),
+                model="nvidia/Cosmos3-Edge",
+                device="cpu",
+                dtype=_SERVED_DTYPE,
+            )
 
     def test_the_refusal_precedes_the_device_copy(self, monkeypatch):
         """``pipe.to(device)`` moves the whole checkpoint (9 GB for Cosmos3-Edge)
@@ -172,7 +196,7 @@ class TestLoadPipelineRefusesAMismatchedCheckpoint:
         pipe = _mismatched_pipe()
         _install_fake_diffusers(monkeypatch, pipe)
         with pytest.raises(RuntimeError):
-            Cosmos3DiffusersBackend(embodiment=get_embodiment("umi"), device="cpu")
+            Cosmos3DiffusersBackend(embodiment=get_embodiment("umi"), device="cpu", dtype=_SERVED_DTYPE)
         assert pipe.to_calls == [], "a refused load must not copy the checkpoint to the device"
 
     def test_a_fully_loaded_checkpoint_still_reaches_the_device(self, monkeypatch):
@@ -180,7 +204,7 @@ class TestLoadPipelineRefusesAMismatchedCheckpoint:
         (``nvidia/Cosmos3-Nano`` loads with 0 meta parameters on both versions)."""
         pipe = _loaded_pipe()
         _install_fake_diffusers(monkeypatch, pipe)
-        backend = Cosmos3DiffusersBackend(embodiment=get_embodiment("umi"), device="cpu")
+        backend = Cosmos3DiffusersBackend(embodiment=get_embodiment("umi"), device="cpu", dtype=_SERVED_DTYPE)
         assert pipe.to_calls == ["cpu"]
         assert backend._pipeline is pipe
 
