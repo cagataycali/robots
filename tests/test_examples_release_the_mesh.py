@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import ast
 import re
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -176,16 +177,29 @@ def test_the_scan_detects_a_planted_private_mesh_read(planted: str):
     assert _unknown_mesh_reads(planted, {"mesh"})
 
 
+# Own private state: assigned in ``__init__``, then read back. Not a missing SDK
+# attribute, so the rule must leave it alone (examples/fleet/dashboard.py does
+# exactly this). Kept as a named constant rather than adjacent string literals so
+# that a dropped comma in the list below cannot silently merge two cases into one.
+_OWN_PRIVATE_MESH_ROUND_TRIP = textwrap.dedent(
+    """\
+    class D:
+        def __init__(self, mesh):
+            self._mesh = mesh
+
+        def go(self):
+            return self._mesh.peers
+    """
+)
+
+
 @pytest.mark.parametrize(
     "clean",
     [
         'mesh = getattr(sim, "mesh", None)\nif mesh:\n    mesh.stop()\n',
         "if args.skip_mesh:\n    pass\n",
         'sim = Robot("so100", mesh=True)\n',
-        # Own private state: assigned here, then read back. Not a missing SDK
-        # attribute, so the rule must leave it alone (examples/fleet/dashboard.py).
-        "class D:\n    def __init__(self, mesh):\n        self._mesh = mesh\n"
-        "    def go(self):\n        return self._mesh.peers\n",
+        _OWN_PRIVATE_MESH_ROUND_TRIP,
     ],
     ids=[
         "public-getattr",
