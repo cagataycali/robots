@@ -59,8 +59,16 @@ from .test_motion_primitives import (  # noqa: F401 - fake_articulation_action i
 # ---------------------------------------------------------------------------
 
 
-class _LimitSourceArticulation(_FakeArticulation):
+class _LimitSourceArticulation:
     """Articulation exposing a chosen one of the two documented limit surfaces.
+
+    A wrapper rather than a ``_FakeArticulation`` subclass: what varies here
+    *is* an attribute the fake's own ``__init__`` writes, so a subclass can only
+    vary it by deleting and re-assigning what its base just set - which reads
+    exactly like an accidental shadow of an inherited attribute, and is one.
+    Wrapping states each surface once: ``dof_properties`` and
+    ``get_dof_limits`` exist on the wrapper only for the cases that say they
+    do, and every other articulation call delegates to the wrapped fake.
 
     ``source`` selects which surface exists:
 
@@ -94,36 +102,42 @@ class _LimitSourceArticulation(_FakeArticulation):
     ):
         spans = [s for s in limits if s is not None]
         assert len(spans) == len(limits), "a fallback table cannot express hasLimits=False"
-        super().__init__(joint_names, limits, **kwargs)
-        table = np.array(spans[: rows if rows is not None else len(spans)], dtype=np.float64)
-        self._table: Any = np.array([table]) if view_shaped else table
-        if as_tensor:
-            self._table = _TorchTensor(self._table)
+        self._inner = _FakeArticulation(joint_names, limits, **kwargs)
         self._raises = source == "raising_fallback"
+
+        if source != "none":
+            table: Any = np.array(spans[: rows if rows is not None else len(spans)], dtype=np.float64)
+            if view_shaped:
+                table = np.array([table])
+            self._table = _TorchTensor(table) if as_tensor else table
+            # Bound as an instance attribute, so ``source="none"`` exposes no
+            # such surface at all rather than one that refuses when called -
+            # the adapter probes for the fallback with getattr.
+            self.get_dof_limits = self._fallback_limits
 
         if source == "no_has_limits":
             fields = np.zeros(len(joint_names), dtype=[("lower", "f8"), ("upper", "f8")])
             for i, (lo, hi) in enumerate(spans):
                 fields["lower"][i], fields["upper"][i] = lo, hi
             self.dof_properties = fields
-            return
-        del self.dof_properties  # the authoritative source is absent
-        if source == "props_unreadable":
+        elif source == "props_unreadable":
             self.dof_properties = np.zeros(len(joint_names))  # not a structured array
-        if source == "none":
-            del self._table
+        # Every other source leaves the authoritative surface absent: see
+        # ``__getattr__``, which does not resolve it on the wrapped fake.
 
-    def get_dof_limits(self):
+    def _fallback_limits(self):
         if self._raises:
             raise RuntimeError("articulation view was torn down")
         return self._table
 
-    def __getattribute__(self, name):
-        # ``source="none"`` must expose neither surface, and the adapter probes
-        # for the fallback with getattr.
-        if name == "get_dof_limits" and "_table" not in object.__getattribute__(self, "__dict__"):
+    def __getattr__(self, name):
+        # Reached only for names this wrapper did not set. The two limit
+        # surfaces are what this module varies, so an absent one stays absent
+        # instead of resolving on the wrapped fake; ``_inner`` is listed so a
+        # missing wrapper state reports itself rather than recursing here.
+        if name in ("dof_properties", "get_dof_limits", "_inner"):
             raise AttributeError(name)
-        return object.__getattribute__(self, name)
+        return getattr(self._inner, name)
 
 
 class _TorchTensor:
