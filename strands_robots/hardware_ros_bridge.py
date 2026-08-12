@@ -96,7 +96,7 @@ class HardwareRosBridge(RosTelemetryBridge):
     Raises:
         ValueError: If ``domain_id`` is outside ``[0, 232]``, if ``spin_period``
             is not a positive finite number, or if ``joint_limits`` is not a
-            ``{motor: (min, max)}`` mapping of numeric pairs with
+            ``{motor: (min, max)}`` mapping of finite numeric pairs with
             ``min <= max``.
     """
 

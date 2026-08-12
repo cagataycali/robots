@@ -24,6 +24,7 @@ from strands_robots.ros_telemetry import (
     ROS2_INSECURE_ENV,
     RosTelemetryBase,
 )
+from strands_robots.utils import finite_number_error
 
 
 class _Msg:
@@ -183,3 +184,109 @@ def test_out_of_range_command_is_dropped_whole(caplog: pytest.LogCaptureFixture)
     assert action is None
     # An unbounded joint alongside bounded ones is accepted when all are in range.
     assert base._command_action(_Msg(["a", "c"], [0.5, 99.0]), joint_limits=limits) == {"a": 0.5, "c": 99.0}
+
+
+# --- a non-finite bound is the malformed shape the ordering check cannot see --
+
+
+_NAN = float("nan")
+_INF = float("inf")
+
+
+@pytest.mark.parametrize(
+    ("bound", "label", "shown"),
+    [
+        ((-1.9, _NAN), "max", "nan"),
+        ((_NAN, 1.9), "min", "nan"),
+        ((_NAN, _NAN), "min", "nan"),
+        ((_INF, _INF), "min", "inf"),
+        ((-1.9, _INF), "max", "inf"),
+        ((-_INF, 1.9), "min", "-inf"),
+    ],
+    ids=["nan-max", "nan-min", "nan-both", "inf-both", "inf-max", "neg-inf-min"],
+)
+def test_non_finite_bound_is_refused_naming_the_joint_and_the_bound(
+    bound: tuple[float, float], label: str, shown: str
+) -> None:
+    # Every comparison against nan is False, so the ordering check below cannot
+    # see this shape; without an explicit finiteness check the bridge builds.
+    with pytest.raises(ValueError) as excinfo:
+        RosTelemetryBase._validate_joint_limits({"shoulder_pan": bound})
+    message = str(excinfo.value)
+    assert "joint_limits['shoulder_pan'] " + label in message
+    assert shown in message
+    # Not mistaken for the ordering refusal, which reports a different cause.
+    assert "min" not in message.replace("joint_limits['shoulder_pan'] min", "") or "> max" not in message
+
+
+def test_the_refusal_is_the_shared_domain_verdict_verbatim() -> None:
+    # The bound is a signed finite physical quantity, so the accepted domain is
+    # the shared one rather than a local re-wording that could drift from it.
+    with pytest.raises(ValueError) as excinfo:
+        RosTelemetryBase._validate_joint_limits({"elbow": (-1.0, _NAN)})
+    assert str(excinfo.value) == finite_number_error(_NAN, "joint_limits['elbow'] max", "RosTelemetryBase")
+
+
+def test_a_non_finite_bound_would_otherwise_drop_every_in_range_command(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The premise the guard rests on, measured without it: a nan bound reaching
+    # the per-command check makes `low <= pos <= high` False for every position,
+    # so the bridge silently drops every inbound command for that joint - the
+    # failure this construction-time validator exists to prevent.
+    base = RosTelemetryBase()
+    poisoned = {"shoulder_pan": (-1.9, _NAN)}
+    with caplog.at_level(logging.WARNING, logger="strands_robots.ros_telemetry"):
+        for commanded in (0.0, 0.5, -1.0, 1.8):
+            assert base._command_action(_Msg(["shoulder_pan"], [commanded]), joint_limits=poisoned) is None
+    assert len(caplog.records) == 4
+    # An identical range with a finite bound admits every one of them.
+    usable = {"shoulder_pan": (-1.9, 1.9)}
+    for commanded in (0.0, 0.5, -1.0, 1.8):
+        assert base._command_action(_Msg(["shoulder_pan"], [commanded]), joint_limits=usable) == {
+            "shoulder_pan": commanded
+        }
+
+
+@pytest.mark.parametrize(
+    "usable",
+    [
+        {"a": (0, 10)},  # ints coerce to floats
+        {"a": ("-0.5", "1.5")},  # a numeric string pair still coerces
+        {"a": (-1e300, 1e300)},  # large but finite is a usable bound
+        {"a": (1.5, 1.5)},  # a degenerate finite point range
+    ],
+    ids=["ints", "numeric-strings", "large-finite", "point-range"],
+)
+def test_finite_bounds_are_still_accepted(usable: dict[str, object]) -> None:
+    # The guard narrows exactly the non-finite bounds and nothing else.
+    out = RosTelemetryBase._validate_joint_limits(usable)  # type: ignore[arg-type]
+    assert out is not None
+    assert all(isinstance(v, float) for pair in out.values() for v in pair)
+
+
+def test_omitting_a_joint_leaves_it_unconstrained() -> None:
+    # The documented spelling for "do not constrain this joint" is to omit it,
+    # which is why an infinite bound is not needed as a second spelling for it.
+    base = RosTelemetryBase()
+    limits = RosTelemetryBase._validate_joint_limits({"a": (-1.0, 1.0)})
+    assert base._command_action(_Msg(["a", "free"], [0.5, 9e9]), joint_limits=limits) == {"a": 0.5, "free": 9e9}
+
+
+def test_both_joint_limits_surfaces_refuse_a_non_finite_bound() -> None:
+    # One parameter name, one accepted domain: the sim-side controller already
+    # refuses a non-finite joint_limits bound, so the bridge that gates a
+    # physical arm's inbound commands must not accept one.
+    from strands_robots.simulation.isaac.delta_eef import IsaacDeltaEEFController
+
+    for bad in (_NAN, _INF):
+        with pytest.raises(ValueError, match="finite"):
+            RosTelemetryBase._validate_joint_limits({"j1": (-1.0, bad)})
+        with pytest.raises(ValueError, match="finite"):
+            IsaacDeltaEEFController(
+                arm_joint_names=["j1"],
+                gripper_joint_names=["g1"],
+                joint_positions_fn=lambda: [0.0],
+                jacobian_fn=lambda: None,
+                joint_limits=[[-1.0, bad]],
+            )

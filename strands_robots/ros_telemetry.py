@@ -31,7 +31,7 @@ import logging
 import os
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import dds_domain_id_error, require_optional
+from strands_robots.utils import dds_domain_id_error, finite_number_error, require_optional
 
 if TYPE_CHECKING:
     import numpy as np
@@ -122,9 +122,18 @@ class RosTelemetryBase:
         per-command) means a malformed bound surfaces at bridge construction,
         not as a silent mid-run rejection of every command.
 
+        Both bounds must be finite. A non-finite bound is the one malformed
+        shape the ordering comparison cannot see, and it is precisely the
+        silent-rejection failure this validator exists to prevent: a ``nan``
+        bound makes the per-command range check False for every position, so
+        the bridge drops every inbound command for that joint. To leave a
+        joint unconstrained, omit it from the mapping rather than declaring an
+        infinite bound.
+
         Raises:
             ValueError: If ``joint_limits`` is not a mapping of name to a
-                ``(min, max)`` numeric pair with ``min <= max``.
+                ``(min, max)`` numeric pair of finite values with
+                ``min <= max``.
         """
         if joint_limits is None:
             return None
@@ -137,6 +146,19 @@ class RosTelemetryBase:
                 low, high = float(low), float(high)
             except (TypeError, ValueError):
                 raise ValueError(f"joint_limits[{name!r}] must be a (min, max) numeric pair, got {bounds!r}") from None
+            for label, bound in (("min", low), ("max", high)):
+                # Checked before the ordering comparison below, which cannot
+                # see a non-finite bound: every comparison against ``nan`` is
+                # False, so a ``nan`` bound passes ``low > high`` and then
+                # makes the per-command ``low <= pos <= high`` check False for
+                # every position - the silent mid-run rejection of every
+                # command this validator exists to prevent. An infinite bound
+                # passes the same way and can never constrain anything; omit
+                # the joint to leave it unconstrained. Mirrors the finiteness
+                # check :class:`~strands_robots.simulation.isaac.delta_eef.IsaacDeltaEEFController`
+                # already applies to its own ``joint_limits``.
+                if error := finite_number_error(bound, f"joint_limits[{name!r}] {label}", "RosTelemetryBase"):
+                    raise ValueError(error)
             if low > high:
                 raise ValueError(f"joint_limits[{name!r}] has min {low} > max {high}")
             normalized[str(name)] = (low, high)

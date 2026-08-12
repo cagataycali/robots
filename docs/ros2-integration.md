@@ -268,7 +268,11 @@ harden it (both threaded through `Robot()`):
 - `joint_limits={motor: (min, max)}` range-checks every inbound command; if any
   commanded joint is outside its declared range the **entire** command is
   rejected (no partial application). Joints without a declared bound are
-  unconstrained. Available on both transports.
+  unconstrained. Available on both transports. **Both bounds must be finite** -
+  a `nan` bound makes the range check false for every position (so the bridge
+  would drop every command for that joint) and an infinite bound never
+  constrains anything, so both are refused at construction; omit the joint to
+  leave it unconstrained.
 - For the pure-RTPS transport (`ros2_transport="rtps"`), a `dds_security_config`
   (or the explicit `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` opt-out) is
   **required** to expose the command surface - see the
