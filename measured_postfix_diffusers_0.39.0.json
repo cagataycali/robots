@@ -1,0 +1,11 @@
+{
+  "tree": "/tmp/robots-mine-31552179429",
+  "model": "nvidia/Cosmos3-Edge",
+  "diffusers_version": "0.39.0",
+  "torch": "2.11.0+cu130",
+  "cuda_available": true,
+  "device_name": "NVIDIA Thor",
+  "load_ok": false,
+  "load_error": "RuntimeError: Cosmos 3 checkpoint 'nvidia/Cosmos3-Edge' was not fully loaded by the installed diffusers (0.39.0): 112 tensor(s) were left uninitialized on the meta device (e.g. ['transformer.layers.0.self_attn.norm_q.weight', 'transformer.layers.0.self_attn.norm_k.weight', 'transformer.layers.0.mlp.gate_proj.weight']), so the pipeline would run on randomly initialized weights. Install a diffusers that supports this checkpoint:\n  uv pip install 'diffusers @ git+https://github.com/huggingface/diffusers'\nThen retry. Or pick a checkpoint the installed diffusers supports, or run the model out-of-process: Cosmos3Policy(backend='service', host=..., port=...).",
+  "load_seconds": 5.3
+}

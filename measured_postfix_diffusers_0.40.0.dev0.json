@@ -1,0 +1,25 @@
+{
+  "tree": "/tmp/robots-mine-31552179429",
+  "diffusers": "0.40.0.dev0",
+  "torch": "2.11.0+cu130",
+  "device_name": "NVIDIA Thor",
+  "model": "nvidia/Cosmos3-Edge",
+  "embodiment": "umi",
+  "domain": "umi",
+  "raw_action_dim": 10,
+  "chunk": 16,
+  "fps": 20,
+  "load_seconds": 13.67,
+  "device": "cuda",
+  "unloaded_after_guard": 0,
+  "n_params_scanned": 745,
+  "infer_seconds": 2.23,
+  "peak_gpu_gb": 8.98,
+  "video_shape": [
+    17,
+    256,
+    256,
+    3
+  ],
+  "action_is_none_for_forward_dynamics": true
+}

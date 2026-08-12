@@ -1,0 +1,11 @@
+{
+  "tree": "/tmp/robots-mine-31552179429",
+  "model": "nvidia/Cosmos3-Edge",
+  "diffusers_version": "0.39.0",
+  "torch": "2.11.0+cu130",
+  "cuda_available": true,
+  "device_name": "NVIDIA Thor",
+  "load_ok": false,
+  "load_error": "NotImplementedError: Cannot copy out of meta tensor; no data! Please use torch.nn.Module.to_empty() instead of torch.nn.Module.to() when moving module from meta to a different device.",
+  "load_seconds": 5.91
+}
