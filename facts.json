@@ -1,0 +1,39 @@
+{
+  "tree": "/tmp/robots-src",
+  "default": {
+    "scouting/multicast/enabled": "false",
+    "scouting/gossip/enabled": "true"
+  },
+  "opted_in": {
+    "scouting/multicast/enabled": "true",
+    "scouting/gossip/enabled": "true"
+  },
+  "sites": [
+    {
+      "path": "README.md",
+      "before": "Peers on the same LAN discover each other via multicast scouting, sharing a single ref-counted `zenoh.Session` per process.",
+      "after": "Peers discover each other over gossip scouting, sharing a single ref-counted `zenoh.Session` per process. Cross-host peers need explicit `ZENOH_CONNECT` endpoints: LAN multicast scouting is off by default (`STRANDS_MESH_MULTICAST=true` opts in) because it lets any host on the network enroll itself into the fleet.",
+      "changed": true
+    },
+    {
+      "path": "strands_robots/mesh/session.py",
+      "before": "3. Zenoh scouting (multicast) handles LAN discovery automatically.",
+      "after": "3. Zenoh gossip scouting propagates peers across already-connected sessions. LAN multicast scouting is off by default -- set ``STRANDS_MESH_MULTICAST=true`` to opt in -- so cross-host peers otherwise need explicit ``ZENOH_CONNECT`` endpoints.",
+      "changed": true
+    },
+    {
+      "path": "strands_robots/mesh/iot/camera_offload.py",
+      "before": "The Zenoh path (LAN multicast)",
+      "after": "The Zenoh path (direct mesh sessions)",
+      "changed": true
+    },
+    {
+      "path": "examples/lerobot/architecture.svg",
+      "before": "Zenoh multicast (default)",
+      "after": "Zenoh gossip (default)",
+      "changed": true
+    }
+  ],
+  "guard_failures_before": 4,
+  "guard_failures_after": 0
+}
