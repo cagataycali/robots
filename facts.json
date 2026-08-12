@@ -1,0 +1,350 @@
+{
+  "tree": "/tmp/robots-mine-31635304146",
+  "before": {
+    "naming": [
+      {
+        "file": "README.md",
+        "label": "paragraph@L973",
+        "why": [
+          "names the flag",
+          "says it is off"
+        ],
+        "snippet": "Every `Robot()` and `Simulation()` is automatically a peer on a local "
+      },
+      {
+        "file": "README.md",
+        "label": "paragraph@L1098",
+        "why": [
+          "names the flag",
+          "says it is off"
+        ],
+        "snippet": "| Variable | Description | Default | |----------|-------------|-------"
+      },
+      {
+        "file": "examples/lerobot/architecture.svg",
+        "label": "label@L115",
+        "why": [],
+        "snippet": "Zenoh multicast (default)"
+      },
+      {
+        "file": "strands_robots/mesh/_zenoh_config.py",
+        "label": "docstring:<module>",
+        "why": [
+          "names the flag"
+        ],
+        "snippet": "Zenoh config builders for the strands-robots mesh. This module owns ev"
+      },
+      {
+        "file": "strands_robots/mesh/_zenoh_config.py",
+        "label": "docstring:scouting_block",
+        "why": [
+          "names the flag",
+          "says it is off"
+        ],
+        "snippet": "Return scouting config: multicast off (default) + gossip on. Multicast"
+      },
+      {
+        "file": "strands_robots/mesh/core.py",
+        "label": "comment@L621",
+        "why": [
+          "names the flag"
+        ],
+        "snippet": "Multicast-scouting fleet-takeover warning. Twin of the H-1 override-co"
+      },
+      {
+        "file": "strands_robots/mesh/core.py",
+        "label": "comment@L1160",
+        "why": [
+          "names the flag"
+        ],
+        "snippet": "Privacy kill switch. Operators on sensitive deployments set STRANDS_ME"
+      },
+      {
+        "file": "strands_robots/mesh/iot/camera_offload.py",
+        "label": "docstring:<module>",
+        "why": [],
+        "snippet": "S3-backed camera frame offload for the IoT-bridged mesh. Why it exists"
+      },
+      {
+        "file": "strands_robots/mesh/session.py",
+        "label": "docstring:<module>",
+        "why": [
+          "names the flag",
+          "says it is off"
+        ],
+        "snippet": "Shared Zenoh session and peer registry for the mesh networking layer. "
+      },
+      {
+        "file": "strands_robots/mesh/session.py",
+        "label": "docstring:_build_config",
+        "why": [
+          "says it is off"
+        ],
+        "snippet": "Create a ``zenoh.Config`` from environment variables. The returned con"
+      }
+    ],
+    "unmarked": [
+      {
+        "file": "examples/lerobot/architecture.svg",
+        "label": "label@L115",
+        "snippet": "Zenoh multicast (default)"
+      },
+      {
+        "file": "strands_robots/mesh/iot/camera_offload.py",
+        "label": "docstring:<module>",
+        "snippet": "S3-backed camera frame offload for the IoT-bridged mesh. Why it exists"
+      }
+    ]
+  },
+  "after": {
+    "naming": [
+      {
+        "file": "README.md",
+        "label": "paragraph@L973",
+        "why": [
+          "names the flag",
+          "says it is off"
+        ],
+        "snippet": "Every `Robot()` and `Simulation()` is automatically a peer on a local "
+      },
+      {
+        "file": "README.md",
+        "label": "paragraph@L1098",
+        "why": [
+          "names the flag",
+          "says it is off"
+        ],
+        "snippet": "| Variable | Description | Default | |----------|-------------|-------"
+      },
+      {
+        "file": "examples/lerobot/architecture.svg",
+        "label": "label@L115",
+        "why": [
+          "says it is off"
+        ],
+        "snippet": "Zenoh gossip (multicast opt-in)"
+      },
+      {
+        "file": "strands_robots/mesh/_zenoh_config.py",
+        "label": "docstring:<module>",
+        "why": [
+          "names the flag"
+        ],
+        "snippet": "Zenoh config builders for the strands-robots mesh. This module owns ev"
+      },
+      {
+        "file": "strands_robots/mesh/_zenoh_config.py",
+        "label": "docstring:scouting_block",
+        "why": [
+          "names the flag",
+          "says it is off"
+        ],
+        "snippet": "Return scouting config: multicast off (default) + gossip on. Multicast"
+      },
+      {
+        "file": "strands_robots/mesh/core.py",
+        "label": "comment@L621",
+        "why": [
+          "names the flag"
+        ],
+        "snippet": "Multicast-scouting fleet-takeover warning. Twin of the H-1 override-co"
+      },
+      {
+        "file": "strands_robots/mesh/core.py",
+        "label": "comment@L1160",
+        "why": [
+          "names the flag"
+        ],
+        "snippet": "Privacy kill switch. Operators on sensitive deployments set STRANDS_ME"
+      },
+      {
+        "file": "strands_robots/mesh/session.py",
+        "label": "docstring:<module>",
+        "why": [
+          "names the flag",
+          "says it is off"
+        ],
+        "snippet": "Shared Zenoh session and peer registry for the mesh networking layer. "
+      },
+      {
+        "file": "strands_robots/mesh/session.py",
+        "label": "docstring:_build_config",
+        "why": [
+          "says it is off"
+        ],
+        "snippet": "Create a ``zenoh.Config`` from environment variables. The returned con"
+      }
+    ],
+    "unmarked": []
+  },
+  "band_before": {
+    "css": {
+      "box-fill": "#FFFFFF",
+      "mesh-fill": "#E8F1F8",
+      "agent-fill": "#FFF4E8",
+      "policy-fill": "#F0E8F5",
+      "real-fill": "#E8F5EC",
+      "sim-fill": "#F5F0E8",
+      "logo-placeholder": "#FAFAFA"
+    },
+    "rects": [
+      {
+        "x": 80.0,
+        "y": 660.0,
+        "w": 840.0,
+        "h": 100.0,
+        "attrs": " rx=\"6\" class=\"mesh-fill box-stroke\""
+      },
+      {
+        "x": 110.0,
+        "y": 695.0,
+        "w": 240.0,
+        "h": 50.0,
+        "attrs": " rx=\"4\" fill=\"#FFFFFF\" stroke=\"#1A3B5C\" stroke-width=\"1\""
+      },
+      {
+        "x": 370.0,
+        "y": 695.0,
+        "w": 260.0,
+        "h": 50.0,
+        "attrs": " rx=\"4\" fill=\"#FFFFFF\" stroke=\"#1A3B5C\" stroke-width=\"1\""
+      },
+      {
+        "x": 650.0,
+        "y": 695.0,
+        "w": 260.0,
+        "h": 50.0,
+        "attrs": " rx=\"4\" fill=\"#FFFFFF\" stroke-dasharray=\"4,3\" class=\"accent-stroke\""
+      }
+    ],
+    "texts": [
+      {
+        "x": 500.0,
+        "y": 683.0,
+        "attrs": " text-anchor=\"middle\" class=\"title-text\"",
+        "body": "Robot mesh (auto-attaches every Robot)"
+      },
+      {
+        "x": 250.0,
+        "y": 715.0,
+        "attrs": " text-anchor=\"middle\" class=\"body-text\" font-weight=\"600\"",
+        "body": "LAN"
+      },
+      {
+        "x": 250.0,
+        "y": 732.0,
+        "attrs": " text-anchor=\"middle\" class=\"label-text\"",
+        "body": "Zenoh multicast (default)"
+      },
+      {
+        "x": 480.0,
+        "y": 715.0,
+        "attrs": " class=\"body-text\" font-weight=\"600\"",
+        "body": "Cloud fleet"
+      },
+      {
+        "x": 480.0,
+        "y": 732.0,
+        "attrs": " class=\"label-text\"",
+        "body": "AWS IoT Core (MQTT5/mTLS)"
+      },
+      {
+        "x": 760.0,
+        "y": 715.0,
+        "attrs": " class=\"body-text\" font-weight=\"600\"",
+        "body": "Device Connect"
+      },
+      {
+        "x": 760.0,
+        "y": 732.0,
+        "attrs": " class=\"label-text\"",
+        "body": "Device fabric (Arm)"
+      }
+    ]
+  },
+  "band_after": {
+    "css": {
+      "box-fill": "#FFFFFF",
+      "mesh-fill": "#E8F1F8",
+      "agent-fill": "#FFF4E8",
+      "policy-fill": "#F0E8F5",
+      "real-fill": "#E8F5EC",
+      "sim-fill": "#F5F0E8",
+      "logo-placeholder": "#FAFAFA"
+    },
+    "rects": [
+      {
+        "x": 80.0,
+        "y": 660.0,
+        "w": 840.0,
+        "h": 100.0,
+        "attrs": " rx=\"6\" class=\"mesh-fill box-stroke\""
+      },
+      {
+        "x": 110.0,
+        "y": 695.0,
+        "w": 240.0,
+        "h": 50.0,
+        "attrs": " rx=\"4\" fill=\"#FFFFFF\" stroke=\"#1A3B5C\" stroke-width=\"1\""
+      },
+      {
+        "x": 370.0,
+        "y": 695.0,
+        "w": 260.0,
+        "h": 50.0,
+        "attrs": " rx=\"4\" fill=\"#FFFFFF\" stroke=\"#1A3B5C\" stroke-width=\"1\""
+      },
+      {
+        "x": 650.0,
+        "y": 695.0,
+        "w": 260.0,
+        "h": 50.0,
+        "attrs": " rx=\"4\" fill=\"#FFFFFF\" stroke-dasharray=\"4,3\" class=\"accent-stroke\""
+      }
+    ],
+    "texts": [
+      {
+        "x": 500.0,
+        "y": 683.0,
+        "attrs": " text-anchor=\"middle\" class=\"title-text\"",
+        "body": "Robot mesh (auto-attaches every Robot)"
+      },
+      {
+        "x": 250.0,
+        "y": 715.0,
+        "attrs": " text-anchor=\"middle\" class=\"body-text\" font-weight=\"600\"",
+        "body": "LAN"
+      },
+      {
+        "x": 250.0,
+        "y": 732.0,
+        "attrs": " text-anchor=\"middle\" class=\"label-text\"",
+        "body": "Zenoh gossip (multicast opt-in)"
+      },
+      {
+        "x": 480.0,
+        "y": 715.0,
+        "attrs": " class=\"body-text\" font-weight=\"600\"",
+        "body": "Cloud fleet"
+      },
+      {
+        "x": 480.0,
+        "y": 732.0,
+        "attrs": " class=\"label-text\"",
+        "body": "AWS IoT Core (MQTT5/mTLS)"
+      },
+      {
+        "x": 760.0,
+        "y": 715.0,
+        "attrs": " class=\"body-text\" font-weight=\"600\"",
+        "body": "Device Connect"
+      },
+      {
+        "x": 760.0,
+        "y": 732.0,
+        "attrs": " class=\"label-text\"",
+        "body": "Device fabric (Arm)"
+      }
+    ]
+  }
+}
