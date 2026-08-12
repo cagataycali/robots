@@ -1,0 +1,46 @@
+{
+  "tree": "/tmp/robots-mine-31615158363",
+  "orthographic": {
+    "orthographic_flag": 1,
+    "get_frame": "ok",
+    "rgb_shape": [
+      480,
+      640,
+      3
+    ],
+    "depth_shape": [
+      480,
+      640
+    ],
+    "saturated_frac": 0.260869140625,
+    "get_camera_params": "ValueError: The free camera is orthographic (<visual><global orthographic=\"true\"/>); a pinhole CameraParams cannot represent an orthographic projection. Add a perspective camera with add_camera() and pass its name.",
+    "gwp_status": "error",
+    "gwp_text": "get_world_point failed to read camera parameters: The free camera is orthographic (<visual><global orthographic=\"true\"/>); a pinhole CameraParams cannot represent an orthographic projection. Add a perspective camera with add_camera() and pass its name."
+  },
+  "perspective": {
+    "orthographic_flag": 0,
+    "get_frame": "ok",
+    "rgb_shape": [
+      480,
+      640,
+      3
+    ],
+    "depth_shape": [
+      480,
+      640
+    ],
+    "saturated_frac": 0.26388346354166664,
+    "get_camera_params": "ok (fx=579.41)",
+    "gwp_status": "success",
+    "gwp_text": "World point [0.4003, -0.0506, 0.1002] m (median over 1/1 valid pixels) via camera 'default'.",
+    "gwp_point": [
+      0.4003,
+      -0.0506,
+      0.1002
+    ]
+  },
+  "ast_digest_base": "cef58c812ca3008d",
+  "ast_digest_head": "cef58c812ca3008d",
+  "text_differs": "True",
+  "numstat": "10\t2\tstrands_robots/simulation/base.py"
+}
