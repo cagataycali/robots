@@ -1,0 +1,27 @@
+{
+  "tree": "/tmp/robots-mine-31620189472",
+  "reference": {
+    "status": "success",
+    "text": "'crate' added: box at [0.0, 0.0, 0.15], size=[0.3, 0.3, 0.3], 0.1kg"
+  },
+  "unsized_add_object": {
+    "status": "error",
+    "text": "add_object: 'size' must be a list/tuple of numbers, got <generator object <genexpr> at 0xffff7acc3c40>"
+  },
+  "objects_after": {
+    "status": "success",
+    "content": [
+      {
+        "text": "No objects."
+      }
+    ]
+  },
+  "patch_size": {
+    "status": "error",
+    "text": "MJCF patch failed: patch op #1 failed: add_geom: 'size' must be a list/tuple of numbers, got <generator object <genexpr> at 0xffff7acc3d00>"
+  },
+  "patch_pos": {
+    "status": "error",
+    "text": "MJCF patch failed: patch op #1 failed: add_geom: 'pos' must be a list/tuple of 3 numbers, got <generator object <genexpr> at 0xffff7acc3d00>"
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "rows": [
+    {
+      "label": "M1 revert the fix (delete the probe)",
+      "new_fail": 10,
+      "old_fail": 0
+    },
+    {
+      "label": "M2 probe BEFORE the component read",
+      "new_fail": 1,
+      "old_fail": 11
+    },
+    {
+      "label": "M3 reword the verdict locally",
+      "new_fail": 1,
+      "old_fail": 0
+    },
+    {
+      "label": "M4 own narrow len() probe instead of the shared owner",
+      "new_fail": 2,
+      "old_fail": 1
+    },
+    {
+      "label": "M5 keep the probe, discard its verdict",
+      "new_fail": 10,
+      "old_fail": 0
+    },
+    {
+      "label": "unmutated control",
+      "new_fail": 0,
+      "old_fail": 0
+    }
+  ],
+  "caught": 5,
+  "blind": 3,
+  "n": 5
+}
