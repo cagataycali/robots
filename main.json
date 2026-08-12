@@ -1,0 +1,33 @@
+{
+  "tree": "/tmp/wt-main-31625236135",
+  "budget_is_a_knob": false,
+  "rows": {
+    "bring-up completes": {
+      "caller": "returned SimpleNamespace",
+      "elapsed_s": 0.0,
+      "budget_s": 30.0,
+      "runtime_stored": "the runtime",
+      "operator_log": "(nothing logged about the bring-up)",
+      "operator_stdout": "arm-1 is online. Ctrl+C to stop.",
+      "reported": false
+    },
+    "bring-up fails": {
+      "caller": "raised RuntimeError",
+      "elapsed_s": 0.0,
+      "budget_s": 30.0,
+      "runtime_stored": "UNSET (assignment skipped)",
+      "operator_log": "WARNING Device Connect init failed: no broker at tcp://127.0.0.1:7447",
+      "operator_stdout": "arm-1 is online. Ctrl+C to stop.",
+      "reported": true
+    },
+    "budget expires": {
+      "caller": "returned None",
+      "elapsed_s": 30.0,
+      "budget_s": 30.0,
+      "runtime_stored": "None",
+      "operator_log": "(nothing logged about the bring-up)",
+      "operator_stdout": "arm-1 is online. Ctrl+C to stop.",
+      "reported": false
+    }
+  }
+}

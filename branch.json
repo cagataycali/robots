@@ -1,0 +1,33 @@
+{
+  "tree": "/tmp/robots-mine-31625236135",
+  "budget_is_a_knob": true,
+  "rows": {
+    "bring-up completes": {
+      "caller": "returned SimpleNamespace",
+      "elapsed_s": 0.0,
+      "budget_s": 0.05,
+      "runtime_stored": "the runtime",
+      "operator_log": "(nothing logged about the bring-up)",
+      "operator_stdout": "arm-1 is online. Ctrl+C to stop.",
+      "reported": false
+    },
+    "bring-up fails": {
+      "caller": "raised RuntimeError",
+      "elapsed_s": 0.0,
+      "budget_s": 0.05,
+      "runtime_stored": "UNSET (assignment skipped)",
+      "operator_log": "WARNING Device Connect init failed: no broker at tcp://127.0.0.1:7447",
+      "operator_stdout": "arm-1 is online. Ctrl+C to stop.",
+      "reported": true
+    },
+    "budget expires": {
+      "caller": "raised TimeoutError",
+      "elapsed_s": 0.05,
+      "budget_s": 0.05,
+      "runtime_stored": "UNSET (assignment skipped)",
+      "operator_log": "WARNING Device Connect init failed: init_device_connect_sync: the Device Connect runtime did not come up within 0.05s. The bring-up is still running on its background thread; check that the messaging URL / broker is reachable.",
+      "operator_stdout": "arm-1 is online. Ctrl+C to stop.",
+      "reported": true
+    }
+  }
+}
