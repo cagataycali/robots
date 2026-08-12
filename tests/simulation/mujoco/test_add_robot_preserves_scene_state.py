@@ -532,3 +532,80 @@ def test_a_settled_object_survives_the_recompile_that_defines_a_new_pose_tail(si
 
     after = [float(v) for v in _json(sim.get_body_state(body_name="crate"))["position"]]
     assert after == pytest.approx(settled, abs=1e-6)
+
+
+@pytest.mark.parametrize("prior_arms", [0, 1, 2, 3])
+def test_an_unnamed_floating_base_spawns_where_declared_at_every_layout(sim, models, prior_arms):
+    """The same spawn, with nothing poisoned, at four different buffer layouts.
+
+    The tests above write the observed corruption deliberately, which is what makes
+    them repeatable -- but it also means none of them reads the tail the allocator
+    actually hands over. This one does, so the defect is pinned in the shape it was
+    reported in: an order dependence, where the number of robots already in the
+    world decides where the new joint lands in ``qpos`` and therefore which
+    leftovers it inherits. On ``main`` the count decides the answer -- three of
+    these four cases fail there and the fourth passes -- so a value that is only
+    right in the small scene cannot pass here.
+    """
+    for i in range(prior_arms):
+        assert sim.add_robot(name=f"a{i}", urdf_path=models["arm"])["status"] == "success"
+
+    assert sim.add_robot(name="rover", urdf_path=models["unnamed_base"])["status"] == "success"
+
+    pose = _json(sim.get_body_state(body_name="rover/chassis"))
+    assert [float(v) for v in pose["position"]] == pytest.approx([0.4, 0.0, 0.35], abs=1e-6)
+    quat = [float(v) for v in pose["quaternion"]]
+    assert math.isclose(sum(v * v for v in quat), 1.0, abs_tol=1e-9), quat
+
+
+def test_every_position_and_velocity_entry_the_recompile_grows_is_defined(sim, models, hostile_pose_leftovers):
+    """The rule stated positionally, over the whole tail rather than one base pose.
+
+    The transfer is positional, so the obligation is too: every index at or past
+    the old size is an entry the old model had no value for, whatever joint owns it
+    and whether or not that joint has a name. Asserting the tail as a whole is what
+    makes the guarantee cover a joint this fixture does not happen to contain, and
+    it is the only place ``qvel`` -- defined by the same change, on the same
+    reasoning -- is read at all.
+
+    Both halves are asserted so neither can be met by the other: the new entries
+    are defined, AND the state already in the scene is untouched. Writing ``qpos0``
+    over the whole buffer would satisfy the first and fail the second.
+    """
+    assert sim.add_robot(name="a", urdf_path=models["arm"])["status"] == "success"
+    parked = _park(sim, "a")
+    preserved = list(sim._world._data.qpos)
+    old_nq = int(sim._world._model.nq)
+    old_nv = int(sim._world._model.nv)
+    # Non-vacuity: an all-zero head would make the preservation half unfalsifiable.
+    assert max(abs(v) for v in preserved) > 0.1, preserved
+
+    assert sim.add_robot(name="rover", urdf_path=models["unnamed_base"])["status"] == "success"
+
+    model, data = sim._world._model, sim._world._data
+    assert model.nq > old_nq and model.nv > old_nv
+    assert list(data.qpos[old_nq:]) == pytest.approx(list(model.qpos0[old_nq:]), abs=1e-12)
+    assert list(data.qvel[old_nv:]) == [0.0] * (model.nv - old_nv)
+    assert list(data.qpos[:old_nq]) == pytest.approx(preserved, abs=1e-12)
+    assert _joints(sim, "a") == pytest.approx(parked, abs=1e-6)
+
+
+def test_the_unnamed_base_joint_is_in_none_of_the_robots_own_joint_sets(sim, models):
+    """The premise the fix's placement rests on, measured rather than argued.
+
+    ``joint_names`` and the ``joint_ids`` resolved from them are keyed by name, so
+    a joint the model leaves unnamed is in neither while every hinge is in both.
+    That is why defining the slice belongs to the recompile, which knows the
+    positional extent of what it left unwritten, and not to a pass over the joints
+    a robot owns -- and it is what would start failing first if the probe model
+    ever acquired a name for its base.
+    """
+    assert sim.add_robot(name="rover", urdf_path=models["unnamed_base"])["status"] == "success"
+
+    robot = sim._world.robots["rover"]
+    model = sim._world._model
+    free = [j for j in range(model.njnt) if int(model.jnt_type[j]) == int(mj.mjtJoint.mjJNT_FREE)]
+    assert len(free) == 1, free
+    assert mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, free[0]) is None
+    assert free[0] not in robot.joint_ids
+    assert robot.joint_names == ["yaw"], robot.joint_names
