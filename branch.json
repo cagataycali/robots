@@ -1,0 +1,225 @@
+{
+  "tree": "/tmp/robots-mine-31568682837",
+  "matrix": {
+    "-1.9|-1.9": {
+      "low": "-1.9",
+      "high": "-1.9",
+      "verdict": "accepted",
+      "want": "accepted",
+      "correct": true,
+      "reason": ""
+    },
+    "-1.9|1.9": {
+      "low": "-1.9",
+      "high": "1.9",
+      "verdict": "accepted",
+      "want": "accepted",
+      "correct": true,
+      "reason": ""
+    },
+    "-1.9|nan": {
+      "low": "-1.9",
+      "high": "nan",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: max must be a finite number, got nan."
+    },
+    "-1.9|+inf": {
+      "low": "-1.9",
+      "high": "+inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: max must be a finite number, got inf."
+    },
+    "-1.9|-inf": {
+      "low": "-1.9",
+      "high": "-inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: max must be a finite number, got -inf."
+    },
+    "1.9|-1.9": {
+      "low": "1.9",
+      "high": "-1.9",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan'] has min 1.9 > max -1.9"
+    },
+    "1.9|1.9": {
+      "low": "1.9",
+      "high": "1.9",
+      "verdict": "accepted",
+      "want": "accepted",
+      "correct": true,
+      "reason": ""
+    },
+    "1.9|nan": {
+      "low": "1.9",
+      "high": "nan",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: max must be a finite number, got nan."
+    },
+    "1.9|+inf": {
+      "low": "1.9",
+      "high": "+inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: max must be a finite number, got inf."
+    },
+    "1.9|-inf": {
+      "low": "1.9",
+      "high": "-inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: max must be a finite number, got -inf."
+    },
+    "nan|-1.9": {
+      "low": "nan",
+      "high": "-1.9",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got nan."
+    },
+    "nan|1.9": {
+      "low": "nan",
+      "high": "1.9",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got nan."
+    },
+    "nan|nan": {
+      "low": "nan",
+      "high": "nan",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got nan."
+    },
+    "nan|+inf": {
+      "low": "nan",
+      "high": "+inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got nan."
+    },
+    "nan|-inf": {
+      "low": "nan",
+      "high": "-inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got nan."
+    },
+    "+inf|-1.9": {
+      "low": "+inf",
+      "high": "-1.9",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got inf."
+    },
+    "+inf|1.9": {
+      "low": "+inf",
+      "high": "1.9",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got inf."
+    },
+    "+inf|nan": {
+      "low": "+inf",
+      "high": "nan",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got inf."
+    },
+    "+inf|+inf": {
+      "low": "+inf",
+      "high": "+inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got inf."
+    },
+    "+inf|-inf": {
+      "low": "+inf",
+      "high": "-inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got inf."
+    },
+    "-inf|-1.9": {
+      "low": "-inf",
+      "high": "-1.9",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got -inf."
+    },
+    "-inf|1.9": {
+      "low": "-inf",
+      "high": "1.9",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got -inf."
+    },
+    "-inf|nan": {
+      "low": "-inf",
+      "high": "nan",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got -inf."
+    },
+    "-inf|+inf": {
+      "low": "-inf",
+      "high": "+inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got -inf."
+    },
+    "-inf|-inf": {
+      "low": "-inf",
+      "high": "-inf",
+      "verdict": "refused",
+      "want": "refused",
+      "correct": true,
+      "reason": "joint_limits['shoulder_pan']: min must be a finite number, got -inf."
+    }
+  },
+  "ledger": {
+    "valid (-1.9, 1.9)": {
+      "ctor": "accepted",
+      "err": "",
+      "applied": 5,
+      "total": 5,
+      "log": ""
+    },
+    "nan max (-1.9, nan)": {
+      "ctor": "refused",
+      "err": "joint_limits['shoulder_pan']: max must be a finite number, got nan.",
+      "applied": 0,
+      "total": 5,
+      "log": ""
+    }
+  },
+  "huge": {
+    "kind": "ValueError",
+    "msg": "joint_limits['j']: min must be within the range of a 64-bit float, got..."
+  }
+}
