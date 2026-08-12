@@ -43,6 +43,7 @@ co-installable with ``cosmos3-service`` and ``lerobot``.
 from __future__ import annotations
 
 import logging
+from importlib import metadata as _metadata
 from typing import TYPE_CHECKING, Any, Protocol
 
 import numpy as np
@@ -60,6 +61,66 @@ ALL_MODES = ("policy", "forward_dynamics", "inverse_dynamics")
 _DEFAULT_MODEL = "nvidia/Cosmos3-Nano"
 
 
+def _unloaded_checkpoint_tensors(pipe: Any) -> list[str]:
+    """Pipeline parameters the checkpoint load left on the ``meta`` device.
+
+    ``Cosmos3OmniPipeline.from_pretrained`` does **not** raise when the
+    installed ``diffusers`` builds a different architecture than the checkpoint
+    holds: it logs "newly initialized" / "not used when initializing" warnings
+    and leaves every unmatched parameter on the ``meta`` device (no data). A
+    non-empty result therefore means the pipeline is carrying randomly
+    initialized weights, whatever ``from_pretrained`` returned.
+
+    Only parameters are scanned: a mismatched Cosmos 3 load leaves unmatched
+    *parameters* on meta and no buffers, so a buffer scan would add no signal.
+    Non-module components (the tokenizer, the scheduler, ``None`` slots) have no
+    ``named_parameters`` and are skipped.
+
+    Args:
+        pipe: A loaded ``Cosmos3OmniPipeline`` (anything exposing ``.components``).
+
+    Returns:
+        ``"<component>.<parameter>"`` names still on the meta device, in
+        iteration order (empty when the checkpoint was fully consumed).
+    """
+    components = getattr(pipe, "components", None)
+    if not isinstance(components, dict):
+        return []
+    unloaded: list[str] = []
+    for component_name, component in components.items():
+        named_parameters = getattr(component, "named_parameters", None)
+        if not callable(named_parameters):
+            continue
+        for parameter_name, parameter in named_parameters():
+            if getattr(getattr(parameter, "device", None), "type", None) == "meta":
+                unloaded.append(f"{component_name}.{parameter_name}")
+    return unloaded
+
+
+def _checkpoint_mismatch_hint(model: str, unloaded: list[str]) -> str:
+    """Actionable message when the installed diffusers cannot load ``model``.
+
+    Names the checkpoint, the installed diffusers, how many tensors were left
+    uninitialized, and the version the checkpoint asks for - so the caller is
+    not left with ``diffusers``' bare
+    ``NotImplementedError: Cannot copy out of meta tensor``, which names none of
+    them.
+    """
+    try:
+        installed = _metadata.version("diffusers")
+    except Exception:  # pragma: no cover - metadata is present wherever diffusers is
+        installed = "unknown"
+    return (
+        f"Cosmos 3 checkpoint {model!r} was not fully loaded by the installed diffusers "
+        f"({installed}): {len(unloaded)} tensor(s) were left uninitialized on the meta "
+        f"device (e.g. {unloaded[:3]}), so the pipeline would run on randomly initialized "
+        f"weights. Install a diffusers that supports this checkpoint:\n"
+        "  uv pip install 'diffusers @ git+https://github.com/huggingface/diffusers'\n"
+        "Then retry. Or pick a checkpoint the installed diffusers supports, or run the "
+        "model out-of-process: Cosmos3Policy(backend='service', host=..., port=...)."
+    )
+
+
 class _PipelineCallable(Protocol):
     """Minimal structural type for the injectable Cosmos3OmniPipeline."""
 
@@ -72,10 +133,11 @@ def _install_hint() -> str:
     return (
         "Cosmos3Policy(backend='diffusers') needs the optional native 'diffusers' "
         "stack (diffusers + torch + transformers), which was not importable. "
-        "Cosmos3OmniPipeline ships only in diffusers-from-source (>0.38), so install "
-        "the git pin alongside the extra:\n"
-        "  uv pip install strands-robots[cosmos3-diffusers] "
-        "'diffusers @ git+https://github.com/huggingface/diffusers'\n"
+        "Cosmos3OmniPipeline first ships in diffusers 0.39.0, which the "
+        "'cosmos3-diffusers' extra floors:\n"
+        "  uv pip install strands-robots[cosmos3-diffusers]\n"
+        "A newer checkpoint can need a newer diffusers than that floor; when one "
+        "does, the load reports which tensors it could not fill.\n"
         "Then retry. Or use the service backend (no in-process GPU load): "
         "Cosmos3Policy(backend='service', host=..., port=...)."
     )
@@ -203,6 +265,14 @@ class Cosmos3DiffusersBackend:
         if not self.enable_safety_checker:
             from_pretrained_kwargs["enable_safety_checker"] = False
         pipe = Cosmos3OmniPipeline.from_pretrained(self.model, **from_pretrained_kwargs)
+        # ``from_pretrained`` returns successfully even when the installed diffusers
+        # builds a different architecture than the checkpoint holds - it only warns and
+        # leaves the unmatched weights on the meta device. Refuse here, before the
+        # device copy, so the caller gets the upgrade instruction rather than either
+        # randomly initialized weights or diffusers' bare meta-tensor NotImplementedError.
+        unloaded = _unloaded_checkpoint_tensors(pipe)
+        if unloaded:
+            raise RuntimeError(_checkpoint_mismatch_hint(self.model, unloaded))
         pipe = pipe.to(device)
         self.device = device
         return pipe

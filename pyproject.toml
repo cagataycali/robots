@@ -66,13 +66,15 @@ cosmos3-service = [
 # unaffected. diffusers composes with numpy>=2, so this extra is co-installable
 # with cosmos3-service and lerobot.
 #
-# Cosmos3OmniPipeline ships only in diffusers-from-source (>0.38); the version
-# floor here is a lower bound, but install the git pin alongside this extra to
-# get the Cosmos3OmniPipeline + CosmosActionCondition symbols:
-#   uv pip install strands-robots[cosmos3-diffusers] \
-#       'diffusers @ git+https://github.com/huggingface/diffusers'
+# The floor is the CAPABILITY floor, not a nominal lower bound: measured against
+# the released wheels, Cosmos3OmniPipeline + CosmosActionCondition first ship in
+# diffusers 0.39.0 (0.36.0/0.37.1/0.38.0 carry neither symbol), so any floor below
+# it resolves to a diffusers that cannot build the pipeline at all. A checkpoint
+# newer than the floor can still need a newer diffusers than it (Cosmos3-Edge is
+# built against 0.40.0.dev0); that is a per-checkpoint fact a version range cannot
+# express, so Cosmos3DiffusersBackend reports it at load time instead.
 cosmos3-diffusers = [
-    "diffusers>=0.30",
+    "diffusers>=0.39",
     "torch>=2.0",
     "transformers>=4.40",
     "accelerate>=0.26",
@@ -517,12 +519,16 @@ constraint-dependencies = [
     "pyopenssl>=26.0.0",
 ]
 override-dependencies = [
-    # SECURITY: diffusers <0.36 is vulnerable to a GHSA trust_remote_code bypass
-    # + a TOCTOU RCE (fixed in 0.38.0). diffusers is only exercised by the
-    # cosmos3-diffusers extra (Cosmos3Policy backend="diffusers"); lerobot core
-    # does not import it at runtime, so forcing >=0.38 is safe and clears the
-    # Dependabot alerts.
-    "diffusers>=0.38.0",
+        # SECURITY + CAPABILITY: diffusers <0.36 is vulnerable to a GHSA
+    # trust_remote_code bypass + a TOCTOU RCE (fixed in 0.38.0). uv *overrides*
+    # replace a requirement rather than intersecting with it, so this pin is the
+    # effective floor for the whole resolution and must not fall below the
+    # cosmos3-diffusers extra's own floor - at 0.38.0 it silently discarded that
+    # floor and locked a diffusers carrying no Cosmos3OmniPipeline. 0.39 clears
+    # both bounds (the CVE fix landed in 0.38.0; the pipeline first ships in
+    # 0.39.0). diffusers is only exercised by the cosmos3-diffusers extra
+    # (Cosmos3Policy backend="diffusers"); lerobot core does not import it.
+    "diffusers>=0.39",
 ]
 
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA

@@ -1015,3 +1015,90 @@ def test_the_floor_check_rejects_a_lock_below_a_declared_floor() -> None:
     assert _unsatisfied_floors(constraints, {"cbor2": [Version("5.9.0"), Version("5.8.0")]}) == ["cbor2"]
     # A package the lock does not resolve at all is not a violation.
     assert _unsatisfied_floors(constraints, {}) == []
+
+
+# ---------------------------------------------------------------------------
+# Cosmos 3 diffusers capability floor.
+#
+# The cosmos3-diffusers extra exists so Cosmos3Policy(backend="diffusers") can
+# build a diffusers.Cosmos3OmniPipeline. Measured against the released wheels,
+# that symbol (and CosmosActionCondition) first ships in diffusers 0.39.0 -
+# 0.36.0, 0.37.1 and 0.38.0 carry neither - so a floor below 0.39 resolves to a
+# diffusers the extra cannot use at all, and the backend's only remedy for that
+# state is an ImportError hint the caller reaches after installing. The floor
+# must therefore be the capability floor, not a nominal lower bound.
+#
+# The [tool.uv] override-dependencies diffusers pin cannot be left below that
+# floor: a uv *override* REPLACES a requirement rather than intersecting with it,
+# so it is the effective floor for the whole resolution. At >=0.38.0 it silently
+# discarded the extra's floor and uv locked diffusers 0.38.0 - a release carrying
+# no Cosmos3OmniPipeline at all.
+# ---------------------------------------------------------------------------
+
+_DIFFUSERS_WITHOUT_COSMOS3_OMNI = ("0.30.0", "0.36.0", "0.37.1", "0.38.0")
+_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI = "0.39.0"
+
+
+def test_cosmos3_diffusers_floor_ships_the_omni_pipeline() -> None:
+    """The extra's diffusers floor must exclude every release lacking the pipeline."""
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    extra = data["project"]["optional-dependencies"]["cosmos3-diffusers"]
+    reqs = [Requirement(r) for r in extra]
+    req = next((r for r in reqs if r.name == "diffusers"), None)
+    assert req is not None, f"cosmos3-diffusers must declare diffusers, got {[r.name for r in reqs]}"
+    for lacking in _DIFFUSERS_WITHOUT_COSMOS3_OMNI:
+        assert Version(lacking) not in req.specifier, (
+            f"diffusers {lacking} ships no Cosmos3OmniPipeline, so the cosmos3-diffusers "
+            f"floor must exclude it; got {req.specifier}"
+        )
+    assert Version(_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI) in req.specifier, (
+        f"diffusers {_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI} is the first release shipping "
+        f"Cosmos3OmniPipeline and must stay installable; got {req.specifier}"
+    )
+
+
+def test_the_diffusers_uv_override_does_not_undercut_the_capability_floor() -> None:
+    """The uv override must dominate both the CVE floor and the capability floor.
+
+    A uv ``override-dependencies`` entry *replaces* every requirement for that
+    package instead of intersecting with it, so it is the effective floor for the
+    whole resolution: an override below the ``cosmos3-diffusers`` floor silently
+    discards it. Measured - with the override at ``>=0.38.0`` and the extra at
+    ``>=0.39``, ``uv lock`` pinned diffusers 0.38.0, which ships no
+    ``Cosmos3OmniPipeline``. The override must therefore stay at or above the
+    extra's floor while still excluding the releases the CVE fix predates.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    overrides = data.get("tool", {}).get("uv", {}).get("override-dependencies", [])
+    diffusers_overrides = [Requirement(o) for o in overrides if Requirement(o).name == "diffusers"]
+    assert diffusers_overrides, (
+        f"the diffusers override must stay declared in [tool.uv].override-dependencies, got {overrides}"
+    )
+    for req in diffusers_overrides:
+        assert Version("0.37.1") not in req.specifier, (
+            f"the diffusers override must still exclude the unpatched 0.37.1; got {req}"
+        )
+        for lacking in _DIFFUSERS_WITHOUT_COSMOS3_OMNI:
+            assert Version(lacking) not in req.specifier, (
+                f"a uv override replaces the extra's requirement, so it must not admit "
+                f"diffusers {lacking} (no Cosmos3OmniPipeline); got {req}"
+            )
+        assert Version(_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI) in req.specifier, (
+            f"the override must keep diffusers {_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI} installable; got {req}"
+        )
+
+
+def test_the_lockfile_pins_a_diffusers_that_ships_the_omni_pipeline() -> None:
+    """The committed lock must not pin a diffusers the extra cannot use.
+
+    The floors above are declarations; this is the resolved fact a
+    ``uv sync``/``uv run`` user actually gets.
+    """
+    lock = tomllib.loads((_REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked = sorted({p["version"] for p in lock.get("package", []) if p["name"] == "diffusers" and p.get("version")})
+    assert locked, "uv.lock must resolve diffusers (the cosmos3-diffusers extra declares it)"
+    for version in locked:
+        assert Version(version) >= Version(_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI), (
+            f"uv.lock pins diffusers {version}, which ships no Cosmos3OmniPipeline; "
+            f"run `uv lock` after raising the floor"
+        )

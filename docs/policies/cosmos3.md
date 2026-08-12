@@ -60,13 +60,25 @@ Cosmos3Policy can run Cosmos 3 two ways. The default is unchanged.
 | backend | how it runs | install | extra outputs |
 |---------|-------------|---------|---------------|
 | `service` (default) | WebSocket to the Cosmos Framework RoboLab policy server (holds the GPU out-of-process) | `strands-robots[cosmos3-service]` (msgpack + websockets, numpy-agnostic) | none (server video discarded) |
-| `diffusers` | in-process via native `diffusers` (`Cosmos3OmniPipeline`) | `strands-robots[cosmos3-diffusers]` + diffusers-from-source | world video + sound on `last_rollout` |
+| `diffusers` | in-process via native `diffusers` (`Cosmos3OmniPipeline`) | `strands-robots[cosmos3-diffusers]` (floors diffusers 0.39, the first release shipping the pipeline) | world video + sound on `last_rollout` |
 
 ```bash
 # in-process backend (heavy GPU stack: diffusers + torch)
-uv pip install "strands-robots[cosmos3-diffusers]" \
-    'diffusers @ git+https://github.com/huggingface/diffusers'
+uv pip install "strands-robots[cosmos3-diffusers]"
 ```
+
+`Cosmos3OmniPipeline` and `CosmosActionCondition` first ship in diffusers 0.39.0,
+which the extra floors. A checkpoint newer than that floor can need a newer
+diffusers still - `nvidia/Cosmos3-Edge` is built against 0.40.0.dev0, which at the
+time of writing ships only from source:
+
+```bash
+uv pip install 'diffusers @ git+https://github.com/huggingface/diffusers'
+```
+
+Loading a checkpoint the installed diffusers cannot build is refused, naming the
+tensors it could not fill - `from_pretrained` itself only warns and leaves them
+uninitialized, so without that check the pipeline would run on random weights.
 
 The `cosmos3-diffusers` extra is native `diffusers` + `torch` + `transformers`
 (no extra wrapper package). It composes with `numpy>=2` (and therefore with
