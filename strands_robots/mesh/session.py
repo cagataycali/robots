@@ -828,6 +828,16 @@ def release_session() -> None:
 
     Delegates to the transport factory when the active backend is
     ``iot`` / ``bridge``; otherwise falls back to the legacy Zenoh refcount.
+
+    On the Zenoh path the final release closes the session. That close is
+    fail-soft over the surface :func:`zenoh_error_types` documents - a broker
+    drop or socket teardown race is logged at WARNING and the reference is
+    still dropped, because nothing can retry a close once the only handle to
+    the session is gone. A failure outside that surface (a ``TypeError`` or
+    ``AttributeError``, i.e. a bug rather than a transport fault) propagates,
+    matching how :meth:`strands_robots.mesh.core.Mesh.stop` treats its
+    ``undeclare`` calls. The "session closed" INFO line is emitted only when
+    the close actually completed.
     """
     global _SESSION, _SESSION_REFS  # noqa: PLW0603
 
@@ -842,13 +852,25 @@ def release_session() -> None:
             return
         _SESSION_REFS -= 1
         if _SESSION_REFS <= 0 and _SESSION is not None:
+            closed = True
             try:
                 _SESSION.close()
-            except Exception:
-                pass
+            except zenoh_error_types() as exc:
+                # Narrow surface per :func:`zenoh_error_types`, whose docstring
+                # names ``close`` among the operations it covers and excludes
+                # programmer errors so they surface loudly instead of being
+                # swallowed by a best-effort teardown. The session reference is
+                # dropped below either way, so nothing can retry the close and
+                # this record is the only evidence it did not complete -
+                # WARNING (not the DEBUG a per-entity cleanup uses) because the
+                # INFO line below otherwise reports a clean close, and a record
+                # must be at least as loud as the claim it contradicts.
+                closed = False
+                logger.warning("Zenoh mesh session close failed: %s", exc)
             _SESSION = None
             _SESSION_REFS = 0
-            logger.info("Zenoh mesh session closed")
+            if closed:
+                logger.info("Zenoh mesh session closed")
 
 
 def session_alive() -> bool:
@@ -899,14 +921,24 @@ def put(key: str, data: dict[str, Any]) -> None:
 
 
 def _atexit_cleanup() -> None:
-    """Best-effort session teardown on process exit."""
+    """Best-effort session teardown on process exit.
+
+    Same close contract as :func:`release_session`, logged at DEBUG: this path
+    reports nothing on success, so there is no claim for the record to
+    contradict. A programmer error still propagates rather than being swallowed
+    at interpreter shutdown.
+    """
     global _SESSION, _SESSION_REFS  # noqa: PLW0603
     with _SESSION_LOCK:
         if _SESSION is not None:
             try:
                 _SESSION.close()
-            except Exception:
-                pass
+            except zenoh_error_types() as exc:
+                # Same narrow surface as :func:`release_session`. DEBUG here
+                # because this path makes no success claim to contradict and
+                # runs during interpreter shutdown, matching the level
+                # ``BridgeTransport.close`` uses for its per-backend close.
+                logger.debug("Zenoh mesh session close failed at exit: %s", exc)
             _SESSION = None
             _SESSION_REFS = 0
 
