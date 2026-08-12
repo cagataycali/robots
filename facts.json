@@ -1,0 +1,238 @@
+{
+  "tree": "/tmp/robots-mine-31648847933",
+  "refusals": [
+    {
+      "line": 340,
+      "text": "return _err(f\"invalid host: {host!r}\")"
+    },
+    {
+      "line": 342,
+      "text": "return _err(port_error)"
+    },
+    {
+      "line": 344,
+      "text": "return _err(transport_error)"
+    },
+    {
+      "line": 346,
+      "text": "return _err(f\"invalid topic name: {topic!r}\")"
+    },
+    {
+      "line": 348,
+      "text": "return _err(f\"invalid service name: {service!r}\")"
+    },
+    {
+      "line": 350,
+      "text": "return _err(f\"invalid interface type: {type!r} (expected ROS1 pkg/Name like geometry_msgs/Twist)\")"
+    },
+    {
+      "line": 353,
+      "text": "return _err(f\"unknown action: {action}\")"
+    },
+    {
+      "line": 361,
+      "text": "return _err(numeric_error)"
+    },
+    {
+      "line": 374,
+      "text": "return _err(_INSTALL_HINT)"
+    },
+    {
+      "line": 388,
+      "text": "return _err(\"echo requires topic\")"
+    },
+    {
+      "line": 391,
+      "text": "return _err(f\"cannot resolve type for {topic}; pass type=pkg/Name\")"
+    },
+    {
+      "line": 403,
+      "text": "return _err(\"service_call requires service and type\")"
+    },
+    {
+      "line": 411,
+      "text": "return _err(\"publish requires topic and type\")"
+    },
+    {
+      "line": 418,
+      "text": "return _err(f\"unknown action: {action}\")"
+    },
+    {
+      "line": 420,
+      "text": "return _err(str(exc))"
+    },
+    {
+      "line": 422,
+      "text": "return _err(f\"{action} failed: {exc}\")"
+    }
+  ],
+  "cov_before": {
+    "stmts": 174,
+    "miss": 2,
+    "pct": 99,
+    "missing": [
+      348,
+      411
+    ],
+    "passed": 82
+  },
+  "cov_after": {
+    "stmts": 174,
+    "miss": 0,
+    "pct": 100,
+    "missing": [],
+    "passed": 97
+  },
+  "wire": [
+    {
+      "label": "a mistyped service name",
+      "steps": [
+        {
+          "call": {
+            "action": "service_call",
+            "service": "/bad name",
+            "type": "std_srvs/Empty"
+          },
+          "status": "error",
+          "text": "use_rosbridge: invalid service name: '/bad name'",
+          "clients_dialed": 0,
+          "advertised": []
+        }
+      ]
+    },
+    {
+      "label": "a publish missing its interface type",
+      "steps": [
+        {
+          "call": {
+            "action": "publish",
+            "topic": "/cmd_vel"
+          },
+          "status": "error",
+          "text": "use_rosbridge: publish requires topic and type",
+          "clients_dialed": 1,
+          "advertised": []
+        }
+      ]
+    },
+    {
+      "label": "the same publish, complete",
+      "steps": [
+        {
+          "call": {
+            "action": "publish",
+            "topic": "/cmd_vel",
+            "type": "geometry_msgs/Twist",
+            "count": 1
+          },
+          "status": "success",
+          "text": "published 1 message(s) to /cmd_vel",
+          "clients_dialed": 1,
+          "advertised": [
+            [
+              "/cmd_vel",
+              true,
+              true,
+              1
+            ]
+          ]
+        }
+      ]
+    }
+  ],
+  "parity": [
+    {
+      "name": "/cmd vel",
+      "topic_refused": true,
+      "service_refused": true
+    },
+    {
+      "name": "/x|y",
+      "topic_refused": true,
+      "service_refused": true
+    },
+    {
+      "name": "../etc",
+      "topic_refused": true,
+      "service_refused": true
+    },
+    {
+      "name": "/a$(x)",
+      "topic_refused": true,
+      "service_refused": true
+    },
+    {
+      "name": "/gazebo/reset_world",
+      "topic_refused": false,
+      "service_refused": false
+    },
+    {
+      "name": "~private",
+      "topic_refused": false,
+      "service_refused": false
+    }
+  ],
+  "mutations": [
+    {
+      "label": "M1 delete the service name guard",
+      "new_failed": 9,
+      "new_passed": 6,
+      "old_failed": 0,
+      "old_passed": 82,
+      "in_fn": 1,
+      "in_file": 1
+    },
+    {
+      "label": "M2 service check evaluated, refusal discarded",
+      "new_failed": 9,
+      "new_passed": 6,
+      "old_failed": 0,
+      "old_passed": 82,
+      "in_fn": 1,
+      "in_file": 1
+    },
+    {
+      "label": "M3 service checked with the interface-type rule",
+      "new_failed": 2,
+      "new_passed": 13,
+      "old_failed": 3,
+      "old_passed": 79,
+      "in_fn": 1,
+      "in_file": 1
+    },
+    {
+      "label": "M4 delete the publish required-argument guard",
+      "new_failed": 4,
+      "new_passed": 11,
+      "old_failed": 0,
+      "old_passed": 82,
+      "in_fn": 1,
+      "in_file": 1
+    },
+    {
+      "label": "M5 publish refused only when BOTH are missing",
+      "new_failed": 3,
+      "new_passed": 12,
+      "old_failed": 0,
+      "old_passed": 82,
+      "in_fn": 1,
+      "in_file": 1
+    },
+    {
+      "label": "M6 publish refusal reworded locally",
+      "new_failed": 3,
+      "new_passed": 12,
+      "old_failed": 0,
+      "old_passed": 82,
+      "in_fn": 1,
+      "in_file": 1
+    }
+  ],
+  "control": {
+    "new_failed": 0,
+    "new_passed": 15,
+    "old_failed": 0,
+    "old_passed": 82
+  },
+  "restored_identically": true
+}
