@@ -1,0 +1,55 @@
+{
+  "tree": "/tmp/robots-mine-31739872682",
+  "reported": {
+    "calls": 14,
+    "ok": 10,
+    "err": 4,
+    "listed": 10,
+    "names": [
+      "ball_green",
+      "cube_0",
+      "cube_1",
+      "cube_2",
+      "cube_3",
+      "cube_4",
+      "cube_5",
+      "cube_6",
+      "cube_7",
+      "cube_8"
+    ],
+    "cylinder_geoms": 0,
+    "png": "_probe/reported.png"
+  },
+  "correct": {
+    "calls": 14,
+    "ok": 14,
+    "err": 0,
+    "listed": 14,
+    "names": [
+      "ball_green",
+      "coin_gold",
+      "cube_0",
+      "cube_1",
+      "cube_2",
+      "cube_3",
+      "cube_4",
+      "cube_5",
+      "cube_6",
+      "cube_7",
+      "cube_8",
+      "pen_0",
+      "pen_1",
+      "pen_2"
+    ],
+    "cylinder_geoms": 4,
+    "png": "_probe/correct.png"
+  },
+  "panel_diff_frac": 0.0342,
+  "crop": [
+    300,
+    220,
+    560,
+    480
+  ],
+  "crop_diff_frac": 0.1485
+}
