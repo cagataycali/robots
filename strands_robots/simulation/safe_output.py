@@ -76,6 +76,15 @@ def validate_output_path(
     target. Normalizes ``..`` via ``resolve()``. When ``sandbox_root`` is given
     and ``allow_abs`` is False, the resolved path must live under it.
 
+    A bare filename (one component, no separator, e.g. ``"frame.png"``) is
+    anchored to ``sandbox_root`` rather than the process CWD whenever
+    confinement is active. Without that, the most natural call a caller can
+    make is refused for naming a CWD path it never supplied. The anchoring
+    cannot widen the sandbox: it applies only to a single-component name, and
+    every guard above still runs against the anchored destination. In
+    guards-only mode (``sandbox_root=None`` or ``allow_abs=True``) a relative
+    name stays CWD-relative, preserving the historic video/recording contract.
+
     Args:
         output_path: Caller-supplied destination path.
         sandbox_root: Directory the path must resolve under, or ``None`` to skip
@@ -98,6 +107,17 @@ def validate_output_path(
     # directory, while plain absolute paths without ".." remain permitted.
     if ".." in raw.parts:
         raise ValueError(f"unsafe {label}: path traversal")
+    # A bare filename ("frame.png") names no directory, so resolving it against
+    # the process CWD is a guess - and under confinement it is a guess that
+    # always fails, refusing the call with a CWD-absolute path the caller never
+    # supplied. Anchor it to the sandbox root instead: a one-component name
+    # cannot escape it, and ".." is refused above by a check that scans every
+    # part (so it holds for the joined path too). Done BEFORE the symlink probe
+    # below because that guard must inspect the destination actually opened -
+    # after it, a link planted inside the sandbox would be probed at the CWD
+    # path instead and followed.
+    if sandbox_root is not None and not allow_abs and not raw.is_absolute() and len(raw.parts) == 1:
+        raw = sandbox_root / raw
     # Refuse to follow a symlink planted at the target (arbitrary-write vector).
     if raw.is_symlink():
         raise ValueError(f"{label} {output_path!r} is a symlink - refusing to follow")
