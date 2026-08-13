@@ -31,6 +31,7 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
+from typing import cast
 
 import pytest
 
@@ -425,29 +426,76 @@ def test_the_workflow_reads_the_script_from_the_base_and_names_the_head() -> Non
 # seam, so faking that is faking the network and nothing else.
 
 
-def _compare(files: list[str], *, merge_base: str = "aaaa1111", behind_by: int = 0) -> dict[str, object]:
+def _files(names: list[str], renamed: dict[str, str] | None = None) -> list[dict[str, object]]:
+    """Build a file list in the shape both file-carrying endpoints return.
+
+    ``renamed`` maps a new path to the path it was renamed from, which the API
+    reports as ``previous_filename`` on that same entry rather than as a second
+    entry -- so a rename is one row naming two paths, and reading only one of
+    them is invisible in the payload.
+    """
+    previous = renamed or {}
+    rows: list[dict[str, object]] = []
+    for name in names:
+        row: dict[str, object] = {"filename": name}
+        if name in previous:
+            row["previous_filename"] = previous[name]
+        rows.append(row)
+    return rows
+
+
+def _compare(
+    files: list[str],
+    *,
+    merge_base: str = "aaaa1111",
+    behind_by: int = 0,
+    renamed: dict[str, str] | None = None,
+) -> dict[str, object]:
     """Build one ``compare`` payload in the shape the endpoint returns."""
     return {
         "merge_base_commit": {"sha": merge_base},
         "behind_by": behind_by,
-        "files": [{"filename": name} for name in files],
+        "files": _files(files, renamed),
     }
 
 
 def _api(
     pulls: list[dict[str, object]],
     compares: dict[str, object],
+    pull_files: dict[int, list[dict[str, object]]] | None = None,
+    base: str = "main",
 ) -> Callable[[str, str], object]:
-    """Return a ``_get`` stand-in serving a recorded open set and compare payloads.
+    """Return a ``_get`` stand-in serving the open set, compares, and head file lists.
 
     A compare with no recorded payload raises, which is deliberate: an unrecorded
     lookup is a test that has not said what it means, and silently returning an
     empty path set would make it pass as "no overlap".
+
+    ``pull_files`` records a pull request's own paginated file list. A number with
+    no entry is served, paginated, from that pull request's ``base...head``
+    compare recording -- sound below the compare cap because the two endpoints
+    return the same set there, measured on #1035 (7 files), #1722 (10) and #1667
+    (153), identical both ways. The tests where the two must differ record the
+    divergence explicitly, which is the only place the distinction carries
+    meaning.
     """
+    heads = {int(cast(int, row["number"])): str(cast(dict[str, object], row["head"])["sha"]) for row in pulls}
+    recorded = dict(pull_files or {})
 
     def get(url: str, token: str) -> object:
         if "/pulls?" in url:
             return pulls if url.endswith("page=1") else []
+        if "/files?" in url:
+            number = int(url.split("/pulls/", 1)[1].split("/files", 1)[0])
+            entries = recorded.get(number)
+            if entries is None:
+                key = f"{base}...{heads[number]}"
+                if key not in compares:
+                    raise check.ApiError(f"no recorded file list for #{number}")
+                entries = cast(list[dict[str, object]], cast(dict[str, object], compares[key])["files"])
+            page = int(url.rsplit("page=", 1)[1])
+            start = (page - 1) * check._PULL_FILE_PAGE
+            return entries[start : start + check._PULL_FILE_PAGE]
         key = url.split("/compare/", 1)[1]
         if key not in compares:
             raise check.ApiError(f"no recorded compare for {key}")
@@ -616,20 +664,22 @@ def test_a_pull_request_level_with_its_base_is_not_a_stale_base_finding(
     assert "base moved under a path" not in capsys.readouterr().out
 
 
-def test_a_truncated_path_set_is_named_rather_than_read_as_no_overlap(
+def test_a_truncated_head_side_path_set_is_named_rather_than_read_as_no_overlap(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """The compare endpoint caps ``files``, and a capped list looks complete.
+    """A file list that stopped at its ceiling looks complete in the payload.
 
     This check's failure mode is a *missed* overlap, so a path set that reached
-    the cap is named as unevaluated. Quietly intersecting a truncated set is
+    the ceiling is named as unevaluated. Quietly intersecting a truncated set is
     exactly how one goes missing, and the report would say "clean" while meaning
-    "did not look".
+    "did not look". The ceiling that applies to the head side is the paginated
+    endpoint's, ten times the compare cap.
     """
-    capped = [f"strands_robots/f{index}.py" for index in range(check._COMPARE_FILE_CAP)]
+    at_ceiling = _files([f"strands_robots/f{index}.py" for index in range(check._PULL_FILE_CAP)])
     get = _api(
         [_pull(10, "head10")],
-        {"main...head10": _compare(capped), "head10...main": _compare([])},
+        {"main...head10": _compare([]), "head10...main": _compare([])},
+        pull_files={10: at_ceiling},
     )
 
     assert _sweep(monkeypatch, get, tmp_path) == 0
@@ -637,8 +687,113 @@ def test_a_truncated_path_set_is_named_rather_than_read_as_no_overlap(
     report = capsys.readouterr().out
     assert "Unevaluated (1)" in report
     assert "#10: not evaluated in either mode" in report
-    assert f"{check._COMPARE_FILE_CAP}-entry cap" in report
+    assert f"{check._PULL_FILE_CAP}-entry ceiling" in report
     assert "0 open non-draft pull request(s)" in report
+
+
+def test_a_head_side_at_the_compare_cap_stays_in_the_pairwise_comparison(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The compare cap must not remove a pull request from the mode that finds defects.
+
+    The compare call survives for ``merge_base_commit`` and ``behind_by``, which
+    the paginated endpoint does not carry, and its ``files`` list is not read --
+    so a head side at the 300-entry cap is not a reason to drop the pull request.
+    It used to be, and a large diff is the most likely thing on a queue to collide
+    with something, so the old behaviour discarded findings in proportion to how
+    much they were worth.
+    """
+    capped = [f"strands_robots/f{index}.py" for index in range(check._COMPARE_FILE_CAP)]
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare(capped),
+            "head10...main": _compare([]),
+            "main...head20": _compare([_SHARED]),
+            "head20...main": _compare([]),
+        },
+        pull_files={10: _files([_SHARED, "strands_robots/private.py"])},
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "#10 + #20" in report, "a capped compare must not drop the pull request from the pairwise mode"
+    assert "Unevaluated" not in report
+    assert "2 open non-draft pull request(s)" in report
+
+
+def test_a_head_side_path_set_spanning_several_pages_is_read_whole(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The pagination is the point, so a set larger than one page must be followed.
+
+    A read that stopped after the first page would raise the ceiling on paper and
+    lower it in fact: the overlap here sits on the last page, past two full ones.
+    """
+    filler = [f"strands_robots/f{index}.py" for index in range(2 * check._PULL_FILE_PAGE)]
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare([]),
+            "head10...main": _compare([]),
+            "main...head20": _compare([_SHARED]),
+            "head20...main": _compare([]),
+        },
+        pull_files={10: _files([*filler, _SHARED])},
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "#10 + #20" in report
+    assert _SHARED in report
+
+
+def test_a_renamed_path_overlaps_a_sibling_editing_the_old_name(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A rename and an edit of the old name compose with no conflict marker.
+
+    The API reports a rename as one entry carrying both names, so collecting only
+    ``filename`` leaves the two branches sharing no path -- while git, which does
+    detect the rename, applies the edit to the new name and merges cleanly. That
+    is the silent composition the sweep exists to report, so it must not be the
+    one shape the sweep cannot see. Merged #2057 renamed a test file, and a
+    sibling still editing the old path would have been invisible.
+    """
+    renamed_to = "tests/test_args_docstring_completeness.py"
+    old_name = "tests/simulation/test_args_docstring_completeness.py"
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare([renamed_to], renamed={renamed_to: old_name}),
+            "head10...main": _compare([]),
+            "main...head20": _compare([old_name]),
+            "head20...main": _compare([]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "#10 + #20" in report
+    assert old_name in report
+
+
+def test_the_two_modes_agree_about_a_rename() -> None:
+    """``--no-renames`` and ``previous_filename`` must reach the same path set.
+
+    ``test_a_rename_on_the_base_still_overlaps_the_old_path`` pins the git side of
+    this from real commits. The two modes reading a rename differently is the
+    class of divergence that makes one of them wrong without either looking it,
+    so the equality is asserted rather than inferred from two separate verdicts.
+    """
+    renamed_to = "strands_robots/b.py"
+    old_name = "strands_robots/a.py"
+    entries = _files([renamed_to], renamed={renamed_to: old_name})
+
+    assert check.paths_from_entries(entries) == frozenset({renamed_to, old_name})
 
 
 def test_a_truncated_base_side_set_still_leaves_the_pair_comparison(
@@ -649,7 +804,9 @@ def test_a_truncated_base_side_set_still_leaves_the_pair_comparison(
     Measured on the live queue: the base-side set is the one that grows without
     bound, so it is the one that reaches the cap -- on #1035, 265 commits behind.
     Dropping the whole pull request for it would have discarded the pairwise
-    finding against #1722, which is the finding this mode exists to make.
+    finding against #1722, which is the finding this mode exists to make. The base
+    side is also the only side still read from the capped endpoint: it has no
+    paginated equivalent, so this is the one cap the sweep cannot route around.
     """
     capped = [f"strands_robots/f{index}.py" for index in range(check._COMPARE_FILE_CAP)]
     get = _api(

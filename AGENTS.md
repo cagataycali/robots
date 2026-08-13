@@ -904,15 +904,26 @@ hatch run format            # ruff check --fix, ruff format
    `strands_robots/mesh/ros_bridge.py`), neither of which any per-branch signal
    was reporting - both read `mergeStateStatus: CLEAN`.
 
-   Two properties of that sweep are worth knowing before leaning on it. A
-   truncated path set is named as unevaluated rather than intersected: the compare
-   endpoint caps `files` at 300, a capped list is indistinguishable from a
-   complete one in the payload, and this check's failure mode is a *missed*
-   overlap, so quietly intersecting a truncated set is how one goes missing.
+   Three properties of that sweep are worth knowing before leaning on it. A
+   truncated path set is named as unevaluated rather than intersected: a capped
+   list is indistinguishable from a complete one in the payload, and this check's
+   failure mode is a *missed* overlap, so quietly intersecting a truncated set is
+   how one goes missing. The two sides differ in how far away that is - the head
+   side is read from the paginated `pulls/{n}/files` endpoint and stops at 3000
+   entries, while the base side has no paginated equivalent and keeps the compare
+   endpoint's 300 - and the head side is the input to the pairwise mode, so it is
+   the one that must not drop a large diff.
    And the two path sets skip apart: the base-side set is the one that grows
-   without bound, so it is the one that hits that cap - #1035 was 265 commits
+   without bound, so it is the one that hits its cap - #1035 was 265 commits
    behind - and dropping the whole pull request for it would discard the pairwise
    finding this mode exists to make.
+
+   Both sides collect `previous_filename` alongside `filename`, so a rename
+   intersects a sibling still editing the old name. Without it the two share no
+   path, while git - which does detect the rename - applies the sibling's edit to
+   the new name and merges with no conflict marker, which is the exact silence
+   this sweep exists to break. That is what keeps the two modes agreeing: the
+   single-branch one reaches the same set with `--no-renames` (#2246).
 
    A file carrying a `strict=True` xfail is the highest-value overlap candidate
    there is, because its whole purpose is to fail when a sibling change lands: it

@@ -48,7 +48,17 @@ both invisible to every per-branch signal:
 computes the same intersection twice per pull request -- once against each
 sibling's ``M..head``, once against what has landed on the base since its own
 ``M`` -- reusing the path-set helpers the single-branch mode uses, so the two
-modes cannot disagree about what counts as an overlap or as prose.
+modes cannot disagree about what counts as an overlap or as prose. That parity
+includes renames: git reports one as its delete plus its add under
+``--no-renames``, and the API side takes ``previous_filename`` alongside
+``filename`` to reach the same set, because a branch that renames a file and a
+branch that edits its old name compose without a conflict marker.
+
+The two sides come from different endpoints, and so have different ceilings. The
+head side -- the input to the pairwise mode -- is read from the paginated
+pull-request files endpoint, which carries ten times what the compare endpoint's
+``files`` does. The base side has no paginated equivalent and keeps the compare
+cap, reported as unevaluated for that mode alone.
 
 A file carrying a ``strict=True`` xfail is the highest-value overlap candidate
 there is: its whole purpose is to fail when a sibling change lands, so it breaks
@@ -248,8 +258,21 @@ _MAX_PAGES = 20
 #: truncated list is indistinguishable from a complete one in the payload, so a
 #: path set that reaches the cap is reported as unevaluated rather than as not
 #: overlapping. This check's failure mode is a *missed* overlap, and quietly
-#: intersecting a truncated set is exactly how one goes missing.
+#: intersecting a truncated set is exactly how one goes missing. Only the
+#: base-side set is read from this endpoint; the head side has a paginated one.
 _COMPARE_FILE_CAP = 300
+
+#: The pull-request files endpoint is paginated and stops at this many entries,
+#: ten times the compare cap. Reaching it carries the same ambiguity a capped
+#: compare does and is reported the same way -- but it is ten times further
+#: away, and the head-side set is the input to the pairwise mode, which is the
+#: mode that finds defects. The largest pull request in this repository's history
+#: is 153 files (#1667, closed unmerged); the largest open one today is 10.
+_PULL_FILE_CAP = 3000
+
+#: Page size for that endpoint. ``_PULL_FILE_CAP`` must stay a whole multiple of
+#: it, because the loop bound below is the quotient.
+_PULL_FILE_PAGE = 100
 
 
 class ApiError(RuntimeError):
@@ -265,6 +288,11 @@ class ApiError(RuntimeError):
 @dataclasses.dataclass(frozen=True)
 class OpenPullRequest:
     """One open pull request's path sets, both taken from its own merge base.
+
+    ``edits`` comes from the paginated pull-request files endpoint and
+    ``landed_since`` from the compare endpoint, so the two sides have different
+    ceilings: the base side has no paginated equivalent and keeps
+    ``_COMPARE_FILE_CAP``.
 
     ``landed_since`` is ``None`` when that side could not be read. It is an input
     to the stale-base mode only, so an unreadable one excludes the pull request
@@ -321,15 +349,45 @@ def resolve_open_pull_requests(repo: str, token: str) -> list[tuple[int, str]]:
     return sorted(found)
 
 
-def compare_paths(repo: str, base: str, head: str, token: str) -> tuple[frozenset[str], str, int]:
-    """Return ``(paths, merge_base_sha, behind_by)`` for a three-dot ``base...head``.
+def paths_from_entries(entries: Iterable[object]) -> frozenset[str]:
+    """Return every path a file-list entry names, a rename's old name included.
+
+    Both file-carrying endpoints report a rename as a single entry whose
+    ``filename`` is the new path and whose ``previous_filename`` is the old one.
+    Reading only the first is a false negative in the direction that matters: a
+    branch renaming ``foo.py`` and a branch editing ``foo.py`` then share no
+    path, while git -- which does detect the rename -- applies the second
+    branch's edit to the new name with no conflict to report. That is exactly
+    the composition this file exists to find, arriving invisibly.
+
+    This is the API counterpart of ``changed_paths``'s ``--no-renames``, and it
+    is what keeps the two modes agreeing about what an overlap is. Taking both
+    names can only widen the reported set, which is the safe direction for a
+    check whose failure mode is a missed overlap.
+    """
+    return frozenset(
+        str(value)
+        for entry in entries
+        if isinstance(entry, dict)
+        for key in ("filename", "previous_filename")
+        if (value := entry.get(key))
+    )
+
+
+def _compare_payload(repo: str, base: str, head: str, token: str) -> tuple[list[object], str, int]:
+    """Fetch a three-dot ``base...head`` and return ``(file entries, merge_base_sha, behind_by)``.
 
     The three-dot form is what makes this the same question the single-branch
     mode asks with git: the ``files`` it reports are the diff from
     ``merge_base(base, head)`` to ``head``, i.e. ``M..head``. Swapping the
     operands therefore yields ``M..base`` from the same endpoint, which is how
-    the sweep obtains both sides without resolving a merge base itself or
+    the sweep obtains the base side without resolving a merge base itself or
     fetching a single commit.
+
+    ``_COMPARE_FILE_CAP`` is deliberately not enforced here. Whether a truncated
+    ``files`` list is a problem depends on whether the caller reads it, and the
+    two callers differ: one wants the paths, the other wants only the two fields
+    the paginated endpoint does not carry.
     """
     url = f"{API_ROOT}/repos/{repo}/compare/{base}...{head}"
     payload = _get(url, token)
@@ -337,16 +395,69 @@ def compare_paths(repo: str, base: str, head: str, token: str) -> tuple[frozense
         raise ApiError(f"{url}: expected an object, got {type(payload).__name__}")
     entries = payload.get("files")
     entries = entries if isinstance(entries, list) else []
-    if len(entries) >= _COMPARE_FILE_CAP:
-        raise ApiError(
-            f"{url}: the file list reached the {_COMPARE_FILE_CAP}-entry cap, so the path set is "
-            + "incomplete and an overlap computed from it could be a false negative"
-        )
-    paths = frozenset(str(entry["filename"]) for entry in entries if isinstance(entry, dict) and entry.get("filename"))
     commit = payload.get("merge_base_commit")
     merge_base_sha = str((commit or {}).get("sha") or "") if isinstance(commit, dict) else ""
     behind_by = payload.get("behind_by")
-    return paths, merge_base_sha, behind_by if isinstance(behind_by, int) else 0
+    return entries, merge_base_sha, behind_by if isinstance(behind_by, int) else 0
+
+
+def compare_paths(repo: str, base: str, head: str, token: str) -> tuple[frozenset[str], str, int]:
+    """Return ``(paths, merge_base_sha, behind_by)`` for a three-dot ``base...head``.
+
+    Enforces the compare endpoint's file cap: a path set that reached it is
+    incomplete, and intersecting it would report "no overlap" while meaning "did
+    not look". Used for the base side, which has no paginated equivalent.
+    """
+    entries, merge_base_sha, behind_by = _compare_payload(repo, base, head, token)
+    if len(entries) >= _COMPARE_FILE_CAP:
+        raise ApiError(
+            f"{API_ROOT}/repos/{repo}/compare/{base}...{head}: the file list reached the "
+            + f"{_COMPARE_FILE_CAP}-entry cap, so the path set is incomplete and an overlap "
+            + "computed from it could be a false negative"
+        )
+    return paths_from_entries(entries), merge_base_sha, behind_by
+
+
+def compare_fork_point(repo: str, base: str, head: str, token: str) -> tuple[str, int]:
+    """Return ``(merge_base_sha, behind_by)`` for ``base...head``, ignoring ``files``.
+
+    The head side takes its paths from ``pull_request_paths``, so this call is
+    needed only for the two fields that endpoint does not carry -- and it must
+    not fail on a capped ``files`` list it never reads. It once did, via
+    ``compare_paths``, which removed a large pull request from the *pairwise*
+    comparison as well: the one mode where a 300-file branch is the most likely
+    thing on the queue to collide with something.
+    """
+    _, merge_base_sha, behind_by = _compare_payload(repo, base, head, token)
+    return merge_base_sha, behind_by
+
+
+def pull_request_paths(repo: str, number: int, token: str) -> frozenset[str]:
+    """Return the paths pull request ``number`` edits, from the paginated endpoint.
+
+    Below the compare cap this is the same set ``base...head`` reports -- measured
+    on this repository at 7, 10 and 153 files (#1035, #1722, #1667), identical
+    both ways, and byte-identical across the whole open queue -- so no verdict
+    changes. What changes is the ceiling: paginating raises the head side's from
+    ``_COMPARE_FILE_CAP`` to ``_PULL_FILE_CAP``.
+
+    Reaching that ceiling is reported like a capped compare, for the same reason:
+    the endpoint stops there without saying so, and a silently short path set is
+    how a missed overlap is manufactured.
+    """
+    collected: list[object] = []
+    for page in range(1, _PULL_FILE_CAP // _PULL_FILE_PAGE + 1):
+        url = f"{API_ROOT}/repos/{repo}/pulls/{number}/files?per_page={_PULL_FILE_PAGE}&page={page}"
+        payload = _get(url, token)
+        rows = payload if isinstance(payload, list) else []
+        collected.extend(rows)
+        if len(rows) < _PULL_FILE_PAGE:
+            return paths_from_entries(collected)
+    raise ApiError(
+        f"{API_ROOT}/repos/{repo}/pulls/{number}/files: the file list reached the "
+        + f"{_PULL_FILE_CAP}-entry ceiling, so the path set is incomplete and an overlap "
+        + "computed from it could be a false negative"
+    )
 
 
 def collect_open_pull_requests(
@@ -366,7 +477,8 @@ def collect_open_pull_requests(
     lookup_failures = (ApiError, urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError)
     for number, head_sha in resolve_open_pull_requests(repo, token):
         try:
-            edits, fork_point, behind_by = compare_paths(repo, base_ref, head_sha, token)
+            fork_point, behind_by = compare_fork_point(repo, base_ref, head_sha, token)
+            edits = pull_request_paths(repo, number, token)
         except lookup_failures as error:
             unevaluated.append((number, f"not evaluated in either mode - own path set unreadable: {error}"))
             continue
