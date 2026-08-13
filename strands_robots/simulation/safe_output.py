@@ -4,6 +4,7 @@ Several simulation entry points persist an artifact to a caller-chosen
 filesystem path that originates from an untrusted (LLM tool-call) source:
 
 * ``render(output_path=...)`` - a PNG still,
+* ``export_xml(output_path=...)`` - the scene as canonical MJCF,
 * ``run_policy(video={"path": ...})`` - a rollout MP4,
 * ``start_cameras_recording(output_dir=..., name=...)`` - per-camera MP4s.
 
@@ -19,7 +20,8 @@ Two confinement policies are supported, selected per sink:
   (used by ``render``, whose ``output_path`` is a newer, sandboxed-by-design
   feature). Pass a non-``None`` ``sandbox_root`` with ``allow_abs=False``.
 * **Guards-only (opt-in sandbox)** - absolute paths are permitted (the historic
-  video/recording contract) but the metacharacter, backslash, symlink, and
+  video/recording contract, and ``export_xml``'s) but the metacharacter,
+  backslash, symlink, and
   name-traversal guards still apply. Pass ``sandbox_root=None`` (or
   ``allow_abs=True``); callers opt in to confinement by supplying a root.
 """
