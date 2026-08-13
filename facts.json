@@ -1,0 +1,25 @@
+{
+  "tree": "/tmp/robots-mine-31656269734",
+  "honored": {
+    "status": "success",
+    "text": "move_to: 'arm' EE (site 'arm/ee_site') reached [0.2, 0.1, 0.2] within 0.02 m in 32 steps (error 0.0199 m).",
+    "moved_frac": 0.2509187788018433,
+    "max_delta": 103,
+    "arm_frac": 0.6256595622119816
+  },
+  "refused_move_to": {
+    "status": "error",
+    "text": "move_to: robot 'arm' has no joint-transmission actuators to drive. If it was loaded from a bare URDF, add position servos first: action='actuate_robot'.",
+    "changed_frac": 0.0,
+    "max_delta": 1,
+    "changed_px": 0,
+    "arm_frac": 0.844104262672811
+  },
+  "refused_rotate_wrist": {
+    "status": "error",
+    "text": "rotate_wrist: could not resolve a wrist joint for 'arm'. Actuated hinge joints: ['jaw']. Drive one directly with action='send_action' instead.",
+    "changed_px": 0,
+    "max_delta": 1,
+    "arm_frac": 0.7761117511520738
+  }
+}
