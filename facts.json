@@ -1,0 +1,55 @@
+{
+  "tree": "/tmp/robots-mine-31658558409",
+  "isaac_status": "error",
+  "isaac_text": "add_camera: parent_body='so101/gripper' is not supported on the Isaac backend (it parents camera prims to the stage camera scope, not to an articulation link, so the camera would not ride with the body). Omit parent_body for a world-fixed camera, or use create_simulation(backend='mujoco') / create_simulation(backend='newton') for a body-mounted (wrist) camera.",
+  "mujoco_mount_status": "success",
+  "mujoco_mount_text": "Camera 'wrist' added at [0.06, 0.0, 0.03] (mounted on 'so101/gripper')",
+  "action_keys": [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6"
+  ],
+  "rest_joints": {
+    "1": 0.0,
+    "1.vel": 0.0,
+    "2": 0.0,
+    "2.vel": 0.0,
+    "3": 0.0,
+    "3.vel": 0.0,
+    "4": 0.0,
+    "4.vel": 0.0,
+    "5": 0.0,
+    "5.vel": 0.0,
+    "6": 0.0,
+    "6.vel": 0.0
+  },
+  "commanded": {
+    "1": 1.1,
+    "2": -1.3,
+    "3": 1.7,
+    "4": 0.0,
+    "5": 0.0,
+    "6": 1.1
+  },
+  "actions_applied_ok": 90,
+  "moved_joints": {
+    "1": 1.0832,
+    "1.vel": 0.6004,
+    "2": -1.2758,
+    "2.vel": -0.7533,
+    "3": 1.5722,
+    "3.vel": 0.0028,
+    "4": 0.0069,
+    "4.vel": -0.0005,
+    "5": 0.0,
+    "5.vel": -0.0,
+    "6": 1.083,
+    "6.vel": 0.5995
+  },
+  "wrist_view_changed_frac": 0.3891,
+  "rest_saturated": 0.3267,
+  "moved_saturated": 0.3201
+}
