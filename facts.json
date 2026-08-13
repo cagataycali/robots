@@ -1,0 +1,130 @@
+{
+  "tree": "/tmp/robots-mine-31659860089",
+  "rows": {
+    "featherstone": {
+      "frames": {
+        "a": {
+          "content_frac": 0.0748
+        },
+        "b": {
+          "content_frac": 0.1458
+        },
+        "c": {
+          "content_frac": 0.2059
+        },
+        "d": {
+          "content_frac": 0.3194
+        }
+      },
+      "add_robot": "success",
+      "send_action": "success",
+      "step": "success",
+      "before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "after": {
+        "j1": 1.0248714685440063,
+        "j2": -0.6345598101615906
+      },
+      "travel": 1.024871
+    },
+    "xpbd": {
+      "frames": {
+        "a": {
+          "content_frac": 0.051
+        },
+        "b": {
+          "content_frac": 0.113
+        },
+        "c": {
+          "content_frac": 0.1682
+        },
+        "d": {
+          "content_frac": 0.2837
+        }
+      },
+      "add_robot": "success",
+      "send_action": "success",
+      "step": "success",
+      "before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "after": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "travel": 0.0
+    }
+  },
+  "cameras": {
+    "a": {
+      "pos": [
+        0.62,
+        -0.58,
+        0.44
+      ],
+      "target": [
+        0.2,
+        0.0,
+        0.14
+      ],
+      "fov": 42,
+      "differing_frac": 0.0978,
+      "min_content_frac": 0.051
+    },
+    "b": {
+      "pos": [
+        0.48,
+        -0.44,
+        0.34
+      ],
+      "target": [
+        0.22,
+        0.0,
+        0.14
+      ],
+      "fov": 48,
+      "differing_frac": 0.1153,
+      "min_content_frac": 0.113
+    },
+    "c": {
+      "pos": [
+        0.38,
+        -0.36,
+        0.3
+      ],
+      "target": [
+        0.22,
+        0.0,
+        0.14
+      ],
+      "fov": 56,
+      "differing_frac": 0.1149,
+      "min_content_frac": 0.1682
+    },
+    "d": {
+      "pos": [
+        0.3,
+        -0.5,
+        0.26
+      ],
+      "target": [
+        0.18,
+        0.0,
+        0.14
+      ],
+      "fov": 50,
+      "differing_frac": 0.0963,
+      "min_content_frac": 0.2837
+    }
+  },
+  "refusal": "Newton solver 'xpbd' cannot drive an articulated robot: it builds and steps without integrating rigid bodies, leaving the world frozen. Solvers that can: ['mujoco', 'featherstone', 'kamino'].",
+  "accepted": [
+    "mujoco",
+    "featherstone",
+    "kamino"
+  ],
+  "chosen_camera": "b"
+}

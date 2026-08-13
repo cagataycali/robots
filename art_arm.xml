@@ -1,0 +1,21 @@
+<mujoco model="art_arm">
+  <compiler angle="radian"/>
+  <option gravity="0 0 -9.81"/>
+  <worldbody>
+    <body name="base" pos="0 0 0.06">
+      <geom type="box" size="0.06 0.06 0.06" rgba="0.30 0.34 0.42 1"/>
+      <body name="link1" pos="0 0 0.06">
+        <joint name="j1" type="hinge" axis="0 0 1" range="-2 2" limited="true" damping="4"/>
+        <geom type="capsule" fromto="0 0 0 0.26 0 0" size="0.05" rgba="0.96 0.45 0.12 1"/>
+        <body name="link2" pos="0.26 0 0">
+          <joint name="j2" type="hinge" axis="0 1 0" range="-2 2" limited="true" damping="4"/>
+          <geom type="capsule" fromto="0 0 0 0.22 0 0" size="0.044" rgba="0.20 0.72 0.38 1"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="a1" joint="j1" kp="60"/>
+    <position name="a2" joint="j2" kp="60"/>
+  </actuator>
+</mujoco>
