@@ -1,0 +1,19 @@
+{
+  "tree": "/tmp/robots-mine-31751868016",
+  "fail": {
+    "status": "success",
+    "says_started": true,
+    "store_live": true,
+    "newlines_written": 0,
+    "record": "[teleop] session 'cal': auto-accept did not complete (Broken pipe); the calibration prompt may be unanswered - check action='status' and the session log",
+    "level": "WARNING"
+  },
+  "ok": {
+    "status": "success",
+    "says_started": true,
+    "store_live": true,
+    "newlines_written": 2,
+    "record": null,
+    "level": null
+  }
+}
