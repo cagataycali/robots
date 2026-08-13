@@ -26,10 +26,13 @@ CI, pinned by ``test_a_merge_commit_head_defeats_the_check``.
 from __future__ import annotations
 
 import importlib.util
+import inspect
+import re
 import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any
 
 import pytest
 
@@ -412,3 +415,292 @@ def test_the_workflow_reads_the_script_from_the_base_and_names_the_head() -> Non
     )
     assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in workflow
     assert '--head "$HEAD_SHA"' in workflow, "the commit under test is named, not checked out"
+
+
+# --------------------------------------------------------------------------
+# The sweep over pairs of open pull requests.
+#
+# Everything above compares one branch against its base. Two *open* pull
+# requests editing the same file have the same failure mode and no signal at
+# all: neither has an `M..base` overlap, so the check reads green on both.
+#
+# Measured over the 19 open pull requests on 2026-08-13: 171 pairs, 7 sharing a
+# path, 3 prose-only, 4 worth reporting. Two of the four had already been found
+# by hand at the cost of a composition run each -- #2233/#2235 share
+# `tests/simulation/isaac/test_motion_primitives.py`, where one carries a strict
+# xfail for the defect the other fixes, and #2224/#2227 share
+# `strands_robots/simulation/safe_output.py`. These pin the caller, and in
+# particular that an incomplete read is named rather than folded in as clean.
+# --------------------------------------------------------------------------
+
+
+def _pull(number: int, *, draft: bool = False) -> dict[str, Any]:
+    return {"number": number, "draft": draft}
+
+
+def _files(*names: str) -> list[dict[str, Any]]:
+    return [{"filename": name} for name in names]
+
+
+def _sweep_fixture(
+    monkeypatch: pytest.MonkeyPatch,
+    pulls: list[dict[str, Any]],
+    files: dict[int, list[dict[str, Any]]],
+    *,
+    unreadable: tuple[int, ...] = (),
+) -> None:
+    """Route the two reads a sweep makes to plain fixtures.
+
+    ``unreadable`` names pull requests whose file list raises, standing in for a
+    rate limit on one branch while the rest of the sweep proceeds.
+    """
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    def fake_get(url: str, _token: str) -> object:
+        if "/pulls?state=open" in url:
+            return pulls if "&page=1" in url else []
+        match = re.search(r"/pulls/(\d+)/files", url)
+        assert match is not None, f"unexpected url {url}"
+        number = int(match.group(1))
+        if number in unreadable:
+            raise check.urllib.error.URLError("rate limited")
+        # Anchored on the separator: an unanchored `page=` also matches inside
+        # `per_page=100`, which silently resolves every read to page 100 and
+        # returns an empty slice for every pull request.
+        page_match = re.search(r"[?&]page=(\d+)", url)
+        assert page_match is not None, f"no page in {url}"
+        page = int(page_match.group(1))
+        rows = files.get(number, [])
+        # 100 rows per page, so a fixture can express a list longer than one page.
+        return rows[(page - 1) * 100 : page * 100]
+
+    monkeypatch.setattr(check, "_get", fake_get)
+
+
+def test_the_sweep_reports_the_measured_pairs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The four measured pairs are reported and the disjoint branch is not.
+
+    This is the sweep's reason to exist: #2233 and #2235 both edit the isaac
+    motion-primitive suite and compose to a red one, and no signal on either
+    branch says so.
+    """
+    isaac = "tests/simulation/isaac/test_motion_primitives.py"
+    safe = "strands_robots/simulation/safe_output.py"
+    _sweep_fixture(
+        monkeypatch,
+        [_pull(2224), _pull(2227), _pull(2233), _pull(2235), _pull(2999)],
+        {
+            2224: _files(safe, "strands_robots/simulation/mujoco/physics.py"),
+            2227: _files(safe, "tests/simulation/test_output_path_sandbox.py"),
+            2233: _files(isaac),
+            2235: _files(isaac, "strands_robots/simulation/isaac/motion_primitives.py"),
+            2999: _files("docs/unrelated_module.py"),
+        },
+    )
+
+    assert check.main(["--all-open", "--repo-slug", "o/r", "--token", "t"]) == 1
+    report = capsys.readouterr().out
+    assert "#2224+#2227, #2233+#2235" in report
+    assert f"| #2233 + #2235 | `{isaac}` |" in report
+    assert f"| #2224 + #2227 | `{safe}` |" in report
+    assert "Compared 10 pair(s) across 5 open non-draft pull request(s)" in report
+    assert "#2999" not in report.split("| pair |")[1]
+
+
+def test_a_prose_only_pair_is_reported_but_not_counted(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The measured prose case: three pull requests sharing one README.
+
+    The exemption is what takes the live report from 7 pairs to 4, so it earns a
+    pin: prose cannot change what the suite does, and a real collision inside it
+    surfaces as a merge conflict the merge gate already stops.
+    """
+    _sweep_fixture(
+        monkeypatch,
+        [_pull(2188), _pull(2191)],
+        {2188: _files("examples/fleet/README.md"), 2191: _files("examples/fleet/README.md")},
+    )
+
+    assert check.main(["--all-open", "--repo-slug", "o/r", "--token", "t"]) == 0
+    report = capsys.readouterr().out
+    assert "No two open pull requests edit the same behaviour-bearing file." in report
+    assert "1 pair(s) sharing only documentation" in report
+    assert "- #2188 + #2191: `examples/fleet/README.md`" in report
+
+
+def test_a_truncated_file_list_is_named_not_reported_as_clean(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A pull request read only in part is excluded and named.
+
+    This is the failure mode worth guarding: the shared path may be on a page
+    nobody read, so comparing a partial set would report the reassuring answer.
+    The pull request is named instead, and the pair it would have formed is not
+    silently absent.
+    """
+    monkeypatch.setattr(check, "MAX_PAGES", 1)
+    shared = "strands_robots/simulation/base.py"
+    long_list = _files(*[f"pkg/mod_{index}.py" for index in range(100)])
+    _sweep_fixture(
+        monkeypatch,
+        [_pull(10), _pull(11)],
+        {10: long_list + _files(shared), 11: _files(shared)},
+    )
+
+    assert check.main(["--all-open", "--repo-slug", "o/r", "--token", "t"]) == 0
+    report = capsys.readouterr().out
+    assert "Not evaluated (1): #10." in report
+    assert "Compared 0 pair(s) across 1 open non-draft pull request(s)" in report
+    assert "let a partial sweep read as a clean one" in report
+
+
+def test_one_unreadable_pull_request_does_not_suppress_the_others(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A rate limit on one branch must not take the report with it."""
+    shared = "strands_robots/mesh/__init__.py"
+    _sweep_fixture(
+        monkeypatch,
+        [_pull(1035), _pull(1722), _pull(9999)],
+        {1035: _files(shared), 1722: _files(shared), 9999: _files(shared)},
+        unreadable=(9999,),
+    )
+
+    assert check.main(["--all-open", "--repo-slug", "o/r", "--token", "t"]) == 1
+    report = capsys.readouterr().out
+    assert f"| #1035 + #1722 | `{shared}` |" in report
+    assert "Not evaluated (1): #9999." in report
+
+
+def test_a_draft_pull_request_is_not_swept(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    """A draft cannot be the branch that lands first and hands over an overlap."""
+    shared = "strands_robots/simulation/base.py"
+    _sweep_fixture(
+        monkeypatch,
+        [_pull(1), _pull(2, draft=True)],
+        {1: _files(shared), 2: _files(shared)},
+    )
+
+    assert check.main(["--all-open", "--repo-slug", "o/r", "--token", "t"]) == 0
+    assert "Compared 0 pair(s) across 1 open" in capsys.readouterr().out
+
+
+def test_a_renamed_path_contributes_both_names(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Measured on #2057: the new name alone misses the overlap.
+
+    That pull request moved ``tests/simulation/test_args_docstring_completeness.py``
+    to ``tests/``. The API reports the rename as one entry naming only the new
+    path, so reading ``filename`` alone gives 6 paths and drops the old name,
+    while adding ``previous_filename`` gives 7 and matches
+    ``git diff --no-renames`` exactly. Taking the new name only would lose the
+    overlap against a branch still editing the old path -- the missed-overlap
+    direction ``changed_paths`` already refuses.
+    """
+    old = "tests/simulation/test_args_docstring_completeness.py"
+    new = "tests/test_args_docstring_completeness.py"
+    _sweep_fixture(
+        monkeypatch,
+        [_pull(2057), _pull(2100)],
+        {
+            2057: [{"filename": new, "previous_filename": old, "status": "renamed"}],
+            2100: _files(old),
+        },
+    )
+
+    assert check.main(["--all-open", "--repo-slug", "o/r", "--token", "t"]) == 1
+    assert f"| #2057 + #2100 | `{old}` |" in capsys.readouterr().out
+
+
+def test_the_paths_of_a_renamed_entry_include_the_previous_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The reader itself returns both names, and reports the read as complete."""
+    monkeypatch.setattr(
+        check,
+        "_get",
+        lambda _url, _token: [{"filename": "b.py", "previous_filename": "a.py", "status": "renamed"}],
+    )
+    paths, complete = check.pull_request_paths("o/r", 1, "t")
+    assert paths == frozenset({"a.py", "b.py"})
+    assert complete is True
+
+
+def test_pairs_are_ordered_and_disjoint_branches_are_absent() -> None:
+    """Pairs come out sorted by number so two reports diff on verdicts."""
+    overlaps = check.pairwise_overlaps({3: ["x.py"], 1: ["x.py"], 2: ["y.py"]})
+    assert [(pair.lower, pair.higher) for pair in overlaps] == [(1, 3)]
+
+
+def test_a_pair_splits_its_shared_paths_into_behaviour_and_prose() -> None:
+    """One pair sharing both kinds reports both, and counts as a finding."""
+    both = ["strands_robots/x.py", "docs/y.md"]
+    (pair,) = check.pairwise_overlaps({1: both, 2: both})
+    assert pair.blocking == ("strands_robots/x.py",)
+    assert pair.prose == ("docs/y.md",)
+    assert pair.is_finding is True
+
+
+def test_a_pair_sharing_only_prose_is_not_a_finding() -> None:
+    (pair,) = check.pairwise_overlaps({1: ["a.md"], 2: ["a.md"]})
+    assert pair.blocking == ()
+    assert pair.is_finding is False
+
+
+def test_the_sweep_uses_the_same_prose_rule_as_the_single_branch_mode() -> None:
+    """The exemption has one owner, so the two modes cannot drift apart.
+
+    ``pairwise_overlaps`` partitions through ``partition_overlap`` rather than
+    re-deriving the suffix set; if it grew its own copy, a suffix added to
+    ``PROSE_SUFFIXES`` would be honoured in one mode and not the other.
+    """
+    source = inspect.getsource(check.pairwise_overlaps)
+    assert "partition_overlap(" in source
+    assert "PROSE_SUFFIXES" not in source
+    assert "is_prose" not in source
+
+
+def test_all_open_and_head_are_mutually_exclusive(capsys: pytest.CaptureFixture[str]) -> None:
+    """Both name what to evaluate, so a conflicting pair is an error."""
+    with pytest.raises(SystemExit) as excinfo:
+        check.main(["--all-open", "--head", "deadbeef"])
+    assert excinfo.value.code == 2
+    assert "mutually exclusive" in capsys.readouterr().err
+
+
+def test_a_sweep_without_a_repository_slug_fails_loudly(capsys: pytest.CaptureFixture[str]) -> None:
+    """A sweep that cannot name its repository must not report an empty one."""
+    assert check.main(["--all-open", "--repo-slug", "", "--token", "t"]) == 1
+    assert "needs --repo-slug" in capsys.readouterr().err
+
+
+def test_listing_the_pull_requests_failing_is_not_a_clean_sweep(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The one read with no partial result to report fails rather than reassures."""
+    monkeypatch.delenv("GITHUB_STEP_SUMMARY", raising=False)
+
+    def boom(_url: str, _token: str) -> object:
+        raise check.urllib.error.URLError("no network")
+
+    monkeypatch.setattr(check, "_get", boom)
+    assert check.main(["--all-open", "--repo-slug", "o/r", "--token", "t"]) == 1
+    assert "could not list open pull requests" in capsys.readouterr().err
+
+
+def test_the_single_branch_mode_still_reads_git_only(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No API read may leak into the mode that answers from the object database.
+
+    The sweep is the only caller of ``_get``; making it fatal here keeps the
+    single-branch check runnable with no token and no network.
+    """
+
+    def fatal(_url: str, _token: str) -> object:
+        raise AssertionError("the single-branch mode must not reach the API")
+
+    monkeypatch.setattr(check, "_get", fatal)
+    _branch_editing_shared(repo)
+    _land_on_main_editing_shared(repo)
+    assert _run(repo) == 1

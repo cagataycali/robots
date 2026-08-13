@@ -635,7 +635,10 @@ class TestNoDocumentedInvocationLeavesTheRepositoryInferred:
     Measured over the check scripts AGENTS.md invokes, exactly one omitted ``--repo``.
     ``check_last_push_approval.py`` names it in both of its invocations, and
     ``check_closing_reference.py`` has no local invocation at all -- its workflow calls
-    it with no arguments, where the environment is correct by construction. Scoped to
+    it with no arguments, where the environment is correct by construction.
+    ``check_merge_base_overlap.py`` joined the set with its open-pull-request sweep and
+    names the repository as ``--repo-slug``, spelled that way because its ``--repo``
+    already means the local checkout to read git from. Scoped to
     the scripts that can *infer* a repository, since the local-git checks have nothing
     to infer and requiring a flag of them would be a false rejection.
     """
@@ -643,7 +646,7 @@ class TestNoDocumentedInvocationLeavesTheRepositoryInferred:
     def test_the_inferring_scripts_are_the_ones_measured(self) -> None:
         """Non-vacuity: the scope is a real set, and this script is in it."""
         assert "check_duplicate_claim.py" in _INFERS_REPOSITORY, _INFERS_REPOSITORY
-        assert len(_INFERS_REPOSITORY) == 3, _INFERS_REPOSITORY
+        assert len(_INFERS_REPOSITORY) == 4, _INFERS_REPOSITORY
 
     def test_every_documented_invocation_names_the_repository(self) -> None:
         invocations = _documented_check_invocations()

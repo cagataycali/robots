@@ -801,6 +801,35 @@ hatch run format            # ruff check --fix, ruff format
    about meaning. This is cheap: the check that would have caught the above was
    one `pytest` invocation on two files.
 
+   **Finding the pairs is a sweep, not a per-branch check.** The rule above
+   starts at "a second approved PR touches a file a just-merged PR also
+   touched", which presumes you already know they do. While both are open
+   neither has a base overlap, so `Detect an untested overlap with the base
+   branch` reads green on both and says nothing; the property lives *between*
+   two pull requests, and a check scoped to one branch cannot hold it:
+
+   ```
+   python3 scripts/check_merge_base_overlap.py --all-open --repo-slug strands-labs/robots
+   ```
+
+   Run that when reporting repository health, and before merging two of a batch.
+   Measured over the 19 open pull requests on 2026-08-13: 171 pairs, 4 sharing a
+   behaviour-bearing file - #1035+#1722, #2223+#2229, #2224+#2227, #2233+#2235 -
+   of which #2233/#2235 compose to a red suite, because one carries a strict
+   `xfail` for the defect the other fixes. Two of the four had already been found
+   by hand, at the cost of a composition run each.
+
+   It asks nothing of either author: whichever merges first is unaffected, and
+   the second then gets the base overlap above, after the fact. Pairs sharing
+   only documentation are listed and not counted, because prose cannot change
+   what the suite does and a genuine collision inside one surfaces as a merge
+   conflict. A pull request whose file list could not be read completely is
+   named as not evaluated rather than compared on a partial set - the shared
+   path may be on the page nobody read, so folding it in would report the
+   reassuring answer. Pinned by
+   tests/test_merge_base_overlap.py::test_the_sweep_reports_the_measured_pairs
+   and ::test_a_truncated_file_list_is_named_not_reported_as_clean
+
    **One field says whether a composition exists at all, and the overlap read
    does not.** File overlap says two pull requests touched the same file; it does
    not say either one landed outside the other's ancestry, which is the thing
