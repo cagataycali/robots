@@ -1,0 +1,54 @@
+{
+  "rows": [
+    {
+      "label": "M1 ungated path appends a slot unconditionally (the defect)",
+      "new_failed": 8,
+      "new_passed": 12,
+      "old_failed": 0,
+      "old_passed": 297
+    },
+    {
+      "label": "M2 ungated path reserves but discards the verdict",
+      "new_failed": 6,
+      "new_passed": 14,
+      "old_failed": 0,
+      "old_passed": 297
+    },
+    {
+      "label": "M3 ungated path reserves with the read-only check",
+      "new_failed": 4,
+      "new_passed": 16,
+      "old_failed": 2,
+      "old_passed": 295
+    },
+    {
+      "label": "M4 the raced call is not audited",
+      "new_failed": 1,
+      "new_passed": 19,
+      "old_failed": 0,
+      "old_passed": 297
+    },
+    {
+      "label": "M5 race message names an operator approval again",
+      "new_failed": 1,
+      "new_passed": 19,
+      "old_failed": 0,
+      "old_passed": 297
+    },
+    {
+      "label": "M6 the pre-gate check consumes a slot",
+      "new_failed": 7,
+      "new_passed": 13,
+      "old_failed": 4,
+      "old_passed": 293
+    }
+  ],
+  "control": {
+    "label": "unmutated control",
+    "new_failed": 0,
+    "new_passed": 20,
+    "old_failed": 0,
+    "old_passed": 297
+  },
+  "old_files": 9
+}

@@ -1,0 +1,31 @@
+{
+  "tree": "/tmp/wt-newbase-31676190317",
+  "has_atomic_helper": true,
+  "has_record_only": true,
+  "approved": {
+    "prefill": 2,
+    "concurrent": 2,
+    "limit": 3,
+    "statuses": [
+      "error",
+      "success"
+    ],
+    "dispatched": 1,
+    "slots_after": 3,
+    "exceeds_limit": false,
+    "refusal": "rate limit exceeded for action 'emergency_stop' between check and record (concurrent approval raced past): max 3 calls per 60s window. Try again in 60"
+  },
+  "ungated": {
+    "prefill": 2,
+    "concurrent": 2,
+    "limit": 3,
+    "statuses": [
+      "success",
+      "success"
+    ],
+    "dispatched": 2,
+    "slots_after": 4,
+    "exceeds_limit": true,
+    "refusal": ""
+  }
+}
