@@ -28,6 +28,7 @@ the exact ``ModuleNotFoundError`` the real import system raises (``name`` set),
 so the production path runs unchanged and the tests need no minimal install.
 """
 
+import contextlib
 import json
 import pathlib
 import tomllib
@@ -134,10 +135,12 @@ class TestNoProviderIsSubstituted:
         """Nothing the funnel returns on the failure path is a policy at all."""
         monkeypatch.setattr(policies_mod.importlib, "import_module", _absent("torch"))
         returned: list[Any] = []
-        try:
+        # The refusal itself is asserted by the cases above; this one is only about
+        # what the funnel RETURNS, so the ImportError is suppressed rather than
+        # required -- a tree that stopped raising would still have to append nothing
+        # for this to pass, which is the substitution being ruled out.
+        with contextlib.suppress(ImportError):
             returned.append(policies_mod.import_policy_class("lerobot_local"))
-        except ImportError:
-            pass
         assert returned == [], f"the funnel returned {returned!r} instead of reporting"
 
 
