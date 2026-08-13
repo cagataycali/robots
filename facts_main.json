@@ -1,0 +1,69 @@
+{
+  "tree": "/tmp/wt-main-31659881805",
+  "census": {
+    "defers_and_translates": [
+      "policies/curobo/policy.py",
+      "policies/groot/client.py",
+      "policies/lerobot_async/policy.py",
+      "policies/lerobot_local/molmoact2.py",
+      "policies/lerobot_local/processor.py",
+      "policies/motionbricks/policy.py",
+      "policies/moveit2/client.py",
+      "policies/wbc/config.py",
+      "policies/wbc/policy.py"
+    ],
+    "module_level_heavy": [
+      {
+        "module": "policies/cosmos3/_msgpack_numpy.py",
+        "imports": [
+          [
+            "msgpack",
+            21
+          ]
+        ]
+      },
+      {
+        "module": "policies/lerobot_local/policy.py",
+        "imports": [
+          [
+            "torch",
+            21
+          ]
+        ]
+      },
+      {
+        "module": "policies/vera/_msgpack_numpy.py",
+        "imports": [
+          [
+            "msgpack",
+            13
+          ]
+        ]
+      }
+    ]
+  },
+  "claim2_recording": {
+    "status": "error",
+    "text": "start_recording produces a LeRobotDataset (parquet + video), which needs lerobot's dataset stack:\n\n  No module named 'lerobot.datasets.lerobot_dataset'\n\nFor plain MP4 video under the [sim-mujoco] extra alone, use start_cameras_recording(cameras=..., output_dir=...) instead.",
+    "degraded_to_mp4": false,
+    "names_lerobot": true
+  },
+  "claim1_scenarios": {
+    "registered": {
+      "outcome": "RAISED",
+      "exc": "ModuleNotFoundError",
+      "message": "No module named 'torch'",
+      "substituted": false,
+      "names_provider": false,
+      "names_module": true,
+      "names_install": false
+    },
+    "autodiscovered": {
+      "outcome": "RAISED",
+      "exc": "ValueError",
+      "message": "Unknown policy provider: 'some_provider'. Available: ['cosmos3', 'curobo', 'groot', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']",
+      "blames_the_name": true,
+      "names_module": false
+    }
+  }
+}

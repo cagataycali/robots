@@ -1,0 +1,69 @@
+{
+  "tree": "/tmp/robots-mine-31659881805",
+  "census": {
+    "defers_and_translates": [
+      "policies/curobo/policy.py",
+      "policies/groot/client.py",
+      "policies/lerobot_async/policy.py",
+      "policies/lerobot_local/molmoact2.py",
+      "policies/lerobot_local/processor.py",
+      "policies/motionbricks/policy.py",
+      "policies/moveit2/client.py",
+      "policies/wbc/config.py",
+      "policies/wbc/policy.py"
+    ],
+    "module_level_heavy": [
+      {
+        "module": "policies/cosmos3/_msgpack_numpy.py",
+        "imports": [
+          [
+            "msgpack",
+            21
+          ]
+        ]
+      },
+      {
+        "module": "policies/lerobot_local/policy.py",
+        "imports": [
+          [
+            "torch",
+            21
+          ]
+        ]
+      },
+      {
+        "module": "policies/vera/_msgpack_numpy.py",
+        "imports": [
+          [
+            "msgpack",
+            13
+          ]
+        ]
+      }
+    ]
+  },
+  "claim2_recording": {
+    "status": "error",
+    "text": "start_recording produces a LeRobotDataset (parquet + video), which needs lerobot's dataset stack:\n\n  No module named 'lerobot.datasets.lerobot_dataset'\n\nFor plain MP4 video under the [sim-mujoco] extra alone, use start_cameras_recording(cameras=..., output_dir=...) instead.",
+    "degraded_to_mp4": false,
+    "names_lerobot": true
+  },
+  "claim1_scenarios": {
+    "registered": {
+      "outcome": "RAISED",
+      "exc": "ImportError",
+      "message": "Policy provider 'lerobot_local' needs an optional dependency that is not installed:\n  No module named 'torch'\n\nInstall the extra that ships it:\n  uv pip install 'strands-robots[lerobot]'",
+      "substituted": false,
+      "names_provider": true,
+      "names_module": true,
+      "names_install": true
+    },
+    "autodiscovered": {
+      "outcome": "RAISED",
+      "exc": "ImportError",
+      "message": "Policy provider 'some_provider' needs an optional dependency that is not installed:\n  No module named 'some_dep'\n\nInstall 'some_dep' (or the strands-robots extra that ships it) and retry.",
+      "blames_the_name": false,
+      "names_module": true
+    }
+  }
+}
