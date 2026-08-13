@@ -1,0 +1,157 @@
+{
+  "tree": "/tmp/robots-mine-31659860089",
+  "rows": {
+    "featherstone": {
+      "solver": "featherstone",
+      "construct": "ok",
+      "create_world": "success",
+      "add_robot": "success",
+      "add_robot_text": "{'status': 'success', 'content': [{'text': \"Added robot 'arm' (2 joints).\"}]}",
+      "joints_before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "send_action": "success",
+      "step": "success",
+      "joints_after": {
+        "j1": 0.8989956378936768,
+        "j2": -0.6977919340133667
+      },
+      "travel": {
+        "j1": 0.898996,
+        "j2": 0.697792
+      },
+      "max_travel": 0.898996,
+      "moved": true,
+      "verdict": "moves",
+      "elapsed_s": 2.0
+    },
+    "kamino": {
+      "solver": "kamino",
+      "construct": "ok",
+      "create_world": "success",
+      "add_robot": "success",
+      "add_robot_text": "{'status': 'success', 'content': [{'text': \"Added robot 'arm' (2 joints).\"}]}",
+      "joints_before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "send_action": "success",
+      "step": "success",
+      "joints_after": {
+        "j1": 0.899337112903595,
+        "j2": -0.6977905035018921
+      },
+      "travel": {
+        "j1": 0.899337,
+        "j2": 0.697791
+      },
+      "max_travel": 0.899337,
+      "moved": true,
+      "verdict": "moves",
+      "elapsed_s": 47.6
+    },
+    "mpm": {
+      "solver": "mpm",
+      "construct": "ok",
+      "create_world": "success",
+      "verdict": "TypeError",
+      "error": "SolverImplicitMPM.__init__() missing 1 required positional argument: 'config'",
+      "traceback_tail": "TypeError: SolverImplicitMPM.__init__() missing 1 required positional argument: 'config'",
+      "elapsed_s": 0.8
+    },
+    "mujoco": {
+      "solver": "mujoco",
+      "construct": "ok",
+      "create_world": "success",
+      "add_robot": "success",
+      "add_robot_text": "{'status': 'success', 'content': [{'text': \"Added robot 'arm' (2 joints).\"}]}",
+      "joints_before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "send_action": "success",
+      "step": "success",
+      "joints_after": {
+        "j1": 0.8991156816482544,
+        "j2": -0.697791337966919
+      },
+      "travel": {
+        "j1": 0.899116,
+        "j2": 0.697791
+      },
+      "max_travel": 0.899116,
+      "moved": true,
+      "verdict": "moves",
+      "elapsed_s": 15.4
+    },
+    "semi_implicit": {
+      "solver": "semi_implicit",
+      "construct": "ok",
+      "create_world": "success",
+      "add_robot": "success",
+      "add_robot_text": "{'status': 'success', 'content': [{'text': \"Added robot 'arm' (2 joints).\"}]}",
+      "joints_before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "send_action": "success",
+      "step": "success",
+      "joints_after": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "travel": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "max_travel": 0.0,
+      "moved": false,
+      "verdict": "builds but does not move",
+      "elapsed_s": 6.0
+    },
+    "style3d": {
+      "solver": "style3d",
+      "construct": "ok",
+      "create_world": "success",
+      "verdict": "AttributeError",
+      "error": "Style3D custom attributes are missing from the model. Call SolverStyle3D.register_custom_attributes() before building the model.",
+      "traceback_tail": "AttributeError: Style3D custom attributes are missing from the model. Call SolverStyle3D.register_custom_attributes() before building the model.",
+      "elapsed_s": 0.6
+    },
+    "vbd": {
+      "solver": "vbd",
+      "construct": "ok",
+      "create_world": "success",
+      "verdict": "ValueError",
+      "error": "model.body_color_groups is empty but rigid bodies are present! When using the SolverVBD you must call ModelBuilder.color() or ModelBuilder.set_coloring() before calling ModelBuilder.finalize().",
+      "traceback_tail": "ValueError: model.body_color_groups is empty but rigid bodies are present! When using the SolverVBD you must call ModelBuilder.color() or ModelBuilder.set_coloring() before calling ModelBuilder.finalize().",
+      "elapsed_s": 0.0
+    },
+    "xpbd": {
+      "solver": "xpbd",
+      "construct": "ok",
+      "create_world": "success",
+      "add_robot": "success",
+      "add_robot_text": "{'status': 'success', 'content': [{'text': \"Added robot 'arm' (2 joints).\"}]}",
+      "joints_before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "send_action": "success",
+      "step": "success",
+      "joints_after": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "travel": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "max_travel": 0.0,
+      "moved": false,
+      "verdict": "builds but does not move",
+      "elapsed_s": 21.2
+    }
+  }
+}

@@ -1,0 +1,21 @@
+<mujoco model="probe_arm">
+  <compiler angle="radian"/>
+  <option gravity="0 0 -9.81"/>
+  <worldbody>
+    <body name="base" pos="0 0 0.05">
+      <geom type="box" size="0.04 0.04 0.05"/>
+      <body name="link1" pos="0 0 0.06">
+        <joint name="j1" type="hinge" axis="0 0 1" range="-2 2" limited="true" damping="0.4"/>
+        <geom type="capsule" fromto="0 0 0 0.14 0 0" size="0.02"/>
+        <body name="link2" pos="0.15 0 0">
+          <joint name="j2" type="hinge" axis="0 1 0" range="-2 2" limited="true" damping="0.4"/>
+          <geom type="capsule" fromto="0 0 0 0.12 0 0" size="0.018"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="a1" joint="j1" kp="30" ctrlrange="-2 2"/>
+    <position name="a2" joint="j2" kp="30" ctrlrange="-2 2"/>
+  </actuator>
+</mujoco>

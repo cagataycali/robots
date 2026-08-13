@@ -1,0 +1,55 @@
+{
+  "tree": "/tmp/robots-mine-31659860089",
+  "rows": {
+    "vbd": {
+      "solver": "vbd",
+      "add_robot": "success",
+      "add_robot_text": "{'status': 'success', 'content': [{'text': \"Added robot 'arm' (2 joints).\"}]}",
+      "step": "success",
+      "max_travel": 0.0,
+      "moved": false,
+      "verdict": "builds but does not move",
+      "elapsed_s": 20.5
+    },
+    "style3d": {
+      "solver": "style3d",
+      "verdict": "AttributeError",
+      "error": "Style3D custom attributes are missing from the model. Call SolverStyle3D.register_custom_attributes() before building the model.",
+      "tb_tail": "AttributeError: Style3D custom attributes are missing from the model. Call SolverStyle3D.register_custom_attributes() before building the model.",
+      "elapsed_s": 0.0
+    }
+  },
+  "coloring_calls": [
+    {
+      "bodies": 0,
+      "body_color_groups": [],
+      "particle_color_groups": 0
+    },
+    {
+      "bodies": 2,
+      "body_color_groups": [
+        1,
+        1
+      ],
+      "particle_color_groups": 0
+    },
+    {
+      "bodies": 0,
+      "body_color_groups": [],
+      "particle_color_groups": 0
+    },
+    {
+      "bodies": 2,
+      "body_color_groups": [
+        1,
+        1
+      ],
+      "particle_color_groups": 0
+    },
+    {
+      "bodies": 0,
+      "body_color_groups": [],
+      "particle_color_groups": 0
+    }
+  ]
+}

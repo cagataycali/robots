@@ -1,0 +1,43 @@
+{
+  "rows": {
+    "mujoco": {
+      "before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "after": {
+        "j1": -1.4741671416763197e-16,
+        "j2": 0.0028757660184055567
+      },
+      "gravity_travel": 0.002876,
+      "integrates": true,
+      "state_text": "{'status': 'success', 'content': [{'text': 'Newton Simulation State\\nsolver=mujoco t=0.3333s (step 200)\\ndt=0.0016666666666666668s gravity=[0.0, 0.0, "
+    },
+    "xpbd": {
+      "before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "after": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "gravity_travel": 0.0,
+      "integrates": false,
+      "state_text": "{'status': 'success', 'content': [{'text': 'Newton Simulation State\\nsolver=xpbd t=0.3333s (step 200)\\ndt=0.0016666666666666668s gravity=[0.0, 0.0, -9"
+    },
+    "semi_implicit": {
+      "before": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "after": {
+        "j1": 0.0,
+        "j2": 0.0
+      },
+      "gravity_travel": 0.0,
+      "integrates": false,
+      "state_text": "{'status': 'success', 'content': [{'text': 'Newton Simulation State\\nsolver=semi_implicit t=0.3333s (step 200)\\ndt=0.0016666666666666668s gravity=[0.0"
+    }
+  }
+}
