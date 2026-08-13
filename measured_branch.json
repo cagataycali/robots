@@ -1,0 +1,65 @@
+{
+  "tree": "/tmp/robots-mine-31733480793",
+  "rows": [
+    {
+      "case": "push_to_hub=True (named)",
+      "status": "error",
+      "launched": false,
+      "publish_argv": [],
+      "asked": false,
+      "reply": null,
+      "msg": "extra_flags policy.push_to_hub blocked for security reasons (controls output paths, telemetry, or code loading). No tool"
+    },
+    {
+      "case": "+ extra_flags policy.repo_id",
+      "status": "error",
+      "launched": false,
+      "publish_argv": [],
+      "asked": false,
+      "reply": null,
+      "msg": "extra_flags policy.push_to_hub blocked for security reasons (controls output paths, telemetry, or code loading). No tool"
+    },
+    {
+      "case": "extra_flags={'push_to_hub': True}",
+      "status": "error",
+      "launched": false,
+      "publish_argv": [],
+      "asked": false,
+      "reply": null,
+      "msg": "extra_flags push_to_hub blocked for security reasons (controls output paths, telemetry, or code loading). No tool_contex"
+    },
+    {
+      "case": "push_to_hub=False (default)",
+      "status": "success",
+      "launched": true,
+      "publish_argv": [
+        "--dataset.repo_id=local",
+        "--policy.push_to_hub=false"
+      ],
+      "asked": false,
+      "reply": null,
+      "msg": "**Training Session Started**"
+    },
+    {
+      "case": "push_to_hub=True, operator declines",
+      "status": "error",
+      "launched": false,
+      "publish_argv": [],
+      "asked": true,
+      "reply": "no",
+      "msg": "extra_flags policy.push_to_hub declined by the operator."
+    },
+    {
+      "case": "push_to_hub=True, operator approves",
+      "status": "success",
+      "launched": true,
+      "publish_argv": [
+        "--dataset.repo_id=local",
+        "--policy.push_to_hub=true"
+      ],
+      "asked": true,
+      "reply": "y",
+      "msg": "**Training Session Started**"
+    }
+  ]
+}

@@ -1,0 +1,75 @@
+{
+  "tree": "/tmp/wt-base-31733480793",
+  "rows": [
+    {
+      "case": "push_to_hub=True (named)",
+      "status": "success",
+      "launched": true,
+      "publish_argv": [
+        "--dataset.repo_id=local",
+        "--policy.push_to_hub=true"
+      ],
+      "asked": false,
+      "reply": null,
+      "msg": "**Training Session Started**"
+    },
+    {
+      "case": "+ extra_flags policy.repo_id",
+      "status": "success",
+      "launched": true,
+      "publish_argv": [
+        "--dataset.repo_id=local",
+        "--policy.push_to_hub=true",
+        "--policy.repo_id=attacker/stolen"
+      ],
+      "asked": false,
+      "reply": null,
+      "msg": "**Training Session Started**"
+    },
+    {
+      "case": "extra_flags={'push_to_hub': True}",
+      "status": "error",
+      "launched": false,
+      "publish_argv": [],
+      "asked": false,
+      "reply": null,
+      "msg": "extra_flags push_to_hub blocked for security reasons (controls output paths, telemetry, or code loading). No tool_contex"
+    },
+    {
+      "case": "push_to_hub=False (default)",
+      "status": "success",
+      "launched": true,
+      "publish_argv": [
+        "--dataset.repo_id=local",
+        "--policy.push_to_hub=false"
+      ],
+      "asked": false,
+      "reply": null,
+      "msg": "**Training Session Started**"
+    },
+    {
+      "case": "push_to_hub=True, operator declines",
+      "status": "success",
+      "launched": true,
+      "publish_argv": [
+        "--dataset.repo_id=local",
+        "--policy.push_to_hub=true"
+      ],
+      "asked": false,
+      "reply": "no",
+      "msg": "**Training Session Started**"
+    },
+    {
+      "case": "push_to_hub=True, operator approves",
+      "status": "success",
+      "launched": true,
+      "publish_argv": [
+        "--dataset.repo_id=local",
+        "--policy.push_to_hub=true"
+      ],
+      "asked": false,
+      "reply": "y",
+      "msg": "**Training Session Started**"
+    }
+  ]
+}
