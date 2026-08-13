@@ -1,0 +1,776 @@
+{
+  "tree": "/tmp/robots-mine-31652545619",
+  "joint": "shoulder_pan",
+  "range": [
+    -180,
+    180
+  ],
+  "span": 360,
+  "start_deg": 169.8901098901099,
+  "end_stop": 4095,
+  "raw": 3980,
+  "sweep": [
+    {
+      "delta": -400,
+      "refused": true,
+      "status": "error",
+      "target_deg": -230.1098901098901,
+      "goal": null,
+      "unclamped": -569,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -390,
+      "refused": true,
+      "status": "error",
+      "target_deg": -220.1098901098901,
+      "goal": null,
+      "unclamped": -456,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -380,
+      "refused": true,
+      "status": "error",
+      "target_deg": -210.1098901098901,
+      "goal": null,
+      "unclamped": -342,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -370,
+      "refused": true,
+      "status": "error",
+      "target_deg": -200.1098901098901,
+      "goal": null,
+      "unclamped": -228,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -360,
+      "refused": false,
+      "status": "success",
+      "target_deg": -190.1098901098901,
+      "goal": 0,
+      "unclamped": -114,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -350,
+      "refused": false,
+      "status": "success",
+      "target_deg": -180.1098901098901,
+      "goal": 0,
+      "unclamped": -1,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -340,
+      "refused": false,
+      "status": "success",
+      "target_deg": -170.1098901098901,
+      "goal": 112,
+      "unclamped": 112,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -330,
+      "refused": false,
+      "status": "success",
+      "target_deg": -160.1098901098901,
+      "goal": 226,
+      "unclamped": 226,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -320,
+      "refused": false,
+      "status": "success",
+      "target_deg": -150.1098901098901,
+      "goal": 340,
+      "unclamped": 340,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -310,
+      "refused": false,
+      "status": "success",
+      "target_deg": -140.1098901098901,
+      "goal": 453,
+      "unclamped": 453,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -300,
+      "refused": false,
+      "status": "success",
+      "target_deg": -130.1098901098901,
+      "goal": 567,
+      "unclamped": 567,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -290,
+      "refused": false,
+      "status": "success",
+      "target_deg": -120.1098901098901,
+      "goal": 681,
+      "unclamped": 681,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -280,
+      "refused": false,
+      "status": "success",
+      "target_deg": -110.1098901098901,
+      "goal": 795,
+      "unclamped": 795,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -270,
+      "refused": false,
+      "status": "success",
+      "target_deg": -100.1098901098901,
+      "goal": 908,
+      "unclamped": 908,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -260,
+      "refused": false,
+      "status": "success",
+      "target_deg": -90.1098901098901,
+      "goal": 1022,
+      "unclamped": 1022,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -250,
+      "refused": false,
+      "status": "success",
+      "target_deg": -80.1098901098901,
+      "goal": 1136,
+      "unclamped": 1136,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -240,
+      "refused": false,
+      "status": "success",
+      "target_deg": -70.1098901098901,
+      "goal": 1250,
+      "unclamped": 1250,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -230,
+      "refused": false,
+      "status": "success",
+      "target_deg": -60.1098901098901,
+      "goal": 1363,
+      "unclamped": 1363,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -220,
+      "refused": false,
+      "status": "success",
+      "target_deg": -50.1098901098901,
+      "goal": 1477,
+      "unclamped": 1477,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -210,
+      "refused": false,
+      "status": "success",
+      "target_deg": -40.1098901098901,
+      "goal": 1591,
+      "unclamped": 1591,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -200,
+      "refused": false,
+      "status": "success",
+      "target_deg": -30.109890109890102,
+      "goal": 1705,
+      "unclamped": 1705,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -190,
+      "refused": false,
+      "status": "success",
+      "target_deg": -20.109890109890102,
+      "goal": 1818,
+      "unclamped": 1818,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": -180,
+      "refused": false,
+      "status": "success",
+      "target_deg": -10.109890109890102,
+      "goal": 1932,
+      "unclamped": 1932,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -170,
+      "refused": false,
+      "status": "success",
+      "target_deg": -0.1098901098901024,
+      "goal": 2046,
+      "unclamped": 2046,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -160,
+      "refused": false,
+      "status": "success",
+      "target_deg": 9.890109890109898,
+      "goal": 2160,
+      "unclamped": 2160,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -150,
+      "refused": false,
+      "status": "success",
+      "target_deg": 19.890109890109898,
+      "goal": 2273,
+      "unclamped": 2273,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -140,
+      "refused": false,
+      "status": "success",
+      "target_deg": 29.890109890109898,
+      "goal": 2387,
+      "unclamped": 2387,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -130,
+      "refused": false,
+      "status": "success",
+      "target_deg": 39.8901098901099,
+      "goal": 2501,
+      "unclamped": 2501,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -120,
+      "refused": false,
+      "status": "success",
+      "target_deg": 49.8901098901099,
+      "goal": 2615,
+      "unclamped": 2615,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -110,
+      "refused": false,
+      "status": "success",
+      "target_deg": 59.8901098901099,
+      "goal": 2728,
+      "unclamped": 2728,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -100,
+      "refused": false,
+      "status": "success",
+      "target_deg": 69.8901098901099,
+      "goal": 2842,
+      "unclamped": 2842,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -90,
+      "refused": false,
+      "status": "success",
+      "target_deg": 79.8901098901099,
+      "goal": 2956,
+      "unclamped": 2956,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -80,
+      "refused": false,
+      "status": "success",
+      "target_deg": 89.8901098901099,
+      "goal": 3070,
+      "unclamped": 3070,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -70,
+      "refused": false,
+      "status": "success",
+      "target_deg": 99.8901098901099,
+      "goal": 3183,
+      "unclamped": 3183,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -60,
+      "refused": false,
+      "status": "success",
+      "target_deg": 109.8901098901099,
+      "goal": 3297,
+      "unclamped": 3297,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -50,
+      "refused": false,
+      "status": "success",
+      "target_deg": 119.8901098901099,
+      "goal": 3411,
+      "unclamped": 3411,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -40,
+      "refused": false,
+      "status": "success",
+      "target_deg": 129.8901098901099,
+      "goal": 3525,
+      "unclamped": 3525,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -30,
+      "refused": false,
+      "status": "success",
+      "target_deg": 139.8901098901099,
+      "goal": 3638,
+      "unclamped": 3638,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -20,
+      "refused": false,
+      "status": "success",
+      "target_deg": 149.8901098901099,
+      "goal": 3752,
+      "unclamped": 3752,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": -10,
+      "refused": false,
+      "status": "success",
+      "target_deg": 159.8901098901099,
+      "goal": 3866,
+      "unclamped": 3866,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 0,
+      "refused": false,
+      "status": "success",
+      "target_deg": 169.8901098901099,
+      "goal": 3980,
+      "unclamped": 3980,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 10,
+      "refused": false,
+      "status": "success",
+      "target_deg": 179.8901098901099,
+      "goal": 4093,
+      "unclamped": 4093,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 20,
+      "refused": false,
+      "status": "success",
+      "target_deg": 189.8901098901099,
+      "goal": 4095,
+      "unclamped": 4207,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 30,
+      "refused": false,
+      "status": "success",
+      "target_deg": 199.8901098901099,
+      "goal": 4095,
+      "unclamped": 4321,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 40,
+      "refused": false,
+      "status": "success",
+      "target_deg": 209.8901098901099,
+      "goal": 4095,
+      "unclamped": 4435,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 50,
+      "refused": false,
+      "status": "success",
+      "target_deg": 219.8901098901099,
+      "goal": 4095,
+      "unclamped": 4548,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 60,
+      "refused": false,
+      "status": "success",
+      "target_deg": 229.8901098901099,
+      "goal": 4095,
+      "unclamped": 4662,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 70,
+      "refused": false,
+      "status": "success",
+      "target_deg": 239.8901098901099,
+      "goal": 4095,
+      "unclamped": 4776,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 80,
+      "refused": false,
+      "status": "success",
+      "target_deg": 249.8901098901099,
+      "goal": 4095,
+      "unclamped": 4890,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 90,
+      "refused": false,
+      "status": "success",
+      "target_deg": 259.8901098901099,
+      "goal": 4095,
+      "unclamped": 5003,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 100,
+      "refused": false,
+      "status": "success",
+      "target_deg": 269.8901098901099,
+      "goal": 4095,
+      "unclamped": 5117,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 110,
+      "refused": false,
+      "status": "success",
+      "target_deg": 279.8901098901099,
+      "goal": 4095,
+      "unclamped": 5231,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 120,
+      "refused": false,
+      "status": "success",
+      "target_deg": 289.8901098901099,
+      "goal": 4095,
+      "unclamped": 5345,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 130,
+      "refused": false,
+      "status": "success",
+      "target_deg": 299.8901098901099,
+      "goal": 4095,
+      "unclamped": 5458,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 140,
+      "refused": false,
+      "status": "success",
+      "target_deg": 309.8901098901099,
+      "goal": 4095,
+      "unclamped": 5572,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 150,
+      "refused": false,
+      "status": "success",
+      "target_deg": 319.8901098901099,
+      "goal": 4095,
+      "unclamped": 5686,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 160,
+      "refused": false,
+      "status": "success",
+      "target_deg": 329.8901098901099,
+      "goal": 4095,
+      "unclamped": 5800,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 170,
+      "refused": false,
+      "status": "success",
+      "target_deg": 339.8901098901099,
+      "goal": 4095,
+      "unclamped": 5913,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 180,
+      "refused": false,
+      "status": "success",
+      "target_deg": 349.8901098901099,
+      "goal": 4095,
+      "unclamped": 6027,
+      "endpoints_rule_refuses": false
+    },
+    {
+      "delta": 190,
+      "refused": false,
+      "status": "success",
+      "target_deg": 359.8901098901099,
+      "goal": 4095,
+      "unclamped": 6141,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 200,
+      "refused": false,
+      "status": "success",
+      "target_deg": 369.8901098901099,
+      "goal": 4095,
+      "unclamped": 6255,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 210,
+      "refused": false,
+      "status": "success",
+      "target_deg": 379.8901098901099,
+      "goal": 4095,
+      "unclamped": 6368,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 220,
+      "refused": false,
+      "status": "success",
+      "target_deg": 389.8901098901099,
+      "goal": 4095,
+      "unclamped": 6482,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 230,
+      "refused": false,
+      "status": "success",
+      "target_deg": 399.8901098901099,
+      "goal": 4095,
+      "unclamped": 6596,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 240,
+      "refused": false,
+      "status": "success",
+      "target_deg": 409.8901098901099,
+      "goal": 4095,
+      "unclamped": 6710,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 250,
+      "refused": false,
+      "status": "success",
+      "target_deg": 419.8901098901099,
+      "goal": 4095,
+      "unclamped": 6823,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 260,
+      "refused": false,
+      "status": "success",
+      "target_deg": 429.8901098901099,
+      "goal": 4095,
+      "unclamped": 6937,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 270,
+      "refused": false,
+      "status": "success",
+      "target_deg": 439.8901098901099,
+      "goal": 4095,
+      "unclamped": 7051,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 280,
+      "refused": false,
+      "status": "success",
+      "target_deg": 449.8901098901099,
+      "goal": 4095,
+      "unclamped": 7165,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 290,
+      "refused": false,
+      "status": "success",
+      "target_deg": 459.8901098901099,
+      "goal": 4095,
+      "unclamped": 7278,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 300,
+      "refused": false,
+      "status": "success",
+      "target_deg": 469.8901098901099,
+      "goal": 4095,
+      "unclamped": 7392,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 310,
+      "refused": false,
+      "status": "success",
+      "target_deg": 479.8901098901099,
+      "goal": 4095,
+      "unclamped": 7506,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 320,
+      "refused": false,
+      "status": "success",
+      "target_deg": 489.8901098901099,
+      "goal": 4095,
+      "unclamped": 7620,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 330,
+      "refused": false,
+      "status": "success",
+      "target_deg": 499.8901098901099,
+      "goal": 4095,
+      "unclamped": 7733,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 340,
+      "refused": false,
+      "status": "success",
+      "target_deg": 509.8901098901099,
+      "goal": 4095,
+      "unclamped": 7847,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 350,
+      "refused": false,
+      "status": "success",
+      "target_deg": 519.8901098901099,
+      "goal": 4095,
+      "unclamped": 7961,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 360,
+      "refused": false,
+      "status": "success",
+      "target_deg": 529.8901098901099,
+      "goal": 4095,
+      "unclamped": 8075,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 370,
+      "refused": true,
+      "status": "error",
+      "target_deg": 539.8901098901099,
+      "goal": null,
+      "unclamped": 8188,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 380,
+      "refused": true,
+      "status": "error",
+      "target_deg": 549.8901098901099,
+      "goal": null,
+      "unclamped": 8302,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 390,
+      "refused": true,
+      "status": "error",
+      "target_deg": 559.8901098901099,
+      "goal": null,
+      "unclamped": 8416,
+      "endpoints_rule_refuses": true
+    },
+    {
+      "delta": 400,
+      "refused": true,
+      "status": "error",
+      "target_deg": 569.8901098901099,
+      "goal": null,
+      "unclamped": 8530,
+      "endpoints_rule_refuses": true
+    }
+  ],
+  "ledger": [
+    {
+      "label": "unknown motor, unbounded delta",
+      "motor": "no_such_joint",
+      "delta": 5000,
+      "domain": null,
+      "status": "error",
+      "text": "Failed to move no_such_joint",
+      "goals": []
+    },
+    {
+      "label": "configured motor, same call",
+      "motor": "shoulder_pan",
+      "delta": -90,
+      "domain": null,
+      "status": "success",
+      "text": "Moved shoulder_pan by -90 deg",
+      "goals": [
+        2956
+      ]
+    },
+    {
+      "label": "configured motor, delta inside travel",
+      "motor": "shoulder_pan",
+      "delta": 300,
+      "domain": null,
+      "status": "success",
+      "text": "Moved shoulder_pan by +300 deg",
+      "goals": [
+        4095
+      ]
+    }
+  ]
+}

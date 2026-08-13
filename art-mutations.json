@@ -1,0 +1,27 @@
+[
+  {
+    "label": "M1 remove the unknown-motor deferral",
+    "new_failed": 3,
+    "old_failed": 0
+  },
+  {
+    "label": "M2 the read tolerates an unconfigured motor",
+    "new_failed": 0,
+    "old_failed": 5
+  },
+  {
+    "label": "M3 incremental_move tolerates a missing reading",
+    "new_failed": 0,
+    "old_failed": 1
+  },
+  {
+    "label": "M4 bound the delta by the endpoints, not the travel",
+    "new_failed": 2,
+    "old_failed": 0
+  },
+  {
+    "label": "M5 drop the clamp the computed target relies on",
+    "new_failed": 1,
+    "old_failed": 10
+  }
+]
