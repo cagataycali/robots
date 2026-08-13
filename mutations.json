@@ -1,0 +1,51 @@
+[
+  {
+    "label": "(unmutated control)",
+    "new_failed": 0,
+    "new_passed": 10,
+    "old_failed": 0,
+    "old_passed": 470
+  },
+  {
+    "label": "M1 put(): drop the explicit-DROP short-circuit",
+    "new_failed": 2,
+    "new_passed": 8,
+    "old_failed": 0,
+    "old_passed": 470
+  },
+  {
+    "label": "M2 _should_drop(): match a bare kind too (make qos<0 redundant)",
+    "new_failed": 1,
+    "new_passed": 9,
+    "old_failed": 0,
+    "old_passed": 470
+  },
+  {
+    "label": "M3 _unsubscribe(): re-raise instead of tolerating a gone handler",
+    "new_failed": 1,
+    "new_passed": 9,
+    "old_failed": 0,
+    "old_passed": 470
+  },
+  {
+    "label": "M4 _unsubscribe(): drop the missing-client guard",
+    "new_failed": 1,
+    "new_passed": 9,
+    "old_failed": 0,
+    "old_passed": 470
+  },
+  {
+    "label": "M5 _is_camera_ref(): stop exempting the /ref pointer",
+    "new_failed": 1,
+    "new_passed": 9,
+    "old_failed": 4,
+    "old_passed": 466
+  },
+  {
+    "label": "M6 _TOPIC_POLICY: add a DROP entry under a top-level kind",
+    "new_failed": 1,
+    "new_passed": 9,
+    "old_failed": 0,
+    "old_passed": 470
+  }
+]
