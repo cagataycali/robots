@@ -1,0 +1,28 @@
+{
+  "main": {
+    "executor": "ThreadPoolExecutor",
+    "start_task_status": "success",
+    "verdict": "TimeoutError -- the test fails here",
+    "verdict_after_s": 2.0,
+    "non_daemon_left": [
+      "test_arm_executor_0"
+    ],
+    "tree": "/tmp/ctrl-31697605436",
+    "exited": false,
+    "exit_code": null,
+    "wall_s": 45.06,
+    "killed_at_s": 45.0
+  },
+  "branch": {
+    "executor": "DaemonThreadExecutor",
+    "start_task_status": "success",
+    "verdict": "TimeoutError -- the test fails here",
+    "verdict_after_s": 2.0,
+    "non_daemon_left": [],
+    "tree": "/tmp/robots-mine-31697605436",
+    "exited": true,
+    "exit_code": 0,
+    "wall_s": 2.78,
+    "killed_at_s": null
+  }
+}
