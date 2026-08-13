@@ -31,14 +31,32 @@ its exports to a bare ``type``. So the canonical spelling of the class was the
 one spelling that carried no type information, and every attribute access,
 constructor argument and return value reached through it went unchecked.
 
-CodeQL reports the first as ``py/undefined-export`` (alert 718, severity
-``error``, open on ``main`` from 2026-07-09) and does **not** report the second,
-which is why this guard is not redundant with it: that module assigns through
-``globals()["MuJoCoSimEngine"] = _Cls``, which its analyzer credits as a
-definition. A local, merge-blocking check that runs in the suite also reports
-the gap to the author before the push rather than to a reviewer afterwards --
-the same reasoning ``.github/codeql/codeql-config.yml`` gives for preferring a
-local gate wherever one can express the rule.
+CodeQL reports **all three** of those entries as ``py/undefined-export``
+(severity ``error``), so this guard is not justified by CodeQL missing any of
+them -- read against the code-scanning API on ``main`` rather than inferred:
+
+    alert 718  simulation/__init__.py:120        MuJoCoSimEngine    open 2026-07-09
+    alert  15  simulation/mujoco/__init__.py:23  MuJoCoSimulation   open 2026-05-21
+    alert  14  simulation/mujoco/__init__.py:22  MuJoCoSimEngine    open 2026-05-21
+
+An earlier draft of this docstring claimed the sibling module went unreported
+because it binds through ``globals()["MuJoCoSimEngine"] = _Cls`` and that the
+analyzer credits such an assignment as a definition. Both halves are wrong: it
+is reported, twice, and the ``globals()`` write does not suppress the rule.
+
+What this guard adds is therefore not coverage of a blind spot but two things
+CodeQL structurally cannot give here. It is **local and merge-blocking**, so a
+gap reaches the author before the push instead of a reviewer afterwards -- the
+same reasoning ``.github/codeql/codeql-config.yml`` gives for preferring a
+local gate wherever one can express the rule. And it is a **standing contract
+over every module**, not a verdict on the three sites that happen to be
+flagged today: the scan below covers all 72 literal-``__all__`` modules, so the
+next lazy export that ships without its mirror fails immediately.
+
+The open-since dates are the argument for the first of those. Alerts 14 and 15
+predate this guard by nearly three months and 718 by one, all three on ``main``
+the whole time. An advisory alert that nobody is obliged to clear is evidently
+not the mechanism that gets this class fixed.
 
 Scope, measured on this tree rather than assumed:
 

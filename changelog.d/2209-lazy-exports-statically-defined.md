@@ -15,9 +15,9 @@ and revealed a bare `type` for both of its exports.
 
 Both are now imported under `TYPE_CHECKING`, which is static-only: no module is
 imported at runtime that was not imported before, and all four spellings remain
-the same object. This also closes CodeQL `py/undefined-export` alert 718, open
-on `main` since 2026-07-09; the second module was never reported, because
-assigning through `globals()[...]` reads as a definition to that analyzer.
+the same object. This closes all three open CodeQL `py/undefined-export` alerts
+on `main`: 718 (`simulation/__init__.py`, since 2026-07-09) plus 14 and 15
+(`simulation/mujoco/__init__.py`, since 2026-05-21).
 
 `tests/test_all_exports_are_statically_defined.py` pins the contract across all
 72 modules that declare a literal `__all__`, generalising an assertion that
