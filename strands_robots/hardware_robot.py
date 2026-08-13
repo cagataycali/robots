@@ -26,7 +26,7 @@ import shutil
 import threading
 import time
 from collections.abc import AsyncGenerator, Mapping
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import Executor, Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -530,7 +530,10 @@ class Robot(TeleopMixin, AgentTool):
 
         # Task execution state
         self._task_state = RobotTaskState()
-        self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{tool_name}_executor")
+        # Annotated with the base class rather than the concrete pool: the two
+        # uses below are ``submit`` and ``shutdown``, so a caller substituting a
+        # different Executor is honouring the contract, not evading it.
+        self._executor: Executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix=f"{tool_name}_executor")
         self._shutdown_event = threading.Event()
         # A stop request that arrived for the current task. An Event rather
         # than a task-state field because ``stop_task`` is called from the
