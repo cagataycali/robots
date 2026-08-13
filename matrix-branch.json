@@ -1,0 +1,47 @@
+{
+  "tree": "/tmp/robots-mine-31669673438",
+  "rows": [
+    {
+      "phase": "already-running",
+      "primitive": "move_to",
+      "status": "error",
+      "text": "Cannot 'move_to' on 'arm' while its policy is running - a primitive and the policy loop would race on the articulation's PD targets. Wait for the rollout to finish (Isaac policy loops clear the flag o",
+      "actions_applied": 0,
+      "names_policy": true
+    },
+    {
+      "phase": "already-running",
+      "primitive": "set_gripper",
+      "status": "error",
+      "text": "Cannot 'set_gripper' on 'arm' while its policy is running - a primitive and the policy loop would race on the articulation's PD targets. Wait for the rollout to finish (Isaac policy loops clear the fl",
+      "actions_applied": 0,
+      "names_policy": true
+    },
+    {
+      "phase": "already-running",
+      "primitive": "rotate_wrist",
+      "status": "error",
+      "text": "Cannot 'rotate_wrist' on 'arm' while its policy is running - a primitive and the policy loop would race on the articulation's PD targets. Wait for the rollout to finish (Isaac policy loops clear the f",
+      "actions_applied": 0,
+      "names_policy": true
+    },
+    {
+      "phase": "starts-mid-run",
+      "primitive": "set_gripper",
+      "status": "error",
+      "text": "set_gripper: a policy started on 'arm' mid-run; aborting.",
+      "actions_applied": 1,
+      "ticks": 1,
+      "names_policy": true
+    },
+    {
+      "phase": "starts-mid-run",
+      "primitive": "rotate_wrist",
+      "status": "error",
+      "text": "rotate_wrist: a policy started on 'arm' mid-run; aborting.",
+      "actions_applied": 1,
+      "ticks": 1,
+      "names_policy": true
+    }
+  ]
+}

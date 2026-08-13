@@ -1,0 +1,47 @@
+{
+  "tree": "/tmp/wt-main-31669673438",
+  "rows": [
+    {
+      "phase": "already-running",
+      "primitive": "move_to",
+      "status": "error",
+      "text": "Cannot 'move_to' on 'arm' while its policy is running - a primitive and the policy loop would race on the articulation's PD targets. Wait for the rollout to finish (Isaac policy loops clear the flag o",
+      "actions_applied": 0,
+      "names_policy": true
+    },
+    {
+      "phase": "already-running",
+      "primitive": "set_gripper",
+      "status": "success",
+      "text": "set_gripper: 'arm' gripper commanded open (12 ticks, actuators ['jaw']).",
+      "actions_applied": 12,
+      "names_policy": false
+    },
+    {
+      "phase": "already-running",
+      "primitive": "rotate_wrist",
+      "status": "success",
+      "text": "rotate_wrist: 'arm' joint 'wrist_roll' reached 0.400 rad within 0.02 rad in 5 steps.",
+      "actions_applied": 5,
+      "names_policy": false
+    },
+    {
+      "phase": "starts-mid-run",
+      "primitive": "set_gripper",
+      "status": "success",
+      "text": "set_gripper: 'arm' gripper commanded open (50 ticks, actuators ['jaw']).",
+      "actions_applied": 50,
+      "ticks": 50,
+      "names_policy": false
+    },
+    {
+      "phase": "starts-mid-run",
+      "primitive": "rotate_wrist",
+      "status": "error",
+      "text": "rotate_wrist: 'arm' joint 'wrist_roll' did not reach 0.700 rad within tol=0.02 rad after max_steps=50 (residual 0.7000 rad).",
+      "actions_applied": 50,
+      "ticks": 50,
+      "names_policy": false
+    }
+  ]
+}
