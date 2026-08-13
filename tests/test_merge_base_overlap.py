@@ -28,6 +28,7 @@ from __future__ import annotations
 import importlib.util
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
@@ -412,3 +413,339 @@ def test_the_workflow_reads_the_script_from_the_base_and_names_the_head() -> Non
     )
     assert "HEAD_SHA: ${{ github.event.pull_request.head.sha }}" in workflow
     assert '--head "$HEAD_SHA"' in workflow, "the commit under test is named, not checked out"
+
+
+# --- the open set ---------------------------------------------------------------
+#
+# ``--all-open`` answers a question no per-branch run can: ``M..base`` is empty by
+# construction whenever ``M`` is the base a branch was evaluated against, so two
+# pull requests that are both still open are invisible to each other, and a
+# sibling merging afterwards invalidates nothing. These pins are API-shaped rather
+# than git-shaped because the sweep reads no checkout -- ``_get`` is its single
+# seam, so faking that is faking the network and nothing else.
+
+
+def _compare(files: list[str], *, merge_base: str = "aaaa1111", behind_by: int = 0) -> dict[str, object]:
+    """Build one ``compare`` payload in the shape the endpoint returns."""
+    return {
+        "merge_base_commit": {"sha": merge_base},
+        "behind_by": behind_by,
+        "files": [{"filename": name} for name in files],
+    }
+
+
+def _api(
+    pulls: list[dict[str, object]],
+    compares: dict[str, object],
+) -> Callable[[str, str], object]:
+    """Return a ``_get`` stand-in serving a recorded open set and compare payloads.
+
+    A compare with no recorded payload raises, which is deliberate: an unrecorded
+    lookup is a test that has not said what it means, and silently returning an
+    empty path set would make it pass as "no overlap".
+    """
+
+    def get(url: str, token: str) -> object:
+        if "/pulls?" in url:
+            return pulls if url.endswith("page=1") else []
+        key = url.split("/compare/", 1)[1]
+        if key not in compares:
+            raise check.ApiError(f"no recorded compare for {key}")
+        return compares[key]
+
+    return get
+
+
+def _pull(number: int, head: str, *, draft: bool = False) -> dict[str, object]:
+    return {"number": number, "head": {"sha": head}, "draft": draft}
+
+
+def _sweep(monkeypatch: pytest.MonkeyPatch, get: Callable[[str, str], object], tmp_path: Path) -> int:
+    """Run the sweep from a directory that is not a repository at all.
+
+    Every sweep test runs from ``tmp_path`` rather than the checkout, which pins
+    the property the mode depends on: the open set comes from the API, so a caller
+    reporting repository health needs no clone and no fetch of ten pull request
+    heads.
+    """
+    monkeypatch.setattr(check, "_get", get)
+    monkeypatch.chdir(tmp_path)
+    return int(check.main(["--all-open", "--github-repo", "owner/name", "--token", "t"]))
+
+
+def test_a_pair_of_open_pull_requests_editing_one_path_is_reported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The finding the single-branch mode cannot make: two open branches, one file.
+
+    This is the #1763/#1766 topology before either has merged. Each pull request's
+    checks ran against a base holding neither change, so both read clean and the
+    first tree in which the two are compiled together is ``main``.
+    """
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare([_SHARED, "tests/a_test.py"]),
+            "head10...main": _compare([]),
+            "main...head20": _compare([_SHARED, "tests/b_test.py"]),
+            "head20...main": _compare([]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "#10 + #20" in report
+    assert _SHARED in report
+    # Only the shared path is named: the two private files are not the finding.
+    assert "tests/a_test.py" not in report
+    assert "tests/b_test.py" not in report
+
+
+def test_a_prose_only_pair_is_listed_but_does_not_set_the_exit_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Same suppression the single-branch mode applies, and for the same reason.
+
+    Reported so a reader can see it was considered, not blocking because prose
+    cannot change what the package or the suite does -- and a genuine collision
+    inside one paragraph arrives as a merge conflict, which is a signal already.
+    """
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare(["docs/guide.md"]),
+            "head10...main": _compare([]),
+            "main...head20": _compare(["docs/guide.md"]),
+            "head20...main": _compare([]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 0
+
+    report = capsys.readouterr().out
+    assert "prose-only" in report
+    assert "#10 + #20: `docs/guide.md`" in report
+    assert "behaviour-bearing path" not in report
+
+
+def test_disjoint_open_pull_requests_report_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Without this, the pins above are satisfied by a sweep that flags everything."""
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare(["strands_robots/one.py"]),
+            "head10...main": _compare([]),
+            "main...head20": _compare(["strands_robots/two.py"]),
+            "head20...main": _compare([]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 0
+    assert "No untested composition" in capsys.readouterr().out
+
+
+def test_a_draft_pull_request_is_excluded_from_the_sweep(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A draft cannot merge whatever else is true of it.
+
+    So a pair involving one does not mean what a pair of ready pull requests
+    means, and reporting it would spend a merge-order decision on a change nobody
+    has offered yet. The excluded pull request's compares are deliberately absent
+    from the recorded set: reaching for them at all would raise.
+    """
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20", draft=True)],
+        {"main...head10": _compare([_SHARED]), "head10...main": _compare([])},
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 0
+
+    report = capsys.readouterr().out
+    assert "1 open non-draft pull request(s)" in report
+    assert "#20" not in report
+
+
+def test_a_stale_base_overlap_is_reported_with_its_distance(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The second mode: the single-branch computation, applied to the population.
+
+    Nothing invalidates a pull request's pass when its sibling merges. Stale
+    approvals are dismissed on push; a stale pass has no equivalent, and a pull
+    request idle in review never re-runs -- so the exposure runs until its next
+    push, not until the next merge.
+    """
+    get = _api(
+        [_pull(10, "head10")],
+        {
+            "main...head10": _compare([_SHARED], behind_by=7),
+            "head10...main": _compare([_SHARED, "strands_robots/other.py"]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "base moved under a path they edit" in report
+    assert "| #10 | 7 |" in report
+    assert _SHARED in report
+    assert "strands_robots/other.py" not in report
+
+
+def test_a_pull_request_level_with_its_base_is_not_a_stale_base_finding(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``behind_by == 0`` is the state the single-branch check already cleared.
+
+    Reporting it would re-report every green pull request in the repository, which
+    is how a sweep becomes noise nobody reads.
+    """
+    get = _api(
+        [_pull(10, "head10")],
+        {
+            "main...head10": _compare([_SHARED], behind_by=0),
+            "head10...main": _compare([_SHARED]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 0
+    assert "base moved under a path" not in capsys.readouterr().out
+
+
+def test_a_truncated_path_set_is_named_rather_than_read_as_no_overlap(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The compare endpoint caps ``files``, and a capped list looks complete.
+
+    This check's failure mode is a *missed* overlap, so a path set that reached
+    the cap is named as unevaluated. Quietly intersecting a truncated set is
+    exactly how one goes missing, and the report would say "clean" while meaning
+    "did not look".
+    """
+    capped = [f"strands_robots/f{index}.py" for index in range(check._COMPARE_FILE_CAP)]
+    get = _api(
+        [_pull(10, "head10")],
+        {"main...head10": _compare(capped), "head10...main": _compare([])},
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 0
+
+    report = capsys.readouterr().out
+    assert "Unevaluated (1)" in report
+    assert "#10: not evaluated in either mode" in report
+    assert f"{check._COMPARE_FILE_CAP}-entry cap" in report
+    assert "0 open non-draft pull request(s)" in report
+
+
+def test_a_truncated_base_side_set_still_leaves_the_pair_comparison(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The two path sets are inputs to two independent modes, so they skip apart.
+
+    Measured on the live queue: the base-side set is the one that grows without
+    bound, so it is the one that reaches the cap -- on #1035, 265 commits behind.
+    Dropping the whole pull request for it would have discarded the pairwise
+    finding against #1722, which is the finding this mode exists to make.
+    """
+    capped = [f"strands_robots/f{index}.py" for index in range(check._COMPARE_FILE_CAP)]
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare([_SHARED], behind_by=265),
+            "head10...main": _compare(capped),
+            "main...head20": _compare([_SHARED]),
+            "head20...main": _compare([]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "#10 + #20" in report, "the pair comparison must survive an unreadable base side"
+    assert "stale-base mode only" in report
+    assert "base moved under a path they edit" not in report
+
+
+def test_one_unreadable_pull_request_does_not_suppress_the_others(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A sweep exists to report across a population, so one failure is not fatal.
+
+    The unreadable pull request is named rather than counted as clean: one this
+    check could not read is not one it cleared, which is the failure mode the
+    whole file is written against.
+    """
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20"), _pull(30, "head30")],
+        {
+            "main...head10": _compare([_SHARED]),
+            "head10...main": _compare([]),
+            "main...head30": _compare([_SHARED]),
+            "head30...main": _compare([]),
+        },
+    )
+
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+    report = capsys.readouterr().out
+    assert "#10 + #30" in report
+    assert "#20: not evaluated in either mode" in report
+
+
+def test_the_sweep_and_the_single_branch_mode_share_one_prose_rule(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both modes call ``partition_overlap``, so they cannot disagree about prose.
+
+    Pinned by construction rather than by comparing two reports: narrowing
+    ``PROSE_SUFFIXES`` moves both verdicts together, which is the point of the
+    sweep reusing the path-set helpers instead of carrying its own copy.
+    """
+    monkeypatch.setattr(check, "PROSE_SUFFIXES", frozenset())
+    get = _api(
+        [_pull(10, "head10"), _pull(20, "head20")],
+        {
+            "main...head10": _compare(["docs/guide.md"]),
+            "head10...main": _compare([]),
+            "main...head20": _compare(["docs/guide.md"]),
+            "head20...main": _compare([]),
+        },
+    )
+
+    # The same prose-only pair the test above cleared now blocks, because the one
+    # classification both modes read has changed.
+    assert _sweep(monkeypatch, get, tmp_path) == 1
+
+
+def test_all_open_and_head_are_mutually_exclusive(tmp_path: Path) -> None:
+    """``--head`` names one commit and the sweep reads none.
+
+    Ignoring it would answer a question the caller did not ask while looking like
+    it had, which is the same reasoning the sibling sweep gives for refusing
+    ``--all-open --pr``.
+    """
+    with pytest.raises(SystemExit) as raised:
+        check.main(["--all-open", "--head", "abc123", "--github-repo", "owner/name", "--token", "t"])
+    assert raised.value.code == 2
+
+
+@pytest.mark.parametrize("missing", ["--github-repo", "--token"])
+def test_the_sweep_refuses_to_run_without_its_own_inputs(monkeypatch: pytest.MonkeyPatch, missing: str) -> None:
+    """Neither input has a local fallback, so a missing one is refused, not guessed.
+
+    ``--repo`` is not consulted for either: in this script it is a checkout path,
+    and the sweep reads no checkout.
+    """
+    monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    argv = ["--all-open", "--github-repo", "owner/name", "--token", "t"]
+    argv.remove(missing)
+    argv.remove("owner/name" if missing == "--github-repo" else "t")
+
+    with pytest.raises(SystemExit) as raised:
+        check.main(argv)
+    assert raised.value.code == 2

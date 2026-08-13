@@ -23,6 +23,40 @@ which predates #1766, so the first evaluation of the two changes *together* was
 **text** -- git had no conflicting hunks to report, and it is not git's job to
 know that one branch's assertion describes the other branch's bug.
 
+What one branch cannot see
+--------------------------
+``M..base`` is empty **by construction** whenever ``M`` is the base the branch
+was evaluated against, which is every run: the check clears itself not after
+wall-clock time but when the pull request is *re-evaluated*. Two consequences,
+both invisible to every per-branch signal:
+
+- For two pull requests that are both still **open**, ``M..base`` contains
+  neither of them, so the intersection is empty and the check reports clean on
+  both. The first evaluation of the two changes together is ``main``. That is the
+  #1763/#1766 topology arriving from the open set rather than from the merged
+  base, and it is a property of the *set*, which is the same reason the
+  duplicate-claim check had to exist (#2017) -- every other check here reads one
+  pull request at a time. This one keys on the file rather than the issue, so two
+  pull requests claiming different issues are silent to that check by design.
+- Once the sibling merges, nothing invalidates the second pull request's green.
+  Stale *approvals* are dismissed on push; a stale *pass* has no equivalent, and
+  a pull request idle in review never re-runs. So the exposure is not the interval
+  between two merges: it is the interval until the second one's next push, which
+  is unbounded for anything sitting in a review queue.
+
+``--all-open`` is the caller for both. It reads the open set from the API and
+computes the same intersection twice per pull request -- once against each
+sibling's ``M..head``, once against what has landed on the base since its own
+``M`` -- reusing the path-set helpers the single-branch mode uses, so the two
+modes cannot disagree about what counts as an overlap or as prose.
+
+A file carrying a ``strict=True`` xfail is the highest-value overlap candidate
+there is: its whole purpose is to fail when a sibling change lands, so it breaks
+a composition that git merges without a single conflict marker. #2233 pinned a
+defect that way and #2235 fixed it; composed, the tree was red with no conflict
+to resolve, which is why ``mergeStateStatus: CLEAN`` is not merely unhelpful
+here but actively reassuring.
+
 What this computes
 ------------------
 The overlap between two path sets, both taken from the branch's merge base ``M``
@@ -78,15 +112,37 @@ Usage
                 never from the working tree.
 ``--repo``      repository root (default: the current working directory).
 
-Exit status is ``1`` when a behaviour-bearing path overlaps, else ``0``.
+``--all-open``  Sweep the open set instead of one branch (see above). Mutually
+                exclusive with ``--head``, which names one commit.
+``--github-repo``
+                ``owner/name`` for ``--all-open`` (default:
+                ``$GITHUB_REPOSITORY``). Deliberately not ``--repo``: in this
+                script ``--repo`` is already a local checkout path, and one flag
+                that means a filesystem path in one mode and a slug in the other
+                is the kind of ambiguity a caller discovers by getting a wrong
+                answer.
+``--token``     API token for ``--all-open`` (default: ``$GITHUB_TOKEN``). Needs
+                ``pull-requests: read``.
+
+Exit status is ``1`` when a behaviour-bearing path overlaps, else ``0``. That is a
+blocking result for one branch, and a report for ``--all-open``: the sweep's
+remedy is a decision about merge order plus possibly one composition run, which
+no push by either author turns green, so it is deliberately absent from the
+required set. A gate a branch cannot clear by doing anything is a report,
+whatever it is wired to.
 """
 
 from __future__ import annotations
 
 import argparse
+import dataclasses
+import itertools
+import json
 import os
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from collections.abc import Iterable, Sequence
 from pathlib import Path
 
@@ -179,6 +235,324 @@ def overlapping_paths(pr_paths: Iterable[str], base_paths: Iterable[str]) -> tup
     return tuple(sorted(frozenset(pr_paths) & frozenset(base_paths)))
 
 
+API_ROOT = "https://api.github.com"
+
+#: Pagination ceiling for the open-pull-request listing, mirroring the sibling
+#: sweep in ``scripts/check_last_push_approval.py``. A repository holding more
+#: open pull requests than this at once has a different problem, and an unbounded
+#: loop over a paginated endpoint is how a transient API shape change becomes a
+#: hang rather than an error.
+_MAX_PAGES = 20
+
+#: GitHub's compare endpoint returns at most this many entries in ``files``. A
+#: truncated list is indistinguishable from a complete one in the payload, so a
+#: path set that reaches the cap is reported as unevaluated rather than as not
+#: overlapping. This check's failure mode is a *missed* overlap, and quietly
+#: intersecting a truncated set is exactly how one goes missing.
+_COMPARE_FILE_CAP = 300
+
+
+class ApiError(RuntimeError):
+    """A GitHub API call the sweep depends on did not succeed.
+
+    Separate from ``GitError`` because the two modes have disjoint inputs: the
+    single-branch check reads the object database and never the network, and the
+    sweep reads the network and never a checkout. One shared exception would let
+    a report offer a remedy that cannot apply to the mode that produced it.
+    """
+
+
+@dataclasses.dataclass(frozen=True)
+class OpenPullRequest:
+    """One open pull request's path sets, both taken from its own merge base.
+
+    ``landed_since`` is ``None`` when that side could not be read. It is an input
+    to the stale-base mode only, so an unreadable one excludes the pull request
+    from that mode while leaving it in the pairwise comparison -- which matters:
+    the base-side set is the one that grows without bound and so the one that
+    hits the file cap, and dropping the whole pull request for it would discard a
+    pairwise finding this check exists to make.
+    """
+
+    number: int
+    head_sha: str
+    merge_base: str
+    behind_by: int
+    edits: frozenset[str]
+    landed_since: frozenset[str] | None
+
+
+def _get(url: str, token: str) -> object:
+    """Fetch and decode one API response."""
+    request = urllib.request.Request(
+        url,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "check-merge-base-overlap",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
+    with urllib.request.urlopen(request, timeout=30) as response:  # noqa: S310 - fixed API host
+        return json.load(response)
+
+
+def resolve_open_pull_requests(repo: str, token: str) -> list[tuple[int, str]]:
+    """Return ``(number, head_sha)`` for every open non-draft pull request, sorted.
+
+    Drafts are excluded for the reason the sibling sweep gives: a draft cannot
+    merge whatever else is true of it, so a finding on one does not mean what a
+    finding here means. Sorting keeps a diff of two reports about changed
+    verdicts rather than reordered rows.
+    """
+    found: list[tuple[int, str]] = []
+    for page in range(1, _MAX_PAGES + 1):
+        payload = _get(f"{API_ROOT}/repos/{repo}/pulls?state=open&per_page=100&page={page}", token)
+        rows = payload if isinstance(payload, list) else []
+        for row in rows:
+            if not isinstance(row, dict) or row.get("draft"):
+                continue
+            number = row.get("number")
+            head = ((row.get("head") or {}).get("sha")) or ""
+            if isinstance(number, int) and head:
+                found.append((number, str(head)))
+        if len(rows) < 100:
+            break
+    return sorted(found)
+
+
+def compare_paths(repo: str, base: str, head: str, token: str) -> tuple[frozenset[str], str, int]:
+    """Return ``(paths, merge_base_sha, behind_by)`` for a three-dot ``base...head``.
+
+    The three-dot form is what makes this the same question the single-branch
+    mode asks with git: the ``files`` it reports are the diff from
+    ``merge_base(base, head)`` to ``head``, i.e. ``M..head``. Swapping the
+    operands therefore yields ``M..base`` from the same endpoint, which is how
+    the sweep obtains both sides without resolving a merge base itself or
+    fetching a single commit.
+    """
+    url = f"{API_ROOT}/repos/{repo}/compare/{base}...{head}"
+    payload = _get(url, token)
+    if not isinstance(payload, dict):
+        raise ApiError(f"{url}: expected an object, got {type(payload).__name__}")
+    entries = payload.get("files")
+    entries = entries if isinstance(entries, list) else []
+    if len(entries) >= _COMPARE_FILE_CAP:
+        raise ApiError(
+            f"{url}: the file list reached the {_COMPARE_FILE_CAP}-entry cap, so the path set is "
+            + "incomplete and an overlap computed from it could be a false negative"
+        )
+    paths = frozenset(str(entry["filename"]) for entry in entries if isinstance(entry, dict) and entry.get("filename"))
+    commit = payload.get("merge_base_commit")
+    merge_base_sha = str((commit or {}).get("sha") or "") if isinstance(commit, dict) else ""
+    behind_by = payload.get("behind_by")
+    return paths, merge_base_sha, behind_by if isinstance(behind_by, int) else 0
+
+
+def collect_open_pull_requests(
+    repo: str, base_ref: str, token: str
+) -> tuple[list[OpenPullRequest], list[tuple[int, str]]]:
+    """Read both path sets for every open pull request.
+
+    Returns the rows it could evaluate and ``(number, reason)`` for every side it
+    could not. A failure on one pull request is named and skipped rather than
+    raised: the sweep exists to surface findings across the standing population,
+    and one unreachable pull request must not take the rest of the report with
+    it. Naming the skips is the same requirement -- an unevaluated pull request
+    that says nothing is the failure mode this whole file is written against.
+    """
+    rows: list[OpenPullRequest] = []
+    unevaluated: list[tuple[int, str]] = []
+    lookup_failures = (ApiError, urllib.error.URLError, urllib.error.HTTPError, ValueError, KeyError)
+    for number, head_sha in resolve_open_pull_requests(repo, token):
+        try:
+            edits, fork_point, behind_by = compare_paths(repo, base_ref, head_sha, token)
+        except lookup_failures as error:
+            unevaluated.append((number, f"not evaluated in either mode - own path set unreadable: {error}"))
+            continue
+        landed_since: frozenset[str] | None
+        try:
+            landed_since, _, _ = compare_paths(repo, head_sha, base_ref, token)
+        except lookup_failures as error:
+            landed_since = None
+            unevaluated.append((number, f"stale-base mode only - base-side path set unreadable: {error}"))
+        rows.append(
+            OpenPullRequest(
+                number=number,
+                head_sha=head_sha,
+                merge_base=fork_point,
+                behind_by=behind_by,
+                edits=edits,
+                landed_since=landed_since,
+            )
+        )
+    return rows, unevaluated
+
+
+def pair_overlaps(
+    pull_requests: Iterable[OpenPullRequest],
+) -> list[tuple[int, int, tuple[str, ...], tuple[str, ...]]]:
+    """Return ``(left, right, blocking, prose)`` for every pair sharing a path."""
+    ordered = sorted(pull_requests, key=lambda row: row.number)
+    found: list[tuple[int, int, tuple[str, ...], tuple[str, ...]]] = []
+    for left, right in itertools.combinations(ordered, 2):
+        blocking, prose = partition_overlap(overlapping_paths(left.edits, right.edits))
+        if blocking or prose:
+            found.append((left.number, right.number, blocking, prose))
+    return found
+
+
+def stale_base_overlaps(
+    pull_requests: Iterable[OpenPullRequest],
+) -> list[tuple[int, int, tuple[str, ...], tuple[str, ...]]]:
+    """Return ``(number, behind_by, blocking, prose)`` for every stale-base overlap.
+
+    This is the single-branch computation applied to the population: the same
+    intersection, with the base branch substituted for a sibling's head. A pull
+    request level with its base has nothing to compare, so it is skipped rather
+    than reported as clean.
+    """
+    found: list[tuple[int, int, tuple[str, ...], tuple[str, ...]]] = []
+    for row in sorted(pull_requests, key=lambda row: row.number):
+        if row.landed_since is None or row.behind_by == 0:
+            continue
+        blocking, prose = partition_overlap(overlapping_paths(row.edits, row.landed_since))
+        if blocking or prose:
+            found.append((row.number, row.behind_by, blocking, prose))
+    return found
+
+
+def render_sweep(
+    *,
+    repo: str,
+    base_ref: str,
+    pull_requests: Sequence[OpenPullRequest],
+    pairs: Sequence[tuple[int, int, tuple[str, ...], tuple[str, ...]]],
+    stale: Sequence[tuple[int, int, tuple[str, ...], tuple[str, ...]]],
+    unevaluated: Sequence[tuple[int, str]],
+) -> str:
+    """Render the sweep report.
+
+    Every multi-line paragraph is a named local joined with explicit ``+``, for
+    the reason ``render_report`` gives: implicit concatenation inside a list of
+    report lines is indistinguishable from a forgotten comma.
+    """
+    pair_count = len(pull_requests) * (len(pull_requests) - 1) // 2
+    lines = ["## Merge-base overlap check - open set", ""]
+    header = (
+        f"`{repo}`, base `{base_ref}`: {len(pull_requests)} open non-draft pull request(s), "
+        + f"{pair_count} pair(s) compared."
+    )
+    lines.append(header)
+    lines.append("")
+
+    blocking_pairs = [row for row in pairs if row[2]]
+    prose_pairs = [row for row in pairs if not row[2]]
+    blocking_stale = [row for row in stale if row[2]]
+
+    if not blocking_pairs and not blocking_stale:
+        lines.append("No untested composition in the open set. Nothing here needs a merge-order decision.")
+        lines.append("")
+    if blocking_pairs:
+        pair_heading = f"### Pairs editing the same behaviour-bearing path ({len(blocking_pairs)})"
+        pair_why = (
+            "Neither pull request's checks have compiled the other's changes, and neither can: "
+            + "each ran against a base that contains neither. Whichever merges second inherits a "
+            + "green result about a tree that no longer exists."
+        )
+        lines.append(pair_heading)
+        lines.append("")
+        lines.append(pair_why)
+        lines.append("")
+        lines.append("| pull requests | shared path(s) |")
+        lines.append("|---|---|")
+        for left, right, paths, _ in blocking_pairs:
+            rendered = ", ".join(f"`{path}`" for path in paths)
+            lines.append(f"| #{left} + #{right} | {rendered} |")
+        lines.append("")
+    if blocking_stale:
+        stale_heading = f"### Pull requests whose base moved under a path they edit ({len(blocking_stale)})"
+        stale_why = (
+            "The single-branch check would report each of these today, and reported none of them "
+            + "when it ran: it reads the base as of that run, and the commits below landed after. "
+            + "Nothing re-runs a pull request idle in review, so the green stands until its next push."
+        )
+        lines.append(stale_heading)
+        lines.append("")
+        lines.append(stale_why)
+        lines.append("")
+        lines.append(f"| pull request | behind `{base_ref}` by | path(s) also changed on `{base_ref}` |")
+        lines.append("|---|---|---|")
+        for number, behind_by, paths, _ in blocking_stale:
+            rendered = ", ".join(f"`{path}`" for path in paths)
+            lines.append(f"| #{number} | {behind_by} | {rendered} |")
+        lines.append("")
+    if prose_pairs:
+        prose_heading = (
+            f"Also sharing a path, not reported ({len(prose_pairs)} prose-only pair(s)) - prose "
+            + "cannot change what the suite or the package does, and a genuine collision inside one "
+            + "surfaces as a merge conflict:"
+        )
+        lines.append(prose_heading)
+        lines.append("")
+        for left, right, _, paths in prose_pairs:
+            rendered = ", ".join(f"`{path}`" for path in paths)
+            lines.append(f"- #{left} + #{right}: {rendered}")
+        lines.append("")
+    if unevaluated:
+        unevaluated_heading = (
+            f"Unevaluated ({len(unevaluated)}) - named rather than counted as clean, because a "
+            + "pull request this check could not read is not a pull request it cleared:"
+        )
+        lines.append(unevaluated_heading)
+        lines.append("")
+        for number, reason in unevaluated:
+            lines.append(f"- #{number}: {reason}")
+        lines.append("")
+
+    remedy = (
+        "**To clear a row above:** decide the merge order, run the tests covering the shared "
+        + "paths against the composition once, and merge. This is a report, not a required check: "
+        + "no push by either author makes a *pair* green."
+    )
+    lines.append(remedy)
+    return "\n".join(lines) + "\n"
+
+
+def _emit(report: str) -> None:
+    """Print the report and append it to the CI job summary when there is one."""
+    print(report, end="")
+    summary_path = os.environ.get("GITHUB_STEP_SUMMARY")
+    if summary_path:
+        with open(summary_path, "a", encoding="utf-8") as handle:
+            handle.write(report)
+
+
+def _run_sweep(repo: str, base_ref: str, token: str) -> int:
+    """Sweep the open set. Exit 1 when a behaviour-bearing composition is untested."""
+    try:
+        pull_requests, unevaluated = collect_open_pull_requests(repo, base_ref, token)
+    except (ApiError, urllib.error.URLError, urllib.error.HTTPError, ValueError) as error:
+        # Listing the pull requests is the one lookup with no partial result to
+        # fall back on: without it there is no population to sweep.
+        print(f"::error::merge-base overlap sweep could not list open pull requests: {error}", file=sys.stderr)
+        return 1
+
+    pairs = pair_overlaps(pull_requests)
+    stale = stale_base_overlaps(pull_requests)
+    _emit(
+        render_sweep(
+            repo=repo,
+            base_ref=base_ref,
+            pull_requests=pull_requests,
+            pairs=pairs,
+            stale=stale,
+            unevaluated=unevaluated,
+        )
+    )
+    return 1 if any(row[2] for row in pairs) or any(row[2] for row in stale) else 0
+
+
 def render_report(
     *,
     base_ref: str,
@@ -256,16 +630,48 @@ def main(argv: Sequence[str] | None = None) -> int:
         description="Report files a pull request edits that its base also changed since it branched.",
     )
     parser.add_argument("--base-ref", default="main", help="branch being merged into (default: main)")
-    parser.add_argument("--head", default="HEAD", help="commit under test (default: HEAD)")
+    parser.add_argument(
+        "--head",
+        default=None,
+        help="commit under test (default: HEAD); one branch only, not --all-open",
+    )
     parser.add_argument("--repo", default=None, help="repository root (default: current directory)")
+    parser.add_argument(
+        "--all-open",
+        action="store_true",
+        help="sweep the open set from the API instead of checking one branch",
+    )
+    parser.add_argument(
+        "--github-repo",
+        default=os.environ.get("GITHUB_REPOSITORY"),
+        help="owner/name for --all-open (default: $GITHUB_REPOSITORY)",
+    )
+    parser.add_argument(
+        "--token",
+        default=os.environ.get("GITHUB_TOKEN"),
+        help="API token for --all-open (default: $GITHUB_TOKEN)",
+    )
     args = parser.parse_args(argv)
 
+    # Mutually exclusive rather than ignored: --head names one commit and the
+    # sweep reads none, so honouring both would answer a question the caller did
+    # not ask while looking like it had.
+    if args.all_open and args.head is not None:
+        parser.error("--all-open sweeps the open set and reads no local commit; --head names one branch")
+    if args.all_open:
+        if not args.github_repo:
+            parser.error("--all-open needs --github-repo owner/name (or $GITHUB_REPOSITORY)")
+        if not args.token:
+            parser.error("--all-open needs --token (or $GITHUB_TOKEN)")
+        return _run_sweep(args.github_repo, args.base_ref, args.token)
+
+    head = args.head if args.head is not None else "HEAD"
     repo = Path(args.repo) if args.repo is not None else None
 
     try:
         base = resolve_base_ref(args.base_ref, repo=repo)
-        fork_point = merge_base(base, args.head, repo=repo)
-        pr_paths = changed_paths(fork_point, args.head, repo=repo)
+        fork_point = merge_base(base, head, repo=repo)
+        pr_paths = changed_paths(fork_point, head, repo=repo)
         base_paths = changed_paths(fork_point, base, repo=repo)
     except GitError as error:
         # Loud and non-zero: a check that cannot compute its answer must not

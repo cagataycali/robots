@@ -878,6 +878,49 @@ hatch run format            # ruff check --fix, ruff format
    code does not separate them. Qualify first, then read a `404` on the
    *qualified* form as the uncomparable one.
 
+   **Both readings above are per-branch, and neither can see the open set.**
+   `M..base` is empty by construction whenever `M` is the base the branch was
+   evaluated against, which is every run, so two pull requests that are both
+   still open are invisible to each other: the intersection contains neither, the
+   overlap check reports clean on both, and the first tree in which the two are
+   compiled together is `main`. That is the #1763/#1766 topology arriving from the
+   open set rather than from a merged base. It also does not clear itself over
+   time - stale *approvals* are dismissed on push, a stale *pass* has no
+   equivalent, and a pull request idle in review never re-runs - so the exposure
+   runs until that branch's next push rather than until the sibling merges.
+   `--all-open` is the caller for both, exactly as for the sweep in step 12:
+
+   ```
+   python3 scripts/check_merge_base_overlap.py --github-repo <owner/name> --all-open
+   ```
+
+   Run it when reporting repository health. It reads the open set from the API and
+   computes the same intersection twice per pull request - once against each
+   sibling's `M..head`, once against what has landed on the base since its own
+   `M` - so the two modes cannot disagree about what counts as an overlap or as
+   prose. Measured on the queue the day it was added: 10 open non-draft pull
+   requests, 45 pairs, one pair sharing a behaviour-bearing path (#1035 + #1722 on
+   `strands_robots/mesh/__init__.py`) and one stale base 62 commits deep (#1722 on
+   `strands_robots/mesh/ros_bridge.py`), neither of which any per-branch signal
+   was reporting - both read `mergeStateStatus: CLEAN`.
+
+   Two properties of that sweep are worth knowing before leaning on it. A
+   truncated path set is named as unevaluated rather than intersected: the compare
+   endpoint caps `files` at 300, a capped list is indistinguishable from a
+   complete one in the payload, and this check's failure mode is a *missed*
+   overlap, so quietly intersecting a truncated set is how one goes missing.
+   And the two path sets skip apart: the base-side set is the one that grows
+   without bound, so it is the one that hits that cap - #1035 was 265 commits
+   behind - and dropping the whole pull request for it would discard the pairwise
+   finding this mode exists to make.
+
+   A file carrying a `strict=True` xfail is the highest-value overlap candidate
+   there is, because its whole purpose is to fail when a sibling change lands: it
+   breaks a composition that git merges without a single conflict marker. #2233
+   pinned a defect that way and #2235 fixed it; composed, the tree was red with
+   nothing to resolve, which is why `mergeStateStatus: CLEAN` is not merely
+   unhelpful here but actively reassuring.
+
    Read that run as a **delta, not an absolute**. The environment you verify in
    is almost never the one CI uses, and a partial one fails tests for reasons
    that have nothing to do with the merge. Composing #1786 and #1804 - both
