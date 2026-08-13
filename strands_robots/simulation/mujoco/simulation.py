@@ -4324,6 +4324,13 @@ class MuJoCoSimEngine(
         # frames separately, which is correct for live control but interleaves
         # for a shared recorder. start_policy while recording is left to the
         # caller's intent (run_multi_policy is the recommended recording path).
+        # Resolve the provider synchronously. run_policy performs this check
+        # too, but it runs on the worker below: a raise there is captured in
+        # the future and this method would still report "Policy started",
+        # leaving the caller with a success for a rollout that never began.
+        if err := self._unresolvable_policy_provider_error(policy_provider, policy_config):
+            return err
+
         future = self._executor.submit(
             self.run_policy,
             robot_name,
