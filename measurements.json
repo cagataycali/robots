@@ -1,0 +1,154 @@
+{
+  "tree": "/tmp/robots-mine-31718229423",
+  "cells": [
+    {
+      "backend": "mujoco",
+      "knob": "timestep (argument)",
+      "key": "mujoco-arg",
+      "verdict": "refused",
+      "names": [
+        "timestep"
+      ],
+      "message": "create_world: timestep must be a finite positive number, got -0.002.",
+      "driven_before": true
+    },
+    {
+      "backend": "mujoco",
+      "knob": "default_timestep (engine default)",
+      "key": "mujoco-def",
+      "verdict": "refused",
+      "names": [
+        "timestep",
+        "default_timestep"
+      ],
+      "message": "create_world: default_timestep must be a finite positive number, got -0.002.",
+      "driven_before": true
+    },
+    {
+      "backend": "newton",
+      "knob": "timestep (argument)",
+      "key": "newton-arg",
+      "verdict": "refused",
+      "names": [
+        "timestep"
+      ],
+      "message": "create_world: timestep must be a finite positive number, got -0.002.",
+      "driven_before": false
+    },
+    {
+      "backend": "newton",
+      "knob": "default_timestep (engine default)",
+      "key": "newton-def",
+      "verdict": "refused",
+      "names": [
+        "timestep",
+        "default_timestep"
+      ],
+      "message": "create_world: default_timestep must be a finite positive number, got -0.002.",
+      "driven_before": false
+    },
+    {
+      "backend": "isaac",
+      "knob": "timestep (argument)",
+      "key": "isaac-arg",
+      "verdict": "refused",
+      "names": [
+        "timestep"
+      ],
+      "message": "create_world: timestep must be a finite positive number, got -0.002.",
+      "driven_before": false
+    },
+    {
+      "backend": "isaac",
+      "knob": "physics_dt (engine default)",
+      "key": "isaac-def",
+      "verdict": "refused",
+      "names": [
+        "physics_dt"
+      ],
+      "message": "create_world: physics_dt must be a finite positive number, got -0.002.",
+      "driven_before": false
+    }
+  ],
+  "config": [
+    {
+      "value": "nan",
+      "config_constructs": true,
+      "why": "physics_dt=nan",
+      "create_world": "refused"
+    },
+    {
+      "value": "inf",
+      "config_constructs": true,
+      "why": "physics_dt=inf",
+      "create_world": "refused"
+    },
+    {
+      "value": "True",
+      "config_constructs": true,
+      "why": "physics_dt=True",
+      "create_world": "refused"
+    },
+    {
+      "value": "-1.0",
+      "config_constructs": false,
+      "why": "ValueError: physics_dt must be > 0, got -1.0",
+      "create_world": "refused"
+    }
+  ],
+  "render": {
+    "path": "/tmp/world.png",
+    "built": "success",
+    "saturated": 0.8944794891640867,
+    "timestep_installed": 0.002,
+    "sim_time": 0.8000000000000006
+  },
+  "mutations": [
+    [
+      "M1 newton: keep the call, discard the refusal",
+      46,
+      0
+    ],
+    [
+      "M2 newton: delete the timestep guard",
+      47,
+      0
+    ],
+    [
+      "M3 isaac: keep the call, discard the refusal",
+      49,
+      0
+    ],
+    [
+      "M4 isaac: delete the timestep guard",
+      50,
+      0
+    ],
+    [
+      "M5 newton: validate the argument, not the effective dt",
+      13,
+      0
+    ],
+    [
+      "M6 isaac: validate the argument, not the effective dt",
+      16,
+      0
+    ],
+    [
+      "M7 isaac: blame `timestep` for a bad engine default",
+      16,
+      0
+    ],
+    [
+      "M8 newton: hand-roll the domain in create_world",
+      17,
+      0
+    ]
+  ],
+  "gate": {
+    "suite": "29660 passed / 266 skipped / 0 failed",
+    "elapsed": "812s",
+    "file": "143 passed (was 67)",
+    "lint": "ruff clean 1214 files; mypy 0 non-examples"
+  }
+}
