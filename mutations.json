@@ -1,0 +1,52 @@
+{
+  "M0 unmutated control": {
+    "new": {
+      "failed": 0,
+      "passed": 217
+    },
+    "pre_existing": {
+      "failed": 0,
+      "passed": 19
+    }
+  },
+  "M1 function-local stdlib import returns to cleanup()": {
+    "new": {
+      "failed": 4,
+      "passed": 213
+    },
+    "pre_existing": {
+      "failed": 0,
+      "passed": 19
+    }
+  },
+  "M2 same regression written as a from-import": {
+    "new": {
+      "failed": 4,
+      "passed": 213
+    },
+    "pre_existing": {
+      "failed": 0,
+      "passed": 19
+    }
+  },
+  "M3 stdlib import lands in destroy() instead": {
+    "new": {
+      "failed": 1,
+      "passed": 216
+    },
+    "pre_existing": {
+      "failed": 0,
+      "passed": 19
+    }
+  },
+  "M4 delete the reason from the docstring": {
+    "new": {
+      "failed": 0,
+      "passed": 217
+    },
+    "pre_existing": {
+      "failed": 0,
+      "passed": 19
+    }
+  }
+}

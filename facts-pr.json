@@ -1,0 +1,49 @@
+{
+  "tree": "/tmp/robots-mine-31660058557",
+  "tag": "pr",
+  "scenario_nocleanup": {
+    "exit": 0,
+    "ok": true,
+    "cleanup_warnings": 0,
+    "egl_errors": 0
+  },
+  "scenario_cleanup": {
+    "exit": 0,
+    "ok": true,
+    "cleanup_warnings": 0,
+    "egl_errors": 0
+  },
+  "shutdown_trace": [
+    "enter",
+    "_shutdown_ros_bridge",
+    "_close_main_thread_renderers",
+    "returned"
+  ],
+  "shutdown_warnings": 0,
+  "renders": {
+    "so101": {
+      "shape": [
+        380,
+        420,
+        3
+      ],
+      "content_frac": 0.9647
+    },
+    "unitree_g1": {
+      "shape": [
+        380,
+        420,
+        3
+      ],
+      "content_frac": 0.9014
+    },
+    "unitree_go2": {
+      "shape": [
+        380,
+        420,
+        3
+      ],
+      "content_frac": 0.9648
+    }
+  }
+}
