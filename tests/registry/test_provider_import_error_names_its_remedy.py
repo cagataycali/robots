@@ -42,6 +42,9 @@ from strands_robots.policies import create_policy
 #: Extra that ships ``lerobot_local``'s dependency, as declared in policies.json.
 _LEROBOT_EXTRA = "lerobot"
 
+#: Providers whose module needs an optional dependency, so a substitution could hide there.
+_SUBSTITUTION_CANDIDATES = ("lerobot_local", "groot", "cosmos3", "wbc")
+
 
 def _absent(module: str) -> Any:
     """Build an import_module stand-in that reports ``module`` as not installed.
@@ -122,7 +125,7 @@ class TestNoProviderIsSubstituted:
     is indistinguishable from the requested one at the call site.
     """
 
-    @pytest.mark.parametrize("provider", ["lerobot_local", "groot", "cosmos3", "wbc"])
+    @pytest.mark.parametrize("provider", _SUBSTITUTION_CANDIDATES)
     def test_a_missing_dependency_raises_rather_than_substituting(
         self, provider: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -131,7 +134,10 @@ class TestNoProviderIsSubstituted:
             policies_mod.import_policy_class(provider)
         assert "mock" not in str(excinfo.value).lower()
 
-    def test_the_funnel_never_falls_back_to_the_mock_provider(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize("provider", _SUBSTITUTION_CANDIDATES)
+    def test_the_funnel_never_falls_back_to_the_mock_provider(
+        self, provider: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Nothing the funnel returns on the failure path is a policy at all."""
         monkeypatch.setattr(policies_mod.importlib, "import_module", _absent("torch"))
         returned: list[Any] = []
@@ -140,8 +146,8 @@ class TestNoProviderIsSubstituted:
         # required -- a tree that stopped raising would still have to append nothing
         # for this to pass, which is the substitution being ruled out.
         with contextlib.suppress(ImportError):
-            returned.append(policies_mod.import_policy_class("lerobot_local"))
-        assert returned == [], f"the funnel returned {returned!r} instead of reporting"
+            returned.append(policies_mod.import_policy_class(provider))
+        assert returned == [], f"the funnel returned {returned!r} for {provider!r} instead of reporting"
 
 
 class TestAnUnknownProviderIsStillUnknown:
