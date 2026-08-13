@@ -1,0 +1,159 @@
+{
+  "tree": "/tmp/robots-mine-31747761477",
+  "cells": [
+    {
+      "label": "safe",
+      "requested": [
+        "arm0__wrist"
+      ],
+      "status": "success",
+      "columns": [
+        "arm0__wrist"
+      ],
+      "sources": [
+        "arm0/wrist"
+      ],
+      "frames": 4
+    },
+    {
+      "label": "raw",
+      "requested": [
+        "arm0/wrist"
+      ],
+      "status": "success",
+      "columns": [
+        "arm0__wrist"
+      ],
+      "sources": [
+        "arm0/wrist"
+      ]
+    },
+    {
+      "label": "both",
+      "requested": [
+        "arm0/wrist",
+        "arm0__wrist"
+      ],
+      "status": "success",
+      "columns": [
+        "arm0__wrist"
+      ],
+      "sources": [
+        "arm0/wrist"
+      ]
+    },
+    {
+      "label": "unknown",
+      "requested": [
+        "nope"
+      ],
+      "status": "error",
+      "text": "start_recording: unknown camera(s) ['nope'] in cameras=. Available scene cameras: ['arm0/wrist', 'overview']. Add them with add_camera(...) before recording, or omit cameras= to record all of them."
+    },
+    {
+      "label": "all",
+      "requested": null,
+      "status": "success",
+      "columns": [
+        "arm0__wrist",
+        "overview"
+      ],
+      "sources": [
+        "arm0/wrist",
+        "overview"
+      ]
+    }
+  ],
+  "roundtrip": {
+    "mp4": "videos/observation.images.arm0__wrist/chunk-000/file-000.mp4",
+    "decoded_frames": 4,
+    "shape": [
+      96,
+      128,
+      3
+    ],
+    "size_bytes": 2162,
+    "saturated_frac": 0.964
+  },
+  "equivalent": true,
+  "mutations": [
+    [
+      "M1 drop the schema-safe alias branch",
+      3,
+      0
+    ],
+    [
+      "M2 alias keeps the safe name as its render source",
+      2,
+      0
+    ],
+    [
+      "M3 drop the both-spellings dedup",
+      1,
+      0
+    ],
+    [
+      "M4 raw request does not canonicalize",
+      2,
+      0
+    ],
+    [
+      "M5 alias swaps raw/safe",
+      3,
+      0
+    ]
+  ],
+  "coverage": {
+    "before_missing": 12,
+    "after_missing": 11,
+    "before_pct": 92.73,
+    "after_pct": 93.33,
+    "closed": [
+      338
+    ]
+  },
+  "cross_backend": [
+    [
+      "all cameras by default",
+      1,
+      1,
+      1,
+      1
+    ],
+    [
+      "subset by raw name",
+      1,
+      1,
+      1,
+      1
+    ],
+    [
+      "schema-safe alias",
+      1,
+      1,
+      0,
+      1
+    ],
+    [
+      "raw == safe equivalence",
+      1,
+      0,
+      0,
+      1
+    ],
+    [
+      "unknown fails loudly",
+      1,
+      1,
+      1,
+      1
+    ],
+    [
+      "both-spellings dedup",
+      0,
+      0,
+      0,
+      1
+    ]
+  ]
+}
