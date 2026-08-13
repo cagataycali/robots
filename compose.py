@@ -165,7 +165,7 @@ for name, new_failed, old_failed in M:
     y -= S3
 assert abs((y + S3) - LAST3) < 1e-9
 put(axm, 0.045, 0.225,
-    f"{caught_new} of {len(M)} caught here; {blind_old} of {len(M)} invisible to the 42 pre-existing cases.",
+    f"{caught_new} of {len(M)} caught here; {blind_old} of {len(M)} invisible to the 43 pre-existing cases.",
     fontsize=10.2, fontweight="bold", transform=axm.transAxes)
 put(axm, 0.045, 0.160,
     "M2 is caught by both - it breaks ordinary paths too.\n"
