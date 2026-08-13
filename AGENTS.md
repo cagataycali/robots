@@ -446,6 +446,25 @@ hatch run format            # ruff check --fix, ruff format
      mutation returned that error and the squash was already on `main`. Confirm
      with `state`/`merged`, or `git log origin/main`, before concluding a merge
      failed and redoing the work.
+
+     Read that error as uninformative rather than rare. #2249 and #2250 were
+     squashed thirty seconds apart, each by a single `mergePullRequest` call
+     carrying `expectedHeadOid` - so a stale oid is ruled out - against a pull
+     request reading `CLEAN` / `MERGEABLE` / `APPROVED` with every required
+     context `SUCCESS`. Both calls returned `Pull Request is not mergeable` beside
+     `mergePullRequest: null`, and both squashes were already on `main`:
+     `926beb9` at 19:24:50 and `07a759d` at 19:25:20. Three for three with
+     #1756's `4bf139c`, and the payload carries no field that separates a refusal
+     from a success, so only the read-back can tell you which one you got.
+
+     The read-back also names the likely cause, in the field the error is worded
+     about: after the merge #2249 reports `mergeStateStatus` and `mergeable` as
+     `UNKNOWN`, consistent with the mutation re-reading a pull request it has just
+     closed. That makes the retry the expensive reflex rather than the safe one -
+     a second call against #2249 after it had merged returned the identical error
+     beside the identical `null`, so retrying manufactures a second confirmation
+     of a failure that never happened. Pinned by
+     tests/test_merge_mutation_error_is_not_a_verdict.py.
    - *And on `main` afterwards.* A rollup of `FAILURE` on a merge commit is not
      evidence that the squash broke anything: a **cancelled** check aggregates
      into `FAILURE`. `pr-and-push.yml` keys its concurrency group on
