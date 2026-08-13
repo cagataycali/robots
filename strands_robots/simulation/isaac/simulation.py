@@ -4382,6 +4382,7 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         width: int | None = None,
         height: int | None = None,
         fov: float = 60.0,
+        parent_body: str | None = None,
     ) -> dict[str, Any]:
         """Add an RTX camera to the scene.
 
@@ -4421,6 +4422,20 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
         height : int, optional
             Image height in pixels; a positive integer. ``None`` (omitted)
             takes ``IsaacConfig.camera_height``.
+        parent_body : str, optional
+            Body to mount the camera on, so it rides with that body instead
+            of standing still in the world. Declared here but NOT SUPPORTED
+            on this backend: the camera prim is parented to the stage's
+            camera scope, not to an articulation link, so a value is refused
+            with a structured error naming the backends that do mount
+            cameras rather than dropped. Mounting is what
+            :doc:`/policies/camera-naming` prescribes for a VLA's
+            ``observation.images.wrist_image`` feature, so a caller
+            following that guidance needs to be told which backend can
+            honour it -- not handed a static world-space view, and not a
+            bare ``TypeError`` naming neither the capability nor the
+            alternative. Omit it (the default) for a world-fixed camera,
+            which this backend does support.
         fov : float
             Horizontal field of view in degrees. Default 60.0. Mapped
             onto ``Camera.set_focal_length`` using the standard pinhole
@@ -4471,6 +4486,22 @@ class IsaacSimulation(IsaacMotionPrimitivesMixin, IsaacRecordingMixin, SimEngine
             computed ``focal_length`` so an agent can confirm the
             camera setup without re-querying.
         """
+        if parent_body is not None:
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"add_camera: parent_body={parent_body!r} is not supported on the Isaac "
+                            "backend (it parents camera prims to the stage camera scope, not to an "
+                            "articulation link, so the camera would not ride with the body). Omit "
+                            "parent_body for a world-fixed camera, or use "
+                            "create_simulation(backend='mujoco') / create_simulation(backend='newton') "
+                            "for a body-mounted (wrist) camera."
+                        )
+                    }
+                ],
+            }
         with self._lock:
             if not self._world_created:
                 return {"status": "error", "content": [{"text": "No world created."}]}
