@@ -70,18 +70,18 @@ def _probe_gl_once() -> bool:
     try:
         import mujoco as mj
     except ImportError:
-        return False
+        return _HARDWARE_PROBE_RESULT
     try:
         model = mj.MjModel.from_xml_string("<mujoco><worldbody/></mujoco>")
         renderer = mj.Renderer(model, height=1, width=1)
     except Exception:
         # Any failure (no EGL/OSMesa, no display, driver error) means the host
         # cannot render offscreen; the dependent tests must skip cleanly.
-        return False
+        return _HARDWARE_PROBE_RESULT
     else:
         del renderer
         _HARDWARE_PROBE_RESULT = True
-        return True
+        return _HARDWARE_PROBE_RESULT
 
 
 @functools.cache

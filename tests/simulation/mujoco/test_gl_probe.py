@@ -22,6 +22,7 @@ import pathlib
 import subprocess
 import sys
 import textwrap
+from collections.abc import Iterator
 
 import pytest
 
@@ -32,6 +33,23 @@ from tests.simulation.mujoco._gl_probe import gl_available, requires_gl
 def _refuse_to_construct(*args: object, **kwargs: object) -> None:
     """Stand in for ``mujoco.Renderer`` and fail if anything tries to build one."""
     raise AssertionError("the probe renderer was constructed a second time")
+
+
+@pytest.fixture(autouse=True)
+def _unforced_probe_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Give every case the unforced environment its assertions assume.
+
+    ``ROBOT_TEST_MUJOCO=0`` is a supported host setting - this module documents
+    it for "a known-bad runner" - and it short-circuits :func:`gl_available`
+    ahead of the probe. Left ambient it means the latch is never primed, so the
+    cases below would assert about a probe that never ran. The cases that
+    exercise the force-skip set the variable themselves.
+    """
+    monkeypatch.delenv("ROBOT_TEST_MUJOCO", raising=False)
+    _gl_probe.gl_available.cache_clear()
+    _gl_probe._probe_gl_once()
+    yield
+    _gl_probe.gl_available.cache_clear()
 
 
 def test_gl_available_returns_bool() -> None:
