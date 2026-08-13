@@ -1,0 +1,58 @@
+{
+  "tree": "/tmp/robots-mine-31660517728",
+  "rows": [
+    {
+      "input": "frame.png",
+      "label": "bare name, confined",
+      "confined": true,
+      "outcome": "accepted",
+      "dest": "/tmp/tmpbwbracra/renders/frame.png",
+      "in_sandbox": true
+    },
+    {
+      "input": "sub/frame.png",
+      "label": "has a separator",
+      "confined": true,
+      "outcome": "refused",
+      "reason": "output_path /tmp/robots-mine-31660517728/sub/frame.png is outside the sandbox /tmp/tmpbwbracra/renders (set the corresponding *_ALLOW_ABS env var to permit absolute paths)"
+    },
+    {
+      "input": "..",
+      "label": "bare '..'",
+      "confined": true,
+      "outcome": "refused",
+      "reason": "unsafe output_path: path traversal"
+    },
+    {
+      "input": "/tmp/x.png",
+      "label": "absolute outside",
+      "confined": true,
+      "outcome": "refused",
+      "reason": "output_path /tmp/x.png is outside the sandbox /tmp/tmpbwbracra/renders (set the corresponding *_ALLOW_ABS env var to permit absolute paths)"
+    },
+    {
+      "input": "frame;rm.png",
+      "label": "metacharacter",
+      "confined": true,
+      "outcome": "refused",
+      "reason": "unsafe output_path: shell metacharacters"
+    },
+    {
+      "input": "clip.mp4",
+      "label": "bare name, guards-only",
+      "confined": false,
+      "outcome": "accepted",
+      "dest": "/tmp/robots-mine-31660517728/clip.mp4",
+      "in_sandbox": false
+    }
+  ],
+  "render": {
+    "status": "success",
+    "saved_path": "/tmp/tmpprg2isgp/rsandbox/frame.png",
+    "file_exists": true,
+    "bytes": 10987
+  },
+  "sandbox": "/tmp/tmpbwbracra/renders",
+  "cwd": "/tmp/robots-mine-31660517728",
+  "symlink_at_anchored_dest": "refused: output_path 'evil.png' is a symlink - refusing to follow"
+}

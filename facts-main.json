@@ -1,0 +1,56 @@
+{
+  "tree": "/tmp/wt-main-31660517728",
+  "rows": [
+    {
+      "input": "frame.png",
+      "label": "bare name, confined",
+      "confined": true,
+      "outcome": "refused",
+      "reason": "output_path /tmp/wt-main-31660517728/frame.png is outside the sandbox /tmp/tmp25p6qtf8/renders (set the corresponding *_ALLOW_ABS env var to permit absolute paths)"
+    },
+    {
+      "input": "sub/frame.png",
+      "label": "has a separator",
+      "confined": true,
+      "outcome": "refused",
+      "reason": "output_path /tmp/wt-main-31660517728/sub/frame.png is outside the sandbox /tmp/tmp25p6qtf8/renders (set the corresponding *_ALLOW_ABS env var to permit absolute paths)"
+    },
+    {
+      "input": "..",
+      "label": "bare '..'",
+      "confined": true,
+      "outcome": "refused",
+      "reason": "unsafe output_path: path traversal"
+    },
+    {
+      "input": "/tmp/x.png",
+      "label": "absolute outside",
+      "confined": true,
+      "outcome": "refused",
+      "reason": "output_path /tmp/x.png is outside the sandbox /tmp/tmp25p6qtf8/renders (set the corresponding *_ALLOW_ABS env var to permit absolute paths)"
+    },
+    {
+      "input": "frame;rm.png",
+      "label": "metacharacter",
+      "confined": true,
+      "outcome": "refused",
+      "reason": "unsafe output_path: shell metacharacters"
+    },
+    {
+      "input": "clip.mp4",
+      "label": "bare name, guards-only",
+      "confined": false,
+      "outcome": "accepted",
+      "dest": "/tmp/wt-main-31660517728/clip.mp4",
+      "in_sandbox": false
+    }
+  ],
+  "render": {
+    "status": "error",
+    "text": "render: output_path /tmp/wt-main-31660517728/frame.png is outside the sandbox /tmp/tmpswppabq2/rsandbox (set the corresponding *_ALLOW_ABS env var to permit absolute paths)",
+    "file_exists": false
+  },
+  "sandbox": "/tmp/tmp25p6qtf8/renders",
+  "cwd": "/tmp/wt-main-31660517728",
+  "symlink_at_anchored_dest": "refused: output_path /tmp/wt-main-31660517728/evil.png is outside the sandbox /"
+}
