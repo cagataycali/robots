@@ -1,0 +1,49 @@
+{
+  "tree": "/tmp/wt-base-31693460861",
+  "label": "main",
+  "healthy_nested": {
+    "status": "success",
+    "actions": 30,
+    "final_action": {
+      "joint_0": 0.3138456806453505,
+      "joint_1": 0.4997850773476125,
+      "joint_2": 0.33611880237975783,
+      "joint_3": -0.06266661678215402,
+      "joint_4": -0.41761598392008564,
+      "joint_5": -0.48043794834844833
+    }
+  },
+  "healthy_sync": {
+    "status": "success",
+    "actions": 30
+  },
+  "failed_dispatch": {
+    "injected_cause": "can't start new thread",
+    "raised_type": "RuntimeError",
+    "raised_message": "asyncio.run() cannot be called from a running event loop",
+    "names_the_cause": false,
+    "names_the_asyncio_internal": true,
+    "actions_commanded": 0,
+    "leaked_coroutines": 1
+  },
+  "render": {
+    "mapped_targets": {
+      "1": 0.3138456806453505,
+      "2": 0.4997850773476125,
+      "3": 0.33611880237975783,
+      "4": -0.06266661678215402,
+      "5": -0.41761598392008564,
+      "6": -0.17453292519943295
+    },
+    "clamped_components": 1,
+    "applied_ok": 60,
+    "achieved": {
+      "1": 0.3133,
+      "2": 0.5329,
+      "3": 0.3542,
+      "4": -0.0577,
+      "5": -0.4175,
+      "6": -0.1745
+    }
+  }
+}
