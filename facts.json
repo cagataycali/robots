@@ -1,0 +1,337 @@
+{
+  "tree": "/tmp/robots-mine-31702629041",
+  "repo": "strands-labs/robots",
+  "open_non_draft": 8,
+  "pairs": 28,
+  "unevaluated": [
+    {
+      "number": 1035,
+      "reason": "stale-base mode only - base-side path set unreadable: https://api.github.com/repos/strands-labs/robots/compare/8d6a4c421087575ebebab08b5f9ac0690221b159...main: the file list reached the 300-entry cap, so the path set is incomplete and an overlap computed from it could be a false negative"
+    },
+    {
+      "number": 1087,
+      "reason": "stale-base mode only - base-side path set unreadable: https://api.github.com/repos/strands-labs/robots/compare/8352a8eed4e8d5dc2cc9dfb20b352da38e04f4a9...main: the file list reached the 300-entry cap, so the path set is incomplete and an overlap computed from it could be a false negative"
+    }
+  ],
+  "prs": [
+    {
+      "number": 1035,
+      "merge_base": "c1acf21d",
+      "behind_by": 267,
+      "head_paths": 7,
+      "base_paths": null
+    },
+    {
+      "number": 1087,
+      "merge_base": "6c7673e6",
+      "behind_by": 372,
+      "head_paths": 3,
+      "base_paths": null
+    },
+    {
+      "number": 1722,
+      "merge_base": "04fd6680",
+      "behind_by": 64,
+      "head_paths": 10,
+      "base_paths": 229
+    },
+    {
+      "number": 2188,
+      "merge_base": "e4fe2f93",
+      "behind_by": 17,
+      "head_paths": 6,
+      "base_paths": 77
+    },
+    {
+      "number": 2191,
+      "merge_base": "e4fe2f93",
+      "behind_by": 17,
+      "head_paths": 4,
+      "base_paths": 77
+    },
+    {
+      "number": 2198,
+      "merge_base": "e4fe2f93",
+      "behind_by": 17,
+      "head_paths": 5,
+      "base_paths": 77
+    },
+    {
+      "number": 2233,
+      "merge_base": "e94b214f",
+      "behind_by": 7,
+      "head_paths": 4,
+      "base_paths": 39
+    },
+    {
+      "number": 2240,
+      "merge_base": "e94b214f",
+      "behind_by": 7,
+      "head_paths": 3,
+      "base_paths": 39
+    }
+  ],
+  "pair_findings": [
+    {
+      "left": 1035,
+      "right": 1722,
+      "blocking": [
+        "strands_robots/mesh/__init__.py",
+        "tests/mesh/test_drive_command_numeric_domains.py"
+      ],
+      "prose": [
+        "docs/ros2-integration.md"
+      ]
+    },
+    {
+      "left": 2188,
+      "right": 2191,
+      "blocking": [],
+      "prose": [
+        "examples/fleet/README.md"
+      ]
+    },
+    {
+      "left": 2188,
+      "right": 2198,
+      "blocking": [],
+      "prose": [
+        "examples/fleet/README.md"
+      ]
+    },
+    {
+      "left": 2191,
+      "right": 2198,
+      "blocking": [],
+      "prose": [
+        "examples/fleet/README.md"
+      ]
+    }
+  ],
+  "stale_findings": [
+    {
+      "number": 1722,
+      "blocking": [
+        "strands_robots/mesh/ros_bridge.py",
+        "tests/mesh/test_ros_bridge.py"
+      ],
+      "prose": [
+        "docs/ros2-integration.md"
+      ],
+      "behind_by": 64
+    }
+  ],
+  "matrix": [
+    {
+      "left": 1035,
+      "right": 1087,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1035,
+      "right": 1722,
+      "n_blocking": 2,
+      "n_prose": 1
+    },
+    {
+      "left": 1035,
+      "right": 2188,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1035,
+      "right": 2191,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1035,
+      "right": 2198,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1035,
+      "right": 2233,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1035,
+      "right": 2240,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1087,
+      "right": 1722,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1087,
+      "right": 2188,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1087,
+      "right": 2191,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1087,
+      "right": 2198,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1087,
+      "right": 2233,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1087,
+      "right": 2240,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1722,
+      "right": 2188,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1722,
+      "right": 2191,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1722,
+      "right": 2198,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1722,
+      "right": 2233,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 1722,
+      "right": 2240,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 2188,
+      "right": 2191,
+      "n_blocking": 0,
+      "n_prose": 1
+    },
+    {
+      "left": 2188,
+      "right": 2198,
+      "n_blocking": 0,
+      "n_prose": 1
+    },
+    {
+      "left": 2188,
+      "right": 2233,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 2188,
+      "right": 2240,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 2191,
+      "right": 2198,
+      "n_blocking": 0,
+      "n_prose": 1
+    },
+    {
+      "left": 2191,
+      "right": 2233,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 2191,
+      "right": 2240,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 2198,
+      "right": 2233,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 2198,
+      "right": 2240,
+      "n_blocking": 0,
+      "n_prose": 0
+    },
+    {
+      "left": 2233,
+      "right": 2240,
+      "n_blocking": 0,
+      "n_prose": 0
+    }
+  ],
+  "focus": [
+    1035,
+    1722
+  ],
+  "per_branch": [
+    {
+      "number": 1035,
+      "title": "feat(mesh): AckermannRosRobot - Ackermann ROS 2 cars",
+      "mergeable": "MERGEABLE",
+      "mergeStateStatus": "BLOCKED",
+      "reviewDecision": "REVIEW_REQUIRED",
+      "merge_base": "c1acf21d",
+      "behind_by": 267,
+      "base_side_paths": null,
+      "single_branch_overlap": [],
+      "single_branch_verdict": "No overlap",
+      "names_a_shared_path": []
+    },
+    {
+      "number": 1722,
+      "title": "refactor(mesh): MobileBaseRobot + Transport - one dr",
+      "mergeable": "CONFLICTING",
+      "mergeStateStatus": "DIRTY",
+      "reviewDecision": "REVIEW_REQUIRED",
+      "merge_base": "04fd6680",
+      "behind_by": 64,
+      "base_side_paths": 229,
+      "single_branch_overlap": [
+        "docs/ros2-integration.md",
+        "strands_robots/mesh/ros_bridge.py",
+        "tests/mesh/test_ros_bridge.py"
+      ],
+      "single_branch_verdict": "overlap",
+      "names_a_shared_path": []
+    }
+  ],
+  "shared_paths": [
+    "strands_robots/mesh/__init__.py",
+    "tests/mesh/test_drive_command_numeric_domains.py"
+  ],
+  "capped_but_still_paired": [
+    1035
+  ]
+}
