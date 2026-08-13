@@ -1,0 +1,25 @@
+{
+  "tree": "/tmp/robots-mine-31663979809",
+  "rows": [
+    {
+      "mutation": "M1 the funnel substitutes MockPolicy instead of reporting",
+      "this_round": 12,
+      "pre_round": 9
+    },
+    {
+      "mutation": "M2 the funnel returns None instead of reporting",
+      "this_round": 12,
+      "pre_round": 9
+    },
+    {
+      "mutation": "M3 the auto-discovery branch misreports a missing dep as unknown",
+      "this_round": 1,
+      "pre_round": 1
+    },
+    {
+      "mutation": "control (unmutated)",
+      "this_round": 0,
+      "pre_round": 0
+    }
+  ]
+}
