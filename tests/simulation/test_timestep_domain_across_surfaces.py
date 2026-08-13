@@ -487,7 +487,9 @@ class TestTheConfigGuardCannotSeeEveryUnusableDefault:
         from strands_robots.simulation.isaac.config import IsaacConfig
 
         config = IsaacConfig(physics_dt=value)  # constructs: the `<= 0` test cannot see it
-        assert config.physics_dt is value or config.physics_dt != config.physics_dt
+        # Identity rather than equality: the claim is that the field is stored with
+        # no coercion at all, which `nan == nan` being False would otherwise hide.
+        assert config.physics_dt is value
 
         engine = _isaac_engine(value)
         result = _create_world(engine)
