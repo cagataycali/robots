@@ -147,6 +147,25 @@ hatch run format            # ruff check --fix, ruff format
     the call site. `tests_integ/` records real datasets and is out of scope.
     Pinned by tests/test_recording_root_is_not_the_shared_cache.py.
 
+16. **An example attests the records it shows, not the whole audit log** -
+    `verify_audit_integrity()` with no argument re-reads the entire log, and an
+    example's log is the developer's real `~/.strands_robots/mesh_audit.jsonl`,
+    because examples deliberately do not redirect `STRANDS_MESH_AUDIT_DIR`. So
+    an example that scopes its read to the run (`read_audit_log(since=...)`)
+    and then attests everything prints one document describing two record sets.
+    Measured on `e4fe2f9` with 4000 records of prior history in the log,
+    `examples/fleet/04_emergency_evacuation.py` rendered
+    `Audit integrity: ok=False (signed=5/4005)` above a five-row timeline. The
+    `ok` value is the worse half: history written before a PSK was configured is
+    unsigned, and an unsigned record is a forgery by definition once a PSK is
+    set at verification time, so a completely successful run reports tamper
+    evidence. Scoped to the records shown the same run reports
+    `ok=True (signed=5/5)`. Pass the records (`verify_audit_integrity(records)`),
+    or have the report pair them itself so the caller cannot get it wrong.
+    `tests/` is exempt mechanically rather than by trust - a test redirects the
+    audit dir to `tmp_path`, so there the whole log *is* the record set it
+    means. Pinned by tests/test_examples_attest_only_what_they_report.py.
+
 ## PR Workflow
 
 1. Create the feature branch **on your fork**. Branch creation in the base
