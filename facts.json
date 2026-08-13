@@ -1,0 +1,95 @@
+{
+  "tree": "/tmp/robots-mine-31666698256",
+  "routes": [
+    {
+      "route": "a-component-is-None",
+      "line": 391,
+      "driven_before": false
+    },
+    {
+      "route": "a-component-is-non-finite",
+      "line": 399,
+      "driven_before": false
+    },
+    {
+      "route": "pose-does-not-unpack",
+      "line": 389,
+      "driven_before": false
+    },
+    {
+      "route": "pose-is-None",
+      "line": 385,
+      "driven_before": true
+    },
+    {
+      "route": "quaternion-has-no-direction",
+      "line": 402,
+      "driven_before": false
+    },
+    {
+      "route": "read-raises",
+      "line": 383,
+      "driven_before": false
+    },
+    {
+      "route": "wrong-component-count",
+      "line": 397,
+      "driven_before": false
+    }
+  ],
+  "torch_surface_read": true,
+  "quaternion_normalized": 1.0,
+  "missing_before": [
+    383,
+    389,
+    391,
+    397,
+    399,
+    402
+  ],
+  "base": [
+    0.4,
+    -0.2,
+    0.0
+  ],
+  "world_target": [
+    0.4,
+    0.0,
+    0.4
+  ],
+  "substituted_target": [
+    0.0,
+    0.2,
+    0.4
+  ],
+  "mapping_error_m": 0.447213595499958,
+  "shots": {
+    "true_base": {
+      "status": "success",
+      "target": [
+        0.4,
+        0.0,
+        0.4
+      ],
+      "reached": true,
+      "own_error_m": 0.019,
+      "from_asked_m": 0.019,
+      "frame": "panda/hand (body)",
+      "png": "true_base.png"
+    },
+    "origin_base": {
+      "status": "success",
+      "target": [
+        0.0,
+        0.2,
+        0.4
+      ],
+      "reached": true,
+      "own_error_m": 0.0196,
+      "from_asked_m": 0.4426,
+      "frame": "panda/hand (body)",
+      "png": "origin_base.png"
+    }
+  },
+  "panel_diff_frac": 0.1761
+}
