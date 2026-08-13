@@ -1,0 +1,32 @@
+[
+ {
+  "label": "M1 drop the base-facade probe",
+  "new_failed": 19,
+  "old_failed": 0
+ },
+ {
+  "label": "M2 probe, discard the reason",
+  "new_failed": 19,
+  "old_failed": 0
+ },
+ {
+  "label": "M3 drop the start_policy guard",
+  "new_failed": 12,
+  "old_failed": 0
+ },
+ {
+  "label": "M4 guard, discard the envelope",
+  "new_failed": 11,
+  "old_failed": 0
+ },
+ {
+  "label": "M5 reword the reason locally",
+  "new_failed": 11,
+  "old_failed": 0
+ },
+ {
+  "label": "M6 widen the probe to Exception",
+  "new_failed": 0,
+  "old_failed": 0
+ }
+]

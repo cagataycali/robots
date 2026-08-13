@@ -1,0 +1,150 @@
+{
+ "tree": "/tmp/wt-main-31660480059",
+ "rows": [
+  {
+   "action": "run_policy",
+   "value": "'molmoact2'",
+   "class": "unresolvable name",
+   "status": null,
+   "text": "ValueError: Unknown policy provider: 'molmoact2'. Available: ['cosmos3', 'curobo', 'groot', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']",
+   "raised": "ValueError"
+  },
+  {
+   "action": "eval_policy",
+   "value": "'molmoact2'",
+   "class": "unresolvable name",
+   "status": null,
+   "text": "ValueError: Unknown policy provider: 'molmoact2'. Available: ['cosmos3', 'curobo', 'groot', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']",
+   "raised": "ValueError"
+  },
+  {
+   "action": "start_policy",
+   "value": "'molmoact2'",
+   "class": "unresolvable name",
+   "status": "success",
+   "text": "Policy started on 'so100' (async)",
+   "raised": null,
+   "running_after": "No policies running."
+  },
+  {
+   "action": "run_policy",
+   "value": "'MolmoAct2'",
+   "class": "unresolvable name",
+   "status": null,
+   "text": "ValueError: Unknown policy provider: 'MolmoAct2'. Available: ['cosmos3', 'curobo', 'groot', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']",
+   "raised": "ValueError"
+  },
+  {
+   "action": "eval_policy",
+   "value": "'MolmoAct2'",
+   "class": "unresolvable name",
+   "status": null,
+   "text": "ValueError: Unknown policy provider: 'MolmoAct2'. Available: ['cosmos3', 'curobo', 'groot', 'lerobot_async', 'lerobot_local', 'mock', 'motionbricks', 'moveit2', 'remote', 'vera', 'wbc', 'wbc_gait']",
+   "raised": "ValueError"
+  },
+  {
+   "action": "start_policy",
+   "value": "'MolmoAct2'",
+   "class": "unresolvable name",
+   "status": "success",
+   "text": "Policy started on 'so100' (async)",
+   "raised": null,
+   "running_after": "No policies running."
+  },
+  {
+   "action": "run_policy",
+   "value": "None",
+   "class": "wrong type",
+   "status": null,
+   "text": "TypeError: argument of type 'NoneType' is not iterable",
+   "raised": "TypeError"
+  },
+  {
+   "action": "eval_policy",
+   "value": "None",
+   "class": "wrong type",
+   "status": null,
+   "text": "TypeError: argument of type 'NoneType' is not iterable",
+   "raised": "TypeError"
+  },
+  {
+   "action": "start_policy",
+   "value": "None",
+   "class": "wrong type",
+   "status": "success",
+   "text": "Policy started on 'so100' (async)",
+   "raised": null,
+   "running_after": "No policies running."
+  },
+  {
+   "action": "run_policy",
+   "value": "3",
+   "class": "wrong type",
+   "status": null,
+   "text": "TypeError: argument of type 'int' is not iterable",
+   "raised": "TypeError"
+  },
+  {
+   "action": "eval_policy",
+   "value": "3",
+   "class": "wrong type",
+   "status": null,
+   "text": "TypeError: argument of type 'int' is not iterable",
+   "raised": "TypeError"
+  },
+  {
+   "action": "start_policy",
+   "value": "3",
+   "class": "wrong type",
+   "status": "success",
+   "text": "Policy started on 'so100' (async)",
+   "raised": null,
+   "running_after": "No policies running."
+  },
+  {
+   "action": "run_policy",
+   "value": "'hf.co/allenai/x'",
+   "class": "trust gate (out of scope)",
+   "status": null,
+   "text": "UntrustedRemoteCodeError: Policy provider 'lerobot_local' loads HuggingFace models with trust_remote_code=True, which allows arbitrary code execution from the model repository.\n\nOnly load models from ",
+   "raised": "UntrustedRemoteCodeError"
+  },
+  {
+   "action": "eval_policy",
+   "value": "'hf.co/allenai/x'",
+   "class": "trust gate (out of scope)",
+   "status": null,
+   "text": "UntrustedRemoteCodeError: Policy provider 'lerobot_local' loads HuggingFace models with trust_remote_code=True, which allows arbitrary code execution from the model repository.\n\nOnly load models from ",
+   "raised": "UntrustedRemoteCodeError"
+  },
+  {
+   "action": "start_policy",
+   "value": "'hf.co/allenai/x'",
+   "class": "trust gate (out of scope)",
+   "status": "success",
+   "text": "Policy started on 'so100' (async)",
+   "raised": null,
+   "running_after": "No policies running."
+  }
+ ],
+ "honored": {
+  "status": "success",
+  "text": "Policy complete on 'so100'\nMockPolicy | \n1.6s | 80 steps | sim_t=1.600s",
+  "joints": {
+   "Elbow": 0.487507,
+   "Elbow.vel": 0.212998,
+   "Jaw": 0.240034,
+   "Jaw.vel": -2.506001,
+   "Pitch": -0.398417,
+   "Pitch.vel": 0.702859,
+   "Rotation": 0.164983,
+   "Rotation.vel": -0.86824,
+   "Wrist_Pitch": -0.337134,
+   "Wrist_Pitch.vel": -1.564174,
+   "Wrist_Roll": 0.056459,
+   "Wrist_Roll.vel": 2.590565
+  },
+  "moved_frac": 0.11343653250773994,
+  "sat_frac": 0.910234133126935
+ }
+}
