@@ -1,0 +1,77 @@
+{
+  "tree": "/tmp/robots-mine-31712822367",
+  "alone": {
+    "pr-a": "1 passed in 0.00s",
+    "pr-b": "2 passed in 0.01s"
+  },
+  "compose": {
+    "merge_exit": 0,
+    "merge_stdout": " create mode 100644 tests/test_ceiling.py",
+    "conflicts": [],
+    "guard_py_exists": false,
+    "limits_py_exists": true,
+    "pytest_tail": "1 error in 0.07s",
+    "error": "E   ModuleNotFoundError: No module named 'pkg.guard'"
+  },
+  "verdicts": {
+    "main": {
+      "exit": 0,
+      "pairs_reported": false,
+      "names_shared_path": false,
+      "report": "## Merge-base overlap check - open set\n\n`owner/name`, base `main`: 2 open non-draft pull request(s), 1 pair(s) compared.\n\nNo untested composition in the open set. Nothing here needs a merge-order decision.\n\n**To clear a row above:** decide the merge order, run the tests covering the shared paths against the composition once, and merge. This is a report, not a required check: no push by either author makes a *pair* green.\n"
+    },
+    "branch": {
+      "exit": 1,
+      "pairs_reported": true,
+      "names_shared_path": true,
+      "report": "## Merge-base overlap check - open set\n\n`owner/name`, base `main`: 2 open non-draft pull request(s), 1 pair(s) compared.\n\n### Pairs editing the same behaviour-bearing path (1)\n\nNeither pull request's checks have compiled the other's changes, and neither can: each ran against a base that contains neither. Whichever merges second inherits a green result about a tree that no longer exists.\n\n| pull requests | shared path(s) |\n|---|---|\n| #10 + #20 | `pkg/guard.py` |\n\n**To clear a row above:** decide the merge order, run the tests covering the shared paths against the composition once, and merge. This is a report, not a required check: no push by either author makes a *pair* green.\n"
+    }
+  },
+  "live": {
+    "open_prs": 8,
+    "pairs": 28,
+    "renames_in_open_set": 0,
+    "max_changed_files": 10,
+    "requests_before": 15,
+    "requests_after": 22,
+    "merged_precedent": "#2057: tests/simulation/test_args_docstring_completeness.py -> tests/test_args_docstring_completeness.py"
+  },
+  "mutations": [
+    [
+      "M1  paths_from_entries drops previous_filename (the defect)",
+      2,
+      [
+        "test_a_renamed_path_overlaps_a_sibling_editing_the_old_name",
+        "test_the_two_modes_agree_about_a_rename"
+      ]
+    ],
+    [
+      "M2  compare_fork_point enforces the compare cap again (old behaviour)",
+      1,
+      [
+        "test_a_head_side_at_the_compare_cap_stays_in_the_pairwise_comparison"
+      ]
+    ],
+    [
+      "M3  pull_request_paths returns after page 1",
+      2,
+      [
+        "test_a_head_side_path_set_spanning_several_pages_is_read_whole",
+        "test_a_truncated_head_side_path_set_is_named_rather_than_read_as_no_overlap"
+      ]
+    ]
+  ],
+  "verification": {
+    "head": "939cd2382c3b",
+    "base": "7954c914d3c8",
+    "suite": "29588 passed, 266 skipped, 0 failed",
+    "elapsed_s": 696.45,
+    "pristine": 29584,
+    "cases_in_file": 47,
+    "lint": "ruff check / ruff format / mypy clean; scripts/ ruff + mypy clean",
+    "live_open": 8,
+    "live_pairs": 28,
+    "live_blocking": "#1035 + #1722",
+    "live_stale": 1
+  }
+}
