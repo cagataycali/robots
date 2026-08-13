@@ -41,6 +41,7 @@ dedup).
 So: the split is honest about being for file-size, not for decoupling.
 """
 
+import contextlib
 import inspect
 import json
 import logging
@@ -5234,6 +5235,14 @@ class MuJoCoSimEngine(
                 stale-pointer window step 2 exists to close, so the safe budget
                 is the honest reading of "no usable preference". Teardown always
                 completes; see :func:`_resolve_policy_stop_timeout`.
+
+        Note:
+            Every name this method needs is bound at module scope. A
+            finalizer calls this during interpreter shutdown, where the
+            import system is already gone, so a function-local import here
+            raises before the first teardown step and the ``__del__`` safety
+            net releases nothing at all - reported only as a warning naming
+            the interpreter rather than anything the caller can act on.
         """
         # Detach from the mesh network first (if attached). A truthy
         # ``self.mesh`` is any object exposing ``.stop()``; falsy values
@@ -5252,12 +5261,10 @@ class MuJoCoSimEngine(
         # (TeleopMixin) before mesh teardown. Best-effort.
         # Tear down the ROS 2 telemetry bridge (if any) before other teardown
         # so external subscribers see the node leave cleanly.
-        import contextlib as _cl
-
-        with _cl.suppress(Exception):
+        with contextlib.suppress(Exception):
             self._shutdown_ros_bridge()
         if getattr(self, "_teleop_running", False) or getattr(self, "_teleops", None):
-            with _cl.suppress(Exception):
+            with contextlib.suppress(Exception):
                 self.stop_teleoperate()
         if self._world is not None:
             for r in list(self._world.robots.values()):
