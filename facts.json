@@ -1,0 +1,129 @@
+{
+ "tree": "/tmp/robots-mine-31728323918",
+ "rows": [
+  {
+   "knob": "control_frequency",
+   "line": 3716,
+   "helper": "_validate_positive_frequency",
+   "bad": "0.0",
+   "text": "run_multi_policy: control_frequency must be > 0, got 0.0.",
+   "status": "error",
+   "driven_before": false,
+   "driven_after": true
+  },
+  {
+   "knob": "duration",
+   "line": 3729,
+   "helper": "_validate_duration",
+   "bad": "0.0",
+   "text": "run_multi_policy: duration must be > 0, got 0.0.",
+   "status": "error",
+   "driven_before": false,
+   "driven_after": true
+  },
+  {
+   "knob": "instructions",
+   "line": 3708,
+   "helper": "_normalize_multi_policy_instructions",
+   "bad": "{'nosuch': 'pick'}",
+   "text": "run_multi_policy: instructions names a robot not driven by this call: ['nosuch']. Robots driven by this call: ['alpha', 'beta'] (the keys of 'policies').",
+   "status": "error",
+   "driven_before": false,
+   "driven_after": true
+  },
+  {
+   "knob": "action_horizon",
+   "line": 3737,
+   "helper": "_normalize_multi_policy_horizons",
+   "bad": "0",
+   "text": "run_multi_policy: action_horizon must be a positive integer, got 0.",
+   "status": "error",
+   "driven_before": false,
+   "driven_after": true
+  }
+ ],
+ "coverage": {
+  "before_miss": 921,
+  "after_miss": 916,
+  "before_pct": 53.29614604462475,
+  "after_pct": 53.54969574036511,
+  "closed": [
+   3708,
+   3716,
+   3728,
+   3729,
+   3737
+  ]
+ },
+ "mutations": [
+  {
+   "label": "M1 frequency guard deleted",
+   "in_fn": 1,
+   "in_file": 1,
+   "new_failed": 3,
+   "old_failed": 0
+  },
+  {
+   "label": "M2 frequency verdict discarded",
+   "in_fn": 1,
+   "in_file": 1,
+   "new_failed": 3,
+   "old_failed": 0
+  },
+  {
+   "label": "M3 duration guard deleted",
+   "in_fn": 1,
+   "in_file": 1,
+   "new_failed": 3,
+   "old_failed": 0
+  },
+  {
+   "label": "M4 duration gate removed (behaviour-preserving)",
+   "in_fn": 1,
+   "in_file": 1,
+   "new_failed": 0,
+   "old_failed": 0
+  },
+  {
+   "label": "M5 instructions verdict discarded",
+   "in_fn": 1,
+   "in_file": 1,
+   "new_failed": 2,
+   "old_failed": 0
+  },
+  {
+   "label": "M6 action_horizon verdict discarded",
+   "in_fn": 1,
+   "in_file": 1,
+   "new_failed": 2,
+   "old_failed": 0
+  },
+  {
+   "label": "M8 caller argument validated instead of resolved horizon",
+   "in_fn": 1,
+   "in_file": 1,
+   "new_failed": 1,
+   "old_failed": 0
+  },
+  {
+   "label": "M7 message re-worded locally (wrong method name)",
+   "in_fn": 1,
+   "in_file": 1,
+   "new_failed": 3,
+   "old_failed": 0
+  }
+ ],
+ "suite": {
+  "passed": 29599,
+  "skipped": 266,
+  "failed": 0,
+  "seconds": 684,
+  "base": "a78ea602",
+  "pristine_passed": 29588
+ },
+ "cases": {
+  "before": 19,
+  "after": 30
+ },
+ "production_lines_changed": 0
+}
