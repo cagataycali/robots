@@ -105,7 +105,10 @@ def _attests_a_record_set(call: ast.Call) -> bool:
 
 
 def _example_sources() -> list[tuple[Path, ast.AST]]:
-    sources = []
+    # Annotated because ``ast.parse`` returns ``Module``: an inferred
+    # ``list[tuple[Path, Module]]`` is not a ``list[tuple[Path, AST]]``, since
+    # ``list`` is invariant.
+    sources: list[tuple[Path, ast.AST]] = []
     for path in sorted(_EXAMPLES_DIR.rglob("*.py")):
         if path.relative_to(_REPO_ROOT).as_posix() in _WHOLE_LOG_IS_THE_SUBJECT:
             continue
