@@ -141,7 +141,7 @@ _GATE_BEFORE: dict[int, dict[str, Any]] = {
 }
 
 #: The repeat call against #2249 after it had merged, same input as the first.
-_RETRY_ON_MERGED = {
+_RETRY_ON_MERGED: dict[str, Any] = {
     "pull_request": 2249,
     "expected_head_oid": "9decef7e6199d695ba928fd45e89f42f055193e5",
     "errors": [_ERROR],
