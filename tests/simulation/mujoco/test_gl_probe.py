@@ -16,6 +16,7 @@ headless host.
 
 from __future__ import annotations
 
+import ast
 import inspect
 import os
 import pathlib
@@ -44,10 +45,19 @@ def _unforced_probe_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
     ahead of the probe. Left ambient it means the latch is never primed, so the
     cases below would assert about a probe that never ran. The cases that
     exercise the force-skip set the variable themselves.
+
+    An unset latch is *primed* rather than probed. That setting exists to keep a
+    known-bad runner from attempting GL at all, so calling the probe here would
+    attempt it on exactly the host that opted out - measured as one offscreen
+    renderer constructed under ``ROBOT_TEST_MUJOCO=0``, against none when the
+    value is primed. ``monkeypatch`` also restores it, so a case that latches a
+    swallowed failure cannot leave that as the process-wide answer for every
+    later caller.
     """
     monkeypatch.delenv("ROBOT_TEST_MUJOCO", raising=False)
+    if _gl_probe._HARDWARE_PROBE_RESULT is None:
+        monkeypatch.setattr(_gl_probe, "_HARDWARE_PROBE_RESULT", False)
     _gl_probe.gl_available.cache_clear()
-    _gl_probe._probe_gl_once()
     yield
     _gl_probe.gl_available.cache_clear()
 
@@ -74,11 +84,14 @@ def test_requires_gl_is_a_skip_marker() -> None:
     assert requires_gl.name == "skipif"
 
 
-def test_the_hardware_answer_is_latched_at_import_time() -> None:
-    """Importing the module already ran the one probe this process allows.
+def test_a_hardware_answer_is_latched_before_any_case_runs() -> None:
+    """An answer is on the latch by the time a case runs, so it is never retried.
 
     Non-vacuity for the tests below: "no second renderer was constructed" only
-    means something if a first construction has already happened.
+    means something if the process already holds an answer. On a host that
+    exports the force-skip the import-time probe never ran, and the fixture
+    primes the latch rather than probing - which is why this asserts that an
+    answer is present rather than where it came from.
     """
     assert _gl_probe._HARDWARE_PROBE_RESULT is not None
 
@@ -193,3 +206,59 @@ def test_the_force_skip_avoids_the_probe_construction_entirely() -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert "answer=False built=0" in proc.stdout, proc.stdout
+
+
+def test_every_probe_exit_returns_the_latch() -> None:
+    """``_probe_gl_once`` reports the latched value rather than a literal.
+
+    The value reported and the value remembered have to be the same one: a
+    literal return can be changed without the latch beside it, leaving the
+    process answering one thing and remembering another for every later caller.
+    Pinned structurally because the two agree today, so no input distinguishes
+    them - the divergence this forbids is a future edit, not current behaviour.
+    """
+    tree = ast.parse(textwrap.dedent(inspect.getsource(_gl_probe._probe_gl_once)))
+    returns = [n for n in ast.walk(tree) if isinstance(n, ast.Return)]
+    assert len(returns) == 4, f"expected four exits, found {len(returns)}"
+    for node in returns:
+        assert isinstance(node.value, ast.Name) and node.value.id == "_HARDWARE_PROBE_RESULT", (
+            f"exit on line {node.lineno} returns "
+            f"{ast.unparse(node.value) if node.value else 'None'} instead of the latch"
+        )
+
+
+def test_this_module_is_green_under_the_force_skip() -> None:
+    """Every case here holds with ``ROBOT_TEST_MUJOCO=0`` in the environment.
+
+    That is the configuration the skip reason points an operator at on a
+    known-bad runner - the host class this gating exists for - so these cases
+    must not depend on the ambient value. With the force-skip set before the
+    module is imported the import-time probe never runs and the latch stays
+    unset, and an assertion written against a latched answer fails there with
+    text (``assert None is not None``) that reads as the safety latch being
+    broken rather than as an environment sensitivity. A child pytest over this
+    file pins it, deselecting this case so the recursion is one level deep.
+    """
+    here = pathlib.Path(__file__).resolve()
+    root = here.parents[3]
+    assert (root / "pyproject.toml").is_file(), root
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pytest",
+            str(here),
+            "-q",
+            "--no-cov",
+            "-p",
+            "no:randomly",
+            "-k",
+            "not is_green_under_the_force_skip",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=root,
+        env={**os.environ, "ROBOT_TEST_MUJOCO": "0"},
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]

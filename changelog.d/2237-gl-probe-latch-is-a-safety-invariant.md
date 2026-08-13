@@ -31,3 +31,11 @@ Pinned on a GL host as well as a headless one: a `mujoco.Renderer` stand-in that
 fails if it is ever constructed proves a cleared cache reaches no second
 construction, and a stand-in that fails on its *first* call proves a graceful
 failure is latched rather than retried. No production behaviour changes.
+
+The cases hold with `ROBOT_TEST_MUJOCO=0` already in the environment as well as
+without it -- the configuration the skip reason points an operator at on a
+known-bad runner, which is the host class this gating exists for. An autouse
+fixture gives every case the unforced environment its assertions assume and
+primes an unset latch rather than probing it, since that setting exists to keep
+such a host from attempting GL at all. A child pytest run over the module pins
+that configuration.
