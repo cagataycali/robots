@@ -61,9 +61,12 @@ class TestBackendSelection:
         monkeypatch.setenv("STRANDS_MESH_BACKEND", "unknownXYZ")
         with caplog.at_level(logging.WARNING):
             assert factory._select_backend() == "zenoh"
-            # The warning message includes the typo'd value
+            # The warning message includes the typo'd value. Matched
+            # case-insensitively: the report quotes the value as the operator
+            # typed it, so it stays greppable in their own configuration, while
+            # this test's contract is only that the value appears at all.
             assert any(
-                "unknownxyz" in r.getMessage()
+                "unknownxyz" in r.getMessage().lower()
                 for r in caplog.records
                 if r.name.startswith("strands_robots.mesh.transport")
             )

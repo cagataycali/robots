@@ -181,25 +181,42 @@ def hz_from_env(name: str) -> tuple[float | None, str | None]:
 # practice.
 _reported_unknown_backends: set[str] = set()
 
+# The values this reader accepts. Duplicated from
+# :data:`strands_robots.mesh.transport.factory._VALID_BACKENDS` rather than
+# imported, because this check runs on every session call while the factory
+# import belongs on the once-per-value report path only. A test pins the two
+# equal, so a backend added to one and not the other fails the suite instead of
+# leaving the two readers disagreeing about what is valid.
+_VALID_BACKENDS = ("zenoh", "iot", "bridge")
+
 
 def _backend_choice() -> str:
     """Read STRANDS_MESH_BACKEND. Defaults to ``zenoh``.
 
     An unknown value falls back to ``zenoh`` and is reported once per distinct
-    value, with the same message
-    :func:`strands_robots.mesh.transport.factory._select_backend` logs for that
-    value. Both readers answer the same question, and this is the one
+    value, through
+    :func:`strands_robots.mesh.transport.factory.unknown_backend_message` -- the
+    same builder :func:`~strands_robots.mesh.transport.factory._select_backend`
+    uses, quoting the raw value rather than the normalized one. Both readers
+    answer the same question, and this is the one
     :class:`strands_robots.mesh.Mesh` consults, so without the report a typo in
     the requested backend leaves every publish on the Zenoh path with nothing
     said about it.
     """
-    raw = os.getenv("STRANDS_MESH_BACKEND", "zenoh").strip().lower()
-    if raw not in ("zenoh", "iot", "bridge"):
+    raw = os.getenv("STRANDS_MESH_BACKEND", "zenoh")
+    normalized = raw.strip().lower()
+    if normalized not in _VALID_BACKENDS:
         if raw not in _reported_unknown_backends:
             _reported_unknown_backends.add(raw)
-            logger.warning("Unknown STRANDS_MESH_BACKEND=%r - falling back to 'zenoh'", raw)
+            # Imported here rather than at module scope: this function is
+            # consulted on every get_session / put / release_session call, and
+            # only the once-per-value report needs the factory, so the common
+            # path touches no import at all.
+            from strands_robots.mesh.transport.factory import unknown_backend_message
+
+            logger.warning("%s", unknown_backend_message(raw))
         return "zenoh"
-    return raw
+    return normalized
 
 
 def _is_transport_backend() -> bool:

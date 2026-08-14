@@ -17,9 +17,10 @@ Subsequent calls in the same process bump the refcount but do NOT switch
 backends. To change the backend, every consumer must release first
 (``release_transport`` until refcount is 0) and then a new selection is made.
 
-The factory is **not** consulted by :mod:`strands_robots.mesh.session` -
-that module owns the legacy zenoh path independently. The factory is the
-new path used when :class:`Mesh` is configured for ``backend="iot"``.
+:mod:`strands_robots.mesh.session` owns the legacy zenoh path independently
+but delegates every non-zenoh call to this factory, and reads the backend
+variable through :func:`_select_backend` so both modules accept the same set
+and report an unknown value once.
 """
 
 from __future__ import annotations
@@ -38,18 +39,79 @@ _TRANSPORT_REFS: int = 0
 _TRANSPORT_BACKEND: str = ""
 _LOCK = threading.Lock()
 
+#: Backends :func:`_construct` can build. Kept beside that dispatch so a new
+#: transport grows the accepted set and the constructor in one edit.
+_VALID_BACKENDS: tuple[str, ...] = ("zenoh", "iot", "bridge")
+
+#: Distinct unknown ``STRANDS_MESH_BACKEND`` values already reported. Latched
+#: per value rather than once per process: :mod:`strands_robots.mesh.session`
+#: reads the variable through :func:`_select_backend` on every publish, so an
+#: unlatched report would emit one line per message, while a single flag would
+#: swallow a second, different typo that the operator has equally not been told
+#: about. Tests clear this set.
+_REPORTED_UNKNOWN_BACKENDS: set[str] = set()
+
+
+def unknown_backend_message(raw: str) -> str:
+    """Build the report for an unrecognised ``STRANDS_MESH_BACKEND`` value.
+
+    Both readers of that variable log this: :func:`_select_backend` here, and
+    :func:`strands_robots.mesh.session._backend_choice`, which is the one
+    :class:`strands_robots.mesh.Mesh` consults on every publish. One builder
+    rather than a copy in each module because the wording carries the whole
+    substitution -- a peer that asked for a cloud transport comes up on the LAN
+    default while every other signal looks healthy -- so a reader told less than
+    the other is a reader told nothing useful.
+
+    Args:
+        raw: The value as read from the environment, unnormalized. The report
+            quotes it verbatim: a normalized whitespace-only value renders as
+            ``''``, which reads as unset, and unset is a different situation
+            (it falls back to ``zenoh`` by design and correctly says nothing).
+
+    Returns:
+        The formatted report, naming the variable, the accepted set and the
+        consequence of the substitution.
+    """
+    return (
+        f"Unknown STRANDS_MESH_BACKEND={raw!r} - falling back to 'zenoh'. "
+        f"Valid backends: {', '.join(_VALID_BACKENDS)}. "
+        "This peer joins the LAN mesh only; a cloud subscriber will not receive from it."
+    )
+
 
 def _select_backend() -> str:
-    """Resolve ``STRANDS_MESH_BACKEND``. Defaults to ``zenoh``.
+    """Resolve ``STRANDS_MESH_BACKEND``, defaulting to ``zenoh``.
 
-    Unknown values fall back to ``zenoh`` with a warning - the policy is to
-    keep the mesh running rather than crash the host on a typo.
+    This resolves the value for transport construction.
+    :func:`strands_robots.mesh.session._backend_choice` reads the same variable
+    to decide whether to delegate to a transport at all, and both report through
+    :func:`unknown_backend_message`, so neither reader can tell an operator less
+    than the other.
+
+    Acceptance is case- and whitespace-insensitive, but the report quotes the
+    **raw** value: the normalized form renders a variable set to whitespace as
+    ``''``, which reads as unset, and unset is a different situation (it falls
+    back to ``zenoh`` by design and correctly says nothing).
+
+    An unknown value falls back to ``zenoh`` rather than raising - a typo must
+    not stop a robot from joining any mesh at all - and is reported once per
+    distinct raw value. The report is the only channel that carries the
+    substitution: a peer asked for a cloud transport comes up on the LAN default
+    and every other signal looks healthy, so the message has to name the
+    variable, the accepted set and the consequence to be actionable.
+
+    Returns:
+        One of :data:`_VALID_BACKENDS`.
     """
-    raw = os.getenv("STRANDS_MESH_BACKEND", "zenoh").strip().lower()
-    if raw not in ("zenoh", "iot", "bridge"):
-        logger.warning("Unknown STRANDS_MESH_BACKEND=%r - falling back to 'zenoh'", raw)
-        return "zenoh"
-    return raw
+    raw = os.getenv("STRANDS_MESH_BACKEND", "zenoh")
+    normalized = raw.strip().lower()
+    if normalized in _VALID_BACKENDS:
+        return normalized
+    if raw not in _REPORTED_UNKNOWN_BACKENDS:
+        _REPORTED_UNKNOWN_BACKENDS.add(raw)
+        logger.warning("%s", unknown_backend_message(raw))
+    return "zenoh"
 
 
 def _construct(backend: str) -> MeshTransport:
