@@ -171,11 +171,33 @@ def hz_from_env(name: str) -> tuple[float | None, str | None]:
 # mesh tests pass unmodified.
 
 
+# Distinct unknown STRANDS_MESH_BACKEND values already reported. The report is
+# latched per value because _backend_choice() is consulted on every
+# get_session / put / release_session / current_session / session_alive call, so
+# an unlatched warning would repeat at publish rate instead of telling the
+# operator once that the backend they asked for is not the one running. A set
+# rather than a single flag so a process that reads two different typos reports
+# both; the value comes from the process environment, so it holds one entry in
+# practice.
+_reported_unknown_backends: set[str] = set()
+
+
 def _backend_choice() -> str:
-    """Read STRANDS_MESH_BACKEND. Defaults to ``zenoh``. Unknown values fall
-    back to ``zenoh`` (matches strands_robots.mesh.transport.factory)."""
+    """Read STRANDS_MESH_BACKEND. Defaults to ``zenoh``.
+
+    An unknown value falls back to ``zenoh`` and is reported once per distinct
+    value, with the same message
+    :func:`strands_robots.mesh.transport.factory._select_backend` logs for that
+    value. Both readers answer the same question, and this is the one
+    :class:`strands_robots.mesh.Mesh` consults, so without the report a typo in
+    the requested backend leaves every publish on the Zenoh path with nothing
+    said about it.
+    """
     raw = os.getenv("STRANDS_MESH_BACKEND", "zenoh").strip().lower()
     if raw not in ("zenoh", "iot", "bridge"):
+        if raw not in _reported_unknown_backends:
+            _reported_unknown_backends.add(raw)
+            logger.warning("Unknown STRANDS_MESH_BACKEND=%r - falling back to 'zenoh'", raw)
         return "zenoh"
     return raw
 

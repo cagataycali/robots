@@ -182,3 +182,120 @@ class TestSessionAliveDelegation:
             return_value=None,
         ):
             assert sess_mod.session_alive() is False
+
+
+def _session_module():
+    """Reach the session module without adding a second import form to this file."""
+    import strands_robots.mesh.session as module
+
+    return module
+
+
+def _factory_module():
+    """Reach the transport factory, the sibling reader of the same variable."""
+    import strands_robots.mesh.transport.factory as module
+
+    return module
+
+
+class TestUnknownBackendIsReported:
+    """An unknown STRANDS_MESH_BACKEND is reported, not silently downgraded.
+
+    ``_backend_choice`` is the reader :class:`strands_robots.mesh.Mesh` consults
+    (via ``_is_transport_backend``), so it is the one an operator's spelling
+    reaches. It answers the same question as
+    :func:`strands_robots.mesh.transport.factory._select_backend`, and its
+    docstring says so, so the two must agree about what they say as well as what
+    they return: a fleet asked for a backend it did not get should hear about it
+    once from whichever reader ran.
+    """
+
+    def test_an_unknown_backend_is_reported_once(self, monkeypatch, caplog):
+        """The value, the fallback and a WARNING level - the report contradicts a
+        success, so it has to be at least as loud as the run that follows it."""
+        session = _session_module()
+        session._reported_unknown_backends.clear()
+        monkeypatch.setenv("STRANDS_MESH_BACKEND", "iot-direct")
+
+        with caplog.at_level("DEBUG", logger=session.logger.name):
+            assert session._backend_choice() == "zenoh"
+
+        reported = [r for r in caplog.records if "STRANDS_MESH_BACKEND" in r.getMessage()]
+        assert reported, "an unknown backend was downgraded to zenoh with no record"
+        assert len(reported) == 1
+        assert reported[0].levelno >= 30
+        message = reported[0].getMessage()
+        assert "iot-direct" in message
+        assert "zenoh" in message
+
+    def test_the_report_is_latched_per_value(self, monkeypatch, caplog):
+        """The reader runs on every get_session / put / release_session call, so an
+        unlatched warning would repeat at publish rate."""
+        session = _session_module()
+        session._reported_unknown_backends.clear()
+        monkeypatch.setenv("STRANDS_MESH_BACKEND", "iot-direct")
+
+        with caplog.at_level("DEBUG", logger=session.logger.name):
+            for _ in range(5):
+                assert session._backend_choice() == "zenoh"
+
+        reported = [r for r in caplog.records if "STRANDS_MESH_BACKEND" in r.getMessage()]
+        assert len(reported) == 1, f"five reads produced {len(reported)} records"
+
+    def test_a_second_distinct_value_is_also_reported(self, monkeypatch, caplog):
+        """Latched per value rather than once per process: a second typo is a
+        second thing the operator has not been told."""
+        session = _session_module()
+        session._reported_unknown_backends.clear()
+
+        with caplog.at_level("DEBUG", logger=session.logger.name):
+            monkeypatch.setenv("STRANDS_MESH_BACKEND", "iot-direct")
+            session._backend_choice()
+            monkeypatch.setenv("STRANDS_MESH_BACKEND", "mqtt")
+            session._backend_choice()
+
+        values = [r.getMessage() for r in caplog.records if "STRANDS_MESH_BACKEND" in r.getMessage()]
+        assert len(values) == 2, values
+        assert any("iot-direct" in v for v in values)
+        assert any("mqtt" in v for v in values)
+
+    def test_every_supported_backend_stays_silent(self, monkeypatch, caplog):
+        """The over-reach control: a supported spelling is not a degradation."""
+        session = _session_module()
+        for backend in ("zenoh", "iot", "bridge"):
+            session._reported_unknown_backends.clear()
+            monkeypatch.setenv("STRANDS_MESH_BACKEND", backend)
+            caplog.clear()
+            with caplog.at_level("DEBUG", logger=session.logger.name):
+                assert session._backend_choice() == backend
+            assert [r for r in caplog.records if "STRANDS_MESH_BACKEND" in r.getMessage()] == []
+
+    def test_an_unset_variable_stays_silent(self, monkeypatch, caplog):
+        """The default is not a degradation either."""
+        session = _session_module()
+        session._reported_unknown_backends.clear()
+        monkeypatch.delenv("STRANDS_MESH_BACKEND", raising=False)
+
+        with caplog.at_level("DEBUG", logger=session.logger.name):
+            assert session._backend_choice() == "zenoh"
+
+        assert [r for r in caplog.records if "STRANDS_MESH_BACKEND" in r.getMessage()] == []
+
+    def test_both_readers_report_the_same_message(self, monkeypatch, caplog):
+        """The docstring claims this reader matches the factory. Pin the wording so
+        the two cannot drift into telling one operator less than the other."""
+        session, factory = _session_module(), _factory_module()
+        monkeypatch.setenv("STRANDS_MESH_BACKEND", "iot-direct")
+
+        session._reported_unknown_backends.clear()
+        with caplog.at_level("DEBUG", logger=session.logger.name):
+            session._backend_choice()
+        from_session = [r.getMessage() for r in caplog.records if "STRANDS_MESH_BACKEND" in r.getMessage()]
+
+        caplog.clear()
+        with caplog.at_level("DEBUG", logger=factory.logger.name):
+            factory._select_backend()
+        from_factory = [r.getMessage() for r in caplog.records if "STRANDS_MESH_BACKEND" in r.getMessage()]
+
+        assert from_session and from_factory, (from_session, from_factory)
+        assert from_session[0] == from_factory[0]
