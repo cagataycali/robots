@@ -436,7 +436,6 @@ class Gr00tPolicy(Policy):
             self._mode = "local"
             logger.info("GR00T local mode, model=%s", model_path)
             self._load_local_policy(model_path, embodiment_tag, device)
-            self._init_mappings()
         else:
             self._mode = "service"
             # ``port`` addresses the inference service this client dials, so a
@@ -452,6 +451,10 @@ class Gr00tPolicy(Policy):
             # Resolve api_token from env var if not provided as parameter
             resolved_token = api_token or os.environ.get("GROOT_API_TOKEN")
             self._client = Gr00tInferenceClient(host=host, port=port, api_token=resolved_token)
+
+        # Both transports resolve the caller's mappings. Parsing one needs no
+        # model - see :meth:`_init_mappings` for what service mode cannot do.
+        self._init_mappings()
 
         logger.info(
             "GR00T ready [mode=%s, version=%s, config=%s]",
@@ -476,8 +479,19 @@ class Gr00tPolicy(Policy):
     # Mapping initialization
 
     def _init_mappings(self) -> None:
-        """Initialize observation/action mappings after model load."""
+        """Resolve the observation/action mappings on either transport.
+
+        A mapping the caller supplied is a rename over flat dicts, so it is
+        parsed whether or not a model is loaded. What service mode cannot do
+        is *infer* a mapping it was not given, or cross-check one against the
+        model's declared channels: both read ``modality_configs``, which only
+        a loaded local policy exposes. So service mode resolves exactly what
+        the caller declared and nothing more, and an absent mapping stays
+        ``None`` there rather than acquiring an inferred one it could not
+        validate.
+        """
         if self._local_policy is None:
+            self._init_service_mappings()
             return
 
         mmc = self._get_modality_configs()
@@ -516,6 +530,42 @@ class Gr00tPolicy(Policy):
             self._obs_mapping.state,
             self._action_mapping.actions,
         )
+
+    def _init_service_mappings(self) -> None:
+        """Parse the caller's mappings with no model to validate against.
+
+        Only the parsers run here. Both are pure over the flat dict the
+        caller passed, so neither needs the model's declared channels -
+        whereas ``_auto_infer_observation_mapping`` and
+        ``_auto_infer_action_mapping`` do, which is why an omitted mapping
+        stays ``None`` instead of being inferred. A ``None`` mapping is the
+        signal both service consumers read to mean "send and return the
+        channels ``data_config`` declares, under their own names", so
+        leaving it unset is what keeps an unmapped caller unaffected.
+        """
+        if self._raw_obs_mapping is not None:
+            parsed = _parse_observation_mapping(self._raw_obs_mapping)
+            # ``_parse_observation_mapping`` falls back to ``"task"`` for the
+            # language key when it cannot read the model's. ``data_config``
+            # declares the key for the embodiment the caller named, and it is
+            # already the key the flat wire builder sends the instruction
+            # under, so prefer it over that fallback and keep an explicit
+            # ``language_key=`` above both.
+            lang = self._language_key_override or (
+                self.data_config.language_keys[0] if self.data_config.language_keys else parsed.language_key
+            )
+            self._obs_mapping = ObservationMapping(video=parsed.video, state=parsed.state, language_key=lang)
+
+        if self._raw_action_mapping is not None:
+            self._action_mapping = _parse_action_mapping(self._raw_action_mapping)
+
+        if self._obs_mapping is not None or self._action_mapping is not None:
+            logger.info(
+                "Service mappings (unvalidated - no model to check against): obs_video=%s, obs_state=%s, actions=%s",
+                self._obs_mapping.video if self._obs_mapping else None,
+                self._obs_mapping.state if self._obs_mapping else None,
+                self._action_mapping.actions if self._action_mapping else None,
+            )
 
     def _get_modality_configs(self) -> dict | None:
         """Get the model's per-embodiment modality configs.
@@ -892,12 +942,15 @@ class Gr00tPolicy(Policy):
     def _service_get_actions(self, robot_obs: dict[str, Any], instruction: str) -> list[dict[str, Any]]:
         """Service mode: build observation, call server, unpack."""
         assert self._client is not None, "Service client not initialized"
-        if self._obs_mapping is not None:
-            wire_obs = self._prepare_observation(robot_obs, instruction)
-            action_chunk = self._client.get_action(wire_obs)
-        else:
-            wire_obs = self._build_service_observation(robot_obs, instruction)
-            action_chunk = self._client.get_action(wire_obs)
+        # One builder, whether or not a mapping was supplied.
+        # :meth:`_prepare_observation` produces the nested
+        # ``{"video": {...}, "state": {...}}`` observation the in-process
+        # Isaac-GR00T policy takes; every server version this client dials
+        # expects the flat dotted keys :meth:`_build_service_observation`
+        # emits, so the mapping is applied inside that builder rather than by
+        # switching transports' payload shape.
+        wire_obs = self._build_service_observation(robot_obs, instruction)
+        action_chunk = self._client.get_action(wire_obs)
 
         # #187 wire-payload diagnostic: capture (wire_obs, action_chunk)
         # for offline diff against the LOCAL path. Zero overhead when
@@ -907,6 +960,48 @@ class Gr00tPolicy(Policy):
         self._maybe_dump_wire_payload("service", wire_obs, action_chunk)
 
         return self._unpack_service_actions(action_chunk)
+
+    def _wire_sources(self, prefix: str, declared: list[str]) -> dict[str, str]:
+        """Resolve ``{wire key: robot observation key}`` for one modality.
+
+        The service wire format is flat and dotted (``video.image``), so an
+        ``observation_mapping`` is honoured by naming the robot key each wire
+        key draws from - not by nesting, which is what
+        :meth:`_prepare_observation` does for the local transport. Two
+        sources, in precedence order:
+
+        1. The caller's mapping, which is authoritative and is the only way
+           to reach a wire key whose robot-side name differs from the model's.
+        2. ``data_config``'s declared keys, under the identity assumption that
+           the robot names a channel exactly as the model does.
+
+        The identity pass is a fallback rather than a replacement, so a
+        mapping that names only some channels *adds* those and leaves the
+        rest resolving as they did: no channel that reaches the server
+        without a mapping stops reaching it because one was supplied. That
+        differs deliberately from the local transport, which sends only what
+        the mapping names and zero-fills the remaining declared channels -
+        zero-filling needs the model's per-key DOF, which this transport
+        cannot read, and sending the robot's real value beats inventing one.
+
+        Args:
+            prefix: The modality's wire-key prefix, ``"video."`` or
+                ``"state."``.
+            declared: ``data_config``'s wire keys for that modality.
+
+        Returns:
+            Wire key to robot observation key. Keys the observation does not
+            carry are included; the caller skips them.
+        """
+        mapping = self._obs_mapping
+        sources: dict[str, str] = {}
+        if mapping is not None:
+            mapped = mapping.video if prefix == "video." else mapping.state
+            for robot_key, model_key in mapped.items():
+                sources[f"{prefix}{model_key}"] = robot_key
+        for wire_key in declared:
+            sources.setdefault(wire_key, wire_key.removeprefix(prefix))
+        return sources
 
     def _build_service_observation(self, robot_obs: dict[str, Any], instruction: str) -> dict:
         """Build flat-key observation for legacy service servers.
@@ -939,10 +1034,9 @@ class Gr00tPolicy(Policy):
         video_keys: list[str] = []
         state_keys: list[str] = []
 
-        for vk in self.data_config.video_keys:
-            bare = vk.removeprefix("video.")
-            if bare in robot_obs:
-                obs[vk] = robot_obs[bare]
+        for vk, robot_key in self._wire_sources("video.", self.data_config.video_keys).items():
+            if robot_key in robot_obs:
+                obs[vk] = robot_obs[robot_key]
                 video_keys.append(vk)
         # Match Isaac-GR00T training preprocessing for embodiments that need
         # it - see :func:`_apply_image_rotation_180_inplace` for the algebra.
@@ -951,10 +1045,9 @@ class Gr00tPolicy(Policy):
         # local-mode inference applies the same rotation.
         if self.data_config.image_rotation_180:
             _apply_image_rotation_180_inplace(obs, video_keys)
-        for sk in self.data_config.state_keys:
-            bare = sk.removeprefix("state.")
-            if bare in robot_obs:
-                arr = np.asarray(robot_obs[bare], dtype=np.float32)
+        for sk, robot_key in self._wire_sources("state.", self.data_config.state_keys).items():
+            if robot_key in robot_obs:
+                arr = np.asarray(robot_obs[robot_key], dtype=np.float32)
                 # Scalars (joint readings, gripper pose components, …)
                 # arrive as 0-D arrays. Promote to (D=1,) so the newaxis
                 # loop below produces the canonical (B, [T,] D) shape
@@ -984,7 +1077,16 @@ class Gr00tPolicy(Policy):
         """Unpack service response into per-timestep dicts.
 
         Applies ``_action_mapping`` if available (consistent with local mode),
-        otherwise returns bare model keys.
+        otherwise returns bare model keys. The falsy branch is reached by a
+        caller who supplied no ``action_mapping``: on this transport an
+        omitted mapping is not inferred, because inferring one needs the
+        model's declared channels. A mapping that *was* supplied is applied
+        here without that cross-check - ``ActionMapping.validate`` reads the
+        same modality configs, so service mode honours the rename it was
+        given and cannot tell the caller that a target channel is misspelled.
+        A key the mapping does not name is returned under
+        ``unmapped.<key>`` rather than dropped, so a partial or wrong mapping
+        is visible in the result instead of silently losing actuators.
         """
         normalized: dict = {}
         for key, value in action_chunk.items():
