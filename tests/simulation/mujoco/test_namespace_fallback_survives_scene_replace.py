@@ -86,7 +86,13 @@ base read mis-addressed                     this module
 ==========================================  =============================
 
 The swap is the one to note: both ``qvel`` blocks are zero at rest, so against
-the rest-state assertions it was invisible in all 8.
+the rest-state assertions it was invisible in all 8. Reproducing that row means
+swapping the pair on BOTH surfaces these cases read - ``base_lin_vel`` /
+``base_ang_vel`` in :meth:`_get_sim_observation`, and ``linear_velocity`` /
+``angular_velocity`` in ``get_robot_state``, which addresses ``qvel`` itself
+rather than delegating. Swapping only the first fails 2 of 8, because the
+``get_robot_state`` case reads the unmutated copy - a partial reproduction that
+looks like the table has drifted.
 
 Which spellings a replacement carries is the premise every case rests on, so it
 is asserted on the recompiled model itself (:func:`_assert_replacement_premise`)
