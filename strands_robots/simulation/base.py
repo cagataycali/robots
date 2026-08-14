@@ -2433,7 +2433,10 @@ class SimEngine(ABC):
                 PD and the gait diverges, so the documented quickstart silently
                 falls over without it. Set ``False`` to manage the controller
                 yourself or to drive a torque-actuated scene directly. No-op for
-                non-WBC policies and on backends without the hook.
+                non-WBC policies and on backends without the hook. The install is
+                refused with ``status="error"`` when the scene needs the shim but
+                the policy's joint set cannot be wired to this model: a rollout
+                on that pairing would command joints the policy never resolved.
             stop_when: Optional semantic early-return condition: end the
                 rollout as soon as the WORLD reaches a state, not only when
                 the step budget runs out - which turns a monolithic rollout
@@ -2681,9 +2684,23 @@ class SimEngine(ABC):
         # cleanup callable restores the scene in the finally below. Opt out with
         # wbc_install_torque_control=False (e.g. when you manage the controller
         # yourself or drive a torque-actuated scene directly).
-        controller_cleanup = (
-            self._maybe_install_wbc_torque_control(policy, robot_name) if wbc_install_torque_control else None
-        )
+        try:
+            controller_cleanup = (
+                self._maybe_install_wbc_torque_control(policy, robot_name) if wbc_install_torque_control else None
+            )
+        except RuntimeError as exc:
+            # The hook declines by RETURNING None when the shim is unnecessary,
+            # but it RAISES when the scene needs one and the policy's joint set
+            # cannot be wired to this model. That is a caller error about the
+            # robot/policy pairing, and this method's contract is a result dict,
+            # so it is reported here rather than escaping past every caller that
+            # reads ``status``. Narrow to RuntimeError - what the installer
+            # raises for an unwirable joint set - so a programming error inside
+            # the hook still surfaces.
+            return {
+                "status": "error",
+                "content": [{"text": f"run_policy: {exc}"}],
+            }
 
         try:
             runner = PolicyRunner(self)

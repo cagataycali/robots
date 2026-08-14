@@ -1913,6 +1913,14 @@ class MuJoCoSimEngine(
         :func:`~strands_robots.policies.wbc.install_wbc_torque_control` and
         returns its :meth:`uninstall` so the scene is restored after the run.
 
+        Raises ``RuntimeError`` when the gate accepts the scene but
+        :func:`~strands_robots.policies.wbc.install_wbc_torque_control` cannot
+        wire the policy's joint set to it. The gate is satisfied by *any* WBC
+        joint on a position servo while the installer needs *every* one, so a
+        model missing a single joint reaches it.
+        :meth:`~strands_robots.simulation.base.SimEngine.run_policy` reports
+        that as ``status="error"``.
+
         Returns ``None`` (no-op) in five cases, in the order they are checked:
         ``[wbc]`` is not installed; ``policy`` is not a ``WBCPolicy``; the sim
         has no compiled world; a controller is already registered (a manual

@@ -126,8 +126,12 @@ _XML_NO_WBC_JOINTS = """
 def _hook_no_op_guards() -> int:
     """Count the hook's ``return None`` early-outs by AST.
 
-    The hook's only other exit returns the cleanup callable, so this is exactly
-    the number of conditions under which it declines to touch the scene.
+    The hook has two further exits: it returns the cleanup callable on a
+    successful install, and it propagates the ``RuntimeError`` raised when the
+    gate accepts a scene whose joint set the installer cannot wire (pinned by
+    the partial-rig module beside this one). So this count is the number of
+    conditions under which it declines to touch the scene, not the number of
+    ways it can leave.
     """
     from strands_robots.simulation.mujoco.simulation import Simulation
 
