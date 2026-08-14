@@ -1,0 +1,51 @@
+[
+  {
+    "label": "M1 delete the world-less guard",
+    "new_failed": 4,
+    "old_failed": 0,
+    "caught_by_new": true,
+    "caught_by_old": false
+  },
+  {
+    "label": "M2 keep the world check, discard the refusal",
+    "new_failed": 4,
+    "old_failed": 0,
+    "caught_by_new": true,
+    "caught_by_old": false
+  },
+  {
+    "label": "M3 delete the duplicate-name refusal",
+    "new_failed": 1,
+    "old_failed": 0,
+    "caught_by_new": true,
+    "caught_by_old": false
+  },
+  {
+    "label": "M4 delete the unknown-source refusal",
+    "new_failed": 4,
+    "old_failed": 0,
+    "caught_by_new": true,
+    "caught_by_old": false
+  },
+  {
+    "label": "M5 delete the keyframe refusal (silently ignore it)",
+    "new_failed": 3,
+    "old_failed": 0,
+    "caught_by_new": true,
+    "caught_by_old": false
+  },
+  {
+    "label": "M6 reword the keyframe message locally",
+    "new_failed": 1,
+    "old_failed": 0,
+    "caught_by_new": true,
+    "caught_by_old": false
+  },
+  {
+    "label": "M7 discard the asset-resolution refusal",
+    "new_failed": 4,
+    "old_failed": 0,
+    "caught_by_new": true,
+    "caught_by_old": false
+  }
+]
