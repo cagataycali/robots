@@ -27,10 +27,10 @@ this file measures how far that masking survives the pin:
 ======================================  =============================
 retry deleted                           this module
 ======================================  =============================
-``_robot_base_free_joint``              3 of 6 tests fail
-``_get_sim_observation`` loop           2 of 6 tests fail
-``_robot_free_base_joint_id``           6 pass - still masked
-all three                               5 of 6 tests fail
+``_robot_base_free_joint``              3 of 8 tests fail
+``_get_sim_observation`` loop           2 of 8 tests fail
+``_robot_free_base_joint_id``           8 pass - still masked
+all three                               5 of 8 tests fail
 ======================================  =============================
 
 So two of the three are now individually observable. The third is masked
@@ -45,6 +45,26 @@ The last test is what keeps the rest non-vacuous: the fallback resolves by bare
 NAME, so when the replacement scene's joints are renamed there is nothing to find
 and the base state must be absent rather than borrowed from an unrelated free
 joint.
+
+Deleting a retry is not the only way this family breaks. The retry is a
+*fallback*, so the other direction is a lookup that stops preferring the
+namespaced name - a bare-name lookup, or a retry hoisted to run unconditionally
+over a successful prefixed hit. Both spellings can be compiled at once, and then
+the two answers differ, so the last two tests pin the precedence against a decoy
+body owning the bare names:
+
+==========================================  =============================
+lookup rewritten                            this module
+==========================================  =============================
+bare name used unconditionally              2 of 8 tests fail
+retry runs unconditionally                  2 of 8 tests fail
+==========================================  =============================
+
+Neither mutation is observable to any of the six tests above, because a scene
+that carries only one spelling cannot tell the two readings apart. This matters
+most for the refactor #2262 defers: collapsing the three copies into one shared
+helper is precisely the change that could reorder the lookup, and the pin is what
+would catch it.
 
 ``_robot_free_base_joint_id`` is asserted through a direct call because neither
 of its callers is reachable here. Terrain seating needs a heightfield, and the
@@ -139,6 +159,39 @@ RENAMED_JOINTS_XML = """
 """
 
 BASE_KEYS = {"base_pos", "base_quat", "base_lin_vel", "base_ang_vel"}
+
+# A replacement carrying BOTH spellings of the robot's hinge: its own
+# ``hum/hip`` and an unrelated ``hip`` on a decoy body. The retry is a FALLBACK,
+# so the prefixed name must still win - a lookup rewritten to use the bare name,
+# or a retry hoisted to run unconditionally, would report the decoy's angle as
+# this robot's and pass every test above. That is the multi-robot failure the
+# namespace exists to prevent, and the refactor #2262 defers (collapsing the
+# three copies into one helper) is exactly the change that could reorder it.
+BOTH_SPELLINGS_XML = """
+<mujoco model="replacement_both_spellings">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002"/>
+  <worldbody>
+    <light name="main" pos="0 0 3" dir="0 0 -1"/>
+    <body name="torso" pos="0 0 0.6">
+      <freejoint name="hum/floating_base_joint"/>
+      <geom type="box" size="0.1 0.05 0.2" rgba="0.3 0.3 0.8 1"/>
+      <body name="thigh" pos="0 0 -0.2">
+        <geom type="capsule" size="0.03" fromto="0 0 0 0 0 -0.3" rgba="0.8 0.3 0.3 1"/>
+        <joint name="hum/hip" type="hinge" axis="0 1 0" range="-3 3"/>
+      </body>
+    </body>
+    <body name="decoy" pos="1 0 0.3">
+      <freejoint name="floating_base_joint"/>
+      <geom type="box" size="0.05 0.05 0.05" rgba="0.5 0.5 0.5 1"/>
+      <body name="decoy_link" pos="0 0 0.05">
+        <geom type="capsule" size="0.02" fromto="0 0 0 0 0 0.1" rgba="0.5 0.5 0.5 1"/>
+        <joint name="hip" type="hinge" axis="0 1 0" range="-3 3"/>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
+"""
 
 
 @pytest.fixture
@@ -255,3 +308,37 @@ def test_base_state_disappears_when_the_bare_name_misses_too(sim):
     assert obs == {}, f"no registered joint resolves, so the observation is empty: {sorted(obs)}"
 
     assert sim._robot_free_base_joint_id(world._model, world.robots["mob"]) == -1
+
+
+def _joint_id(sim: Simulation, name: str) -> int:
+    world = sim._world
+    assert world is not None
+    return sim._mj.mj_name2id(world._model, sim._mj.mjtObj.mjOBJ_JOINT, name)
+
+
+def test_the_namespaced_joint_is_preferred_over_a_bare_homonym(sim):
+    """With both ``hum/hip`` and a decoy ``hip`` compiled, the observation reads
+    ours. The retry is a fallback, so it must not fire when the prefixed lookup
+    succeeds - otherwise an unrelated body's angle is reported as this robot's."""
+    _add_and_replace(sim, "hum", NAMED_BASE_XML, BOTH_SPELLINGS_XML)
+    world = sim._world
+    model, data = world._model, world._data
+
+    ours, decoy = _joint_id(sim, "hum/hip"), _joint_id(sim, "hip")
+    assert ours >= 0 and decoy >= 0 and ours != decoy, "the scene must compile both spellings"
+    data.qpos[model.jnt_qposadr[ours]] = 0.25
+    data.qpos[model.jnt_qposadr[decoy]] = -0.75
+    sim._mj.mj_forward(model, data)
+
+    obs = sim.get_observation(robot_name="hum", skip_images=True)
+    assert obs["hip"] == pytest.approx(0.25), "the bare homonym was read instead of the robot's own joint"
+
+
+def test_the_namespaced_free_base_is_preferred_over_a_bare_homonym(sim):
+    """Same precedence on the free-base finder: the decoy body carries a free
+    joint under the bare name, and the finder must return the robot's own."""
+    _add_and_replace(sim, "hum", NAMED_BASE_XML, BOTH_SPELLINGS_XML)
+    world = sim._world
+
+    resolved = sim._robot_free_base_joint_id(world._model, world.robots["hum"])
+    assert resolved == _joint_id(sim, "hum/floating_base_joint"), "the finder resolved the decoy's free joint"
