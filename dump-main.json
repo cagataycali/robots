@@ -1,0 +1,54 @@
+{
+  "tree": "/tmp/wt-main-31763756842",
+  "cells": {
+    "no entry|named": {
+      "asked": true,
+      "published": false,
+      "status": "error",
+      "argv_flag": null
+    },
+    "no entry|raw": {
+      "asked": true,
+      "published": false,
+      "status": "error",
+      "argv_flag": null
+    },
+    "push_to_hub|named": {
+      "asked": true,
+      "published": false,
+      "status": "error",
+      "argv_flag": null
+    },
+    "push_to_hub|raw": {
+      "asked": false,
+      "published": true,
+      "status": "success",
+      "argv_flag": "--policy.push_to_hub=false"
+    },
+    "policy.push_to_hub|named": {
+      "asked": false,
+      "published": true,
+      "status": "success",
+      "argv_flag": "--policy.push_to_hub=true"
+    },
+    "policy.push_to_hub|raw": {
+      "asked": false,
+      "published": false,
+      "status": "error",
+      "argv_flag": null
+    }
+  },
+  "description": {
+    "entry": "Push the trained checkpoint to the HF Hub at the end. Publishing is an outward-facing action, so a true value requires operator approval through ``tool_context`` (or an explicit STRANDS_TRAIN_EXTRA_FLAGS_ALLOW entry) exactly as the ``extra_flags={'push_to_hub': True}`` spelling already does. The default false value emits the flag unchanged and is not gated.",
+    "names_allow_key": null,
+    "example_key": "push_to_hub",
+    "reader_would_set": "push_to_hub",
+    "claims_parity": true
+  },
+  "following_the_description": {
+    "asked": true,
+    "published": false,
+    "status": "error",
+    "argv_flag": null
+  }
+}
