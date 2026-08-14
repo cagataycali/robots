@@ -38,6 +38,11 @@ lerobot_teleoperate = tele_mod.lerobot_teleoperate
 
 _LOGGER_NAME = "strands_robots.tools.lerobot_teleoperate"
 
+#: Session name used by the failure fixtures. Deliberately not a substring of
+#: the record's own prose: ``"cal"`` was, because the record says
+#: ``"calibration"``, which made the "names the session" assertion vacuous.
+_SESSION = "wrist-rig-7"
+
 # The store prunes any record whose pid is not a live process on every read, so
 # a fake pid would make the session vanish before a test could read it back.
 # This process's own pid is live for the duration of the test, which is what a
@@ -117,7 +122,7 @@ def _start_with_auto_accept(monkeypatch: pytest.MonkeyPatch, *, fail: bool) -> t
     monkeypatch.setattr(tele_mod.time, "sleep", lambda s: None)
     result = lerobot_teleoperate(
         action="start",
-        session_name="cal",
+        session_name=_SESSION,
         robot_type="so101_follower",
         teleop_type="so101_leader",
         auto_accept_calibration=True,
@@ -144,7 +149,7 @@ def test_a_failed_auto_accept_is_reported(monkeypatch: pytest.MonkeyPatch, caplo
     assert records, "a failed auto-accept left no record at all"
     message = records[0].getMessage()
     assert records[0].levelno >= logging.WARNING, f"reported below WARNING: {records[0].levelname}"
-    assert "cal" in message, f"the record does not name the session: {message}"
+    assert _SESSION in message, f"the record does not name the session: {message}"
     assert "Broken pipe" in message, f"the record does not carry the reason: {message}"
 
 
@@ -162,6 +167,27 @@ def test_a_failed_auto_accept_points_at_the_prompt_and_the_log(
     assert "status" in message and "log" in message, f"the record offers no next step: {message}"
 
 
+def test_the_session_name_needle_is_not_satisfiable_by_the_prose(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The "names the session" assertion must not be satisfiable by the record's
+    own wording.
+
+    With the name stripped out, the remaining prose must not contain it. A name
+    of ``"cal"`` failed this: the record says ``"calibration"``, so the
+    assertion held whether or not the session was ever named.
+    """
+    with caplog.at_level(logging.WARNING, logger=_LOGGER_NAME):
+        _start_with_auto_accept(monkeypatch, fail=True)
+
+    reported = [r.getMessage() for r in caplog.records if "auto-accept" in r.getMessage()]
+    assert reported, "a failed auto-accept left no record to inspect"
+    prose = reported[0].replace(repr(_SESSION), "").replace(_SESSION, "")
+    assert _SESSION not in prose, (
+        f"{_SESSION!r} occurs in the record's own prose, so naming the session proves nothing: {prose}"
+    )
+
+
 def test_the_start_result_still_reports_success_when_the_auto_accept_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -175,7 +201,7 @@ def test_the_start_result_still_reports_success_when_the_auto_accept_fails(
 
     assert result["status"] == "success"
     assert "Session Started" in _texts(result)
-    assert SessionManager().get_session("cal") is not None, (
+    assert SessionManager().get_session(_SESSION) is not None, (
         "the store must still report the session running - that is what makes the "
         "silent failure indistinguishable from a healthy start"
     )
@@ -191,7 +217,7 @@ def test_a_successful_auto_accept_stays_silent(
     the failure is newly reported; this is the over-reach control for that.
     """
     with caplog.at_level(logging.DEBUG, logger=_LOGGER_NAME):
-        _result, _proc = _start_with_auto_accept(monkeypatch, fail=False)
+        _start_with_auto_accept(monkeypatch, fail=False)
 
     assert [r.getMessage() for r in caplog.records if "auto-accept" in r.getMessage()] == []
 
