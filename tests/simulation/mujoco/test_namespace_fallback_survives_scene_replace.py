@@ -66,6 +66,16 @@ most for the refactor #2262 defers: collapsing the three copies into one shared
 helper is precisely the change that could reorder the lookup, and the pin is what
 would catch it.
 
+Which spellings a replacement carries is the premise every case rests on, so it
+is asserted on the recompiled model itself (:func:`_assert_replacement_premise`)
+rather than on ``robot.namespace`` alone. Checking the registry establishes only
+what the registry still believes: were ``replace_scene_mjcf`` ever to namespace
+what it compiles, the prefixed lookup would resolve, no retry body would execute,
+and the six namespace-dropping cases would all still pass - going green while
+pinning nothing, and quietly ceasing to reproduce the tables above. The two
+precedence cases opt into the opposite premise (``prefixed_resolves=True``),
+since a decoy scene must carry both spellings for the answers to differ.
+
 ``_robot_free_base_joint_id`` is asserted through a direct call because neither
 of its callers is reachable here. Terrain seating needs a heightfield, and the
 replacement MJCF cannot carry one (a scene exported from a seated world fails to
@@ -209,7 +219,58 @@ def _write(xml: str) -> str:
     return path
 
 
-def _add_and_replace(sim: Simulation, name: str, robot_xml: str, replacement: str) -> None:
+def _joint_id(sim: Simulation, name: str) -> int:
+    world = sim._world
+    assert world is not None
+    return sim._mj.mj_name2id(world._model, sim._mj.mjtObj.mjOBJ_JOINT, name)
+
+
+def _assert_replacement_premise(sim: Simulation, name: str, *, prefixed_resolves: bool, bare_resolves: bool) -> None:
+    """Assert on the COMPILED MODEL which spellings of ``name``'s joints exist.
+
+    ``robot.namespace`` only records what the registry believes. Without this the
+    namespace-dropping cases would keep passing against a ``replace_scene_mjcf``
+    that started namespacing its output, with no retry body executed at all. See
+    the module docstring.
+    """
+    world = sim._world
+    assert world is not None
+    joint_names = world.robots[name].joint_names
+    assert joint_names, f"{name!r} registered no joints, so no lookup is exercised"
+
+    prefixed = [jnt for jnt in joint_names if _joint_id(sim, f"{name}/{jnt}") >= 0]
+    bare = [jnt for jnt in joint_names if _joint_id(sim, jnt) >= 0]
+
+    if prefixed_resolves:
+        assert prefixed, (
+            f"the replacement carries no '{name}/' joint, so the prefixed lookup cannot win and "
+            "this case is not exercising precedence"
+        )
+    else:
+        assert not prefixed, (
+            f"the replacement still carries {[f'{name}/{jnt}' for jnt in prefixed]}: the prefixed "
+            "lookup resolves, so no namespace-fallback retry is driven and this case would pass "
+            "while pinning nothing"
+        )
+
+    if bare_resolves:
+        assert bare, (
+            f"no registered joint of {name!r} resolves by bare name either ({joint_names}): the "
+            "retry has nothing to find, so the assertions below would be vacuous"
+        )
+    else:
+        assert not bare, f"the replacement still resolves {bare} by bare name, so this case is not exercising a miss"
+
+
+def _add_and_replace(
+    sim: Simulation,
+    name: str,
+    robot_xml: str,
+    replacement: str,
+    *,
+    prefixed_resolves: bool = False,
+    bare_resolves: bool = True,
+) -> None:
     """Register ``name`` (which namespaces its joints), then replace the scene."""
     sim.add_robot(name, urdf_path=_write(robot_xml))
     world = sim._world
@@ -220,6 +281,8 @@ def _add_and_replace(sim: Simulation, name: str, robot_xml: str, replacement: st
     # The premise of the whole family: the registry is not rewritten, so every
     # lookup still prefixes with a namespace the compiled model no longer has.
     assert world.robots[name].namespace == f"{name}/", "replace_scene_mjcf must not rewrite the namespace"
+    # ... and the other half of it, on the model that was actually compiled.
+    _assert_replacement_premise(sim, name, prefixed_resolves=prefixed_resolves, bare_resolves=bare_resolves)
 
 
 def test_named_floating_base_observation_survives_namespace_dropping_replace(sim):
@@ -300,7 +363,7 @@ def test_base_state_disappears_when_the_bare_name_misses_too(sim):
     """The pin above is not vacuous: the fallback resolves by bare NAME, so a
     replacement scene whose joints are renamed leaves nothing to find - the base
     state must be absent rather than borrowed from an unrelated free joint."""
-    _add_and_replace(sim, "mob", UNNAMED_BASE_XML, RENAMED_JOINTS_XML)
+    _add_and_replace(sim, "mob", UNNAMED_BASE_XML, RENAMED_JOINTS_XML, bare_resolves=False)
     world = sim._world
 
     obs = sim.get_observation(robot_name="mob", skip_images=True)
@@ -310,17 +373,11 @@ def test_base_state_disappears_when_the_bare_name_misses_too(sim):
     assert sim._robot_free_base_joint_id(world._model, world.robots["mob"]) == -1
 
 
-def _joint_id(sim: Simulation, name: str) -> int:
-    world = sim._world
-    assert world is not None
-    return sim._mj.mj_name2id(world._model, sim._mj.mjtObj.mjOBJ_JOINT, name)
-
-
 def test_the_namespaced_joint_is_preferred_over_a_bare_homonym(sim):
     """With both ``hum/hip`` and a decoy ``hip`` compiled, the observation reads
     ours. The retry is a fallback, so it must not fire when the prefixed lookup
     succeeds - otherwise an unrelated body's angle is reported as this robot's."""
-    _add_and_replace(sim, "hum", NAMED_BASE_XML, BOTH_SPELLINGS_XML)
+    _add_and_replace(sim, "hum", NAMED_BASE_XML, BOTH_SPELLINGS_XML, prefixed_resolves=True)
     world = sim._world
     model, data = world._model, world._data
 
@@ -337,7 +394,7 @@ def test_the_namespaced_joint_is_preferred_over_a_bare_homonym(sim):
 def test_the_namespaced_free_base_is_preferred_over_a_bare_homonym(sim):
     """Same precedence on the free-base finder: the decoy body carries a free
     joint under the bare name, and the finder must return the robot's own."""
-    _add_and_replace(sim, "hum", NAMED_BASE_XML, BOTH_SPELLINGS_XML)
+    _add_and_replace(sim, "hum", NAMED_BASE_XML, BOTH_SPELLINGS_XML, prefixed_resolves=True)
     world = sim._world
 
     resolved = sim._robot_free_base_joint_id(world._model, world.robots["hum"])
