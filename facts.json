@@ -1,0 +1,93 @@
+{
+  "branch": {
+    "wire_zid": null,
+    "published_key": "strands/safety/resume",
+    "body_carries_source_zid": false,
+    "body_carries_proof": true,
+    "resume_status": {
+      "status": "ok"
+    },
+    "receiver_locked_before": true,
+    "receiver_locked_after": false,
+    "fleet_available": true,
+    "verify_error": null,
+    "tree": "/tmp/robots-mine-31755440387"
+  },
+  "m2": {
+    "wire_zid": "deadbeefdeadbeef",
+    "published_key": "strands/safety/resume",
+    "body_carries_source_zid": false,
+    "body_carries_proof": true,
+    "resume_status": {
+      "status": "ok"
+    },
+    "receiver_locked_before": true,
+    "receiver_locked_after": true,
+    "fleet_available": false,
+    "verify_error": null,
+    "tree": "/tmp/robots-mine-31755440387"
+  },
+  "coverage": {
+    "missing_before": 31,
+    "missing_after": 22,
+    "pct_before": 97.54,
+    "pct_after": 98.26,
+    "closed": [
+      3281,
+      3282,
+      3325,
+      3326,
+      3354,
+      3355,
+      3459,
+      3460,
+      3461
+    ],
+    "opened": []
+  },
+  "mutations": [
+    [
+      "M1 wire_zid: let the ImportError escape",
+      3,
+      0
+    ],
+    [
+      "M2 wire_zid: bind the proof to the zid anyway",
+      3,
+      0
+    ],
+    [
+      "M3 publish: do not strip the body",
+      1,
+      0
+    ],
+    [
+      "M4 publish: drop the envelope entirely",
+      1,
+      0
+    ],
+    [
+      "M5 local_session_zid: let it escape",
+      1,
+      0
+    ],
+    [
+      "M6 publisher_for: let it escape",
+      1,
+      0
+    ],
+    [
+      "M7 docs: drop the enumeration bullet",
+      1,
+      0
+    ]
+  ],
+  "gate": {
+    "suite": "29751 passed / 266 skipped / 0 failed (677.62s)",
+    "pristine": 29740,
+    "pre_existing_mesh_cases": 3136,
+    "new_cases": 11,
+    "ast_digest": "83ee20e2c5879bf1",
+    "base": "aef98a22"
+  }
+}
