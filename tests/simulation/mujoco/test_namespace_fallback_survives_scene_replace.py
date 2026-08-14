@@ -66,6 +66,28 @@ most for the refactor #2262 defers: collapsing the three copies into one shared
 helper is precisely the change that could reorder the lookup, and the pin is what
 would catch it.
 
+The base signals read back are PLANTED (:func:`_plant_known_state`), not the
+compiled rest state. That rest state - identity quaternion, zero twist, zero
+hinge angle - is also what a read from the wrong joint, the wrong ``qpos`` offset
+or the wrong ``qvel`` offset returns, so asserting it cannot separate a correct
+address from several incorrect ones. ``base_lin_vel`` / ``base_ang_vel`` are the
+sharpest case: they are addressed through ``jnt_dofadr`` into ``qvel``, computed
+independently of ``qpos``'s ``jnt_qposadr``, so swapping the two blocks is
+invisible at rest and a locomotion policy reading ``base_lin_vel`` is exactly the
+consumer that would notice.
+
+Planting makes the address itself observable, which deleting a retry never was:
+
+==========================================  =============================
+base read mis-addressed                     this module
+==========================================  =============================
+``base_lin_vel``/``base_ang_vel`` swapped   3 of 8 tests fail
+``base_quat`` off the ``qpos`` offset       2 of 8 tests fail
+==========================================  =============================
+
+The swap is the one to note: both ``qvel`` blocks are zero at rest, so against
+the rest-state assertions it was invisible in all 8.
+
 Which spellings a replacement carries is the premise every case rests on, so it
 is asserted on the recompiled model itself (:func:`_assert_replacement_premise`)
 rather than on ``robot.namespace`` alone. Checking the registry establishes only
@@ -86,6 +108,7 @@ run wherever that extra is absent.
 
 import os
 import tempfile
+from typing import Any
 
 import pytest
 
@@ -170,6 +193,17 @@ RENAMED_JOINTS_XML = """
 
 BASE_KEYS = {"base_pos", "base_quat", "base_lin_vel", "base_ang_vel"}
 
+# Distinct in every component and different from the compiled rest state, so a
+# wrong joint, a wrong ``qpos`` offset and a wrong ``qvel`` offset each fail with
+# a value that names which. The quaternion is unit-norm (+90 deg about Y) so
+# ``mj_forward`` cannot alter it by renormalising.
+KNOWN_BASE_POS = [0.11, -0.22, 0.83]
+KNOWN_BASE_QUAT = [0.7071068, 0.0, 0.7071068, 0.0]
+KNOWN_BASE_LIN_VEL = [0.41, -0.52, 0.63]
+KNOWN_BASE_ANG_VEL = [0.13, 0.24, 0.37]
+KNOWN_HINGE_POS = 0.37
+KNOWN_HINGE_VEL = -0.29
+
 # A replacement carrying BOTH spellings of the robot's hinge: its own
 # ``hum/hip`` and an unrelated ``hip`` on a decoy body. The retry is a FALLBACK,
 # so the prefixed name must still win - a lookup rewritten to use the bare name,
@@ -217,6 +251,56 @@ def _write(xml: str) -> str:
     with open(path, "w") as f:
         f.write(xml)
     return path
+
+
+def _single_joint_of_type(sim: Simulation, model: Any, jnt_type: Any, label: str) -> int:
+    """Locate the scene's only joint of ``jnt_type`` by scanning ``jnt_type``.
+
+    Deliberately not obtained from the helper under test: deriving the address
+    from the code whose result is compared against it would make the comparison
+    circular.
+    """
+    ids = [i for i in range(model.njnt) if model.jnt_type[i] == jnt_type]
+    assert len(ids) == 1, f"expected exactly one {label} joint in the replacement scene, found ids {ids}"
+    return int(ids[0])
+
+
+def _plant_known_state(sim: Simulation) -> None:
+    """Write the known base pose/twist and hinge state into the replaced scene."""
+    mj = sim._mj
+    world = sim._world
+    assert world is not None
+    model, data = world._model, world._data
+
+    free_id = _single_joint_of_type(sim, model, mj.mjtJoint.mjJNT_FREE, "free")
+    qadr = int(model.jnt_qposadr[free_id])
+    vadr = int(model.jnt_dofadr[free_id])
+    data.qpos[qadr : qadr + 3] = KNOWN_BASE_POS
+    data.qpos[qadr + 3 : qadr + 7] = KNOWN_BASE_QUAT
+    data.qvel[vadr : vadr + 3] = KNOWN_BASE_LIN_VEL
+    data.qvel[vadr + 3 : vadr + 6] = KNOWN_BASE_ANG_VEL
+
+    hinge_id = _single_joint_of_type(sim, model, mj.mjtJoint.mjJNT_HINGE, "hinge")
+    data.qpos[int(model.jnt_qposadr[hinge_id])] = KNOWN_HINGE_POS
+    data.qvel[int(model.jnt_dofadr[hinge_id])] = KNOWN_HINGE_VEL
+
+    # Recompute derived quantities without integrating, so the reads below see
+    # exactly what was planted.
+    mj.mj_forward(model, data)
+
+
+def _assert_planted_base(
+    pos: list[float], quat: list[float], lin_vel: list[float], ang_vel: list[float], *, where: str
+) -> None:
+    """Assert the four base signals are the planted ones, component by component."""
+    assert pos == pytest.approx(KNOWN_BASE_POS, abs=1e-6), f"{where}: base position is not the planted pose"
+    assert quat == pytest.approx(KNOWN_BASE_QUAT, abs=1e-6), f"{where}: base orientation is not the planted quat"
+    assert lin_vel == pytest.approx(KNOWN_BASE_LIN_VEL, abs=1e-6), (
+        f"{where}: base linear velocity is not the planted twist - a wrong qvel dof address reads zeros here"
+    )
+    assert ang_vel == pytest.approx(KNOWN_BASE_ANG_VEL, abs=1e-6), (
+        f"{where}: base angular velocity is not the planted twist - a wrong qvel dof address reads zeros here"
+    )
 
 
 def _joint_id(sim: Simulation, name: str) -> int:
@@ -290,18 +374,18 @@ def test_named_floating_base_observation_survives_namespace_dropping_replace(sim
     name after the replace, so the observation keeps its base state AND its
     per-joint scalars."""
     _add_and_replace(sim, "hum", NAMED_BASE_XML, NAMED_BASE_UNPREFIXED)
+    _plant_known_state(sim)
 
     obs = sim.get_observation(robot_name="hum", skip_images=True)
 
     assert BASE_KEYS <= set(obs), f"floating-base state lost after replace: {sorted(obs)}"
-    assert len(obs["base_pos"]) == 3
-    assert len(obs["base_quat"]) == 4
-    assert len(obs["base_lin_vel"]) == 3
-    assert len(obs["base_ang_vel"]) == 3
+    _assert_planted_base(
+        obs["base_pos"], obs["base_quat"], obs["base_lin_vel"], obs["base_ang_vel"], where="get_observation"
+    )
     # The scalar joints go through the same retry, so they are part of the pin:
     # without it the observation would be base state and nothing else.
-    assert obs["hip"] == pytest.approx(0.0)
-    assert obs["hip.vel"] == pytest.approx(0.0)
+    assert obs["hip"] == pytest.approx(KNOWN_HINGE_POS, abs=1e-6)
+    assert obs["hip.vel"] == pytest.approx(KNOWN_HINGE_VEL, abs=1e-6)
     # A free joint is never reported as a scalar (its qpos is [xyz + quat]).
     assert "floating_base_joint" not in obs
 
@@ -314,20 +398,23 @@ def test_unnamed_mobile_base_observation_survives_namespace_dropping_replace(sim
 
     assert sim._world.robots["mob"].joint_names == ["shoulder"], "the base freejoint is unnamed, so not enumerated"
 
+    _plant_known_state(sim)
+
     obs = sim.get_observation(robot_name="mob", skip_images=True)
 
     assert BASE_KEYS <= set(obs), f"mobile base observed as a fixed-base arm after replace: {sorted(obs)}"
-    # The base is the base_plate at z=0.1 with identity orientation, not the
-    # scene's other free joint.
-    assert obs["base_pos"][2] == pytest.approx(0.1, abs=1e-3)
-    assert obs["base_quat"][0] == pytest.approx(1.0, abs=1e-3)
-    assert obs["shoulder"] == pytest.approx(0.0)
+    _assert_planted_base(
+        obs["base_pos"], obs["base_quat"], obs["base_lin_vel"], obs["base_ang_vel"], where="get_observation"
+    )
+    assert obs["shoulder"] == pytest.approx(KNOWN_HINGE_POS, abs=1e-6)
 
 
 def test_get_robot_state_base_entry_survives_namespace_dropping_replace(sim):
     """``get_robot_state`` reaches the same tree-walk fallback and must keep
     reporting the structured ``base`` entry, not just the scalar joints."""
     _add_and_replace(sim, "mob", UNNAMED_BASE_XML, UNNAMED_BASE_UNPREFIXED)
+
+    _plant_known_state(sim)
 
     result = sim.get_robot_state(robot_name="mob")
 
@@ -336,6 +423,19 @@ def test_get_robot_state_base_entry_survives_namespace_dropping_replace(sim):
     assert "base: pos=" in text, f"structured base entry lost after replace: {text}"
     assert "quat=" in text
     assert "shoulder: pos=" in text
+    # The rendered text is rounded to 4dp, so assert the planted values on the
+    # structured payload that recording and policies actually consume.
+    payload = result["content"][1]["json"]
+    base = payload.get("base")
+    assert base is not None, f"structured base entry lost after replace: {payload}"
+    _assert_planted_base(
+        base["position"],
+        base["quaternion"],
+        base["linear_velocity"],
+        base["angular_velocity"],
+        where="get_robot_state",
+    )
+    assert payload["state"]["shoulder"]["position"] == pytest.approx(KNOWN_HINGE_POS, abs=1e-6)
 
 
 def test_free_base_joint_id_resolves_the_base_after_namespace_dropping_replace(sim):
