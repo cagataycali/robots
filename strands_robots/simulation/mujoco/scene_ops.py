@@ -75,6 +75,37 @@ def _sync_cached_xml(world: SimWorld, spec: Any) -> None:
         logger.debug("spec.to_xml() failed; cached XML left stale: %s", xml_err)
 
 
+def _raise_spec_joint_damping(joint: Any, floor: float) -> None:
+    """Floor a spec joint's damping, on either MuJoCo layout of that field.
+
+    ``MjsJoint.damping`` is a per-DOF sequence on MuJoCo builds from 3.10 and a
+    plain ``float`` on the older builds this package still supports
+    (``mujoco>=3.2.0``). Reading or writing through the wrong one of those two
+    layouts raises ``TypeError``, which
+    :func:`actuate_robot_in_scene` reports as a refused spec surgery - so a
+    robot that needs a damping floor cannot be actuated at all. Both layouts are
+    handled here, once, rather than at the call site.
+
+    Existing damping larger than ``floor`` is kept, which is the floor contract
+    :meth:`strands_robots.simulation.mujoco.manipulation.ManipulationMixin.actuate_robot`
+    documents for its ``damping`` argument.
+
+    Args:
+        joint: The ``MjsJoint`` (or any object exposing a ``damping`` field in
+            one of the two layouts) to floor in place.
+        floor: Minimum damping to leave on the joint.
+    """
+    current = joint.damping
+    try:
+        first = float(current[0])
+    except TypeError:
+        # Scalar layout (mujoco < 3.10): assign the field itself.
+        joint.damping = max(float(current), floor)
+    else:
+        # Per-DOF layout: write element 0, leaving any further DOFs alone.
+        joint.damping[0] = max(first, floor)
+
+
 def _snapshot_spec(spec: Any, *, context: str) -> Any | None:
     """Deep-copy ``spec`` so a refused mutation can be rolled back losslessly.
 
@@ -1363,7 +1394,7 @@ def actuate_robot_in_scene(
             short = joint_name[len(pfx) :]
             if short not in kp_by_joint:
                 continue
-            joint.damping[0] = max(float(joint.damping[0]), damping)
+            _raise_spec_joint_damping(joint, damping)
             joint.armature = max(float(joint.armature), armature)
 
         for short, kp in kp_by_joint.items():
