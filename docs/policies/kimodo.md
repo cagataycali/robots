@@ -7,8 +7,9 @@ streams them one frame per tick as G1 joint targets.
 
 Kimodo sits in the same seat as [`MotionBricksPolicy`](./motionbricks.md) — it
 is a *kinematic motion generator* that emits motion targets, not torques. A
-tracking controller (WBC / PD) turns those into physics via
-[`CompositePolicy`](./composite.md).
+tracking controller (WBC / PD) turns those into physics — see
+[`WBC`](./wbc.md) or compose via `policy_provider="composite"` (see
+[Custom Policies](./custom-policies.md)).
 
 ## When to use
 

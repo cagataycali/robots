@@ -22,10 +22,9 @@ are accepted verbatim; the loader defers validation to ``from_pretrained``.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-
 
 _KIMODO_DEFAULT_MODEL_ID = "nvidia/Kimodo-G1-RP-v1"
 _KIMODO_MAX_FRAMES = 196
@@ -100,14 +99,14 @@ class KimodoConfig:
             raise ValueError("model_id must be a non-empty string")
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "KimodoConfig":
+    def from_dict(cls, data: dict[str, Any]) -> KimodoConfig:
         """Build a config from a plain dict (drops unknown keys with a warning)."""
         known = {f.name for f in cls.__dataclass_fields__.values()}
         kwargs = {k: v for k, v in data.items() if k in known}
         return cls(**kwargs)
 
     @classmethod
-    def from_json(cls, path: str | Path) -> "KimodoConfig":
+    def from_json(cls, path: str | Path) -> KimodoConfig:
         """Load a config from a JSON file on disk."""
         import json
 
