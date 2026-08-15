@@ -112,6 +112,19 @@ cache["num_frames"], cache["control_dt"]
 `MotionPlayer` accepts that dict, an `.npz` written by
 `MotionPlayer.save_cache_npz`, or a raw ProtoMotions `.pt`.
 
+### Motion files are read with a restricted unpickler
+
+An `.npz` cache is read by NumPy and needs no torch. A raw `.pt` is read with
+`torch.load(..., weights_only=True)`, which accepts tensors and plain scalars -
+the documented payload above - and refuses anything else.
+
+That restriction matters because a motion file travels: clips get downloaded,
+shared between machines and committed to dataset repos. The unrestricted
+unpickler runs whatever `__reduce__` a file names *while reading it*, so
+accepting one would make playing a third-party motion enough to execute code on
+the machine that plays it. If a `.pt` is refused, re-save it as a dict of
+tensors, or convert it once with `save_cache_npz` and load the `.npz`.
+
 ## Per-episode reset
 
 `reset(seed=...)` rewinds the playhead and clears the historical-action buffer.

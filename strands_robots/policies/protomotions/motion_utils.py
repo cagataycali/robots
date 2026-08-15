@@ -32,6 +32,7 @@ Clean-room from ProtoMotions (Apache 2.0) deployment/motion_utils.py.
 from __future__ import annotations
 
 import logging
+import pickle
 from typing import Any
 
 import numpy as np
@@ -300,9 +301,25 @@ class MotionPlayer:
             purpose="unpickling a raw ProtoMotions .pt motion (a cache dict or .npz needs no torch)",
         )
 
-        data = torch.load(  # type: ignore[attr-defined]
-            path, map_location="cpu", weights_only=False
-        )
+        # A motion file travels: it gets downloaded, shared between machines and
+        # committed to dataset repos. The unrestricted unpickler runs whatever
+        # __reduce__ the file names while reading it, so accepting one would make
+        # playing a motion enough to execute code on this host. The documented
+        # payload is tensors plus two scalars (see the cache format above), which
+        # weights_only=True reads, so the restriction costs nothing. Same loader
+        # as the checkpoint read in strands_robots.training.rl.base_algo.
+        try:
+            data = torch.load(  # type: ignore[attr-defined]
+                path, map_location="cpu", weights_only=True
+            )
+        except pickle.UnpicklingError as e:
+            raise ValueError(
+                f"{path} carries more than tensors and plain scalars, so only "
+                "the unrestricted unpickler could read it - and that executes "
+                "arbitrary code from the file while loading. Re-save the motion "
+                "as a dict of tensors, or convert it once with "
+                "MotionPlayer.save_cache_npz and load the .npz instead."
+            ) from e
         if "control_dt" in data and "body_rot" in data:
             # A .pt that is already a cache.
             self._load_cache({k: np.asarray(v) for k, v in data.items()})
