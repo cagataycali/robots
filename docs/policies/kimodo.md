@@ -115,6 +115,32 @@ merged value is re-validated by `KimodoConfig`, so `diffusion_steps=0` is
 refused whichever way it arrives. There is no `**kwargs`: a misspelled knob
 raises `TypeError` at construction instead of being silently ignored.
 
+## When the sampler runs again
+
+One `sample()` call produces a motion buffer that `get_actions` then drains one
+frame per control tick, holding the last frame once the buffer is exhausted. The
+buffer is identified by the four inputs that determine it - the prompt plus
+`diffusion_steps`, `guidance_scale` and `seed` - so the sampler runs again as
+soon as any of them differs from the values that produced the buffer in hand,
+and otherwise the buffered frames are reused:
+
+```python
+await policy.get_actions({}, "walking forward")                     # samples
+await policy.get_actions({}, "walking forward")                     # drains
+await policy.get_actions({}, "waving")                              # samples
+await policy.get_actions({}, "waving", diffusion_steps=25)          # samples
+policy.reset()                                                      # rewinds
+policy.reset(seed=7); await policy.get_actions({}, "waving")        # samples
+```
+
+This is what makes a multi-episode `eval_policy` meaningful for a stochastic
+policy. `PolicyRunner.evaluate` derives a distinct seed per episode and forwards
+it to `policy.reset(seed=...)`, so each episode samples its own motion while the
+whole run stays reproducible: re-running at the same master `seed=` replays the
+same per-episode motions. Repeating a seed replays the buffered motion rather
+than re-running the sampler for identical frames, and `reset()` without a seed
+only rewinds - neither pays for a diffusion run.
+
 ## When the checkpoint is not a Kimodo checkpoint
 
 `model_id` is accepted verbatim so an alternate Kimodo revision can be pinned,
