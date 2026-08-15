@@ -1,0 +1,20 @@
+{
+  "outcome": "reset returned normally",
+  "rows": {
+    "python": {
+      "prev": false,
+      "default": true,
+      "requested": false
+    },
+    "numpy": {
+      "prev": false,
+      "default": true,
+      "requested": false
+    },
+    "torch": {
+      "prev": false,
+      "default": true,
+      "requested": false
+    }
+  }
+}
