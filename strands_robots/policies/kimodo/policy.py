@@ -173,15 +173,58 @@ class KimodoPolicy(Policy):
     def __init__(
         self,
         config: KimodoConfig | dict[str, Any] | None = None,
+        *,
         motion_agent: KimodoMotionAgent | None = None,
-        **kwargs: Any,
+        model_id: str | None = None,
+        diffusion_steps: int | None = None,
+        guidance_scale: float | None = None,
+        num_frames: int | None = None,
+        native_fps: int | None = None,
+        tracker_fps: int | None = None,
+        device: str | None = None,
+        dtype: str | None = None,
+        seed: int | None = None,
     ) -> None:
-        super().__init__(**kwargs)
-        if config is None:
-            config = KimodoConfig()
-        elif isinstance(config, dict):
-            config = KimodoConfig.from_dict(config)
-        self.config: KimodoConfig = config
+        """Build the policy from a config object and/or per-field overrides.
+
+        Every field the registry advertises in ``config_keys`` is an explicit
+        parameter here, so ``create_policy("kimodo", diffusion_steps=25)``
+        configures the sampler instead of failing on an unexpected keyword.
+        There is deliberately no ``**kwargs``: an unknown knob raises
+        ``TypeError`` at construction rather than being swallowed by a
+        parameter nothing reads.
+
+        Args:
+            config: A :class:`KimodoConfig`, a plain dict of its fields, or
+                ``None`` for the dataclass defaults.
+            motion_agent: Injected sampler, for driving the frame -> action-dict
+                mapping without diffusers, weights, or CUDA.
+            model_id: HuggingFace model id override.
+            diffusion_steps: Denoising steps override.
+            guidance_scale: Classifier-free-guidance weight override.
+            num_frames: Motion length override, in native frames.
+            native_fps: Sampler output rate override.
+            tracker_fps: Tracker consumption rate override.
+            device: torch device string override.
+            dtype: Sampler dtype override (``"fp16"``/``"bf16"``/``"fp32"``).
+            seed: Sampling seed override.
+
+        Raises:
+            ValueError: If a resolved field is outside its domain, as validated
+                by :class:`KimodoConfig`.
+        """
+        self.config: KimodoConfig = self._resolve_config(
+            config,
+            model_id=model_id,
+            diffusion_steps=diffusion_steps,
+            guidance_scale=guidance_scale,
+            num_frames=num_frames,
+            native_fps=native_fps,
+            tracker_fps=tracker_fps,
+            device=device,
+            dtype=dtype,
+            seed=seed,
+        )
         self._motion_agent: KimodoMotionAgent | None = motion_agent
 
         # Streaming state - filled by _synthesise() and drained by get_actions().
@@ -319,6 +362,35 @@ class KimodoPolicy(Policy):
             self.config.tracker_fps,
             prompt[:80],
         )
+
+    @staticmethod
+    def _resolve_config(
+        config: KimodoConfig | dict[str, Any] | None,
+        **overrides: Any,
+    ) -> KimodoConfig:
+        """Merge a base config with per-field overrides, explicit values winning.
+
+        Precedence is override > ``config`` field > dataclass default. The merge
+        goes back through :class:`KimodoConfig` rather than
+        ``dataclasses.replace`` so ``__post_init__`` re-validates the merged
+        result: an override is checked exactly like a directly-constructed
+        field instead of bypassing the domain.
+
+        Args:
+            config: Base config, a dict of its fields, or ``None`` for defaults.
+            **overrides: Per-field values, where ``None`` means "not supplied".
+
+        Returns:
+            The merged, validated config.
+        """
+        if config is None:
+            base: dict[str, Any] = {}
+        elif isinstance(config, dict):
+            base = dict(config)
+        else:
+            base = {name: getattr(config, name) for name in config.__dataclass_fields__}
+        base.update({key: value for key, value in overrides.items() if value is not None})
+        return KimodoConfig.from_dict(base)
 
     def _build_real_agent(self) -> KimodoMotionAgent:
         """Lazy-construct the real diffusers-backed sampler agent.

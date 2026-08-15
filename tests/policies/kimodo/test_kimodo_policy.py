@@ -145,3 +145,105 @@ def test_config_validation_rejects_bad_values():
 def test_config_from_dict_drops_unknown_keys():
     cfg = KimodoConfig.from_dict({"diffusion_steps": 50, "unknown": "x"})
     assert cfg.diffusion_steps == 50
+
+
+# --------------------------------------------------------------------------
+# The registry surface has to reach the constructor
+# --------------------------------------------------------------------------
+# policies.json advertises every KimodoConfig field in the provider's
+# ``config_keys``, and create_policy splats those keys straight into the class.
+# They were not parameters of __init__, so each one landed in a ``**kwargs``
+# that forwarded to ``object.__init__`` - measured, every advertised knob raised
+# ``TypeError: object.__init__() takes exactly one argument``, so the whole
+# documented configuration surface was unusable through the factory that the
+# registry exists to serve.
+
+
+def test_each_advertised_config_key_reaches_the_config_through_the_factory():
+    """Every config_keys entry configures the sampler, rather than raising."""
+    from strands_robots.policies.kimodo import KimodoPolicy
+
+    policy = KimodoPolicy(
+        model_id="me/custom",
+        diffusion_steps=25,
+        guidance_scale=1.5,
+        num_frames=48,
+        native_fps=24,
+        tracker_fps=60,
+        device="cpu",
+        dtype="fp32",
+        seed=7,
+    )
+    assert policy.config.model_id == "me/custom"
+    assert policy.config.diffusion_steps == 25
+    assert policy.config.guidance_scale == 1.5
+    assert policy.config.num_frames == 48
+    assert policy.config.native_fps == 24
+    assert policy.config.tracker_fps == 60
+    assert policy.config.device == "cpu"
+    assert policy.config.dtype == "fp32"
+    assert policy.config.seed == 7
+
+
+def test_every_advertised_config_key_is_a_constructor_parameter():
+    """The registry list and the signature agree, so neither can drift alone."""
+    import inspect
+
+    from strands_robots.policies.kimodo import KimodoPolicy
+    from strands_robots.registry.policies import get_policy_provider
+
+    advertised = set(get_policy_provider("kimodo")["config_keys"])
+    accepted = set(inspect.signature(KimodoPolicy.__init__).parameters) - {"self"}
+    assert advertised <= accepted, f"advertised but not accepted: {sorted(advertised - accepted)}"
+
+
+def test_an_unknown_knob_raises_rather_than_being_swallowed():
+    """No ``**kwargs``: a mistyped parameter is refused at construction."""
+    from strands_robots.policies.kimodo import KimodoPolicy
+
+    with pytest.raises(TypeError, match="diffusion_step"):
+        KimodoPolicy(diffusion_step=25)  # missing the plural 's'
+
+
+def test_an_override_is_validated_like_a_directly_constructed_field():
+    """The merge re-enters KimodoConfig, so the domain still applies."""
+    from strands_robots.policies.kimodo import KimodoPolicy
+
+    with pytest.raises(ValueError, match="diffusion_steps"):
+        KimodoPolicy(diffusion_steps=0)
+    with pytest.raises(ValueError, match="num_frames"):
+        KimodoPolicy(config=KimodoConfig(), num_frames=1000)
+
+
+def test_an_override_wins_over_the_supplied_config_object():
+    """Precedence: the more explicit per-field value beats the config it overlays."""
+    from strands_robots.policies.kimodo import KimodoPolicy
+
+    policy = KimodoPolicy(config=KimodoConfig(diffusion_steps=40), diffusion_steps=12)
+    assert policy.config.diffusion_steps == 12
+
+
+def test_a_config_object_survives_the_registry_default_merge(monkeypatch):
+    """A caller's config must not be silently overwritten on the factory path.
+
+    ``build_policy_kwargs`` forwards a provider's registry ``defaults``
+    unconditionally - it only skips a key the caller passed itself - so a
+    default that merely restates a dataclass default still arrives as a flat
+    override and, with per-field precedence, would replace the caller's value.
+    Measured before this change: a config carrying steps=25/guidance=1.5/
+    model='me/custom' reached the policy as 100/7.5/'nvidia/Kimodo-G1-RP-v1'.
+    The three redundant defaults are gone from policies.json for that reason.
+    """
+    from strands_robots.policies.factory import create_policy
+    from strands_robots.registry.policies import build_policy_kwargs
+
+    # The provider loads a custom HF sampler class, so the factory gates it.
+    monkeypatch.setenv("STRANDS_TRUST_REMOTE_CODE", "1")
+
+    mine = KimodoConfig(diffusion_steps=25, guidance_scale=1.5, model_id="me/custom")
+    kwargs = build_policy_kwargs("kimodo", config=mine)
+    policy = create_policy("kimodo", **kwargs, motion_agent=_StubAgent())
+
+    assert policy.config.diffusion_steps == 25
+    assert policy.config.guidance_scale == 1.5
+    assert policy.config.model_id == "me/custom"
