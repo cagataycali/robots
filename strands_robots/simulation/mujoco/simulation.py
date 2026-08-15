@@ -3178,8 +3178,12 @@ class MuJoCoSimEngine(
 
         Naming: ``add_object(name="X", ...)`` injects its geom as
         ``"X_geom"`` in MJCF, so cameras share the name table only with
-        other cameras and body names - not with object geoms. Duplicate
-        camera names are rejected upfront.
+        other cameras and body names - not with object geoms. A name this
+        engine already registered is rejected upfront; a name the loaded
+        scene's MJCF declares is invisible to that check (``load_scene``
+        replaces the registry, not the MJCF) and is refused by the compiler
+        instead - either way the add is refused and the camera the scene
+        already had keeps its own pose.
 
         Orientation: ``target`` is baked into the camera's ``xyaxes``
         attribute so the rendered view looks at that point (not just
