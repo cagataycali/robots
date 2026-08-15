@@ -135,6 +135,44 @@ checkpoint, or pass a `motion_agent=` adapter that reads the sampler's own
 output field and returns the `(num_frames, 7+29)` `qpos` array this policy
 expects.
 
+## Driving the real robot
+
+Kimodo names its joint targets the way the URDF does (`left_hip_pitch_joint`);
+lerobot's `UnitreeG1` driver names its action keys after its own joint enum
+(`kLeftHipPitch.q`). The two vocabularies name the same 29 joints, so the
+hardware path is a key rename applied between the policy and the driver:
+
+```python
+from strands_robots.policies.kimodo.hardware import build_lerobot_g1_action_dict
+
+for policy_action in await policy.get_actions(observation, instruction):
+    robot.send_action(build_lerobot_g1_action_dict(policy_action))
+```
+
+`get_joint_map()` returns the table itself (`{"left_hip_pitch_joint":
+"kLeftHipPitch.q", ...}`) if you would rather rename in your own loop. Both are
+lerobot-only helpers: `pip install "strands-robots[lerobot]"`. Commanding the
+physical robot additionally needs Unitree's `unitree_sdk2` runtime, which
+lerobot documents separately for its `unitree_g1` robot.
+
+The table pairs joints by name, never by position in the driver enum. That
+matters because the driver applies only the action keys it recognises and leaves
+every other motor on its previous command, so a key paired with the wrong joint
+— or spelled in a way the driver does not know — raises nothing at all and the
+robot simply moves wrong. Pairing by name means a driver-side reorder cannot
+move a target, and a driver-side rename or DOF change is refused with the
+unmatched joints named on both sides instead of being taken on trust:
+
+```text
+RuntimeError: Unitree G1 joint sets disagree between the policy and lerobot's
+driver. Joints the policy commands that the driver does not name:
+['waist_yaw_joint']. Joints the driver names that the policy does not command:
+['kTorsoYaw.q']. ...
+```
+
+The rename is one-way. The driver's `get_observation()` already reports
+`<motor>.q` keys, so the read path needs no inverse table.
+
 ## Unit testing without weights
 
 Inject a `KimodoMotionAgent` stub — no torch/diffusers/CUDA needed. See

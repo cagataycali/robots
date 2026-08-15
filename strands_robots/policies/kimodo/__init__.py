@@ -34,6 +34,15 @@ See :doc:`docs/policies/kimodo`.
 """
 
 from strands_robots.policies.kimodo.config import KimodoConfig
+
+# Hardware action-key helpers. Importing them does not import lerobot: the
+# joint rename table is built on the first get_joint_map() call, so a pure-sim
+# import path never looks for the driver.
+from strands_robots.policies.kimodo.hardware import (
+    build_lerobot_g1_action_dict,
+    get_joint_map,
+    kimodo_action_to_lerobot_g1,
+)
 from strands_robots.policies.kimodo.policy import (
     KIMODO_G1_JOINTS,
     KimodoMotionAgent,
@@ -45,4 +54,7 @@ __all__ = [
     "KimodoConfig",
     "KimodoMotionAgent",
     "KIMODO_G1_JOINTS",
+    "build_lerobot_g1_action_dict",
+    "get_joint_map",
+    "kimodo_action_to_lerobot_g1",
 ]
