@@ -181,7 +181,10 @@ kimodo = [
     "torch>=2.0.0",
     "diffusers>=0.30.0",
     "transformers>=4.40.0",
-    "huggingface_hub>=0.24.0",
+    # Same >=1.5 floor and MAJOR-only cap as [wbc]: the documented bucket-sync
+    # guidance needs the `hf buckets`/`hf sync` CLI subcommands, which first
+    # ship in huggingface_hub 1.5.0. See the [wbc] comment for the full reason.
+    "huggingface_hub>=1.5,<2.0.0",
     "accelerate>=0.30.0",
     "imageio>=2.30.0",
     "imageio-ffmpeg>=0.4.9",

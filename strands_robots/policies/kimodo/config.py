@@ -15,8 +15,7 @@ Numeric domains follow the shared helpers in :mod:`strands_robots.utils`:
 * ``num_frames`` - positive integer bounded by the model's max sequence length
   (196 for RP-v1)
 
-The default ``model_id`` targets the RP-v1 checkpoint that produced the
-2026-06-26 Thor walking demo (see recent Telegram log). Alternate model ids
+The default ``model_id`` targets the RP-v1 checkpoint. Alternate model ids
 are accepted verbatim; the loader defers validation to ``from_pretrained``.
 """
 
@@ -62,7 +61,7 @@ class KimodoConfig:
             :class:`KimodoPolicy`.
         device: torch device string (``"cuda"``, ``"cuda:0"``, ``"cpu"``).
             ``None`` means auto-select CUDA if available.
-        dtype: Sampler dtype string. ``"fp16"`` recommended on Thor for speed;
+        dtype: Sampler dtype string. ``"fp16"`` recommended on GPU for speed;
             ``"fp32"`` for reproducibility.
         cache_dir: Optional local HF cache override; ``None`` uses
             ``$HF_HOME``.

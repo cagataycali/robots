@@ -15,7 +15,7 @@ Where it sits in the stack (identical seat to
   under physics via :class:`~strands_robots.policies.composite.CompositePolicy`.
 * Standalone, calling the policy in a MuJoCo sim without a tracker sets
   ``qpos`` directly - this is the faithful visualisation of a kinematic
-  generator (matches the Thor demo pipeline).
+  generator.
 
 Contract:
 
@@ -149,7 +149,7 @@ class KimodoPolicy(Policy):
             plus a working CUDA runtime.
         **kwargs: Passed to :class:`Policy` base class (e.g. ``robot_name``).
 
-    Example (in a MuJoCo sim, matching the Thor Kimodo->MuJoCo demo):
+    Example (in a MuJoCo sim):
 
         >>> from strands_robots import Robot
         >>> sim = Robot("g1", mesh=False)

@@ -1,6 +1,6 @@
-"""Kimodo + MuJoCo end-to-end example (Thor Kimodo->G1 walking demo).
+"""Kimodo + MuJoCo end-to-end example: text prompt -> G1 walking in sim.
 
-Reproduces the pipeline that produced the 2026-06-26 Thor walking video:
+The full text-to-motion-to-physics pipeline:
   text prompt -> Kimodo diffusion -> qpos frames -> SLERP upsample ->
   ProtoMotions GTP ONNX tracker -> G1 physics @ 1kHz -> rendered MP4
 

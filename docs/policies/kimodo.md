@@ -18,7 +18,7 @@ tracking controller (WBC / PD) turns those into physics — see
 | Control input | free-form text prompt | style token + heading |
 | Prompt vocabulary | anything English | fixed clip modes |
 | Sampler | diffusion (multi-step) | autoregressive one-shot |
-| Wall clock (Thor, 100 steps, 120 frames) | ~8 s | ~1 s |
+| Wall clock (Jetson AGX-class, 100 steps, 120 frames) | ~8 s | ~1 s |
 | Best for | novel motions, prompt engineering | known styles, low latency |
 
 ## Install
@@ -98,6 +98,23 @@ sim.run_policy(
 | `dtype` | str | `"fp16"` | `"fp16"` / `"bf16"` / `"fp32"` |
 | `seed` | int \| None | None | Reproducible sampling |
 
+Every field above is also an explicit keyword argument of `KimodoPolicy`, so it
+can be set three interchangeable ways:
+
+```python
+from strands_robots import create_policy
+from strands_robots.policies.kimodo import KimodoConfig, KimodoPolicy
+
+create_policy("kimodo", diffusion_steps=25)          # flat, through the factory
+KimodoPolicy(config=KimodoConfig(diffusion_steps=25))  # a config object
+KimodoPolicy(config={"diffusion_steps": 25})           # a plain dict
+```
+
+Precedence is per-field override > `config` field > the default in the table. A
+merged value is re-validated by `KimodoConfig`, so `diffusion_steps=0` is
+refused whichever way it arrives. There is no `**kwargs`: a misspelled knob
+raises `TypeError` at construction instead of being silently ignored.
+
 ## Unit testing without weights
 
 Inject a `KimodoMotionAgent` stub — no torch/diffusers/CUDA needed. See
@@ -106,5 +123,4 @@ Inject a `KimodoMotionAgent` stub — no torch/diffusers/CUDA needed. See
 ## References
 
 * Kimodo: <https://huggingface.co/nvidia/Kimodo-G1-RP-v1>
-* Related demo: 2026-06-26 Thor Kimodo→MuJoCo→G1 walking pipeline
 * Sibling policy: [`motionbricks`](./motionbricks.md)
