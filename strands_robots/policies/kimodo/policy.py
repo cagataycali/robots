@@ -41,6 +41,7 @@ HuggingFace under the NVIDIA Open Model License.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from typing import Any, Protocol, runtime_checkable
 
@@ -356,14 +357,16 @@ class KimodoPolicy(Policy):
         )
         self._current_prompt = prompt
         self._frame_cursor = 0
-        # The prompt is caller-supplied, so flatten line breaks before logging:
-        # a raw newline would let it forge an additional log record.
-        logged_prompt = " ".join(prompt[:80].split())
+        # The prompt is caller-supplied, so it is identified by digest rather
+        # than echoed: interpolating the text would let a prompt containing a
+        # newline forge an additional log record. The digest still correlates
+        # repeated samples of the same prompt across a run.
         logger.info(
-            "Kimodo: sampled %d frames @ %dHz for prompt=%r",
+            "Kimodo: sampled %d frames @ %dHz for prompt sha256:%s (%d chars)",
             self._motion_buffer.shape[0],
             self.config.tracker_fps,
-            logged_prompt,
+            hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12],
+            len(prompt),
         )
 
     @staticmethod

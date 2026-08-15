@@ -198,13 +198,21 @@ def test_every_advertised_config_key_is_a_constructor_parameter():
 
 
 def test_an_unknown_knob_raises_rather_than_being_swallowed():
-    """No ``**kwargs``: a mistyped parameter is refused at construction."""
+    """No ``**kwargs``: a mistyped parameter is refused at construction.
+
+    The name is derived from the real signature rather than hardcoded, so the
+    case cannot silently stop being a typo if a parameter is renamed later.
+    """
+    import inspect
+
     from strands_robots.policies.kimodo import KimodoPolicy
 
-    # Splatted rather than written inline: the point is that an unsupported name
-    # is refused at runtime, not that this module contains a mistyped call.
-    with pytest.raises(TypeError, match="diffusion_step"):
-        KimodoPolicy(**{"diffusion_step": 25})  # missing the plural 's'
+    accepted = set(inspect.signature(KimodoPolicy.__init__).parameters)
+    unsupported = "diffusion_step"  # 'diffusion_steps' without the plural 's'
+    assert unsupported not in accepted, "this name has to be one the constructor rejects"
+
+    with pytest.raises(TypeError, match=unsupported):
+        KimodoPolicy(**dict.fromkeys([unsupported], 25))
 
 
 def test_an_override_is_validated_like_a_directly_constructed_field():
@@ -266,15 +274,24 @@ def test_config_rejects_a_bool_and_a_non_finite_number():
             KimodoConfig(guidance_scale=bad)
 
 
-def test_a_multiline_prompt_is_flattened_before_it_is_logged(caplog):
-    """A caller-supplied prompt must not be able to forge a second log record."""
+def test_the_prompt_is_logged_by_digest_and_never_echoed(caplog):
+    """A caller-supplied prompt must not be able to forge a second log record.
+
+    The sampler identifies the prompt by digest rather than interpolating it, so
+    neither the text nor a newline it carries reaches the log line.
+    """
+    import hashlib
     import logging
 
+    prompt = "walk forward\nINFO:root:forged record"
     policy, _ = _make_policy(num_frames=4, native_fps=30, tracker_fps=30)
     with caplog.at_level(logging.INFO, logger="strands_robots.policies.kimodo.policy"):
-        _first_action(policy, "walk forward\nINFO:root:forged record")
+        _first_action(policy, prompt)
 
     logged = [r.getMessage() for r in caplog.records]
     assert logged, "expected the sampler to log one record"
     assert not any("\n" in message for message in logged)
-    assert any("forged record" in message for message in logged)
+    assert not any("forged record" in message for message in logged)
+
+    digest = hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:12]
+    assert any(digest in message for message in logged), "the digest identifies the prompt"
