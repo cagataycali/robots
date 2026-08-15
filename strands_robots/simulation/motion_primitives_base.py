@@ -65,12 +65,51 @@ _WORKSPACE_SANITY_RADIUS_M = 5.0
 # case is still a sub-second solve budget.
 _IK_RESTART_SEEDS = 8
 
+# Default orientation convergence tolerance for ``move_to`` (radians), applied
+# when the caller supplies an ``orientation`` target and no explicit
+# ``orientation_tol``. A pose target is two independent quantities, so the
+# rotational half needs its own domain: ``tol`` is documented in METERS and
+# cannot bound an angle, and gating a pose request on the translation alone
+# accepts a solve that reached the point with the wrong wrist orientation.
+#
+# The value clears the compliant-servo floor with margin. The primitives drive
+# position servos under gravity, which settle to a small steady-state
+# rotational offset that no further stepping removes; held to steady state on
+# the shipped models that floor is 0.0123 rad (0.70 deg) for panda (7 DOF) and
+# 0.0343 rad (1.97 deg) for so101 (5 DOF). 0.1 rad (5.7 deg) is roughly 3x the
+# worse of the two, so a realizable orientation is never refused for servo
+# compliance, while an orientation the arm cannot realize still fails the gate.
+_DEFAULT_ORIENTATION_TOL_RAD = 0.1
+
 
 def _is_finite_real(value: Any) -> bool:
     """True when ``value`` is a real, finite scalar (bool rejected)."""
     if isinstance(value, bool) or not isinstance(value, numbers.Real):
         return False
     return math.isfinite(float(value))
+
+
+def _quat_angle_error(target_wxyz: Any, actual_wxyz: Any) -> float:
+    """Rotation angle between two ``[w, x, y, z]`` quaternions, in radians.
+
+    Both inputs are normalized first, and the double-cover sign ambiguity is
+    resolved by taking ``abs`` of the dot product: ``q`` and ``-q`` denote the
+    SAME orientation, so an ``arccos`` of the signed dot would report ``pi``
+    for two identical rotations and make an exactly-met orientation look
+    maximally wrong. The result is the absolute geodesic angle in ``[0, pi]``.
+
+    Returns ``0.0`` when either input has ~zero norm; ``move_to`` refuses such
+    a target up front (:meth:`MotionPrimitivesCore._validate_move_to_args`), so
+    this only keeps the helper total for callers that measure a readback.
+    """
+    target = np.asarray(target_wxyz, dtype=np.float64)
+    actual = np.asarray(actual_wxyz, dtype=np.float64)
+    target_norm = float(np.linalg.norm(target))
+    actual_norm = float(np.linalg.norm(actual))
+    if target_norm < 1e-8 or actual_norm < 1e-8:
+        return 0.0
+    dot = abs(float(np.dot(target / target_norm, actual / actual_norm)))
+    return float(2.0 * math.acos(min(1.0, dot)))
 
 
 def _err(text: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -108,30 +147,39 @@ class MotionPrimitivesCore:
         orientation: Any,
         tol: Any,
         max_steps: Any,
-    ) -> tuple[np.ndarray | None, np.ndarray | None, int, dict[str, Any] | None]:
+        orientation_tol: Any = None,
+    ) -> tuple[np.ndarray | None, np.ndarray | None, int, float | None, dict[str, Any] | None]:
         """Shared ``move_to`` parameter domain (before any engine state is read).
 
-        Returns ``(target, orientation, max_steps, None)`` on success -
-        ``target`` a float64 ``(3,)`` array, ``orientation`` a float64 ``(4,)``
-        array or ``None`` when omitted - or ``(None, None, 0, error)`` when a
+        Returns ``(target, orientation, max_steps, orientation_tol, None)`` on
+        success - ``target`` a float64 ``(3,)`` array, ``orientation`` a float64
+        ``(4,)`` array or ``None`` when omitted, ``orientation_tol`` the
+        resolved rotational tolerance in radians or ``None`` when no
+        orientation was requested - or ``(None, None, 0, None, error)`` when a
         parameter is off-domain. The pose vectors are validated by the same
         rule the scene-construction calls use
         (:func:`strands_robots.utils.coerce_pose_vector`): three/four finite
         real components, a NumPy array accepted, a ``bool`` refused.
+
+        ``orientation_tol`` without an ``orientation`` target is REFUSED rather
+        than ignored: the value would have no quantity to bound, and silently
+        dropping a tolerance the caller set is how an unmet request goes
+        unnoticed. When an orientation IS given and no tolerance is passed the
+        default is :data:`_DEFAULT_ORIENTATION_TOL_RAD`.
         """
         if position is None:
-            return None, None, 0, _err("move_to requires 'position' ([x, y, z] target in meters).")
+            return None, None, 0, None, _err("move_to requires 'position' ([x, y, z] target in meters).")
         # Same guard the scene-construction entry points use, so a pose
         # `add_object`/`move_object` refuses is refused here too. `len()` on a
         # value with no length (a scalar, an iterator) raises a bare TypeError,
         # which would escape the primitives' documented never-raises contract.
         position, pos_err = coerce_pose_vector("move_to", "position", position, 3)
         if pos_err is not None:
-            return None, None, 0, _err(pos_err)
+            return None, None, 0, None, _err(pos_err)
         assert position is not None  # non-None input yields a non-None result
         orientation, quat_err = coerce_pose_vector("move_to", "orientation", orientation, 4)
         if quat_err is not None:
-            return None, None, 0, _err(quat_err)
+            return None, None, 0, None, _err(quat_err)
         if orientation is not None:
             quat_norm = float(np.linalg.norm(np.asarray(orientation, dtype=np.float64)))
             if quat_norm < 1e-8:
@@ -139,16 +187,42 @@ class MotionPrimitivesCore:
                     None,
                     None,
                     0,
+                    None,
                     _err("move_to: 'orientation' quaternion has ~zero norm; pass a valid [w, x, y, z]."),
                 )
         if not _is_finite_real(tol) or float(tol) <= 0.0:
-            return None, None, 0, _err(f"move_to: 'tol' must be a positive number of meters, got {tol!r}.")
+            return None, None, 0, None, _err(f"move_to: 'tol' must be a positive number of meters, got {tol!r}.")
+        if orientation_tol is not None and orientation is None:
+            return (
+                None,
+                None,
+                0,
+                None,
+                _err(
+                    "move_to: 'orientation_tol' only bounds an 'orientation' target, and none was "
+                    "given. Pass orientation=[w, x, y, z] to command a full pose, or drop "
+                    "orientation_tol - a position-only solve has no orientation to converge."
+                ),
+            )
+        if orientation_tol is not None and (not _is_finite_real(orientation_tol) or float(orientation_tol) <= 0.0):
+            return (
+                None,
+                None,
+                0,
+                None,
+                _err(f"move_to: 'orientation_tol' must be a positive number of radians, got {orientation_tol!r}."),
+            )
         err = self._validate_step_budget("move_to", "max_steps", max_steps)
         if err is not None:
-            return None, None, 0, err
+            return None, None, 0, None, err
         target = np.asarray(position, dtype=np.float64)
         quat = None if orientation is None else np.asarray(orientation, dtype=np.float64)
-        return target, quat, int(max_steps), None
+        resolved_orientation_tol = (
+            None
+            if quat is None
+            else (_DEFAULT_ORIENTATION_TOL_RAD if orientation_tol is None else float(orientation_tol))
+        )
+        return target, quat, int(max_steps), resolved_orientation_tol, None
 
     def _validate_set_gripper_args(self, state: Any, steps: Any) -> tuple[int, dict[str, Any] | None]:
         """Shared ``set_gripper`` parameter domain: ``(steps, None)`` or ``(0, error)``."""
@@ -258,7 +332,115 @@ class MotionPrimitivesCore:
             return str(meta.get("open", "high") if state == "open" else meta.get("closed", "low"))
         return "high" if state == "open" else "low"
 
+    # -- shared pose-error measurement ----------------------------------------
+
+    @staticmethod
+    def _pose_violation(
+        position_error: float,
+        tol: float,
+        orientation_error: float | None = None,
+        orientation_tol: float | None = None,
+    ) -> float:
+        """Worst of the pose error's two components, normalized by its tolerance.
+
+        ``move_to`` has to rank candidate IK solutions and decide convergence
+        against a target that is up to TWO independent quantities. Comparing
+        the raw numbers is meaningless (metres against radians), so each
+        component is divided by its own tolerance and the worse ratio wins:
+        the result is ``<= 1.0`` exactly when EVERY requested component is
+        within tolerance, which makes one scalar usable both as the accept
+        gate and as the "is this restart better" ordering.
+
+        With no orientation requested this degenerates to
+        ``position_error / tol``, i.e. ranking by the position residual - the
+        position-only behaviour, unchanged.
+        """
+        violation = position_error / tol
+        if orientation_error is not None and orientation_tol is not None:
+            violation = max(violation, orientation_error / orientation_tol)
+        return float(violation)
+
     # -- shared result envelopes ----------------------------------------------
+    @staticmethod
+    def _move_to_unreachable_error(
+        robot_name: str,
+        target: np.ndarray,
+        tol: float,
+        *,
+        ik_residual: float,
+        frame_name: str,
+        frame_type: str,
+        orientation_tol: float | None = None,
+        ik_orientation_residual: float | None = None,
+        position_only_residual: float | None = None,
+    ) -> dict[str, Any]:
+        """Refusal for a ``move_to`` target the kinematics cannot reach.
+
+        Names the component that is actually out of reach. A damped
+        least-squares solve given a full pose trades the two halves off against
+        each other, and on an arm with too few DOF to realize the orientation
+        it will satisfy the ROTATION and leave the position short - so a
+        position-keyed message blames the point when the point is fine.
+        ``position_only_residual`` (the residual of the same target solved with
+        the orientation task switched off, when the backend could measure it)
+        is what settles that, and it selects the remedy: omitting
+        ``orientation`` is the fix when the position alone is reachable, and no
+        tolerance change is.
+
+        With no orientation requested the wording is the position-only one.
+        """
+        payload: dict[str, Any] = {
+            "reached": False,
+            "steps": 0,
+            "ik_residual_m": ik_residual,
+            "frame": frame_name,
+            "frame_type": frame_type,
+        }
+        if orientation_tol is not None:
+            payload["orientation_tol_rad"] = orientation_tol
+            payload["ik_orientation_residual_rad"] = ik_orientation_residual
+        if position_only_residual is not None:
+            payload["position_only_ik_residual_m"] = position_only_residual
+
+        if orientation_tol is None:
+            return _err(
+                f"move_to: target {target.tolist()} is unreachable for '{robot_name}' "
+                f"within tol={float(tol)} m - best IK solution leaves a residual of "
+                f"{ik_residual:.4f} m. Choose a closer target or loosen tol.",
+                payload,
+            )
+
+        missed = []
+        if ik_residual > float(tol):
+            missed.append(f"position by {ik_residual:.4f} m (tol={float(tol)} m)")
+        if ik_orientation_residual is not None and ik_orientation_residual > float(orientation_tol):
+            missed.append(
+                f"orientation by {ik_orientation_residual:.4f} rad (orientation_tol={float(orientation_tol)} rad)"
+            )
+        missed_text = " and ".join(missed) if missed else "the requested pose"
+        text = (
+            f"move_to: the requested POSE is not achievable for '{robot_name}' - the best IK "
+            f"solution misses {missed_text}."
+        )
+        if position_only_residual is not None and position_only_residual <= float(tol):
+            text += (
+                f" The position {target.tolist()} on its own IS reachable "
+                f"(residual {position_only_residual:.4f} m): it is the orientation that does not "
+                "fit. Omit 'orientation' for a position-only solve, or command this pose on an "
+                "arm with enough DOF to realize it. Loosening 'tol' would only accept a solve "
+                "that still points the wrong way."
+            )
+        else:
+            text += (
+                f" The position {target.tolist()} is out of reach as well"
+                + (
+                    f" (position-only residual {position_only_residual:.4f} m)"
+                    if position_only_residual is not None
+                    else ""
+                )
+                + ". Choose a closer target."
+            )
+        return _err(text, payload)
 
     @staticmethod
     def _move_to_result(
@@ -275,9 +457,19 @@ class MotionPrimitivesCore:
         ee_quat: Any,
         frame_name: str,
         frame_type: str,
+        orientation_error: float | None = None,
+        orientation_tol: float | None = None,
+        ik_orientation_residual: float | None = None,
     ) -> dict[str, Any]:
-        """Success / not-reached envelope for ``move_to``, shared across backends."""
-        payload = {
+        """Success / not-reached envelope for ``move_to``, shared across backends.
+
+        ``orientation_error`` / ``orientation_tol`` /
+        ``ik_orientation_residual`` are the rotational half of the pose error
+        and are ``None`` for a position-only call, which has no orientation to
+        report. When they are present ``reached`` must already account for
+        them - this builder reports the measurement, it does not decide it.
+        """
+        payload: dict[str, Any] = {
             "reached": reached,
             "steps": steps_used,
             "position_error_m": position_error,
@@ -287,6 +479,15 @@ class MotionPrimitivesCore:
             "frame": frame_name,
             "frame_type": frame_type,
         }
+        # Both halves of the rotational measurement travel together: an
+        # orientation error without the tolerance it was judged against is not
+        # a reportable number, so a caller cannot see one without the other.
+        pose_detail = ""
+        if orientation_error is not None and orientation_tol is not None:
+            payload["orientation_error_rad"] = orientation_error
+            payload["orientation_tol_rad"] = orientation_tol
+            payload["ik_orientation_residual_rad"] = ik_orientation_residual
+            pose_detail = f" and orientation within {float(orientation_tol)} rad (error {orientation_error:.4f} rad)"
         if reached:
             return {
                 "status": "success",
@@ -295,15 +496,18 @@ class MotionPrimitivesCore:
                         "text": (
                             f"move_to: '{robot_name}' EE ({frame_type} '{frame_name}') reached "
                             f"{target.tolist()} within {float(tol)} m in {steps_used} steps "
-                            f"(error {position_error:.4f} m)."
+                            f"(error {position_error:.4f} m){pose_detail}."
                         )
                     },
                     {"json": payload},
                 ],
             }
+        residuals = f"residual {position_error:.4f} m"
+        if orientation_error is not None and orientation_tol is not None:
+            residuals += f", orientation residual {orientation_error:.4f} rad (tol {float(orientation_tol)} rad)"
         return _err(
             f"move_to: '{robot_name}' did not reach {target.tolist()} within tol={float(tol)} m "
-            f"after max_steps={max_steps} (residual {position_error:.4f} m; IK residual was "
+            f"after max_steps={max_steps} ({residuals}; IK residual was "
             f"{ik_residual:.4f} m). The servo may need more steps, or the pose fights joint "
             "limits/contacts.",
             payload,

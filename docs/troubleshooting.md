@@ -28,6 +28,9 @@ description: Error → fix table for the most common gotchas across install, sim
 | `Robot("foo")` raises ValueError | Unknown name | Check `list_robots("all")`; or pass `urdf_path=...` |
 | Sim hangs on `create_world` | Asset download | Wait - first call downloads MJCF, then cached |
 | `ModuleNotFoundError: trs_so_arm100_mj_description` | Auto-install failed | `uv pip install trs-so-arm100-mj-description` |
+| `move_to: the requested POSE is not achievable ... The position ... on its own IS reachable` | The point is fine, the `orientation` is not - a damped least-squares solve honours the rotation and gives up the position, and an arm with fewer than 6 DOF (SO-100/SO-101) cannot realize an arbitrary full pose | Omit `orientation=` for a position-only solve, or command the pose on an arm with enough DOF. Loosening `tol` would only accept a solve that still points the wrong way |
+| `move_to` reached the point but the wrist points the wrong way | `tol` bounds the POSITION in meters; the rotation is bounded by `orientation_tol` in radians (default 0.1, ~5.7 deg) | Read `orientation_error_rad` in the result's json block, and pass a tighter `orientation_tol=` if the default is too loose for the task |
+| `move_to: 'orientation_tol' only bounds an 'orientation' target` | `orientation_tol` passed for a position-only move, where it would have nothing to bound | Pass `orientation=[w, x, y, z]` to command a full pose, or drop `orientation_tol` |
 | `add_robot` raises after `load_scene` | Scene XML overrides world | Use `add_robot` before `load_scene` |
 
 ## Hardware

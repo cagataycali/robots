@@ -2047,10 +2047,13 @@ class MuJoCoSimEngine(
         # transport/release vocabulary around a learned policy (Harness VLA).
         base["methods"]["move_to"] = (
             "(robot_name=None, position, orientation=None, tol=0.01, "
-            "max_steps=200) -> dict  # move the end-effector to a world-frame "
-            "[x, y, z] target via IK (position-only when orientation is "
-            "omitted - right for <6-DOF arms); NOT collision-aware; returns "
-            "reached/residual, structured error when unreachable"
+            "max_steps=200, orientation_tol=None) -> dict  # move the "
+            "end-effector to a world-frame [x, y, z] target via IK "
+            "(position-only when orientation is omitted - right for <6-DOF "
+            "arms); an orientation is CONVERGED to within orientation_tol "
+            "radians (default 0.1), not just fed to the solver; NOT "
+            "collision-aware; returns reached/residuals, structured error "
+            "naming the out-of-reach component when the pose is unreachable"
         )
         base["methods"]["set_gripper"] = (
             "(robot_name=None, state='open'|'close', steps=12) -> dict  # "
