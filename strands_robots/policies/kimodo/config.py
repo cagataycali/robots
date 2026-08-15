@@ -25,6 +25,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from strands_robots.utils import positive_finite_number_error, positive_whole_number_error
+
 _KIMODO_DEFAULT_MODEL_ID = "nvidia/Kimodo-G1-RP-v1"
 _KIMODO_MAX_FRAMES = 196
 _KIMODO_NATIVE_FPS = 30
@@ -32,16 +34,51 @@ _KIMODO_TRACKER_FPS = 50
 
 
 def _positive_int(name: str, value: int, upper: int | None = None) -> int:
-    if not isinstance(value, int) or value <= 0:
-        raise ValueError(f"{name} must be a positive integer, got {value!r}")
+    """Validate a positive whole knob through the shared domain, plus an upper bound.
+
+    Delegates the sign, integrality, ``bool`` and float-range rules to
+    :func:`~strands_robots.utils.positive_whole_number_error` so this provider
+    cannot drift from every other counted knob in the tree; only the
+    provider-specific ceiling is applied here.
+
+    Args:
+        name: Parameter name, used in the message.
+        value: The caller-supplied value.
+        upper: Inclusive ceiling, when the field has one.
+
+    Returns:
+        The validated value.
+
+    Raises:
+        ValueError: If the value is outside the domain or above ``upper``.
+    """
+    if error := positive_whole_number_error(value, name, "KimodoConfig"):
+        raise ValueError(error)
     if upper is not None and value > upper:
-        raise ValueError(f"{name} must be <= {upper}, got {value}")
-    return value
+        raise ValueError(f"KimodoConfig: {name} must be <= {upper}, got {value}.")
+    return int(value)
 
 
 def _positive_float(name: str, value: float) -> float:
-    if not isinstance(value, (int, float)) or not (value > 0) or value != value:
-        raise ValueError(f"{name} must be a positive finite number, got {value!r}")
+    """Validate a positive continuous knob through the shared domain.
+
+    Delegates to :func:`~strands_robots.utils.positive_finite_number_error`,
+    which rejects ``bool``, ``nan``, ``inf`` and values past the float64 range -
+    the cases a hand-rolled ``value != value`` check reads as a NaN test but
+    states less precisely.
+
+    Args:
+        name: Parameter name, used in the message.
+        value: The caller-supplied value.
+
+    Returns:
+        The validated value as a float.
+
+    Raises:
+        ValueError: If the value is not a positive finite number.
+    """
+    if error := positive_finite_number_error(value, name, "KimodoConfig"):
+        raise ValueError(error)
     return float(value)
 
 

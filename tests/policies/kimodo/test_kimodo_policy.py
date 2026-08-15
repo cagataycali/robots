@@ -201,8 +201,10 @@ def test_an_unknown_knob_raises_rather_than_being_swallowed():
     """No ``**kwargs``: a mistyped parameter is refused at construction."""
     from strands_robots.policies.kimodo import KimodoPolicy
 
+    # Splatted rather than written inline: the point is that an unsupported name
+    # is refused at runtime, not that this module contains a mistyped call.
     with pytest.raises(TypeError, match="diffusion_step"):
-        KimodoPolicy(diffusion_step=25)  # missing the plural 's'
+        KimodoPolicy(**{"diffusion_step": 25})  # missing the plural 's'
 
 
 def test_an_override_is_validated_like_a_directly_constructed_field():
@@ -247,3 +249,32 @@ def test_a_config_object_survives_the_registry_default_merge(monkeypatch):
     assert policy.config.diffusion_steps == 25
     assert policy.config.guidance_scale == 1.5
     assert policy.config.model_id == "me/custom"
+
+
+def test_config_rejects_a_bool_and_a_non_finite_number():
+    """The shared numeric domains reject what a hand-rolled check let through.
+
+    `True` is an `int` subclass, so an isinstance-only check accepted it as a
+    silent 1; `nan`/`inf` poison the comparisons these knobs feed. Both are
+    refused by the shared domain this config resolves through.
+    """
+    for bad in (True, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="diffusion_steps"):
+            KimodoConfig(diffusion_steps=bad)
+    for bad in (True, float("nan"), float("inf")):
+        with pytest.raises(ValueError, match="guidance_scale"):
+            KimodoConfig(guidance_scale=bad)
+
+
+def test_a_multiline_prompt_is_flattened_before_it_is_logged(caplog):
+    """A caller-supplied prompt must not be able to forge a second log record."""
+    import logging
+
+    policy, _ = _make_policy(num_frames=4, native_fps=30, tracker_fps=30)
+    with caplog.at_level(logging.INFO, logger="strands_robots.policies.kimodo.policy"):
+        _first_action(policy, "walk forward\nINFO:root:forged record")
+
+    logged = [r.getMessage() for r in caplog.records]
+    assert logged, "expected the sampler to log one record"
+    assert not any("\n" in message for message in logged)
+    assert any("forged record" in message for message in logged)

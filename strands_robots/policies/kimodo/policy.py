@@ -356,11 +356,14 @@ class KimodoPolicy(Policy):
         )
         self._current_prompt = prompt
         self._frame_cursor = 0
+        # The prompt is caller-supplied, so flatten line breaks before logging:
+        # a raw newline would let it forge an additional log record.
+        logged_prompt = " ".join(prompt[:80].split())
         logger.info(
             "Kimodo: sampled %d frames @ %dHz for prompt=%r",
             self._motion_buffer.shape[0],
             self.config.tracker_fps,
-            prompt[:80],
+            logged_prompt,
         )
 
     @staticmethod
