@@ -6,10 +6,10 @@ full-body `qpos` sequences for the Unitree G1 in a single diffusion pass, then
 streams them one frame per tick as G1 joint targets.
 
 Kimodo sits in the same seat as [`MotionBricksPolicy`](./motionbricks.md) — it
-is a *kinematic motion generator* that emits motion targets, not torques. A
-tracking controller (WBC / PD) turns those into physics — see
-[`WBC`](./wbc.md) or compose via `policy_provider="composite"` (see
-[Custom Policies](./custom-policies.md)).
+is a *kinematic motion generator* that emits motion targets, not torques — a
+whole-body reference over all 29 leg + waist + arm joints. Applying that
+reference under physics needs a controller that *tracks* it; see
+[Tracking the reference under physics](#tracking-the-reference-under-physics).
 
 ## When to use
 
@@ -63,24 +63,36 @@ sim.run_policy(
 )
 ```
 
-## Composing with a physics tracker
+## Tracking the reference under physics
 
-Kimodo is kinematic. To close the loop through physics, compose it with WBC:
+Kimodo is kinematic: it emits joint *targets* for all 29 DOFs, not torques. Run
+standalone (the example above) those targets are applied directly, which is the
+faithful visualisation of the generated motion.
 
-```python
-sim.run_policy(
-    robot_name="g1",
-    policy_provider="composite",
-    policy_config={
-        "layers": [
-            {"provider": "kimodo", "config": {"diffusion_steps": 100}},
-            {"provider": "wbc"},
-        ],
-    },
-    instruction="walking forward",
-    n_steps=500,
-)
+Making the robot follow that motion under physics requires a controller that
+**tracks the reference** — the 29 targets are the tracker's input. Generator and
+tracker therefore run in **series over the same joints**:
+
+```text
+prompt -> Kimodo -> 29 joint targets -> reference tracker -> torques -> robot
 ```
+
+That is a cascade, and `CompositePolicy` does not express it.
+[`CompositePolicy`](./custom-policies.md) merges two policies over **disjoint**
+joint groups (locomotion legs+waist plus manipulation arms, each joint owned by
+exactly one child); handing it a whole-body generator and a whole-body controller
+gives both children the same joints, so one child's output is discarded entirely.
+That configuration is refused with an error naming the shadowed joints rather
+than silently returning one child's commands.
+
+[`WBCPolicy`](./wbc.md) in particular is **not** a reference tracker: its only
+command input is a target base velocity (`target_velocity`, plus optional
+orientation and height), it has no reference-pose input, and it drives 15 of the
+same 29 joints Kimodo drives. Composing the two cannot track a Kimodo motion.
+
+`strands_robots` does not currently ship a whole-body reference tracker. A
+tracker matched to the generator's motion distribution (an RL tracker trained on
+it, or a tuned PD law) is required, and is out of scope for this provider.
 
 ## Config reference
 

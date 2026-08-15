@@ -10,12 +10,21 @@ per-tick action-dict contract the rest of ``strands_robots`` expects.
 Where it sits in the stack (identical seat to
 :class:`~strands_robots.policies.motionbricks.MotionBricksPolicy`):
 
-* Kimodo emits **motion targets** (kinematic ``qpos``).
-* A tracking controller (WBC / PD) turns those targets into joint torques
-  under physics via :class:`~strands_robots.policies.composite.CompositePolicy`.
-* Standalone, calling the policy in a MuJoCo sim without a tracker sets
-  ``qpos`` directly - this is the faithful visualisation of a kinematic
-  generator.
+* Kimodo emits **motion targets** (kinematic ``qpos``) for all 29 leg + waist +
+  arm joints - a whole-body reference, not a joint subset.
+* Standalone, calling the policy in a MuJoCo sim without a tracker sets those
+  targets directly - the faithful visualisation of a kinematic generator, and
+  what this provider supports today.
+* Closing the loop through physics needs a controller that TRACKS this
+  reference: the 29 targets are its input, so generator and tracker run in
+  series over the same joints. That is a cascade, not a composition, and
+  :class:`~strands_robots.policies.composite.CompositePolicy` does not express
+  it - it merges two policies over DISJOINT joint groups (see its module
+  docstring). Composing Kimodo with
+  :class:`~strands_robots.policies.wbc.WBCPolicy` in particular cannot track a
+  reference at all: WBC's only command input is a target base velocity, it has
+  no reference-pose input, and it drives 15 of the 29 joints Kimodo already
+  drives.
 
 Contract:
 
