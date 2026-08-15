@@ -1,0 +1,61 @@
+name: PR Harness (strands-coder)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      trusted: ${{ steps.check.outputs.trusted }}
+    steps:
+      - id: check
+        run: |
+          assoc="${{ github.event.pull_request.author_association }}"
+          echo "PR author association: $assoc"
+          if [[ "$assoc" =~ ^(OWNER|MEMBER|COLLABORATOR|CONTRIBUTOR)$ ]]; then
+            echo "trusted=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted=false" >> "$GITHUB_OUTPUT"
+            echo "Author association '$assoc' is not yet a recognized contributor — skipping autonomous harness. A maintainer can still review manually."
+          fi
+
+  harness:
+    needs: gate
+    if: needs.gate.outputs.trusted == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Run Strands Coder harness on this PR
+        uses: cagataycali/strands-coder@main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          prompt: |
+            A pull request was opened/updated on strands-labs/robots by a recognized contributor
+            (author_association: ${{ github.event.pull_request.author_association }}).
+
+            Review PR #${{ github.event.pull_request.number }} — "${{ github.event.pull_request.title }}":
+            1. Check out the PR diff and run the test suite for the files it touches.
+            2. Follow this repo's own review culture: produce a mutation-matrix table (which
+               regression each new/changed test actually catches), reference AGENTS.md conventions,
+               and flag any open `decision(...)` issues this PR touches or should open one for.
+            3. Post your findings as a single PR comment. Do NOT merge. Do NOT force-push to the PR branch.
+            4. If tests are missing for the changed behavior, say so explicitly and suggest the
+               minimal test to add — do not write it yourself unless asked in a follow-up comment.
+          provider: bedrock
+          model: global.anthropic.claude-opus-4-5-20251101-v1:0
+          tools: "strands_tools:shell,file_read;strands_coder:use_github"
+          aws_role_arn: ${{ secrets.AWS_ROLE_ARN }}
+          aws_region: us-west-2
+          skip_git_config: "true"
