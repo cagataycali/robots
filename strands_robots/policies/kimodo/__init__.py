@@ -34,6 +34,15 @@ See :doc:`docs/policies/kimodo`.
 """
 
 from strands_robots.policies.kimodo.config import KimodoConfig
+
+# Hardware bridge helpers live in ``.hardware``. Imported lazily by callers on
+# real hardware; a pure-sim import path does not pay for the lerobot lookup
+# because ``.hardware`` builds its joint map lazily on first ``get_joint_map()``.
+from strands_robots.policies.kimodo.hardware import (
+    build_lerobot_g1_action_dict,
+    get_joint_map,
+    kimodo_action_to_lerobot_g1,
+)
 from strands_robots.policies.kimodo.policy import (
     KIMODO_G1_JOINTS,
     KimodoMotionAgent,
@@ -45,4 +54,7 @@ __all__ = [
     "KimodoConfig",
     "KimodoMotionAgent",
     "KIMODO_G1_JOINTS",
+    "build_lerobot_g1_action_dict",
+    "get_joint_map",
+    "kimodo_action_to_lerobot_g1",
 ]
