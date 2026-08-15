@@ -21,6 +21,7 @@ mappings.  No positional guessing.  One step in, one step out.
 import importlib.util
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -96,9 +97,16 @@ def _detect_groot_version(*, force: bool = False) -> str | None:
 class ObservationMapping:
     """Maps robot sensor names → model modality keys.
 
+    A model key is spelled as the loaded model declares it, because it is the
+    key the observation payload is sent under: bare on N1.6/N1.7
+    (``"front"``), prefixed on N1.5 (``"video.front"``).
+    :class:`Gr00tPolicy` accepts either spelling from a caller and restates it
+    once against the model, so a mapping built by hand needs no knowledge of
+    which release is loaded.
+
     Attributes:
-        video: ``{robot_camera: model_video_key}`` - bare, no prefix.
-        state: ``{robot_state: model_state_key}`` - bare, no prefix.
+        video: ``{robot_camera: model_video_key}``.
+        state: ``{robot_state: model_state_key}``.
         language_key: Model's language key (e.g. ``"task"``).
     """
 
@@ -135,8 +143,11 @@ class ObservationMapping:
 class ActionMapping:
     """Maps model action keys → robot actuator names.
 
+    A model key is spelled as the loaded model declares it - see
+    :class:`ObservationMapping` for why, and for what a caller may supply.
+
     Attributes:
-        actions: ``{model_action_key: robot_actuator}`` - bare, no prefix.
+        actions: ``{model_action_key: robot_actuator}``.
     """
 
     actions: dict[str, str] = field(default_factory=dict)
@@ -147,6 +158,82 @@ class ActionMapping:
         for model_key in self.actions:
             if model_key not in model_action:
                 raise ValueError(f"Action mapping: model key '{model_key}' not in model: {sorted(model_action)}")
+
+
+# Model key spelling
+
+# The spelling of ``ModalityConfig.modality_keys`` differs by GR00T release, and
+# a policy reads whichever one its loaded model carries:
+#
+#   N1.6 / N1.7  bare      ``["front", "wrist"]``   - built by the checkpoint
+#                                                     processor that
+#                                                     ``gr00t.policy.gr00t_policy``
+#                                                     reads, and the same
+#                                                     spelling a live server
+#                                                     returns for
+#                                                     ``get_modality_config``
+#   N1.5         prefixed  ``["video.front", ...]`` - declared by
+#                                                     ``gr00t.experiment.data_config``
+#
+# Everything downstream matches keys by name, so both spellings have to reduce to
+# one before a name comparison, and a resolved model key has to be written back in
+# the spelling that model declares - it is the key the payload is sent under.
+
+
+def _declared_by_bare(declared: list[str], modality: str) -> dict[str, str]:
+    """Index a model's declared keys by their bare (prefix-free) name.
+
+    Args:
+        declared: The model's ``modality_keys`` for one modality, in either
+            spelling.
+        modality: The modality these keys belong to (``"video"``, ``"state"``
+            or ``"action"``), whose name is the prefix to reduce away.
+
+    Returns:
+        ``{bare name: declared spelling}``. For a bare-spelling model every
+        entry maps to itself.
+    """
+    prefix = f"{modality}."
+    return {key.removeprefix(prefix): key for key in declared}
+
+
+def _canonical_model_keys(requested: Iterable[str], declared: list[str], modality: str) -> dict[str, str]:
+    """Resolve requested model keys to the model's own spelling of each.
+
+    A caller names a model key in whichever spelling they have in front of
+    them; the payload has to carry the spelling the model declares. A key that
+    matches no declared key is returned unchanged, so it reaches
+    :meth:`ObservationMapping.validate` / :meth:`ActionMapping.validate` and is
+    refused there by name rather than being quietly rewritten.
+
+    Args:
+        requested: Model keys as supplied or inferred.
+        declared: The model's ``modality_keys`` for that modality.
+        modality: ``"video"``, ``"state"`` or ``"action"``.
+
+    Returns:
+        ``{requested key: declared spelling}``.
+    """
+    index = _declared_by_bare(declared, modality)
+    prefix = f"{modality}."
+    return {key: index.get(key.removeprefix(prefix), key) for key in requested}
+
+
+def _canonicalize_observation_mapping(mapping: ObservationMapping, modality_configs: dict) -> ObservationMapping:
+    """Restate an observation mapping's model keys in the model's own spelling."""
+    video = _canonical_model_keys(mapping.video.values(), modality_configs["video"].modality_keys, "video")
+    state = _canonical_model_keys(mapping.state.values(), modality_configs["state"].modality_keys, "state")
+    return replace(
+        mapping,
+        video={robot: video[model] for robot, model in mapping.video.items()},
+        state={robot: state[model] for robot, model in mapping.state.items()},
+    )
+
+
+def _canonicalize_action_mapping(mapping: ActionMapping, modality_configs: dict) -> ActionMapping:
+    """Restate an action mapping's model keys in the model's own spelling."""
+    canonical = _canonical_model_keys(mapping.actions, modality_configs["action"].modality_keys, "action")
+    return replace(mapping, actions={canonical[model]: robot for model, robot in mapping.actions.items()})
 
 
 # Auto-inference (exact name match → positional fallback)
@@ -200,14 +287,14 @@ def _auto_infer_action_mapping(
     """
     ours = [k.removeprefix("action.") for k in data_config.action_keys]
     model = list(modality_configs["action"].modality_keys)
-    model_set = set(model)
+    declared = _declared_by_bare(model, "action")
 
     actions: dict[str, str] = {}
     used: set = set()
     for k in ours:
-        if k in model_set:
-            actions[k] = k
-            used.add(k)
+        if k in declared:
+            actions[declared[k]] = k
+            used.add(declared[k])
     remaining_ours = [k for k in ours if k not in actions.values()]
     remaining_model = [k for k in model if k not in used]
     if strict_keys and remaining_ours and remaining_model:
@@ -224,13 +311,18 @@ def _auto_infer_action_mapping(
     return ActionMapping(actions=actions)
 
 
-def _match_keys(ours: list[str], model: list[str], label: str, strict_keys: bool = False) -> dict[str, str]:
-    """Match our keys to model keys: exact first, positional fallback.
+def _match_keys(ours: list[str], model: list[str], modality: str, strict_keys: bool = False) -> dict[str, str]:
+    """Match our keys to model keys: exact name first, positional fallback.
+
+    Both arms return the model's declared spelling of the key they resolved, so
+    which arm resolved a key is not observable in the result.
 
     Args:
-        ours: Robot/sim key names to map.
-        model: The model's declared key names.
-        label: Human-readable label for logs/errors (e.g. ``"video"``).
+        ours: Robot/sim key names to map, bare.
+        model: The model's declared key names, in either spelling.
+        modality: The modality being matched (``"video"``, ``"state"`` or
+            ``"action"``) - names the prefix to reduce away, and labels logs
+            and errors.
         strict_keys: When True, raise instead of falling back to positional
             matching if any key cannot be resolved by exact name.
 
@@ -238,18 +330,18 @@ def _match_keys(ours: list[str], model: list[str], label: str, strict_keys: bool
         ValueError: If ``strict_keys`` is True and any key needs positional
             fallback.
     """
-    model_set = set(model)
+    declared = _declared_by_bare(model, modality)
     mapping: dict[str, str] = {}
     used: set = set()
     for k in ours:
-        if k in model_set:
-            mapping[k] = k
-            used.add(k)
+        if k in declared:
+            mapping[k] = declared[k]
+            used.add(declared[k])
     remaining_ours = [k for k in ours if k not in mapping]
     remaining_model = [k for k in model if k not in used]
     if strict_keys and remaining_ours and remaining_model:
         raise ValueError(
-            f"strict_keys=True: cannot resolve {label} keys by exact name. "
+            f"strict_keys=True: cannot resolve {modality} keys by exact name. "
             f"Unmatched robot keys: {sorted(remaining_ours)}; "
             f"available model keys: {sorted(remaining_model)}. "
             "Provide an explicit mapping (observation_mapping/action_mapping) "
@@ -257,7 +349,7 @@ def _match_keys(ours: list[str], model: list[str], label: str, strict_keys: bool
         )
     for our, mdl in zip(remaining_ours, remaining_model):
         mapping[our] = mdl
-        logger.info("Auto-mapped %s: '%s' -> '%s' (positional)", label, our, mdl)
+        logger.info("Auto-mapped %s: '%s' -> '%s' (positional)", modality, our, mdl)
     return mapping
 
 
@@ -374,6 +466,10 @@ class Gr00tPolicy(Policy):
             prefixes, so no model metadata is needed. Service mode cannot
             cross-check it against the server, so a key the server does not have
             surfaces there as a server-side error rather than a refusal here.
+            With a local checkpoint loaded, each model key is restated in the
+            spelling that model declares - bare on N1.6/N1.7, prefixed on N1.5 -
+            so either spelling is accepted here and one that names no declared
+            key is refused by name.
         action_mapping: ``{"action.X": "robot_key"}``. Honoured in either mode,
             on the same terms.
         language_key: Override the key the instruction is sent under. Otherwise
@@ -560,6 +656,7 @@ class Gr00tPolicy(Policy):
         if self._obs_mapping is None:
             self._obs_mapping = _auto_infer_observation_mapping(self.data_config, mmc, strict_keys=self._strict_keys)
 
+        self._obs_mapping = _canonicalize_observation_mapping(self._obs_mapping, mmc)
         self._obs_mapping = replace(self._obs_mapping, language_key=self._resolve_language_key(mmc))
         self._obs_mapping.validate(mmc)
 
@@ -567,6 +664,7 @@ class Gr00tPolicy(Policy):
         if self._action_mapping is None:
             self._action_mapping = _auto_infer_action_mapping(self.data_config, mmc, strict_keys=self._strict_keys)
 
+        self._action_mapping = _canonicalize_action_mapping(self._action_mapping, mmc)
         self._action_mapping.validate(mmc)
 
         logger.info(
