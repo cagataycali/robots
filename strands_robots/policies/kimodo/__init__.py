@@ -27,7 +27,7 @@ so downstream trackers see the same signal.
 Requires the ``[kimodo]`` extra:
 
 * ``torch>=2.0.0``, ``diffusers>=0.30.0``, ``transformers>=4.40.0``,
-  ``huggingface_hub``, ``imageio``, ``imageio-ffmpeg``.
+  ``huggingface_hub``, ``accelerate``, ``scipy``.
 
 Model weights are fetched on demand from HuggingFace; no checkpoints bundled.
 See :doc:`docs/policies/kimodo`.
