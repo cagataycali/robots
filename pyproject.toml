@@ -188,6 +188,22 @@ kimodo = [
     "accelerate>=0.30.0",
     "scipy>=1.10.0",
 ]
+protomotions = [
+    # ProtoMotions Generalist Tracking Policy (GTP) - the ONNX whole-body
+    # motion tracker that turns a kinematic reference clip (e.g. one Kimodo
+    # samples) into balanced joint targets for the Unitree G1. Same three
+    # support libraries as [wbc], for the same three reasons: onnxruntime runs
+    # the exported graph, pyyaml reads the `unified_pipeline.yaml` sidecar next
+    # to it, and huggingface_hub fetches the checkpoint from a model id. Weights
+    # are NOT bundled. See strands_robots/policies/protomotions/ and
+    # docs/policies/protomotions.md.
+    "onnxruntime>=1.17.0,<2.0.0",
+    "pyyaml>=5.1,<7.0.0",
+    # Same >=1.5 floor and MAJOR-only cap as [wbc]: the documented bucket-sync
+    # guidance needs the `hf buckets`/`hf sync` CLI subcommands, which first
+    # ship in huggingface_hub 1.5.0. See the [wbc] comment for the full reason.
+    "huggingface_hub>=1.5,<2.0.0",
+]
 lerobot = [
     # [dataset] bundles the read-back stack the streaming data loop needs:
     # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec
@@ -440,6 +456,7 @@ all = [
     "strands-robots[wbc]",
     "strands-robots[motionbricks]",
     "strands-robots[kimodo]",
+    "strands-robots[protomotions]",
     "strands-robots[molmoact2]",
     "strands-robots[ollama]",
     "strands-robots[inference]",
