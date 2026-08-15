@@ -90,7 +90,7 @@ cosmos3-diffusers = [
 # cosmos3-service, sim-mujoco, and lerobot).
 cosmos3-sim = [
     "mink>=0.0.4",
-    "mujoco>=3.2.0,<4.0.0",
+    "mujoco>=3.5.0,<4.0.0",
     # qpsolvers QP backend for mink.solve_ik. quadprog is the dependency-light
     # default that is always available; the bridge auto-selects whatever
     # qpsolvers reports (preferring daqp when present).
@@ -245,7 +245,14 @@ sim = [
 ]
 sim-mujoco = [
     "strands-robots[sim]",
-    "mujoco>=3.2.0,<4.0.0",
+    # 3.5.0 is the oldest release the backend can drive, not merely import:
+    # every scene is built through the MjSpec procedural API, and URDF loading
+    # through it first works in 3.5.0 (3.4.0 and earlier refuse add_robot with
+    # "Could not find decoder for resource '<path>.urdf'"), while MjSpec.delete
+    # - which world creation needs on its first call - first ships in 3.3.4.
+    # simulation.mujoco.backend._MUJOCO_API_FLOOR owns the number and refuses an
+    # older build at the import funnel; keep the two in step.
+    "mujoco>=3.5.0,<4.0.0",
     "imageio>=2.28.0,<3.0.0",
     "imageio-ffmpeg>=0.4.0,<1.0.0",
     # Differential-IK solver stack. `move_to`, the Cartesian transport
@@ -403,7 +410,7 @@ vera-sim = [
     # the package. If you genuinely need NVlabs MimicGen for data generation,
     # install it from source:
     #     pip install "mimicgen @ git+https://github.com/NVlabs/mimicgen.git"
-    "mujoco>=3.5.0",
+    "mujoco>=3.5.0,<4.0.0",
     "imageio",
 ]
 # Local-LLM agent path (no API key / no AWS -- the natural choice on an edge
