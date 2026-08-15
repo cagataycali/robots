@@ -32,9 +32,7 @@ class _StubAgent:
         out = np.zeros((num_frames, 7 + self.num_joints), dtype=np.float32)
         out[:, 6] = 1.0  # identity quaternion
         for t in range(num_frames):
-            out[t, 7:] = np.linspace(0.0, 1.0, self.num_joints) * (
-                t / max(num_frames - 1, 1)
-            )
+            out[t, 7:] = np.linspace(0.0, 1.0, self.num_joints) * (t / max(num_frames - 1, 1))
         return out
 
 

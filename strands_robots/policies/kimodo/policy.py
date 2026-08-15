@@ -260,12 +260,8 @@ class KimodoPolicy(Policy):
         if self._motion_buffer is None or prompt != self._current_prompt:
             self._synthesise(
                 prompt=prompt,
-                diffusion_steps=int(
-                    kwargs.get("diffusion_steps", self.config.diffusion_steps)
-                ),
-                guidance_scale=float(
-                    kwargs.get("guidance_scale", self.config.guidance_scale)
-                ),
+                diffusion_steps=int(kwargs.get("diffusion_steps", self.config.diffusion_steps)),
+                guidance_scale=float(kwargs.get("guidance_scale", self.config.guidance_scale)),
                 seed=kwargs.get("seed", self.config.seed),
             )
 

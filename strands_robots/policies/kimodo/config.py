@@ -92,9 +92,7 @@ class KimodoConfig:
         _positive_int("native_fps", self.native_fps)
         _positive_int("tracker_fps", self.tracker_fps)
         if self.dtype not in ("fp16", "bf16", "fp32"):
-            raise ValueError(
-                f"dtype must be one of 'fp16'/'bf16'/'fp32', got {self.dtype!r}"
-            )
+            raise ValueError(f"dtype must be one of 'fp16'/'bf16'/'fp32', got {self.dtype!r}")
         if not isinstance(self.model_id, str) or not self.model_id.strip():
             raise ValueError("model_id must be a non-empty string")
 

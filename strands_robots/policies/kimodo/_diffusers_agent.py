@@ -89,10 +89,7 @@ class DiffusersKimodoAgent:
             # Fallback: some versions use `output["motion"]`.
             motion = output["motion"] if isinstance(output, dict) else None
         if motion is None:
-            raise RuntimeError(
-                "Kimodo pipeline output missing 'motion' field; is the "
-                "checkpoint version compatible?"
-            )
+            raise RuntimeError("Kimodo pipeline output missing 'motion' field; is the checkpoint version compatible?")
         arr = motion.detach().to("cpu").float().numpy().astype(self._np_dtype)
         # Some checkpoints return (B, T, D) with B=1 - squeeze.
         if arr.ndim == 3 and arr.shape[0] == 1:
