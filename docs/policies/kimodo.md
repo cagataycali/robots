@@ -27,8 +27,10 @@ tracking controller (WBC / PD) turns those into physics — see
 pip install "strands-robots[kimodo]"
 ```
 
-Kimodo requires `trust_remote_code=True` at load time. The factory gates this
-behind an explicit opt-in:
+The extra installs the `diffusers` loader, which drives any checkpoint published
+in *diffusers pipeline layout*. `trust_remote_code=True` is forwarded for a
+pipeline that ships custom code, and the factory gates it behind an explicit
+opt-in:
 
 ```bash
 export STRANDS_TRUST_REMOTE_CODE=1
@@ -36,6 +38,15 @@ export STRANDS_TRUST_REMOTE_CODE=1
 
 Weights are fetched from HuggingFace on first use under the NVIDIA Open Model
 License; nothing is bundled with `strands_robots`.
+
+!!! important "`nvidia/Kimodo-G1-RP-v1` is not a diffusers pipeline"
+
+    NVIDIA publishes the Kimodo weights bare — `config.yaml`,
+    `model.safetensors` and `stats/`, with `library_name: kimodo` on the Hub.
+    There is no `model_index.json`, so `DiffusionPipeline.from_pretrained`
+    cannot load it and the default `model_id` is refused at construction. To
+    run the NVIDIA checkpoint, supply its sampler through `motion_agent=` — see
+    [Driving the NVIDIA checkpoint](#driving-the-nvidia-checkpoint).
 
 ## Quick start
 
@@ -117,11 +128,30 @@ raises `TypeError` at construction instead of being silently ignored.
 
 ## When the checkpoint is not a Kimodo checkpoint
 
-`model_id` is accepted verbatim so an alternate Kimodo revision can be pinned,
-which also means a `model_id` pointing at some other diffusers pipeline loads
-fine and only fails at the first sample. Kimodo emits per-frame `qpos` under a
-`motion` field; a pipeline that names its output something else is refused with
-a `RuntimeError` naming the `model_id` and the fields the output *did* carry:
+`model_id` is accepted verbatim so an alternate revision can be pinned. Two
+distinct refusals guard that freedom.
+
+**At load time**, a target carrying no `model_index.json` is not a diffusers
+pipeline at all, so no amount of sampling will help. Rather than surface a bare
+404 for a file that will never exist, the loader names the layout mismatch and
+the remedy:
+
+```text
+RuntimeError: Kimodo model_id 'nvidia/Kimodo-G1-RP-v1' is not a diffusers
+pipeline: it carries no model_index.json, so DiffusionPipeline.from_pretrained
+cannot load it. NVIDIA's Kimodo checkpoints publish bare weights (config.yaml
+plus model.safetensors) for their own runtime - the Hub declares library_name
+'kimodo', not 'diffusers'. Pass motion_agent= with a sampler that loads this
+checkpoint through its own runtime and returns a (num_frames, 7+29) qpos array,
+or point model_id at a checkpoint published in diffusers pipeline layout.
+```
+
+A transport failure is *not* reported this way — a 401 or a 503 re-raises
+untouched, so a network problem is never misread as a layout problem.
+
+**At sample time**, a pipeline that loaded but names its output something other
+than `motion` is refused with a `RuntimeError` naming the `model_id` and the
+fields the output *did* carry:
 
 ```text
 RuntimeError: Kimodo pipeline output for model_id 'acme/not-kimodo' carries no
@@ -134,6 +164,55 @@ The remedies are the two the message names: point `model_id` at a Kimodo
 checkpoint, or pass a `motion_agent=` adapter that reads the sampler's own
 output field and returns the `(num_frames, 7+29)` `qpos` array this policy
 expects.
+
+## Driving the NVIDIA checkpoint
+
+`nvidia/Kimodo-G1-RP-v1` loads through NVIDIA's own `kimodo` runtime, which is
+distributed with the model rather than on PyPI. Wrap it in a `KimodoMotionAgent`
+and hand the policy to `run_policy` as a built object:
+
+```python
+import numpy as np
+from strands_robots.policies.kimodo import KimodoPolicy
+
+
+class NativeKimodoAgent:
+    """Samples through NVIDIA's kimodo runtime instead of diffusers."""
+
+    def __init__(self, device: str = "cuda") -> None:
+        from kimodo.exports.mujoco import MujocoQposConverter
+        from kimodo.model.load_model import load_model
+
+        self._model = load_model("kimodo-g1-rp", device=device)
+        self._converter = MujocoQposConverter(self._model.skeleton)
+        self._device = device
+
+    def sample(self, prompt, num_frames, diffusion_steps, guidance_scale, seed):
+        output = self._model(
+            [prompt.strip().rstrip(".") + "."],
+            [num_frames],
+            num_denoising_steps=diffusion_steps,
+            num_samples=1,
+            return_numpy=True,
+        )
+        qpos = np.asarray(self._converter.dict_to_qpos(output, self._device))
+        return qpos[0].astype(np.float32) if qpos.ndim == 3 else qpos.astype(np.float32)
+
+
+sim.run_policy(
+    robot_name="g1",
+    policy_object=KimodoPolicy(motion_agent=NativeKimodoAgent()),
+    instruction="a person walking forward with confident strides",
+    n_steps=200,
+    control_frequency=50,
+)
+```
+
+The runtime emits a dict of rotation matrices and root positions, so the
+`MujocoQposConverter` step is what produces the `(num_frames, 7+29)` qpos array
+the agent protocol expects. `guidance_scale` has no counterpart in that runtime
+(its classifier-free-guidance knob is a per-stage `cfg_weight` list) and is
+ignored by this adapter.
 
 ## Unit testing without weights
 
