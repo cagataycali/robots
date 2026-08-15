@@ -31,7 +31,8 @@ Example::
         upper_joints=ARM_JOINTS,                 # both arms
     )
     sim.run_policy(robot_name="unitree_g1", policy_object=policy,
-                   target_velocity=[0.5, 0.0, 0.0])
+                   policy_kwargs={"target_velocity": [0.5, 0.0, 0.0]},
+                   control_frequency=50.0, n_steps=500)
 """
 
 import asyncio
@@ -118,6 +119,15 @@ class CompositePolicy(Policy):
     def upper(self) -> Policy:
         """The upper-body (e.g. manipulation) child policy."""
         return self._upper
+
+    @property
+    def children(self) -> tuple[Policy, ...]:
+        """Both child policies, ``lower`` first - the order they are merged in.
+
+        Lets a runtime capability probe reach the concrete policies inside the
+        composite; see :attr:`Policy.children`.
+        """
+        return (self._lower, self._upper)
 
     @property
     def provider_name(self) -> str:

@@ -1913,15 +1913,26 @@ class MuJoCoSimEngine(
         :func:`~strands_robots.policies.wbc.install_wbc_torque_control` and
         returns its :meth:`uninstall` so the scene is restored after the run.
 
+        ``policy`` may be the ``WBCPolicy`` itself or any wrapper that declares
+        it through :attr:`~strands_robots.policies.base.Policy.children` - a
+        :class:`~strands_robots.policies.composite.CompositePolicy` driving the
+        legs from WBC and the arms from a manipulation policy, or a
+        :class:`~strands_robots.policies.persistent.PersistentPolicy` holding it
+        warm. The shim is resolved by walking that tree
+        (:func:`~strands_robots.policies.base.iter_policy_tree`), because the
+        physics it corrects is a property of the WBC policy driving the joints,
+        not of the type of object handed to ``run_policy``.
+
         Returns ``None`` (no-op) in five cases, in the order they are checked:
-        ``[wbc]`` is not installed; ``policy`` is not a ``WBCPolicy``; the sim
-        has no compiled world; a controller is already registered (a manual
-        install always wins); or
+        ``[wbc]`` is not installed; no ``WBCPolicy`` appears in ``policy``'s
+        tree; the sim has no compiled world; a controller is already registered
+        (a manual install always wins); or
         :func:`~strands_robots.policies.wbc.wbc_uses_position_servo` finds no
         position-servo actuator, meaning the driven actuators are already torque
         motors or none of the WBC joints resolve in this scene.
         """
         try:
+            from strands_robots.policies.base import iter_policy_tree
             from strands_robots.policies.wbc import (
                 WBCPolicy,
                 install_wbc_torque_control,
@@ -1930,7 +1941,11 @@ class MuJoCoSimEngine(
         except ImportError:
             return None
 
-        if not isinstance(policy, WBCPolicy):
+        # The shim is keyed on the WBC policy actually driving the joints, which
+        # may sit inside a wrapper (composite / persistent) that is not itself a
+        # WBCPolicy. Walk the declared tree instead of type-testing the argument.
+        wbc_policy = next((p for p in iter_policy_tree(policy) if isinstance(p, WBCPolicy)), None)
+        if wbc_policy is None:
             return None
         world = self._world
         if world is None or world._model is None:
@@ -1938,10 +1953,10 @@ class MuJoCoSimEngine(
         backend_state = getattr(world, "_backend_state", None)
         if isinstance(backend_state, dict) and backend_state.get("action_controller") is not None:
             return None  # a manually-installed controller wins
-        if not wbc_uses_position_servo(self, policy, robot_name):
+        if not wbc_uses_position_servo(self, wbc_policy, robot_name):
             return None
 
-        controller = install_wbc_torque_control(self, policy, robot_name)
+        controller = install_wbc_torque_control(self, wbc_policy, robot_name)
         logger.info(
             "run_policy: auto-installed WBC torque control on %r (position-servo "
             "actuators detected). WBC emits joint-position targets the stock servo "
