@@ -12,16 +12,15 @@ websockets 12.0 has no such name - it spells that class ``WebSocketServer``, and
 ``Server`` first appears in 13.0. Both ``[inference]`` and ``[cosmos3-service]``
 declared ``websockets>=12.0``, so the manifest described an install in which the
 package's own annotation does not resolve. Measured against the released wheels
-(``Server`` is the only name above the 12.0 line):
+(``Server`` is the only name the declared floor was missing):
 
-===========  ==================================================
-release      names missing of the nine the sources reach for
-===========  ==================================================
-11.0.3       ``websockets.sync.server.Server``
-12.0         ``websockets.sync.server.Server``
-13.0         none
-13.1 - 17.x  none
-===========  ==================================================
+=============  ================================================
+release        names missing of the nine the sources reach for
+=============  ================================================
+9.1, 10.x      all seven ``websockets.sync.*`` names
+11.0 - 12.0    ``websockets.sync.server.Server``
+13.0 - 17.0.1  none
+=============  ================================================
 
 Nothing caught it because the import lives under ``TYPE_CHECKING`` and is never
 executed: on 12.0 the package imports, binds a port, serves and stops cleanly.
@@ -66,19 +65,26 @@ _DISTRIBUTION = "websockets"
 #: or by ``from websockets.sync.server import ...`` (which needs the module too).
 _MODULE = "<module>"
 
-# (module, symbol) -> first websockets release that ships it, measured against
-# the released wheels. The whole ``websockets.sync`` package arrives in 12.0;
-# everything recorded at 12.0 was present the moment that package existed.
+#: The releases probed to produce the table below, oldest first.
+_PROBED_RELEASES = ("9.1", "10.0", "10.4", "11.0", "11.0.3", "12.0", "13.0", "13.1", "14.0", "15.0", "16.0", "17.0.1")
+
+# (module, symbol) -> first release that ships it, measured against the released
+# wheels across _PROBED_RELEASES. The synchronous implementation
+# (``websockets.sync``) lands in 11.0 and ``Server`` joins it in 13.0. The two
+# ``websockets``-level names predate the oldest release probed, so they are
+# recorded at that release rather than at their true origin - only the maximum of
+# this table feeds the floor, so an older origin cannot change the answer, and an
+# entry can never understate the release the code needs.
 _WEBSOCKETS_SYMBOL_FLOORS: dict[tuple[str, str], str] = {
-    ("websockets", _MODULE): "12.0",
-    ("websockets", "connect"): "12.0",
-    ("websockets.sync.client", _MODULE): "12.0",
-    ("websockets.sync.client", "ClientConnection"): "12.0",
-    ("websockets.sync.client", "connect"): "12.0",
-    ("websockets.sync.server", _MODULE): "12.0",
+    ("websockets", _MODULE): "9.1",
+    ("websockets", "connect"): "9.1",
+    ("websockets.sync.client", _MODULE): "11.0",
+    ("websockets.sync.client", "ClientConnection"): "11.0",
+    ("websockets.sync.client", "connect"): "11.0",
+    ("websockets.sync.server", _MODULE): "11.0",
     ("websockets.sync.server", "Server"): "13.0",
-    ("websockets.sync.server", "ServerConnection"): "12.0",
-    ("websockets.sync.server", "serve"): "12.0",
+    ("websockets.sync.server", "ServerConnection"): "11.0",
+    ("websockets.sync.server", "serve"): "11.0",
 }
 
 # A refactor that stops the walk from reaching the sources would make the
@@ -236,6 +242,15 @@ class TestTheFloorIsSelfMaintaining:
             f"{ {f'{m}.{s}': files for (m, s), files in unrecorded.items()} }. "
             "Add each to _WEBSOCKETS_SYMBOL_FLOORS with the release that first ships it, "
             "and raise the pyproject floor if it is higher."
+        )
+
+    def test_every_recorded_release_was_probed(self) -> None:
+        # A row invented from a changelog rather than measured against a wheel
+        # could name a release that never shipped the name.
+        unprobed = sorted({v for v in _WEBSOCKETS_SYMBOL_FLOORS.values() if v not in _PROBED_RELEASES})
+        assert not unprobed, (
+            f"_WEBSOCKETS_SYMBOL_FLOORS records releases that are not in _PROBED_RELEASES: {unprobed}. "
+            "Probe the wheel and add it to _PROBED_RELEASES, so every number in the table is measured."
         )
 
     def test_the_table_records_nothing_the_package_stopped_importing(self) -> None:
