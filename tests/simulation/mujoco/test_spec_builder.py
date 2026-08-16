@@ -1089,7 +1089,7 @@ class TestSurplusRollbackTargetsOnlyWhatThisCallAppended:
         try:
             spec.worldbody.add_camera(name="overview", pos=[0.0, 0.0, 9.0])
         except ValueError:
-            pass
+            pass  # eager-validating builds still leave the duplicate behind
         assert SpecBuilder.count_cameras_named(spec, "overview") == 2
 
         assert SpecBuilder.remove_surplus_cameras(spec, "overview", keep) == 1
