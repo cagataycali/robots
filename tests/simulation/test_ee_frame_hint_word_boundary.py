@@ -183,6 +183,7 @@ def test_leaf_fallback_when_no_component_matches() -> None:
 
 import types  # noqa: E402
 
+from strands_robots.simulation.models import SimRobot, SimWorld  # noqa: E402
 from strands_robots.simulation.newton.simulation import NewtonSimEngine  # noqa: E402
 
 
@@ -193,11 +194,15 @@ def _mujoco_gripper_body(tmp_path, robot: str, links: str) -> str | None:
     written MJCF, then ``list_bodies`` - so the namespacing and the model
     traversal are the production ones. Renders nothing, downloads nothing.
     """
-    from strands_robots import create_simulation
+    # `list_bodies` is a concrete-backend method, not a member of the `SimEngine`
+    # ABC that `create_simulation` is annotated to return, so the backend is
+    # constructed directly - the same class the factory resolves for
+    # `backend="mujoco"`. Mirrors the sibling entity-name-domain tests.
+    from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
 
     path = tmp_path / f"{robot}.xml"
     path.write_text(_chain("", links))
-    sim = create_simulation(backend="mujoco")
+    sim = MuJoCoSimEngine()
     try:
         sim.create_world(ground_plane=False)
         added = sim.add_robot(name=robot, urdf_path=str(path))
@@ -247,8 +252,10 @@ def _newton_gripper_body(labels: list[str]) -> str | None:
     body map, so a stand-in ``self`` carrying those exercises the real method
     without a Newton runtime - the pattern its sibling backend-parity tests use.
     """
+    world = SimWorld()
+    world.robots["bot"] = SimRobot(name="bot", urdf_path="bot.xml", data_config="bot", joint_names=[])
     engine = NewtonSimEngine.__new__(NewtonSimEngine)
-    engine._world = types.SimpleNamespace(robots={"bot": object()})
+    engine._world = world
     engine._model = types.SimpleNamespace(body_label=list(labels))
     engine._robot_body_map = {"bot": list(labels)}
     result = NewtonSimEngine.list_bodies(engine, "bot")
