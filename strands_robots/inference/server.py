@@ -142,11 +142,20 @@ class PolicyServer:
         :meth:`stop` ends the loop by closing the listening socket from another
         thread, and the socket is exactly what the loop is waiting on. The
         websockets sync server does not synchronize those two, so a stop that
-        lands while the loop is entering or polling raises out of
-        ``serve_forever()`` - and the exception it raises is not stable across
-        websockets releases: 12.0 raises ``ValueError: Invalid file descriptor:
-        -1`` while registering the socket, and 13.0 through 17.x raise ``OSError:
-        [Errno 9] Bad file descriptor`` while polling it.
+        lands while the loop is coming up raises out of ``serve_forever()``.
+
+        Both shapes come from the *same* call - ``serve_forever()`` registering
+        the listening socket with its selector - and which one surfaces depends
+        on where in that call the close lands, not on the release. ``selectors``
+        reads ``fileno()`` to build its key and then hands the descriptor to
+        ``epoll_ctl``: a close landing before the read leaves ``fileno()`` at
+        ``-1`` and raises ``ValueError: Invalid file descriptor: -1``, while a
+        close landing between the read and ``epoll_ctl`` leaves a live-looking
+        descriptor and raises ``OSError: [Errno 9] Bad file descriptor``. 12.0
+        wraps that call in nothing, so both escape it; 13.0 through 17.x wrap it
+        in ``except ValueError: return``, which absorbs the first shape and
+        leaves the second - so raising the dependency floor narrows this race
+        but does not close it.
 
         Left unhandled that kills the serving thread, and a daemon thread reports
         its death nowhere: ``stop()`` returns, :attr:`_server` is cleared, and the
@@ -155,8 +164,9 @@ class PolicyServer:
         the same failure without a stop pending is a real one and still
         propagates, which is why this keys on :attr:`_stopping` rather than on
         the exception type. Keying on the type would both swallow a genuine
-        socket error and go stale the next time websockets changes which one it
-        raises.
+        socket error and encode a release-to-exception mapping that is already
+        untrue: one call raises either shape depending on scheduling, and every
+        supported release can produce the ``OSError``.
 
         Args:
             server: The running sync server whose accept loop to drive.

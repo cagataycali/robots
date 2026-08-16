@@ -4,14 +4,23 @@
 background thread; :meth:`PolicyServer.stop` ends it by closing the listening
 socket from the caller's thread. That socket is exactly what the loop is waiting
 on, and the sync server does not synchronize the two, so a stop that lands while
-the loop is entering or polling raises straight out of ``serve_forever()``.
+the loop is coming up raises straight out of ``serve_forever()``.
 
-Which exception it raises is not stable across websockets releases:
+Both shapes come out of the *same* call - ``serve_forever()`` registering the
+listening socket with its selector - and which one surfaces is decided by where
+in that call the close lands rather than by the release:
 
-* 12.0 registers the socket with its selector *inside* ``serve_forever()``, so a
-  stop that lands first raises ``ValueError: Invalid file descriptor: -1``.
-* 13.0 through 17.x guard that registration, and instead raise
-  ``OSError: [Errno 9] Bad file descriptor`` from the poll that follows.
+* the close lands before ``selectors`` reads ``fileno()``, so the descriptor is
+  ``-1`` -> ``ValueError: Invalid file descriptor: -1``;
+* the close lands between that read and ``epoll_ctl``, so the descriptor still
+  looks live -> ``OSError: [Errno 9] Bad file descriptor``.
+
+The release decides only which of the two is already handled upstream. 12.0
+wraps the call in nothing and lets both escape (30 ``ValueError`` and 3
+``OSError`` over 200 contended cycles); 13.0 through 17.x wrap it in
+``except ValueError: return``, so only the ``OSError`` escapes (0 and 2 over the
+same 200). Raising the dependency floor therefore narrows this race and cannot
+close it, which is why the fix lives here.
 
 Either way the serving thread dies, and nothing reports it: the thread is a
 daemon, ``stop()`` returns normally, ``_server`` is cleared, and the server looks
@@ -34,11 +43,12 @@ import pytest
 
 from strands_robots.inference import PolicyServer
 
-#: The two failure shapes observed across websockets 12.0 through 17.x. Keyed by
-#: the release that raises each so a future change is easy to record.
+#: The two failure shapes one registration call can raise, keyed by the window
+#: that produces each. Every supported release can raise the ``OSError``; only
+#: 12.0 lets the ``ValueError`` escape, so these are windows and not versions.
 _TEARDOWN_FAILURES = [
-    pytest.param(ValueError("Invalid file descriptor: -1"), id="websockets-12.0-ValueError"),
-    pytest.param(OSError(9, "Bad file descriptor"), id="websockets-13.0-through-17.x-OSError"),
+    pytest.param(ValueError("Invalid file descriptor: -1"), id="closed-before-fileno-ValueError"),
+    pytest.param(OSError(9, "Bad file descriptor"), id="closed-before-epoll_ctl-OSError"),
 ]
 
 #: A real start/stop pair loses the race often but not always, so the end-to-end
@@ -58,8 +68,8 @@ class _RacingServer:
 
     Reproduces the window deterministically instead of hoping the scheduler
     lands in it: ``serve_forever`` blocks until ``shutdown`` closes the socket
-    and then raises, which is what the real server does when a stop arrives
-    while it is polling a socket the stop just closed.
+    and then raises, which is what the real server does when a stop closes the
+    socket underneath the registration that is about to hand it to the selector.
     """
 
     def __init__(self, failure: BaseException) -> None:
