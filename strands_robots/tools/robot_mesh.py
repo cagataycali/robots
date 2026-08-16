@@ -32,6 +32,7 @@ human-readable text payload so the calling agent can recover.
 
 from __future__ import annotations
 
+import atexit
 import collections
 import functools
 import json
@@ -46,7 +47,7 @@ from strands import tool
 from strands.types.tools import ToolContext
 
 from strands_robots.mesh import security as _security
-from strands_robots.utils import positive_count_error, positive_finite_number_error
+from strands_robots.utils import finite_number_error, positive_count_error, positive_finite_number_error
 
 # Literal peer-id pattern for watch(target=...). Peer ids are an enumerable
 # surface (per AGENTS.md > Review Learnings (PR #92) > "Allowlist enumerable
@@ -514,6 +515,87 @@ _GATEWAY_LOCK = threading.Lock()
 #: the tree already uses for lock-guarded module state.
 _GATEWAY: dict[str, Any] = {}
 
+#: Environment override for how long gateway bring-up waits for presence.
+_GATEWAY_WAIT_ENV = "STRANDS_MESH_GATEWAY_DISCOVERY_WAIT_S"
+
+#: Default gateway presence wait (seconds) -- one heartbeat period.
+_GATEWAY_DISCOVERY_WAIT_S = 3.0
+
+
+def _gateway_discovery_wait_s() -> float:
+    """Resolve how long gateway bring-up waits for presence to populate.
+
+    Read through the shared numeric domain rather than by calling ``float()`` on
+    the raw value inside the :func:`time.sleep` argument. That form gave one
+    operator knob two failures that look nothing like a misconfigured wait. A
+    non-numeric value raised :class:`ValueError`, which the best-effort handler
+    around gateway bring-up absorbed, so a typo was reported as "gateway mesh
+    unavailable" and every action fell back to ``no local mesh found`` -- naming
+    neither the variable nor the typo. ``inf`` was worse than raising:
+    :func:`time.sleep` accepts it and blocks forever while holding
+    ``_GATEWAY_LOCK``, so the call never returns and no later call can take the
+    lock either.
+
+    Same shape as :func:`~strands_robots.mesh.session.stream_min_period_from_env`
+    for the step-telemetry rate; this is the remaining mesh knob that was still
+    read inline.
+
+    Returns:
+        The override when it names a span :func:`time.sleep` can honor,
+        including ``0`` -- an operator asking not to wait is obeyed rather than
+        overridden -- and :data:`_GATEWAY_DISCOVERY_WAIT_S` when it is unset or
+        holds a value no sleep can honor. A wait that is merely wrong costs
+        first-call peer completeness; refusing to start the gateway over it
+        would cost the whole feature, so the default is the safe direction.
+    """
+    raw = os.environ.get(_GATEWAY_WAIT_ENV)
+    if raw is None or raw.strip() == "":
+        return _GATEWAY_DISCOVERY_WAIT_S
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        logger.warning(
+            "%s=%r is not a number; waiting the %.1fs default for gateway presence",
+            _GATEWAY_WAIT_ENV,
+            raw,
+            _GATEWAY_DISCOVERY_WAIT_S,
+        )
+        return _GATEWAY_DISCOVERY_WAIT_S
+    error = finite_number_error(value, _GATEWAY_WAIT_ENV, "gateway mesh bring-up")
+    if error is None and value < 0:
+        error = f"{_GATEWAY_WAIT_ENV} must be >= 0 seconds, got {value}"
+    if error is not None:
+        logger.warning("%s; waiting the %.1fs default for gateway presence", error, _GATEWAY_DISCOVERY_WAIT_S)
+        return _GATEWAY_DISCOVERY_WAIT_S
+    return value
+
+
+def _stop_gateway_mesh() -> None:
+    """Stop the process-wide gateway mesh, if one was ever started.
+
+    The gateway is created lazily and cached for the process lifetime, and it is
+    the one :class:`~strands_robots.mesh.core.Mesh` in the tree with no owner to
+    stop it: every other one is closed by the ``Robot`` or ``Simulation`` that
+    built it. So it held an open session plus its heartbeat and state threads,
+    and stayed advertised to the fleet as a live peer, until the interpreter
+    died. Registered with :mod:`atexit`, matching the session singleton's own
+    teardown.
+    """
+    with _GATEWAY_LOCK:
+        gateway = _GATEWAY.pop("mesh", None)
+    if gateway is None:
+        return
+    try:
+        gateway.stop()
+    except (AttributeError, OSError, RuntimeError) as exc:
+        # Interpreter shutdown: this path makes no success claim to contradict,
+        # and Mesh.stop already absorbs its own transport errors. Narrow so a
+        # programmer error still surfaces rather than being swallowed at exit.
+        logger.debug("robot_mesh: gateway mesh stop failed at exit: %s", exc)
+
+
+atexit.register(_stop_gateway_mesh)
+
 
 def _gateway_mesh() -> Any | None:
     """Lazily create the robot-less gateway Mesh (None if zenoh unavailable)."""
@@ -542,7 +624,7 @@ def _gateway_mesh() -> Any | None:
             # caller reads peers. Once, here, rather than per call - a
             # per-call wait stretches a burst of calls past the rate-limit
             # window and silently raises the effective cap.
-            time.sleep(float(os.environ.get("STRANDS_MESH_GATEWAY_DISCOVERY_WAIT_S", "3")))
+            time.sleep(_gateway_discovery_wait_s())
             return gw
         except Exception as exc:  # noqa: BLE001 - gateway is best-effort
             logger.debug("robot_mesh: gateway mesh unavailable: %s", exc)
