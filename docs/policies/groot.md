@@ -88,6 +88,19 @@ unitree_g1_real     unitree_g1_sonic
 agibot_*            galaxea_r1_pro
 ```
 
+Every name above is also a robot identifier: the registry declares each
+embodiment's `data_config` spellings as aliases of the robot they name, so
+`unitree_g1_sonic` resolves the same Unitree G1 that `unitree_g1` does.
+
+```python
+Robot("unitree_g1_sonic", mode="sim")          # same robot as Robot("unitree_g1")
+sim.add_robot(name="g1", data_config="unitree_g1_sonic")
+```
+
+That is what lets `add_robot(data_config=...)` find the model to load, lets the
+Isaac IK solve resolve an MJCF for the robot, and lets `move_to` read the
+registry `gripper` block instead of guessing the gripper heuristically.
+
 ## Container lifecycle
 
 ```python
