@@ -211,6 +211,8 @@ and hand the policy to `run_policy` as a built object:
 
 ```python
 import numpy as np
+import torch
+
 from strands_robots.policies.kimodo import KimodoPolicy
 
 
@@ -226,6 +228,8 @@ class NativeKimodoAgent:
         self._device = device
 
     def sample(self, prompt, num_frames, diffusion_steps, guidance_scale, seed):
+        if seed is not None:
+            torch.manual_seed(seed)
         output = self._model(
             [prompt.strip().rstrip(".") + "."],
             [num_frames],
@@ -251,6 +255,16 @@ The runtime emits a dict of rotation matrices and root positions, so the
 the agent protocol expects. `guidance_scale` has no counterpart in that runtime
 (its classifier-free-guidance knob is a per-stage `cfg_weight` list) and is
 ignored by this adapter.
+
+`seed` is applied with `torch.manual_seed` because the runtime draws its initial
+noise from the global torch generator and accepts no generator or seed argument
+of its own. Seeding is what makes the agent reproducible, and it is what an
+adapter is most likely to leave out: an agent that accepts `seed` and ignores it
+still satisfies the protocol, so nothing raises, but every request samples fresh
+noise. That silently defeats the per-episode seed, since `eval_policy` derives
+one seed per episode and hands it to `reset()`, and the policy re-samples
+whenever a sampler input changes. Every episode would then get an independent
+motion no seed can reproduce.
 ## Driving the real robot
 
 Kimodo names its joint targets the way the URDF does (`left_hip_pitch_joint`);
