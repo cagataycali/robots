@@ -129,7 +129,13 @@ class TrainSpec:
             the lerobot backend maps it onto ``--dataset.eval_split`` plus a
             non-zero ``--eval_steps`` so an eval loss is logged periodically.
             Must be a positive integer below the dataset's episode count, or
-            ``None`` to train on every episode. Because the count is converted
+            ``None`` to train on every episode. That upper bound is also a SOURCE
+            requirement: the count comes from the dataset's local
+            ``meta/info.json``, so a backend that cannot read one (a Hub source
+            with no populated :attr:`dataset_root`) MUST refuse rather than emit
+            no split - an absent split is indistinguishable from ``None``, and
+            reporting no problem would launch exactly the validation-less run
+            this field exists to avoid. Because the count is converted
             into a real-valued split fraction whose ceiling lerobot takes, a
             backend MUST check it with
             :meth:`Trainer._validation_episodes_problems` rather than compare it

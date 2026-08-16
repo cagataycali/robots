@@ -476,6 +476,35 @@ class LerobotTrainer(Trainer):
             return validation_split_fraction(spec.val_episodes, total)
         return None
 
+    def _unreadable_episode_count_problem(self, spec: TrainSpec) -> str:
+        """Refusal text for a ``val_episodes`` whose episode count cannot be read.
+
+        :meth:`_val_eval_split` turns ``val_episodes`` into lerobot's
+        ``dataset.eval_split`` FRACTION, which needs the dataset's
+        ``total_episodes``. That count is only available from a local
+        ``meta/info.json``, so it is unreadable for a Hub dataset with no local
+        copy (``dataset_repo_id`` set, ``dataset_root`` empty) and for a
+        ``dataset_root`` that is a Hub cache directory nothing has been
+        downloaded into yet.
+
+        Both remedies named here are honored by this backend: pointing
+        ``dataset_root`` at a populated local copy makes the count readable, and
+        the raw ``extra`` passthrough reaches lerobot's own two knobs directly.
+        """
+        where = (
+            f"no readable 'meta/info.json' under dataset_root={spec.dataset_root!r}"
+            if spec.dataset_root
+            else "no dataset_root was given to read one from"
+        )
+        return (
+            f"{self.provider_name}: val_episodes={spec.val_episodes} cannot be reserved because the "
+            f"dataset's episode count is unavailable ({where}). A held-out split is a FRACTION in "
+            "lerobot (it holds out ceil(episodes_in_task * eval_split)), so the count is what turns "
+            "an episode number into that fraction. Either point dataset_root at a local copy of the "
+            "dataset - for a Hub dataset that is its local cache directory - or pass the split "
+            "directly with extra={'dataset.eval_split': <fraction>, 'eval_steps': <steps>}."
+        )
+
     def _dataset_total_tasks(self, dataset_root: str) -> int:
         """``total_tasks`` from ``meta/info.json``, or 0 when not recorded."""
         from pathlib import Path
@@ -617,15 +646,26 @@ class LerobotTrainer(Trainer):
         val_problems = self._validation_episodes_problems(spec)
         problems.extend(val_problems)
 
-        if not val_problems and spec.val_episodes is not None and spec.dataset_root:
-            total = self._dataset_total_episodes(spec.dataset_root)
-            if total is not None and spec.val_episodes >= total:
-                problems.append(f"val_episodes={spec.val_episodes} >= total_episodes={total}")
-            split_err = validation_split_error(
-                spec.val_episodes, self._dataset_total_tasks(spec.dataset_root), "LeRobotTrainer"
-            )
-            if split_err:
-                problems.append(split_err)
+        if not val_problems and spec.val_episodes is not None:
+            total = self._dataset_total_episodes(spec.dataset_root) if spec.dataset_root else None
+            if total is None:
+                # The split is a FRACTION derived from the episode count, so with
+                # no count to divide by there is nothing to emit - and a missing
+                # eval_split is indistinguishable from "no validation asked for".
+                # Refuse instead, naming both remedies, rather than launch a run
+                # that trains on every episode and records no validation loss.
+                problems.append(self._unreadable_episode_count_problem(spec))
+            else:
+                if spec.val_episodes >= total:
+                    problems.append(f"val_episodes={spec.val_episodes} >= total_episodes={total}")
+                split_err = validation_split_error(
+                    spec.val_episodes,
+                    self._dataset_total_tasks(spec.dataset_root),
+                    self.provider_name,
+                    passthrough_param="extra",
+                )
+                if split_err:
+                    problems.append(split_err)
 
         problems.extend(self._lora_hyperparameter_problems(spec))
 
