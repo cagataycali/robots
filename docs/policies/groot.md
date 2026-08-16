@@ -119,6 +119,13 @@ gr00t_inference(action="lifecycle", lifecycle="teardown",
                 remove_volumes=True)  # stop + remove container (and volumes)
 ```
 
+`action="stop"` escalates SIGTERM then SIGKILL over every process serving the
+port, inside the GR00T container first and on the host as a fallback. A process
+that had already exited is not a failure, but a port still held after both
+signals is: the result is then `{"status": "error", ...}` naming the port and the
+surviving pid, because reporting success there would send the next `start` into a
+bind that cannot succeed. Check the status before rebinding the same port.
+
 ## See also
 
 - [Policy providers](../policies/overview.md)
