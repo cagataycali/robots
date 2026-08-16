@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import json
 import logging
 import os
@@ -85,6 +86,43 @@ def command_succeeded(response: dict[str, Any] | None) -> bool:
     return True
 
 
+def _raw_to_jpeg(raw: bytes, shape: Any) -> tuple[bytes | None, str | None]:
+    """Transcode raw pixel bytes to JPEG. Returns ``(jpeg, error)``.
+
+    Only called for frames whose ``encoding`` is not JPEG. Needs the shape the
+    publisher sent - without it the byte string is unreadable, and saying so is
+    more useful than a black rectangle.
+    """
+    if not (isinstance(shape, (list, tuple)) and len(shape) in (2, 3)):
+        return None, f"encoding is not jpeg and shape {shape!r} is unusable"
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        return None, "raw frame received but numpy/Pillow are not installed to transcode it"
+    try:
+        dims = tuple(int(d) for d in shape)
+        expected = 1
+        for d in dims:
+            expected *= d
+        if len(raw) != expected:
+            return None, f"raw frame is {len(raw)} B but shape {dims} needs {expected} B"
+        array = np.frombuffer(raw, dtype=np.uint8).reshape(dims)
+        if array.ndim == 3 and array.shape[2] == 4:
+            image = Image.fromarray(array, "RGBA").convert("RGB")
+        elif array.ndim == 3 and array.shape[2] == 3:
+            image = Image.fromarray(array, "RGB")
+        elif array.ndim == 2:
+            image = Image.fromarray(array, "L")
+        else:
+            return None, f"unsupported raw frame shape {dims}"
+        buffer = io.BytesIO()
+        image.save(buffer, format="JPEG", quality=80)
+        return buffer.getvalue(), None
+    except Exception as exc:  # noqa: BLE001 - a bad frame must not kill the sub
+        return None, f"raw frame transcode failed: {type(exc).__name__}: {exc}"
+
+
 def stop_outcome(response: dict[str, Any] | None) -> dict[str, Any]:
     """Classify one peer's answer to a stop into the three honest states.
 
@@ -128,6 +166,10 @@ class MeshBridge:
         self._queues: set[asyncio.Queue] = set()
         self._queues_lock = threading.Lock()
         self._loop: asyncio.AbstractEventLoop | None = None
+
+        # Signed safety rail (lazy - see _safety_mesh)
+        self._safety: Any | None = None
+        self._safety_lock = threading.Lock()
 
         # RPC correlation (mirrors Mesh.send)
         self._pending: dict[str, threading.Event] = {}
@@ -248,6 +290,12 @@ class MeshBridge:
 
     def stop(self) -> None:
         self._running = False
+        if self._safety is not None:
+            try:
+                self._safety.stop()
+            except Exception:  # noqa: BLE001 - teardown is best-effort
+                pass
+            self._safety = None
         for s in self._subs:
             with contextlib.suppress(Exception):
                 s.undeclare()
@@ -355,7 +403,21 @@ class MeshBridge:
             raw = base64.b64decode(encoded)
         except Exception:
             return
-        meta = {"t": data.get("t"), "shape": data.get("shape"), "encoding": data.get("encoding")}
+        meta: dict[str, Any] = {
+            "t": data.get("t"),
+            "shape": data.get("shape"),
+            "encoding": data.get("encoding"),
+        }
+        # A peer may publish raw pixel bytes instead of JPEG. Handing those to
+        # an <img> (or serving them as image/jpeg) produces a black tile that
+        # looks exactly like a dead camera, so transcode here and say so when we
+        # cannot.
+        if str(meta["encoding"] or "jpeg").lower() not in ("jpeg", "jpg"):
+            raw, error = _raw_to_jpeg(raw, meta.get("shape"))
+            meta["converted"] = error is None
+            if error:
+                meta["error"] = error
+        meta["displayable"] = raw is not None
         with self._frames_lock:
             self.frames[(peer_id, cam)] = {"jpeg": raw, **meta}
         entry = self._touch_peer(peer_id)
@@ -390,6 +452,66 @@ class MeshBridge:
     # Commands (dashboard -> robot). Human-initiated; bypasses LLM HITL
     # gates by design (the human IS the loop - they clicked the button).
     # ------------------------------------------------------------------
+
+    # ------------------------------------------------------------------
+    # Signed safety rail (A6). The dashboard's raw zenoh session can only
+    # broadcast per-peer stop commands; the SIGNED strands/safety/estop
+    # envelope (SourceInfo zid binding + HMAC resume proof + fleet-wide
+    # lockout) needs a Mesh instance. Mesh accepts robot=None - a robot-less
+    # gateway signs and fans out exactly like a robot peer, it just has
+    # nothing of its own to stop.
+    # ------------------------------------------------------------------
+
+    def _safety_mesh(self) -> Any | None:
+        """Lazily start the robot-less Mesh used for signed safety envelopes."""
+        with self._safety_lock:
+            if self._safety is not None and getattr(self._safety, "alive", False):
+                return self._safety
+            try:
+                from strands_robots.mesh.core import Mesh
+
+                m = Mesh(None, peer_id=f"{self.peer_id}-safety", peer_type="gateway")
+                m.start()
+                if not m.alive:
+                    return None
+                self._safety = m
+                logger.info("signed safety rail online as %s", m.peer_id)
+                return m
+            except Exception as exc:  # noqa: BLE001 - rail is enrichment over broadcast-stop
+                logger.warning("signed safety rail unavailable: %s", exc)
+                return None
+
+    def signed_estop(self) -> dict[str, Any]:
+        """Fleet e-stop over the SIGNED rail.
+
+        Publishes the strands/safety/estop envelope (SourceInfo zid binding)
+        which engages the LOCKOUT on every listening peer - they refuse all
+        non-status commands until a proofed resume - and aggregates the
+        per-peer stop responses the mesh's own broadcast collected.
+        """
+        m = self._safety_mesh()
+        if m is None:
+            return {"signed": False, "error": "safety mesh unavailable"}
+        responses = m.emergency_stop()
+        return {
+            "signed": True,
+            "issuer": m.peer_id,
+            "responses": responses,
+            "lockout_engaged": True,
+        }
+
+    def signed_resume(self, override_code: str) -> dict[str, Any]:
+        """Clear the fleet lockout with the operator override code.
+
+        The local safety mesh verifies the code (brute-force throttled),
+        clears its own lockout, and publishes the HMAC-proofed resume
+        envelope every peer independently re-verifies.
+        """
+        m = self._safety_mesh()
+        if m is None:
+            return {"signed": False, "error": "safety mesh unavailable"}
+        res = m._resume_lockout(override_code)
+        return {"signed": True, "issuer": m.peer_id, **(res or {})}
 
     def send_cmd(
         self,

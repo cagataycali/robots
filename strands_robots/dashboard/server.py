@@ -393,6 +393,12 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             detail=f"{counts['stopped']}/{len(peers)} confirmed stopped",
             ok=counts["stopped"] == len(peers) and bool(peers),
         )
+        # A6: fire the SIGNED safety rail too - the envelope engages the
+        # fleet-wide LOCKOUT on every listening peer (they refuse all further
+        # commands until a proofed resume), which per-peer stop commands
+        # cannot do. Signed rail failure must not degrade the broadcast-stop
+        # above; both fire, results are reported side by side.
+        signed = await asyncio.to_thread(bridge.signed_estop)
         return {
             "targeted": peers,
             "stale_skipped": stale,
@@ -401,7 +407,29 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             # UI must keep shouting.
             "all_stopped": bool(peers) and counts["stopped"] == len(peers),
             "stopped": per_peer,
+            "signed_rail": {k: v for k, v in signed.items() if k != "responses"},
+            "lockout_engaged": bool(signed.get("lockout_engaged")),
         }
+
+    @app.post("/api/safety/resume")
+    async def safety_resume(body: dict[str, Any]) -> dict[str, Any]:
+        """Clear the fleet e-stop lockout with the operator override code.
+
+        The code is verified locally (brute-force throttled) and the
+        HMAC-proofed resume envelope is published for every peer to
+        re-verify independently. The code itself never crosses the wire.
+        """
+        code = (body.get("override_code") or "").strip()
+        if not code:
+            raise HTTPException(422, "override_code required")
+        result = await asyncio.to_thread(app.state.bridge.signed_resume, code)
+        bridge2: MeshBridge = app.state.bridge
+        bridge2.record_activity(
+            "resume", "safety_resume", target="fleet",
+            detail=result.get("status", result.get("error", "?")),
+            ok=result.get("status") == "ok",
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Configuration
