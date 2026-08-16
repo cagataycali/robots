@@ -2,9 +2,10 @@
 
 Wraps ``cagataydev/protomotions-gtp-unitree-g1``'s ``unified_pipeline.onnx``
 into the :class:`~strands_robots.policies.base.Policy` interface. Given a
-reference :class:`~strands_robots.policies.protomotions.motion_utils.
-MotionPlayer` and a per-tick observation dict, emits PD joint targets for the
-G1's 29 actuators.
+reference
+:class:`~strands_robots.policies.protomotions.motion_utils.MotionPlayer`
+and a per-tick observation dict, emits PD joint targets for the G1's 29
+actuators.
 
 Contract:
 
