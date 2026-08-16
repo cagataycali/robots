@@ -151,3 +151,57 @@ body {
 }
 .empty-fleet .hint { font-size: 12px; }
 .empty-fleet code { color: var(--blue); background: var(--panel); padding: 1px 5px; border-radius: 4px; }
+
+/* ── agent dock ────────────────────────────────────── */
+.dock-bar {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 60;
+  display: flex; gap: 8px; align-items: center;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(16px);
+  border-top: 1px solid var(--border);
+}
+.dock-bar input {
+  flex: 1; min-width: 0;
+  background: var(--panel2); color: var(--text);
+  border: 1px solid var(--border); border-radius: 22px;
+  padding: 11px 16px; font-size: 14px;
+}
+.dock-bar input:focus { outline: none; border-color: var(--blue); }
+.mic {
+  width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--panel2); font-size: 18px; cursor: pointer; flex-shrink: 0;
+  transition: all .2s;
+}
+.mic.live { border-color: var(--red); box-shadow: 0 0 14px color-mix(in srgb, var(--red) 55%, transparent); animation: pulse .8s infinite alternate; }
+.mic.connecting { opacity: .6; }
+.dock-send {
+  width: 44px; height: 44px; border-radius: 50%; border: none;
+  background: var(--blue); color: white; font-size: 18px; font-weight: 700; cursor: pointer; flex-shrink: 0;
+}
+.dock-send:disabled { background: var(--panel2); color: var(--dim); }
+.dock-min { background: none; border: none; color: var(--dim); font-size: 14px; cursor: pointer; padding: 6px; }
+
+.dock-panel {
+  position: fixed; bottom: 64px; left: 0; right: 0; z-index: 55;
+  max-height: 46dvh; display: flex; flex-direction: column;
+  background: color-mix(in srgb, var(--bg) 92%, transparent);
+  backdrop-filter: blur(18px);
+  border-top: 1px solid var(--border);
+}
+.dock-scroll { overflow-y: auto; padding: 14px 14px 8px; display: flex; flex-direction: column; gap: 8px; }
+.dock-hint { color: var(--dim); font-size: 13px; text-align: center; padding: 18px 0; line-height: 1.9; }
+.dock-hint em { color: var(--blue); font-style: normal; }
+.bubble { max-width: 86%; border-radius: 14px; padding: 9px 13px; font-size: 13.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; }
+.bubble.user { align-self: flex-end; background: var(--blue); color: white; }
+.bubble.agent { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); }
+.toolchip {
+  display: inline-block; margin: 0 6px 6px 0;
+  font-size: 10px; font-family: ui-monospace, monospace;
+  padding: 2px 8px; border-radius: 10px;
+  background: color-mix(in srgb, var(--amber) 14%, transparent); color: var(--amber);
+}
+.toolchip.success { background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); }
+.toolchip.error { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
+.voice-transcript { padding: 8px 14px; font-size: 12px; color: var(--amber); border-top: 1px solid var(--border); font-family: ui-monospace, monospace; }
+.grid { padding-bottom: 84px; }

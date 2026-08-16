@@ -1,6 +1,7 @@
 import { useMesh } from './lib/useMesh'
 import FleetBar from './components/FleetBar'
 import RobotCard from './components/RobotCard'
+import AgentDock from './components/AgentDock'
 
 export default function App() {
   const { conn, dashboardId, peers, safetyFlash } = useMesh()
@@ -29,6 +30,7 @@ export default function App() {
           {list.map(p => <RobotCard key={p.peer_id} peer={p} />)}
         </main>
       )}
+      <AgentDock />
     </div>
   )
 }

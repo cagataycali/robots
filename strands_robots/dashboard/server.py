@@ -53,6 +53,10 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     async def _startup() -> None:
         loop = asyncio.get_running_loop()
         app.state.mesh_online = await asyncio.to_thread(app.state.bridge.start, loop)
+        # Hand the mesh gateway to the fleet agent (chat + voice).
+        from strands_robots.dashboard import agent_bridge as _ab
+
+        _ab.set_bridge(app.state.bridge)
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
@@ -209,6 +213,54 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 await asyncio.sleep(1 / 15)
         except (WebSocketDisconnect, RuntimeError):
             pass
+
+    @app.websocket("/ws/chat")
+    async def ws_chat(ws: WebSocket) -> None:
+        """Fleet agent chat: streams token/reasoning/tool/done events."""
+        import queue as _queue
+        import threading as _threading
+
+        from strands_robots.dashboard.agent_bridge import run_turn_blocking
+
+        await ws.accept()
+        try:
+            while True:
+                raw = await ws.receive_text()
+                try:
+                    msg = json.loads(raw)
+                except json.JSONDecodeError:
+                    msg = {"type": "chat", "text": raw}
+                if msg.get("type") == "ping":
+                    await ws.send_text(json.dumps({"type": "pong"}))
+                    continue
+                prompt = (msg.get("text") or "").strip()
+                if not prompt:
+                    continue
+                q: _queue.Queue = _queue.Queue()
+                _threading.Thread(target=run_turn_blocking, args=(prompt, q), daemon=True).start()
+                while True:
+                    ev = await asyncio.to_thread(q.get)
+                    if ev.get("type") == "__END__":
+                        break
+                    await ws.send_text(json.dumps(ev))
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+
+    @app.websocket("/ws/voice")
+    async def ws_voice(ws: WebSocket) -> None:
+        """Speech-to-speech fleet control (PCM16 <-> bidi agent)."""
+        from strands_robots.dashboard.voice import run_voice_session
+
+        await ws.accept()
+        try:
+            await run_voice_session(ws)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            try:
+                await ws.close()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Static PWA (built frontend). Fallback to index.html for SPA routes.

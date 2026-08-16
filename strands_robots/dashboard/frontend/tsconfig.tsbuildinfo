@@ -1,1 +1,1 @@
-{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/components/cameratile.tsx","./src/components/fleetbar.tsx","./src/components/jointstrip.tsx","./src/components/robotcard.tsx","./src/lib/usemesh.ts"],"version":"5.9.3"}
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/components/agentdock.tsx","./src/components/cameratile.tsx","./src/components/fleetbar.tsx","./src/components/jointstrip.tsx","./src/components/robotcard.tsx","./src/lib/usemesh.ts","./src/lib/usevoice.ts"],"version":"5.9.3"}
