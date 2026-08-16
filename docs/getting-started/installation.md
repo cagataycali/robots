@@ -16,7 +16,7 @@ Requires **Python >= 3.12**. Examples use [`uv`](https://docs.astral.sh/uv/) (`c
 | `[lerobot]` | `lerobot>=0.6.1,<0.7.0` | `LerobotLocalPolicy` + dataset recording |
 | `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` (ZMQ to a GR00T container) |
 | `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` (WebSocket to Cosmos 3 server) |
-| `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh discovery + RPC |
+| `[mesh]` | `eclipse-zenoh>=1.6.1,<2.0.0`, `json5` | Multi-robot mesh discovery + RPC |
 | `[mesh-iot]` | `mesh` + `awsiotsdk`, `awscrt`, `boto3` | AWS IoT Core transport for mesh |
 | `[benchmark-libero]` | `libero` eval deps | LIBERO benchmark suite |
 | `[all]` | `groot-service` + `lerobot` + `sim-mujoco` + `mesh` + `mesh-iot` | Demos, CI, exploration |
