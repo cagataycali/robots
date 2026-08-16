@@ -17,10 +17,12 @@ and the agent-tool observation all received the wrong view under a success
 result, with nothing to distinguish it from the camera they asked for. Two short
 keys on one robot were byte-identical to each other for the same reason.
 
-The same branch answered for a key that names no compiled camera at all, which
-``remove_robot`` leaves behind: it deletes the entries whose ``origin_robot`` is
-the departing robot, and a key registered against a different robot survives
-pointing at a camera that left with the model.
+The same branch answered for a key that names no compiled camera at all. The
+registry and the compiled model are separate stores, so an entry can name a
+camera the model does not hold; no public call sequence produces that state
+today (``remove_robot`` drops the departing robot's own cameras and any user
+camera parented to its bodies), so the case is constructed directly against the
+registry the branch reads.
 
 So the contract is one sentence - an observation key that names a camera carries
 that camera's view, or is absent - and it is pinned here from both directions:
@@ -56,6 +58,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from strands_robots.simulation.models import SimCamera
 from strands_robots.simulation.mujoco.simulation import Simulation
 from tests.simulation.mujoco._gl_probe import requires_gl
 
@@ -208,26 +211,30 @@ def test_two_short_keys_carry_two_different_views(sim: Simulation) -> None:
 def test_key_naming_no_compiled_camera_is_absent(sim: Simulation) -> None:
     """A camera key the compiled model cannot answer for is omitted, not filled in.
 
-    ``remove_robot`` drops the entries owned by the departing robot, so the
-    duplicate key another robot owns outlives the camera it names. There is no
-    view to report under it, and the overview is not a stand-in.
+    The registry and the compiled model are separate stores, so a registry entry
+    can name a camera the model does not hold. There is no view to report under
+    that key, and the scene overview is not a stand-in.
+
+    The divergence is built directly here because no public call sequence
+    produces it: ``remove_robot`` drops both the departing robot's own cameras
+    and any user camera parented to its bodies. The registry is what the branch
+    under test resolves against, so it is the input this pins.
     """
     assert sim.add_robot("arm0", urdf_path=_write(TWO_CAMERA_ROBOT_XML))["status"] == "success"
-    assert sim.add_robot("arm1", urdf_path=_write(CAMERALESS_ROBOT_XML))["status"] == "success"
-    assert sim.remove_robot("arm0")["status"] == "success"
 
     world = sim._world
     assert world is not None
-    stranded = [key for key, cam in world.cameras.items() if key.startswith("arm0/")]
-    assert stranded, "premise: removing the camera-bearing robot strands a camera key"
+    world.cameras["ghost"] = SimCamera(name="arm0/no_such_camera")
 
     observation = sim.get_observation()
     images = _image_keys(observation)
-    for key in stranded:
-        assert key not in images, (
-            f"observation[{key!r}] names a camera that is no longer in the model, so it must be "
-            "absent rather than carrying some other camera's view"
-        )
+
+    assert "ghost" not in images, (
+        "observation['ghost'] names a camera the compiled model does not have, so it must be "
+        "absent rather than carrying some other camera's view"
+    )
+    # Control: dropping the unanswerable key costs the answerable ones nothing.
+    assert {"wrist", "side"} <= set(images)
 
 
 @requires_gl
