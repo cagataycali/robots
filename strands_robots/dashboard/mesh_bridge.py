@@ -21,15 +21,26 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import socket
 import threading
 import time
 import uuid
+from collections import deque
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 PEER_STALE_S = 15.0  # presence heartbeat timeout before a card greys out
+
+#: Transport low-pass filter on ``**/cmd`` (_zenoh_config.DEFAULT_MAX_CMD_BYTES).
+#: Anything larger is dropped pre-deserialise and the sender only ever sees a
+#: timeout, so we check before publishing and return a real error instead
+#: (NEW-BUGS N1).
+MAX_CMD_BYTES = int(os.getenv("STRANDS_MESH_MAX_CMD_BYTES", str(16 * 1024)))
+
+#: How many fleet actions to keep for the activity panel.
+ACTIVITY_CAP = 300
 
 
 def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -48,6 +59,53 @@ def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, 
             cmd = {**cmd, "robot_name": robot_name}
             target = parent
     return target, cmd
+
+
+def command_succeeded(response: dict[str, Any] | None) -> bool:
+    """Did a peer actually carry the command out?
+
+    The wire is layered - ``{"type": "response", "result": {...}}`` for a
+    dispatched command, ``{"type": "error", "error": ...}`` for a rejection -
+    and a *successful* response can still carry ``result.ok == False`` (e.g.
+    "peer exposes no stop_task; nothing was stopped"). Callers that only check
+    for transport errors therefore report success while nothing stopped, which
+    is how the ■ button came to lie (BUGS.md #17).
+    """
+    if not isinstance(response, dict):
+        return False
+    if response.get("error") or response.get("type") == "error":
+        return False
+    if response.get("ok") is False:
+        return False
+    result = response.get("result")
+    if isinstance(result, dict):
+        if result.get("ok") is False:
+            return False
+        if str(result.get("status", "")).lower() in ("error", "failed"):
+            return False
+    return True
+
+
+def stop_outcome(response: dict[str, Any] | None) -> dict[str, Any]:
+    """Classify one peer's answer to a stop into the three honest states.
+
+    ``stopped`` / ``not_stopped`` (the peer answered but could not stop) /
+    ``no_answer`` (timeout). ``emergency_stop()`` upstream makes exactly this
+    distinction via ``peers_not_stopped``; the UI has to show it, because
+    "unstoppable peer" and "peer offline" need different human reactions.
+    """
+    if not isinstance(response, dict):
+        return {"state": "no_answer", "detail": "no response"}
+    error = response.get("error")
+    if error and "timeout" in str(error).lower():
+        return {"state": "no_answer", "detail": str(error)}
+    if command_succeeded(response):
+        return {"state": "stopped", "detail": ""}
+    result = response.get("result")
+    detail = ""
+    if isinstance(result, dict):
+        detail = str(result.get("error") or result.get("status") or "")
+    return {"state": "not_stopped", "detail": detail or str(error or "refused")}
 
 
 class MeshBridge:
@@ -77,13 +135,27 @@ class MeshBridge:
         self._responses: dict[str, dict[str, Any]] = {}
         self._rpc_lock = threading.Lock()
 
+        # Fleet activity: every command this dashboard issued + safety
+        # envelopes seen on the wire. Cheap forensics for "who moved that arm?"
+        self.activity: deque[dict[str, Any]] = deque(maxlen=ACTIVITY_CAP)
+        self._activity_lock = threading.Lock()
+
+        # Resolved endpoints of the live session, for /api/mesh/config.
+        self._endpoints: dict[str, Any] = {}
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     def start(self, loop: asyncio.AbstractEventLoop) -> bool:
         """Join the mesh. Returns False when zenoh is unavailable."""
+        from strands_robots.dashboard import settings
         from strands_robots.mesh.session import get_session
+
+        # ZENOH_CONNECT / ZENOH_LISTEN / STRANDS_MESH_PORT are read *inside*
+        # get_session(), so remote-endpoint settings have to be in the
+        # environment before this call - not after.
+        settings.apply_mesh_env()
 
         self._loop = loop
         session = get_session()
@@ -103,8 +175,77 @@ class MeshBridge:
             sub("strands/safety/resume", self._on_safety),
             sub(f"strands/{self.peer_id}/response/**", self._on_response),
         ]
+        self._endpoints = self._read_endpoints()
         logger.info("MeshBridge online as %s", self.peer_id)
         return True
+
+    def _read_endpoints(self) -> dict[str, Any]:
+        """What the live session is actually talking to."""
+        from strands_robots.dashboard import settings
+
+        info: dict[str, Any] = {
+            "connect": settings.as_list(os.getenv("ZENOH_CONNECT")),
+            "listen": settings.as_list(os.getenv("ZENOH_LISTEN")),
+            "port": os.getenv("STRANDS_MESH_PORT", "7447"),
+            "backend": os.getenv("STRANDS_MESH_BACKEND", "zenoh"),
+        }
+        try:
+            from strands_robots.mesh._zenoh_config import resolve_auth_mode
+
+            info["auth_mode"] = resolve_auth_mode()
+        except Exception:  # noqa: BLE001 - introspection only
+            info["auth_mode"] = "unknown"
+        return info
+
+    def mesh_info(self) -> dict[str, Any]:
+        """Mesh posture for /api/mesh/config and the settings panel."""
+        from strands_robots.dashboard import settings
+
+        local_dev = os.getenv("STRANDS_MESH_LOCAL_DEV", "") not in ("", "0", "false")
+        camera_hz = os.getenv("STRANDS_MESH_CAMERA_HZ")
+        info = {
+            **self._endpoints,
+            "online": self._running,
+            "peer_id": self.peer_id,
+            "peers": len(self.peers),
+            "live_peers": len(self.live_peers()),
+            "local_dev": local_dev,
+            # STRANDS_MESH_LOCAL_DEV=1 runs the entire mesh with auth "none";
+            # _build_config logs "WIRE SECURITY DISABLED". Surface it so a lab
+            # posture can't be mistaken for a secured one.
+            "wire_security": "DISABLED (local dev)" if local_dev else self._endpoints.get("auth_mode"),
+            "camera_hz": float(camera_hz) if camera_hz else 0.0,
+            "settings": settings.load()["mesh"],
+            "multicast": os.getenv("STRANDS_MESH_MULTICAST", ""),
+            "max_cmd_bytes": MAX_CMD_BYTES,
+        }
+        try:
+            from strands_robots.mesh.security import _policy_type_allowlist
+
+            info["policy_allow"] = sorted(_policy_type_allowlist())
+        except Exception:  # noqa: BLE001
+            info["policy_allow"] = []
+        return info
+
+    def restart(self) -> bool:
+        """Re-open the mesh session against the current settings.
+
+        The upstream session is a ref-counted module singleton, so a reopen
+        only picks up new endpoints once every consumer has released it -
+        stopping the bridge is what drops our reference.
+        """
+        loop = self._loop
+        if loop is None:
+            return False
+        self.stop()
+        with self._peers_lock:
+            self.peers.clear()
+        with self._frames_lock:
+            self.frames.clear()
+        ok = self.start(loop)
+        self.record_activity("mesh", "restart", detail=self._endpoints, ok=ok)
+        self._emit({"type": "mesh_reconfigured", "ok": ok, "mesh": self.mesh_info()})
+        return ok
 
     def stop(self) -> None:
         self._running = False
@@ -230,6 +371,7 @@ class MeshBridge:
             return
         key = str(getattr(sample, "key_expr", ""))
         kind = "estop" if key.endswith("estop") else "resume"
+        self.record_activity("safety", kind, detail=data, ok=True)
         self._emit({"type": "safety", "kind": kind, "data": data})
 
     def _on_response(self, sample: Any) -> None:
@@ -250,32 +392,108 @@ class MeshBridge:
     # gates by design (the human IS the loop - they clicked the button).
     # ------------------------------------------------------------------
 
-    def send_cmd(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
+    def send_cmd(
+        self,
+        target: str,
+        cmd: dict[str, Any],
+        timeout: float = 30.0,
+        *,
+        source: str = "api",
+    ) -> dict[str, Any]:
         """Send a command to a peer and wait for its response (blocking)."""
         from strands_robots.mesh.session import put
 
         if not self._running:
-            return {"error": "mesh offline"}
+            return {"error": "mesh offline", "ok": False}
         turn = uuid.uuid4().hex
+        envelope = {
+            "sender_id": self.peer_id,
+            "turn_id": turn,
+            "command": cmd,
+            "timestamp": time.time(),
+        }
+        # The transport silently drops cmd messages over the low-pass cap, so
+        # the caller would otherwise see a bare timeout with nothing to act on.
+        size = len(json.dumps(envelope, default=str).encode())
+        if size > MAX_CMD_BYTES:
+            result = {
+                "ok": False,
+                "error": f"command too large: {size} B > transport cap {MAX_CMD_BYTES} B "
+                         "(raise STRANDS_MESH_MAX_CMD_BYTES on every peer, or shrink the payload)",
+            }
+            self.record_activity(source, cmd.get("action", "?"), target=target, detail=result, ok=False)
+            return result
+
         evt = threading.Event()
         with self._rpc_lock:
             self._pending[turn] = evt
+        started = time.time()
         try:
-            put(
-                f"strands/{target}/cmd",
-                {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()},
-            )
+            put(f"strands/{target}/cmd", envelope)
             if not evt.wait(timeout):
-                return {"error": f"timeout after {timeout:g}s", "turn_id": turn}
-            with self._rpc_lock:
-                return self._responses.pop(turn, {"error": "response lost"})
+                result = {"error": f"timeout after {timeout:g}s", "turn_id": turn, "ok": False}
+            else:
+                with self._rpc_lock:
+                    result = self._responses.pop(turn, {"error": "response lost", "ok": False})
+            self.record_activity(
+                source,
+                cmd.get("action", "?"),
+                target=target,
+                detail={"instruction": cmd.get("instruction"), "provider": cmd.get("policy_provider")},
+                ok=command_succeeded(result),
+                result=result,
+                elapsed=time.time() - started,
+            )
+            return result
         finally:
             with self._rpc_lock:
                 self._pending.pop(turn, None)
                 self._responses.pop(turn, None)
 
-    async def send_cmd_async(self, target: str, cmd: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
-        return await asyncio.to_thread(self.send_cmd, target, cmd, timeout)
+    async def send_cmd_async(
+        self,
+        target: str,
+        cmd: dict[str, Any],
+        timeout: float = 30.0,
+        *,
+        source: str = "api",
+    ) -> dict[str, Any]:
+        return await asyncio.to_thread(self.send_cmd, target, cmd, timeout, source=source)
+
+    # ------------------------------------------------------------------
+    # Activity log
+    # ------------------------------------------------------------------
+
+    def record_activity(
+        self,
+        source: str,
+        action: str,
+        *,
+        target: str = "",
+        detail: Any = None,
+        ok: bool | None = None,
+        result: Any = None,
+        elapsed: float | None = None,
+    ) -> None:
+        entry = {
+            "t": time.time(),
+            "source": source,
+            "action": action,
+            "target": target,
+            "ok": ok,
+            "detail": detail,
+            "elapsed": round(elapsed, 3) if elapsed is not None else None,
+        }
+        if result is not None:
+            entry["result"] = json.dumps(result, default=str)[:400]
+        with self._activity_lock:
+            self.activity.append(entry)
+        self._emit({"type": "activity", "data": entry})
+
+    def activity_log(self, limit: int = 100) -> list[dict[str, Any]]:
+        with self._activity_lock:
+            items = list(self.activity)
+        return items[-limit:][::-1]
 
     # ------------------------------------------------------------------
     # Snapshot for initial page load
@@ -288,7 +506,27 @@ class MeshBridge:
                 pid: {**entry, "stale": (now - entry.get("last_seen", 0)) > PEER_STALE_S}
                 for pid, entry in self.peers.items()
             }
-        return {"type": "snapshot", "dashboard_peer_id": self.peer_id, "peers": peers, "t": now}
+        return {
+            "type": "snapshot",
+            "dashboard_peer_id": self.peer_id,
+            "peers": peers,
+            "mesh": self.mesh_info(),
+            "t": now,
+        }
+
+    def live_peers(self) -> list[str]:
+        """Peer ids with a fresh presence heartbeat.
+
+        Fleet-wide operations use this instead of every id we have ever seen:
+        gathering stops from dead peers just blocks the response for the full
+        RPC timeout and reports nothing useful.
+        """
+        now = time.time()
+        with self._peers_lock:
+            return [
+                pid for pid, entry in self.peers.items()
+                if (now - entry.get("last_seen", 0)) <= PEER_STALE_S
+            ]
 
     def latest_frame(self, peer_id: str, cam: str) -> dict[str, Any] | None:
         with self._frames_lock:
