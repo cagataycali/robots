@@ -32,6 +32,7 @@ description: Error → fix table for the most common gotchas across install, sim
 | `move_to` reached the point but the wrist points the wrong way | `tol` bounds the POSITION in meters; the rotation is bounded by `orientation_tol` in radians (default 0.1, ~5.7 deg) | Read `orientation_error_rad` in the result's json block, and pass a tighter `orientation_tol=` if the default is too loose for the task |
 | `move_to: 'orientation_tol' only bounds an 'orientation' target` | `orientation_tol` passed for a position-only move, where it would have nothing to bound | Pass `orientation=[w, x, y, z]` to command a full pose, or drop `orientation_tol` |
 | `add_robot` raises after `load_scene` | Scene XML overrides world | Use `add_robot` before `load_scene` |
+| `move_to` refuses with `is unreachable ... The same target solves to ... once the N degree(s) of freedom move_to does not command are free too` | The target needs motion `move_to` does not produce. It drives the arm's position servos only, so a mobile base, a floating pelvis or any unactuated joint is not available to the solve - and 35 of the shipped sim robots have one | Move those degrees of freedom first (drive the base to the work area), then call `move_to`. The refusal's `uncommanded_joints_moved` names them and `unrestricted_ik_residual_m` is what the whole robot could reach |
 
 ## Hardware
 

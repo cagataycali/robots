@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import math
 import numbers
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 import numpy as np
@@ -373,21 +374,59 @@ class MotionPrimitivesCore:
         orientation_tol: float | None = None,
         ik_orientation_residual: float | None = None,
         position_only_residual: float | None = None,
+        unrestricted_residual: float | None = None,
+        uncommanded_joints: Sequence[str] = (),
     ) -> dict[str, Any]:
         """Refusal for a ``move_to`` target the kinematics cannot reach.
 
-        Names the component that is actually out of reach. A damped
-        least-squares solve given a full pose trades the two halves off against
-        each other, and on an arm with too few DOF to realize the orientation
-        it will satisfy the ROTATION and leave the position short - so a
-        position-keyed message blames the point when the point is fine.
-        ``position_only_residual`` (the residual of the same target solved with
-        the orientation task switched off, when the backend could measure it)
-        is what settles that, and it selects the remedy: omitting
-        ``orientation`` is the fix when the position alone is reachable, and no
-        tolerance change is.
+        Two independent things put a target out of reach, and the refusal names
+        whichever one applies instead of always advising a closer point.
 
-        With no orientation requested the wording is the position-only one.
+        *Which half of a pose is short.* A damped least-squares solve given a
+        full pose trades position against orientation, so the residual alone
+        cannot say WHICH half is out of reach - on an arm with too few DOF to
+        realize the rotation it satisfies the ROTATION and leaves the position
+        short, so a position-keyed message blames the point when the point is
+        fine. ``position_only_residual`` (the same target solved with the
+        orientation task switched off) settles that, and it selects the remedy:
+        omitting ``orientation`` is the fix when the position alone is
+        reachable, and no tolerance change is.
+
+        *Whose reach is short - the robot's, or only this primitive's.*
+        ``ik_residual`` is measured on a solve restricted to the joints the
+        primitive commands, so it is the error the servo descent would actually
+        be left with. ``unrestricted_residual`` is the same target solved with
+        the whole model free: when that one fits ``tol`` the target is inside
+        the reach of the ROBOT but outside the reach of this PRIMITIVE, and the
+        remedy is to move the borrowed degrees of freedom rather than to pick a
+        closer point or loosen the tolerance.
+
+        The two are reported independently, so a caller gets whichever
+        diagnosis its backend could measure. With no orientation requested the
+        wording is the position-only one.
+
+        Args:
+            robot_name: Robot the target was requested for.
+            target: The requested Cartesian target, in the frame the message
+                reports it in (world for both MuJoCo and Isaac).
+            tol: Position tolerance the request was judged against (m).
+            ik_residual: Best residual over the commanded joints (m).
+            frame_name: End-effector frame the solve tracked.
+            frame_type: ``"site"`` / ``"body"`` / ``"geom"``.
+            orientation_tol: Orientation tolerance (rad), or ``None`` for a
+                position-only request - which selects the position-only
+                wording.
+            ik_orientation_residual: Best orientation residual (rad), when an
+                orientation was requested.
+            position_only_residual: The same target solved with the orientation
+                task off (m), when the backend could measure it.
+            unrestricted_residual: The same target solved with every model DOF
+                free (m), when the backend could measure it.
+            uncommanded_joints: Uncommanded joints that unrestricted solve
+                moved, as named by :meth:`_uncommanded_joints_moved`.
+
+        Returns:
+            The structured error envelope, json block included.
         """
         payload: dict[str, Any] = {
             "reached": False,
@@ -401,14 +440,35 @@ class MotionPrimitivesCore:
             payload["ik_orientation_residual_rad"] = ik_orientation_residual
         if position_only_residual is not None:
             payload["position_only_ik_residual_m"] = position_only_residual
+        if unrestricted_residual is not None:
+            payload["unrestricted_ik_residual_m"] = unrestricted_residual
+            payload["uncommanded_joints_moved"] = list(uncommanded_joints)
+
+        # A borrowed-DOF solve only explains the miss when it BOTH clears the
+        # tolerance and needed a joint this primitive does not command; an
+        # unmeasurable one (bridge unavailable) reports math.inf and so cannot.
+        borrowed_dofs_would_reach = (
+            bool(uncommanded_joints) and unrestricted_residual is not None and unrestricted_residual <= float(tol)
+        )
+        borrowed_dof_text = ""
+        if borrowed_dofs_would_reach:
+            borrowed_dof_text = (
+                f" The same target solves to {unrestricted_residual:.4f} m once the "
+                f"{len(uncommanded_joints)} degree(s) of freedom move_to does not command are "
+                f"free too ({', '.join(uncommanded_joints)}), so the point is not outside the "
+                "robot's workspace: reaching it needs motion this primitive cannot produce. "
+                "move_to drives the arm's position servos only, so move those degrees of "
+                "freedom first (a mobile base has to drive there), then call move_to."
+            )
 
         if orientation_tol is None:
-            return _err(
-                f"move_to: target {target.tolist()} is unreachable for '{robot_name}' "
-                f"within tol={float(tol)} m - best IK solution leaves a residual of "
-                f"{ik_residual:.4f} m. Choose a closer target or loosen tol.",
-                payload,
+            text = (
+                f"move_to: target {target.tolist()} is unreachable for '{robot_name}' within "
+                f"tol={float(tol)} m - the best solve over the joints move_to commands leaves a "
+                f"residual of {ik_residual:.4f} m."
             )
+            text += borrowed_dof_text if borrowed_dofs_would_reach else " Choose a closer target or loosen tol."
+            return _err(text, payload)
 
         missed = []
         if ik_residual > float(tol):
@@ -430,6 +490,8 @@ class MotionPrimitivesCore:
                 "arm with enough DOF to realize it. Loosening 'tol' would only accept a solve "
                 "that still points the wrong way."
             )
+        elif borrowed_dofs_would_reach:
+            text += borrowed_dof_text
         else:
             text += (
                 f" The position {target.tolist()} is out of reach as well"
@@ -512,6 +574,70 @@ class MotionPrimitivesCore:
             "limits/contacts.",
             payload,
         )
+
+    @staticmethod
+    def _commanded_dof_indices(model: Any, commanded_joint_ids: Iterable[int]) -> list[int]:
+        """Velocity-space indices of the joints a primitive's servos command.
+
+        The position servos ``move_to`` drives command one scalar per joint, so
+        the commandable subspace is the first DOF of each of those joints. This
+        is the mask handed to
+        :class:`strands_robots.simulation.ik.MinkIKBridge` as ``commanded_dofs``
+        so the solve cannot answer with motion the servo loop never sends.
+
+        Args:
+            model: The ``mujoco.MjModel`` the IK bridge solves on.
+            commanded_joint_ids: MuJoCo joint ids the primitive commands.
+
+        Returns:
+            The corresponding ``nv``-space indices, ascending.
+        """
+        return sorted(int(model.jnt_dofadr[joint_id]) for joint_id in commanded_joint_ids)
+
+    @staticmethod
+    def _uncommanded_joints_moved(
+        mj: Any,
+        model: Any,
+        commanded_joint_ids: Iterable[int],
+        q_before: np.ndarray,
+        q_after: np.ndarray,
+        namespace: str = "",
+    ) -> list[str]:
+        """Names of the uncommanded joints a solve moved, for the refusal text.
+
+        Used only on the unreachable path, to say WHY a target the arm cannot
+        reach is nonetheless solvable: an unrestricted solve reports which
+        degrees of freedom it had to borrow (a mobile base, a held gripper),
+        which is the difference between "outside the workspace" and "needs
+        motion this primitive does not command".
+
+        Args:
+            mj: The ``mujoco`` module.
+            model: The model both configurations belong to.
+            commanded_joint_ids: Joint ids the primitive commands (excluded).
+            q_before: Seed configuration (length ``model.nq``).
+            q_after: Solved configuration (length ``model.nq``).
+            namespace: Robot namespace prefix to strip from reported names.
+
+        Returns:
+            Joint names (namespace-stripped, ascending by joint id) whose
+            configuration the solve changed and which are not commanded. An
+            unnamed joint (a bare ``<freejoint/>``) is reported by index.
+        """
+        commanded = {int(joint_id) for joint_id in commanded_joint_ids}
+        moved: list[str] = []
+        for joint_id in range(int(model.njnt)):
+            if joint_id in commanded:
+                continue
+            start = int(model.jnt_qposadr[joint_id])
+            end = int(model.jnt_qposadr[joint_id + 1]) if joint_id + 1 < int(model.njnt) else int(model.nq)
+            if np.allclose(q_before[start:end], q_after[start:end], atol=1e-9, rtol=0.0):
+                continue
+            name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, joint_id) or ""
+            if namespace and name.startswith(namespace):
+                name = name[len(namespace) :]
+            moved.append(name or f"unnamed joint {joint_id}")
+        return moved
 
     @staticmethod
     def _set_gripper_result(
