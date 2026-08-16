@@ -175,6 +175,26 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             raise HTTPException(500, "policy registry unavailable")
         return {"providers": catalog, "names": [p["name"] for p in catalog]}
 
+    @app.post("/api/replay")
+    async def replay_episode(body: dict[str, Any]) -> dict[str, Any]:
+        """Replay a recorded LeRobotDataset episode in a one-shot mesh sim.
+
+        The replay peer appears in the fleet grid with live cameras while
+        the recorded actions drive real MuJoCo physics; it exits when the
+        episode ends. Datasets come from /api/training/datasets.
+        """
+        repo_id = (body.get("repo_id") or "").strip()
+        if not repo_id:
+            raise HTTPException(422, "repo_id required")
+        return await asyncio.to_thread(
+            app.state.devices.replay,
+            repo_id,
+            int(body.get("episode", 0)),
+            body.get("root"),
+            float(body.get("speed", 1.0)),
+            body.get("robot_name") or "so101",
+        )
+
     @app.get("/api/training/trainers")
     async def training_trainers() -> dict[str, Any]:
         from strands_robots.dashboard import training

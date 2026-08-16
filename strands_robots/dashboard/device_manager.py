@@ -181,6 +181,42 @@ else:
 '''
 
 
+_REPLAY_SPAWNER = r'''
+import os, sys, time, json
+cfg = json.loads(sys.argv[1])
+os.environ.setdefault("STRANDS_ROBOTS_NO_DYLD_SHIM", "1")
+os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", os.environ.get("STRANDS_MESH_LOCAL_DEV", "1"))
+os.environ.setdefault("STRANDS_MESH_MULTICAST", "true")
+os.environ.setdefault("STRANDS_MESH", "true")
+os.environ.setdefault("STRANDS_MESH_CAMERA_HZ", os.environ.get("STRANDS_MESH_CAMERA_HZ", "5"))
+
+from strands_robots import Robot
+
+robot_name = cfg.get("robot_name") or "so101"
+sim = Robot(robot_name, mesh=True, peer_id=cfg["peer_id"])
+n = robot_name
+sim.add_camera(name=f"{n}/front", position=[0.6, 0.4, 0.5], target=[0.0, 0.0, 0.15])
+print(f"{cfg['peer_id']} (replay sim) online", flush=True)
+
+res = sim.replay_episode(
+    cfg["repo_id"],
+    episode=int(cfg.get("episode", 0)),
+    root=cfg.get("root"),
+    speed=float(cfg.get("speed", 1.0)),
+)
+status = res.get("status")
+for block in res.get("content", []):
+    if isinstance(block, dict) and block.get("text"):
+        print(f"replay: {status}: {block['text'][:300]}", flush=True)
+        break
+# linger briefly so the last camera frames reach subscribers, then exit.
+# os._exit: the mesh session runs non-daemon threads that would otherwise
+# keep this one-shot process alive forever after the script body returns.
+time.sleep(3)
+os._exit(0)
+'''
+
+
 class DeviceManager:
     """Owns local device discovery + robot child processes."""
 
@@ -282,6 +318,47 @@ class DeviceManager:
             ).start()
         logger.info("spawned %s (%s, pid=%s)", peer_id, mode, proc.pid)
         return {"peer_id": peer_id, "pid": proc.pid, "mode": mode}
+
+    def replay(
+        self,
+        repo_id: str,
+        episode: int = 0,
+        root: str | None = None,
+        speed: float = 1.0,
+        robot_name: str = "so101",
+    ) -> dict[str, Any]:
+        """One-shot replay sim: spawns a mesh sim peer, replays the episode
+        with real physics + cameras streaming on the mesh, exits when done.
+
+        The peer appears in the fleet grid like any sim while the replay
+        runs - the operator literally watches the recorded episode through
+        the mesh camera rail. replay_episode is in-process-only upstream
+        (not a wire action), so a dedicated short-lived process is the way
+        a robot-less dashboard can drive it.
+        """
+        import json as _json
+
+        peer_id = f"replay-{int(time.time()) % 100000}"
+        cfg = {
+            "peer_id": peer_id, "repo_id": repo_id, "episode": episode,
+            "root": root, "speed": speed, "robot_name": robot_name,
+        }
+        with self._lock:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", _REPLAY_SPAWNER, _json.dumps(cfg)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            managed = ManagedRobot(
+                peer_id=peer_id, robot_name=robot_name, mode="replay",
+                process=proc, started_at=time.time(),
+            )
+            self.robots[peer_id] = managed
+            threading.Thread(
+                target=_drain, args=(proc, managed.logs, peer_id),
+                name=f"drain-{peer_id}", daemon=True,
+            ).start()
+        logger.info("replay %s ep%d as %s (pid=%s)", repo_id, episode, peer_id, proc.pid)
+        return {"peer_id": peer_id, "pid": proc.pid, "repo_id": repo_id, "episode": episode}
 
     def despawn(self, peer_id: str) -> dict[str, Any]:
         with self._lock:

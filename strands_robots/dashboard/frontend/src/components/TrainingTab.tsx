@@ -72,6 +72,21 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     setBusy(false)
   }
 
+  const replay = async (d: Dataset) => {
+    setBusy(true); setMsg(null)
+    try {
+      const r = await fetch('/api/replay', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ repo_id: d.repo_id, root: d.root, episode: 0 }),
+      })
+      const j = await r.json()
+      setMsg(j.peer_id
+        ? `▶ replaying ${d.repo_id} ep0 as ${j.peer_id} — watch it in the fleet grid`
+        : `⚠ ${JSON.stringify(j).slice(0, 200)}`)
+    } catch (e) { setMsg(`⚠ ${e}`) }
+    setBusy(false)
+  }
+
   const exportCkpt = async (job: Job) => {
     setBusy(true)
     try {
@@ -133,6 +148,23 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
       </div>
 
       <div className="train-jobs">
+        <h3>Datasets</h3>
+        {datasets.length === 0 && <div className="dock-hint">No local LeRobotDatasets found.</div>}
+        {datasets.map(d => (
+          <div className="train-job" key={d.root}>
+            <div className="train-job-head">
+              <b>{d.repo_id}</b>
+              <span className="jstate">{d.total_episodes ?? '?'} eps · {d.fps ?? '?'} fps</span>
+            </div>
+            <div className="train-job-actions">
+              <button className="btn ghost" onClick={() => replay(d)} disabled={busy}
+                title="Replay episode 0 in a live mesh sim — appears in the fleet grid">
+                🎬 replay in sim
+              </button>
+            </div>
+          </div>
+        ))}
+
         <h3>Jobs</h3>
         {jobs.length === 0 && <div className="dock-hint">No training jobs yet.</div>}
         {jobs.map(job => {
