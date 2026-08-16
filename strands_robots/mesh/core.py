@@ -2908,6 +2908,14 @@ class Mesh(SensorLoopsMixin):
                     ),
                 }
         except ImportError:
+            # The size pre-check is a diagnostic, not part of sending: it turns
+            # a silent transport drop into a structured error naming the cap.
+            # If the config helper cannot be imported there is no cap to read,
+            # so skip the check and publish. An over-cap message then behaves as
+            # it did before the check existed - dropped by the low-pass filter,
+            # surfacing as the {"status": "timeout"} below - which is worse
+            # diagnostics but still a correct send. Raising instead would let a
+            # missing optional module fail every command on this path.
             pass
         try:
             self.publish(f"strands/{target}/cmd", msg)
