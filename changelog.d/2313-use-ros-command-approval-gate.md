@@ -19,3 +19,19 @@ to the robot. The gate now runs after the action's required arguments are
 validated, so an operator is never prompted to approve a call that could not have
 run. The headless pre-approval variable is `STRANDS_ROS2_COMMAND_ALLOW`, matching
 the surfaces it now covers.
+
+Everything that wraps `use_ros` has to forward an operator context or it inherits
+the fail-closed path for every command it sends, so `RosBridgedRobot` now does:
+`drive_<node>`, `stop_<node>` and `navigate_<node>` are declared
+`@tool(context=True)` and hand the context through `drive()` / `stop()` /
+`navigate_to()` into `use_ros`, and an agent driving a bridged robot is prompted
+per command instead of refused. **Migration:** a *programmatic*
+`robot.drive(...)` / `stop()` / `navigate_to(...)` has no operator to prompt, so
+it now needs its surface named in `STRANDS_ROS2_COMMAND_ALLOW` (or
+`BYPASS_TOOL_CONSENT=true`) - `/cmd_vel` and a Nav2 `nav_action` are both
+blocklisted. Reads (`get_pose`, `get_scan`) are unaffected. `stop()` is gated
+like any other publish to the same topic: the gate is keyed on the surface and
+not on the payload, because "zero is harmless" holds for a `Twist` and not for
+`/joint_command`, where zero commands motion to the zero pose - so a deployment
+that must always be able to halt unattended pre-approves its `cmd_vel` topic
+rather than relying on a carve-out.
