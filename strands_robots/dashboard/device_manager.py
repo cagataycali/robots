@@ -3,8 +3,7 @@
 Detects:
 * Serial servo buses (Feetech/Dynamixel USB adapters). Known VIDs:
   - 0x1a86 WCH CH34x  (SO-100/SO-101 controller boards - enumerate as
-    "USB Single Serial" on macOS, so keyword matching alone misses them;
-    this is bug #5 in BUGS.md)
+    "USB Single Serial" on macOS, so keyword matching alone misses them)
   - 0x0403 FTDI
 * Local cameras via OpenCV index probe (dashboard is the sole owner of
   local USB cams - the neon lesson; robots opened by the dashboard get
@@ -47,7 +46,7 @@ class ManagedRobot:
     cameras: dict[str, Any] = field(default_factory=dict)
     process: subprocess.Popen | None = None
     started_at: float = 0.0
-    # Last N lines of child output. The pipe MUST be drained (BUGS.md #14):
+    # Last N lines of child output. The pipe MUST be drained:
     # with stdout=PIPE and no reader, the child blocks in print() once the
     # OS pipe buffer (~64KB) fills and the peer silently freezes.
     logs: deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES))
@@ -57,7 +56,7 @@ class ManagedRobot:
 
 
 def _drain(proc: subprocess.Popen, logs: deque[str], peer_id: str) -> None:
-    """Continuously read child stdout so the pipe never fills (bug #14)."""
+    """Continuously read child stdout so the pipe never fills."""
     try:
         assert proc.stdout is not None
         for raw in iter(proc.stdout.readline, b""):
@@ -112,7 +111,7 @@ def scan_serial_ports() -> list[dict[str, Any]]:
 def scan_cameras(max_index: int = 4, skip: set[int] | None = None) -> list[dict[str, Any]]:
     """Probe OpenCV camera indices. Cheap open/read/release per index.
 
-    ``skip`` indices are NOT opened (BUGS.md #16: probing an index owned by a
+    ``skip`` indices are NOT opened (probing an index owned by a
     running robot's camera thread steals/flaps its frames mid-episode).
     """
     try:
@@ -185,7 +184,7 @@ else:
 class DeviceManager:
     """Owns local device discovery + robot child processes."""
 
-    CAMERA_CACHE_TTL_S = 30.0  # bug #16: don't re-open /dev cameras per request
+    CAMERA_CACHE_TTL_S = 30.0  # don't re-open /dev cameras on every request
 
     def __init__(self) -> None:
         self.robots: dict[str, ManagedRobot] = {}
@@ -243,7 +242,7 @@ class DeviceManager:
         }
 
     def logs(self, peer_id: str) -> dict[str, Any]:
-        """Full ring buffer for one managed robot (drained per bug #14)."""
+        """Full ring buffer for one managed robot."""
         m = self.robots.get(peer_id)
         if m is None:
             return {"error": f"unknown peer {peer_id}"}
@@ -276,7 +275,7 @@ class DeviceManager:
                 cameras=cameras or {}, process=proc, started_at=time.time(),
             )
             self.robots[peer_id] = managed
-            # Drain stdout forever (bug #14) - daemon thread, ring buffer.
+            # Drain stdout forever - daemon thread, ring buffer.
             threading.Thread(
                 target=_drain, args=(proc, managed.logs, peer_id),
                 name=f"drain-{peer_id}", daemon=True,

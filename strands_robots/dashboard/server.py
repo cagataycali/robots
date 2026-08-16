@@ -114,7 +114,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         for opt in ("policy_port", "policy_host", "policy_config", "robot_name"):
             if body.get(opt) is not None:
                 cmd[opt] = body[opt]
-        # Child sim peers can't execute themselves (BUGS.md #11/#13):
+        # Child sim peers can't execute themselves:
         # route "<parent>__<robot>" to the parent with robot_name here, so
         # the card ▶ button and every API caller get the fix - not just the
         # agent's fleet tool.
@@ -170,7 +170,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         """Local USB serial ports (servo buses) + cameras + managed robots.
 
         Camera probe results are cached ~30s and indices owned by running
-        robots are never re-opened (BUGS.md #16); ``?refresh=1`` forces a
+        robots are never re-opened; ``?refresh=1`` forces a
         fresh probe of the unclaimed indices.
         """
         return await asyncio.to_thread(app.state.devices.devices, refresh)
@@ -199,7 +199,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.get("/api/devices/logs/{peer_id}")
     async def device_logs(peer_id: str) -> dict[str, Any]:
-        """Child-process output for one managed robot (ring buffer, bug #14)."""
+        """Child-process output for one managed robot (ring buffer)."""
         return app.state.devices.logs(peer_id)
 
     @app.post("/api/robots/{peer_id}/twin")

@@ -162,7 +162,7 @@ def _policy_catalog() -> list[dict[str, Any]]:
     The registry IS the run-form schema: ``requires`` are the mandatory
     inputs, ``config_keys`` the advanced set, ``defaults`` the prefill. Sending
     only ``{instruction, policy_provider}`` for a provider that requires a port
-    or a checkpoint is a guaranteed failed run (BUGS.md #18), so the UI builds
+    or a checkpoint is a guaranteed failed run, so the UI builds
     its form from this instead of a hardcoded list.
     """
     try:

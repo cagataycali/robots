@@ -80,8 +80,8 @@ def _trim_history(messages: list) -> list:
 
     A blind ``messages[-200:]`` can slice between an assistant ``toolUse`` and
     its ``toolResult``. Because the file is reloaded on every restart, that one
-    bad slice then fails *every* subsequent turn until it is deleted by hand
-    (BUGS.md #15). Cutting only at a plain user message keeps every tool pair
+    bad slice then fails *every* subsequent turn until it is deleted by hand.
+    Cutting only at a plain user message keeps every tool pair
     intact.
     """
     if len(messages) <= HISTORY_LIMIT:
@@ -143,7 +143,7 @@ def clear_history() -> bool:
 
 # Set by server.py at startup - the dashboard's mesh gateway. robot_mesh
 # cannot be used here: it requires an in-process Robot()/Simulation() as its
-# Zenoh gateway (BUGS.md #10), and the dashboard is a robot-less peer.
+# Zenoh gateway, and the dashboard is a robot-less peer.
 _bridge: Any = None
 
 
@@ -214,7 +214,7 @@ def _make_fleet_tool() -> Any:
             if robot_name:
                 cmd["robot_name"] = robot_name
             # Child sim peers ("<parent>__<robot>") route to the parent
-            # Simulation peer - shared choke point (BUGS.md #11/#13).
+            # Simulation peer - the shared routing choke point.
             from strands_robots.dashboard.mesh_bridge import route_task_target
 
             target, cmd = route_task_target(target, cmd)
@@ -273,7 +273,7 @@ def _build_agent() -> Any:
             logger.warning("could not apply %s to model: %s", overrides, e)
 
     # Restore conversation history from disk so the fleet agent survives
-    # dashboard restarts (BUGS.md #12 - "amnesiac agent").
+    # dashboard restarts instead of waking up amnesiac.
     history = _trim_history(_load_history())
     if history:
         try:
@@ -385,7 +385,7 @@ def _is_history_poisoned(exc: Exception) -> bool:
 
     A split toolUse/toolResult pair comes back as a provider validation error
     on the *whole* conversation, which then repeats on every turn because the
-    same file is reloaded each time (BUGS.md #15).
+    same file is reloaded each time.
     """
     text = str(exc).lower()
     return any(
