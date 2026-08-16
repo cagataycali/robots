@@ -2112,6 +2112,13 @@ class Robot(TeleopMixin, AgentTool):
                 finite; it is validated before the task is submitted, so a
                 budget the loop cannot honor is reported here instead of as a
                 started task that commands nothing (or never ends).
+            **policy_kwargs: Checkpoint/provider keywords (``model_path``,
+                ``policy_type``, ``pretrained_name_or_path``,
+                ``server_address``, ...) forwarded to ``create_policy`` via
+                :meth:`_get_policy`. This is the vocabulary the mesh dispatch
+                collects from the wire command; per-provider validity is
+                ``create_policy``'s contract, so an unknown keyword is the
+                provider's own refusal to make.
 
         Returns:
             Tool-shaped result confirming the task started, or an error naming
