@@ -367,10 +367,23 @@ class MinkIKBridge:
 #      ``wrist`` / ...).
 #   3. The **leaf body** of the robot's kinematic chain (the descendant of the
 #      robot's joints with no child body) - the last link, where a tool mounts.
+#
+# Rung 1 searches the end-effector vocabulary of rung 2 as well, after its own
+# TCP-specific names. The two rungs describe the same physical part of the robot
+# in different words, so a token that identifies the end effector as a body
+# identifies it as a site too - and a site is the more precise frame, because it
+# is placed at the tool point while the body origin sits at the link's mount.
+# Searching sites for TCP names only made a model that publishes its tool point
+# as a site lose to the link of the same name: ``so101`` names both ``gripper``
+# and resolved to the body, 98 mm behind its own fingertips.
 # --------------------------------------------------------------------------
 
 _SITE_HINTS = ("attachment_site", "attachment", "grasp", "pinch", "tcp", "ee_site", "ee", "flange")
 _BODY_HINTS = ("hand", "gripper", "tool", "tcp", "ee", "wrist", "flange", "end_effector", "eef")
+# Rung 1's search order: TCP-specific site names first, then the end-effector
+# names rung 2 matches on bodies. Order-preserving dedupe, because the two
+# tuples share tokens and the first occurrence is the one that decides.
+_SITE_SEARCH_HINTS = tuple(dict.fromkeys((*_SITE_HINTS, *_BODY_HINTS)))
 
 
 def _names_of(model: Any, obj_type: Any) -> list[tuple[int, str]]:
@@ -406,6 +419,12 @@ def _basename(name: str, namespace: str | None) -> str:
 def discover_ee_frame(model: Any, namespace: str | None = None) -> tuple[str, str] | None:
     """Discover an IK end-effector frame ``(name, type)`` for a robot.
 
+    Resolution is first-match-wins over three rungs: a site whose name denotes
+    the tool point or the end effector, else a body whose name denotes the end
+    effector, else the leaf body of the namespace's kinematic chain. A site
+    outranks a body even when both carry the same name, because a site is placed
+    at the tool point while the body origin sits at the link's mount.
+
     Args:
         model: The compiled ``mujoco.MjModel`` (the shared world model).
         namespace: The robot's body/site namespace prefix (e.g. ``"panda/"``).
@@ -421,9 +440,9 @@ def discover_ee_frame(model: Any, namespace: str | None = None) -> tuple[str, st
         logger.debug("mujoco not importable; cannot auto-discover ee-frame")
         return None
 
-    # 1) Prefer a TCP-like SITE.
+    # 1) Prefer a SITE: a TCP-like name first, then an end-effector name.
     sites = [(i, n) for i, n in _names_of(model, _site_obj()) if _scoped(n, namespace)]
-    for hint in _SITE_HINTS:
+    for hint in _SITE_SEARCH_HINTS:
         for _i, name in sites:
             if hint in _basename(name, namespace).lower():
                 logger.info("ee-frame: site %r (hint %r)", name, hint)
