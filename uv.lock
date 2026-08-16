@@ -5218,9 +5218,9 @@ requires-dist = [
     { name = "vector-quantize-pytorch", marker = "extra == 'all'", specifier = ">=1.14.0" },
     { name = "vector-quantize-pytorch", marker = "extra == 'motionbricks'", specifier = ">=1.14.0" },
     { name = "warp-lang", marker = "extra == 'sim-newton'", specifier = ">=1.14.0,<2.0.0" },
-    { name = "websockets", marker = "extra == 'all'", specifier = ">=12.0" },
-    { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=12.0" },
-    { name = "websockets", marker = "extra == 'inference'", specifier = ">=12.0" },
+    { name = "websockets", marker = "extra == 'all'", specifier = ">=13.0" },
+    { name = "websockets", marker = "extra == 'cosmos3-service'", specifier = ">=13.0" },
+    { name = "websockets", marker = "extra == 'inference'", specifier = ">=13.0" },
 ]
 provides-extras = ["all", "benchmark-libero", "cosmos3-diffusers", "cosmos3-service", "cosmos3-sim", "curobo", "dev", "device-connect", "groot-service", "inference", "kimodo", "lerobot", "lerobot-async", "mesh", "mesh-iot", "molmoact2", "motionbricks", "moveit2", "ollama", "protomotions", "ros2", "rosbridge", "sim", "sim-gs", "sim-isaac", "sim-mujoco", "sim-newton", "vera-sim", "wbc"]
 
