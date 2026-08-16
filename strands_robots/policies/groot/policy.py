@@ -143,21 +143,34 @@ class ObservationMapping:
 class ActionMapping:
     """Maps model action keys → robot actuator names.
 
-    A model key is spelled as the loaded model declares it - see
-    :class:`ObservationMapping` for why, and for what a caller may supply.
+    A model key is held **bare**, which is the opposite of
+    :class:`ObservationMapping` and for the opposite reason: an action key is
+    never sent to the model, it only arrives from it, and both unpack paths
+    reduce a raw output key to its bare name before matching it. So bare is the
+    spelling a lookup can succeed in, whichever spelling the model declares.
+    :class:`Gr00tPolicy` accepts either spelling from a caller and reduces it
+    once, so a mapping built by hand needs no knowledge of which release is
+    loaded.
 
     Attributes:
-        actions: ``{model_action_key: robot_actuator}``.
+        actions: ``{model_action_key: robot_actuator}`` - bare, no prefix.
     """
 
     actions: dict[str, str] = field(default_factory=dict)
 
     def validate(self, modality_configs: dict) -> None:
-        """Validate all mapped model action keys exist in the model config."""
-        model_action = set(modality_configs["action"].modality_keys)
+        """Validate all mapped model action keys exist in the model config.
+
+        Compares bare names on both sides, so a mapping resolves against a
+        release that declares its action keys in either spelling. The refusal
+        quotes the model's own spellings, which is the vocabulary a caller
+        correcting the mapping has to read.
+        """
+        declared = list(modality_configs["action"].modality_keys)
+        model_action = {key.removeprefix("action.") for key in declared}
         for model_key in self.actions:
-            if model_key not in model_action:
-                raise ValueError(f"Action mapping: model key '{model_key}' not in model: {sorted(model_action)}")
+            if model_key.removeprefix("action.") not in model_action:
+                raise ValueError(f"Action mapping: model key '{model_key}' not in model: {sorted(declared)}")
 
 
 # Model key spelling
@@ -176,8 +189,21 @@ class ActionMapping:
 #                                                     ``gr00t.experiment.data_config``
 #
 # Everything downstream matches keys by name, so both spellings have to reduce to
-# one before a name comparison, and a resolved model key has to be written back in
-# the spelling that model declares - it is the key the payload is sent under.
+# one before a name comparison. Which spelling a *resolved* key is then held in
+# depends on the direction that key travels, and the two directions want opposite
+# answers:
+#
+#   observation  robot -> model  held in the model's declared spelling, because it
+#                                is the key ``_prepare_observation`` sends the
+#                                payload under, and the model reads that key
+#   action       model -> robot  held bare, because it is only ever compared
+#                                against a raw output key that ``_unpack_actions``
+#                                and ``_unpack_service_actions`` have already
+#                                reduced with ``removeprefix("action.")``
+#
+# Holding an action key in the declared spelling instead would make that lookup
+# unsatisfiable against a prefixed release: every actuator would miss its mapping
+# and be emitted under ``unmapped.<bare>`` with nothing reporting it.
 
 
 def _declared_by_bare(declared: list[str], modality: str) -> dict[str, str]:
@@ -230,10 +256,41 @@ def _canonicalize_observation_mapping(mapping: ObservationMapping, modality_conf
     )
 
 
-def _canonicalize_action_mapping(mapping: ActionMapping, modality_configs: dict) -> ActionMapping:
-    """Restate an action mapping's model keys in the model's own spelling."""
-    canonical = _canonical_model_keys(mapping.actions, modality_configs["action"].modality_keys, "action")
-    return replace(mapping, actions={canonical[model]: robot for model, robot in mapping.actions.items()})
+def _bare_action_keys(actions: dict[str, str]) -> dict[str, str]:
+    """Reduce ``{model_action_key: robot_key}`` to bare model keys.
+
+    The single owner of the reduction, so a caller's mapping is reduced on the
+    same terms in either mode: service mode has no model metadata and therefore
+    never reaches :func:`_canonicalize_action_mapping`, but its unpack path
+    reduces raw output keys identically, so it needs the same bare form.
+
+    Raises:
+        ValueError: If two entries name one action key in different spellings.
+            A plain dict comprehension keeps whichever the iteration order
+            reached last and drops the other actuator with nothing reporting it,
+            which is the failure this whole module exists to remove.
+    """
+    reduced: dict[str, str] = {}
+    for model_key, robot_key in actions.items():
+        bare = model_key.removeprefix("action.")
+        if bare in reduced and reduced[bare] != robot_key:
+            raise ValueError(
+                f"Action mapping: model key '{bare}' is mapped twice, to robot keys "
+                f"'{reduced[bare]}' and '{robot_key}'. A prefixed and a bare spelling of one "
+                "model key are the same key; map it once."
+            )
+        reduced[bare] = robot_key
+    return reduced
+
+
+def _canonicalize_action_mapping(mapping: ActionMapping) -> ActionMapping:
+    """Reduce an action mapping's model keys to their bare names.
+
+    Actions travel the other way from observations - see :class:`ActionMapping`
+    for why bare rather than declared spelling is the form a mapping is held in,
+    and note that the model's declared spelling is therefore not consulted here.
+    """
+    return replace(mapping, actions=_bare_action_keys(mapping.actions))
 
 
 # Auto-inference (exact name match → positional fallback)
@@ -293,7 +350,7 @@ def _auto_infer_action_mapping(
     used: set = set()
     for k in ours:
         if k in declared:
-            actions[declared[k]] = k
+            actions[k] = k
             used.add(declared[k])
     remaining_ours = [k for k in ours if k not in actions.values()]
     remaining_model = [k for k in model if k not in used]
@@ -306,7 +363,7 @@ def _auto_infer_action_mapping(
             "or set strict_keys=False to allow positional fallback."
         )
     for mdl, our in zip(remaining_model, remaining_ours):
-        actions[mdl] = our
+        actions[mdl.removeprefix("action.")] = our
         logger.info("Auto-mapped action: model '%s' -> robot '%s' (positional)", mdl, our)
     return ActionMapping(actions=actions)
 
@@ -382,8 +439,8 @@ def _parse_observation_mapping(flat: dict[str, str]) -> ObservationMapping:
 
 
 def _parse_action_mapping(flat: dict[str, str]) -> ActionMapping:
-    """Parse ``{"action.X": "robot_key"}`` → ActionMapping."""
-    return ActionMapping(actions={k.removeprefix("action."): v for k, v in flat.items()})
+    """Parse ``{"action.X": "robot_key"}`` → ActionMapping, keys reduced to bare."""
+    return ActionMapping(actions=_bare_action_keys(flat))
 
 
 def _coerce_action_row(row: Any) -> float | list[float]:
@@ -471,7 +528,10 @@ class Gr00tPolicy(Policy):
             so either spelling is accepted here and one that names no declared
             key is refused by name.
         action_mapping: ``{"action.X": "robot_key"}``. Honoured in either mode,
-            on the same terms.
+            on the same terms. Either spelling of a model key is accepted and
+            reduced to a bare name, which is the form the unpack paths match
+            against; naming one key in both spellings is refused rather than
+            silently collapsed.
         language_key: Override the key the instruction is sent under. Otherwise
             the model's own language key is used when a local checkpoint is
             loaded, and in service mode - where there is no model to ask - the
@@ -664,7 +724,7 @@ class Gr00tPolicy(Policy):
         if self._action_mapping is None:
             self._action_mapping = _auto_infer_action_mapping(self.data_config, mmc, strict_keys=self._strict_keys)
 
-        self._action_mapping = _canonicalize_action_mapping(self._action_mapping, mmc)
+        self._action_mapping = _canonicalize_action_mapping(self._action_mapping)
         self._action_mapping.validate(mmc)
 
         logger.info(

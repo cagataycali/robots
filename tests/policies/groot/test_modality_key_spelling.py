@@ -10,12 +10,27 @@
   N1.5 policy and then reads back.
 
 Mapping resolution compares key *names*, so it must reduce both spellings to one
-before comparing, and must state a resolved model key back in the spelling that
-model declares - it is the key the payload is sent under. Against a prefixed
-model the by-name arm used to match nothing, which left declaration *order* the
-only thing that resolved a mapping and refused an explicit one that was correct.
+before comparing. Against a prefixed model the by-name arm used to match nothing,
+which left declaration *order* the only thing that resolved a mapping and refused
+an explicit one that was correct.
+
+Which spelling a resolved key is *held* in then depends on the direction it
+travels, and the two directions want opposite answers:
+
+* An **observation** key is held in the model's declared spelling, because it is
+  the key the payload is sent under and the model reads that key.
+* An **action** key is held bare, because it is never sent - it only arrives, and
+  both unpack paths reduce a raw output key with ``removeprefix("action.")``
+  before matching it by name.
+
+Holding an action key in the declared spelling makes that lookup unsatisfiable
+against a prefixed release: the mapping validates, then every actuator misses it
+at ``get_actions()`` and is emitted under ``unmapped.<bare>`` with nothing
+reporting it. So the action assertions below are round trips through unpack
+rather than assertions about the mapping's spelling alone.
 """
 
+import numpy as np
 import pytest
 
 msgpack = pytest.importorskip("msgpack", reason="msgpack not installed - pip install 'strands-robots[groot-service]'")
@@ -125,15 +140,31 @@ class TestAutoInferenceResolvesByName:
         # Declared in the opposite order, so a positional resolution swaps them.
         assert mapping.video == {"wrist": wrist, "front": front}
 
-    @pytest.mark.parametrize(
-        ("spelling", "expected"),
-        [
-            ("bare", {"single_arm": "single_arm", "gripper": "gripper"}),
-            ("prefixed", {"action.single_arm": "single_arm", "action.gripper": "gripper"}),
-        ],
-    )
-    def test_action_keys_carry_the_spelling_the_model_declares(self, spelling, expected):
-        assert _auto_infer_action_mapping(DATA_CONFIG, _modality_configs(spelling)).actions == expected
+    @pytest.mark.parametrize("spelling", ["bare", "prefixed"])
+    def test_action_keys_are_inferred_bare_under_either_spelling(self, spelling):
+        """The by-name arm resolves against a prefixed model, and stores bare."""
+        mapping = _auto_infer_action_mapping(DATA_CONFIG, _modality_configs(spelling))
+
+        assert mapping.actions == {"single_arm": "single_arm", "gripper": "gripper"}
+
+    @pytest.mark.parametrize("spelling", ["bare", "prefixed"])
+    def test_a_positionally_resolved_action_key_is_also_stored_bare(self, spelling):
+        """The positional arm reads the declared list, so it must reduce too.
+
+        This arm stored the declared spelling before either spelling resolved by
+        name, so against a prefixed release it produced a mapping key no unpack
+        lookup could match - the same silent drop, reached without a caller
+        supplying anything.
+        """
+        configs = _modality_configs(spelling)
+        configs["action"] = ModalityConfig(
+            delta_indices=[0],
+            modality_keys=[k if spelling == "bare" else f"action.{k}" for k in ("left", "right")],
+        )
+
+        mapping = _auto_infer_action_mapping(DATA_CONFIG, configs)
+
+        assert mapping.actions == {"left": "single_arm", "right": "gripper"}
 
     @pytest.mark.parametrize("spelling", ["bare", "prefixed"])
     def test_a_fully_name_matching_key_set_is_not_a_strict_keys_failure(self, spelling):
@@ -167,16 +198,26 @@ class TestASuppliedMappingIsAcceptedInEitherSpelling:
         assert p._obs_mapping.video == {"cam": front}
 
     @pytest.mark.parametrize(
-        ("spelling", "version", "action_key"),
-        [
-            ("bare", "n1.6", "single_arm"),
-            ("prefixed", "n1.5", "action.single_arm"),
-        ],
+        ("spelling", "version"),
+        [("bare", "n1.6"), ("prefixed", "n1.5")],
     )
-    def test_a_supplied_action_key_is_restated_in_the_model_spelling(self, spelling, version, action_key):
+    def test_a_supplied_action_key_is_reduced_to_a_bare_name(self, spelling, version):
         p = _policy(spelling, version=version, action_mapping={"action.single_arm": "joints"})
 
-        assert p._action_mapping.actions == {action_key: "joints"}
+        assert p._action_mapping.actions == {"single_arm": "joints"}
+
+    @pytest.mark.parametrize(
+        ("spelling", "version"),
+        [("bare", "n1.6"), ("prefixed", "n1.5")],
+    )
+    def test_one_action_key_named_in_both_spellings_is_refused(self, spelling, version):
+        """Reducing the pair would keep one actuator and drop the other silently."""
+        with pytest.raises(ValueError, match="mapped twice"):
+            _policy(
+                spelling,
+                version=version,
+                action_mapping={"action.single_arm": "joints", "single_arm": "other"},
+            )
 
     @pytest.mark.parametrize(
         ("spelling", "version"),
@@ -185,3 +226,64 @@ class TestASuppliedMappingIsAcceptedInEitherSpelling:
     def test_a_mapping_naming_no_declared_key_is_still_refused_by_name(self, spelling, version):
         with pytest.raises(ValueError, match="model video 'wirst'"):
             _policy(spelling, version=version, observation_mapping={"cam": "video.wirst"})
+
+
+class TestAMappedActionReachesTheRobotKey:
+    """A validated action mapping must actually resolve at ``get_actions()``.
+
+    The mapping's spelling is only observable through unpack, so a mapping that
+    validates and then matches nothing is indistinguishable from a correct one
+    until an actuator value is read back. Both spellings of the *model's*
+    declaration and both spellings of the *raw output* are covered, because the
+    unpack paths reduce the raw key and must therefore be insensitive to it.
+    """
+
+    @staticmethod
+    def _raw(spelling: str) -> dict[str, np.ndarray]:
+        """A two-timestep action chunk keyed in one spelling."""
+        prefix = "" if spelling == "bare" else "action."
+        return {
+            f"{prefix}single_arm": np.array([[0.1, 0.2], [0.3, 0.4]]),
+            f"{prefix}gripper": np.array([[1.0], [0.0]]),
+        }
+
+    @pytest.mark.parametrize("unpack", ["_unpack_actions", "_unpack_service_actions"])
+    @pytest.mark.parametrize("raw_spelling", ["bare", "prefixed"])
+    @pytest.mark.parametrize(("spelling", "version"), [("bare", "n1.6"), ("prefixed", "n1.5")])
+    def test_a_supplied_mapping_resolves_every_actuator(self, spelling, version, raw_spelling, unpack):
+        p = _policy(
+            spelling,
+            version=version,
+            action_mapping={"action.single_arm": "joints", "action.gripper": "grip"},
+        )
+
+        steps = getattr(p, unpack)(self._raw(raw_spelling))
+
+        assert [sorted(step) for step in steps] == [["grip", "joints"], ["grip", "joints"]]
+        assert steps[0]["joints"] == [0.1, 0.2]
+        assert steps[1]["grip"] == [0.0]
+
+    @pytest.mark.parametrize("unpack", ["_unpack_actions", "_unpack_service_actions"])
+    @pytest.mark.parametrize("raw_spelling", ["bare", "prefixed"])
+    @pytest.mark.parametrize(("spelling", "version"), [("bare", "n1.6"), ("prefixed", "n1.5")])
+    def test_no_mapped_actuator_is_reported_as_unmapped(self, spelling, version, raw_spelling, unpack):
+        """``unmapped.*`` is the shape a missed lookup takes, so pin its absence."""
+        p = _policy(
+            spelling,
+            version=version,
+            action_mapping={"action.single_arm": "joints", "action.gripper": "grip"},
+        )
+
+        steps = getattr(p, unpack)(self._raw(raw_spelling))
+
+        assert [key for step in steps for key in step if key.startswith("unmapped.")] == []
+
+    @pytest.mark.parametrize("unpack", ["_unpack_actions", "_unpack_service_actions"])
+    @pytest.mark.parametrize(("spelling", "version"), [("bare", "n1.6"), ("prefixed", "n1.5")])
+    def test_an_auto_inferred_mapping_resolves_every_actuator(self, spelling, version, unpack):
+        """Auto-inference feeds the same lookup, so it needs the same round trip."""
+        p = _policy(spelling, version=version)
+
+        steps = getattr(p, unpack)(self._raw(spelling))
+
+        assert [sorted(step) for step in steps] == [["gripper", "single_arm"]] * 2
