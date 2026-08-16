@@ -32,13 +32,25 @@ function Dashboard() {
   const [detail, setDetail] = useState<string | null>(null)
   const [busyPeers, setBusyPeers] = useState<Record<string, boolean>>({})
 
-  const list = useMemo(() => Object.values(peers).sort((a, b) => {
-    // fresh first, then robots before sims, then name
-    if (!!a.stale !== !!b.stale) return a.stale ? 1 : -1
-    const at = a.presence?.robot_type ?? 'z', bt = b.presence?.robot_type ?? 'z'
-    if (at !== bt) return at === 'robot' ? -1 : 1
-    return a.peer_id.localeCompare(b.peer_id)
-  }), [peers])
+  const list = useMemo(() => Object.values(peers)
+    // Infrastructure peers are not robots: 'gateway' meshes (robot_mesh's
+    // robot-less fallback, one per coordinating agent process) and the
+    // dashboard's own '-safety' signer have no cameras, no joints, and no
+    // dispatch - a run form on them is a card that can only fail. They stay
+    // visible in the settings/mesh panel, just not in the fleet grid.
+    .filter(p => {
+      const t = p.presence?.robot_type
+      if (t === 'gateway') return false
+      if (p.peer_id.endsWith('-safety')) return false
+      return true
+    })
+    .sort((a, b) => {
+      // fresh first, then robots before sims, then name
+      if (!!a.stale !== !!b.stale) return a.stale ? 1 : -1
+      const at = a.presence?.robot_type ?? 'z', bt = b.presence?.robot_type ?? 'z'
+      if (at !== bt) return at === 'robot' ? -1 : 1
+      return a.peer_id.localeCompare(b.peer_id)
+    }), [peers])
 
   const anyRunning = Object.values(busyPeers).some(Boolean)
 

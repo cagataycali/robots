@@ -45,10 +45,123 @@ export interface Peer {
   cameras?: Record<string, { t?: number; shape?: number[] }>
 }
 
+export interface ActivityEntry {
+  t: number
+  source: 'api' | 'agent' | 'estop' | 'mesh' | string
+  action: string
+  target: string
+  ok: boolean | null
+  detail?: any
+  elapsed?: number | null
+  result?: string
+}
+
+export interface MeshInfo {
+  online?: boolean
+  peer_id?: string
+  peers?: number
+  live_peers?: number
+  connect?: string[]
+  listen?: string[]
+  port?: string | number
+  backend?: string
+  auth_mode?: string
+  local_dev?: boolean
+  wire_security?: string
+  camera_hz?: number
+  multicast?: string
+  max_cmd_bytes?: number
+  policy_allow?: string[]
+  settings?: Record<string, any>
+}
+
+/** A provider input the mesh command schema will actually carry. */
+export interface WireField {
+  key: string
+  /** the command key it travels as (registry names differ from wire names) */
+  wire_key: string
+  type: 'string' | 'int' | 'float' | 'bool' | 'json' | string
+  required: boolean
+  default?: any
+}
+
+/** One entry of `registry/policies.json` - the run form's schema. */
+export interface PolicyProvider {
+  wire_fields: WireField[]
+  /** provider kwargs the wire schema drops; only usable when built locally */
+  unsettable_over_mesh: string[]
+  name: string
+  description: string
+  requires: string[]
+  config_keys: string[]
+  defaults: Record<string, any>
+  shorthands: string[]
+  url_patterns: string[]
+  extra?: string | null
+  trainable: boolean
+  /** false -> the mesh security gate rejects this over the wire. */
+  wire_safe: boolean
+  /** needs a running inference server rather than a local checkpoint. */
+  server_based: boolean
+}
+
+export interface EnvRow {
+  key: string
+  value: string
+  secret: boolean
+  set: boolean
+  in_file: boolean
+}
+
+export interface ConfigDoc {
+  agent: {
+    model_id: string | null
+    known_models: string[]
+    system_prompt: string
+    is_default_prompt: boolean
+    temperature: number | null
+    max_tokens: number | null
+    built?: boolean
+    busy?: boolean
+    messages?: number
+    tools?: string[]
+    bridge_online?: boolean
+    history_file?: string
+  }
+  voice: { provider: string; voice_name: string | null; providers: string[] }
+  mesh: MeshInfo
+  runtime: { trust_remote_code: boolean }
+  security: { auth_enabled: boolean; cors_origins: string[] }
+  policies: PolicyProvider[]
+  env: EnvRow[]
+  env_file: string
+  settings_file: string
+}
+
+export interface StopResult {
+  peer_id: string
+  state: 'stopped' | 'not_stopped' | 'no_answer'
+  detail?: any
+  result?: any
+}
+
+export interface EstopResult {
+  targeted: string[]
+  stale_skipped: string[]
+  counts: { stopped: number; not_stopped: number; no_answer: number }
+  all_stopped: boolean
+  stopped: Record<string, StopResult>
+  /** Signed strands/safety/estop rail (fleet-wide lockout). */
+  signed_rail?: { signed: boolean; issuer?: string; error?: string }
+  lockout_engaged?: boolean
+}
+
 export type MeshEvent =
-  | { type: 'snapshot'; dashboard_peer_id: string; peers: Record<string, Peer>; t: number }
+  | { type: 'snapshot'; dashboard_peer_id: string; peers: Record<string, Peer>; mesh?: MeshInfo; t: number }
   | { type: 'presence'; peer_id: string; data: Presence }
   | { type: 'state'; peer_id: string; data: PeerState }
   | { type: 'stream'; peer_id: string; data: StreamStep }
   | { type: 'camera_meta'; peer_id: string; cam: string; data: { t?: number; shape?: number[] } }
   | { type: 'safety'; kind: 'estop' | 'resume'; data: Record<string, unknown> }
+  | { type: 'activity'; data: ActivityEntry }
+  | { type: 'mesh_reconfigured'; ok: boolean; mesh: MeshInfo }

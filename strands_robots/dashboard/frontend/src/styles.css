@@ -614,3 +614,15 @@ body {
 .train-job-meta { font-size: 11.5px; color: var(--dim); font-family: ui-monospace, monospace; }
 .train-job-metrics { font-size: 10.5px; color: var(--amber); font-family: ui-monospace, monospace; }
 .train-job-actions { display: flex; justify-content: flex-end; }
+
+/* ── resume flow in the estop sheet ────────────────── */
+.resume-box { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.resume-row { display: flex; gap: 8px; }
+.resume-row input {
+  flex: 1; min-width: 0;
+  background: var(--panel2); color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--red) 40%, var(--border));
+  border-radius: 9px; padding: 9px 12px; font-size: 13px;
+  font-family: ui-monospace, monospace;
+}
+.resume-row input:focus { outline: none; border-color: var(--red); }
