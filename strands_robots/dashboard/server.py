@@ -114,8 +114,15 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         for opt in ("policy_port", "policy_host", "policy_config", "robot_name"):
             if body.get(opt) is not None:
                 cmd[opt] = body[opt]
-        result = await app.state.bridge.send_cmd_async(peer_id, cmd, timeout=float(body.get("timeout", 60.0)))
-        return {"peer_id": peer_id, "result": result}
+        # Child sim peers can't execute themselves (BUGS.md #11/#13):
+        # route "<parent>__<robot>" to the parent with robot_name here, so
+        # the card ▶ button and every API caller get the fix - not just the
+        # agent's fleet tool.
+        from strands_robots.dashboard.mesh_bridge import route_task_target
+
+        target, cmd = route_task_target(peer_id, cmd)
+        result = await app.state.bridge.send_cmd_async(target, cmd, timeout=float(body.get("timeout", 60.0)))
+        return {"peer_id": peer_id, "routed_to": target if target != peer_id else None, "result": result}
 
     @app.post("/api/robots/{peer_id}/stop")
     async def stop_task(peer_id: str) -> dict[str, Any]:
@@ -170,6 +177,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         if not peer_id:
             raise HTTPException(422, "peer_id required")
         return await asyncio.to_thread(app.state.devices.despawn, peer_id)
+
+    @app.get("/api/devices/logs/{peer_id}")
+    async def device_logs(peer_id: str) -> dict[str, Any]:
+        """Child-process output for one managed robot (ring buffer, bug #14)."""
+        return app.state.devices.logs(peer_id)
 
     @app.get("/api/frame/{peer_id}/{cam}")
     async def frame(peer_id: str, cam: str) -> Response:

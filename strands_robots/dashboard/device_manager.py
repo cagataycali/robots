@@ -23,10 +23,13 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+LOG_TAIL_LINES = 200  # ring buffer per managed robot
 
 # VIDs seen on servo-bus USB adapters. Keyword matching (feetech/dynamixel/...)
 # still applies; VIDs catch the generic-description boards.
@@ -44,9 +47,32 @@ class ManagedRobot:
     cameras: dict[str, Any] = field(default_factory=dict)
     process: subprocess.Popen | None = None
     started_at: float = 0.0
+    # Last N lines of child output. The pipe MUST be drained (BUGS.md #14):
+    # with stdout=PIPE and no reader, the child blocks in print() once the
+    # OS pipe buffer (~64KB) fills and the peer silently freezes.
+    logs: deque[str] = field(default_factory=lambda: deque(maxlen=LOG_TAIL_LINES))
 
     def alive(self) -> bool:
         return self.process is not None and self.process.poll() is None
+
+
+def _drain(proc: subprocess.Popen, logs: deque[str], peer_id: str) -> None:
+    """Continuously read child stdout so the pipe never fills (bug #14)."""
+    try:
+        assert proc.stdout is not None
+        for raw in iter(proc.stdout.readline, b""):
+            line = raw.decode(errors="replace").rstrip()
+            if line:
+                logs.append(f"{time.strftime('%H:%M:%S')} {line}")
+    except Exception as e:  # reader must never take the server down
+        logs.append(f"[drain error: {e}]")
+    finally:
+        try:
+            code = proc.wait(timeout=5)  # EOF usually precedes reaping by a tick
+        except Exception:
+            code = proc.poll()
+        logs.append(f"[process exited code={code}]")
+        logger.info("robot %s child exited (code=%s)", peer_id, code)
 
 
 def scan_serial_ports() -> list[dict[str, Any]]:
@@ -165,10 +191,18 @@ class DeviceManager:
                 pid: {
                     "peer_id": m.peer_id, "robot_name": m.robot_name, "mode": m.mode,
                     "port": m.port, "alive": m.alive(), "started_at": m.started_at,
+                    "log_tail": list(m.logs)[-20:],
                 }
                 for pid, m in self.robots.items()
             },
         }
+
+    def logs(self, peer_id: str) -> dict[str, Any]:
+        """Full ring buffer for one managed robot (drained per bug #14)."""
+        m = self.robots.get(peer_id)
+        if m is None:
+            return {"error": f"unknown peer {peer_id}"}
+        return {"peer_id": peer_id, "alive": m.alive(), "lines": list(m.logs)}
 
     def spawn(
         self,
@@ -192,10 +226,16 @@ class DeviceManager:
                 [sys.executable, "-c", _SPAWNER, _json.dumps(cfg)],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             )
-            self.robots[peer_id] = ManagedRobot(
+            managed = ManagedRobot(
                 peer_id=peer_id, robot_name=robot_name, mode=mode, port=port,
                 cameras=cameras or {}, process=proc, started_at=time.time(),
             )
+            self.robots[peer_id] = managed
+            # Drain stdout forever (bug #14) - daemon thread, ring buffer.
+            threading.Thread(
+                target=_drain, args=(proc, managed.logs, peer_id),
+                name=f"drain-{peer_id}", daemon=True,
+            ).start()
         logger.info("spawned %s (%s, pid=%s)", peer_id, mode, proc.pid)
         return {"peer_id": peer_id, "pid": proc.pid, "mode": mode}
 

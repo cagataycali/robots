@@ -142,13 +142,11 @@ def _make_fleet_tool() -> Any:
                 "action": "execute", "instruction": instruction,
                 "policy_provider": policy_provider, "duration": float(duration),
             }
-            # Child sim peers ("<parent>__<robot>") cannot execute themselves
-            # (upstream BUGS.md #11) - route to the parent Simulation peer with
-            # robot_name so _dispatch_sim_policy handles it.
-            if "__" in target:
-                parent, _, robot_name = target.partition("__")
-                cmd["robot_name"] = robot_name
-                target = parent
+            # Child sim peers ("<parent>__<robot>") route to the parent
+            # Simulation peer - shared choke point (BUGS.md #11/#13).
+            from strands_robots.dashboard.mesh_bridge import route_task_target
+
+            target, cmd = route_task_target(target, cmd)
             res = _bridge.send_cmd(target, cmd, timeout=float(duration) + 30.0)
             return {"status": "success", "content": [{"text": _json.dumps(res)[:1500]}]}
 

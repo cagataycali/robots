@@ -32,6 +32,24 @@ logger = logging.getLogger(__name__)
 PEER_STALE_S = 15.0  # presence heartbeat timeout before a card greys out
 
 
+def route_task_target(target: str, cmd: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    """Route commands aimed at a child sim peer to its parent Simulation peer.
+
+    Child sim peers ("<parent>__<robot>") stream state/cameras but cannot
+    execute tasks themselves (upstream mesh._dispatch has no execute path on
+    SimRobot children - BUGS.md #11). The parent's _dispatch_sim_policy
+    honors cmd["robot_name"], so we rewrite the target here. This is THE
+    choke point (BUGS.md #13): the REST API, the card ▶ button, and the
+    fleet agent tool all go through it.
+    """
+    if "__" in target and not cmd.get("robot_name"):
+        parent, _, robot_name = target.partition("__")
+        if parent and robot_name:
+            cmd = {**cmd, "robot_name": robot_name}
+            target = parent
+    return target, cmd
+
+
 class MeshBridge:
     """Dashboard-side mesh peer. One instance per server process."""
 
