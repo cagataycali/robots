@@ -205,3 +205,9 @@ body {
 .toolchip.error { background: color-mix(in srgb, var(--red) 14%, transparent); color: var(--red); }
 .voice-transcript { padding: 8px 14px; font-size: 12px; color: var(--amber); border-top: 1px solid var(--border); font-family: ui-monospace, monospace; }
 .grid { padding-bottom: 84px; }
+
+.twinbtn {
+  background: none; border: 1px solid var(--border); color: var(--blue);
+  border-radius: 7px; font-size: 13px; padding: 3px 8px; cursor: pointer;
+}
+.twinbtn:hover { border-color: var(--blue); }

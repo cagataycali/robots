@@ -121,8 +121,22 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         from strands_robots.dashboard.mesh_bridge import route_task_target
 
         target, cmd = route_task_target(peer_id, cmd)
-        result = await app.state.bridge.send_cmd_async(target, cmd, timeout=float(body.get("timeout", 60.0)))
-        return {"peer_id": peer_id, "routed_to": target if target != peer_id else None, "result": result}
+        timeout_s = float(body.get("timeout", 60.0))
+        # Twin mirroring: fire the same instruction at '<peer>-twin' when one
+        # is live (fire-and-forget; twin progress streams on the mesh).
+        twin_id = f"{peer_id}-twin"
+        twin = app.state.bridge.peers.get(twin_id)
+        mirrored = bool(twin and not twin.get("stale"))
+        if mirrored:
+            t_target, t_cmd = route_task_target(twin_id, dict(cmd))
+            asyncio.create_task(app.state.bridge.send_cmd_async(t_target, t_cmd, timeout=timeout_s))
+        result = await app.state.bridge.send_cmd_async(target, cmd, timeout=timeout_s)
+        return {
+            "peer_id": peer_id,
+            "routed_to": target if target != peer_id else None,
+            "mirrored_to_twin": mirrored,
+            "result": result,
+        }
 
     @app.post("/api/robots/{peer_id}/stop")
     async def stop_task(peer_id: str) -> dict[str, Any]:
@@ -187,6 +201,39 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
     async def device_logs(peer_id: str) -> dict[str, Any]:
         """Child-process output for one managed robot (ring buffer, bug #14)."""
         return app.state.devices.logs(peer_id)
+
+    @app.post("/api/robots/{peer_id}/twin")
+    async def toggle_twin(peer_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Spawn/despawn a MuJoCo digital twin sim peer named '<peer>-twin'.
+
+        Tasks started via /api/robots/<peer>/task are mirrored to a live
+        twin.
+        """
+        body = body or {}
+        twin_id = f"{peer_id}-twin"
+        dm = app.state.devices
+        existing = dm.robots.get(twin_id)
+        if existing and existing.alive():
+            return await asyncio.to_thread(dm.despawn, twin_id)
+        robot_name = body.get("robot_name")
+        if not robot_name:
+            peer = app.state.bridge.peers.get(peer_id) or {}
+            robot_name = (peer.get("presence") or {}).get("tool_name") or "so101"
+        return await asyncio.to_thread(dm.spawn, robot_name, "sim", twin_id)
+
+    @app.get("/api/calibration")
+    async def calibration_list() -> dict[str, Any]:
+        from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
+
+        res = await asyncio.to_thread(lerobot_calibrate, "list")
+        return {"status": res.get("status"), "text": (res.get("content") or [{}])[0].get("text", "")}
+
+    @app.get("/api/calibration/{name}")
+    async def calibration_view(name: str, device_type: str = "robots") -> dict[str, Any]:
+        from strands_robots.tools.lerobot_calibrate import lerobot_calibrate
+
+        res = await asyncio.to_thread(lerobot_calibrate, "view", name, device_type)
+        return {"status": res.get("status"), "text": (res.get("content") or [{}])[0].get("text", "")}
 
     @app.get("/api/frame/{peer_id}/{cam}")
     async def frame(peer_id: str, cam: str) -> Response:

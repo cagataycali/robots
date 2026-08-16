@@ -38,12 +38,21 @@ export default function RobotCard({ peer }: { peer: Peer }) {
     setBusy(false)
   }
 
+  const toggleTwin = async () => {
+    setBusy(true)
+    try { await fetch(`/api/robots/${peer.peer_id}/twin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }) } catch {}
+    setBusy(false)
+  }
+
   return (
     <div className={peer.stale ? 'card stale' : 'card'}>
       <div className="card-head">
         <span className={`typebadge ${type}`}>{type}</span>
         <span className="peername" title={peer.peer_id}>{peer.peer_id}</span>
         {p?.hostname && <span className="host">{p.hostname}</span>}
+        {type === 'robot' && !peer.peer_id.includes('__') && !peer.peer_id.endsWith('-twin') && (
+          <button className="twinbtn" onClick={toggleTwin} disabled={busy} title="Toggle sim twin">⿻</button>
+        )}
         <span className={peer.stale ? 'dot off' : 'dot on'} />
       </div>
 
