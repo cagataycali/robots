@@ -1089,7 +1089,7 @@ touches ROS 2.
 | `STRANDS_ISAAC_RTX_PATHTRACING` | Isaac Sim backend: on (`1`/`true`/`yes`/`on`) enables RTX path-tracing (photorealistic, slow) instead of the default render mode; off leaves the render mode alone, any other spelling is refused | unset |
 | `STRANDS_ISAAC_NUCLEUS_URL` | Isaac Sim backend: override the Omniverse Nucleus asset-server URL | unset (Isaac default) |
 | `GROOT_API_TOKEN` | API token for the GR00T inference service | unset |
-| `STRANDS_MESH` | Set `false` to disable Zenoh mesh globally | `true` |
+| `STRANDS_MESH` | Opt a bare `Robot()` into the Zenoh mesh: `true`/`1`/`yes` turns it on. `false`/`0`/`no` is a hard kill switch that also overrides an explicit `mesh=True` | unset (mesh off) |
 | `STRANDS_MESH_LOCAL_DEV` | Set `1` for a one-var localhost preset (auth `none`, no second factor needed) | unset |
 | `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE` | Second factor to expose a `Robot(ros2_transport="rtps")` inbound `joint_command` surface with no `dds_security_config` (DDS Security). Truthy: `1`/`true`/`yes` | unset |
 <details>
