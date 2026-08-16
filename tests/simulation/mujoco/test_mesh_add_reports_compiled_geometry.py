@@ -170,6 +170,16 @@ class TestTheReportedGeometryIsTheGeometryThatActsOnObjects:
     def test_an_unresolvable_geom_reports_no_extent_rather_than_a_wrong_one(self, sim) -> None:
         assert _compiled_geom_extent(sim._mj, sim.mj_model, "never_added_geom") is None
 
+    def test_a_non_string_geom_name_reports_no_extent_rather_than_crashing(self, sim) -> None:
+        """The lookup routes through ``mj_name_to_id``, so it inherits its guard.
+
+        Reaching ``mujoco.mj_name2id`` with a non-string name terminates the
+        interpreter with SIGSEGV rather than raising, which no envelope can
+        recover from.
+        """
+        not_a_name: Any = None
+        assert _compiled_geom_extent(sim._mj, sim.mj_model, not_a_name) is None
+
     def test_a_concave_asset_collides_as_its_filled_hull(self, sim, channel_mesh: str) -> None:
         """The documented consequence, pinned so the warning cannot go stale.
 

@@ -190,15 +190,18 @@ def _compiled_geom_extent(mj: Any, model: Any, geom_name: str) -> list[float] | 
     which no request component defines.
 
     Args:
-        mj: the cached ``mujoco`` module.
+        mj: the cached ``mujoco`` module, for the ``mjtObj`` enum.
         model: a compiled ``MjModel``.
-        geom_name: name of the geom to measure.
+        geom_name: name of the geom to measure. Resolved through
+            :func:`~strands_robots.simulation.mujoco.backend.mj_name_to_id`, so a
+            name that is not a string reports no extent rather than reaching the
+            binding.
 
     Returns:
         ``[x, y, z]`` full extents, or ``None`` when ``geom_name`` resolves to
         no geom -- a caller then reports no extent rather than a wrong one.
     """
-    geom_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, geom_name)
+    geom_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_GEOM, geom_name)
     if geom_id < 0:
         return None
     aabb = model.geom_aabb[geom_id]
