@@ -290,7 +290,11 @@ and one bad add never bricks later scene edits.
 
 Beyond primitives, `add_object` can inject a triangle-mesh asset (STL/OBJ) into
 the live scene at runtime. Pass `shape="mesh"` with a `mesh_path` to the asset
-file; the extent is defined by the mesh's own units, so `size` is ignored.
+file; the extent is defined by the mesh's own units, so `size` is ignored on
+this backend. The Newton backend consumes it instead, as a per-axis scale on the
+loaded geometry, so a mesh add carrying a `size` does not mean the same thing
+there - which meaning is right is tracked in
+[#2300](https://github.com/strands-labs/robots/issues/2300).
 
 ```python
 sim.add_object(name="bracket", shape="mesh", mesh_path="/abs/path/bracket.stl",
