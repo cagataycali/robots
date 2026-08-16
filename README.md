@@ -1163,7 +1163,7 @@ other spelling is refused. See
 |----------|-------------|---------|
 | `STRANDS_LIBERO_ACTION_LOG` / `_MAX` | Per-step OSC controller diagnostics | unset / `50` |
 | `STRANDS_LIBERO_STATE_LOG` / `_MAX` | Per-step state values fed to GR00T | unset / `50` |
-| `STRANDS_GROOT_WIRE_LOG` / `_MAX_CALLS` | Dump pre/post inference payloads to verify LOCAL vs SERVICE parity | unset / `10` |
+| `STRANDS_GROOT_WIRE_LOG` / `_MAX_CALLS` | Directory to dump pre/post inference payloads to, e.g. `/tmp/groot-wire`, to verify LOCAL vs SERVICE parity | unset / `10` |
 
 </details>
 

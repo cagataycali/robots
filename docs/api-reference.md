@@ -196,7 +196,7 @@ LIBERO task suites, BDDL parser. Install: `uv pip install "strands-robots[benchm
 | `STRANDS_MESH_AUDIT_DIR` | Safety event audit log | `~/.strands_robots/` |
 | `MUJOCO_GL` | GL backend for MuJoCo | auto |
 | `GROOT_API_TOKEN` | GR00T cloud inference token | (unset) |
-| `STRANDS_GROOT_WIRE_LOG` | Log raw ZMQ frames when `1` | (unset) |
+| `STRANDS_GROOT_WIRE_LOG` | Directory to dump pre/post-inference payloads to, e.g. `/tmp/groot-wire`; covers the in-process path as well as the service path, capped by `STRANDS_GROOT_WIRE_LOG_MAX_CALLS` | (unset) |
 
 ## See also
 
