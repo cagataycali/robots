@@ -68,13 +68,20 @@ def _max_render_bytes() -> int:
     return val
 
 
+# Environment variable that re-permits absolute ``render(output_path=...)``
+# destinations outside the render sandbox. One owner for the spelling, so the
+# value read and the name quoted in a refusal cannot drift apart.
+_RENDER_ALLOW_ABS_ENV = "STRANDS_ROBOTS_RENDER_ALLOW_ABS"
+
+
 def _validate_render_output_path(output_path: str) -> Path:
     """Validate an LLM-supplied render path, confined to the render sandbox.
 
     Thin render-specific binding over
     :func:`strands_robots.simulation.safe_output.validate_output_path`: absolute
     paths outside the sandbox are rejected unless ``STRANDS_ROBOTS_RENDER_ALLOW_ABS``
-    opts in.
+    opts in. That variable's name is passed down as well as read, so a
+    confinement refusal quotes the spelling the caller must set.
 
     Raises:
         ValueError: If the path is unsafe (the caller maps this to a tool error).
@@ -82,7 +89,8 @@ def _validate_render_output_path(output_path: str) -> Path:
     return validate_output_path(
         output_path,
         sandbox_root=_render_sandbox_root(),
-        allow_abs=env_flag("STRANDS_ROBOTS_RENDER_ALLOW_ABS"),
+        allow_abs=env_flag(_RENDER_ALLOW_ABS_ENV),
+        allow_abs_env=_RENDER_ALLOW_ABS_ENV,
     )
 
 
@@ -1994,9 +2002,15 @@ class RenderingMixin:
             if name is not None:
                 sanitize_name_component(name, label="name")
             if output_dir is not None:
-                _sb_root, _allow_abs = video_sandbox_args()
+                _sb_root, _allow_abs, _allow_abs_env = video_sandbox_args()
                 out_dir = str(
-                    validate_output_path(output_dir, sandbox_root=_sb_root, allow_abs=_allow_abs, label="output_dir")
+                    validate_output_path(
+                        output_dir,
+                        sandbox_root=_sb_root,
+                        allow_abs=_allow_abs,
+                        label="output_dir",
+                        allow_abs_env=_allow_abs_env,
+                    )
                 )
             else:
                 out_dir = _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings")
@@ -2443,9 +2457,15 @@ class RenderingMixin:
             if name is not None:
                 sanitize_name_component(name, label="name")
             if output_dir is not None:
-                _sb_root, _allow_abs = video_sandbox_args()
+                _sb_root, _allow_abs, _allow_abs_env = video_sandbox_args()
                 out_dir = str(
-                    validate_output_path(output_dir, sandbox_root=_sb_root, allow_abs=_allow_abs, label="output_dir")
+                    validate_output_path(
+                        output_dir,
+                        sandbox_root=_sb_root,
+                        allow_abs=_allow_abs,
+                        label="output_dir",
+                        allow_abs_env=_allow_abs_env,
+                    )
                 )
             else:
                 out_dir = _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings")
