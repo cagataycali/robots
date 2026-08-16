@@ -175,6 +175,32 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             raise HTTPException(500, "policy registry unavailable")
         return {"providers": catalog, "names": [p["name"] for p in catalog]}
 
+    @app.post("/api/collect")
+    async def collect_episodes(body: dict[str, Any]) -> dict[str, Any]:
+        """Collect a policy-driven dataset in a one-shot mesh sim.
+
+        run_policy drives exactly n_episodes rollouts with per-episode
+        parquet boundaries and reports parquet-truth counts. The dataset
+        lands under dataset_root, where /api/training/datasets discovers it
+        - closing the record -> train -> deploy loop entirely in the UI.
+        """
+        dataset_root = (body.get("dataset_root") or "").strip()
+        if not dataset_root:
+            raise HTTPException(422, "dataset_root required")
+        return await asyncio.to_thread(
+            lambda: app.state.devices.collect(
+                dataset_root=dataset_root,
+                dataset_repo_id=body.get("dataset_repo_id", "local/collected"),
+                robot_name=body.get("robot_name") or "so101",
+                policy_provider=body.get("policy_provider", "mock"),
+                policy_config=body.get("policy_config"),
+                instruction=body.get("instruction", ""),
+                n_episodes=int(body.get("n_episodes", 5)),
+                duration=float(body.get("duration", 10.0)),
+                fps=int(body.get("fps", 30)),
+            )
+        )
+
     @app.post("/api/replay")
     async def replay_episode(body: dict[str, Any]) -> dict[str, Any]:
         """Replay a recorded LeRobotDataset episode in a one-shot mesh sim.

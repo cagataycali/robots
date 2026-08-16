@@ -72,6 +72,32 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
     setBusy(false)
   }
 
+  const [collect, setCollect] = useState({ dataset_root: '', instruction: 'pick up the red cube', n_episodes: '5', duration: '10', robot_name: 'so101' })
+  const [showCollect, setShowCollect] = useState(false)
+
+  const submitCollect = async () => {
+    if (!collect.dataset_root.trim()) return
+    setBusy(true); setMsg(null)
+    try {
+      const r = await fetch('/api/collect', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          dataset_root: collect.dataset_root,
+          instruction: collect.instruction,
+          n_episodes: Number(collect.n_episodes) || 5,
+          duration: Number(collect.duration) || 10,
+          robot_name: collect.robot_name,
+        }),
+      })
+      const j = await r.json()
+      setMsg(j.peer_id
+        ? `▶ collecting ${j.n_episodes} episodes as ${j.peer_id} — watch it in the fleet grid; dataset appears below when done`
+        : `⚠ ${JSON.stringify(j).slice(0, 200)}`)
+      if (j.peer_id) setTimeout(refresh, 15000)
+    } catch (e) { setMsg(`⚠ ${e}`) }
+    setBusy(false)
+  }
+
   const replay = async (d: Dataset) => {
     setBusy(true); setMsg(null)
     try {
@@ -145,6 +171,43 @@ export default function TrainingTab({ onClose }: { onClose: () => void }) {
           <button className="btn go wide" onClick={() => submit(false)} disabled={busy || !form.dataset_root || !form.output_dir}>▶ train</button>
         </div>
         {msg && <div className="train-msg">{msg}</div>}
+      </div>
+
+      <div className="train-form">
+        <button className="btn ghost" onClick={() => setShowCollect(s => !s)}>
+          {showCollect ? '▾' : '▸'} 📹 collect new dataset (sim rollouts)
+        </button>
+        {showCollect && (
+          <>
+            <label className="field"><span>dataset root (path)</span>
+              <input value={collect.dataset_root} placeholder="/tmp/my_demos"
+                onChange={e => setCollect(c => ({ ...c, dataset_root: e.target.value }))} disabled={busy} />
+            </label>
+            <label className="field"><span>instruction</span>
+              <input value={collect.instruction}
+                onChange={e => setCollect(c => ({ ...c, instruction: e.target.value }))} disabled={busy} />
+            </label>
+            <div className="train-row">
+              <label className="field"><span>episodes</span>
+                <input type="number" value={collect.n_episodes}
+                  onChange={e => setCollect(c => ({ ...c, n_episodes: e.target.value }))} disabled={busy} />
+              </label>
+              <label className="field"><span>sec/episode</span>
+                <input type="number" value={collect.duration}
+                  onChange={e => setCollect(c => ({ ...c, duration: e.target.value }))} disabled={busy} />
+              </label>
+              <label className="field"><span>robot</span>
+                <input value={collect.robot_name}
+                  onChange={e => setCollect(c => ({ ...c, robot_name: e.target.value }))} disabled={busy} />
+              </label>
+            </div>
+            <div className="train-actions">
+              <button className="btn go wide" onClick={submitCollect} disabled={busy || !collect.dataset_root.trim()}>
+                📹 collect
+              </button>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="train-jobs">

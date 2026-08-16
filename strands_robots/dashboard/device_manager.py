@@ -181,6 +181,59 @@ else:
 '''
 
 
+_COLLECT_SPAWNER = r'''
+import os, sys, time, json
+cfg = json.loads(sys.argv[1])
+os.environ.setdefault("STRANDS_ROBOTS_NO_DYLD_SHIM", "1")
+os.environ.setdefault("STRANDS_MESH_LOCAL_DEV", os.environ.get("STRANDS_MESH_LOCAL_DEV", "1"))
+os.environ.setdefault("STRANDS_MESH_MULTICAST", "true")
+os.environ.setdefault("STRANDS_MESH", "true")
+os.environ.setdefault("STRANDS_MESH_CAMERA_HZ", os.environ.get("STRANDS_MESH_CAMERA_HZ", "5"))
+
+from strands_robots import Robot
+from strands_robots.tools.run_policy import run_policy
+
+robot_name = cfg.get("robot_name") or "so101"
+sim = Robot(robot_name, mesh=True, peer_id=cfg["peer_id"])
+n = robot_name
+sim.add_camera(name=f"{n}/front", position=[0.6, 0.4, 0.5], target=[0.0, 0.0, 0.15])
+try:
+    sim.add_camera(name=f"{n}/wrist", position=[0.02, 0.0, 0.05], target=[0.2, 0.0, 0.0], parent_body=f"{n}/gripper")
+except Exception:
+    pass
+print(f"{cfg['peer_id']} (collect sim) online - {cfg['n_episodes']} episodes", flush=True)
+
+# run_policy drives the N-episode loop deterministically and reports
+# parquet-truth (meta/info.json total_episodes) - no self-reporting.
+# run_policy takes n_steps (not duration): steps = seconds * control Hz.
+control_hz = 30.0
+n_steps = max(1, int(float(cfg.get("duration", 10.0)) * control_hz))
+res = run_policy(
+    simulation=sim,
+    robot_name=robot_name,
+    policy_provider=cfg.get("policy_provider", "mock"),
+    policy_config=cfg.get("policy_config") or None,
+    instruction=cfg.get("instruction", ""),
+    n_episodes=int(cfg.get("n_episodes", 5)),
+    n_steps=n_steps,
+    control_frequency=control_hz,
+    dataset_root=cfg["dataset_root"],
+    dataset_repo_id=cfg.get("dataset_repo_id", "local/collected"),
+    dataset_task=cfg.get("instruction", ""),
+    dataset_fps=int(cfg.get("fps", 30)),
+)
+status = res.get("status")
+for block in res.get("content", []):
+    if isinstance(block, dict) and block.get("json"):
+        print(f"collect: {status}: {json.dumps(block['json'])[:400]}", flush=True)
+        break
+    if isinstance(block, dict) and block.get("text"):
+        print(f"collect: {status}: {block['text'][:300]}", flush=True)
+time.sleep(3)
+os._exit(0)
+'''
+
+
 _REPLAY_SPAWNER = r'''
 import os, sys, time, json
 cfg = json.loads(sys.argv[1])
@@ -359,6 +412,52 @@ class DeviceManager:
             ).start()
         logger.info("replay %s ep%d as %s (pid=%s)", repo_id, episode, peer_id, proc.pid)
         return {"peer_id": peer_id, "pid": proc.pid, "repo_id": repo_id, "episode": episode}
+
+    def collect(
+        self,
+        dataset_root: str,
+        dataset_repo_id: str = "local/collected",
+        robot_name: str = "so101",
+        policy_provider: str = "mock",
+        policy_config: dict[str, Any] | None = None,
+        instruction: str = "",
+        n_episodes: int = 5,
+        duration: float = 10.0,
+        fps: int = 30,
+    ) -> dict[str, Any]:
+        """One-shot data collection: spawn a mesh sim, roll out a policy for
+        N recorded episodes (parquet-truth verified by the run_policy tool),
+        exit. The dataset lands where the Training tab's discovery scans.
+
+        This is scripted collection (policy demos); teleop-driven human
+        demos additionally need a leader arm attached to a real robot peer.
+        """
+        import json as _json
+
+        peer_id = f"collect-{int(time.time()) % 100000}"
+        cfg = {
+            "peer_id": peer_id, "robot_name": robot_name,
+            "policy_provider": policy_provider, "policy_config": policy_config,
+            "instruction": instruction, "n_episodes": n_episodes,
+            "duration": duration, "dataset_root": dataset_root,
+            "dataset_repo_id": dataset_repo_id, "fps": fps,
+        }
+        with self._lock:
+            proc = subprocess.Popen(
+                [sys.executable, "-c", _COLLECT_SPAWNER, _json.dumps(cfg)],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            managed = ManagedRobot(
+                peer_id=peer_id, robot_name=robot_name, mode="collect",
+                process=proc, started_at=time.time(),
+            )
+            self.robots[peer_id] = managed
+            threading.Thread(
+                target=_drain, args=(proc, managed.logs, peer_id),
+                name=f"drain-{peer_id}", daemon=True,
+            ).start()
+        logger.info("collect %d eps -> %s as %s (pid=%s)", n_episodes, dataset_root, peer_id, proc.pid)
+        return {"peer_id": peer_id, "pid": proc.pid, "dataset_root": dataset_root, "n_episodes": n_episodes}
 
     def despawn(self, peer_id: str) -> dict[str, Any]:
         with self._lock:
