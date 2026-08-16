@@ -10,6 +10,11 @@ Provides:
 Environment Variables:
     STRANDS_ROBOT_MODE: Override mode detection ("sim", "real", "auto").
         Case-insensitive; surrounding whitespace ignored.
+    STRANDS_MESH: Opt a bare ``Robot()`` into the Zenoh mesh. Mesh is OFF
+        unless asked for: only "true"/"1"/"yes" turns it ON, and unset or
+        "false" leaves it OFF. An explicit ``mesh=True``/``mesh=False``
+        kwarg wins over this default, except that "false" is a hard kill
+        switch honoured by ``init_mesh`` even against ``mesh=True``.
 
 Examples::
 
@@ -113,6 +118,27 @@ def _auto_detect_mode(canonical: str) -> str:
             logger.debug("USB probe failed (%s: %s); falling back to sim", type(e).__name__, e)
 
     return "sim"
+
+
+def _mesh_env_opt_in() -> bool:
+    """Return True when ``STRANDS_MESH`` opts a bare ``Robot()`` into the mesh.
+
+    Mesh is OFF unless it is asked for. ``mesh=None`` (the factory default)
+    consults this function, and only ``true``, ``1`` or ``yes``
+    (case-insensitive, surrounding whitespace ignored) turns it ON. Every
+    other value -- including unset, empty and ``false`` -- leaves mesh OFF,
+    so a bare ``Robot("so100")`` never spins up Zenoh, ACL or e-stop
+    machinery.
+
+    ``STRANDS_MESH=false`` is additionally a hard kill switch honoured by
+    :func:`strands_robots.mesh.init_mesh` even when the caller passed an
+    explicit ``mesh=True``; the env var never forces mesh ON there, so an
+    explicit ``mesh=False`` is always respected.
+
+    Returns:
+        True when the environment opts in, False otherwise.
+    """
+    return os.getenv("STRANDS_MESH", "").strip().lower() in ("true", "1", "yes")
 
 
 def _validate_known_robot(canonical: str, original: str, urdf_path: str | None) -> None:
@@ -310,7 +336,7 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
     # the env default. ``STRANDS_MESH=false`` remains a hard kill switch
     # enforced in ``init_mesh`` regardless of this resolution.
     if mesh is None:
-        mesh = os.getenv("STRANDS_MESH", "").strip().lower() in ("true", "1", "yes")
+        mesh = _mesh_env_opt_in()
 
     # --- Simulation ---
     if mode == "sim":
