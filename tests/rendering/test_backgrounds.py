@@ -787,26 +787,35 @@ class TestBakeGsplatPanorama:
         ply.write_bytes(b"placeholder")
         return bg, ply, rendered
 
+    @staticmethod
+    def _panorama_size(path) -> tuple[int, int]:
+        """Return the (width, height) of a baked panorama, closing the file."""
+        from PIL import Image
+
+        with Image.open(path) as img:
+            return img.size
+
     def test_a_new_equirect_resolution_is_rendered_not_served_from_the_cache(self, tmp_path, monkeypatch) -> None:
         # The headline defect: bake small, then ask for a bigger panorama. The
         # second request used to return the first call's small image with zero
         # renders, so the caller silently got a backdrop at a resolution it had
         # not asked for (and then sampled that as if it were the big one).
-        from PIL import Image
-
         bg, ply, rendered = self._stub_render_boundary(monkeypatch, tmp_path)
 
         first = bg.bake_gsplat_panorama(ply, face_size=16, equi_w=64, equi_h=32, device="cpu")
-        assert Image.open(first).size == (64, 32)
+        first_size = self._panorama_size(first)
+        assert first_size == (64, 32)
 
         rendered.clear()
         second = bg.bake_gsplat_panorama(ply, face_size=16, equi_w=128, equi_h=64, device="cpu")
+        second_size = self._panorama_size(second)
+        first_size_after = self._panorama_size(first)
 
-        assert Image.open(second).size == (128, 64), "the requested equirect size must be honored"
+        assert second_size == (128, 64), "the requested equirect size must be honored"
         assert rendered, "a new resolution must re-render rather than reuse the cached panorama"
         assert second != first, "distinct requests must not collide on one cache path"
         # The first panorama is still intact for whoever asked for that size.
-        assert Image.open(first).size == (64, 32)
+        assert first_size_after == (64, 32)
 
     def test_a_new_face_size_is_rendered_not_served_from_the_cache(self, tmp_path, monkeypatch) -> None:
         # face_size changes the sharpness of the cube faces the panorama is
