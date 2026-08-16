@@ -10,6 +10,8 @@ refuses correctly is worthless if a verb never consults it.
 from __future__ import annotations
 
 import ast
+import inspect
+import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -425,3 +427,182 @@ def test_the_blocklist_is_documented_where_operators_look() -> None:
     for entry in ros_mod._DEFAULT_COMMAND_BLOCKLIST:
         assert entry in text, f"{entry} is blocked but undocumented"
     assert "STRANDS_ROS2_COMMAND_ALLOW" in text
+
+
+# Files an operator reads to decide what to pre-approve before a headless run.
+# The README Configuration table is the single source of truth for env vars, so a
+# wrong contract there is the one that gets scaffolded from.
+_OPERATOR_FACING_DOCS: tuple[str, ...] = (
+    "README.md",
+    "docs/ros2-integration.md",
+    "docs/security.md",
+)
+
+# A clause that names the halt and denies that it is gated claims an exemption.
+_HALT_PHRASES: tuple[str, ...] = ("zero-velocity", "zero velocity", "zero `twist`", "halt", "stop()")
+_NOT_GATED_PHRASES: tuple[str, ...] = (
+    "never gated",
+    "not gated",
+    "ungated",
+    "un-gated",
+    "never prompt",
+    "no approval",
+    "without approval",
+    "never asks",
+)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _readme_allow_row() -> str:
+    """Return the README Configuration row documenting the pre-approval variable."""
+    readme = (_repo_root() / "README.md").read_text(encoding="utf-8")
+    for line in readme.splitlines():
+        if line.startswith("|") and f"`{ros_mod._COMMAND_ALLOW_ENV}`" in line:
+            return line
+    return ""
+
+
+def _documented_halt_exemptions() -> list[tuple[str, int, str]]:
+    """Every operator-facing clause asserting the halt is exempt from the gate."""
+    found: list[tuple[str, int, str]] = []
+    for name in _OPERATOR_FACING_DOCS:
+        text = (_repo_root() / name).read_text(encoding="utf-8")
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for clause in re.split(r"(?<=[.;])\s+|\s*\|\s*", line):
+                low = clause.lower()
+                if any(h in low for h in _HALT_PHRASES) and any(u in low for u in _NOT_GATED_PHRASES):
+                    found.append((name, lineno, clause.strip()))
+    return found
+
+
+class TestTheDocumentedExemptionsAreTheRealOnes:
+    """An operator-facing document may only claim an exemption the gate makes.
+
+    ``_gate_command`` is handed the verb and the surface name and never the
+    payload, so an exemption that depends on what is being sent cannot be
+    implemented. An operator who believes the halt is exempt leaves ``cmd_vel``
+    out of ``STRANDS_ROS2_COMMAND_ALLOW`` and discovers in the field that
+    ``stop()`` is refused - the unreachable-halt hazard, reintroduced through
+    documentation rather than through code.
+
+    The documented claims are graded against the running gate rather than banned
+    outright, so a gate that one day does exempt a payload makes the claim
+    permissible instead of failing here.
+    """
+
+    calls: dict[str, list[tuple[Any, ...]]]
+
+    @pytest.fixture(autouse=True)
+    def _hermetic(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("BYPASS_TOOL_CONSENT", raising=False)
+        monkeypatch.delenv(ros_mod._COMMAND_ALLOW_ENV, raising=False)
+        monkeypatch.setattr(ros_mod._backend, "available", lambda: True)
+        self.calls = {"_publish": [], "_action_send_goal": []}
+
+        def _recorder(key: str, outcome: Any) -> Callable[..., Any]:
+            def _fake(*args: Any) -> Any:
+                self.calls[key].append(args)
+                return outcome
+
+            return _fake
+
+        monkeypatch.setattr(ros_mod, "_publish", _recorder("_publish", None))
+        monkeypatch.setattr(ros_mod, "_action_send_goal", _recorder("_action_send_goal", {"goal_status": "SUCCEEDED"}))
+
+    @staticmethod
+    def _halt_fields() -> dict[str, Any]:
+        return {"linear": {"x": 0.0, "y": 0.0, "z": 0.0}, "angular": {"x": 0.0, "y": 0.0, "z": 0.0}}
+
+    def _publish_twist(self, fields: dict[str, Any], ctx: MagicMock) -> dict[str, Any]:
+        return use_ros(
+            action="publish",
+            tool_context=ctx,
+            topic="/cmd_vel",
+            type="geometry_msgs/msg/Twist",
+            fields=fields,
+        )
+
+    def _halt_is_gated(self) -> bool:
+        """Measure whether a zero-velocity halt is subject to the gate."""
+        ctx = MagicMock()
+        ctx.interrupt.return_value = "n"
+        self._publish_twist(self._halt_fields(), ctx)
+        return bool(ctx.interrupt.called)
+
+    def test_the_gate_never_receives_the_payload(self) -> None:
+        """The reason a payload-conditional exemption cannot be documented."""
+        params = tuple(inspect.signature(_gate_command).parameters)
+        assert params == ("kind", "name", "tool_context"), (
+            f"_gate_command takes {params}; a documented payload exemption is only "
+            "implementable if the payload is passed in"
+        )
+
+    def test_a_halt_is_refused_exactly_like_a_full_speed_drive(self) -> None:
+        """Same surface, same verb, same outcome - the payload changes nothing."""
+        outcomes = []
+        for fields in (self._halt_fields(), {"linear": {"x": 1.0}, "angular": {"z": 0.5}}):
+            ctx = MagicMock()
+            ctx.interrupt.return_value = "n"
+            result = self._publish_twist(fields, ctx)
+            outcomes.append((ctx.interrupt.called, result["status"]))
+        assert outcomes == [(True, "error"), (True, "error")], (
+            f"halt vs drive outcomes differ: {outcomes}; the gate is keyed on the surface"
+        )
+        assert self.calls["_publish"] == [], "a declined publish reached the transport"
+
+    def test_the_documented_halt_contract_matches_the_gate(self) -> None:
+        """The docs and the gate must agree on whether the halt is exempt."""
+        row = _readme_allow_row()
+        assert row, (
+            f"no README Configuration row documents {ros_mod._COMMAND_ALLOW_ENV}; a clean sweep would prove nothing"
+        )
+        claims = _documented_halt_exemptions()
+        measured = "exempt" if not self._halt_is_gated() else "gated"
+        documented = "exempt" if claims else "gated"
+        detail = "\n".join(f"  {name}:{lineno}: {clause}" for name, lineno, clause in claims) or "  (none)"
+        assert measured == documented, (
+            f"the gate treats a zero-velocity halt to a blocklisted surface as {measured}, "
+            f"but the operator-facing documentation describes it as {documented}.\n"
+            f"clauses claiming an exemption:\n{detail}"
+        )
+
+    def test_the_documented_read_exemption_is_real(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The row's other clause: reads of a blocked surface are never gated."""
+        assert re.search(r"read[s]? are never gated", _readme_allow_row().lower()), (
+            "the row no longer states the read exemption that does hold"
+        )
+        monkeypatch.setattr(ros_mod, "_echo", lambda *a: [{"linear": {"x": 0.0}}])
+        ctx = MagicMock()
+        result = use_ros(action="echo", tool_context=ctx, topic="/cmd_vel", type="geometry_msgs/msg/Twist")
+        assert not ctx.interrupt.called
+        assert result["status"] == "success"
+
+    def test_the_pre_approval_example_in_the_row_lifts_the_gate(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Follow the row's own example and the halt must then go through.
+
+        Correcting the default must not remove the documented way to make the
+        halt reachable unattended, which is the whole point of the variable.
+        """
+        row = _readme_allow_row()
+        example = re.search(r"e\.g\.\s*`([^`]+)`", row)
+        assert example, f"the row no longer shows a pre-approval example: {row}"
+        surfaces = example.group(1)
+        assert "/cmd_vel" in surfaces, f"the example stopped naming the halt surface: {surfaces}"
+        monkeypatch.setenv(ros_mod._COMMAND_ALLOW_ENV, surfaces)
+
+        ctx = MagicMock()
+        result = self._publish_twist(self._halt_fields(), ctx)
+        assert result["status"] == "success", f"the documented pre-approval did not lift the gate: {_texts(result)}"
+        assert not ctx.interrupt.called, "a pre-approved surface still prompted the operator"
+        assert len(self.calls["_publish"]) == 1, "the halt never reached the transport"
+
+        goal = use_ros(
+            action="action_send_goal",
+            tool_context=ctx,
+            action_name="/navigate_to_pose",
+            type="nav2_msgs/action/NavigateToPose",
+        )
+        assert goal["status"] == "success", "the example's second surface was not pre-approved"
