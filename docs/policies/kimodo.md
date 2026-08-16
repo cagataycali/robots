@@ -6,10 +6,10 @@ full-body `qpos` sequences for the Unitree G1 in a single diffusion pass, then
 streams them one frame per tick as G1 joint targets.
 
 Kimodo sits in the same seat as [`MotionBricksPolicy`](./motionbricks.md) — it
-is a *kinematic motion generator* that emits motion targets, not torques. A
-tracking controller (WBC / PD) turns those into physics — see
-[`WBC`](./wbc.md) or compose via `policy_provider="composite"` (see
-[Custom Policies](./custom-policies.md)).
+is a *kinematic motion generator* that emits motion targets, not torques — a
+whole-body reference over all 29 leg + waist + arm joints. Applying that
+reference under physics needs a controller that *tracks* it; see
+[Tracking the reference under physics](#tracking-the-reference-under-physics).
 
 ## When to use
 
@@ -74,24 +74,36 @@ sim.run_policy(
 )
 ```
 
-## Composing with a physics tracker
+## Tracking the reference under physics
 
-Kimodo is kinematic. To close the loop through physics, compose it with WBC:
+Kimodo is kinematic: it emits joint *targets* for all 29 DOFs, not torques. Run
+standalone (the example above) those targets are applied directly, which is the
+faithful visualisation of the generated motion.
 
-```python
-sim.run_policy(
-    robot_name="g1",
-    policy_provider="composite",
-    policy_config={
-        "layers": [
-            {"provider": "kimodo", "config": {"diffusion_steps": 100}},
-            {"provider": "wbc"},
-        ],
-    },
-    instruction="walking forward",
-    n_steps=500,
-)
+Making the robot follow that motion under physics requires a controller that
+**tracks the reference** — the 29 targets are the tracker's input. Generator and
+tracker therefore run in **series over the same joints**:
+
+```text
+prompt -> Kimodo -> 29 joint targets -> reference tracker -> torques -> robot
 ```
+
+That is a cascade, and `CompositePolicy` does not express it.
+[`CompositePolicy`](./custom-policies.md) merges two policies over **disjoint**
+joint groups (locomotion legs+waist plus manipulation arms, each joint owned by
+exactly one child); handing it a whole-body generator and a whole-body controller
+gives both children the same joints, so one child's output is discarded entirely.
+That configuration is refused with an error naming the shadowed joints rather
+than silently returning one child's commands.
+
+[`WBCPolicy`](./wbc.md) in particular is **not** a reference tracker: its only
+command input is a target base velocity (`target_velocity`, plus optional
+orientation and height), it has no reference-pose input, and it drives 15 of the
+same 29 joints Kimodo drives. Composing the two cannot track a Kimodo motion.
+
+`strands_robots` does not currently ship a whole-body reference tracker. A
+tracker matched to the generator's motion distribution (an RL tracker trained on
+it, or a tuned PD law) is required, and is out of scope for this provider.
 
 ## Config reference
 
@@ -125,6 +137,32 @@ Precedence is per-field override > `config` field > the default in the table. A
 merged value is re-validated by `KimodoConfig`, so `diffusion_steps=0` is
 refused whichever way it arrives. There is no `**kwargs`: a misspelled knob
 raises `TypeError` at construction instead of being silently ignored.
+
+## When the sampler runs again
+
+One `sample()` call produces a motion buffer that `get_actions` then drains one
+frame per control tick, holding the last frame once the buffer is exhausted. The
+buffer is identified by the four inputs that determine it - the prompt plus
+`diffusion_steps`, `guidance_scale` and `seed` - so the sampler runs again as
+soon as any of them differs from the values that produced the buffer in hand,
+and otherwise the buffered frames are reused:
+
+```python
+await policy.get_actions({}, "walking forward")                     # samples
+await policy.get_actions({}, "walking forward")                     # drains
+await policy.get_actions({}, "waving")                              # samples
+await policy.get_actions({}, "waving", diffusion_steps=25)          # samples
+policy.reset()                                                      # rewinds
+policy.reset(seed=7); await policy.get_actions({}, "waving")        # samples
+```
+
+This is what makes a multi-episode `eval_policy` meaningful for a stochastic
+policy. `PolicyRunner.evaluate` derives a distinct seed per episode and forwards
+it to `policy.reset(seed=...)`, so each episode samples its own motion while the
+whole run stays reproducible: re-running at the same master `seed=` replays the
+same per-episode motions. Repeating a seed replays the buffered motion rather
+than re-running the sampler for identical frames, and `reset()` without a seed
+only rewinds - neither pays for a diffusion run.
 
 ## When the checkpoint is not a Kimodo checkpoint
 
@@ -213,6 +251,43 @@ The runtime emits a dict of rotation matrices and root positions, so the
 the agent protocol expects. `guidance_scale` has no counterpart in that runtime
 (its classifier-free-guidance knob is a per-stage `cfg_weight` list) and is
 ignored by this adapter.
+## Driving the real robot
+
+Kimodo names its joint targets the way the URDF does (`left_hip_pitch_joint`);
+lerobot's `UnitreeG1` driver names its action keys after its own joint enum
+(`kLeftHipPitch.q`). The two vocabularies name the same 29 joints, so the
+hardware path is a key rename applied between the policy and the driver:
+
+```python
+from strands_robots.policies.kimodo.hardware import build_lerobot_g1_action_dict
+
+for policy_action in await policy.get_actions(observation, instruction):
+    robot.send_action(build_lerobot_g1_action_dict(policy_action))
+```
+
+`get_joint_map()` returns the table itself (`{"left_hip_pitch_joint":
+"kLeftHipPitch.q", ...}`) if you would rather rename in your own loop. Both are
+lerobot-only helpers: `pip install "strands-robots[lerobot]"`. Commanding the
+physical robot additionally needs Unitree's `unitree_sdk2` runtime, which
+lerobot documents separately for its `unitree_g1` robot.
+
+The table pairs joints by name, never by position in the driver enum. That
+matters because the driver applies only the action keys it recognises and leaves
+every other motor on its previous command, so a key paired with the wrong joint
+— or spelled in a way the driver does not know — raises nothing at all and the
+robot simply moves wrong. Pairing by name means a driver-side reorder cannot
+move a target, and a driver-side rename or DOF change is refused with the
+unmatched joints named on both sides instead of being taken on trust:
+
+```text
+RuntimeError: Unitree G1 joint sets disagree between the policy and lerobot's
+driver. Joints the policy commands that the driver does not name:
+['waist_yaw_joint']. Joints the driver names that the policy does not command:
+['kTorsoYaw.q']. ...
+```
+
+The rename is one-way. The driver's `get_observation()` already reports
+`<motor>.q` keys, so the read path needs no inverse table.
 
 ## Unit testing without weights
 

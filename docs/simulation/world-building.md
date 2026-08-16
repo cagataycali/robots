@@ -295,7 +295,36 @@ file; the extent is defined by the mesh's own units, so `size` is ignored.
 ```python
 sim.add_object(name="bracket", shape="mesh", mesh_path="/abs/path/bracket.stl",
                position=[0.3, 0.0, 0.1])
+# 'bracket' added: mesh at [0.3, 0.0, 0.1], extent=[0.12, 0.08, 0.03]m from the
+# asset (collision uses its convex hull), 0.1kg
 ```
+
+Because no `size` component is consumed, the success text reports the extent
+read back off the compiled geom rather than echoing the request - the request
+carries no extent for a mesh, and the asset can be any size.
+
+### A mesh geom collides as its convex hull
+
+MuJoCo collides a mesh geom as its **convex hull**, not as the triangles that
+render. For a convex asset (a bracket, a mug body, a crate) the two coincide and
+there is nothing to think about. For a concave one - a scanned or generated room
+shell, a tray, a shelf, a bowl - the hull fills every cavity, so:
+
+* an object placed "inside" the cavity starts inside solid geometry and is pushed
+  out, and one dropped in rests on the filled hull instead of on the interior
+  floor;
+* a camera still shows the open interior, because rendering uses the triangles.
+  Nothing looks wrong.
+
+To get load-bearing concave geometry, decompose the asset into convex parts and
+add one mesh object per part:
+
+```python
+for i, part in enumerate(convex_parts):          # e.g. a V-HACD decomposition
+    sim.add_object(name=f"room_{i}", shape="mesh", mesh_path=part, is_static=True)
+```
+
+A single-mesh room is still useful as a visual backdrop; it just is not a floor.
 
 `mesh_path` is required for `shape="mesh"` - a mesh without a path is rejected
 with an actionable error rather than an opaque recompile failure. If the mesh
@@ -427,6 +456,16 @@ half-applied scene. Use
 
 Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` - no `add_camera` needed.
 
+A discovered camera is registered under its short MJCF name (`wrist`), and the
+compiled model also carries it namespaced (`so101/wrist`); `render` takes the
+namespaced form, `get_observation` keys on the short one. The short name is
+first-come across robots: when a second robot declares a camera whose short name
+is already taken, that camera is registered under its namespaced name instead
+(logged, naming both), so two arms that both declare `wrist` give you `wrist` and
+`arm2/wrist` rather than one of them shadowing the other. Each camera belongs to
+exactly one robot, which is what makes `remove_robot` take that robot's cameras
+with it and leave every other robot's alone.
+
 To mount a camera ON a moving body (a realistic wrist/gripper view that rides with the arm), pass `parent_body`. Body names are namespaced `<robot>/<body>`; discover the exact mount point with `list_bodies` instead of guessing:
 
 ```python
@@ -437,6 +476,8 @@ sim.add_camera(name="wrist", parent_body=mount,
 ```
 
 `list_bodies()` (no `robot_name`) lists every body in the world; with `robot_name` it scopes to that robot and also returns `gripper_body`, the best-guess end-effector mount.
+
+The guess matches its hint words (`gripper`, `hand`, `ee`, `tool`) on word boundaries, so a short hint cannot fire inside an unrelated word - a `knee` link or a `wheel` hub is not a gripper mount because `ee` occurs in its name. A robot with no gripper-like body reports `gripper_body: None` and omits the mount line rather than naming an unrelated body; pick the mount from the full `bodies` list in that case.
 
 A mounted camera survives `remove_robot`, which rebuilds the whole scene: it is
 re-mounted on its body once every surviving robot is re-attached, keeping its
