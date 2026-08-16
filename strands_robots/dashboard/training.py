@@ -32,7 +32,39 @@ JOBS_FILE = Path(os.getenv(
     "DASHBOARD_JOBS_FILE",
     os.path.join(tempfile.gettempdir(), "strands_dashboard", "train_jobs.json"),
 ))
+#: Dataset roots the dashboard itself created (collect wizard). The default
+#: scanner only walks HF_LEROBOT_HOME + STRANDS_ROBOTS_DATA_DIRS, so a
+#: collect into /tmp/... would produce a dataset the Training tab cannot see.
+ROOTS_FILE = JOBS_FILE.parent / "dataset_roots.json"
 _LOCK = threading.Lock()
+
+
+def remember_dataset_root(root: str) -> None:
+    """Persist a dataset root so local_datasets() discovers it forever."""
+    try:
+        with _LOCK:
+            roots: list[str] = []
+            if ROOTS_FILE.exists():
+                data = json.loads(ROOTS_FILE.read_text())
+                if isinstance(data, list):
+                    roots = data
+            if root not in roots:
+                roots.append(root)
+                ROOTS_FILE.parent.mkdir(parents=True, exist_ok=True)
+                ROOTS_FILE.write_text(json.dumps(roots[-50:]))
+    except Exception as e:  # noqa: BLE001
+        logger.debug("could not remember dataset root: %s", e)
+
+
+def _remembered_roots() -> list[Path]:
+    try:
+        if ROOTS_FILE.exists():
+            data = json.loads(ROOTS_FILE.read_text())
+            if isinstance(data, list):
+                return [Path(r) for r in data]
+    except Exception:  # noqa: BLE001
+        pass
+    return []
 
 
 def _load_jobs() -> list[dict[str, Any]]:
@@ -85,6 +117,12 @@ def local_datasets(query: str = "") -> list[dict[str, Any]]:
     for extra in (os.getenv("STRANDS_ROBOTS_DATA_DIRS") or "").split(":"):
         if extra.strip():
             roots.append(Path(extra.strip()).expanduser())
+    # Collect-wizard roots: each remembered path is a dataset dir itself, so
+    # its PARENT enters the scan (the walker finds meta/info.json one level
+    # down, and siblings collected next to it come along for free).
+    for r in _remembered_roots():
+        if r.parent.is_dir() and r.parent not in roots:
+            roots.append(r.parent)
 
     q = query.lower()
     out: list[dict[str, Any]] = []

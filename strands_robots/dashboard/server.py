@@ -175,6 +175,40 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             raise HTTPException(500, "policy registry unavailable")
         return {"providers": catalog, "names": [p["name"] for p in catalog]}
 
+    @app.get("/api/robots/{peer_id}/teleop")
+    async def teleop_status(peer_id: str) -> dict[str, Any]:
+        """Live teleop health for one peer: publisher/receiver rates, drops,
+        slew rejections - the counters InputPublisher/InputReceiver already
+        keep. Works on hardware AND sim peers (TeleopMixin lift)."""
+        result = await app.state.bridge.send_cmd_async(peer_id, {"action": "teleop_status"}, timeout=10.0)
+        return {"peer_id": peer_id, "result": result}
+
+    @app.post("/api/robots/{peer_id}/teleop/receive")
+    async def teleop_receive(peer_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        """Point a follower (real or sim twin) at a leader's input stream.
+
+        With the TeleopMixin lift a SIM twin can follow a REAL leader arm -
+        practice-on-the-twin before metal.
+        """
+        source = (body.get("source_peer_id") or "").strip()
+        if not source:
+            raise HTTPException(422, "source_peer_id required")
+        cmd = {
+            "action": "teleop_receive",
+            "source_peer_id": source,
+            "device_name": body.get("device_name", "leader"),
+        }
+        result = await app.state.bridge.send_cmd_async(peer_id, cmd, timeout=15.0)
+        return {"peer_id": peer_id, "result": result}
+
+    @app.post("/api/robots/{peer_id}/teleop/stop")
+    async def teleop_stop(peer_id: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        cmd: dict[str, Any] = {"action": "teleop_stop"}
+        if body and body.get("device_name"):
+            cmd["device_name"] = body["device_name"]
+        result = await app.state.bridge.send_cmd_async(peer_id, cmd, timeout=10.0)
+        return {"peer_id": peer_id, "result": result}
+
     @app.post("/api/collect")
     async def collect_episodes(body: dict[str, Any]) -> dict[str, Any]:
         """Collect a policy-driven dataset in a one-shot mesh sim.
@@ -187,6 +221,11 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         dataset_root = (body.get("dataset_root") or "").strip()
         if not dataset_root:
             raise HTTPException(422, "dataset_root required")
+        # Remember the root so /api/training/datasets discovers the result
+        # even outside the default scan paths (HF_LEROBOT_HOME etc.).
+        from strands_robots.dashboard import training as _training
+
+        _training.remember_dataset_root(dataset_root)
         return await asyncio.to_thread(
             lambda: app.state.devices.collect(
                 dataset_root=dataset_root,
