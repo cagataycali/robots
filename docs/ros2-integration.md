@@ -153,6 +153,51 @@ distro is sourced and a refusal happens before a publisher joins the graph:
 An option the requested action never reads is not second-guessed:
 `use_ros(action="status", count=-1)` still reports the backend.
 
+### Safety-critical command surfaces need operator approval
+
+A robot is driven through three different verbs - `publish` to a topic,
+`service_call` to a service and `action_send_goal` to an action server - so the
+gate is keyed on the surface **name** and consulted from all three. An agent
+asked to "drive forward" reaches for whichever verb fits the interface it found
+on the graph, so gating `publish` alone would leave `/navigate_to_pose` (a ROS 2
+action) and `/emergency_stop` (usually a `std_srvs/srv/Trigger` service)
+unenforceable. These surfaces are blocked by default:
+
+| Surface | Usually reached by |
+|---------|--------------------|
+| `/cmd_vel`, `/cmd_vel_unstamped` | `publish` |
+| `/joint_command`, `/joint_trajectory`, `/joint_trajectory_controller/joint_trajectory` | `publish` |
+| `/emergency_stop`, `/e_stop` | `service_call`, sometimes `publish` |
+| `/motor_enable`, `/enable_motor`, `/disable_motor` | `service_call` |
+| `/navigate_to_pose`, `/follow_path` | `action_send_goal` |
+
+Matching is on the final path segment, so a namespaced form
+(`/my_robot/cmd_vel`, `/fleet/robot1/emergency_stop`) is caught while a lookalike
+(`/cmd_vel_evil`, `/joint_trajectory_status`) is not. The name is compared in the
+form rclpy resolves it to, so the unrooted `cmd_vel` and the trailing-separator
+`/cmd_vel/` are the same surface as `/cmd_vel`. Case is deliberately **not**
+folded: ROS 2 graph names are case-sensitive, so `/CMD_VEL` is a genuinely
+different topic that no `/cmd_vel` subscriber receives, and refusing it would
+block a legitimate surface without closing a path to the robot.
+
+Three ways through the gate, consulted in this order:
+
+| Mode | Mechanism |
+|------|-----------|
+| Interactive (default) | `tool_context.interrupt()` prompts the operator; reply `y` to approve |
+| Headless allowlist | `STRANDS_ROS2_COMMAND_ALLOW=/cmd_vel,/follow_path` pre-approves those surfaces, everything else stays gated |
+| Fully trusted | `BYPASS_TOOL_CONSENT=true` allows every blocked surface with a WARNING log |
+
+The gate **fails closed**: with no `tool_context` (outside an agent loop), or when
+`interrupt()` is unavailable, the command is refused and the error names both
+environment variables. Only the operator's approve/deny verdict is read - the
+reply text is never echoed back into the agent's context.
+
+Reading is never gated: `echo`, `info` and the `list_*` queries work on a blocked
+surface, so telemetry stays available to the agent. The gate also runs *after* the
+action's required arguments are validated, so an operator is never asked to
+approve a call that could not have run.
+
 ## Sim bridge: publish a simulation on a ROS 2 domain
 
 The simulator can advertise its own live state on ROS 2. Construct any

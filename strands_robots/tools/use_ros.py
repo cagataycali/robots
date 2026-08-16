@@ -80,11 +80,16 @@ logger = logging.getLogger(__name__)
 _NAME_RE = re.compile(r"^[A-Za-z0-9_/~{}]+$")
 _TYPE_RE = re.compile(r"^[A-Za-z0-9_]+/[A-Za-z0-9_]+/[A-Za-z0-9_]+$")
 
-# Security: topics blocked from LLM-initiated publish. Safety-critical command
-# topics gated by a human-in-the-loop (HIL) interrupt. An operator can
-# pre-approve individual topics via STRANDS_ROS2_PUBLISH_ALLOW (comma-separated)
-# or bypass the gate entirely with BYPASS_TOOL_CONSENT=true.
-_DEFAULT_PUBLISH_BLOCKLIST = frozenset(
+# Security: safety-critical ROS 2 command surfaces blocked from LLM-initiated
+# commands. A robot is driven through three different verbs - a topic publish, a
+# service call and an action goal - so the gate is keyed on the surface NAME and
+# consulted from all three rather than from publish alone: /navigate_to_pose and
+# /follow_path are ROS 2 actions, and the e-stop / motor-enable surfaces are
+# usually services, so a publish-only gate leaves its most dangerous entries
+# unenforceable. An operator can pre-approve individual surfaces via
+# STRANDS_ROS2_COMMAND_ALLOW (comma-separated) or bypass the gate entirely with
+# BYPASS_TOOL_CONSENT=true.
+_DEFAULT_COMMAND_BLOCKLIST = frozenset(
     {
         "/cmd_vel",
         "/cmd_vel_unstamped",
@@ -101,7 +106,7 @@ _DEFAULT_PUBLISH_BLOCKLIST = frozenset(
     }
 )
 
-_PUBLISH_ALLOW_ENV = "STRANDS_ROS2_PUBLISH_ALLOW"
+_COMMAND_ALLOW_ENV = "STRANDS_ROS2_COMMAND_ALLOW"
 _BYPASS_CONSENT_ENV = "BYPASS_TOOL_CONSENT"
 
 _APPROVE_RESPONSES = frozenset({"y", "yes", "approve", "approved"})
@@ -112,67 +117,120 @@ def _approve_response(response: object) -> bool:
     return isinstance(response, str) and response.strip().lower() in _APPROVE_RESPONSES
 
 
-def _match_blocklist(topic: str, blocked: frozenset[str]) -> bool:
-    """Check exact match and namespace-stripped match against a topic set."""
-    parts = topic.rsplit("/", 1)
-    base_topic = "/" + parts[-1] if len(parts) > 1 else topic
-    return topic in blocked or base_topic in blocked
+def _canonical_command_name(name: str) -> str:
+    """Reduce a graph name to the form rclpy resolves it to, for comparison only.
+
+    ``cmd_vel`` (relative) and ``/cmd_vel/`` (trailing separator) name the same
+    surface as ``/cmd_vel`` once rclpy has resolved them, so a literal membership
+    test on the caller's spelling misses both. The canonical form is compared
+    against the blocklist and the allowlist ONLY - the caller's original string
+    is what reaches rclpy, so a normalisation mistake can never redirect a
+    command to a surface other than the one the caller named.
+
+    Case is deliberately preserved. ROS 2 graph names are case-sensitive, so
+    ``/CMD_VEL`` is a genuinely different topic that no ``/cmd_vel`` subscriber
+    receives; folding it would refuse a legitimate surface without closing a
+    path to the robot.
+
+    Args:
+        name: A topic, service or action name as supplied by the caller.
+
+    Returns:
+        The name with a leading ``/`` and no trailing ``/``, or the name
+        unchanged when stripping would leave nothing to compare.
+    """
+    canonical = name.rstrip("/")
+    if not canonical:
+        return name
+    if not canonical.startswith("/"):
+        canonical = "/" + canonical
+    return canonical
 
 
-def _is_publish_blocked(topic: str) -> str | None:
-    """Return an error message if topic is in the default blocklist, else None."""
-    if _match_blocklist(topic, _DEFAULT_PUBLISH_BLOCKLIST):
-        return f"Topic {topic!r} is blocked for publish (safety-critical command surface)."
+def _match_blocklist(name: str, blocked: frozenset[str]) -> bool:
+    """Check exact and namespace-stripped match of a graph name against a set.
+
+    Both sides are reduced to their canonical form first, so the caller's
+    spelling and the operator's allowlist spelling do not have to agree.
+    """
+    canonical = _canonical_command_name(name)
+    targets = {_canonical_command_name(entry) for entry in blocked}
+    base = "/" + canonical.rsplit("/", 1)[-1]
+    return canonical in targets or base in targets
+
+
+def _is_command_blocked(kind: str, name: str) -> str | None:
+    """Return an error message if the named surface is blocklisted, else None.
+
+    Args:
+        kind: The ``use_ros`` action carrying the command, named in the message
+            so the operator sees which verb was attempted.
+        name: The topic, service or action name the command targets.
+    """
+    if _match_blocklist(name, _DEFAULT_COMMAND_BLOCKLIST):
+        return f"{name!r} is a safety-critical command surface, blocked for {kind}."
     return None
 
 
-def _gate_publish(topic: str, tool_context: ToolContext | None) -> dict[str, Any] | None:
-    """HIL gate for publish to blocked topics.
+def _gate_command(kind: str, name: str, tool_context: ToolContext | None) -> dict[str, Any] | None:
+    """HIL gate for a command verb aimed at a blocklisted surface.
 
-    Returns an error dict to halt the publish, or None to proceed.
-    Three modes:
-    - STRANDS_ROS2_PUBLISH_ALLOW contains the topic -> allow silently
-    - BYPASS_TOOL_CONSENT=true -> allow with WARNING log
-    - Otherwise -> prompt the operator via tool_context.interrupt()
+    Called from every action that carries a command to a robot - ``publish``,
+    ``service_call`` and ``action_send_goal`` - because the same physical surface
+    is reachable through more than one of them. The read-only actions
+    (``echo``, ``info``, the ``list_*`` queries) are never gated.
+
+    Args:
+        kind: The ``use_ros`` action carrying the command.
+        name: The topic, service or action name the command targets.
+        tool_context: The agent tool context supplying ``interrupt()``.
+
+    Returns:
+        An error dict to halt the command, or None to let it proceed. Four
+        outcomes, in order: the surface is not blocklisted -> proceed;
+        STRANDS_ROS2_COMMAND_ALLOW names it -> allow silently;
+        BYPASS_TOOL_CONSENT=true -> allow with a WARNING log; otherwise prompt
+        the operator, failing closed when no interrupt is reachable.
     """
-    block_msg = _is_publish_blocked(topic)
+    block_msg = _is_command_blocked(kind, name)
     if block_msg is None:
         return None
 
-    allow_raw = os.environ.get(_PUBLISH_ALLOW_ENV)
+    allow_raw = os.environ.get(_COMMAND_ALLOW_ENV)
     if allow_raw is not None:
-        allowed = frozenset(t.strip() for t in allow_raw.split(",") if t.strip())
-        if _match_blocklist(topic, allowed):
-            logger.debug("publish to %s allowed via %s", topic, _PUBLISH_ALLOW_ENV)
+        allowed = frozenset(entry.strip() for entry in allow_raw.split(",") if entry.strip())
+        if _match_blocklist(name, allowed):
+            logger.debug("%s to %s allowed via %s", kind, name, _COMMAND_ALLOW_ENV)
             return None
 
     if os.environ.get(_BYPASS_CONSENT_ENV, "").lower() == "true":
-        logger.warning("BYPASS_TOOL_CONSENT: allowing publish to blocked topic %s", topic)
+        logger.warning("BYPASS_TOOL_CONSENT: allowing %s to blocked command surface %s", kind, name)
         return None
 
     if tool_context is None:
         return _err(
             f"{block_msg} No tool_context available for operator approval. "
-            f"Set {_PUBLISH_ALLOW_ENV} or {_BYPASS_CONSENT_ENV}=true to allow in headless mode."
+            f"Set {_COMMAND_ALLOW_ENV} or {_BYPASS_CONSENT_ENV}=true to allow in headless mode."
         )
 
     try:
         response = tool_context.interrupt(
-            "use_ros-publish-approval",
+            "use_ros-command-approval",
             reason={
-                "action": "publish",
-                "topic": topic,
+                "action": kind,
+                "target": name,
                 "warning": f"{block_msg} Reply 'y' to approve, anything else to deny.",
             },
         )
     except RuntimeError as exc:
-        return _err(f"publish to {topic!r} requires operator approval, but interrupts are not available: {exc}")
+        return _err(f"{kind} to {name!r} requires operator approval, but interrupts are not available: {exc}")
 
     if not _approve_response(response):
-        return _err(f"publish to {topic!r} was declined by the operator.")
+        return _err(f"{kind} to {name!r} was declined by the operator.")
 
-    logger.info("publish to %s approved via operator interrupt", topic)
+    logger.info("%s to %s approved via operator interrupt", kind, name)
     return None
+
 
 # Which numeric options each action actually consumes. An action that reads none
 # of them (``status``, the ``list_*`` queries, ``info``) must not be refused for
@@ -595,6 +653,9 @@ def use_ros(
             if action == "action_send_goal":
                 if not action_name or not type:
                     return _err("action_send_goal requires action_name and type")
+                gate_err = _gate_command("action_send_goal", action_name, tool_context)
+                if gate_err:
+                    return gate_err
                 import json
 
                 outcome = _action_send_goal(action_name, type, fields, timeout)
@@ -619,19 +680,20 @@ def use_ros(
                 return _ok(f"echo {topic} ({msg_type}):\n{json.dumps(samples, indent=2, default=str)}")
 
             if action == "publish":
-                if topic:
-                    gate_err = _gate_publish(topic, tool_context)
-                    if gate_err:
-                        return gate_err
-
                 if not topic or not type:
                     return _err("publish requires topic and type")
+                gate_err = _gate_command("publish", topic, tool_context)
+                if gate_err:
+                    return gate_err
                 _publish(topic, type, fields, count, rate)
                 return _ok(f"published {count} message(s) to {topic}")
 
             if action == "service_call":
                 if not service or not type:
                     return _err("service_call requires service and type")
+                gate_err = _gate_command("service_call", service, tool_context)
+                if gate_err:
+                    return gate_err
                 import json
 
                 resp = _service_call(service, type, fields, timeout)
