@@ -16,11 +16,19 @@ import os
 import signal
 import subprocess
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import psutil
 from strands import tool
+
+from strands_robots.utils import (
+    boolean_flag_error,
+    non_negative_whole_number_error,
+    positive_finite_number_error,
+    positive_whole_number_error,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +37,227 @@ logger = logging.getLogger(__name__)
 # Session storage directory
 SESSION_DIR = Path.cwd() / ".strands_robots/.sessions"
 SESSION_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# The numeric knobs each command mode actually puts on the lerobot argv. Every
+# one is interpolated with ``str()`` into the command line of a DETACHED
+# subprocess, so a value the lerobot CLI cannot parse is never reported by the
+# call that supplied it: the session starts, ``status="success"`` is returned,
+# and the failure appears minutes later in that session's log. A value the CLI
+# *can* parse but should not have been given - a zero recording rate, a negative
+# episode index - is worse, because nothing reports it at all.
+#
+# Refusing a knob the requested mode never emits would be a false rejection, so
+# the scoping is driven by this table rather than by validating the whole
+# signature unconditionally.
+_MODE_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
+    "replay": ("replay_episode", "dataset_fps"),
+    "record": ("dataset_num_episodes", "dataset_fps", "dataset_episode_time_s", "dataset_reset_time_s"),
+    "teleoperate": ("fps", "teleop_time_s"),
+    "dagger": ("dagger_num_episodes", "dataset_num_episodes", "dataset_fps", "fps"),
+}
+
+# The domain each knob is checked against, in the order errors are reported.
+# The whole-number knobs are declared ``int`` by lerobot's own config
+# dataclasses (``DatasetRecordConfig.fps`` / ``.num_episodes``,
+# ``TeleoperateConfig.fps``, ``DatasetReplayConfig.episode``) and by this
+# module's own signature, so a whole number is the honest domain and an integral
+# float read from a config is still honored. ``teleop_time_s`` is lerobot's
+# ``float | None`` session budget, where a fractional value is perfectly usable.
+#
+# Two knobs take the non-negative floor instead of the positive one:
+# ``dataset_reset_time_s=0`` (no operator pause between episodes) and
+# ``replay_episode=0`` (the first episode) are both real requests, whereas a
+# zero recording rate, a zero-length episode and a zero-episode recording are
+# each a request no run can satisfy.
+_OPTION_DOMAINS: tuple[tuple[str, Callable[[Any, str, str], str | None]], ...] = (
+    ("dataset_fps", positive_whole_number_error),
+    ("dataset_num_episodes", positive_whole_number_error),
+    ("dataset_episode_time_s", positive_whole_number_error),
+    ("dataset_reset_time_s", non_negative_whole_number_error),
+    ("dagger_num_episodes", positive_whole_number_error),
+    ("fps", positive_whole_number_error),
+    ("replay_episode", non_negative_whole_number_error),
+    ("teleop_time_s", positive_finite_number_error),
+)
+
+# Knobs whose ``None`` means "omit the flag and take the lerobot default", so
+# there ``None`` is a supplied value rather than an unusable one. Every other
+# knob in the table has a non-None default, so ``None`` is a caller mistake.
+_OPTIONAL_OPTIONS: frozenset[str] = frozenset({"teleop_time_s", "dagger_num_episodes"})
+
+
+def _numeric_option_error(mode: str, supplied: dict[str, Any]) -> str | None:
+    """Error text for the first numeric knob ``mode`` emits but cannot honor.
+
+    Args:
+        mode: A key of :data:`_MODE_NUMERIC_OPTIONS`; decides which knobs are
+            effective. A mode absent from that map emits none of them and is
+            never refused here.
+        supplied: Every knob in :data:`_OPTION_DOMAINS`, as supplied by the
+            caller.
+
+    Returns:
+        An error message naming the knob and its domain, or ``None`` when every
+        knob this mode emits is usable.
+    """
+    consumed = set(_MODE_NUMERIC_OPTIONS.get(mode, ()))
+    for param, check in _OPTION_DOMAINS:
+        if param not in consumed:
+            continue
+        value = supplied[param]
+        if value is None and param in _OPTIONAL_OPTIONS:
+            continue
+        if error := check(value, param, "build_lerobot_command"):
+            return error
+    return None
+
+
+# The boolean flags each command mode actually puts on the lerobot argv, in the
+# order that argv emits them. Each selects a posture rather than scaling a
+# quantity - ``dataset_video`` picks the literal ``"true"`` or ``"false"``, while
+# ``record_resume`` decides whether ``--resume true`` appears at all - and both
+# spellings were read by truthiness, where every non-empty string is truthy. So
+# the words an operator reaches for when opting out selected the *opposite*
+# posture from the one they read as, on a command line the supplying call cannot
+# read a failure back from. Measured on ``3ce3da7``:
+#
+#   dataset_push_to_hub="false"   ->  --dataset.push_to_hub true
+#   record_resume="false"         ->  --resume true
+#   dagger_record_autonomous="off"->  --strategy.record_autonomous true
+#
+# The first uploads an unattended recording to the Hub, the second appends into
+# an existing dataset instead of creating the fresh one that was asked for, and
+# the third records autonomous episodes into a corrections dataset. ``None`` and
+# ``[]`` took the other branch just as silently, without ever being a declared
+# spelling of it.
+#
+# ``teleoperate`` carries only ``display_data`` because lerobot's
+# ``TeleoperateConfig`` declares no other field this module offers: refusing a
+# flag a mode never puts on its argv would be a false rejection, the same scoping
+# rule :data:`_MODE_NUMERIC_OPTIONS` encodes.
+#
+# ``play_sounds`` is scoped by that same table rather than exempted from it. It
+# was previously in no tuple because no mode emitted it at all - declared,
+# documented and forwarded, and then read by nothing (#2072), so a domain would
+# have refused values for an option that had no effect either way. It is now
+# emitted for the three entry points that accept it, which is what makes the
+# domain honest rather than decorative. Measured against ``lerobot==0.6.1``, the
+# version this package's ``[lerobot]`` extra floors:
+#
+#   lerobot/scripts/lerobot_record.py:188   RecordConfig.play_sounds  = True
+#   lerobot/scripts/lerobot_replay.py:99    ReplayConfig.play_sounds  = True
+#   lerobot/rollout/configs.py:256          RolloutConfig.play_sounds = True
+#   lerobot/scripts/lerobot_teleoperate.py  TeleoperateConfig - absent
+#
+# All three are fields of the top-level ``@parser.wrap()`` config, so the flag is
+# spelled ``--play_sounds`` rather than nested. ``teleoperate`` is excluded
+# because that entry point never speaks - it holds no ``log_say`` call and no
+# such field - so emitting the flag there would not be a silent no-op but an
+# unrecognized argument, which is the failure the class docstring above warns the
+# removed pre-0.5 flat flags cause.
+#
+# ``play_sounds`` is emitted *unconditionally* as an explicit literal, like
+# ``dataset_video`` and ``dataset_push_to_hub``, rather than only when set, like
+# ``display_data`` and ``record_resume``. That split is not a style choice: it
+# follows the upstream default. A flag lerobot defaults to ``False`` is expressed
+# by its presence, so omitting it says "false" exactly; a flag lerobot defaults
+# to ``True`` cannot express an opt-out by omission at all, so the only spelling
+# of ``play_sounds=False`` that reaches the CLI is the explicit literal.
+_MODE_FLAG_OPTIONS: dict[str, tuple[str, ...]] = {
+    "record": ("record_resume", "dataset_push_to_hub", "dataset_video", "display_data", "play_sounds"),
+    "teleoperate": ("display_data",),
+    "replay": ("play_sounds",),
+    "dagger": (
+        "dagger_record_autonomous",
+        "dataset_push_to_hub",
+        "dataset_video",
+        "display_data",
+        "play_sounds",
+    ),
+}
+
+
+def _flag_error(mode: str, supplied: dict[str, Any]) -> str | None:
+    """Error text for the first boolean flag ``mode`` emits but cannot honor.
+
+    Each flag is checked against the shared
+    :func:`~strands_robots.utils.boolean_flag_error` domain - the one the mesh
+    provisioning entry points already apply - so a posture flag is refused
+    identically wherever it is supplied rather than merely equivalently.
+
+    No coercion follows the check, unlike
+    :func:`~strands_robots.mesh.iot.bootstrap.bootstrap_account`: every reader
+    here either selects a literal or gates a ``cmd.extend``, and the numpy
+    booleans ``boolean_flag_error`` also accepts drive both correctly.
+
+    Args:
+        mode: A key of :data:`_MODE_FLAG_OPTIONS`; decides which flags are
+            effective. A mode absent from that map emits none of them and is
+            never refused here.
+        supplied: Every flag named in :data:`_MODE_FLAG_OPTIONS`, as supplied by
+            the caller.
+
+    Returns:
+        An error message naming the flag and its domain, or ``None`` when every
+        flag this mode emits is usable.
+    """
+    for param in _MODE_FLAG_OPTIONS.get(mode, ()):
+        if error := boolean_flag_error(supplied[param], param, "build_lerobot_command"):
+            return error
+    return None
+
+
+# The two flags the per-mode table above cannot scope, because neither is a
+# parameter of :func:`build_lerobot_command`: no mode emits them and no argv
+# records them. They choose how :func:`lerobot_teleoperate` *runs* the command it
+# has already built - ``background`` gates the detach, log file and session
+# persistence, and ``auto_accept_calibration`` gates a thread writing two
+# newlines into the child's stdin ~2s in, which accepts whatever calibration
+# prompt the robot is showing.
+#
+# Both were read as ``if <flag>:``, and every non-empty string is truthy, so an
+# opt-out selected the affirmative posture (#2074, measured on ``3ce3da7``):
+#
+#   background="false"               ->  detached, not the foreground run asked for
+#   auto_accept_calibration="false"  ->  a calibration accepted by no operator
+#
+# ``auto_accept_calibration`` is the sharper of the two. The posture
+# ``background`` reaches is at least reported - the returned envelope carries
+# ``"background": True``, a pid and a log file, so a caller who asked for the
+# foreground can see it did not get it - while nothing anywhere reports that
+# stdin was written to.
+#
+# A flat tuple rather than a per-mode map: both are read unconditionally for a
+# ``start`` / ``dagger`` call, so the effectiveness question
+# :data:`_MODE_FLAG_OPTIONS` answers does not arise for them. They are read by no
+# other action, which is why the check is scoped to that branch rather than to
+# the whole tool - refusing ``background`` for an ``action="list"`` that never
+# reads it would be a false rejection.
+_EXECUTION_FLAGS: tuple[str, ...] = ("background", "auto_accept_calibration")
+
+
+def _execution_flag_error(supplied: dict[str, Any]) -> str | None:
+    """Error text for the first execution-posture flag the tool cannot honor.
+
+    The same shared :func:`~strands_robots.utils.boolean_flag_error` domain
+    :func:`_flag_error` applies to the argv flags, so a posture flag is refused
+    identically wherever it is supplied rather than merely equivalently. Only the
+    context differs: these are refused by the tool and not by the builder, and
+    the message says so.
+
+    Args:
+        supplied: Every flag named in :data:`_EXECUTION_FLAGS`, as supplied by
+            the caller.
+
+    Returns:
+        An error message naming the flag and its domain, or ``None`` when both
+        can be honoured.
+    """
+    for param in _EXECUTION_FLAGS:
+        if error := boolean_flag_error(supplied[param], param, "lerobot_teleoperate"):
+            return error
+    return None
 
 
 class SessionManager:
@@ -233,31 +462,81 @@ def build_lerobot_command(
             (resolved from ``dataset_repo_id``) so lerobot HEAD's repo_id
             timestamp-stamping never relocates the on-disk dataset.
         replay_episode: Episode index to replay (``--dataset.episode``).
+        play_sounds: Emit ``--play_sounds true|false`` for the modes whose lerobot
+            entry point declares the field - ``record``, ``replay`` and
+            ``dagger``. Always explicit, because lerobot defaults it to ``True``
+            and an opt-out therefore cannot be expressed by omitting the flag.
+            Plain teleoperation ignores it: ``TeleoperateConfig`` has no such
+            field, so emitting it there would be an unrecognized argument.
+
+            Every caller reaching a mode that emits it must forward it. Making
+            the builder honor a flag is only half the fix, because the tool spec
+            sits on :func:`lerobot_teleoperate` rather than here: the ``replay``
+            dispatch omitted this kwarg, so the builder's default won whatever
+            the agent asked for, and the argv read ``--play_sounds true`` on the
+            only model-reachable path to replay. Pinned at the tool level, not
+            just here, since a builder-level test cannot observe a dropped
+            forward.
 
     Returns:
         The argv list, beginning with ``["python", "-m", "lerobot.scripts...."]``.
 
     Raises:
-        ValueError: If ``action`` is unknown, or ``replay`` is requested without
-            ``dataset_repo_id``.
+        ValueError: If ``action`` is unknown, ``replay`` is requested without
+            ``dataset_repo_id``, or a numeric knob (see :data:`_OPTION_DOMAINS`)
+            or boolean flag (see :data:`_MODE_FLAG_OPTIONS`) the requested mode
+            emits cannot be honored. The refusal precedes the argv, so no
+            subprocess is launched.
     """
+    # Every numeric knob below is interpolated into a detached subprocess's
+    # command line, which is not a channel this call can read a failure back
+    # from. Check the ones this mode actually emits before building the argv.
+    numeric_options: dict[str, Any] = {
+        "dataset_fps": dataset_fps,
+        "dataset_num_episodes": dataset_num_episodes,
+        "dataset_episode_time_s": dataset_episode_time_s,
+        "dataset_reset_time_s": dataset_reset_time_s,
+        "dagger_num_episodes": dagger_num_episodes,
+        "fps": fps,
+        "replay_episode": replay_episode,
+        "teleop_time_s": teleop_time_s,
+    }
+    # The boolean flags reach that same command line, but as a posture rather
+    # than a magnitude, so an unusable value does not fail there - it selects the
+    # other posture and reports success. Same per-mode scoping.
+    flag_options: dict[str, Any] = {
+        "record_resume": record_resume,
+        "dataset_push_to_hub": dataset_push_to_hub,
+        "dataset_video": dataset_video,
+        "display_data": display_data,
+        "dagger_record_autonomous": dagger_record_autonomous,
+        "play_sounds": play_sounds,
+    }
     if action == "replay":
         if not dataset_repo_id:
             raise ValueError("dataset_repo_id is required for replay action")
+        if error := _numeric_option_error("replay", numeric_options):
+            raise ValueError(error)
+        if error := _flag_error("replay", flag_options):
+            raise ValueError(error)
         cmd = ["python", "-m", "lerobot.scripts.lerobot_replay"]
         cmd.extend(
             _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
         )
-        cmd.extend(["--dataset.repo_id", dataset_repo_id, "--dataset.episode", str(replay_episode)])
+        cmd.extend(["--dataset.repo_id", dataset_repo_id, "--dataset.episode", str(int(replay_episode))])
         if dataset_root:
             cmd.extend(["--dataset.root", dataset_root])
-        if dataset_fps:
-            cmd.extend(["--dataset.fps", str(dataset_fps)])
+        cmd.extend(["--dataset.fps", str(int(dataset_fps))])
+        cmd.extend(["--play_sounds", "true" if play_sounds else "false"])
         return cmd
 
     if action == "start":
         if dataset_repo_id:
             # Recording mode -> lerobot-record (pure data collection via teleop).
+            if error := _numeric_option_error("record", numeric_options):
+                raise ValueError(error)
+            if error := _flag_error("record", flag_options):
+                raise ValueError(error)
             from strands_robots.dataset_recorder import resolve_dataset_dir
 
             cmd = ["python", "-m", "lerobot.scripts.lerobot_record"]
@@ -266,12 +545,12 @@ def build_lerobot_command(
             )
             cmd.extend(_teleop_args(teleop_type, teleop_port, teleop_id, teleop_left_arm_port, teleop_right_arm_port))
             cmd.extend(["--dataset.repo_id", dataset_repo_id])
-            cmd.extend(["--dataset.num_episodes", str(dataset_num_episodes)])
+            cmd.extend(["--dataset.num_episodes", str(int(dataset_num_episodes))])
             if dataset_single_task:
                 cmd.extend(["--dataset.single_task", dataset_single_task])
-            cmd.extend(["--dataset.fps", str(dataset_fps)])
-            cmd.extend(["--dataset.episode_time_s", str(dataset_episode_time_s)])
-            cmd.extend(["--dataset.reset_time_s", str(dataset_reset_time_s)])
+            cmd.extend(["--dataset.fps", str(int(dataset_fps))])
+            cmd.extend(["--dataset.episode_time_s", str(int(dataset_episode_time_s))])
+            cmd.extend(["--dataset.reset_time_s", str(int(dataset_reset_time_s))])
             # Always pin --dataset.root to a resolved on-disk path. On a fresh
             # (non-resume) recording, lerobot-record calls
             # ``cfg.dataset.stamp_repo_id()`` which rewrites repo_id to
@@ -287,19 +566,32 @@ def build_lerobot_command(
             cmd.extend(["--dataset.video", "true" if dataset_video else "false"])
             if display_data:
                 cmd.extend(["--display_data", "true"])
+            cmd.extend(["--play_sounds", "true" if play_sounds else "false"])
             return cmd
 
         # Simple teleoperation mode -> lerobot-teleoperate.
+        if error := _numeric_option_error("teleoperate", numeric_options):
+            raise ValueError(error)
+        if error := _flag_error("teleoperate", flag_options):
+            raise ValueError(error)
         cmd = ["python", "-m", "lerobot.scripts.lerobot_teleoperate"]
         cmd.extend(
             _robot_args(robot_type, robot_port, robot_id, robot_left_arm_port, robot_right_arm_port, robot_cameras)
         )
         cmd.extend(_teleop_args(teleop_type, teleop_port, teleop_id, teleop_left_arm_port, teleop_right_arm_port))
-        cmd.extend(["--fps", str(fps)])
-        if teleop_time_s:
+        cmd.extend(["--fps", str(int(fps))])
+        # ``is not None``, not truthiness: ``0`` is now refused above, and reading
+        # it as "unset" made the one value meaning "stop at once" emit no budget
+        # at all - an unbounded session where the caller asked for none.
+        if teleop_time_s is not None:
             cmd.extend(["--teleop_time_s", str(teleop_time_s)])
         if display_data:
             cmd.extend(["--display_data", "true"])
+        # No ``--play_sounds`` here, and deliberately not for symmetry's sake:
+        # lerobot's ``TeleoperateConfig`` declares no such field and the entry
+        # point makes no ``log_say`` call, so the flag would be an unrecognized
+        # argument rather than an accepted no-op. Plain teleoperation has no
+        # audio to suppress; see the note on :data:`_MODE_FLAG_OPTIONS`.
         return cmd
 
     if action == "dagger":
@@ -316,6 +608,12 @@ def build_lerobot_command(
             raise ValueError("dataset_repo_id is required for dagger action (corrections are recorded)")
         if dagger_input_device not in ("keyboard", "pedal"):
             raise ValueError(f"dagger_input_device must be 'keyboard' or 'pedal', got '{dagger_input_device}'")
+        # Before the lerobot-version preflight below, so the same caller mistake
+        # reports identically whether or not the rollout entry point is present.
+        if error := _numeric_option_error("dagger", numeric_options):
+            raise ValueError(error)
+        if error := _flag_error("dagger", flag_options):
+            raise ValueError(error)
 
         # lerobot.scripts.lerobot_rollout (the DAgger entry point) landed in
         # lerobot 0.6.0; on an older install the subprocess would fail with an
@@ -339,21 +637,22 @@ def build_lerobot_command(
         if dagger_record_autonomous:
             cmd.extend(["--strategy.record_autonomous", "true"])
         if dagger_num_episodes is not None:
-            cmd.extend(["--strategy.num_episodes", str(dagger_num_episodes)])
+            cmd.extend(["--strategy.num_episodes", str(int(dagger_num_episodes))])
         cmd.extend(["--dataset.repo_id", dataset_repo_id])
         if dataset_single_task:
             cmd.extend(["--dataset.single_task", dataset_single_task])
-        cmd.extend(["--dataset.num_episodes", str(dataset_num_episodes)])
-        cmd.extend(["--dataset.fps", str(dataset_fps)])
+        cmd.extend(["--dataset.num_episodes", str(int(dataset_num_episodes))])
+        cmd.extend(["--dataset.fps", str(int(dataset_fps))])
         if dataset_root:
             cmd.extend(["--dataset.root", dataset_root])
         # push_to_hub defaults to True in lerobot's DatasetRecordConfig; make it
         # explicit so an unattended correction run never uploads by surprise.
         cmd.extend(["--dataset.push_to_hub", "true" if dataset_push_to_hub else "false"])
         cmd.extend(["--dataset.video", "true" if dataset_video else "false"])
-        cmd.extend(["--fps", str(fps)])
+        cmd.extend(["--fps", str(int(fps))])
         if display_data:
             cmd.extend(["--display_data", "true"])
+        cmd.extend(["--play_sounds", "true" if play_sounds else "false"])
         return cmd
 
     raise ValueError(f"Unknown action: {action}")
@@ -534,7 +833,11 @@ def lerobot_teleoperate(
     Args:
         action: Action to perform (start, stop, list, status, replay)
         session_name: Session identifier (auto-generated for start, required for stop/status)
-        background: Run session in background with logging (default: True)
+        background: Run session in background with logging (default: True).
+            Must be a boolean: it selects an execution posture rather than
+            scaling a quantity, so a truthy spelling of off such as
+            ``"false"`` is refused rather than detaching the session it reads
+            as declining to detach.
 
         robot_type: Robot type identifier
         robot_port: Serial port for single-arm robots
@@ -575,7 +878,32 @@ def lerobot_teleoperate(
         display_data: Show live camera feeds and telemetry
         fps: Teleoperation control loop frequency
         teleop_time_s: Session duration limit
-        play_sounds: Enable audio feedback
+        play_sounds: Enable lerobot's spoken event announcements ("Recording
+            episode 3", "Stop recording"). Effective for recording, replay and
+            dagger; plain teleoperation emits no audio and ignores it. Must be a
+            boolean - a string such as ``"false"`` is refused rather than read by
+            truthiness, since every non-empty string is truthy.
+        auto_accept_calibration: Answer the calibration prompt on the session's
+            behalf, by writing two newlines into the process's stdin shortly
+            after it starts. Withhold it (``False``) to answer the prompt
+            yourself; nothing reports that stdin was written to, so an
+            unintended acceptance is not visible afterwards. A write that
+            *fails* is reported at WARNING, since by then the start result
+            has already told the caller the session started. Must be a
+            boolean, on the same reasoning as ``background``.
+
+        dagger_record_autonomous: Record the autonomous rollout episodes into the
+            corrections dataset as well, rather than only the teleoperated
+            takeovers. Must be a boolean; a truthy spelling of off would
+            otherwise land autonomous episodes in a corrections dataset.
+        policy_path: Checkpoint the ``dagger`` action rolls out autonomously
+            between human takeovers. Required for ``dagger``; ignored by every
+            other action.
+        dagger_input_device: How the operator seizes control during a ``dagger``
+            rollout - ``"keyboard"`` (default) or ``"pedal"``. Any other value
+            is refused.
+        dagger_num_episodes: Cap on the corrections collected in one ``dagger``
+            session. A positive whole number, or None for no cap.
 
     Returns:
         Dict with operation status and results:
@@ -596,6 +924,14 @@ def lerobot_teleoperate(
 
     try:
         if action in ("start", "dagger"):
+            # Before anything is named, recorded or launched: a refused call must
+            # leave no session behind and start no process (see
+            # :data:`_EXECUTION_FLAGS`).
+            if error := _execution_flag_error(
+                {"background": background, "auto_accept_calibration": auto_accept_calibration}
+            ):
+                return {"status": "error", "content": [{"text": error}]}
+
             # Generate session name if not provided
             if not session_name:
                 session_name = f"teleop_{int(time.time())}"
@@ -682,8 +1018,22 @@ def lerobot_teleoperate(
                             proc.stdin.write("\n")  # Send another ENTER (for robot calibration)
                             proc.stdin.flush()
                             proc.stdin.close()  # Close stdin after sending responses
-                        except Exception:
-                            pass  # Ignore errors if process has already finished
+                        except Exception as exc:
+                            # Report it. The start result above has already told the
+                            # caller the session started, so this record is the only
+                            # signal that the prompt went unanswered. Every other
+                            # handler in this tool reports its failure - one even
+                            # surfaces a log-read failure into the caller's content -
+                            # and the write this guards is the whole job of
+                            # ``auto_accept_calibration``. WARNING rather than DEBUG
+                            # because the visible report is a success.
+                            logger.warning(
+                                "[teleop] session %r: auto-accept did not complete (%s); "
+                                "the calibration prompt may be unanswered - check "
+                                "action='status' and the session log",
+                                session_name,
+                                exc,
+                            )
 
                     threading.Thread(target=auto_respond, daemon=True).start()
                 else:
@@ -916,6 +1266,7 @@ def lerobot_teleoperate(
                     dataset_repo_id=dataset_repo_id,
                     replay_episode=replay_episode,
                     display_data=display_data,
+                    play_sounds=play_sounds,
                 )
             except Exception as e:
                 return {"status": "error", "content": [{"text": f"Replay command build failed: {str(e)}"}]}

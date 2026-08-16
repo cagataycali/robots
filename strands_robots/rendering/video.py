@@ -12,8 +12,6 @@ from __future__ import annotations
 
 import io
 import logging
-import math
-import numbers
 import time
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from pathlib import Path
@@ -21,16 +19,68 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import positive_whole_number_error, require_optional
+from strands_robots.utils import (
+    finite_number_error,
+    positive_whole_number_error,
+    require_optional,
+    sequence_length,
+)
 
 logger = logging.getLogger(__name__)
+
+
+# libx264 quality bounds. ``imageio-ffmpeg`` enforces them with a bare
+# ``assert 1 <= quality <= 10`` in its writer, and ``python -O`` strips
+# assertions: on an optimized interpreter an out-of-range quality is encoded at
+# whatever the arithmetic produces rather than refused, a non-numeric one leaks
+# a raw ``TypeError``/``ValueError`` out of the bitrate computation, and a value
+# above the range surfaces only as "the encoder wrote no clip". The lower bound
+# is 1, not the 0 this module and imageio's own plugin documentation both used
+# to advertise as the lowest quality.
+_MIN_CLIP_QUALITY = 1
+_MAX_CLIP_QUALITY = 10
+
+
+def _clip_quality_error(quality: Any) -> str | None:
+    """Error text when ``quality`` is outside the range the clip encoder honors.
+
+    Only a finite number in ``[_MIN_CLIP_QUALITY, _MAX_CLIP_QUALITY]`` reaches
+    the encoder as the requested quality. ``bool`` is rejected explicitly - an
+    ``int`` subclass whose ``True`` acted as a silent quality of 1, the lowest
+    the encoder offers, which is the same substitution
+    :func:`_jpeg_quality_error` rejects on the streaming side.
+
+    The numeric half is delegated to
+    :func:`~strands_robots.utils.finite_number_error` rather than hand-rolled,
+    so an integer too large to convert to a float reports the shared
+    64-bit-float reason instead of raising ``OverflowError`` out of the
+    ``float()`` this guard would otherwise apply itself. Only the interval is
+    decided here.
+
+    A fractional quality such as ``2.7`` is honorable and accepted: the encoder
+    maps this knob onto a bitrate by arithmetic rather than indexing a table of
+    discrete levels. That is the one way this domain is wider than
+    :func:`_jpeg_quality_error`'s, where Pillow's JPEG quality is a whole-number
+    scale.
+
+    Args:
+        quality: The caller-supplied clip quality.
+
+    Returns:
+        An error message, or ``None`` when the quality is usable.
+    """
+    if text := finite_number_error(quality, "quality", "encode_clip"):
+        return text
+    if not _MIN_CLIP_QUALITY <= float(quality) <= _MAX_CLIP_QUALITY:
+        return f"encode_clip: quality must be between {_MIN_CLIP_QUALITY} and {_MAX_CLIP_QUALITY}, got {quality!r}."
+    return None
 
 
 def encode_clip(
     frames: Iterable[np.ndarray],
     path: str | Path,
     fps: int = 20,
-    quality: int = 8,
+    quality: float = 8,
     macro_block_size: int = 1,
 ) -> Path:
     """Encode RGB frames into a clip at ``path`` (``.mp4`` or ``.gif``).
@@ -48,8 +98,12 @@ def encode_clip(
         fps: playback frame rate, a positive whole number of frames per
             second (the shared media domain - see
             :func:`~strands_robots.utils.positive_whole_number_error`).
-        quality: imageio/ffmpeg quality knob (0-10, higher is better).
-            Ignored for GIF.
+        quality: encoder quality knob, a finite number in ``[1, 10]`` (higher
+            is better - see :func:`_clip_quality_error`). Read only by the MP4
+            writer, since the GIF writer takes a per-frame duration instead,
+            but the domain applies to both containers so that one call does not
+            become valid by changing the output extension. A NumPy real is
+            accepted and converted for the writer.
         macro_block_size: libx264 macro-block rounding; ``1`` preserves the
             exact frame size (the recorders' convention), ``8``/``16`` lets
             ffmpeg pad to codec-friendly sizes. Ignored for GIF.
@@ -60,9 +114,10 @@ def encode_clip(
     Raises:
         ImportError: if ``imageio`` (and, for MP4, ``imageio-ffmpeg``) is not
             installed.
-        ValueError: if ``frames`` is empty, or if ``fps`` is not a positive
-            whole number -- either would silently produce a corrupt or
-            wrongly-timed artifact rather than the requested clip.
+        ValueError: if ``frames`` is empty, if ``fps`` is not a positive whole
+            number, or if ``quality`` is not a finite number in ``[1, 10]`` --
+            each would silently produce a corrupt, wrongly-timed or
+            wrongly-encoded artifact rather than the requested clip.
         RuntimeError: if the encoder wrote no clip despite accepting the
             frames (for example a ``macro_block_size`` that rounds the frame
             size to dimensions libx264 refuses), so the returned path always
@@ -71,6 +126,8 @@ def encode_clip(
     # Guard the caller's parameters before probing the optional encoder, so
     # the same mistake reports identically whether or not imageio is installed.
     if text := positive_whole_number_error(fps, "fps", "encode_clip"):
+        raise ValueError(text)
+    if text := _clip_quality_error(quality):
         raise ValueError(text)
     require_optional(
         "imageio",
@@ -90,7 +147,11 @@ def encode_clip(
         # Pillow's GIF writer takes per-frame duration (ms), not fps.
         imageio.mimsave(str(out), frame_list, duration=1000.0 / int(fps))
     else:
-        writer = imageio.get_writer(str(out), fps=int(fps), quality=quality, macro_block_size=macro_block_size)
+        # ``float(quality)`` is load-bearing rather than cosmetic: the ffmpeg
+        # writer gates the knob on ``isinstance(quality, (float, int))``, which
+        # a NumPy scalar such as ``np.int64(8)`` or ``np.float32(8.0)`` fails
+        # even though it names a quality this function has already accepted.
+        writer = imageio.get_writer(str(out), fps=int(fps), quality=float(quality), macro_block_size=macro_block_size)
         try:
             for frame in frame_list:
                 writer.append_data(frame)
@@ -131,6 +192,12 @@ def _stream_rate_error(fps: Any) -> str | None:
     header stores an integer frame rate, but pacing a live view is just a sleep
     interval, so a fractional rate such as ``12.5`` is honorable here.
 
+    The "is this a number at all" half is delegated to
+    :func:`~strands_robots.utils.finite_number_error`, which every rate and
+    quality guard in this module shares, so an integer too large to convert to a
+    float reports rather than raising ``OverflowError`` out of the ``float()``
+    below - out of a function whose whole contract is to return the message.
+
     Args:
         fps: The caller-supplied frame rate.
 
@@ -138,10 +205,9 @@ def _stream_rate_error(fps: Any) -> str | None:
         An error message, or ``None`` when the rate is usable.
     """
     message = f"mjpeg_frames: fps must be a positive finite number, got {fps!r}."
-    if isinstance(fps, bool) or not isinstance(fps, numbers.Real):
+    if finite_number_error(fps, "fps", "mjpeg_frames"):
         return message
-    numeric = float(fps)
-    if not math.isfinite(numeric) or numeric <= 0:
+    if float(fps) <= 0:
         return message
     return None
 
@@ -155,6 +221,11 @@ def _jpeg_quality_error(quality: Any) -> str | None:
     ``bool`` is rejected explicitly - an ``int`` subclass whose ``True`` would
     act as a silent quality of 1.
 
+    Shares the numeric half with :func:`_stream_rate_error` and
+    :func:`_clip_quality_error` via
+    :func:`~strands_robots.utils.finite_number_error`, so only the whole-number
+    scale and the bounds are decided here.
+
     Args:
         quality: The caller-supplied JPEG quality.
 
@@ -165,10 +236,10 @@ def _jpeg_quality_error(quality: Any) -> str | None:
         f"mjpeg_frames: quality must be a whole number between {_MIN_JPEG_QUALITY} "
         f"and {_MAX_JPEG_QUALITY}, got {quality!r}."
     )
-    if isinstance(quality, bool) or not isinstance(quality, numbers.Real):
+    if finite_number_error(quality, "quality", "mjpeg_frames"):
         return message
     numeric = float(quality)
-    if not math.isfinite(numeric) or numeric != int(numeric):
+    if numeric != int(numeric):
         return message
     if not _MIN_JPEG_QUALITY <= int(numeric) <= _MAX_JPEG_QUALITY:
         return message
@@ -194,9 +265,9 @@ def _frame_size_error(size: Any) -> str | None:
     if size is None:
         return None
     message = f"mjpeg_frames: size must be a (width, height) pair of positive whole numbers, got {size!r}."
-    if isinstance(size, str | bytes | Mapping) or not (hasattr(size, "__len__") and hasattr(size, "__getitem__")):
+    if isinstance(size, str | bytes | Mapping) or not hasattr(size, "__getitem__"):
         return message
-    if len(size) != 2:
+    if sequence_length(size) != 2:
         return message
     for index, label in ((0, "size width"), (1, "size height")):
         if text := positive_whole_number_error(size[index], label, "mjpeg_frames"):

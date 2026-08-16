@@ -23,7 +23,24 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
+from strands_robots.utils import (
+    finite_number_error,
+    lerobot_version,
+    non_negative_count_error,
+    positive_count_error,
+)
+
 logger = logging.getLogger(__name__)
+
+# The first lerobot release whose ``StreamingLeRobotDataset`` accepts a
+# ``repo_type`` parameter, i.e. the floor for bucket streaming. 0.6.0's
+# constructor has no such parameter; 0.6.1 added
+# ``repo_type: Literal["dataset", "bucket"]``. The ``[lerobot]`` extra floors
+# lerobot here so a resolver-conformant install always has the capability; this
+# constant is what the runtime guard below advertises to an environment that
+# carries a pre-existing older lerobot, so the packaging floor and the remedy
+# the error message names cannot drift apart.
+BUCKET_STREAMING_MIN_LEROBOT = "0.6.1"
 
 
 # Only the POSITIVE result is cached. lerobot availability is a process
@@ -77,14 +94,67 @@ def _get_streaming_cls() -> Any:
         ) from exc
 
 
-def _lerobot_version() -> str:
-    """Best-effort installed lerobot version string for error messages."""
-    try:
-        from importlib.metadata import PackageNotFoundError, version
+def _tolerance_error(value: Any) -> str | None:
+    """Return why ``tolerance_s`` cannot be used as a grid-match half-width.
 
-        return version("lerobot")
-    except (ImportError, PackageNotFoundError):
-        return "unknown"
+    ``tolerance_s`` is the half-width of the window
+    ``lerobot.datasets.feature_utils.check_delta_timestamps`` compares each
+    delta against, and :meth:`StreamingDatasetReader.open` runs that check
+    itself to restore the grid validation the streaming path skips. So the
+    value decides whether that check can answer at all, in both directions:
+    ``inf`` makes ``... <= tolerance_s`` true for every delta, silently
+    accepting an off-grid ``delta_timestamps`` and disabling the very parity
+    the call was replicating, while ``nan`` and a negative half-width make it
+    false for every delta, refusing a perfectly on-grid one with a message
+    that blames the caller's deltas.
+
+    ``0`` is first-class here rather than degenerate - it asks for an exact
+    grid match, the strictest tolerance available - so neither shared
+    continuous domain fits (:func:`~strands_robots.utils.positive_finite_number_error`
+    refuses it). This decides only the floor and defers the numeric-ness,
+    finiteness and ``bool`` decisions to
+    :func:`~strands_robots.utils.finite_number_error`, so the two cannot
+    diverge on them.
+
+    Args:
+        value: The caller-supplied tolerance, in seconds.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if error := finite_number_error(value, "tolerance_s", "open"):
+        return error
+    if float(value) < 0.0:
+        return (
+            f"open: tolerance_s must be >= 0, got {value!r}. It is the half-width of the "
+            "grid-match window, so a negative one is satisfied by no delta at all and "
+            "refuses an on-grid delta_timestamps. Pass 0 to require an exact grid match."
+        )
+    return None
+
+
+# Every numeric parameter of ``StreamingDatasetReader.open`` and the domain
+# that decides it. A table rather than an inline chain because the pairing is
+# what stops the two drifting apart: a knob added to the signature without a
+# domain is a knob forwarded raw into a constructor that validates only
+# ``repo_type``, which is how these four came to be unguarded.
+_NUMERIC_DOMAINS: dict[str, Callable[[Any], str | None]] = {
+    # Half-width of the grid-match window; see _tolerance_error.
+    "tolerance_s": _tolerance_error,
+    # Reservoir size: the exclusive upper bound of ``rng.integers(0, buffer_size)``
+    # and the length the frame buffer is compared against, so only a true
+    # positive int can be honored - 0 and a negative raise ``high <= 0`` from
+    # NumPy part-way through iteration, and a fractional one is used verbatim.
+    "buffer_size": lambda value: positive_count_error(value, "buffer_size", "open"),
+    # Shard count: reaches ``min(hf_shards, max_num_shards)`` and then
+    # ``range(num_shards)``, so 0 or a negative yields zero shards and the
+    # reader streams no frames at all under a successful open.
+    "max_num_shards": lambda value: positive_count_error(value, "max_num_shards", "open"),
+    # Reproducibility seed for the reservoir shuffle: ``np.random.default_rng``
+    # refuses a negative or a float, and 0 is simply a seed - the domain
+    # ``TrainSpec.seed`` already uses.
+    "seed": lambda value: non_negative_count_error(value, "seed", "open"),
+}
 
 
 class StreamingDatasetReader:
@@ -127,14 +197,29 @@ class StreamingDatasetReader:
     ) -> StreamingDatasetReader:
         """Open a version-tolerant streaming reader.
 
+        Validation:
+            The numeric knobs are checked against
+            :data:`_NUMERIC_DOMAINS` before the lerobot import, because
+            ``StreamingLeRobotDataset`` validates only ``repo_type`` and stores
+            the rest verbatim. So an unusable one is a caller mistake reported
+            the same way with or without the extra installed, rather than a
+            NumPy error part-way through iteration, a shard count of zero that
+            streams no frames, or a tolerance that switches the grid check off.
+
         Raises:
+            ValueError: A numeric knob (``tolerance_s``, ``buffer_size``,
+                ``max_num_shards`` or ``seed``) is outside its domain. The
+                message names the parameter, the value and why it cannot be
+                honored.
             RuntimeError: ``repo_type`` is not ``"dataset"`` but the installed
                 ``StreamingLeRobotDataset`` does not accept a ``repo_type``
-                parameter. No released lerobot does (the versioned-dataset vs
-                bucket storage split is not upstream); the parameter is retained
-                only for a lerobot build that adds it. Silently dropping the
-                kwarg would stream from the versioned *dataset* namespace instead
-                of the requested bucket - a different storage system, not a
+                parameter. lerobot >= :data:`BUCKET_STREAMING_MIN_LEROBOT`
+                accepts it; earlier releases do not. The ``[lerobot]`` extra
+                floors lerobot at that version, so this guard only fires for an
+                environment carrying a pre-existing older lerobot - and it
+                names the upgrade as the remedy. Silently dropping the kwarg
+                would stream from the versioned *dataset* namespace instead of
+                the requested bucket - a different storage system, not a
                 cosmetic difference - so this is never tolerant-dropped.
             ValueError: ``drop_videos=True`` but no non-video keys remain in
                 ``delta_timestamps`` (or none were passed). Without a proprio
@@ -143,24 +228,43 @@ class StreamingDatasetReader:
                 call would silently do the opposite of what was asked.
             ImportError: ``StreamingLeRobotDataset`` is not importable.
         """
+        # Before the lerobot import: a value outside these domains is a caller
+        # mistake rather than a capability question, so it must be reported the
+        # same way whether or not the extra is installed - and refusing it here
+        # means an unusable value never reaches the constructor, which fetches
+        # dataset metadata and re-shards before any of it would be consumed.
+        supplied = {
+            "tolerance_s": tolerance_s,
+            "buffer_size": buffer_size,
+            "max_num_shards": max_num_shards,
+            "seed": seed,
+        }
+        for param, domain in _NUMERIC_DOMAINS.items():
+            if error := domain(supplied[param]):
+                raise ValueError(error)
+
         StreamingCls = _get_streaming_cls()
         init_sig = inspect.signature(StreamingCls).parameters
         # If the constructor accepts **kwargs, every candidate is forwardable.
         accepts_var_kw = any(p.kind is inspect.Parameter.VAR_KEYWORD for p in init_sig.values())
 
         # repo_type selects WHICH storage system is read (versioned dataset
-        # namespace vs bucket). No released lerobot accepts it; unlike the
-        # cosmetic kwargs below, silently dropping a non-default value would open
-        # the wrong storage system without error - fail fast instead.
+        # namespace vs bucket). lerobot >= BUCKET_STREAMING_MIN_LEROBOT accepts
+        # it and the [lerobot] extra floors there, so this only fires for a
+        # pre-existing older lerobot; unlike the cosmetic kwargs below, silently
+        # dropping a non-default value would open the wrong storage system
+        # without error - fail fast, naming the upgrade, instead.
         if repo_type != "dataset" and not (accepts_var_kw or "repo_type" in init_sig):
             raise RuntimeError(
-                f"repo_type={repo_type!r} is not supported by any released lerobot "
-                f"(installed: {_lerobot_version()}): StreamingLeRobotDataset does not "
-                "accept a repo_type parameter (the versioned-dataset vs bucket storage "
-                "split is not upstream), and silently falling back to the 'dataset' "
-                "namespace would stream from a different storage system. Pass "
-                "repo_type='dataset' (the default) or use a lerobot build whose "
-                "StreamingLeRobotDataset accepts repo_type."
+                f"repo_type={repo_type!r} requires lerobot >= "
+                f"{BUCKET_STREAMING_MIN_LEROBOT} (installed: {lerobot_version()}): "
+                "this StreamingLeRobotDataset does not accept a repo_type "
+                "parameter, and silently falling back to the 'dataset' namespace "
+                "would stream from a different storage system. Upgrade with "
+                '`pip install -U "strands-robots[lerobot]"` (its floor is at '
+                "least that), or pass "
+                "repo_type='dataset' (the default) to stream from the versioned "
+                "dataset namespace."
             )
 
         # Proprio-only: strip video keys from delta_timestamps so video decode
@@ -194,7 +298,7 @@ class StreamingDatasetReader:
                 "(lerobot %s) does not accept return_uint8, so frames stream as "
                 "float32 (~4x the bandwidth of uint8). Policies still normalize "
                 "correctly; upgrade lerobot for uint8 streaming.",
-                _lerobot_version(),
+                lerobot_version(),
             )
 
         kwargs: dict[str, Any] = {"repo_id": repo_id}

@@ -31,6 +31,7 @@ nav:
 - Device Connect: device-connect.md
 - Multi-robot Mesh: mesh.md
 - ROS 2 Integration: ros2-integration.md
+- rosbridge Integration: rosbridge-integration.md
 - Pure-RTPS ROS 2: rtps-integration.md
 - Policy Providers:
   - Overview: policies/overview.md
@@ -42,10 +43,13 @@ nav:
   - WBC (Whole-Body-Control): policies/wbc.md
   - WBC Gait-Clock Variant: policies/wbc_gait.md
   - MotionBricks (G1 generative motion): policies/motionbricks.md
+  - Kimodo (G1 text-to-motion diffusion): policies/kimodo.md
+  - ProtoMotions (G1 motion tracker): policies/protomotions.md
   - LeRobot Local: policies/lerobot-local.md
   - LeRobot Async (gRPC inference): policies/lerobot-async.md
   - MolmoAct2 (SO-100/101): policies/molmoact2.md
   - Remote (WebSocket inference): policies/remote.md
+  - Persistent Worker (long-lived inference): policies/persistent-worker.md
   - Camera Naming: policies/camera-naming.md
   - Custom Policies: policies/custom-policies.md
 - Real Hardware:

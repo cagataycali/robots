@@ -36,6 +36,7 @@ from strands_robots.mesh.session import (
     MAP_INFO_HZ,
     ODOM_HZ,
     POSE_HZ,
+    hz_from_env,
     put,  # noqa: F401  # re-exported so test fixtures can patch.object(sensors, "put")
 )
 
@@ -43,14 +44,24 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_hz(env_name: str, default: float) -> float:
-    """Read an Hz value from environment, falling back to default."""
-    env = os.getenv(env_name)
-    if env is None or env.strip() == "":
+    """Read a publish rate (Hz) from the environment, falling back to default.
+
+    Args:
+        env_name: Environment variable holding the operator override.
+        default: Rate to use when the variable is unset or unusable.
+
+    Returns:
+        The override when it names a rate this loop can pace itself with,
+        *default* when the variable is unset or holds a value no loop can honor
+        (including a non-finite one, which would otherwise make the caller's
+        ``1.0 / hz`` period zero and busy-spin the publish loop), and ``0.0``
+        for a non-positive override, which disables the loop.
+    """
+    hz, reason = hz_from_env(env_name)
+    if reason is not None:
+        logger.warning("%s; using default %.1f", reason, default)
         return default
-    try:
-        hz = float(env)
-    except ValueError:
-        logger.warning("%s=%r invalid; using default %.1f", env_name, env, default)
+    if hz is None:
         return default
     return hz if hz > 0 else 0.0
 

@@ -55,18 +55,24 @@ sim.destroy()
 
 ## Solvers
 
-Pass `solver=` to `create_simulation("newton", solver=...)`. The rigid-body
-solvers used by articulated robots are:
+Pass `solver=` to `create_simulation("newton", solver=...)`. The solvers that
+integrate a rigid articulated robot are:
 
 | Name | Newton class | Notes |
 |------|--------------|-------|
 | `mujoco` (default) | `SolverMuJoCo` | MuJoCo-Warp; requires `mujoco-warp` |
 | `featherstone` | `SolverFeatherstone` | Reduced-coordinate articulated-body |
-| `xpbd` | `SolverXPBD` | Position-based dynamics |
-| `semi_implicit` | `SolverSemiImplicit` | Explicit semi-implicit integrator |
+| `kamino` | `SolverKamino` | Rigid-body contact solver |
 
-`vbd`, `style3d`, `mpm`, and `kamino` are also resolvable for soft-body /
-particle scenes but are not exercised by rigid robot arms.
+Newton resolves five more names -- `vbd`, `style3d`, `mpm`, `xpbd` and
+`semi_implicit` -- that belong to other physics families and have nothing to
+integrate in a rigid robot scene. Naming one is refused when the engine is
+constructed, with the reason and the list above, because the alternatives are
+worse than a refusal: `vbd`, `style3d` and `mpm` raise from inside Newton
+naming a `ModelBuilder` the caller never touched, and `xpbd` and
+`semi_implicit` build and step without moving a joint, so `add_robot`,
+`send_action` and `step` all report success over a frozen world.
+`describe()["available_solvers"]` reports the accepted names only.
 
 `SolverMuJoCo` requires at least one joint in the model; an empty world (ground
 plane only) defers solver creation until a robot is added, and stepping is a
@@ -157,7 +163,10 @@ method names:
   the robots and primitive objects in the world.
 - `list_bodies(robot_name=None)` lists Newton body labels and, when scoped to
   a robot, resolves a best-guess `gripper_body` mount (a body whose trailing
-  path segment contains `gripper`, `hand`, `jaw`, `ee`, or `tool`).
+  path segment *names* `gripper`, `hand`, `jaw`, `ee`, or `tool` as one of its
+  words). Hints match on word boundaries, so a short hint cannot fire inside an
+  unrelated word - a `knee` link is not a gripper mount because `ee` occurs in
+  its name - and a robot with no gripper-like body reports `None`.
 - `move_object(name, position=None, orientation=None)` repositions an existing
   object and rebuilds the model, preserving live joint targets.
 - `get_features(robot_name=None)` reports the model's joint / body / DOF counts,
@@ -210,9 +219,13 @@ Viewer kinds (the `viewer` argument):
 - `"auto"` (default) - opens the `"gl"` window when a display server is
   present (`DISPLAY` / `WAYLAND_DISPLAY` set), otherwise falls back to
   `"viser"` so headless hosts still get a live view.
-- `"gl"` - `newton.viewer.ViewerGL` native OpenGL window. Requires a display;
-  on a headless host `open_viewer("gl")` returns a structured error pointing at
-  `"viser"` or `render(...)` instead of crashing.
+- `"gl"` - `newton.viewer.ViewerGL` native OpenGL window, sized by `width` /
+  `height` (default `1280x720`). Requires a display; on a headless host
+  `open_viewer("gl")` returns a structured error pointing at `"viser"` or
+  `render(...)` instead of crashing. The window size is a pixel count on the
+  same floor `add_camera` and `render(...)` apply - a positive `int` - so a
+  resolution this backend refuses for a frame is refused for a window too, and
+  a refused size leaves the single viewer slot free for the retry.
 - `"viser"` - `newton.viewer.ViewerViser` browser dashboard served at
   `http://localhost:<port>` (default `8080`). Works headless - no display
   required - which makes it the right choice for live inspection on a remote
@@ -242,7 +255,8 @@ sim = create_simulation("newton", solver="mujoco")
 sim.create_world()
 sim.add_robot("so100")
 
-sim.start_recording(repo_id="local/newton_demo", task="pick the cube", fps=30)
+# fps must equal the rollout's control_frequency (run_policy default: 50.0)
+sim.start_recording(repo_id="local/newton_demo", task="pick the cube", fps=50)
 for _ in range(n_episodes):
     sim.run_policy(robot_name="so100", policy_provider="mock", n_steps=200)
     sim.save_episode()          # flush this rollout as one episode

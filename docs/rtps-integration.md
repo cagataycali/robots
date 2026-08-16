@@ -199,7 +199,10 @@ keystore/env (`ROS_SECURITY_*` / `sros2`), not from a config dict.
 every inbound command. If **any** commanded joint falls outside its declared
 range, the **entire** command is rejected - never partially applied - so one
 out-of-range joint can never drive part of the arm while the rest holds. Joints
-without a declared bound are unconstrained.
+without a declared bound are unconstrained; to leave a joint unbounded, omit it
+rather than declaring an infinite bound. Every bound must be a finite number - a
+non-finite one declares a range that admits nothing, and the bridge refuses it at
+construction rather than dropping every command for that joint mid-run.
 
 ```python
 arm = Robot(
@@ -219,3 +222,11 @@ mangling (absolute `/`-rooted alnum/`_` names; `pkg/msg/Name` types). The tool
 never constructs a shell command or generates source, so there is no
 command-injection or `eval` surface. Backend, type-resolution, and field errors
 are returned as structured `{"status": "error"}` results rather than raised.
+
+The numeric options are checked in the same place, ahead of the backend probe, so
+a refusal happens before a writer joins the graph and reports identically whether
+or not `cyclonedds` is installed. `count` (`publish`, `echo`) must be a positive
+integer, and `rate` (`publish`) and `timeout` (`echo`) must be positive finite
+numbers - the same accepted domain `use_ros` enforces, so a value publishable
+through one transport is publishable through the other. An option the requested
+action never reads is not second-guessed.

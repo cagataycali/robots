@@ -27,16 +27,17 @@ magnitude across resets without changing the terrain *kind* -- a robot settles
 onto shallower bumps/steps at a lower difficulty and taller ones as it is
 raised.
 
-The generator is intentionally backend- and MuJoCo-independent (pure stdlib, no
-numpy / mujoco import) so the height data is trivially unit-testable and
+The generator is intentionally backend- and MuJoCo-independent (stdlib plus the shared
+validation domain in :mod:`strands_robots.utils`, no numpy / mujoco import) so the height data is trivially unit-testable and
 deterministic given ``(kind, resolution, seed)`` -- a benchmark that evaluates a
 policy on ``terrain="rough"`` regenerates the identical field on every reset.
 """
 
 from __future__ import annotations
 
-import math
 import random
+
+from strands_robots.utils import positive_finite_number_error
 
 # Supported terrain kinds. ``"rough"`` is smoothed value-noise bumps; ``"stairs"``
 # is a flight of discrete parallel step plateaus rising along +x; ``"pyramid"`` is
@@ -83,17 +84,33 @@ def validate_terrain(kind: str | None) -> None:
 
 
 def validate_difficulty(difficulty: float) -> None:
-    """Raise ``ValueError`` unless ``difficulty`` is a finite value ``> 0``.
+    """Raise ``ValueError`` unless ``difficulty`` is a finite number ``> 0``.
 
     ``difficulty`` scales the terrain's peak elevation (``1.0`` = full height);
     ``0`` would collapse the heightfield to a flat plane (a degenerate hfield
     with zero elevation, which MuJoCo rejects) and a negative/NaN value is
     meaningless, so both are rejected actionably rather than silently producing
     broken ground.
+
+    The accepted domain is
+    :func:`~strands_robots.utils.positive_finite_number_error` - the shared
+    positive-real domain every other continuous knob is measured against - and
+    this function is the raising binding over it. All three ``create_world``
+    implementations report through this one binding, so a scale one backend
+    refuses cannot be honored by another and the message is identical
+    everywhere.
+
+    Delegating also closes the type axis a bare ``float(difficulty)`` left
+    open. ``None`` and ``["0.5"]`` raised ``TypeError``, which escapes the
+    ``{"status": "error"}`` tool-result contract entirely because the callers
+    catch only ``ValueError``; a non-numeric string surfaced ``float()``'s own
+    message, naming neither the parameter nor the surface; and ``bool`` was
+    accepted asymmetrically - as an ``int`` subclass ``True`` passed the
+    ``<= 0`` test as a silent ``1.0`` (indistinguishable from the default full
+    height) while ``False`` was refused as a zero scale.
     """
-    d = float(difficulty)
-    if not math.isfinite(d) or d <= 0.0:
-        raise ValueError(f"terrain difficulty must be a finite value > 0 (1.0 = full height), got {difficulty!r}.")
+    if positive_finite_number_error(difficulty, "difficulty", "terrain") is not None:
+        raise ValueError(f"terrain difficulty must be a finite number > 0 (1.0 = full height), got {difficulty!r}.")
 
 
 def terrain_elevation(difficulty: float = 1.0) -> float:

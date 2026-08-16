@@ -26,7 +26,7 @@ LerobotLocalPolicy(
     pretrained_name_or_path="",          # HF model_id or local checkpoint dir (required)
     policy_type=None,                    # override auto-detected class
     device=None,                         # "cuda" | "cpu" | "mps"
-    actions_per_step=1,                   # auto-set from config.n_action_steps if left at 1
+    actions_per_step=1,                  # positive int; auto-set from config.n_action_steps if left at 1
     use_processor=True,                  # observation/action processor bridge
     processor_overrides=None,
     tokenizer_max_length=48,
@@ -46,6 +46,13 @@ LerobotLocalPolicy(
     revision=None,                       # pin a HF Hub revision (branch/tag/commit SHA)
 )
 ```
+
+`tokenizer_max_length` is the instruction's token budget and must be a positive
+`int`. The tokenizer takes it as a slice bound over the encoded instruction, so a
+count below one truncates the instruction away and the policy acts on an empty
+prompt; an unusable value is refused when the policy is constructed (and by
+`preflight`, before the weights are fetched) rather than at the first inference.
+
 
 ### Pinning a Hub revision
 
@@ -196,7 +203,7 @@ lerobot PR #3604 and first released in 0.6.0 - so it resolves straight from
 PyPI with no git-from-source install. The `[molmoact2]` extra layers the
 auxiliary deps MolmoAct2's modeling and processor code needs
 (`transformers>=5.4.0,<5.6.0`, `peft`, `scipy`) on top of
-`strands-robots[lerobot]` (which pins `lerobot>=0.6.0,<0.7.0`):
+`strands-robots[lerobot]` (which pins `lerobot>=0.6.1,<0.7.0`):
 
 ```bash
 uv pip install "strands-robots[molmoact2]"
@@ -303,6 +310,47 @@ producing off-policy / micro-motion trajectories. An explicit
 `processor_overrides={"device_processor": {"device": ...}}` is still honored
 as-is and takes precedence over the automatic reconciliation.
 
+## State routing
+
+`observation.state` is composed from `robot_state_keys` (set explicitly with
+`set_robot_state_keys([...])`, or by an `embodiment`). That ordering is used
+verbatim whenever at least one of its keys is present in the observation; a
+configured key the observation does not carry is zero-filled IN PLACE so the
+present joints keep their index.
+
+When NONE of the configured keys match - typically generic auto-generated names
+(`joint_0..joint_N`) paired with a sim that reports named joints - the policy
+warns (or raises under `strict_keys=True`), sets `generic_state_keys_used`, and
+falls back to the observation's own scalar keys so the state is populated rather
+than silently dropped.
+
+Both degradations quote a remedy chosen from the observation itself rather than a
+fixed example. `matching_embodiments(observation_keys)` returns every shipped
+embodiment whose entire `state_keys` set the observation carries, and only those
+are offered:
+
+- one match - the message names it (`embodiment='so100'`);
+- several - all are listed, because an observation cannot always tell them apart
+  (the real SO, Koch and OMX arms all report the same six `'<motor>.pos'` keys);
+- none - no embodiment is suggested at all, only `set_robot_state_keys([...])`,
+  quoted with the observed keys verbatim when the list is short enough to paste.
+
+This matters most on hardware. A real SO arm reports `'<motor>.pos'` keys, while
+the `so101` embodiment declares the MuJoCo asset's numeric joints `'1'..'6'` and
+converts degrees to radians - so recommending it there would re-declare keys the
+observation does not have, landing back on this same guard. `so_real` is the
+configuration that binds that observation, and it is what the message names.
+
+That fallback ordering is **position-only**: a `<joint>.vel` entry is dropped
+when the observation also carries its `<joint>` position companion. The MuJoCo
+backend emits a velocity sibling beside every joint position, so taking its keys
+in observation order would otherwise interleave velocities into the state vector
+and push the trailing joints past the model's declared state dim. A `.vel` key
+with no position companion is kept, because some embodiments legitimately declare
+velocity state (LeKiwi's body-frame base velocities `x.vel` / `y.vel` /
+`theta.vel`). Explicit `robot_state_keys` are never filtered - naming `elbow.vel`
+there states the model's input.
+
 ## Camera routing
 
 Robot/sim observations use bare camera names (`top`, `wrist`, `side`); the policy
@@ -407,6 +455,52 @@ Two ways to fix it:
        },
    )
    ```
+
+#### `image_keys` must declare what the embodiment feeds
+
+The pre-flight check works in both directions. An explicit `image_keys=` is
+priority 1 in `derive_image_keys`, so it *replaces* the feature list that would
+otherwise be derived from the embodiment's `obs_rename` targets. If the list does
+not cover those targets, the model is built without the inputs the embodiment
+routes and its configuration is refused after the weight download, so pre-flight
+refuses it up front instead:
+
+```
+Embodiment 'so_real' feeds image feature(s) ['observation.images.image',
+'observation.images.wrist_image'], but the explicit image_keys=['base', 'wrist']
+does not declare them, so the model would be built without the inputs the
+embodiment routes and its configuration is refused after the weight download.
+Either: (a) drop image_keys= ..., or (b) pass image_keys=[...] ..., or
+(c) pass policy_config={'obs_rename_override': {...}} for EVERY key you declared ...
+```
+
+Any of the three named fixes resolves it: drop `image_keys` so the features come
+from the embodiment, declare the embodiment's own targets, or retarget every key
+you declared with `obs_rename_override` so each declared feature is a rename
+target. `image_keys` is a MolmoAct2 knob and is inert for other policy types, so
+this check applies to the MolmoAct2 load path only.
+
+#### `image_keys` is a list of names, not a name
+
+A single key still has to be a one-element list. `str` is iterable, so a bare
+string is read one name per character - `image_keys="wrist"` would declare five
+features named `w`, `r`, `i`, `s` and `t` - and nothing downstream can tell that
+apart from a deliberate five-entry list. Passing one is refused, with the reading
+it would have produced and the list to pass instead:
+
+```
+LerobotLocalPolicy: image_keys must be a list of names, not a single string, got
+'wrist'. A string is iterable per character, so this would be read as
+['w', 'r', 'i', 's', 't'] (5 name(s)). Wrap it in a list: ['wrist'].
+```
+
+A mapping is refused for the mirror-image reason (it iterates over its keys, so
+its values would be dropped), as is a non-string entry, a blank entry, and a
+repeated one - a duplicate collapses in the feature dict, declaring fewer
+features than asked for. `None` and `[]` keep their meaning of "not supplied",
+so the list is derived from the embodiment as usual. The same rule applies to the
+VERA provider's `image_keys`, which names observation cameras rather than model
+features, and the refusal happens before the weight download or server handshake.
 
 ### Single camera with no embodiment
 
@@ -544,6 +638,15 @@ machine load. When a policy is driven directly without a runner (e.g. on async
 real hardware where the arm genuinely keeps moving during inference), leave the
 override unset (`None`) and the policy falls back to the wall-clock p95 estimate,
 which is the right proxy there.
+
+The override is an offset into the action chunk, so it accepts `None` or a
+non-negative `int` and nothing else. A fractional count is not a smaller offset
+and `True` is not a count of one - both used to be coerced into a neighbouring
+value, which moves the seam silently. The control rate the estimator multiplies
+by (`set_control_frequency(hz)`) is a finite positive number for the same
+reason: `nan` and `inf` survive a `hz <= 0` test but not the `int()` that turns
+a latency into a step count, so they are refused where they arrive rather than
+part-way through a rollout.
 
 ## See also
 

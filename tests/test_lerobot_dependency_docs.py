@@ -1,6 +1,6 @@
 """Keep the VLA install docs consistent with the declared dependencies.
 
-The ``lerobot>=0.6.0`` bump obsoleted a body of pre-0.6 install guidance that
+The ``lerobot>=0.6`` bump obsoleted a body of pre-0.6 install guidance that
 lived in the ``train_policy`` tool docstring and the policy/training docs:
 
 * ``pip install 'lerobot[smolvla]==0.5.1'`` and a ``transformers==5.3.0`` pin -
@@ -12,7 +12,7 @@ lived in the ``train_policy`` tool docstring and the policy/training docs:
   longer applies to the supported range.
 * "MolmoAct2 requires lerobot **from source**" - ``MolmoAct2Policy`` ships in
   lerobot >= 0.6, so ``strands-robots[molmoact2]`` (which pulls
-  ``strands-robots[lerobot]`` -> ``lerobot>=0.6.0``) resolves it straight from
+  ``strands-robots[lerobot]`` -> ``lerobot>=0.6.1``) resolves it straight from
   PyPI; no ``git+`` install.
 
 These assertions pin the pyproject reality and forbid the stale guidance from
@@ -24,8 +24,18 @@ from __future__ import annotations
 import tomllib
 from pathlib import Path
 
+from packaging.requirements import Requirement
+from packaging.version import Version
+
+from strands_robots import dataset_recorder
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _PYPROJECT = _REPO_ROOT / "pyproject.toml"
+
+
+def _bucket_cli_floor_spec() -> str:
+    """The requirement string the library's bucket-sync guidance must quote."""
+    return dataset_recorder._HF_BUCKET_CLI_MIN_SPEC
 
 
 def _extras() -> dict[str, list[str]]:
@@ -36,10 +46,16 @@ def _extras() -> dict[str, list[str]]:
 # --- positive contract: the pyproject reality the docs must reflect ---
 
 
-def test_lerobot_extra_requires_0_6() -> None:
-    joined = " ".join(_extras()["lerobot"])
-    assert "lerobot" in joined
-    assert ">=0.6.0" in joined, f"lerobot extra no longer pins >=0.6.0: {joined!r}"
+def test_lerobot_extra_requires_0_6_1() -> None:
+    """The ``[lerobot]`` extra floors lerobot at >= 0.6.1.
+
+    0.6.1 is the first release whose ``StreamingLeRobotDataset`` accepts
+    ``repo_type``, so flooring there makes bucket streaming resolver-guaranteed
+    rather than docs-guaranteed.
+    """
+    req = next(r for r in map(Requirement, _extras()["lerobot"]) if r.name == "lerobot")
+    lower = min(Version(s.version) for s in req.specifier if s.operator == ">=")
+    assert lower >= Version("0.6.1"), f"lerobot extra no longer floors >=0.6.1: {req.specifier}"
 
 
 def test_molmoact2_extra_is_pure_pypi_with_transformers_5_4_plus() -> None:
@@ -50,10 +66,13 @@ def test_molmoact2_extra_is_pure_pypi_with_transformers_5_4_plus() -> None:
     # lerobot[transformers-dep] (>=5.4.0) transitively, so the >=5.4.0 guarantee
     # is preserved by construction while staying in lock-step with lerobot.
     assert "lerobot[molmoact2]" in joined, joined
-    # the lerobot floor is >=0.6.0 (MolmoAct2Policy landed in lerobot 0.6), so
-    # its transformers-dep (>=5.4.0) is what gets resolved - never the pre-0.6
-    # transformers==5.3.0.
-    assert ">=0.6.0" in joined, joined
+    # the lerobot floor is >=0.6 (MolmoAct2Policy landed in lerobot 0.6), so its
+    # transformers-dep (>=5.4.0) is what gets resolved - never the pre-0.6
+    # transformers==5.3.0. Asserted as a bound, not a literal substring, so a
+    # floor raise cannot strand a guard whose requirement it still satisfies.
+    req = next(r for r in map(Requirement, _extras()["molmoact2"]) if r.name == "lerobot")
+    lower = min(Version(s.version) for s in req.specifier if s.operator == ">=")
+    assert lower >= Version("0.6"), f"molmoact2 lerobot floor is below 0.6: {req.specifier}"
     # resolves from PyPI - no git-from-source URL
     assert "git+" not in joined, f"molmoact2 extra should not need a git URL: {joined!r}"
 
@@ -97,7 +116,7 @@ def test_lerobot_local_docs_do_not_claim_molmoact2_needs_source() -> None:
 
 # --- negative contract, extended: the pre-0.6 "lerobot from source / <0.6 pin"
 #     narrative also lingered in the architecture / troubleshooting / molmoact2
-#     pages after the >=0.6.0 floor bump. These pin it out. ---
+#     pages after the >=0.6 floor bump. These pin it out. ---
 
 _ARCHITECTURE = _REPO_ROOT / "docs" / "architecture.md"
 _TROUBLESHOOTING = _REPO_ROOT / "docs" / "troubleshooting.md"
@@ -117,16 +136,19 @@ def test_architecture_lerobot_extra_row_matches_pyproject_floor() -> None:
     text = _ARCHITECTURE.read_text()
     # the dependency-matrix row must not advertise the dead pre-0.6 cap
     assert "lerobot>=0.5.0,<0.6.0" not in text, "architecture.md still cites the dead <0.6.0 lerobot cap"
-    # it must reflect the real floor (>=0.6.0)
-    assert ">=0.6.0" in text, "architecture.md [lerobot] row should name the >=0.6.0 floor"
+    # It must reflect the real floor, read from pyproject rather than hardcoded:
+    # a floor bump would otherwise leave this page citing a dead version while
+    # the guard kept passing.
+    floor = _lerobot_floor_from_pyproject()
+    assert f"lerobot{floor}" in text, f"architecture.md [lerobot] row should name the pyproject floor lerobot{floor}"
 
 
 def test_troubleshooting_version_skew_remedy_does_not_conflict_with_floor() -> None:
     text = _TROUBLESHOOTING.read_text()
     # remedying a version-skew ImportError by pinning ``<0.6`` directly conflicts
-    # with the pyproject floor (``lerobot[...]>=0.6.0``); the remedy must (re)install
+    # with the pyproject floor (``lerobot[...]>=0.6.1``); the remedy must (re)install
     # the extra instead of a manual sub-floor pin.
-    assert "lerobot>=0.5.0,<0.6" not in text, "troubleshooting remedy pins lerobot below the required >=0.6.0 floor"
+    assert "lerobot>=0.5.0,<0.6" not in text, "troubleshooting remedy pins lerobot below the required >=0.6.1 floor"
     assert "strands-robots[lerobot]" in text
 
 
@@ -227,17 +249,19 @@ def test_readme_streamed_training_invocation_is_current() -> None:
     )
 
 
-def test_hf_cli_install_guidance_pins_huggingface_hub_1_0() -> None:
-    # `pip install -U huggingface_hub` (unversioned) resolves to 0.36.x in many
-    # envs, which has no `buckets`/`sync` subcommands; every install line next
-    # to `sync_to_bucket` guidance must pin >=1.0.
+def test_hf_cli_install_guidance_pins_the_bucket_cli_floor() -> None:
+    # `pip install -U huggingface_hub` (unversioned) resolves to whatever is
+    # newest, and an environment pinned below the floor resolves to a CLI
+    # without the `buckets`/`sync` subcommands; every install line next to
+    # `sync_to_bucket` guidance must name the floor that ships them.
+    floor = _bucket_cli_floor_spec()
     for path in (_README, _DATASET_RECORDER):
         text = path.read_text()
         assert "pip install -U huggingface_hub" not in text, (
             f"{path.name} recommends an unversioned huggingface_hub install; "
-            "the `hf buckets`/`hf sync` subcommands need >=1.0"
+            f"the `hf buckets`/`hf sync` subcommands need {floor}"
         )
-        assert "huggingface_hub>=1.0" in text, f"{path.name} lost the huggingface_hub>=1.0 pin"
+        assert floor in text, f"{path.name} lost the {floor} pin"
 
 
 def test_shard_size_claim_names_both_lerobot_defaults() -> None:
@@ -275,15 +299,16 @@ def test_dataset_recorder_codec_docs_track_the_supported_lerobot_floor() -> None
 
 # --- positive contract: the [wbc] extra's huggingface_hub floor must guarantee
 #     the `hf buckets`/`hf sync` CLI subcommands the bucket-sync docs instruct.
-#     Those subcommands only exist on huggingface_hub>=1.0; the docs (README
+#     Those subcommands first ship in huggingface_hub 1.5.0; the docs (README
 #     streamed-training section + dataset_recorder.sync_to_bucket, pinned by
-#     test_hf_cli_install_guidance_pins_huggingface_hub_1_0) tell users to
-#     `pip install -U "huggingface_hub>=1.0"`, so a fresh
+#     test_hf_cli_install_guidance_pins_the_bucket_cli_floor) tell users to
+#     `pip install -U "huggingface_hub>=1.5"`, so a fresh
 #     `pip install strands-robots[wbc]` that resolves an `hf` entry point WITHOUT
-#     those subcommands (huggingface_hub 0.36.x satisfies a <1.0 floor) silently
-#     reproduces the exact "hf CLI not found / no such subcommand" failure the
-#     docs' own error message calls out. Floor the direct pin at >=1.0 so the
-#     resolver can't drift below the documented minimum. See issue #1549. ---
+#     those subcommands (0.36.x, but equally 1.0-1.4.x, satisfy a <1.5 floor)
+#     silently reproduces the exact "hf CLI not found / no such subcommand"
+#     failure the docs' own error message calls out. Floor the direct pin at the
+#     capability version so the resolver can't drift below the documented
+#     minimum. See issue #1549. ---
 
 
 def _wbc_huggingface_hub_spec() -> str:
@@ -296,14 +321,110 @@ def _wbc_huggingface_hub_spec() -> str:
     raise AssertionError("no huggingface_hub pin found in the [wbc] extra")
 
 
-def test_wbc_extra_huggingface_hub_floor_is_at_least_1_0() -> None:
+def test_wbc_extra_huggingface_hub_floor_ships_the_bucket_cli() -> None:
     spec = _wbc_huggingface_hub_spec()
-    # floor at >=1.0 so the resolved `hf` CLI carries the buckets/sync subcommands
-    assert ">=1.0" in spec, (
-        f"[wbc] huggingface_hub floor must be >=1.0 (the `hf buckets`/`hf sync` "
-        f"CLI subcommands the bucket-sync docs instruct only exist on >=1.0); got {spec!r}"
+    # Assert the declared lower BOUND, not a `">=X" in spec` substring: a later
+    # floor raise falsifies the substring while the property it stands for -
+    # "the resolved `hf` CLI carries the buckets/sync subcommands" - still holds.
+    lower = min(Version(s.version) for s in Requirement(spec).specifier if s.operator == ">=")
+    minimum = Version(".".join(str(part) for part in dataset_recorder._HF_BUCKET_CLI_MIN_VERSION))
+    assert lower >= minimum, (
+        f"[wbc] huggingface_hub floor must be >= {minimum} (the `hf buckets`/`hf sync` "
+        f"CLI subcommands the bucket-sync docs instruct first ship there); got {spec!r}"
     )
-    # the dead pre-1.0 floor must not linger
-    assert ">=0.20.0" not in spec, f"[wbc] still pins the dead pre-1.0 huggingface_hub floor: {spec!r}"
     # keep the MAJOR cap (<2.0.0) per repo convention (>=1.0 deps cap the major)
     assert "<2.0.0" in spec, f"[wbc] huggingface_hub pin lost its <2.0.0 major cap: {spec!r}"
+
+
+# --- negative contract: the training docs must name a stack that can actually
+#     train. LeRobot's ``train()`` calls
+#     ``require_package("accelerate", extra="training")`` *before* it branches on
+#     device, so "no GPU" does not mean "no extra" -- and nothing on the
+#     ``lerobot_local`` path pulls ``accelerate`` in (the ``[lerobot]`` extra is
+#     exactly ``lerobot[feetech,dataset]``). ``docs/training/overview.md`` called
+#     that row "works out of the box", which is false for the one thing the page
+#     is about: a reader following it gets ``'accelerate' is required but not
+#     installed`` on the first ``train()``, on CPU and GPU alike, and -- because
+#     ``train()`` reports the failure in its ``TrainResult`` rather than raising --
+#     an unchecked call passes a ``checkpoint_dir`` of ``None`` on instead.
+#
+#     The notebooks state the requirement (pinned by
+#     ``tests/test_notebook_min_version_docs.py``); the canonical training page
+#     contradicted them. These keep both it and the troubleshooting table from
+#     drifting back. ---
+
+# every extra a `lerobot_local` user could install to reach `trainer.train(...)`
+_LEROBOT_PATH_EXTRAS = ("lerobot", "lerobot-async", "molmoact2", "all")
+
+
+def _extras_declaring_accelerate() -> set[str]:
+    return {
+        name
+        for name, reqs in _extras().items()
+        if any(Requirement(r).name.replace("-", "_").lower() == "accelerate" for r in reqs)
+    }
+
+
+def test_no_lerobot_path_extra_declares_accelerate() -> None:
+    """The premise the docs' ``lerobot[training]`` instruction rests on.
+
+    If a ``strands-robots`` extra on this path ever *does* vendor ``accelerate``
+    -- the deferred ``training`` extra that would layer ``lerobot[training]`` the
+    way ``lerobot-async`` layers ``lerobot[async]`` -- then the instruction is
+    obsolete and the docs must be re-cut to name that extra instead. Failing here
+    is the signal to do that, not to loosen the assertion.
+    """
+    declaring = _extras_declaring_accelerate()
+    # non-vacuity: the matcher really does find `accelerate` where it is declared,
+    # so the emptiness below is a fact about these extras and not a broken parse.
+    assert declaring, "no extra declares accelerate at all - the requirement matcher is not matching"
+    available = _extras()
+    for name in _LEROBOT_PATH_EXTRAS:
+        assert name in available, f"[{name}] extra vanished from pyproject; update _LEROBOT_PATH_EXTRAS"
+        assert name not in declaring, (
+            f"[{name}] now declares accelerate, so `pip install 'strands-robots[{name}]'` can train "
+            "on its own; docs/training/overview.md and docs/troubleshooting.md must stop instructing "
+            "`lerobot[training]` and name this extra instead"
+        )
+
+
+def _unwrapped(text: str) -> str:
+    """Collapse whitespace runs so a prose assertion survives a reflow.
+
+    Markdown joins the lines of a paragraph when it renders, so where a sentence
+    happens to wrap is not semantic -- and a pin that reads the raw file cannot
+    tell "the claim was removed" from "the paragraph was re-filled one column
+    narrower". Only the rendered wording is asserted below.
+    """
+    return " ".join(text.split())
+
+
+def test_training_overview_names_the_trainer_extra() -> None:
+    text = _unwrapped(_TRAINING_OVERVIEW.read_text())
+    # the false claim: [lerobot] alone cannot run train() on any device
+    assert "works out of the box" not in text, (
+        "docs/training/overview.md calls the lerobot_local ACT/diffusion install "
+        "'works out of the box', but train() refuses without accelerate, which no "
+        "extra on that path declares"
+    )
+    assert "extra is enough for **ACT / diffusion from" not in text, (
+        "docs/training/overview.md still claims the [lerobot] extra alone is enough to train from scratch"
+    )
+    # the remedy, and why it applies with no GPU in sight
+    assert "lerobot[training]" in text, "docs/training/overview.md lost the lerobot[training] requirement"
+    assert 'require_package("accelerate", extra="training")' in text, (
+        "docs/training/overview.md should name the call that refuses, so the "
+        "'CPU needs it too' claim is checkable rather than asserted"
+    )
+    assert "on CPU as well as GPU" in text
+
+
+def test_troubleshooting_has_a_remedy_for_the_missing_trainer_extra() -> None:
+    text = _unwrapped(_TROUBLESHOOTING.read_text())
+    # the symptom a reader actually sees, verbatim from lerobot's require_package
+    assert "'accelerate' is required but not installed" in text, (
+        "docs/troubleshooting.md has no row for the missing-accelerate training failure"
+    )
+    assert 'uv pip install "lerobot[training]"' in text, (
+        "docs/troubleshooting.md names the accelerate symptom without the lerobot[training] remedy"
+    )

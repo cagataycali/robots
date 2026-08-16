@@ -37,6 +37,7 @@ except ImportError as e:
 from strands import tool
 
 from strands_robots.tools._path_validation import validate_save_path
+from strands_robots.utils import positive_finite_number_error, positive_whole_number_error
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -74,6 +75,89 @@ def _frame_to_image_content(frame: np.ndarray, format: str = "jpg") -> dict[str,
     except Exception as e:
         logger.error(f"Failed to convert frame to image content: {e}")
         return {"text": f"Failed to encode image: {str(e)}"}
+
+
+# Which numeric options each action actually consumes. Every action that opens a
+# camera is configured with the caller's geometry, so width/height/fps are
+# effective for all of them; each duration knob drives exactly one loop, and
+# "discover"/"list" open no camera with caller-supplied geometry at all. Every
+# handler that selects the asynchronous read hands the caller's timeout_ms to it,
+# so each of those actions carries that row.
+_ACTION_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
+    "capture": ("width", "height", "fps", "timeout_ms"),
+    "capture_batch": ("width", "height", "fps", "timeout_ms"),
+    "record": ("width", "height", "fps", "capture_duration", "timeout_ms"),
+    "preview": ("width", "height", "fps", "preview_duration", "timeout_ms"),
+    "test": ("width", "height", "fps", "timeout_ms"),
+    "configure": ("width", "height", "fps"),
+}
+
+
+def _numeric_option_error(
+    action: str,
+    *,
+    width: Any,
+    height: Any,
+    fps: Any,
+    capture_duration: Any,
+    preview_duration: Any,
+    timeout_ms: Any,
+    async_mode: Any,
+) -> str | None:
+    """Error text for the first numeric option ``action`` consumes but cannot honor.
+
+    Every value here is agent-supplied, so each is checked against the shared
+    domain for its kind before a camera is opened: ``width`` / ``height`` / ``fps``
+    count pixels and frames
+    (:func:`~strands_robots.utils.positive_whole_number_error`, which already owns
+    the recorders' geometry and rate), while the two durations and ``timeout_ms``
+    are continuous spans of time
+    (:func:`~strands_robots.utils.positive_finite_number_error`). Reusing those
+    helpers is what keeps this tool from accepting a frame size or a rate that the
+    plain-MP4 recorders refuse.
+
+    Validating here rather than letting the camera driver object is what makes the
+    refusal a property of the request instead of the device: the driver compares
+    the rate it was asked for against the rate the attached camera reports, so its
+    complaint names an ``actual_fps`` and is only raised once the device has been
+    opened and reconfigured. A rate of ``0`` is impossible on every camera, and the
+    tool has its own stake in these values regardless of the device - ``fps`` is
+    written into the MP4 container as its timebase and is the divisor of the
+    preview's frame period.
+
+    ``timeout_ms`` is only effective under ``async_mode``: the synchronous read
+    takes no timeout, so a value it never consumes is not refused.
+
+    Args:
+        action: The requested action; decides which options are effective.
+        width: Frame width in pixels, as supplied.
+        height: Frame height in pixels, as supplied.
+        fps: Frame rate, as supplied.
+        capture_duration: Recording span in seconds, as supplied.
+        preview_duration: Preview span in seconds, as supplied.
+        timeout_ms: Asynchronous read budget in milliseconds, as supplied.
+        async_mode: Whether the asynchronous read path is selected.
+
+    Returns:
+        An error message naming the action and the option, or ``None`` when every
+        option this action reads is usable.
+    """
+    consumed = set(_ACTION_NUMERIC_OPTIONS.get(action, ()))
+    if not async_mode:
+        consumed.discard("timeout_ms")
+    for param, value, check in (
+        ("width", width, positive_whole_number_error),
+        ("height", height, positive_whole_number_error),
+        ("fps", fps, positive_whole_number_error),
+        ("capture_duration", capture_duration, positive_finite_number_error),
+        ("preview_duration", preview_duration, positive_finite_number_error),
+        ("timeout_ms", timeout_ms, positive_finite_number_error),
+    ):
+        if param in consumed:
+            error = check(value, param, action)
+            if error:
+                return error
+    return None
 
 
 @tool
@@ -114,16 +198,16 @@ def lerobot_camera(
         save_path: Directory to save captured images/videos
         filename: Custom filename (without extension)
         camera_ids: List of camera IDs for batch operations
-        width: Frame width in pixels
-        height: Frame height in pixels
-        fps: Frames per second
+        width: Frame width in pixels (a positive whole number)
+        height: Frame height in pixels (a positive whole number)
+        fps: Frames per second (a positive whole number)
         color_mode: Color mode ("RGB" or "BGR")
         rotation: Image rotation ("NO_ROTATION", "ROTATE_90", "ROTATE_180", "ROTATE_270")
         format: Image format ("jpg", "png", "bmp")
-        capture_duration: Duration for video recording (seconds)
-        preview_duration: Duration for preview display (seconds)
+        capture_duration: Duration for video recording (positive seconds)
+        preview_duration: Duration for preview display (positive seconds)
         async_mode: Use async reading for better performance
-        timeout_ms: Timeout for async operations (milliseconds)
+        timeout_ms: Timeout for async operations (positive milliseconds; read only when async_mode is on)
         warmup: Enable camera warmup on connection
         save_config: Save camera configuration to file
 
@@ -132,6 +216,24 @@ def lerobot_camera(
     """
 
     try:
+        numeric_error = _numeric_option_error(
+            action,
+            width=width,
+            height=height,
+            fps=fps,
+            capture_duration=capture_duration,
+            preview_duration=preview_duration,
+            timeout_ms=timeout_ms,
+            async_mode=async_mode,
+        )
+        if numeric_error:
+            return {"status": "error", "content": [{"text": numeric_error}]}
+        if action in _ACTION_NUMERIC_OPTIONS:
+            # Accepted above as integral values; coerce so the camera config's
+            # declared int fields, the VideoWriter frame size and the progress
+            # modulo each receive a true int rather than an integral float.
+            width, height, fps = int(width), int(height), int(fps)
+
         if action == "discover":
             return _discover_cameras()
         elif action == "list":
@@ -193,6 +295,7 @@ def lerobot_camera(
                 rotation,
                 capture_duration,
                 async_mode,
+                timeout_ms,
                 warmup,
             )
         elif action == "preview":
@@ -609,6 +712,7 @@ def _record_video_sequence(
     rotation: str,
     capture_duration: float,
     async_mode: bool,
+    timeout_ms: float,
     warmup: bool,
 ) -> dict[str, Any]:
     """Record a video sequence from camera."""
@@ -639,7 +743,7 @@ def _record_video_sequence(
         try:
             while frames_captured < target_frames:
                 if async_mode:
-                    frame = camera.async_read(timeout_ms=1000)
+                    frame = camera.async_read(timeout_ms=timeout_ms)
                 else:
                     frame = camera.read()
 

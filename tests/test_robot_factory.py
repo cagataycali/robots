@@ -1419,9 +1419,10 @@ class TestHardwareConfigV040Followups:
         because lerobot 0.5.1's own marker excluded aarch64. lerobot 0.6 fixed
         that upstream (its `torchcodec>=0.11,<0.12; aarch64` marker pulls the
         torch-ABI-matched decoder), so the strands override was dropped and the
-        guarantee now rides on the `lerobot>=0.6.0` floor. This pins that floor
-        so a revert below 0.6 -- which would resurrect the missing-decoder bug
-        without the removed override -- fails here."""
+        guarantee now rides on the `lerobot>=0.6` floor (the extra declares
+        >=0.6.1, which bucket streaming additionally needs). This pins that
+        floor so a revert below 0.6 -- which would resurrect the
+        missing-decoder bug without the removed override -- fails here."""
         import tomllib
         from pathlib import Path
 
@@ -1432,8 +1433,12 @@ class TestHardwareConfigV040Followups:
         data = tomllib.load(open(root / "pyproject.toml", "rb"))
         lerobot_extra = data["project"]["optional-dependencies"]["lerobot"]
         lerobot_req = next(Requirement(d) for d in lerobot_extra if Requirement(d).name == "lerobot")
-        assert Version("0.6.0") in lerobot_req.specifier and Version("0.5.9") not in lerobot_req.specifier, (
-            f"[lerobot] extra must floor lerobot at >=0.6.0 so aarch64 gets torchcodec (#378); "
+        # Assert the declared lower BOUND, not membership of one version: a
+        # floor raise (e.g. to >=0.6.1 for bucket streaming) excludes 0.6.0
+        # while the >=0.6 requirement this guards still holds a fortiori.
+        lower = min(Version(s.version) for s in lerobot_req.specifier if s.operator == ">=")
+        assert lower >= Version("0.6") and Version("0.5.9") not in lerobot_req.specifier, (
+            f"[lerobot] extra must floor lerobot at >=0.6 so aarch64 gets torchcodec (#378); "
             f"got {lerobot_req.specifier}"
         )
 

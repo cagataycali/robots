@@ -43,6 +43,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from strands_robots.ros_telemetry import RosTelemetryBridge
+from strands_robots.utils import positive_finite_number_error
 
 if TYPE_CHECKING:
     from strands_robots.hardware_robot import Robot
@@ -69,6 +70,8 @@ class HardwareRosBridge(RosTelemetryBridge):
             that only publish (the per-step control-loop path) opt out of the
             inbound half entirely.
         domain_id: ROS 2 domain (``ROS_DOMAIN_ID``) to publish/subscribe on.
+            Only an ``int`` in ``[0, 232]`` names a domain: RTPS derives its
+            discovery ports from it, and 233 lands past the end of the port space.
         node_name: Internal rclpy node name (defaults to ``strands_hardware``).
         qos_depth: Depth of the publishers'/subscription's KEEP_LAST history.
         enable_commands: When True (default) and a ``robot`` is bound, subscribe
@@ -79,14 +82,25 @@ class HardwareRosBridge(RosTelemetryBridge):
             bridge *publishes* ``joint_states`` under), so a controller can echo
             our own joint names straight back to drive the arm.
         spin_period: Seconds between ``spin_once`` calls on the command thread.
-        joint_limits: Optional ``{motor: (min, max)}`` clamp ranges. When set,
+            Only a positive finite number paces a loop. The value is handed
+            straight to ``Event.wait`` on the backoff path, where ``0``,
+            a negative and ``nan`` all return immediately - turning the
+            thread into a busy-spin with no bound - and ``inf`` raises
+            ``OverflowError`` out of it, killing the loop while the bridge
+            reports a successful construction.
+        joint_limits: Optional ``{motor: (min, max)}`` clamp ranges. Each bound
+            must be a finite number - a non-finite one declares a range that
+            admits nothing, so the bridge refuses it at construction rather than
+            dropping every inbound command for that joint mid-run. When set,
             an inbound ``joint_command`` whose ANY commanded joint is outside
             its declared range is rejected whole (no partial application), so a
             single out-of-range joint can never drive part of the arm.
 
     Raises:
-        ValueError: If ``joint_limits`` is not a ``{motor: (min, max)}`` mapping
-            of numeric pairs with ``min <= max``.
+        ValueError: If ``domain_id`` is outside ``[0, 232]``, if ``spin_period``
+            is not a positive finite number, or if ``joint_limits`` is not a
+            ``{motor: (min, max)}`` mapping of finite numeric pairs with
+            ``min <= max``.
     """
 
     default_node_name = "strands_hardware"
@@ -103,6 +117,15 @@ class HardwareRosBridge(RosTelemetryBridge):
         spin_period: float = 0.02,
         joint_limits: dict[str, tuple[float, float]] | None = None,
     ) -> None:
+        # Refuse a spin period that cannot pace the command thread before the
+        # base constructor runs - the placement ``domain_id`` already uses - so
+        # the same caller mistake reports identically on an install with the
+        # [ros2] extra and one without it. It also lands ahead of the
+        # process-wide ``ROS_DOMAIN_ID`` write the base performs, so a refused
+        # period leaves the environment as it found it.
+        if error := positive_finite_number_error(spin_period, "spin_period", type(self).__name__):
+            raise ValueError(error)
+
         super().__init__(domain_id=domain_id, node_name=node_name, qos_depth=qos_depth)
 
         self._robot = robot
@@ -112,6 +135,10 @@ class HardwareRosBridge(RosTelemetryBridge):
         # Commands require a robot to drive; a pure-publisher bridge (robot
         # None) is telemetry-only and stays symmetric with the sim sibling.
         self._enable_commands = bool(enable_commands) and robot is not None
+        # ``float`` after the guard rather than instead of it: the shared domain
+        # accepts any real scalar - a ``np.float32`` read from a config array is
+        # documented as usable - and ``Event.wait`` rejects ``np.float32``
+        # outright, so the conversion is what makes an accepted value consumable.
         self._spin_period = float(spin_period)
         self._command_sub: Any = None
         self._stop = threading.Event()

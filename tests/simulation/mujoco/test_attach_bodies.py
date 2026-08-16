@@ -24,6 +24,7 @@ import pytest
 
 mj = pytest.importorskip("mujoco")
 
+from strands_robots.simulation.mujoco import scene_ops  # noqa: E402
 from strands_robots.simulation.mujoco.simulation import Simulation  # noqa: E402
 
 
@@ -296,3 +297,72 @@ class TestDispatch:
         assert result["status"] == "success", result
         result = sim._dispatch_action("detach_bodies", {"parent": "carrier", "child": "cube"})
         assert result["status"] == "success", result
+
+
+class TestRecompileFailureRecovery:
+    """A weld install or removal whose recompile is refused must leave a way back.
+
+    Both surgeries edit the live spec before the recompile that validates them,
+    so a refused recompile has to undo the edit. What matters to a caller is not
+    the ``error`` status but what the refusal costs: the attachment must be
+    exactly as it was, so the identical call succeeds once the refusal clears,
+    and no later unrelated mutation may apply the edit the caller was told had
+    failed. ``attach_bodies`` and ``detach_bodies`` are each other's inverse, so
+    both directions are pinned here rather than only the one that regressed.
+    """
+
+    def test_a_refused_weld_install_is_reported_and_the_retry_still_attaches(self, two_boxes, monkeypatch):
+        sim = two_boxes
+        orig = scene_ops._recompile_preserving_state
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", lambda *a, **k: False)
+        refused = sim.attach_bodies("carrier", "cube", mode="weld")
+        assert refused["status"] == "error", refused
+        assert "weld recompile failed" in refused["content"][0]["text"]
+        # No attachment recorded, and nothing left behind on the spec.
+        assert sim.attachment_involving("cube") is None
+        assert int(sim._world._model.neq) == 0
+
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", orig)
+        assert sim.attach_bodies("carrier", "cube", mode="weld")["status"] == "success"
+        assert int(sim._world._model.neq) == 1
+
+    def test_a_refused_weld_removal_keeps_the_attachment_and_the_retry_detaches(self, two_boxes, monkeypatch):
+        sim = two_boxes
+        assert sim.attach_bodies("carrier", "cube", mode="weld")["status"] == "success"
+        orig = scene_ops._recompile_preserving_state
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", lambda *a, **k: False)
+        refused = sim.detach_bodies("carrier", "cube")
+        assert refused["status"] == "error", refused
+        assert "failed to remove weld constraint" in refused["content"][0]["text"]
+
+        # The refusal is a no-op, so the registry's record of the attachment is
+        # still true: the constraint is on the live spec and in the model.
+        spec = scene_ops._get_spec(sim._world)
+        assert spec is not None
+        assert "attach_weld_carrier__cube" in [eq.name for eq in spec.equalities]
+        assert int(sim._world._model.neq) == 1
+        assert sim.attachment_involving("cube") == "cube"
+
+        # Which is what lets the identical detach succeed once it clears. A spec
+        # that had already lost the constraint would refuse this permanently.
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", orig)
+        assert sim.detach_bodies("carrier", "cube")["status"] == "success"
+        assert int(sim._world._model.neq) == 0
+        assert sim.attachment_involving("cube") is None
+
+    def test_a_refused_weld_removal_does_not_leak_into_a_later_mutation(self, two_boxes, monkeypatch):
+        """A refused detach must not be applied by an unrelated later recompile."""
+        sim = two_boxes
+        assert sim.attach_bodies("carrier", "cube", mode="weld")["status"] == "success"
+        orig = scene_ops._recompile_preserving_state
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", lambda *a, **k: False)
+        assert sim.detach_bodies("carrier", "cube")["status"] == "error"
+
+        monkeypatch.setattr(scene_ops, "_recompile_preserving_state", orig)
+        # add_object never mentions the weld, but it recompiles the live spec.
+        assert (
+            sim.add_object("bystander", shape="box", size=[0.05, 0.05, 0.05], position=[1, 1, 0.5])["status"]
+            == "success"
+        )
+        assert int(sim._world._model.neq) == 1, "an unrelated mutation applied the refused detach"
+        assert sim.attachment_involving("cube") == "cube"

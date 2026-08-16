@@ -201,6 +201,64 @@ def _configure_gl_backend() -> None:  # noqa: C901
     )
 
 
+# Oldest MuJoCo release this backend can drive, and the single source of truth
+# for it: the packaging pins, the refusal below and the docs all read this tuple.
+#
+# The backend builds and edits every scene through the ``MjSpec`` procedural API
+# (see :mod:`strands_robots.simulation.mujoco.spec_builder`), and that API only
+# becomes complete enough in 3.5.0:
+#
+# * ``MjSpec.delete`` first ships in 3.3.4. Without it no scene can be built at
+#   all - :meth:`add_robot` fails on the first call with ``'mujoco._specs.MjSpec'
+#   object has no attribute 'delete'``.
+# * ``mujoco.mjtLightType`` first ships in 3.3.3, and ``MjVisual.global_`` (the
+#   spelling of the reserved-word field) in 3.3.0; below those, world creation
+#   raises before any robot is added.
+# * URDF loading through ``MjSpec`` first works in 3.5.0. On 3.4.0 and earlier
+#   ``add_robot(urdf_path=...)`` is refused with ``Could not find decoder for
+#   resource '<path>.urdf'``, so no URDF robot can enter a scene.
+#
+# 3.5.0 is therefore the first release on which the backend's own surface works,
+# not merely imports.
+_MUJOCO_API_FLOOR: tuple[int, int, int] = (3, 5, 0)
+
+
+def _mujoco_api_floor_error(version: str) -> str | None:
+    """Refuse an installed MuJoCo older than the API floor this backend needs.
+
+    A build below :data:`_MUJOCO_API_FLOOR` imports cleanly and reports a
+    healthy ``mujoco.__version__``, then fails deep inside the first scene
+    operation with a raw ``AttributeError`` naming a private MuJoCo binding -
+    a message that implicates this package rather than the install. Refusing at
+    the import funnel names the version, the floor and the remedy instead.
+
+    Args:
+        version: The installed ``mujoco.__version__``.
+
+    Returns:
+        The refusal text, or ``None`` when the build satisfies the floor. Also
+        ``None`` when ``version`` carries no readable ``major.minor`` prefix: an
+        unreadable version is not evidence of an old one, and refusing on it
+        would reject a source build over its version string alone.
+    """
+    parts = re.match(r"(\d+)\.(\d+)(?:\.(\d+))?", version.strip())
+    if parts is None:
+        return None
+    installed = (int(parts.group(1)), int(parts.group(2)), int(parts.group(3) or 0))
+    if installed >= _MUJOCO_API_FLOOR:
+        return None
+    floor = ".".join(str(part) for part in _MUJOCO_API_FLOOR)
+    return (
+        f"mujoco {version} is installed, but the MuJoCo simulation backend requires "
+        f"mujoco>={floor}. Earlier releases cannot build or edit a scene through the "
+        "MjSpec API this backend is written against: URDF loading is refused with "
+        '"Could not find decoder for resource" up to 3.4.0, and MjSpec.delete does '
+        "not exist before 3.3.4. Upgrade with: "
+        f"uv pip install 'mujoco>={floor},<4.0.0'  (or reinstall the extra: "
+        "uv pip install 'strands-robots[sim-mujoco]')."
+    )
+
+
 def _ensure_mujoco() -> "Any":
     """Lazy import MuJoCo to avoid hard dependency.
 
@@ -209,18 +267,28 @@ def _ensure_mujoco() -> "Any":
 
     Uses require_optional() for consistent dependency management across
     the strands-robots package.
+
+    Raises:
+        ImportError: if mujoco is not installed, or is older than
+            :data:`_MUJOCO_API_FLOOR` - which this backend cannot drive, so it
+            is refused here rather than left to fail inside a scene operation.
     """
     global _mujoco, _mujoco_viewer
     if _mujoco is None:
         _configure_gl_backend()
         from strands_robots.utils import require_optional
 
-        _mujoco = require_optional(
+        module = require_optional(
             "mujoco",
             pip_install="mujoco",
             extra="sim-mujoco",
             purpose="MuJoCo simulation",
         )
+        # Not cached until it passes: a refused build must be re-checked (and
+        # re-reported) on the next call rather than served from the global.
+        if msg := _mujoco_api_floor_error(str(getattr(module, "__version__", ""))):
+            raise ImportError(msg)
+        _mujoco = module
     if _mujoco_viewer is None and not _is_headless():
         try:
             import mujoco.viewer as viewer
@@ -232,6 +300,40 @@ def _ensure_mujoco() -> "Any":
 
 
 _rendering_available: bool | None = None
+
+
+def mj_name_to_id(model: Any, obj_type: int, name: Any) -> int:
+    """Resolve a MuJoCo entity name to its id, refusing a name that is not a string.
+
+    ``mujoco.mj_name2id`` declares its third parameter as ``const char *``, and the
+    pybind11 binding maps Python ``None`` onto a NULL pointer instead of rejecting
+    it. MuJoCo then dereferences that pointer while comparing names, so the call
+    does not raise - it terminates the interpreter with SIGSEGV. Nothing above it
+    can recover: the agent-tool envelope, the caller's ``except`` clauses and any
+    open recording all die with the process.
+
+    A value that is not a string cannot name an entity, so it resolves to "not
+    found" (``-1``) and the caller's existing unknown-entity message reports it -
+    naming the value and listing what the model does contain. Routing every
+    lookup through here, rather than adding a type check at each public entry
+    point, means a lookup added later is safe by construction.
+
+    Args:
+        model: The compiled ``MjModel`` to search.
+        obj_type: A ``mujoco.mjtObj`` enum member (``mjOBJ_BODY``, ``mjOBJ_JOINT``, ...).
+        name: The entity name to resolve. Anything that is not a ``str``
+            resolves to ``-1`` without reaching the binding.
+
+    Returns:
+        The entity id, or ``-1`` when *name* is not a string or names nothing
+        of *obj_type* in *model*.
+    """
+    if not isinstance(name, str):
+        return -1
+    import mujoco as _mj
+
+    return int(_mj.mj_name2id(model, obj_type, name))
+
 
 # One-shot guard so the software-rendering warning fires at most once per
 # process. A set (mutated via .add, never reassigned) avoids a `global`

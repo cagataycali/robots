@@ -240,6 +240,8 @@ def test_hardware_robot_cleanup_stops_mesh() -> None:
 
     hw.tool_name_str = "fakebot"
     hw._shutdown_event = threading.Event()
+    hw._task_admission = threading.Lock()
+    hw._task_claimed = False
     hw._task_state = MagicMock()
     hw._task_state.status = "IDLE"
     hw._executor = ThreadPoolExecutor(max_workers=1)

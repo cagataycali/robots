@@ -62,6 +62,26 @@ def make_env() -> SimEnv:
     )
 ```
 
+### Numeric arguments
+
+Every numeric `SimEnv` stores is checked at construction, against the shared
+domain for its kind, before the engine is read:
+
+| Argument | Domain | Why |
+|---|---|---|
+| `action_scale` | positive finite | It multiplies every action sent. `0` disconnects the policy from the robot, a negative value inverts every commanded DOF, and `nan`/`inf` make each command unsendable - `send_action` refuses a non-finite action, and `step` discards that status, so the rollout banks its full return having moved nothing. |
+| `max_episode_steps` | positive whole number | `0` or below reports a time-out on the first step, so every episode ends before it begins - and reports it as a *truncation*, which on-policy GAE value-bootstraps. |
+| `n_substeps` | positive whole number | The action is a position target; the PD controller needs several substeps to track it. This is `send_action`'s own domain for the parameter, which `SimEnv` forwards it to. |
+| `action_dim` | positive integer, or `None` | `None` is the documented "size the head from the robot's action keys" spelling. A width of `0` gives the policy no outputs. Narrower than the two above because it sizes the trainers' action head, where an integral float raises rather than being coerced. |
+
+An unusable value raises `ValueError` naming the class and the argument
+(`SimEnv: action_scale must be > 0, got 0.0.`). Each domain is the one its
+consumer can honor, so nothing is refused here that the code downstream accepts:
+a fractional scale (`0.25`) and a scale read from a config array
+(`np.float32(0.25)`) are fine, and so is a whole-number count spelled `50.0` or
+`np.int64(50)` - all normalized to the plain `float`/`int` the attribute
+advertises.
+
 ## PPO
 
 ```python
@@ -93,7 +113,15 @@ print(result.metrics)              # mean_reward, mean_episode_return, surrogate
 - `policy.pt` - the actor-critic + observation-normalizer state (the loadable
   artifact returned by `result.exported_model`).
 - `policy_meta.json` - deployable-policy metadata: `num_actions`,
-  `actor_obs_keys`, `joint_names`, `hidden_dims`.
+  `actor_obs_keys`, `action_keys`, `hidden_dims`.
+
+`action_keys` names what the `num_actions` outputs drive, in order, and is the
+robot's `robot_action_keys` - the vocabulary `send_action` binds an action
+vector against. It is not the joint list: a tendon-driven gripper is one
+actuator over two finger joints (so a Panda has 9 joints and 8 action keys), and
+the Newton backend's floating base is a joint with no commandable scalar. `SimEnv`
+sizes `num_actions` from the same list, so `len(action_keys) == num_actions`
+always holds. Pass `action_dim` to `SimEnv` to override the width.
 
 `PpoTrainer` trains fine on CPU (its `hardware_floor` declares no GPU
 requirement); MuJoCo stepping dominates, not the network.
@@ -165,6 +193,82 @@ loop while keeping the same hooks and checkpoint format.
 off-policy SAC fields (`buffer_size`, `batch_size`, `learning_starts`,
 `gradient_steps`, `tau`, `autotune_alpha`, `init_alpha`, `alpha_lr`,
 `target_entropy`), plus the universal `output_dir` / `learning_rate` / `seed`.
+
+`gamma` must be a finite number in the closed interval `[0, 1]`, checked by
+`validate()` on both backends. It is the one coefficient both of them read (PPO
+discounts the GAE recursion with it, FastSAC its target-Q bootstrap) and a
+discounted return is a geometric series, so a value above 1 makes that series
+diverge in the rollout horizon rather than merely being large - the run would
+train on the inflated advantages, report success and write a checkpoint. Both
+endpoints are inside the domain: `gamma=1` is the undiscounted episodic return
+and `gamma=0` a myopic agent that optimizes the immediate reward only. The
+FastSAC `tau` is bounded the same way, in `(0, 1]`.
+
+`num_learning_epochs` must be a positive integer, checked by `validate()` on the
+on-policy backend only (FastSAC optimizes per gradient step from a replay buffer
+and has no epoch loop). It is the loop bound of the entire optimizer step, so a
+non-positive value takes *no* gradient step while the run still collects its
+rollouts, writes a checkpoint and reports success - with losses of `0.0`,
+because the update averages its accumulators through `max(1, n_updates)`. `True`
+is likewise a silent single epoch, and a non-integer raises a bare `TypeError`
+out of `range()` after the environment and the networks are already built.
+
+FastSAC builds two optimizers from two learning-rate fields - `learning_rate`
+for the actor and both critics, `alpha_lr` for the entropy temperature - so
+when `autotune_alpha` is set `alpha_lr` must be a positive finite number too,
+checked by the same `validate()`. `alpha_lr=0` builds the temperature
+optimizer and never moves it, so the temperature stays at `init_alpha` and the
+automatic tuning the spec asked for silently does not happen; `inf` sends it
+to an infinity on the first step, and because the temperature multiplies the
+log-probability in the actor loss the resulting checkpoint holds non-finite
+parameters. Both previously reported success. It is inert when
+`autotune_alpha=False`, which builds no temperature optimizer.
+
+`max_grad_norm` must be a positive number a 64-bit float can represent, checked
+by `validate()` on the on-policy backend only (`clip_grad_norm_` appears in
+`rl/ppo.py` and nowhere else). It is the last thing that touches a gradient
+before the optimizer steps, and `clip_grad_norm_` scales every gradient by
+`max_norm / total_norm` without judging the bound, so two values used to be
+honored silently and wrongly:
+`max_grad_norm=0` scaled every gradient to zero, and the run reported success
+with a checkpoint bit-identical to a never-trained one; a **negative** bound
+negated the scaling ratio, so the update became gradient *ascent* on the loss
+and moved the parameters away from the objective, also under a successful run.
+`True` was a silent bound of one and `"1.0"` was silently coerced, while `nan`,
+`None` and a list raised from inside `torch` mid-update.
+
+`inf` is inside the domain: it is the field's only spelling of *do not clip*, and
+`clip_grad_norm_` honors it by leaving every gradient untouched. A real that no
+64-bit float stands for is refused with the range as its reason rather than the
+sign, and `validate()` reports it like any other unusable bound instead of
+raising: Python integers are arbitrary-precision, so `10**400` is one request
+away.
+
+`clip_param` must be a positive number too, checked by the same `validate()` on
+the on-policy backend only (`spec.clip_param` appears in `rl/ppo.py` and nowhere
+else). It is the half-width of the trust region PPO is named for, read twice per
+mini-batch - once to clip the policy ratio and once to clip the value loss - and
+`torch.clamp` judges it not at all, so every unusable value produced a finite,
+successful, deployable run whose objective was not the configured one:
+
+- `nan` **silently removes the trust region.** Both clipped terms become `nan`,
+  so `torch.max(surrogate, surrogate_clipped)` returns `nan` - but its gradient
+  flows to the *unclipped* branch, because every comparison against `nan` is
+  false. Measured over a seeded 60-step run, the resulting checkpoint is
+  bit-identical to an unclipped one (parameter sum `140.1735330768706262`) while
+  `surrogate_loss`, `value_loss` and `latest_loss` are all reported as `nan`.
+- A **negative** half-width is not a window: `1 - c` exceeds `1 + c`, so the
+  clamp bounds are inverted and it returns a constant regardless of the ratio,
+  and the reported surrogate loss changes sign. `0` is the same failure at the
+  boundary - the value clip becomes `clamp(-0, 0)`, so `value_clipped` is exactly
+  `old_values` and the critic's clipped branch is a constant.
+- `True` was a silent half-width of one, five times the shipped `0.2`, and
+  `"0.2"`, `None` and a list raised `TypeError` from inside the update loop.
+
+`inf` is inside this field's domain for the same reason as `max_grad_norm`'s -
+`clamp(ratio, -inf, inf)` returns the ratio unchanged, so it is the field's only
+spelling of *do not clip* - and the two bounds share one domain helper rather
+than a copy each.
 
 ## Worked example
 

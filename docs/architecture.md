@@ -17,7 +17,7 @@ graph TB
 
     subgraph factory_layer[Robot factory  -  strands_robots/robot.py]
         ROBOT["Robot()"]
-        REGISTRY["registry/robots.json<br/>68 robots, 8 categories"]
+        REGISTRY["registry/robots.json<br/>72 robots, 8 categories"]
         ROBOT --> REGISTRY
     end
 
@@ -78,7 +78,7 @@ graph TB
 | Module | What it owns | Key types |
 |--------|--------------|-----------|
 | `strands_robots/robot.py` | Factory `Robot(name, mode, backend, **kwargs)`. Name resolution, sim/real dispatch, mesh attach. | `Robot()` function |
-| `strands_robots/registry/` | 68 robots, 106 aliases, 8 categories. `robots.json` is source of truth. | `list_robots()`, `resolve_name()`, `get_robot()` |
+| `strands_robots/registry/` | 72 robots, 114 aliases, 8 categories. `robots.json` is source of truth. | `list_robots()`, `resolve_name()`, `get_robot()` |
 | `strands_robots/simulation/` | MuJoCo `AgentTool` - 60+ actions. | `Simulation`, `SimWorld`, `SimRobot`, `SimObject`, `SimCamera` |
 | `strands_robots/simulation/base.py` | Backend ABC for future Isaac/Newton backends. | `SimEngine` |
 | `strands_robots/hardware_robot.py` | Real-servo path. Async task execution + status. | `Robot` (class), `TaskStatus`, `RobotTaskState` |
@@ -103,8 +103,8 @@ graph TB
 
 | Extra | Pulls in | When |
 |-------|----------|------|
-| `[sim-mujoco]` | `mujoco`, `numpy`, `imageio`, `imageio-ffmpeg`, `mink`, `qpsolvers` | `Robot(mode="sim")`; `mink`/`qpsolvers` solve IK for the `move_to` primitive |
-| `[lerobot]` | `lerobot>=0.6.0,<0.7.0`, `torch` | Real hardware OR `LerobotLocalPolicy` |
+| `[sim-mujoco]` | `mujoco`, `numpy`, `imageio`, `imageio-ffmpeg`, `mink`, `qpsolvers[daqp]` | `Robot(mode="sim")`; `mink`/`qpsolvers` solve IK for the `move_to` primitive (the `[daqp]` backend extra is what makes the solve runnable - `qpsolvers` alone ships no solver) |
+| `[lerobot]` | `lerobot>=0.6.1,<0.7.0`, `torch` | Real hardware OR `LerobotLocalPolicy` |
 | `[groot-service]` | `pyzmq`, `msgpack` | `Gr00tPolicy` ZMQ |
 | `[cosmos3-service]` | `msgpack`, `websockets` | `Cosmos3Policy` WebSocket |
 | `[mesh]` | `eclipse-zenoh`, `json5` | Multi-robot mesh |

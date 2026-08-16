@@ -19,7 +19,6 @@ import pkgutil
 import sys
 import threading
 import types
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 import pytest
@@ -27,6 +26,7 @@ import pytest
 from strands_robots.hardware_robot import Robot as HwRobot
 from strands_robots.hardware_robot import RobotTaskState, TaskStatus
 from strands_robots.policies.base import Policy
+from tests._daemon_executor import DaemonThreadExecutor
 from tests.tool_result_contract import tool_json
 
 
@@ -98,8 +98,11 @@ def _make_robot(fake: _FakeLeRobot | None = None, control_frequency: float = 100
     hw.control_frequency = control_frequency
     hw.action_sleep_time = 1.0 / control_frequency
     hw._task_state = RobotTaskState()
-    hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
+    hw._executor = DaemonThreadExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
     hw._shutdown_event = threading.Event()
+    hw._stop_requested = threading.Event()
+    hw._task_admission = threading.Lock()
+    hw._task_claimed = False
     hw.mesh = None
     hw.peer_id = None
     hw.robot = fake if fake is not None else _FakeLeRobot()
@@ -174,9 +177,16 @@ class TestStopTask:
 
 class TestStartTask:
     def test_start_when_already_running_returns_error(self):
+        """A second start is refused while a rollout owns the motors bus.
+
+        The in-flight rollout is represented by taking the real admission
+        claim rather than by writing ``RUNNING`` onto the task state: the
+        status only reaches ``RUNNING`` after connect and the policy build, so
+        it is not what decides admission (see
+        ``tests/test_hardware_one_rollout_per_bus.py``).
+        """
         hw = _make_robot()
-        hw._task_state.status = TaskStatus.RUNNING
-        hw._task_state.instruction = "busy"
+        assert hw._claim_task("busy") is None
         result = hw.start_task("new task", policy_port=5555)
         assert result["status"] == "error"
         assert "already running" in result["content"][0]["text"].lower()
@@ -188,18 +198,22 @@ class TestStartTask:
 
         captured = {}
 
-        def _fake_sync(instruction, port, host, provider, duration):
+        def _fake_loop(instruction, port, host, provider, duration, **_kw):
             captured["instruction"] = instruction
             hw._task_state.status = TaskStatus.COMPLETED
             return {"status": "success", "content": [{"text": "done"}]}
 
-        hw._execute_task_sync = _fake_sync  # type: ignore[assignment]
+        # Stubs the control loop rather than the callable start_task submits, so
+        # the submitted wrapper still releases the motors-bus claim it was
+        # started under.
+        hw._run_control_loop = _fake_loop  # type: ignore[assignment]
         result = hw.start_task("grab", policy_port=5555, duration=1.0)
         assert result["status"] == "success"
         assert "grab" in result["content"][0]["text"]
         # Wait for the background future to run.
         hw._task_state.task_future.result(timeout=5)
         assert captured["instruction"] == "grab"
+        assert hw._task_claimed is False
         hw.cleanup()
 
 
@@ -430,13 +444,17 @@ class TestRunPolicyObject:
         hw.cleanup()
 
     def test_rejects_concurrent_task(self):
+        """A rollout is refused while another one owns the motors bus.
+
+        As above, the in-flight rollout is represented by the real admission
+        claim; ``_task_state.status`` is not the admission predicate.
+        """
         hw = _make_robot()
-        hw._task_state.status = TaskStatus.RUNNING
-        hw._task_state.instruction = "busy"
+        assert hw._claim_task("busy") is None
         result = hw.run_policy(policy_object=_StubPolicy(), instruction="pick", n_steps=1)
         assert result["status"] == "error"
         assert "already running" in result["content"][0]["text"].lower()
-        hw._task_state.status = TaskStatus.IDLE
+        hw._release_task()
         hw.cleanup()
 
     def test_connect_failure_reports_error_payload(self):

@@ -34,7 +34,19 @@ classifiers = [
 ]
 
 dependencies = [
-    "strands-agents>=1.0.0,<2.0.0",
+    # CAPABILITY floor, not a nominal lower bound. The package imports
+    # ``strands.types.tools.ToolContext`` (first shipped in strands-agents
+    # 1.5.0) and ``strands.types._events.ToolResultEvent`` (first shipped in
+    # 1.7.0), both at module import time. Measured against the released
+    # wheels, every release below 1.7.0 leaves
+    # ``strands_robots.simulation.mujoco.simulation`` and
+    # ``strands_robots.hardware_robot`` unimportable, so a resolve inside an
+    # older-but-declared range yields an install where ``import
+    # strands_robots`` succeeds (those are lazy exports) and
+    # ``strands_robots.Simulation`` simply does not exist. See
+    # tests/test_strands_agents_floor_ships_the_imported_api.py, which fails
+    # the moment a newer strands symbol is imported without raising this floor.
+    "strands-agents>=1.7.0,<2.0.0",
     "numpy>=1.21.0,<3.0.0",
     "opencv-python-headless>=4.5.0,<5.0.0",
     "Pillow>=8.0.0,<13.0.0",
@@ -66,13 +78,15 @@ cosmos3-service = [
 # unaffected. diffusers composes with numpy>=2, so this extra is co-installable
 # with cosmos3-service and lerobot.
 #
-# Cosmos3OmniPipeline ships only in diffusers-from-source (>0.38); the version
-# floor here is a lower bound, but install the git pin alongside this extra to
-# get the Cosmos3OmniPipeline + CosmosActionCondition symbols:
-#   uv pip install strands-robots[cosmos3-diffusers] \
-#       'diffusers @ git+https://github.com/huggingface/diffusers'
+# The floor is the CAPABILITY floor, not a nominal lower bound: measured against
+# the released wheels, Cosmos3OmniPipeline + CosmosActionCondition first ship in
+# diffusers 0.39.0 (0.36.0/0.37.1/0.38.0 carry neither symbol), so any floor below
+# it resolves to a diffusers that cannot build the pipeline at all. A checkpoint
+# newer than the floor can still need a newer diffusers than it (Cosmos3-Edge is
+# built against 0.40.0.dev0); that is a per-checkpoint fact a version range cannot
+# express, so Cosmos3DiffusersBackend reports it at load time instead.
 cosmos3-diffusers = [
-    "diffusers>=0.30",
+    "diffusers>=0.39",
     "torch>=2.0",
     "transformers>=4.40",
     "accelerate>=0.26",
@@ -88,7 +102,7 @@ cosmos3-diffusers = [
 # cosmos3-service, sim-mujoco, and lerobot).
 cosmos3-sim = [
     "mink>=0.0.4",
-    "mujoco>=3.2.0,<4.0.0",
+    "mujoco>=3.5.0,<4.0.0",
     # qpsolvers QP backend for mink.solve_ik. quadprog is the dependency-light
     # default that is always available; the bridge auto-selects whatever
     # qpsolvers reports (preferring daqp when present).
@@ -137,14 +151,19 @@ wbc = [
     # Required so create_policy("wbc") with no local checkpoint works out of the
     # box - WBCPolicy._maybe_download_checkpoint raises RuntimeError naming the
     # [wbc] extra when it is absent.
-    # Floor at >=1.0 (cap the MAJOR only, <2.0.0): the docs' bucket-sync
+    # Floor at >=1.5 (cap the MAJOR only, <2.0.0): the docs' bucket-sync
     # guidance (README streamed-training section + dataset_recorder.sync_to_bucket)
-    # instructs `pip install -U "huggingface_hub>=1.0"` because the `hf buckets`/
-    # `hf sync` CLI subcommands only exist on huggingface_hub>=1.0; a <1.0 floor
-    # lets a fresh resolve land on 0.36.x, whose `hf` entry point lacks those
-    # subcommands. >=1.0 also matches lerobot (huggingface-hub>=1.0.0) - and
-    # [wbc] is pulled into [all] alongside lerobot, so the two co-resolve.
-    "huggingface_hub>=1.0,<2.0.0",
+    # instructs `pip install -U "huggingface_hub>=1.5"` because the `hf buckets`/
+    # `hf sync` CLI subcommands first ship in huggingface_hub 1.5.0
+    # (huggingface_hub/cli/buckets.py, registered by cli/hf.py). Every earlier
+    # release installs an `hf` entry point WITHOUT them - 0.36.x, but also
+    # 1.0-1.4.x, which answer `hf buckets create` with
+    # "Error: No such command 'buckets'". A floor below 1.5 therefore lets a
+    # fresh resolve land on a CLI that cannot run a bucket sync while satisfying
+    # the documented minimum. lerobot floors it higher still
+    # (lerobot 0.6.1 requires huggingface-hub>=1.6.0) and [wbc] is pulled into
+    # [all] alongside lerobot, so the two co-resolve on the stricter of the two.
+    "huggingface_hub>=1.5,<2.0.0",
 ]
 motionbricks = [
     # MotionBricks (NVlabs/GR00T-WholeBodyControl `motionbricks/`) generative
@@ -165,6 +184,41 @@ motionbricks = [
     "pytorch-lightning>=2.0.0,<3.0.0",
     "scipy>=1.10.0",
 ]
+kimodo = [
+    # Kimodo text-conditioned motion diffusion for the Unitree G1. Drives a
+    # `diffusers` pipeline checkpoint (one carrying a `model_index.json`) with
+    # `trust_remote_code=True` (gated by STRANDS_TRUST_REMOTE_CODE at the
+    # factory layer). NVIDIA's own `nvidia/Kimodo-G1-RP-v1` publishes bare
+    # weights for its own runtime instead, so that checkpoint is driven through
+    # a `motion_agent=` sampler rather than by this extra alone. Weights are
+    # fetched on demand; nothing bundled.
+    # See strands_robots/policies/kimodo/ and docs/policies/kimodo.md.
+    "torch>=2.0.0",
+    "diffusers>=0.30.0",
+    "transformers>=4.40.0",
+    # Same >=1.5 floor and MAJOR-only cap as [wbc]: the documented bucket-sync
+    # guidance needs the `hf buckets`/`hf sync` CLI subcommands, which first
+    # ship in huggingface_hub 1.5.0. See the [wbc] comment for the full reason.
+    "huggingface_hub>=1.5,<2.0.0",
+    "accelerate>=0.30.0",
+    "scipy>=1.10.0",
+]
+protomotions = [
+    # ProtoMotions Generalist Tracking Policy (GTP) - the ONNX whole-body
+    # motion tracker that turns a kinematic reference clip (e.g. one Kimodo
+    # samples) into balanced joint targets for the Unitree G1. Same three
+    # support libraries as [wbc], for the same three reasons: onnxruntime runs
+    # the exported graph, pyyaml reads the `unified_pipeline.yaml` sidecar next
+    # to it, and huggingface_hub fetches the checkpoint from a model id. Weights
+    # are NOT bundled. See strands_robots/policies/protomotions/ and
+    # docs/policies/protomotions.md.
+    "onnxruntime>=1.17.0,<2.0.0",
+    "pyyaml>=5.1,<7.0.0",
+    # Same >=1.5 floor and MAJOR-only cap as [wbc]: the documented bucket-sync
+    # guidance needs the `hf buckets`/`hf sync` CLI subcommands, which first
+    # ship in huggingface_hub 1.5.0. See the [wbc] comment for the full reason.
+    "huggingface_hub>=1.5,<2.0.0",
+]
 lerobot = [
     # [dataset] bundles the read-back stack the streaming data loop needs:
     # datasets + pandas + pyarrow (parquet streaming) + av + torchcodec
@@ -183,7 +237,16 @@ lerobot = [
     # marker. NOTE: torch/torchcodec ship as +cuXXX wheels resolved by
     # UV_TORCH_BACKEND; a plain `pip install` on Thor may need the matching CUDA
     # index -- see the README Installation section for the Thor/Jetson caveat.
-    "lerobot[feetech,dataset]>=0.6.0,<0.7.0",
+    #
+    # The floor is 0.6.1 rather than 0.6.0 because bucket streaming
+    # (`stream_dataset(repo_type="bucket")`) needs a StreamingLeRobotDataset
+    # that accepts `repo_type`, and 0.6.1 is the first release that does
+    # (0.6.0's constructor has no such parameter). Flooring here makes the
+    # flagship streaming path resolver-guaranteed instead of docs-guaranteed;
+    # `strands_robots.streaming_dataset.BUCKET_STREAMING_MIN_LEROBOT` carries
+    # the same version for the runtime guard that protects an environment with
+    # a pre-existing older lerobot.
+    "lerobot[feetech,dataset]>=0.6.1,<0.7.0",
 ]
 # Remote/offloaded inference via lerobot's native async-inference gRPC
 # transport (the `lerobot_async` policy provider, LerobotAsyncPolicy). Layers
@@ -193,7 +256,7 @@ lerobot = [
 # it here, so the gRPC/protobuf floor tracks lerobot.
 lerobot-async = [
     "strands-robots[lerobot]",
-    "lerobot[async]>=0.6.0,<0.7.0",
+    "lerobot[async]>=0.6.1,<0.7.0",
 ]
 # MolmoAct2 transformers-native VLA (e.g. allenai/MolmoAct2-SO100_101). The
 # MolmoAct2Policy ships in lerobot >= 0.6 (landed via lerobot PR #3604). Rather
@@ -202,29 +265,43 @@ lerobot-async = [
 # own ``[molmoact2]`` extra. That extra pulls lerobot[transformers-dep],
 # lerobot[peft-dep], lerobot[scipy-dep] at exactly the versions the MolmoAct2
 # modeling/processor code was built against, so the two stay in lock-step by
-# construction. The base ``strands-robots[lerobot]`` pin (>=0.6.0,<0.7.0) already
+# construction. The base ``strands-robots[lerobot]`` pin (>=0.6.1,<0.7.0) already
 # fixes the lerobot floor; ``lerobot[molmoact2]`` just adds the aux deps.
 molmoact2 = [
     "strands-robots[lerobot]",
-    "lerobot[molmoact2]>=0.6.0,<0.7.0",
+    "lerobot[molmoact2]>=0.6.1,<0.7.0",
 ]
 sim = [
     "robot_descriptions>=1.11.0,<2.0.0",
 ]
 sim-mujoco = [
     "strands-robots[sim]",
-    "mujoco>=3.2.0,<4.0.0",
+    # 3.5.0 is the oldest release the backend can drive, not merely import:
+    # every scene is built through the MjSpec procedural API, and URDF loading
+    # through it first works in 3.5.0 (3.4.0 and earlier refuse add_robot with
+    # "Could not find decoder for resource '<path>.urdf'"), while MjSpec.delete
+    # - which world creation needs on its first call - first ships in 3.3.4.
+    # simulation.mujoco.backend._MUJOCO_API_FLOOR owns the number and refuses an
+    # older build at the import funnel; keep the two in step.
+    "mujoco>=3.5.0,<4.0.0",
     "imageio>=2.28.0,<3.0.0",
     "imageio-ffmpeg>=0.4.0,<1.0.0",
     # Differential-IK solver stack. `move_to`, the Cartesian transport
     # primitive in this backend's agent-callable action enum, solves IK on the
     # same mujoco.MjModel via strands_robots.simulation.ik.MinkIKBridge, so the
     # solver is part of what this extra ships rather than an add-on the caller
-    # has to name themselves. `mink` pulls a QP backend of its own
-    # (qpsolvers[daqp], the bridge's first preference); `qpsolvers` is declared
-    # here too because simulation/ik.py imports it directly.
+    # has to name themselves. `qpsolvers` is declared here because
+    # simulation/ik.py imports it directly, and the `[daqp]` backend extra
+    # because qpsolvers on its own solves nothing: with no backend installed
+    # `mink.solve_ik` cannot run and `move_to` returns "IK bridge unavailable:
+    # No qpsolvers backend is installed", whose remedy names THIS extra. daqp is
+    # both the bridge's first preference (ik._PREFERRED_QP_SOLVERS) and the
+    # backend `mink` pulls for itself, so this changes nothing about what
+    # resolves - it stops the guarantee resting on a transitive of `mink` that
+    # this extra does not control. `[cosmos3-sim]`, which drives the same
+    # mink + qpsolvers stack, declares its backend the same way.
     "mink>=0.0.4",
-    "qpsolvers>=4.0.0",
+    "qpsolvers[daqp]>=4.0.0",
 ]
 # Newton GPU-native backend (newton-physics/newton on NVIDIA Warp +
 # MuJoCo-Warp). GPU-batched parallel envs, headless ray-traced rendering, and
@@ -248,16 +325,21 @@ sim-newton = [
 # out-of-band Kit runtime).
 #
 # IMPORTANT: Isaac Sim itself is NOT installed by this extra. It is an Omniverse
-# Kit application provisioned out-of-band - via the NVIDIA Omniverse Launcher,
+# Kit application provisioned separately - via the runtime's own pip wheels
+# (`pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url
+# https://pypi.nvidia.com`, viable on Python 3.12; the `extscache` extra is
+# required, and see docs/simulation/isaac.md for the coverage-downgrade /
+# EULA / torch-bump caveats, #1803), the NVIDIA Omniverse Launcher,
 # Isaac Lab (`./isaaclab.sh -i`), or the NGC docker image
 # (`nvcr.io/nvidia/isaac-sim:6.0`; see
 # strands_robots/simulation/isaac/_install.py for the pinned image tag). Those
-# images/launchers ship a complete, bootable Kit (Python 3.12 interpreter + the
+# routes ship a complete, bootable Kit (Python 3.12 interpreter + the
 # full `isaacsim-*` / `isaacsim-extscache-*` extension set that `SimulationApp`
-# needs to boot). We do NOT pin `isaacsim` here: the PyPI `isaacsim[all]`
+# needs to boot). We still do NOT pin `isaacsim` here: the bare `isaacsim[all]`
 # metapackage is incomplete on its own (it omits the `isaacsim-extscache-*`
-# packages, so `SimulationApp` aborts resolving its extension graph), and every
-# other surface documents Isaac Sim as "installed separately".
+# packages, so `SimulationApp` aborts resolving its extension graph), it needs
+# the NVIDIA extra index, and its transitive pins (coverage==7.4.4, a
+# torch/torchvision bump) would degrade every non-Isaac install of this extra.
 #
 # This extra pulls ONLY the pip-installable Python helpers the backend uses
 # out-of-band from an Isaac Sim install:
@@ -359,7 +441,7 @@ vera-sim = [
     # the package. If you genuinely need NVlabs MimicGen for data generation,
     # install it from source:
     #     pip install "mimicgen @ git+https://github.com/NVlabs/mimicgen.git"
-    "mujoco>=3.5.0",
+    "mujoco>=3.5.0,<4.0.0",
     "imageio",
 ]
 # Local-LLM agent path (no API key / no AWS -- the natural choice on an edge
@@ -367,7 +449,7 @@ vera-sim = [
 # Delegate to strands-agents' own [ollama] extra (bounded pin, ollama>=0.4.8,<1.0.0)
 # so the client version stays in sync with the code that imports it.
 ollama = [
-    "strands-agents[ollama]>=1.0.0,<2.0.0",
+    "strands-agents[ollama]>=1.7.0,<2.0.0",
 ]
 # Remote policy inference (client/server split): stream observations from a
 # CPU/edge robot host to a remote GPU PolicyServer and receive action chunks
@@ -376,6 +458,13 @@ ollama = [
 # strands_robots/inference/ and docs/inference/remote.md.
 inference = [
     "websockets>=12.0",
+]
+# rosbridge WebSocket transport: drive ROS1 (or remote ROS 2) robots from a host
+# with no ROS install at all. Pure-pip `roslibpy` speaks the rosbridge JSON
+# protocol over a WebSocket. See strands_robots/tools/use_rosbridge.py and
+# docs/rosbridge-integration.md.
+rosbridge = [
+    "roslibpy>=1.7.0,<2.0.0",
 ]
 all = [
     "strands-robots[groot-service]",
@@ -388,9 +477,12 @@ all = [
     "strands-robots[device-connect]",
     "strands-robots[wbc]",
     "strands-robots[motionbricks]",
+    "strands-robots[kimodo]",
+    "strands-robots[protomotions]",
     "strands-robots[molmoact2]",
     "strands-robots[ollama]",
     "strands-robots[inference]",
+    "strands-robots[rosbridge]",
 ]
 dev = [
     "pytest>=6.0,<10.0.0",
@@ -458,13 +550,41 @@ conflicts = [
     [{ extra = "vera-sim" }, { extra = "all" }],
     [{ extra = "vera-sim" }, { extra = "benchmark-libero" }],
 ]
+# SECURITY floors for transitive packages. Each of these arrives only through
+# another dependency (cbor2/ujson under autobahn, twisted under roslibpy,
+# pyopenssl under twisted), so nothing in [project] declares a version for
+# them and the resolver is free to pick any release the graph allows --
+# including one inside a HIGH advisory range. A constraint bounds a transitive
+# without claiming it as a direct dependency, and unlike an override it fails
+# the resolution loudly if something genuinely requires less, which is the
+# wanted behaviour for a security floor.
+#
+# Each floor is the first version that clears every HIGH/CRITICAL advisory for
+# that package, not the version currently resolved: the floor states the
+# requirement, so it stays correct as the resolution moves.
+constraint-dependencies = [
+    # GHSA-3c37-wwvx-h642 (HIGH): uncontrolled recursion DoS in cbor2.loads, <= 5.8.0.
+    "cbor2>=5.9.0",
+    # GHSA-grgv-6hw6-v9g4 (HIGH): twisted.names DNS compression-pointer DoS,
+    # <= 25.5.0. First patched in 26.4.0rc2; 26.4.0 is the first stable release
+    # that clears it, and a floor at the rc would admit a prerelease.
+    "twisted>=26.4.0",
+    # GHSA-c38f-wx89-p2xg (HIGH): memory leak in ujson.dump() on write failure, <= 5.12.0.
+    "ujson>=5.12.1",
+    # GHSA-5pwr-322w-8jr4 (HIGH): DTLS cookie-callback buffer overflow, >= 22.0.0 < 26.0.0.
+    "pyopenssl>=26.0.0",
+]
 override-dependencies = [
-    # SECURITY: diffusers <0.36 is vulnerable to a GHSA trust_remote_code bypass
-    # + a TOCTOU RCE (fixed in 0.38.0). diffusers is only exercised by the
-    # cosmos3-diffusers extra (Cosmos3Policy backend="diffusers"); lerobot core
-    # does not import it at runtime, so forcing >=0.38 is safe and clears the
-    # Dependabot alerts.
-    "diffusers>=0.38.0",
+        # SECURITY + CAPABILITY: diffusers <0.36 is vulnerable to a GHSA
+    # trust_remote_code bypass + a TOCTOU RCE (fixed in 0.38.0). uv *overrides*
+    # replace a requirement rather than intersecting with it, so this pin is the
+    # effective floor for the whole resolution and must not fall below the
+    # cosmos3-diffusers extra's own floor - at 0.38.0 it silently discarded that
+    # floor and locked a diffusers carrying no Cosmos3OmniPipeline. 0.39 clears
+    # both bounds (the CVE fix landed in 0.38.0; the pipeline first ships in
+    # 0.39.0). diffusers is only exercised by the cosmos3-diffusers extra
+    # (Cosmos3Policy backend="diffusers"); lerobot core does not import it.
+    "diffusers>=0.39",
 ]
 
 # Auto-select the right PyTorch wheel for the host accelerator. On NVIDIA
@@ -506,6 +626,15 @@ select = [
     "F",     # pyflakes
     "I",     # isort
     "UP",    # pyupgrade
+    # Two flake8-bugbear codes, selected individually rather than as "B".
+    # They carry the no-op-statement capability that CodeQL's
+    # py/ineffectual-statement used to nominally provide before
+    # .github/codeql/codeql-config.yml filtered it (#1810): every one of that
+    # rule's 27 alerts was a `...` typing-construct body, which ruff exempts,
+    # so the rule reported only unavoidable idioms while the real bug class
+    # went unenforced by any merge-blocking check. Ruff is that check here.
+    "B015",  # useless comparison - `x == 1` as a statement, the real bug class
+    "B018",  # useless expression - a value computed and discarded
 ]
 ignore = [
     "E501",  # line too long - handled by formatter
@@ -531,7 +660,7 @@ ignore_missing_imports = false
 
 # Third-party libs without type stubs
 [[tool.mypy.overrides]]
-module = ["lerobot.*", "gr00t.*", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "motionbricks", "motionbricks.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*"]
+module = ["lerobot.*", "gr00t.*", "tyro", "draccus.*", "msgpack.*", "websockets", "websockets.*", "zmq.*", "huggingface_hub.*", "serial.*", "psutil.*", "torch.*", "torchvision.*", "transformers.*", "einops.*", "robot_descriptions.*", "mujoco.*", "imageio.*", "pyarrow", "pyarrow.*", "libero.*", "zenoh.*", "boto3", "boto3.*", "awscrt", "awscrt.*", "awsiot", "awsiot.*", "botocore.*", "strands_robots.policies.cosmos3._msgpack_numpy", "diffusers", "diffusers.*", "accelerate", "accelerate.*", "openpi_client", "openpi_client.*", "openpi_server", "openpi_server.*", "openpi", "openpi.*", "device_connect_edge", "device_connect_edge.*", "device_connect_agent_tools", "device_connect_agent_tools.*", "rclpy", "rclpy.*", "cyclonedds", "cyclonedds.*", "roslibpy", "roslibpy.*", "rosidl_runtime_py", "rosidl_runtime_py.*", "moveit", "moveit.*", "moveit_configs_utils", "moveit_configs_utils.*", "geometry_msgs", "geometry_msgs.*", "mink", "mink.*", "qpsolvers", "qpsolvers.*", "onnxruntime", "onnxruntime.*", "motionbricks", "motionbricks.*", "trimesh", "trimesh.*", "stable_baselines3", "stable_baselines3.*", "strands_robots_sim", "strands_robots_sim.*", "isaacsim", "isaacsim.*", "omni", "omni.*", "gsplat", "gsplat.*", "plyfile", "plyfile.*"]
 ignore_missing_imports = true
 
 # Device Connect drivers - thin wrappers over the untyped device_connect_edge

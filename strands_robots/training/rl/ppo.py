@@ -141,6 +141,8 @@ class PpoTrainer(BaseRLAlgo):
     def validate(self, spec: TrainSpec) -> list[str]:
         """Preflight an :class:`RLTrainSpec` for a PPO run (pure / read-only)."""
         problems = self._security_problems(spec)
+        problems.extend(self._learning_rate_problems(spec))
+        problems.extend(self._seed_problems(spec))
         if not isinstance(spec, RLTrainSpec):
             problems.append(f"ppo requires an RLTrainSpec, got {type(spec).__name__}")
             return problems
@@ -148,6 +150,30 @@ class PpoTrainer(BaseRLAlgo):
             problems.append("env_factory is required (a zero-arg callable returning a SimEnv)")
         if not spec.output_dir:
             problems.append("output_dir is required")
+        # gamma discounts the return this backend optimizes; the arithmetic that
+        # consumes it never judges it, so the shared interval domain does.
+        problems.extend(self._discount_factor_problems(spec))
+        # lam is the other factor of the same trace decay: the recursion decays by
+        # gamma * lam, so the gate above cannot bound the trace on its own.
+        problems.extend(self._gae_lambda_problems(spec))
+        # num_learning_epochs is the loop bound of the whole optimizer step, so a
+        # non-positive value takes no gradient step while the run still succeeds.
+        problems.extend(self._optimization_epochs_problems(spec))
+        # max_grad_norm scales every gradient before the optimizer steps: zero
+        # scales them all to zero and a negative bound negates them, so neither
+        # takes the step the caller asked for while the run still succeeds.
+        problems.extend(self._gradient_clip_problems(spec))
+        # value_loss_coef and entropy_coef weight the two terms of the objective
+        # the update descends; the multiplication judges neither, so a non-finite
+        # weight poisons every parameter and surfaces as a torch error naming
+        # neither field, and a bool lands as a silently different coefficient.
+        problems.extend(self._loss_weight_problems(spec))
+        # clip_param is the half-width of the trust region the surrogate is clipped
+        # to, and also clips the value loss. torch.clamp judges it not at all: a
+        # nan half-width routes the gradient to the unclipped branch, so the run
+        # trains bit-identically to an unclipped one while every reported loss is
+        # nan, and a negative half-width inverts the bounds into a constant.
+        problems.extend(self._clip_range_problems(spec))
         if spec.total_timesteps <= 0:
             problems.append(f"total_timesteps must be > 0, got {spec.total_timesteps}")
         if spec.rollout_steps <= 0:
@@ -475,7 +501,12 @@ class PpoTrainer(BaseRLAlgo):
             "num_critic_obs": self.env.num_critic_obs,
             "num_actions": self.env.num_actions,
             "actor_obs_keys": self.env.actor_obs_keys,
-            "joint_names": (self.env.engine.robot_joint_names(self.env.robot_name) if self.env.robot_name else []),
+            # ``action_keys``, not a joint list: the field names what the
+            # ``num_actions`` outputs above it drive, so it must be the same
+            # vocabulary ``send_action`` binds a vector against. A tendon
+            # gripper's actuator has no matching joint name at all, and a
+            # Newton floating base is a joint with no commandable scalar.
+            "action_keys": (self.env.engine.robot_action_keys(self.env.robot_name) if self.env.robot_name else []),
             "hidden_dims": list(self.spec.hidden_dims),
             "iteration": iteration,
         }

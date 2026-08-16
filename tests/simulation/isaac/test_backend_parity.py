@@ -122,6 +122,16 @@ class TestSendActionPartialDict:
         assert list(np.asarray(act.joint_positions)) == pytest.approx([0.1, 0.2, 0.3, 0.04])
 
     def test_vector_action_addresses_all_joints(self, fake_isaacsim_types):
+        """A full-width vector commands every joint, in order.
+
+        The assertion is on which DOFs are addressed rather than on how that is
+        spelled. It used to require ``joint_indices is None`` -- the "all DOFs"
+        shorthand the raw vector path happened to use -- which made this and
+        ``test_full_dict_commands_all_joints`` pin two different spellings of one
+        outcome. The vector is now bound to ``robot_action_keys`` by the shared
+        coercion, so both arrive as a mapping over every joint and name the DOFs
+        explicitly; ``[0, 1, 2, 3]`` and ``None`` address the same articulation.
+        """
         sim = IsaacSimulation()
         art = _FakeArticulation()
         _seed_running_world(sim, self.JOINTS, art)
@@ -129,8 +139,7 @@ class TestSendActionPartialDict:
         result = sim.send_action([0.1, 0.2, 0.3, 0.04], robot_name="arm")
         assert result["status"] == "success", result
         act = art.last_action
-        # A positional vector addresses every joint -> joint_indices None (all).
-        assert act.joint_indices is None
+        assert list(np.asarray(act.joint_indices)) == list(range(len(self.JOINTS)))
         assert list(np.asarray(act.joint_positions)) == pytest.approx([0.1, 0.2, 0.3, 0.04])
 
 
@@ -143,10 +152,17 @@ class TestCreateWorldGravity:
         assert "z-aligned" in text or "z-aligned gravity" in text
 
     def test_wrong_length_vector_rejected(self):
+        """The component count is the shared domain's, so the wording is too.
+
+        ``create_world`` now normalizes through
+        ``SimEngine._normalize_gravity`` instead of counting components locally,
+        so a wrong-length vector reports the same sentence here as it does on
+        the MuJoCo and Newton backends.
+        """
         sim = IsaacSimulation()
         result = sim.create_world(gravity=[0.0, -9.81])
         assert result["status"] == "error"
-        assert "3 components" in result["content"][0]["text"]
+        assert "3-element" in result["content"][0]["text"]
 
     def test_non_finite_gravity_rejected(self):
         sim = IsaacSimulation()
@@ -161,7 +177,7 @@ class TestCreateWorldGravity:
         result = sim.create_world(gravity=[0.0, 0.0, -9.81])
         assert result["status"] == "error"
         assert "z-aligned" not in result["content"][0]["text"].lower()
-        assert "3 components" not in result["content"][0]["text"]
+        assert "3-element" not in result["content"][0]["text"]
 
 
 class TestAddRobotUnsupportedParams:

@@ -34,9 +34,11 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco
+from strands_robots.simulation.models import registry_entry
+from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, _ensure_mujoco, mj_name_to_id
 from strands_robots.simulation.mujoco.scene_ops import (
     actuate_robot_in_scene,
+    actuator_joint_id,
     add_weld_constraint,
     remove_equality_constraint,
 )
@@ -105,7 +107,7 @@ class ManipulationMixin:
         def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
             """Provided by ``Simulation``; declared here for type-checkers."""
 
-        def _unknown_robot_msg(self, requested: str) -> str:
+        def _unknown_robot_msg(self, requested: object) -> str:
             """Provided by ``Simulation``; declared here for type-checkers."""
 
     # -- shared guards -----------------------------------------------------
@@ -222,8 +224,8 @@ class ManipulationMixin:
         mj = _ensure_mujoco()
         with self._lock:
             model, data = self._world._model, self._world._data
-            parent_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, parent)
-            child_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, child)
+            parent_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, parent)
+            child_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, child)
             for label, body_id in (("parent", parent_id), ("child", child_id)):
                 if body_id < 0:
                     name = parent if label == "parent" else child
@@ -380,8 +382,8 @@ class ManipulationMixin:
         model, data = world._model, world._data
         stale: list[str] = []
         for child, record in attachments.items():
-            parent_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, str(record["parent"]))
-            child_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, child)
+            parent_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, str(record["parent"]))
+            child_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, child)
             free_jid = _find_free_joint(mj, model, child_id) if child_id >= 0 else -1
             if parent_id < 0 or child_id < 0 or free_jid < 0:
                 stale.append(child)
@@ -468,7 +470,7 @@ class ManipulationMixin:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
         if err := self._require_no_running_policy("actuate_robot", robot_name):
             return err
-        robot = self._world.robots.get(robot_name)
+        robot = registry_entry(self._world.robots, robot_name)
         if robot is None:
             return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
         if not _finite_non_negative(damping):
@@ -488,7 +490,10 @@ class ManipulationMixin:
 
             robot_joint_ids = set(robot.joint_ids)
             for act_id in range(model.nu):
-                if int(model.actuator_trnid[act_id, 0]) in robot_joint_ids:
+                # Gate on the transmission: an actuator driving a tendon, site or
+                # body carries an id from a different space, so comparing it raw
+                # refuses a robot whose joint merely shares a number with one.
+                if actuator_joint_id(model, act_id, mj) in robot_joint_ids:
                     return {
                         "status": "error",
                         "content": [
@@ -573,8 +578,11 @@ class ManipulationMixin:
             # robot.actuator_ids.
             model, data = self._world._model, self._world._data
             for act_id in robot.actuator_ids:
-                jnt_id = int(model.actuator_trnid[act_id, 0])
-                if 0 <= jnt_id < model.njnt:
+                # A non-joint transmission has no joint position to hold, and its
+                # trnid indexes another entity table - seeding ctrl from it would
+                # command a gripper from an unrelated joint's angle.
+                jnt_id = actuator_joint_id(model, act_id, mj)
+                if jnt_id >= 0:
                     data.ctrl[act_id] = data.qpos[int(model.jnt_qposadr[jnt_id])]
             mj.mj_forward(model, data)
             n_added = len(kp_by_joint)
@@ -630,7 +638,7 @@ class ManipulationMixin:
                 data.qacc_warmstart[:] = 0.0
                 scope = f"all {int(model.nv)} DOFs"
             else:
-                robot = self._world.robots.get(robot_name)
+                robot = registry_entry(self._world.robots, robot_name)
                 if robot is None:
                     return {"status": "error", "content": [{"text": self._unknown_robot_msg(robot_name)}]}
                 n_zeroed = 0

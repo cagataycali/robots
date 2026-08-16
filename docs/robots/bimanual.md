@@ -17,7 +17,7 @@ sim = Robot("trossen_wxai")     # Trossen WX-AI
 
 | Name | Description | Joints | Aliases |
 |------|-------------|-------:|---------|
-| `aloha` | ALOHA Bimanual (2x ViperX 300s, 14-DOF + 2 grippers) | 28 | `agibot_dual_arm`, `agibot_dual_arm_dexhand`, `agibot_dual_arm_full` |
+| `aloha` | ALOHA Bimanual (2x ViperX 300s, 14-DOF + 2 grippers) | 28 | `agibot_dual_arm`, `agibot_dual_arm_dexhand`, `agibot_dual_arm_full`, `agibot_dual_arm_gripper`, `agibot_genie1`, `bi_so_follower`, `galaxea_r1_pro` |
 | `bi_openarm` | Bi-manual OpenArm (dual-arm coordination) _(hardware-only, no sim asset)_ | ? | `bi_openarm_follower`, `dual_openarm`, `openarm_bimanual` |
 | `bi_rebot_b601` | Bi-manual reBot B601-DM (dual 6-DOF + gripper, Damiao CAN motors) _(hardware-only, no sim asset)_ | ? | `bi_rebot_b601_follower`, `dual_rebot_b601` |
 | `trossen_wxai` | Trossen WidowX AI Bimanual | 17 | `trossen_ai_bimanual` |

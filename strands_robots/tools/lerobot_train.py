@@ -28,6 +28,12 @@ import psutil
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots.utils import (
+    positive_count_error,
+    validation_split_error,
+    validation_split_fraction,
+)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -102,6 +108,10 @@ _BLOCKED_EXTRA_FLAGS = frozenset(
         "wandb.api_key",
         "dataset.root",
         "policy.pretrained_path",
+        # Blocked in both spellings, and the pair is not a duplicate: the named
+        # push_to_hub parameter is gated under the policy.-prefixed key (the only
+        # one LeRobot accepts), while the bare key covers the raw extra_flags
+        # passthrough. The allowlist entry that clears one does not clear the other.
         "push_to_hub",
         "policy.push_to_hub",
         "hub_repo_id",
@@ -306,6 +316,22 @@ class SessionManager:
         return self._load_sessions()
 
 
+def _read_total_tasks(dataset_root: str) -> int:
+    """Return ``total_tasks`` from a LeRobot v3 dataset's ``meta/info.json``.
+
+    lerobot's own field defaults to 0, and older datasets may omit it entirely;
+    both mean "no task count recorded" and are returned as 0, which callers
+    treat as single-task.
+    """
+    info_path = Path(dataset_root) / "meta" / "info.json"
+    if not info_path.exists():
+        return 0
+    with open(info_path) as f:
+        info = json.load(f)
+    total = info.get("total_tasks")
+    return total if isinstance(total, int) and not isinstance(total, bool) else 0
+
+
 def _read_total_episodes(dataset_root: str) -> int:
     """Return ``total_episodes`` from a LeRobot v3 dataset's ``meta/info.json``.
 
@@ -367,10 +393,20 @@ def build_train_command(
     ``--config_path=<ckpt>/train_config.json --resume=true`` form lerobot's
     validate() requires, instead of the from-scratch flags.
 
+    ``steps`` and ``batch_size`` size the run, so each is checked against the
+    shared positive-count domain before it reaches the argv. lerobot declares
+    both as a plain ``int``: ``steps`` bounds the training loop
+    (``for _ in range(step, cfg.steps)``, which is empty for a non-positive
+    value) and ``batch_size`` reaches ``torch.utils.data.DataLoader``, which
+    requires a positive integer. Passing ``None`` for either omits the flag and
+    leaves lerobot's own default in place.
+
     Raises:
         ValueError: if ``lora`` and ``train_expert_only`` are both set (both
             freeze the VLM and are mutually exclusive), if ``train_expert_only``
-            is requested for a non-expert policy, or if ``num_gpus < 1``.
+            is requested for a non-expert policy, if ``num_gpus < 1``, or if a
+            supplied ``steps`` / ``batch_size`` - or, under ``lora``, a supplied
+            ``lora_r`` / ``lora_alpha`` - is not a positive integer.
     """
     if lora and train_expert_only:
         raise ValueError(
@@ -383,6 +419,16 @@ def build_train_command(
         )
     if num_gpus < 1:
         raise ValueError(f"num_gpus must be >= 1, got {num_gpus}")
+    # The two knobs that size the run. An unusable value here is not merely
+    # rejected downstream: it is written into the argv of a DETACHED process, so
+    # the caller is told the run started and only the training log records that
+    # it could not be honored. ``None`` means "omit the flag and keep lerobot's
+    # default", so only a supplied value is checked.
+    for size_param, size_value in (("steps", steps), ("batch_size", batch_size)):
+        if size_value is not None:
+            size_error = positive_count_error(size_value, size_param, "lerobot_train")
+            if size_error:
+                raise ValueError(size_error)
 
     resume_config = _has_resumable_checkpoint(output_dir) if (resume and output_dir) else None
 
@@ -460,6 +506,17 @@ def build_train_command(
 
     if lora:
         cmd.append("--peft.method_type=LORA")
+        # The adapter's rank and scaling numerator, on the same shared count
+        # domain as the run-size knobs above. peft judges only the rank, and only
+        # from inside get_peft_model once the base model is loaded; lora_alpha is
+        # a bare numerator nothing compares, so alpha=0 trains an adapter whose
+        # scaling is 0.0 and which cannot change the model's output. Only checked
+        # under `lora`, since neither flag is emitted otherwise.
+        for lora_param, lora_value in (("lora_r", lora_r), ("lora_alpha", lora_alpha)):
+            if lora_value is not None:
+                lora_error = positive_count_error(lora_value, lora_param, "lerobot_train")
+                if lora_error:
+                    raise ValueError(lora_error)
         if lora_r is not None:
             cmd.append(f"--peft.r={lora_r}")
         if lora_alpha is not None:
@@ -468,16 +525,34 @@ def build_train_command(
             cmd.append(f"--peft.target_modules={lora_target_modules}")
 
     if val_episodes is not None:
-        if val_episodes <= 0:
-            raise ValueError(f"val_episodes must be positive, got {val_episodes}")
+        # The same shared count domain the trainer's validate() applies, rather
+        # than a local `<= 0` test: that comparison reads True as a silent
+        # request for one episode, lets 2.7 through to a fraction that reserves
+        # a different whole number, renders nan as `eval_split=nan`, and raises
+        # out of itself for a string.
+        count_err = positive_count_error(val_episodes, "val_episodes", "lerobot_train")
+        if count_err:
+            raise ValueError(count_err)
         total = _read_total_episodes(dataset_root)
         if val_episodes >= total:
             raise ValueError(
                 f"val_episodes={val_episodes} leaves no training data (dataset has {total} episodes); reserve fewer."
             )
-        train_eps = list(range(total - val_episodes))
-        episodes_arg = "[" + ",".join(str(e) for e in train_eps) + "]"
-        cmd.append(f"--dataset.episodes={episodes_arg}")
+        split_err = validation_split_error(val_episodes, _read_total_tasks(dataset_root), "lerobot_train")
+        if split_err:
+            raise ValueError(split_err)
+        # Hand the split to lerobot instead of restricting --dataset.episodes
+        # ourselves: it holds out the tail AND computes an eval loss on it, where
+        # an episode restriction only shrinks the TRAINING set and leaves the
+        # reserved episodes unused by either half.
+        supplied = {key.lstrip("-") for key in (extra_flags or {})}
+        if "dataset.eval_split" not in supplied:
+            cmd.append(f"--dataset.eval_split={validation_split_fraction(val_episodes, total)}")
+        if "eval_steps" not in supplied:
+            # Validate on the caller's own checkpoint cadence, so every saved
+            # checkpoint has a validation loss recorded beside it. A non-positive
+            # save_freq disables periodic saving, so evaluate once at the end.
+            cmd.append(f"--eval_steps={save_freq if save_freq > 0 else steps}")
 
     if extra_flags:
         for key, value in extra_flags.items():
@@ -531,9 +606,15 @@ def lerobot_train(
         smolvla; sourced live so it tracks lerobot).
 
     Overfit guard:
-        ``val_episodes=N`` reserves the LAST N episodes for evaluation by training
-        only on episodes ``[0 .. total-N-1]`` via ``--dataset.episodes``. The total
-        is read from ``meta/info.json``.
+        ``val_episodes=N`` reserves the LAST N episodes as a validation set by
+        emitting ``--dataset.eval_split`` (the fraction that makes lerobot hold
+        out exactly N) together with ``--eval_steps``, so lerobot both keeps the
+        tail out of training AND logs an eval loss over it at the checkpoint
+        cadence. The episode and task counts are read from ``meta/info.json``;
+        a dataset with several tasks is refused because lerobot applies the
+        split fraction per task, where a global count is not expressible.
+        Passing ``dataset.eval_split`` or ``eval_steps`` in ``extra_flags``
+        overrides the derived value.
 
     Resume:
         ``resume=True`` emits ``--config_path=<ckpt>/train_config.json --resume=true``
@@ -571,9 +652,22 @@ def lerobot_train(
         lora_target_modules: PEFT target module spec (e.g. "all-linear").
         train_expert_only: Freeze the VLM, train only the action expert
             (policies exposing train_expert_only: pi0/pi05/smolvla).
-        val_episodes: Reserve the LAST N episodes as a held-out validation split.
+        val_episodes: A positive integer below the dataset's episode count, or
+            None for no held-out set. Reserves the LAST N episodes as a held-out
+            validation split, evaluated every ``save_freq`` steps so each checkpoint has
+            a validation loss beside it.
         num_gpus: Number of GPUs; >1 launches via accelerate --multi_gpu.
         push_to_hub: Push the trained checkpoint to the HF Hub at the end.
+            Publishing is an outward-facing action, so a true value requires
+            operator approval through ``tool_context``. A headless run
+            pre-approves it with
+            ``STRANDS_TRAIN_EXTRA_FLAGS_ALLOW=policy.push_to_hub``: this
+            parameter is gated under the ``policy.``-prefixed key, the only
+            spelling LeRobot accepts (``push_to_hub`` is a field of its policy
+            config, not of the train config). The bare ``push_to_hub``
+            allowlist entry clears the raw ``extra_flags={'push_to_hub': True}``
+            passthrough instead -- one flag, two spellings, two entries. The
+            default false value emits the flag unchanged and is not gated.
         resume: Resume from the latest checkpoint under output_dir when present.
         action: One of start, status, stop, list.
         session_name: Session identifier (auto-generated on start; required for
@@ -638,6 +732,11 @@ def lerobot_train(
 
             if pretrained_path:
                 gate_err = _gate_extra_flags({"policy.pretrained_path": pretrained_path}, tool_context)
+                if gate_err:
+                    return gate_err
+
+            if push_to_hub:
+                gate_err = _gate_extra_flags({"policy.push_to_hub": push_to_hub}, tool_context)
                 if gate_err:
                     return gate_err
 

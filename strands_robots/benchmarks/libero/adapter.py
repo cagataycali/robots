@@ -30,14 +30,17 @@ the one that pulls in the upstream package to discover task files.
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import importlib
+import inspect
 import json
 import logging
+import math
 import os
 import random
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
@@ -52,13 +55,100 @@ from strands_robots.benchmarks.libero.bddl_parser import (
     parse_bddl_file,
 )
 from strands_robots.simulation.benchmark import BenchmarkProtocol, StepInfo
+from strands_robots.simulation.isaac.delta_eef import IsaacDeltaEEFController
 from strands_robots.simulation.models import SimCamera, SimRobot
-from strands_robots.utils import get_base_dir, require_optional
+from strands_robots.utils import get_base_dir, positive_count_error, require_optional
 
 if TYPE_CHECKING:
     from strands_robots.simulation.base import SimEngine
 
 logger = logging.getLogger(__name__)
+
+# #1812 - LIBERO-on-Isaac Franka joint/link names. The Isaac eval path
+# (``examples/libero/run_isaac.py``) loads Isaac Sim's bundled Franka USD,
+# whose articulation DOFs are named ``panda_joint1..7`` (arm) plus
+# ``panda_finger_joint1/2`` (0..0.04 m prismatic fingers), with the
+# end-effector link ``panda_hand``. LIBERO is a Franka-only benchmark, so
+# these are constants rather than constructor knobs; a robot that lacks
+# them is a setup error surfaced through ``_ControllerInstallError``.
+_ISAAC_FRANKA_ARM_JOINTS: tuple[str, ...] = tuple(f"panda_joint{i}" for i in range(1, 8))
+_ISAAC_FRANKA_GRIPPER_JOINTS: tuple[str, ...] = ("panda_finger_joint1", "panda_finger_joint2")
+_ISAAC_FRANKA_EEF_LINK = "panda_hand"
+
+
+#: Key the per-camera config must not carry: :meth:`LiberoAdapter._install_libero_cameras`
+#: supplies the camera name itself from the mapping key, so a config that also
+#: sets it collides on every backend.
+_CAMERA_NAME_KEY = "name"
+
+
+def camera_config_error(add_camera: Any, cam_name: str, cam_kwargs: Mapping[str, Any]) -> str | None:
+    """Report a per-camera config the sim's ``add_camera`` cannot accept.
+
+    ``LiberoAdapter(cameras=...)`` documents each value as the keyword
+    arguments forwarded to :meth:`Simulation.add_camera`, so a key that
+    method does not declare cannot be honored on any call: the splat raises
+    :class:`TypeError` before the camera is created. The install loop is
+    best-effort about a sim *failing* to add a camera - one flaky camera must
+    not kill a whole eval - and that tolerance used to cover this case too,
+    which left a one-character typo silently equivalent to omitting the
+    camera: the policy's required ``image`` / ``wrist_image`` view never
+    entered the world and every subsequent inference failed for a reason
+    unrelated to the policy under test.
+
+    The accepted key set belongs to the backend, not to this adapter -
+    MuJoCo and Newton declare ``parent_body`` and Isaac does not - so it is
+    read from the bound method rather than hard-coded here. A sim whose
+    ``add_camera`` takes ``**kwargs`` genuinely accepts any key, so only the
+    reserved name is checked there.
+
+    ``name`` is reserved: the install loop supplies it positionally by
+    keyword, so a config that also sets it is a guaranteed
+    "multiple values for keyword argument" on every backend.
+
+    Args:
+        add_camera: The bound ``add_camera`` of the sim under configuration.
+        cam_name: Camera name the config is keyed by, for the message.
+        cam_kwargs: The caller-supplied per-camera keyword mapping.
+
+    Returns:
+        A message naming every unusable key, or ``None`` when every key can
+        be forwarded.
+    """
+    try:
+        params = inspect.signature(add_camera).parameters
+    except (TypeError, ValueError):
+        # Not introspectable (a C-implemented or exotic callable): nothing can
+        # be checked, so defer to the call itself as before.
+        return None
+
+    takes_var_kw = any(pp.kind is inspect.Parameter.VAR_KEYWORD for pp in params.values())
+    accepted = {
+        pname
+        for pname, pp in params.items()
+        if pname != "self" and pp.kind not in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL)
+    }
+    prefix = f"LiberoAdapter cameras[{cam_name!r}]: "
+
+    if _CAMERA_NAME_KEY in cam_kwargs:
+        return (
+            f"{prefix}{_CAMERA_NAME_KEY!r} must not be set - the camera name is the mapping key, "
+            f"and the install passes it to add_camera itself. Drop it from the config."
+        )
+    if takes_var_kw:
+        return None
+
+    unknown = [str(k) for k in cam_kwargs if k not in accepted]
+    if not unknown:
+        return None
+    parts = []
+    for key in sorted(unknown):
+        close = difflib.get_close_matches(key.lower(), sorted(accepted), n=1, cutoff=0.7)
+        parts.append(f"{key!r}" + (f" (did you mean {close[0]!r}?)" if close else ""))
+    return (
+        f"{prefix}add_camera does not accept {', '.join(parts)}. "
+        f"Accepted keys: {', '.join(sorted(accepted - {_CAMERA_NAME_KEY}))}."
+    )
 
 
 class LiberoAdapter(BenchmarkProtocol):
@@ -85,11 +175,11 @@ class LiberoAdapter(BenchmarkProtocol):
             ``MultiStepConfig.max_episode_steps`` for LIBERO eval -
             see ``Isaac-GR00T/gr00t/eval/rollout_policy.py``). Override
             per-task by passing ``max_steps=`` to the constructor or
-            mutating the attribute after construction. Pre-#168 we used the LIBERO repository's lifelong-learning
-            convention of 300; that was too short for libero_10's
-            longer-horizon manipulation tasks (e.g. multi-step pick-
-            and-place chains) and was contributing to ``success_rate=0``
-            on tasks that needed more time. 720 matches the canonical
+            mutating the attribute after construction. The LIBERO
+            repository's lifelong-learning convention of 300 is too short
+            for libero_10's longer-horizon manipulation tasks (e.g.
+            multi-step pick-and-place chains) and drives ``success_rate=0``
+            on tasks that need more time. 720 matches the canonical
             GR00T-N1.7-LIBERO eval setup.
         problem: The parsed :class:`BDDLProblem`. Stored for introspection
             (agents may read ``problem.language`` as the instruction).
@@ -145,8 +235,11 @@ class LiberoAdapter(BenchmarkProtocol):
         cameras: dict[str, dict[str, Any]] | None = None,
         eef_body_name: str | None = None,
         eef_state_site_name: str | None = None,
+        eef_pos_offset: list[float] | None = None,
+        eef_quat_offset: list[float] | None = None,
         gripper_joint_name: str | None = None,
         state_gripper_joint_names: list[str] | None = None,
+        state_gripper_signs: list[float] | None = None,
         inject_eef_state: bool = True,
         auto_generate_scene: bool = True,
         scene_cache_dir: str | None = None,
@@ -167,7 +260,8 @@ class LiberoAdapter(BenchmarkProtocol):
             scene_path: Optional MJCF to ``sim.load_scene()`` on each
                 episode start. ``None`` triggers ``auto_generate_scene``
                 if enabled (see below).
-            max_steps: Override the class-level 300.
+            max_steps: Override the class-level default (720). Must be a
+                positive integer - it is the per-episode step cap.
             init_jitter: Per-episode ±jitter (metres) applied to xy of every
                 object referenced by ``(:init (on A B))`` clauses. Default
                 ``0.0`` matches LIBERO's deterministic-reset convention -
@@ -188,8 +282,11 @@ class LiberoAdapter(BenchmarkProtocol):
                 no-ops on auto-generated scenes.
             cameras: Override / extend :attr:`LIBERO_CAMERAS`. Keyed by
                 camera name, each value is forwarded as ``**kwargs`` to
-                :meth:`Simulation.add_camera`. Passing an empty dict
-                disables camera installation regardless of
+                :meth:`Simulation.add_camera`; a key that method does not
+                accept, or a ``"name"`` key (the mapping key already names
+                the camera), is refused when the cameras are installed
+                rather than leaving the camera silently absent. Passing an
+                empty dict disables camera installation regardless of
                 ``install_cameras``.
             eef_body_name: MuJoCo body name whose pose is read for the
                 LIBERO ``state.x/y/z/roll/pitch/yaw`` keys *as a fallback*
@@ -220,6 +317,28 @@ class LiberoAdapter(BenchmarkProtocol):
                 deltas. The site is preferred; the body is used as a
                 fallback when the site doesn't exist (non-RoboSuite
                 scenes).
+            eef_pos_offset: Optional ``[x, y, z]`` offset (metres),
+                expressed in the EEF *body's local frame*, added to the
+                position read via the ``get_body_state`` fallback path.
+                Backends without the RoboSuite grip site (e.g. Isaac,
+                whose Franka USD has no ``gripper0_grip_site``) can only
+                report the wrist-body pose, which sits ~9.7 cm behind
+                the gripper tip that ``state.x/y/z`` was trained on
+                (#168). This offset translates the body read to the
+                site-equivalent point: ``pos + R(body_quat) @ offset``.
+                ``None`` (default) applies no offset. Never applied to
+                the direct MuJoCo site read (that source IS the site).
+            eef_quat_offset: Optional ``[w, x, y, z]`` unit quaternion,
+                right-multiplied onto the orientation read via the
+                ``get_body_state`` fallback path (a constant local-frame
+                correction: ``quat = body_quat * offset``). Use when the
+                backend's EEF body frame differs from RoboSuite's
+                ``robot0_right_hand`` frame by a fixed rotation (the
+                frames are rigidly attached to the same physical link,
+                so the correction is configuration-independent). ``None``
+                (default) applies no correction. The position offset is
+                applied using the RAW body orientation, before this
+                correction.
             gripper_joint_name: Joint name whose ``qpos`` is read for the
                 LIBERO ``state.gripper`` key. ``None`` (default) triggers
                 auto-resolution from the scene at episode start using
@@ -231,6 +350,31 @@ class LiberoAdapter(BenchmarkProtocol):
                 is ``"finger_joint1"``. The Menagerie Panda's two-finger
                 MJCF equality constraint mirrors the value to the second
                 finger, so reading just one is sufficient.
+            state_gripper_joint_names: Ordered finger joint names read for the
+                LIBERO ``state.gripper`` vector, in the order the trained state
+                vector uses. ``None`` (default) auto-derives
+                ``["<scene_gripper_prefix>finger_joint1",
+                "<scene_gripper_prefix>finger_joint2"]`` - see
+                :attr:`state_gripper_joint_names`, which exposes the resolved
+                list. The number of names is the width of ``state.gripper``:
+                :meth:`_read_gripper_qpos` reads one ``qpos`` per name, so a list
+                that is not 2 long disagrees with ``state_gripper_signs``, which
+                IS arity-checked to 2 at construction. That disagreement is not
+                refused - the signs are skipped with a warning and
+                ``state.gripper`` is recorded unsigned, which is the
+                out-of-distribution state #168 exists to prevent - so keep the
+                two the same length when overriding either.
+            state_gripper_signs: Optional 2-element sign/scale vector
+                multiplied elementwise onto the ``state.gripper``
+                2-vector, whatever source produced it. RoboSuite's
+                training data records the two Panda finger qpos with
+                OPPOSITE signs (``finger_joint1`` in ``[0, +0.04]``,
+                ``finger_joint2`` in ``[-0.04, 0]``); backends whose
+                gripper model drives both fingers positive (e.g. the
+                Isaac Franka USD, whose ``panda_finger_joint2`` follows
+                the URDF ``[0, 0.04]`` mimic convention) must pass
+                ``[1.0, -1.0]`` to restore the trained sign convention.
+                ``None`` (default) leaves values as read.
             inject_eef_state: When ``True`` (default), the adapter's
                 :meth:`augment_observation` injects ``x`` / ``y`` / ``z``
                 / ``roll`` / ``pitch`` / ``yaw`` / ``gripper`` keys
@@ -246,7 +390,7 @@ class LiberoAdapter(BenchmarkProtocol):
                 generator. The generated XML is cached on disk so
                 subsequent episodes / processes reuse it without
                 re-running ``libero``. Set to ``False`` to keep the
-                pre-#164 behaviour of running against a bare Panda when
+                fallback behaviour of running against a bare Panda when
                 no ``scene_path`` is provided.
             scene_cache_dir: Filesystem location for the generated-scene
                 cache. Defaults to ``$STRANDS_BASE_DIR/scene_cache/libero/``
@@ -354,11 +498,11 @@ class LiberoAdapter(BenchmarkProtocol):
                 action. ``PolicyRunner._evaluate_with_spec`` catches the
                 exception from ``on_episode_start`` and returns a
                 structured ``{"status": "error", ...}`` dict, so a broken
-                *setup* (e.g. the ``numba`` / ``coverage>=7`` import clash,
+                *setup* (e.g. the ``numba`` / ``coverage`` import clash,
                 missing robosuite, missing site/actuator IDs) is no longer
                 indistinguishable from a bad *policy* scoring
                 ``success_rate=0`` on a green run (#522). Set to ``False``
-                to restore the pre-#522 best-effort behaviour (log + run
+                to restore the best-effort behaviour (log + run
                 with actions no-op'd); the failure is still recorded on
                 :attr:`action_controller_error` so callers/CI can tag the
                 result. Dependency-clash failures (``ImportError`` /
@@ -387,7 +531,15 @@ class LiberoAdapter(BenchmarkProtocol):
         if self._init_jitter < 0:
             raise ValueError(f"init_jitter must be >= 0, got {init_jitter}")
         if max_steps is not None:
-            self.max_steps = int(max_steps)
+            # Same shared count domain as ``init_jitter`` above and as the
+            # declarative spec path: the value becomes this benchmark's
+            # per-episode ``range(max_steps)`` bound, so ``int()`` alone
+            # silently truncated ``2.7`` to 2, read ``True`` as 1, and let a
+            # zero or negative horizon through to run episodes of zero
+            # length that still report a 0% success rate.
+            if error := positive_count_error(max_steps, "max_steps", type(self).__name__):
+                raise ValueError(error)
+            self.max_steps = max_steps
         self._install_cameras = bool(install_cameras)
         # Snapshot the camera config at construction time so subsequent
         # mutations to LIBERO_CAMERAS don't leak across instances.
@@ -425,11 +577,11 @@ class LiberoAdapter(BenchmarkProtocol):
         # State-side gripper joint names (#168). LIBERO trains
         # ``state.gripper`` on a 2-element vector ``[finger1.qpos, finger2.qpos]``
         # - the two fingers have OPPOSITE-sign qpos by physical
-        # convention (they move apart). Pre-#168 we read ONE
-        # finger from ``obs[gripper_joint_name]`` and packed it as
-        # ``[v, v]`` (both positive), which is structurally
-        # out-of-distribution for GR00T-LIBERO and produced the
-        # near-zero deltas observed across earlier iterations. The current implementation
+        # convention (they move apart). Reading ONE finger from
+        # ``obs[gripper_joint_name]`` and packing it as ``[v, v]``
+        # (both positive) is structurally out-of-distribution for
+        # GR00T-LIBERO and produces near-zero policy deltas.
+        # The current implementation
         # reads both finger qpos directly from ``data.qpos[jnt_qposadr]``.
         # Default auto-derives ``["<gripper_prefix>finger_joint1",
         # "<gripper_prefix>finger_joint2"]`` (i.e.
@@ -439,7 +591,26 @@ class LiberoAdapter(BenchmarkProtocol):
         self._user_state_gripper_joint_names: list[str] | None = (
             [str(n) for n in state_gripper_joint_names] if state_gripper_joint_names is not None else None
         )
+        # #1802 - EEF source corrections for backends without the RoboSuite
+        # grip site (Isaac). Validated eagerly: a malformed offset silently
+        # feeding GR00T garbage state is exactly the failure class #168
+        # spent 30 rounds bisecting.
+        self._eef_pos_offset: list[float] | None = _validated_float_vector(eef_pos_offset, 3, "eef_pos_offset")
+        self._eef_quat_offset: list[float] | None = _validated_float_vector(eef_quat_offset, 4, "eef_quat_offset")
+        if self._eef_quat_offset is not None:
+            norm = float(np.linalg.norm(self._eef_quat_offset))
+            if not (0.99 < norm < 1.01):
+                raise ValueError(f"eef_quat_offset must be a unit quaternion (wxyz); got norm={norm:.4f}")
+        self._state_gripper_signs: list[float] | None = _validated_float_vector(
+            state_gripper_signs, 2, "state_gripper_signs"
+        )
         self._inject_eef_state = bool(inject_eef_state)
+        # #1802 - loud-error latch for augment_observation: when EEF state
+        # injection is enabled but produces no state keys, the failure used
+        # to surface only as the GR00T server's cryptic "State key 'state.x'
+        # must be in observation" rejection. Log ERROR once per adapter
+        # instead (once: augment_observation runs per control step).
+        self._eef_state_missing_logged = False
         self._auto_generate_scene = bool(auto_generate_scene)
         self._scene_cache_dir = scene_cache_dir
         # Default camera-name alias map matches RoboSuite/LIBERO's two
@@ -494,6 +665,10 @@ class LiberoAdapter(BenchmarkProtocol):
         # episode so qpos/qvel land on the same canonical state every time.
         self._canonical_qpos: np.ndarray | None = None
         self._canonical_qvel: np.ndarray | None = None
+        # CPU-side MuJoCo decode model for the object-pose init-state branch
+        # (#1820, Isaac backend). Cached as (scene_path, model, data) so the
+        # per-episode pose decode doesn't recompile the scene MJCF.
+        self._pose_decode_cache: tuple[str, Any, Any] | None = None
         self._bddl_source = bddl_source
         self._bddl_path = bddl_path
         self._success_fn: Callable[[SimEngine], bool] = compile_goal(problem.goal)
@@ -507,6 +682,13 @@ class LiberoAdapter(BenchmarkProtocol):
         # clears the tag.
         self._strict_action_controller = bool(strict_action_controller)
         self._action_controller_error: str | None = None
+        # #1812 - name of the robot an Isaac-side delta-EEF action
+        # controller was installed for (via
+        # ``IsaacSimulation.install_action_controller``), or ``None`` when
+        # the MuJoCo OSC path (or no path) is active. Used by the
+        # post-install settle step in :meth:`on_episode_start`, which
+        # otherwise only fires for the MuJoCo ``backend_state`` seam.
+        self._isaac_action_controller_robot: str | None = None
 
         # #168 - diagnostic logging gate for the STATE side
         # of the policy interface. Set ``STRANDS_LIBERO_STATE_LOG=1`` to
@@ -555,8 +737,11 @@ class LiberoAdapter(BenchmarkProtocol):
         cameras: dict[str, dict[str, Any]] | None = None,
         eef_body_name: str | None = None,
         eef_state_site_name: str | None = None,
+        eef_pos_offset: list[float] | None = None,
+        eef_quat_offset: list[float] | None = None,
         gripper_joint_name: str | None = None,
         state_gripper_joint_names: list[str] | None = None,
+        state_gripper_signs: list[float] | None = None,
         inject_eef_state: bool = True,
         auto_generate_scene: bool = True,
         scene_cache_dir: str | None = None,
@@ -584,8 +769,11 @@ class LiberoAdapter(BenchmarkProtocol):
             cameras=cameras,
             eef_body_name=eef_body_name,
             eef_state_site_name=eef_state_site_name,
+            eef_pos_offset=eef_pos_offset,
+            eef_quat_offset=eef_quat_offset,
             gripper_joint_name=gripper_joint_name,
             state_gripper_joint_names=state_gripper_joint_names,
+            state_gripper_signs=state_gripper_signs,
             inject_eef_state=inject_eef_state,
             auto_generate_scene=auto_generate_scene,
             scene_cache_dir=scene_cache_dir,
@@ -611,8 +799,11 @@ class LiberoAdapter(BenchmarkProtocol):
         cameras: dict[str, dict[str, Any]] | None = None,
         eef_body_name: str | None = None,
         eef_state_site_name: str | None = None,
+        eef_pos_offset: list[float] | None = None,
+        eef_quat_offset: list[float] | None = None,
         gripper_joint_name: str | None = None,
         state_gripper_joint_names: list[str] | None = None,
+        state_gripper_signs: list[float] | None = None,
         inject_eef_state: bool = True,
         auto_generate_scene: bool = True,
         scene_cache_dir: str | None = None,
@@ -635,8 +826,11 @@ class LiberoAdapter(BenchmarkProtocol):
             cameras=cameras,
             eef_body_name=eef_body_name,
             eef_state_site_name=eef_state_site_name,
+            eef_pos_offset=eef_pos_offset,
+            eef_quat_offset=eef_quat_offset,
             gripper_joint_name=gripper_joint_name,
             state_gripper_joint_names=state_gripper_joint_names,
+            state_gripper_signs=state_gripper_signs,
             inject_eef_state=inject_eef_state,
             auto_generate_scene=auto_generate_scene,
             scene_cache_dir=scene_cache_dir,
@@ -709,8 +903,8 @@ class LiberoAdapter(BenchmarkProtocol):
         #168: LIBERO trains ``state.gripper`` on a 2-element
         vector ``[finger1.qpos, finger2.qpos]`` whose elements have
         OPPOSITE signs by physical convention (the two fingers move
-        apart). Pre-#168 we read ONE finger and packed it as
-        ``[v, v]`` (both positive), which fed GR00T structurally
+        apart). Reading ONE finger and packing it as
+        ``[v, v]`` (both positive) feeds GR00T structurally
         out-of-distribution state. The property returns the names in
         the order they appear in the trained state vector.
         """
@@ -980,20 +1174,23 @@ class LiberoAdapter(BenchmarkProtocol):
         # settle to avoid raising - the eval will still run, just at
         # the un-settled init pose.
         if scene_was_loaded:
-            world = getattr(sim, "_world", None)
-            if world is not None:
-                backend_state = getattr(world, "_backend_state", None)
-                if isinstance(backend_state, dict) and "action_controller" in backend_state:
-                    send_action = getattr(sim, "send_action", None)
-                    if callable(send_action):
-                        try:
-                            send_action({})
-                        except Exception as e:  # noqa: BLE001 - never abort eval on settle failure
-                            logger.warning(
-                                "LiberoAdapter.on_episode_start: settle send_action({}) raised %s; "
-                                "first observation will be at raw init_state instead of init_state+1step",
-                                e,
-                            )
+            controller_installed = self._isaac_action_controller_robot is not None
+            if not controller_installed:
+                world = getattr(sim, "_world", None)
+                if world is not None:
+                    backend_state = getattr(world, "_backend_state", None)
+                    controller_installed = isinstance(backend_state, dict) and "action_controller" in backend_state
+            if controller_installed:
+                send_action = getattr(sim, "send_action", None)
+                if callable(send_action):
+                    try:
+                        send_action({})
+                    except Exception as e:  # noqa: BLE001 - never abort eval on settle failure
+                        logger.warning(
+                            "LiberoAdapter.on_episode_start: settle send_action({}) raised %s; "
+                            "first observation will be at raw init_state instead of init_state+1step",
+                            e,
+                        )
 
         # #168 - reset per-episode state-log counter so each
         # episode emits its own first N STATE_LOG lines (matches the
@@ -1218,8 +1415,8 @@ class LiberoAdapter(BenchmarkProtocol):
         # ``start_cameras_recording`` has its own
         # ``threading.local`` Renderer instance, but some driver-
         # level state (compiled shaders, texture caches, GLContext
-        # bind state) is process-shared. The reviewer's variant-B
-        # verification (#168) showed that without a main-thread
+        # bind state) is process-shared. Verification showed that
+        # without a main-thread
         # render after prewarm, the recorder thread's first ~15
         # render calls return GL clear-colour gradient even when
         # ``mj_forward`` has populated ``data.xpos / xmat``. A single
@@ -1467,8 +1664,8 @@ class LiberoAdapter(BenchmarkProtocol):
         2. Fall back to the BODY path via
            ``sim.get_body_state(self._eef_body_name)`` for non-RoboSuite
            scenes that don't ship the canonical site (e.g. bare
-           Menagerie Panda). The fallback path matches the pre-#168
-           behaviour exactly.
+           Menagerie Panda). The fallback path reads the body pose
+           directly.
         3. Convert the site/body's rotation matrix or quaternion to
            extrinsic XYZ Euler ``(roll, pitch, yaw)`` to match the
            LIBERO/RoboSuite ``mat2euler(..., axes='sxyz')`` convention
@@ -1514,22 +1711,28 @@ class LiberoAdapter(BenchmarkProtocol):
         # ``[gripper0_finger_joint1.qpos, gripper0_finger_joint2.qpos]``.
         # The two fingers have OPPOSITE-sign qpos by physical
         # convention (they move apart); typical at-rest values are
-        # ``[+0.0208, -0.0208]``. Pre-#168 we read only one finger
-        # via ``obs[self._gripper_joint_name]`` and packed it as
-        # ``[v, v]`` (both positive), which fed GR00T structurally
-        # out-of-distribution state - manifest as near-zero policy
-        # deltas across rounds 23-32 of #168.
+        # ``[+0.0208, -0.0208]``. Reading only one finger via
+        # ``obs[self._gripper_joint_name]`` and packing it as
+        # ``[v, v]`` (both positive) feeds GR00T structurally
+        # out-of-distribution state, which manifests as near-zero
+        # policy deltas.
         #
         # Read both finger qpos directly from ``data.qpos[jnt_qposadr]``
-        # using the canonical RoboSuite joint names. Falls back to the
-        # legacy single-joint duplicate-packing for non-RoboSuite
-        # scenes that don't ship two named finger joints.
+        # using the canonical RoboSuite joint names. On backends without
+        # a direct MuJoCo model (Isaac), fall back to reading both
+        # configured finger joints from the observation dict itself
+        # (#1802), then to the legacy single-joint duplicate-packing for
+        # scenes that don't ship two named finger joints. Whatever source
+        # produced the 2-vector, ``state_gripper_signs`` restores the
+        # RoboSuite sign convention when configured.
         gripper_qpos = self._read_gripper_qpos(sim)
+        if gripper_qpos is None:
+            gripper_qpos = self._read_gripper_qpos_from_obs(obs)
         if gripper_qpos is not None:
-            merged.setdefault("gripper", gripper_qpos)
+            merged.setdefault("gripper", self._apply_gripper_signs(gripper_qpos))
         else:
             # Legacy fallback - read one joint from obs and duplicate
-            # (preserves pre-#168 behaviour for non-RoboSuite
+            # (the documented fallback for non-RoboSuite
             # scenes; the duplicate-packing is wrong for LIBERO but
             # there's no better default for unknown gripper layouts).
             gripper_value = obs.get(self._gripper_joint_name)
@@ -1540,7 +1743,7 @@ class LiberoAdapter(BenchmarkProtocol):
                         gripper_value = val
                         break
             if isinstance(gripper_value, (int, float)) and not isinstance(gripper_value, bool):
-                merged.setdefault("gripper", [float(gripper_value), float(gripper_value)])
+                merged.setdefault("gripper", self._apply_gripper_signs([float(gripper_value), float(gripper_value)]))
             else:
                 logger.debug(
                     "LiberoAdapter: gripper joints %s not found via direct mujoco lookup, "
@@ -1588,6 +1791,37 @@ class LiberoAdapter(BenchmarkProtocol):
             cam_value = merged.get(cam_key)
             if isinstance(cam_value, np.ndarray) and cam_value.ndim >= 2:
                 merged[cam_key] = np.ascontiguousarray(cam_value[::-1, :])
+
+        # #1802 - loud, actionable failure when injection was requested
+        # but produced nothing. Before this check the only symptom was
+        # the GR00T server's per-call rejection ("State key 'state.x'
+        # must be in observation") after a silent DEBUG skip here -
+        # useless for diagnosing WHICH source failed. Logged once per
+        # adapter (augment_observation runs every control step).
+        if self._inject_eef_state and not self._eef_state_missing_logged:
+            missing = [k for k in ("x", "y", "z", "roll", "pitch", "yaw", "gripper") if k not in merged]
+            if missing:
+                self._eef_state_missing_logged = True
+                has_body_state = getattr(sim, "get_body_state", None) is not None
+                logger.error(
+                    "LiberoAdapter.augment_observation: could not inject EEF state key(s) %s "
+                    "(sim=%s, get_body_state=%s, eef_state_site_name=%r, eef_body_name=%r, "
+                    "gripper_joint_name=%r, state_gripper_joint_names=%s). A policy data-config "
+                    "that requires 'state.*' keys (e.g. libero_panda) will reject every "
+                    "observation with \"State key 'state.x' must be in observation\". Fix: pass "
+                    "eef_body_name= / gripper joint names that resolve on this backend (for the "
+                    "bundled Isaac Franka: eef_body_name='panda_hand', state_gripper_joint_names="
+                    "['panda_finger_joint1', 'panda_finger_joint2']), or set "
+                    "inject_eef_state=False if the backend supplies these keys natively. "
+                    "This error is logged once per adapter.",
+                    missing,
+                    type(sim).__name__,
+                    "available" if has_body_state else "NOT IMPLEMENTED",
+                    self.eef_state_site_name,
+                    self._eef_body_name,
+                    self._gripper_joint_name,
+                    self.state_gripper_joint_names,
+                )
 
         # #168 - emit one structured STATE_LOG line per
         # ``augment_observation`` call when STRANDS_LIBERO_STATE_LOG=1.
@@ -1733,6 +1967,25 @@ class LiberoAdapter(BenchmarkProtocol):
                 logger.debug("LiberoAdapter: get_body_state(%r) raised: %s", self._eef_body_name, e)
                 state_result = None
             fallback_pos, fallback_quat = _extract_pose(state_result)
+            # #1802 - site-equivalent corrections for backends whose only
+            # EEF source is the wrist body (Isaac has no RoboSuite grip
+            # site). The position offset is expressed in the body's local
+            # frame and therefore rotated by the RAW body orientation -
+            # before the quaternion correction, which realigns the frame
+            # to RoboSuite's ``robot0_right_hand`` convention afterwards.
+            if self._eef_pos_offset is not None and fallback_pos is not None:
+                if fallback_quat is not None:
+                    delta = _quat_wxyz_rotate_vec(fallback_quat, self._eef_pos_offset)
+                    fallback_pos = [p + d for p, d in zip(fallback_pos, delta)]
+                else:
+                    logger.debug(
+                        "LiberoAdapter: eef_pos_offset configured but get_body_state(%r) "
+                        "reported no orientation; cannot express the body-frame offset - "
+                        "using the uncorrected position",
+                        self._eef_body_name,
+                    )
+            if self._eef_quat_offset is not None and fallback_quat is not None:
+                fallback_quat = _quat_wxyz_multiply(fallback_quat, self._eef_quat_offset)
         else:
             logger.debug("LiberoAdapter: sim has no get_body_state(); skipping EEF state injection")
 
@@ -1757,9 +2010,9 @@ class LiberoAdapter(BenchmarkProtocol):
         finger joints; their values have OPPOSITE signs by physical
         convention (the Panda gripper's two-finger MJCF puts each
         finger on its own joint with mirrored ranges, e.g.
-        ``[0, +0.04]`` and ``[-0.04, 0]``). Pre-#168 the adapter
-        read ONE finger's value and packed it as ``[v, v]`` (both
-        positive), which is structurally OOD from training.
+        ``[0, +0.04]`` and ``[-0.04, 0]``). Reading ONE finger's value
+        and packing it as ``[v, v]`` (both positive) is structurally
+        OOD from training.
 
         Returns ``None`` (and the caller falls back to the legacy
         single-joint duplicate path) if any of:
@@ -1813,6 +2066,56 @@ class LiberoAdapter(BenchmarkProtocol):
                 )
                 return None
         return finger_qposes
+
+    def _read_gripper_qpos_from_obs(self, obs: dict[str, Any]) -> list[float] | None:
+        """Read both finger qpos from the observation dict itself (#1802).
+
+        Backends without a direct MuJoCo model (Isaac) still key their
+        observations by joint name, so the two joints named by
+        :attr:`state_gripper_joint_names` can be read straight from
+        ``obs``. Tries the bare key first, then the ``.../<name>``
+        namespaced-suffix convention (same convention as the legacy
+        single-joint fallback).
+
+        Returns the 2-element ``[finger1.qpos, finger2.qpos]`` vector, or
+        ``None`` if ANY configured joint is missing / non-numeric - whole
+        vector or nothing, same contract as :meth:`_read_gripper_qpos`.
+        """
+        joint_names = self.state_gripper_joint_names
+        if not joint_names:
+            return None
+        values: list[float] = []
+        for jname in joint_names:
+            value = obs.get(jname)
+            if value is None:
+                for key, val in obs.items():
+                    if isinstance(key, str) and key.endswith("/" + jname):
+                        value = val
+                        break
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                return None
+            values.append(float(value))
+        return values
+
+    def _apply_gripper_signs(self, gripper_qpos: list[float]) -> list[float]:
+        """Apply the configured ``state_gripper_signs`` to a gripper 2-vector.
+
+        No-op (returns the input unchanged) when signs weren't configured
+        or the vector length doesn't match - a mismatch means the caller
+        produced a shape this adapter wasn't configured for, and mangling
+        a partial application would be worse than leaving it as read.
+        """
+        if self._state_gripper_signs is None:
+            return gripper_qpos
+        if len(gripper_qpos) != len(self._state_gripper_signs):
+            logger.warning(
+                "LiberoAdapter: state_gripper_signs has %d elements but the gripper "
+                "vector has %d; leaving state.gripper unsigned",
+                len(self._state_gripper_signs),
+                len(gripper_qpos),
+            )
+            return gripper_qpos
+        return [v * s for v, s in zip(gripper_qpos, self._state_gripper_signs)]
 
     def is_success(self, sim: SimEngine) -> bool:
         """Check whether the LIBERO task goal is satisfied.
@@ -1922,7 +2225,7 @@ class LiberoAdapter(BenchmarkProtocol):
         # * Upstream hides collision capsules at the *renderer* level via
         #   ``mjvOption.geomgroup[0] = 0``, not via MJCF rgba edits.
         #   Same approach for site / joint / actuator markers
-        #   (the red dot + green line the reviewer caught are
+        #   (the red dot + green line visible in agentview are
         #   ``gripper0_ft_frame`` / ``gripper0_grip_site_cylinder``
         #   sites in ``site_group=1``).
         #
@@ -2147,7 +2450,7 @@ class LiberoAdapter(BenchmarkProtocol):
         attributes, ``mj_name2id`` raising) is caught and logged at
         DEBUG, leaving the legacy bare-Panda defaults
         (``"hand"`` / ``"finger_joint1"``) in place. That preserves the
-        pre-#166 behaviour for non-MuJoCo backends.
+        documented fallback for non-MuJoCo backends.
         """
         prefix = self._scene_robot_prefix
         gprefix = self._scene_gripper_prefix
@@ -2247,8 +2550,8 @@ class LiberoAdapter(BenchmarkProtocol):
           ``gripper0_ft_frame`` (red dot - force-torque frame),
           ``gripper0_grip_site`` (semi-transparent red sphere),
           ``gripper0_grip_site_cylinder`` (green line - grasp-axis
-          cylinder). Default ``sitegroup`` shows them; reviewer caught
-          them as "red dot + green line in the middle of agentview".
+          cylinder). Default ``sitegroup`` shows them, which reads as a
+          "red dot + green line in the middle of agentview".
         * Joint visualisations (``mjVIS_JOINT = 0``). Hides the
           axis-arrow widgets MuJoCo draws on each ``<joint>`` definition.
         * Actuator visualisations (``mjVIS_ACTUATOR = 0``). Hides the
@@ -2360,9 +2663,9 @@ class LiberoAdapter(BenchmarkProtocol):
         * When ``False``, the failure is logged at WARNING and recorded
           on :attr:`_action_controller_error` (so callers can still tag
           the result) before falling through to the no-op name-lookup
-          path - the pre-#522 best-effort behaviour.
+          path - the best-effort behaviour.
         * Dependency-clash failures (``ImportError`` / ``AttributeError``
-          from the import chain - e.g. the ``numba`` / ``coverage>=7``
+          from the import chain - e.g. the ``numba`` / ``coverage``
           incompatibility) are ALWAYS re-raised with a remediation hint,
           regardless of the flag, because they are fixable
           environment-level breakage, not a legitimate "no controller
@@ -2377,8 +2680,10 @@ class LiberoAdapter(BenchmarkProtocol):
         ``prewarm`` or another ``on_episode_start`` cycle.
         """
         # Clear any prior-episode failure tag - a re-install that now
-        # succeeds must not leave a stale error around.
+        # succeeds must not leave a stale error around. Same for the
+        # Isaac-path marker: it is re-set below if that path installs.
         self._action_controller_error = None
+        self._isaac_action_controller_robot = None
         try:
             controller = _LiberoOSCController.from_sim(
                 sim,
@@ -2389,7 +2694,7 @@ class LiberoAdapter(BenchmarkProtocol):
         except (ImportError, AttributeError) as e:
             # Defense-in-depth: an import/attribute error escaped from_sim's
             # own classification (it normally wraps these). Treat the known
-            # numba/coverage>=7 clash as fatal (surface it, #522); anything
+            # numba/coverage clash as fatal (surface it, #522); anything
             # else degrades like a missing optional dep.
             if _is_numba_coverage_clash(e):
                 remediation = self._action_controller_remediation(e)
@@ -2405,13 +2710,34 @@ class LiberoAdapter(BenchmarkProtocol):
             logger.warning("LiberoAdapter._install_action_controller: %s", msg)
             return
         except _ControllerDependencyMissing as e:
-            # An optional dep (mujoco / robosuite) is genuinely absent.
-            # This is environmental, not a fixable setup bug, so degrade
-            # gracefully even in strict mode: requiring robosuite as a
-            # hard dep would break installs without the optional extras.
+            # The MuJoCo OSC path is unavailable - either an optional dep
+            # (mujoco / robosuite) is genuinely absent or the engine has no
+            # compiled MuJoCo model (e.g. the Isaac backend). Before
+            # degrading to the no-op name-lookup path, try the Isaac-side
+            # delta-EEF differential-IK controller (#1812); the duck-typed
+            # probe returns False on engines that expose no Isaac action
+            # seam, so non-Isaac environments keep the pre-existing
+            # warn-and-degrade behaviour.
+            try:
+                if self._try_install_isaac_action_controller(sim):
+                    return
+            except _ControllerInstallError as isaac_err:
+                msg = f"{isaac_err}. GR00T actions would no-op without the Isaac delta-EEF action controller."
+                self._action_controller_error = msg
+                if self._strict_action_controller:
+                    logger.error("LiberoAdapter._install_action_controller: %s", msg)
+                    raise _ControllerInstallError(msg) from isaac_err
+                logger.warning(
+                    "LiberoAdapter._install_action_controller: %s "
+                    "Running in non-strict mode: GR00T actions will no-op until this is resolved "
+                    "(set strict_action_controller=True to surface this as an eval error).",
+                    msg,
+                )
+                return
             msg = (
-                f"{e}. GR00T actions will no-op: the OSC controller's optional "
-                "dependencies (robosuite + mujoco) are not available in this environment."
+                f"{e}. GR00T actions will no-op: neither the MuJoCo OSC controller's "
+                "optional dependencies (robosuite + mujoco) nor an Isaac-side action "
+                "path are available in this environment."
             )
             self._action_controller_error = msg
             logger.warning("LiberoAdapter._install_action_controller: %s", msg)
@@ -2462,23 +2788,170 @@ class LiberoAdapter(BenchmarkProtocol):
             len(controller.gripper_actuator_ids),
         )
 
+    def _try_install_isaac_action_controller(self, sim: SimEngine) -> bool:
+        """Install the Isaac delta-EEF differential-IK action controller.
+
+        Isaac counterpart of the robosuite ``OSC_POSE`` install (#1812): the
+        Isaac backend has no compiled MuJoCo model, so GR00T's task-space
+        delta-EEF action keys resolve to no joint and every action lands in
+        ``send_action``'s ``unresolved_keys`` - a 946-second video of a
+        perfectly still Franka. This builds an
+        :class:`~strands_robots.simulation.isaac.delta_eef.IsaacDeltaEEFController`
+        over the engine's public seams (``get_jacobian`` /
+        ``get_observation`` / ``install_action_controller``) so
+        ``send_action`` converts each delta into joint position targets.
+
+        Duck-typed engine probe, mirroring how the MuJoCo path probes
+        ``sim._world._model``: an engine that lacks any of the required
+        callables is simply not an Isaac engine and gets ``False`` back (the
+        caller then keeps the pre-existing warn-and-degrade behaviour).
+
+        Returns:
+            ``True`` when the controller was installed, ``False`` when the
+            engine exposes no Isaac action seam.
+
+        Raises:
+            _ControllerInstallError: The engine IS an Isaac engine but the
+                setup is broken - zero or multiple robots, missing Franka
+                joints, an unreadable or malformed Jacobian, an arm joint
+                state the observation cannot supply, or a rejected install.
+                These are fixable setup bugs, so the caller applies the same
+                strict/non-strict policy as the MuJoCo path.
+        """
+        # Typed ``Any``: SimEngine's base surface declares none of these
+        # backend-specific seams, so ``getattr`` would otherwise narrow the
+        # results to ``None`` and mypy would reject the calls below.
+        install: Any = getattr(sim, "install_action_controller", None)
+        get_jacobian: Any = getattr(sim, "get_jacobian", None)
+        list_robots: Any = getattr(sim, "list_robots", None)
+        robot_joint_names: Any = getattr(sim, "robot_joint_names", None)
+        get_observation: Any = getattr(sim, "get_observation", None)
+        if not all(callable(f) for f in (install, get_jacobian, list_robots, robot_joint_names, get_observation)):
+            return False
+
+        robots = list(list_robots())
+        if len(robots) != 1:
+            raise _ControllerInstallError(
+                f"Isaac delta-EEF controller needs exactly one robot to bind to, found {robots!r}"
+            )
+        robot_name = robots[0]
+        joint_names = list(robot_joint_names(robot_name))
+        required = list(_ISAAC_FRANKA_ARM_JOINTS) + list(_ISAAC_FRANKA_GRIPPER_JOINTS)
+        missing = [j for j in required if j not in joint_names]
+        if missing:
+            raise _ControllerInstallError(
+                f"Isaac robot '{robot_name}' lacks the LIBERO Franka joints {missing}; "
+                f"articulation DOFs present: {joint_names}"
+            )
+
+        arm_joints = list(_ISAAC_FRANKA_ARM_JOINTS)
+        arm_indices = [joint_names.index(j) for j in arm_joints]
+
+        def jacobian_fn() -> np.ndarray:
+            result = get_jacobian(body_name=_ISAAC_FRANKA_EEF_LINK, robot_name=robot_name)
+            if result.get("status") != "success":
+                raise RuntimeError(result["content"][0]["text"])
+            payload = result["content"][1]["json"]
+            jac = np.asarray(payload["jacp"] + payload["jacr"], dtype=np.float64)
+            return jac[:, arm_indices]
+
+        def joint_positions_fn() -> np.ndarray:
+            obs = get_observation(robot_name, skip_images=True)
+            try:
+                return np.array([float(obs[j]) for j in arm_joints], dtype=np.float64)
+            except KeyError as missing_joint:
+                raise RuntimeError(
+                    f"Observation for robot '{robot_name}' is missing arm joint {missing_joint}; "
+                    f"observation keys: {sorted(obs)}"
+                ) from missing_joint
+
+        # Probe BOTH kinematics reads once at install time so a broken read
+        # surfaces as a loud install error at episode start (where the
+        # strict/non-strict policy applies) instead of as one error
+        # envelope per action mid-eval. The physics tensor view exists by
+        # now: the runner's warm-up and the scene load have stepped the
+        # world.
+        #
+        # The properties asserted here are exactly the preconditions
+        # ``IsaacDeltaEEFController._solve_arm_targets`` re-checks on every
+        # action - the shape and the finiteness of the Jacobian and of the
+        # arm joint state - so a controller that installs cannot fail the
+        # solver on its first action. Probing the joint state is not implied
+        # by the Jacobian probe: the joint check above reads
+        # ``robot_joint_names`` (the articulation DOFs) while the solver
+        # reads ``get_observation``, and an engine whose observation omits or
+        # renames an arm joint satisfies the first and not the second.
+        try:
+            probe = jacobian_fn()
+        except Exception as e:
+            # Translation path, not a swallow: the documented contract is that
+            # any broken setup lands as _ControllerInstallError so the caller's
+            # strict/non-strict policy applies. A malformed Jacobian payload
+            # raises whatever numpy makes of it - measured IndexError (too few
+            # columns), ValueError (ragged rows) and KeyError (no "jacp") - so
+            # an enumerated tuple cannot be complete, and each of those would
+            # otherwise escape this method's Raises: contract. The OSC install
+            # path above translates an unexpected failure class the same way.
+            raise _ControllerInstallError(
+                f"Isaac delta-EEF controller cannot read the '{_ISAAC_FRANKA_EEF_LINK}' Jacobian: {e}"
+            ) from e
+        if probe.shape != (6, len(arm_joints)):
+            raise _ControllerInstallError(
+                f"Isaac Jacobian probe returned shape {probe.shape}; expected (6, {len(arm_joints)})"
+            )
+        if not np.all(np.isfinite(probe)):
+            raise _ControllerInstallError(
+                f"Isaac Jacobian probe for '{_ISAAC_FRANKA_EEF_LINK}' returned non-finite values; "
+                "the differential-IK solve refuses to solve on those"
+            )
+        try:
+            q_probe = np.asarray(joint_positions_fn(), dtype=np.float64)
+        except Exception as e:
+            # Same translation, same reason: a KeyError naming the arm joint
+            # the observation lacks is a setup bug, and it is the read the
+            # Jacobian probe cannot vouch for.
+            raise _ControllerInstallError(
+                f"Isaac delta-EEF controller cannot read the arm joint state of '{robot_name}': {e}"
+            ) from e
+        if not np.all(np.isfinite(q_probe)):
+            raise _ControllerInstallError(
+                f"Isaac joint-state probe for '{robot_name}' returned non-finite values; "
+                "the differential-IK solve refuses to solve on those"
+            )
+
+        controller = IsaacDeltaEEFController(
+            arm_joint_names=arm_joints,
+            gripper_joint_names=list(_ISAAC_FRANKA_GRIPPER_JOINTS),
+            joint_positions_fn=joint_positions_fn,
+            jacobian_fn=jacobian_fn,
+        )
+        result = install(robot_name, controller)
+        if result.get("status") != "success":
+            raise _ControllerInstallError(
+                f"IsaacSimulation.install_action_controller refused the controller: {result['content'][0]['text']}"
+            )
+        controller.reset()
+        self._isaac_action_controller_robot = robot_name
+        logger.info(
+            "LiberoAdapter: installed Isaac delta-EEF action controller for robot '%s' "
+            "(eef_link=%r, arm_joints=%d, gripper_joints=%d)",
+            robot_name,
+            _ISAAC_FRANKA_EEF_LINK,
+            len(arm_joints),
+            len(_ISAAC_FRANKA_GRIPPER_JOINTS),
+        )
+        return True
+
     @staticmethod
     def _action_controller_remediation(error: BaseException) -> str:
         """Build a remediation hint for a dependency-clash install failure.
 
-        Detects the known ``numba`` / ``coverage>=7`` incompatibility
+        Detects the known ``numba`` / ``coverage`` incompatibility
         (#522) via :func:`_is_numba_coverage_clash` and surfaces a targeted
         fix; falls back to a generic hint for other failures.
         """
         if _is_numba_coverage_clash(error):
-            return (
-                "This is the known numba/coverage>=7 incompatibility: numba's "
-                "coverage_support module subclasses coverage.types.Tracer, which "
-                "coverage>=7 removed. Remediation: uninstall the conflicting "
-                "coverage from the eval environment ('pip uninstall coverage'), or "
-                "pin coverage<7, or upgrade numba to a release that no longer "
-                "imports coverage.types.Tracer."
-            )
+            return _numba_coverage_clash_remedy()
         return (
             "Ensure the OSC controller dependencies (robosuite and its "
             "transitive imports) are importable in this environment."
@@ -2513,6 +2986,13 @@ class LiberoAdapter(BenchmarkProtocol):
 
         Other ``add_camera`` failures are logged at WARNING but never
         fatal - one missing camera shouldn't kill the whole eval.
+
+        A per-camera config carrying a key ``add_camera`` cannot accept is the
+        one exception: :func:`camera_config_error` refuses it with a
+        ``ValueError`` rather than letting the splat's ``TypeError`` fall into
+        the tolerance above. Retrying cannot help - the key is wrong on every
+        episode - and swallowing it leaves the policy's required view absent
+        from the world with only a WARNING to say so.
         """
         add_camera = getattr(sim, "add_camera", None)
         if add_camera is None:
@@ -2522,6 +3002,16 @@ class LiberoAdapter(BenchmarkProtocol):
         existing = self._existing_camera_names(sim)
 
         for cam_name, cam_kwargs in self._cameras.items():
+            # Refuse a config this sim's add_camera cannot accept BEFORE either
+            # branch below. The skip branch is as affected as the add branch:
+            # it forwards the same mapping to _publish_camera_dims_to_world,
+            # which reads ``width`` / ``height`` by name, so a misspelled
+            # dimension silently publishes the 256x256 fallback for a
+            # model-side camera. A key no call can honor is a caller error no
+            # retry fixes, unlike the add_camera failures the loop below is
+            # deliberately tolerant of.
+            if config_error := camera_config_error(add_camera, cam_name, cam_kwargs):
+                raise ValueError(config_error)
             if cam_name in existing:
                 logger.debug("LiberoAdapter: camera %r already in sim; skipping install", cam_name)
                 # #168: even when we skip add_camera (because
@@ -2617,7 +3107,7 @@ class LiberoAdapter(BenchmarkProtocol):
 
         Backends without a MuJoCo-compiled model (or with mujoco not
         importable) fall back to the registry-only check - that's the
-        pre-#166-review behaviour, retained as a defensive fallback for
+        registry-only fallback, retained for
         non-MuJoCo engines that still want LIBERO eval.
 
         Critical for #166: :meth:`Simulation.load_scene` creates a fresh
@@ -2635,6 +3125,16 @@ class LiberoAdapter(BenchmarkProtocol):
         cameras_attr = getattr(world, "cameras", None) if world is not None else None
         if isinstance(cameras_attr, dict):
             names.update(cameras_attr.keys())
+
+        # Isaac registry-side (#1802): IsaacSimulation tracks cameras on
+        # ``sim._cameras`` (its ``_world`` is the Isaac ``World`` handle,
+        # which has no ``cameras`` dict). Without this check the install
+        # step re-attempts ``add_camera`` for the pre-added ``image`` /
+        # ``wrist_image`` every episode and logs a duplicate-name WARNING
+        # per camera per episode.
+        sim_cameras_attr = getattr(sim, "_cameras", None)
+        if isinstance(sim_cameras_attr, dict):
+            names.update(sim_cameras_attr.keys())
 
         # Model-side: cameras declared in a loaded scene MJCF.
         model = getattr(world, "_model", None) if world is not None else None
@@ -2682,7 +3182,7 @@ class LiberoAdapter(BenchmarkProtocol):
            scene compile (after ``super().on_episode_start`` and
            ``_install_libero_cameras`` have run); restore the cached
            snapshot on every subsequent episode. The procedurally-
-           generated MJCFs from :meth:`_generate_scene_from_bddl` (PR #165)
+           generated MJCFs from :meth:`_generate_scene_from_bddl`
            don't carry a keyframe, so this branch fires when init_states
            is also None (e.g. adapters built directly from a BDDL file
            without going through :func:`load_libero_suite`).
@@ -2693,7 +3193,14 @@ class LiberoAdapter(BenchmarkProtocol):
 
         Best-effort:
 
-        * Sims without an exposed compiled MuJoCo model -> debug-log + skip.
+        * Sims without an exposed compiled MuJoCo model -> route to
+          :meth:`_apply_object_pose_state` (#1820): non-MuJoCo backends
+          (Isaac) have no ``qpos`` to write, so the init state is applied
+          as per-object *poses* decoded through a local CPU MuJoCo
+          compile of the scene MJCF. That helper debug-log + skips when
+          its own preconditions (init states, scene path, a
+          ``move_object`` method, importable ``mujoco``) are missing, so
+          arbitrary model-less sims still degrade gracefully.
         * ``scene_keyframe_index`` out of range when ``nkey > 0`` -> log
           at WARNING and skip (out-of-range is a config error).
         * ``mujoco`` not importable -> debug-log + skip.
@@ -2709,7 +3216,12 @@ class LiberoAdapter(BenchmarkProtocol):
         model = getattr(world, "_model", None) if world is not None else None
         data = getattr(world, "_data", None) if world is not None else None
         if model is None or data is None:
-            logger.debug("LiberoAdapter: sim has no compiled MuJoCo model/data; skipping canonical-state apply")
+            # Non-MuJoCo backend (e.g. Isaac): no compiled model/data to
+            # write qpos into. Apply the init state as per-object poses
+            # instead (#1820) -- without this, Isaac scene objects stay at
+            # their MJCF placeholder poses (coincident bodies at the robot
+            # base) and live physics explodes on the first step.
+            self._apply_object_pose_state(sim, rng)
             return
 
         try:
@@ -2840,6 +3352,333 @@ class LiberoAdapter(BenchmarkProtocol):
         # Increment after successful apply so the next call is
         # "episode 1+" and gets RNG-sampled selection.
         self._episode_count += 1
+
+    def _apply_object_pose_state(self, sim: SimEngine, rng: random.Random | None = None) -> None:
+        """Object-pose branch of :meth:`_apply_canonical_state` (#1820).
+
+        Non-MuJoCo backends (Isaac) realize the LIBERO scene as one prim
+        per MJCF body (``IsaacSimulation.load_scene``), so the flat
+        ``[time, qpos, qvel]`` init-state vector can't be written into an
+        engine ``qpos`` -- there isn't one. Instead this branch decodes
+        the init state into per-object world poses and teleports each
+        realized prim there:
+
+        1. Compile the scene MJCF with **CPU MuJoCo** (a decode-only
+           model; nothing is stepped). ``mujoco`` is always importable on
+           the LIBERO path -- the scene MJCF itself was generated through
+           robosuite, which hard-depends on it.
+        2. Select an init-state row with the SAME semantics as
+           :meth:`_apply_init_state_branch` (episode 0 pinned to row 0,
+           episodes 1+ RNG-sampled; width validated against
+           ``1 + nq + nv``, mismatch fatal per #168 bug I).
+        3. Write ``qpos``/``qvel``, ``mj_forward``, and read each free
+           body's world pose (``data.xpos`` / ``data.xquat``).
+        4. Align the robot base with the scene's ``robot0_base`` body via
+           ``sim.set_robot_pose`` (on MuJoCo the robot is part of the
+           scene MJCF; on Isaac it is a separately-loaded USD spawned at
+           the origin, inside the footprint of the scene's
+           origin-anchored static fixtures).
+        5. Write the decoded arm + gripper qpos into the articulation via
+           :meth:`_apply_scene_arm_qpos` (#1828): the scene names the
+           joints with robosuite prefixes (``robot0_joint1`` /
+           ``gripper0_finger_joint1``) while the USD articulation names
+           them ``panda_joint1`` / ``panda_finger_joint1``, so the
+           prefix-stripped names are mapped onto articulation DOFs by
+           longest-suffix match (ambiguity fatal). Without this the arm
+           starts every episode at the USD default (all-zero, upright)
+           instead of LIBERO's Panda ready pose, so the policy's first
+           observation is OOD relative to its training distribution.
+        6. Teleport each realized dynamic prim via ``sim.move_object``.
+           The prim is a box at the body's collision-AABB centre, so the
+           prim pose is ``xpos + R(xquat) @ offset`` with the body-frame
+           ``offset`` recorded by :func:`load_mjcf_scene_objects`.
+           Static fixtures keep their MJCF poses (they have no free
+           joint; ``qpos`` cannot move them on MuJoCo either).
+        7. Settle a few physics steps so PhysX resolves residual contact
+           from the teleports before the first observation. The settle
+           runs HERE, after the poses are legal -- ``load_scene`` itself
+           must not step, because its objects still sit at the MJCF
+           placeholder poses (coincident bodies at the robot base) and
+           integrating from that configuration storms PhysX "Illegal
+           BroadPhaseUpdateData - non-finite bounds" and NaNs the joint
+           state (#1820 part 2).
+
+        Failed teleports and unresolvable body names raise
+        ``RuntimeError``: an object left at its placeholder pose
+        interpenetrates the robot base and WILL explode live physics, so
+        warn-and-continue is exactly the silent-failure mode this branch
+        exists to remove.
+
+        Best-effort preconditions (debug-log + skip, preserving the
+        graceful-degradation contract for arbitrary model-less sims):
+        missing/empty init states, missing scene path, no ``move_object``
+        method on the sim, ``mujoco`` not importable.
+        """
+        if self._init_states is None or int(self._init_states.shape[0]) == 0:
+            logger.debug("LiberoAdapter: no init_states; skipping object-pose state apply")
+            return
+        init_states = self._init_states
+        scene_path = self.scene_path
+        if not scene_path or not os.path.exists(scene_path):
+            logger.debug("LiberoAdapter: no scene_path on disk; skipping object-pose state apply")
+            return
+        move_object = getattr(sim, "move_object", None)
+        if not callable(move_object):
+            logger.debug("LiberoAdapter: sim has no move_object(); skipping object-pose state apply")
+            return
+        try:
+            import mujoco as _mj
+        except ImportError:
+            logger.debug("LiberoAdapter: mujoco not importable; skipping object-pose state apply")
+            return
+
+        from strands_robots.simulation.isaac.loaders import load_mjcf_scene_objects
+
+        # Decode model: compile once per scene_path, reuse across episodes.
+        if self._pose_decode_cache is not None and self._pose_decode_cache[0] == scene_path:
+            _, model, data = self._pose_decode_cache
+        else:
+            model = _mj.MjModel.from_xml_path(scene_path)
+            data = _mj.MjData(model)
+            self._pose_decode_cache = (scene_path, model, data)
+
+        # Row selection + width validation: identical semantics to
+        # _apply_init_state_branch (episode 0 -> row 0; episodes 1+ RNG).
+        n_states = int(init_states.shape[0])
+        if self._episode_count == 0:
+            idx = 0
+        else:
+            rng_local = rng if rng is not None else random.Random()
+            idx = rng_local.randint(0, n_states - 1)
+        state = init_states[idx]
+
+        nq = int(model.nq)
+        nv = int(model.nv)
+        expected_width = 1 + nq + nv
+        actual_width = int(state.shape[0])
+        if actual_width != expected_width:
+            raise RuntimeError(
+                f"LiberoAdapter: init_state width {actual_width} does not match the scene MJCF "
+                f"compiled for pose decode (1 + nq={nq} + nv={nv} = {expected_width}). The "
+                f"cached scene diverges from upstream LIBERO's scene for this BDDL task. "
+                f"#168 bug I: silent slicing forbidden - fix the scene generator instead."
+            )
+
+        data.time = float(state[0])
+        np.copyto(data.qpos, state[1 : 1 + nq])
+        np.copyto(data.qvel, state[1 + nq :])
+        _mj.mj_forward(model, data)
+
+        # Align the robot base with the scene (#1820 part 2, robot half).
+        # On MuJoCo the robot is part of the scene MJCF, so its base lands
+        # wherever the scene put it (LIBERO: robot0_base at
+        # (-0.66, 0, 0.912)); on Isaac the robot is a separately-loaded
+        # USD articulation spawned at the ORIGIN -- inside the footprint
+        # of the scene's origin-anchored static fixtures (cabinet, stove),
+        # and live physics starting from that interpenetration is the same
+        # broadphase NaN storm as the object-pose half. Best-effort on the
+        # lookup side (a robot-less scene or a sim without set_robot_pose
+        # skips with a log); a FAILED write raises, same as the object
+        # teleports below.
+        base_body = f"{self._scene_robot_prefix}base"
+        base_id = _mj.mj_name2id(model, _mj.mjtObj.mjOBJ_BODY, base_body)
+        set_robot_pose = getattr(sim, "set_robot_pose", None)
+        if base_id >= 0 and callable(set_robot_pose):
+            base_pos = np.asarray(data.xpos[base_id], dtype=float)
+            base_quat = np.asarray(data.xquat[base_id], dtype=float)  # wxyz
+            result = set_robot_pose(position=base_pos.tolist(), orientation=base_quat.tolist())
+            if isinstance(result, dict) and result.get("status") == "error":
+                text = (result.get("content") or [{}])[0].get("text", "")
+                raise RuntimeError(
+                    f"LiberoAdapter: aligning the robot base with scene body {base_body!r} failed "
+                    f"({text}). A robot left inside the scene's origin-anchored fixtures explodes "
+                    f"live physics on the first step (#1820)."
+                )
+        elif base_id < 0:
+            logger.debug("LiberoAdapter: scene has no %r body; skipping robot base alignment", base_body)
+        else:
+            logger.debug("LiberoAdapter: sim has no set_robot_pose(); skipping robot base alignment")
+
+        # The robot's other half (#1828): write the decoded arm + gripper
+        # qpos into the articulation so the arm starts the episode at
+        # LIBERO's Panda ready pose rather than the USD default.
+        self._apply_scene_arm_qpos(sim, model, data, _mj)
+
+        moved = 0
+        for obj in load_mjcf_scene_objects(scene_path):
+            if obj.is_static:
+                continue
+            body_id = _mj.mj_name2id(model, _mj.mjtObj.mjOBJ_BODY, obj.name)
+            if body_id < 0:
+                raise RuntimeError(
+                    f"LiberoAdapter: scene object {obj.name!r} (parsed from {scene_path!r}) "
+                    f"has no body in the compiled MJCF - the scene parser and the compiled "
+                    f"model disagree, so its init pose cannot be applied and live physics "
+                    f"would start from its placeholder pose (#1820)."
+                )
+            xpos = np.asarray(data.xpos[body_id], dtype=float)
+            xmat = np.asarray(data.xmat[body_id], dtype=float).reshape(3, 3)
+            xquat = np.asarray(data.xquat[body_id], dtype=float)  # wxyz, matches Isaac
+            prim_pos = xpos + xmat @ np.asarray(obj.offset, dtype=float)
+            result = move_object(name=obj.name, position=prim_pos.tolist(), orientation=xquat.tolist())
+            if isinstance(result, dict) and result.get("status") == "error":
+                text = (result.get("content") or [{}])[0].get("text", "")
+                raise RuntimeError(
+                    f"LiberoAdapter: applying init pose to scene object {obj.name!r} failed "
+                    f"({text}). An object left at its MJCF placeholder pose interpenetrates "
+                    f"the robot base and explodes live physics on the first step (#1820)."
+                )
+            moved += 1
+
+        # Settle now that every dynamic body is at a legal pose. Uses the
+        # engine's own step() (renders per its config); a handful of ticks
+        # lets PhysX resolve residual teleport contact before the first
+        # observation. Best-effort: a sim without step() just skips.
+        step = getattr(sim, "step", None)
+        if callable(step):
+            step(5)
+
+        logger.debug(
+            "LiberoAdapter: applied init_state[%d] as object poses (ep=%d, moved=%d, n_states=%d)",
+            idx,
+            self._episode_count,
+            moved,
+            n_states,
+        )
+
+        # Increment after successful apply so the next call is
+        # "episode 1+" and gets RNG-sampled selection (parity with
+        # _apply_init_state_branch).
+        self._episode_count += 1
+
+    def _apply_scene_arm_qpos(self, sim: SimEngine, model: Any, data: Any, mj: Any) -> None:
+        """Arm-qpos half of :meth:`_apply_object_pose_state` (#1828).
+
+        The init state's object poses and robot *base* pose land on Isaac
+        via ``move_object`` / ``set_robot_pose`` (#1820), but the arm qpos
+        slice (LIBERO's Panda ready pose ``[0, -0.161, 0, -2.444, 0,
+        2.227, pi/4]`` + gripper) stayed unapplied: the USD Franka
+        articulation started every episode at its USD default (all-zero,
+        upright), so the policy's first observation was OOD relative to
+        the LIBERO training distribution. This writes the decoded arm +
+        gripper joint values into the articulation via
+        ``sim.set_joint_positions`` (a kinematic state + PD-target write
+        on Isaac, so the pose holds through the settle steps).
+
+        The decode model names joints with robosuite prefixes
+        (``robot0_joint1..7`` / ``gripper0_finger_joint1..2``) while the
+        Isaac USD articulation names them ``panda_joint1..7`` /
+        ``panda_finger_joint1..2``. Plain suffix matching is ambiguous
+        (``joint1`` is a suffix of both ``panda_joint1`` and
+        ``panda_finger_joint1``), so the prefix-stripped scene names are
+        mapped onto articulation DOF names via
+        :func:`_map_scene_joints_to_articulation` -- each DOF claims its
+        LONGEST matching scene suffix, and any scene joint left unclaimed
+        or claimed by several DOFs raises. No silent partial writes: a
+        mapping failure raises ``RuntimeError`` BEFORE anything is
+        written, and a failed engine write raises too.
+
+        Scene-side conventions match :meth:`_write_libero_arm_home_qpos`
+        (#168): arm joints carry ``self._scene_robot_prefix``, gripper
+        joints carry ``self._scene_gripper_prefix`` and are filtered to
+        ``finger_joint`` names.
+
+        Best-effort preconditions (debug-log + skip, preserving the
+        graceful-degradation contract of the enclosing branch): a scene
+        without prefixed robot joints (robot-less probe scenes), a sim
+        that exposes no ``set_joint_positions`` / ``robot_joint_names`` /
+        ``list_robots`` seam (arbitrary model-less sims), or a sim with
+        no robot registered yet. Multiple robots raise -- the write
+        target is ambiguous, matching ``set_robot_pose``'s contract.
+        """
+        # 1. Collect prefix-stripped scene joint values from the decode
+        # model (qpos already carries the selected init-state row).
+        single_dof_types = (int(mj.mjtJoint.mjJNT_HINGE), int(mj.mjtJoint.mjJNT_SLIDE))
+        scene_values: dict[str, float] = {}
+        njnt = int(getattr(model, "njnt", 0))
+        for i in range(njnt):
+            jname = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, i)
+            if not isinstance(jname, str):
+                continue
+            if jname.startswith(self._scene_robot_prefix) and not jname.startswith(self._scene_gripper_prefix):
+                bare = jname[len(self._scene_robot_prefix) :]
+            elif jname.startswith(self._scene_gripper_prefix) and "finger_joint" in jname:
+                # Finger joints only -- matches the #168 convention used
+                # by _write_libero_arm_home_qpos.
+                bare = jname[len(self._scene_gripper_prefix) :]
+            else:
+                continue
+            if int(model.jnt_type[i]) not in single_dof_types:
+                raise RuntimeError(
+                    f"LiberoAdapter: scene robot joint {jname!r} is not a 1-DOF hinge/slide joint; "
+                    f"its qpos cannot map onto a single articulation DOF. The scene MJCF diverges "
+                    f"from the robosuite convention this mapping assumes (#1828)."
+                )
+            if bare in scene_values:
+                raise RuntimeError(
+                    f"LiberoAdapter: two scene robot joints strip to the same name {bare!r} "
+                    f"(prefixes {self._scene_robot_prefix!r} / {self._scene_gripper_prefix!r}); "
+                    f"one value would silently overwrite the other (#1828)."
+                )
+            scene_values[bare] = float(data.qpos[int(model.jnt_qposadr[i])])
+
+        if not scene_values:
+            logger.debug("LiberoAdapter: scene has no prefixed robot joints; skipping arm-qpos apply")
+            return
+
+        # 2. Duck-typed engine seam probe, mirroring
+        # _try_install_isaac_action_controller: an engine lacking any of
+        # these callables is simply not an articulated-robot engine.
+        # Typed ``Any``: SimEngine's base surface declares none of these
+        # backend-specific seams.
+        set_joint_positions: Any = getattr(sim, "set_joint_positions", None)
+        robot_joint_names: Any = getattr(sim, "robot_joint_names", None)
+        list_robots: Any = getattr(sim, "list_robots", None)
+        if not all(callable(f) for f in (set_joint_positions, robot_joint_names, list_robots)):
+            logger.debug("LiberoAdapter: sim exposes no joint-write seam; skipping arm-qpos apply")
+            return
+        robots = list(list_robots())
+        if not robots:
+            logger.debug("LiberoAdapter: no robot registered on the sim; skipping arm-qpos apply")
+            return
+        if len(robots) > 1:
+            raise RuntimeError(
+                f"LiberoAdapter: arm-qpos apply is ambiguous with {len(robots)} robots present "
+                f"({sorted(robots)}); cannot pick a write target (#1828)."
+            )
+        robot_name = robots[0]
+        dof_names = list(robot_joint_names(robot_name))
+        if not dof_names:
+            raise RuntimeError(
+                f"LiberoAdapter: robot {robot_name!r} reports no articulation DOF names; the decoded "
+                f"init-state arm qpos ({sorted(scene_values)}) has nowhere to land and the arm would "
+                f"silently start at the USD default pose (#1828)."
+            )
+
+        # 3. Map and write. Mapping failures raise BEFORE the write, so
+        # there is never a partial application.
+        try:
+            mapped = _map_scene_joints_to_articulation(scene_values, dof_names)
+        except ValueError as e:
+            raise RuntimeError(
+                f"LiberoAdapter: cannot apply the init-state arm qpos to robot {robot_name!r}: {e} "
+                f"An unmapped arm joint would leave the articulation at the USD default pose and the "
+                f"policy's first observation OOD relative to its training distribution (#1828)."
+            ) from e
+        result = set_joint_positions(mapped, robot_name=robot_name)
+        if isinstance(result, dict) and result.get("status") == "error":
+            text = (result.get("content") or [{}])[0].get("text", "")
+            raise RuntimeError(
+                f"LiberoAdapter: writing the init-state arm qpos to robot {robot_name!r} failed "
+                f"({text}). The arm would start the episode at the USD default pose instead of "
+                f"LIBERO's ready pose (#1828)."
+            )
+        logger.debug(
+            "LiberoAdapter: applied init-state arm qpos to robot %r (%d joints: %s)",
+            robot_name,
+            len(mapped),
+            sorted(mapped),
+        )
 
     def _apply_keyframe_branch(
         self,
@@ -3221,6 +4060,48 @@ def _extract_pose(state: dict[str, Any] | None) -> tuple[list[float] | None, lis
     return (pos, quat)
 
 
+def _validated_float_vector(value: Any, n: int, param: str) -> list[float] | None:
+    """Validate an optional length-``n`` float vector constructor argument.
+
+    Returns ``None`` untouched; otherwise a fresh ``list[float]`` of exactly
+    ``n`` finite elements. Raises :class:`ValueError` on any shape / dtype
+    problem - state-side config errors must fail at construction, not feed
+    the policy silently-wrong observations (#168's failure class).
+    """
+    if value is None:
+        return None
+    try:
+        vec = [float(c) for c in value]
+    except (TypeError, ValueError) as e:
+        raise ValueError(f"{param} must be a sequence of {n} numbers; got {value!r}") from e
+    if len(vec) != n or not all(math.isfinite(c) for c in vec):
+        raise ValueError(f"{param} must be {n} finite numbers; got {value!r}")
+    return vec
+
+
+def _quat_wxyz_multiply(a: list[float], b: list[float]) -> list[float]:
+    """Hamilton product ``a * b`` of two wxyz quaternions."""
+    aw, ax, ay, az = a
+    bw, bx, by, bz = b
+    return [
+        aw * bw - ax * bx - ay * by - az * bz,
+        aw * bx + ax * bw + ay * bz - az * by,
+        aw * by - ax * bz + ay * bw + az * bx,
+        aw * bz + ax * by - ay * bx + az * bw,
+    ]
+
+
+def _quat_wxyz_rotate_vec(quat_wxyz: list[float], vec: list[float]) -> list[float]:
+    """Rotate ``vec`` by the (normalized) wxyz quaternion: ``R(q) @ vec``."""
+    q = np.asarray(quat_wxyz, dtype=np.float64)
+    norm = float(np.linalg.norm(q)) or 1.0
+    w, x, y, z = q / norm
+    u = np.array([x, y, z], dtype=np.float64)
+    v = np.asarray(vec, dtype=np.float64)
+    rotated = v + 2.0 * np.cross(u, np.cross(u, v) + w * v)
+    return [float(c) for c in rotated]
+
+
 def _fmt_state_value(value: Any) -> str:
     """Format a state value for ``STATE_LOG`` output (#168).
 
@@ -3323,6 +4204,86 @@ def _quat_wxyz_to_rpy_xyz(quat_wxyz: list[float]) -> tuple[float, float, float]:
 # Scene-generation helpers (#164)
 
 
+def _is_joint_name_suffix(dof_name: str, bare_name: str) -> bool:
+    """True when ``bare_name`` is a whole-token suffix of ``dof_name``.
+
+    ``panda_joint1`` ends with ``joint1`` at a ``_`` boundary -> match;
+    ``arm_pjoint1`` also ends with ``joint1`` but at an alphanumeric
+    boundary -> no match (it names a different joint that merely shares
+    a tail). Exact equality matches too (an articulation converted
+    straight from the MJCF keeps the bare names).
+    """
+    if dof_name == bare_name:
+        return True
+    if not dof_name.endswith(bare_name):
+        return False
+    return not dof_name[-len(bare_name) - 1].isalnum()
+
+
+def _map_scene_joints_to_articulation(
+    scene_values: dict[str, float],
+    dof_names: list[str],
+) -> dict[str, float]:
+    """Map prefix-stripped scene joint values onto articulation DOF names.
+
+    The LIBERO scene MJCF names robot joints with robosuite prefixes
+    (``robot0_joint1``, ``gripper0_finger_joint1``) while the Isaac USD
+    Franka articulation names them ``panda_joint1`` /
+    ``panda_finger_joint1``. With the prefixes stripped, plain suffix
+    matching is still ambiguous: bare ``joint1`` is a suffix of BOTH
+    ``panda_joint1`` and ``panda_finger_joint1``. So the match runs in
+    the DOF -> scene direction with longest-suffix-wins semantics
+    (#1828): each articulation DOF claims the LONGEST bare scene name
+    that is a whole-token suffix of it (``panda_finger_joint1`` claims
+    ``finger_joint1`` over ``joint1``; equal-length suffixes of one
+    string are identical, so the per-DOF winner is always unique).
+
+    Parameters
+    ----------
+    scene_values : dict[str, float]
+        Prefix-stripped scene joint name -> decoded init-state qpos value.
+    dof_names : list[str]
+        Articulation DOF names in engine order.
+
+    Returns
+    -------
+    dict[str, float]
+        ``{dof_name: value}`` covering every entry of ``scene_values``
+        exactly once. DOFs with no matching scene joint are simply not
+        written (they keep their current value).
+
+    Raises
+    ------
+    ValueError
+        When any scene joint is claimed by zero DOFs (unmappable) or by
+        several DOFs (ambiguous, e.g. a dual-arm articulation where
+        ``left_joint1`` and ``right_joint1`` both claim ``joint1``).
+        Raised before anything is written -- no silent partial writes.
+    """
+    claims: dict[str, list[str]] = {}
+    for dof in dof_names:
+        candidates = [bare for bare in scene_values if _is_joint_name_suffix(dof, bare)]
+        if not candidates:
+            continue
+        best = max(candidates, key=len)
+        claims.setdefault(best, []).append(dof)
+
+    unmapped = sorted(bare for bare in scene_values if bare not in claims)
+    ambiguous = {bare: dofs for bare, dofs in claims.items() if len(dofs) > 1}
+    if unmapped or ambiguous:
+        problems = []
+        if unmapped:
+            problems.append(f"unmappable scene joints (no articulation DOF suffix-matches them): {unmapped}")
+        if ambiguous:
+            detail = "; ".join(f"{bare!r} -> {sorted(dofs)}" for bare, dofs in sorted(ambiguous.items()))
+            problems.append(f"ambiguous scene joints (claimed by several DOFs): {detail}")
+        raise ValueError(
+            f"cannot map scene joints onto articulation DOFs: {'; '.join(problems)}. "
+            f"Articulation DOFs present: {list(dof_names)}."
+        )
+    return {dofs[0]: scene_values[bare] for bare, dofs in claims.items()}
+
+
 def _default_scene_cache_dir() -> Path:
     """Filesystem location for cached LIBERO scene MJCFs.
 
@@ -3421,7 +4382,7 @@ def _rename_mjcf_cameras(xml: str, aliases: dict[str, str]) -> str:
 # the upgrade.
 #
 # History:
-# * ``v1``: implicit (pre-#168, alias map alone in cache key).
+# * ``v1``: implicit (alias map alone in the cache key).
 # * ``v2``: #168 (initial attempt) - applied ``_apply_libero_visual_fixes`` (rgba alpha=0 on
 #   collision geoms + custom ``<visual>`` block with stacked ``<headlight>``).
 #   Empirically wrong direction (washed out contrast); reverted in v3.
@@ -3578,7 +4539,7 @@ class _ControllerInstallError(RuntimeError):
     """Raised inside :meth:`_LiberoOSCController.from_sim` when the
     LIBERO action controller can't be built but the prerequisites ARE
     present (missing site / actuator IDs, wrong arm-joint count, a
-    broken-but-installed import such as the numba/coverage>=7 clash,
+    broken-but-installed import such as the numba/coverage clash,
     etc.). With ``strict_action_controller=True`` (the default),
     :meth:`LiberoAdapter._install_action_controller` re-raises this so
     ``PolicyRunner`` returns a structured eval error instead of silently
@@ -3598,14 +4559,64 @@ class _ControllerDependencyMissing(_ControllerInstallError):
     extras."""
 
 
+#: Oldest ``coverage`` release that provides ``coverage.types.Tracer`` - the
+#: symbol ``numba.misc.coverage_support`` subclasses unconditionally. The name
+#: was renamed INTO existence at this release: coverage 7.4.0-7.6.0 call the
+#: same protocol ``TracerCore``, 7.0-7.3 call it ``TTracer``, and 6.x and older
+#: ship no ``coverage/types.py`` at all. The numba clash is therefore a
+#: coverage-too-OLD condition, so every remedy must raise ``coverage`` rather
+#: than pin it down.
+_COVERAGE_TRACER_MIN_VERSION = "7.6.1"
+
+
+def _numba_coverage_clash_remedy() -> str:
+    """Return the remediation text for the ``numba`` / ``coverage`` clash (#522).
+
+    Single source of truth, so every raise site that classifies the clash
+    hands the caller the same fix. The version boundary it names is
+    :data:`_COVERAGE_TRACER_MIN_VERSION`. The canonical trigger it names is
+    a pip-installed Isaac Sim, whose ``isaacsim-kernel`` package pins
+    ``coverage==7.4.4``, silently downgrading modern coverage in the same
+    environment (#1803).
+    """
+    return (
+        "This is the known numba/coverage import clash: numba's coverage_support "
+        "module subclasses coverage.types.Tracer with no version guard, and "
+        f"coverage provides that symbol only from {_COVERAGE_TRACER_MIN_VERSION} "
+        f"onward. Remediation: raise coverage (pip install "
+        f"'coverage>={_COVERAGE_TRACER_MIN_VERSION}'), or remove coverage from the "
+        "eval environment entirely ('pip uninstall coverage'), which numba's "
+        "ImportError guard tolerates. Pinning coverage DOWN does not fix it - older "
+        "releases have no coverage.types.Tracer either. The usual cause is an "
+        "environment held at an older coverage: a pip-installed Isaac Sim pins "
+        "coverage==7.4.4 via isaacsim-kernel, and the pip conflict warning that "
+        "raising coverage prints against isaacsim-kernel is cosmetic - coverage "
+        "is kit test tooling, not a runtime dependency (#1803)."
+    )
+
+
 def _is_numba_coverage_clash(error: BaseException) -> bool:
-    """Recognise the ``numba`` / ``coverage>=7`` import incompatibility (#522).
+    """Recognise the ``numba`` / ``coverage`` import incompatibility (#522).
 
     ``numba/misc/coverage_support.py`` defines
-    ``class NumbaTracer(coverage.types.Tracer)``, but ``coverage>=7``
-    removed ``coverage.types.Tracer`` - so importing ``numba`` (pulled in
-    transitively by robosuite's OSC controller path) raises
-    ``AttributeError: module 'coverage.types' has no attribute 'Tracer'``.
+    ``class NumbaTracer(coverage.types.Tracer)`` with no version guard - its
+    only guard is ``except ImportError`` around ``import coverage`` - while
+    ``coverage`` provides ``coverage.types.Tracer`` only from
+    :data:`_COVERAGE_TRACER_MIN_VERSION` onward. Importing ``numba`` (pulled in
+    transitively by robosuite's OSC controller path) against an older
+    ``coverage`` therefore fails in one of two shapes:
+
+    * ``module 'coverage.types' has no attribute 'Tracer'`` - coverage
+      7.0-7.6.0, where ``coverage/types.py`` exists but names the protocol
+      ``TTracer`` (7.0-7.3) or ``TracerCore`` (7.4.0-7.6.0).
+    * ``module 'coverage' has no attribute 'types'`` - coverage 6.x and older,
+      which ship no ``coverage/types.py`` at all.
+
+    Both shapes are the same clash with the same fix, so both are recognised.
+    The second one is what a caller lands in after pinning ``coverage`` *down*;
+    not recognising it would downgrade the strict install error into the silent
+    "GR00T actions will no-op" degrade that #522 exists to prevent.
+
     Walk the exception chain so the signature is still recognised when the
     AttributeError is wrapped by a later ImportError.
     """
@@ -3615,6 +4626,8 @@ def _is_numba_coverage_clash(error: BaseException) -> bool:
         seen.add(id(cur))
         text = str(cur)
         if "coverage.types" in text and "Tracer" in text:
+            return True
+        if "coverage" in text and "has no attribute 'types'" in text:
             return True
         cur = cur.__cause__ or cur.__context__
     return False
@@ -3784,7 +4797,7 @@ class _LiberoOSCController:
         the sim has no compiled MuJoCo model - the caller degrades
         gracefully. Raises the base :class:`_ControllerInstallError` for a
         fixable setup failure (missing site / actuator IDs, wrong arm-joint
-        count, or the known numba/coverage>=7 clash) - in strict mode the
+        count, or the known numba/coverage clash) - in strict mode the
         caller re-raises so ``PolicyRunner`` returns a structured eval
         error instead of silently dropping every GR00T action (#522).
         """
@@ -3796,7 +4809,7 @@ class _LiberoOSCController:
         # caller degrades gracefully; that is an environmental / optional-
         # dep condition, not a fixable setup bug. An import that fails for
         # ANOTHER reason while the module IS importable-but-broken (e.g.
-        # the numba/coverage>=7 ``AttributeError`` clash) raises the base
+        # the numba/coverage ``AttributeError`` clash) raises the base
         # ``_ControllerInstallError`` so the caller can surface it (#522).
         try:
             import mujoco as _mj
@@ -3804,7 +4817,9 @@ class _LiberoOSCController:
             raise _ControllerDependencyMissing(f"mujoco not available: {e}") from e
         except ImportError as e:
             if _is_numba_coverage_clash(e):
-                raise _ControllerInstallError(f"mujoco import hit the numba/coverage clash: {e}") from e
+                raise _ControllerInstallError(
+                    f"mujoco import hit the numba/coverage clash: {e} {_numba_coverage_clash_remedy()}"
+                ) from e
             raise _ControllerDependencyMissing(f"mujoco import failed (treated as unavailable): {e}") from e
         try:
             from robosuite.controllers import (  # type: ignore[import-not-found]
@@ -3814,7 +4829,7 @@ class _LiberoOSCController:
             from robosuite.utils.binding_utils import MjSim  # type: ignore[import-not-found]
         except (ImportError, AttributeError) as e:
             # The robosuite OSC import chain failed. Two cases:
-            #   1. The known numba/coverage>=7 clash (#522) - a FIXABLE
+            #   1. The known numba/coverage clash (#522) - a FIXABLE
             #      environment problem - surface it strictly so the eval
             #      returns an error instead of scoring success_rate=0 with
             #      every action dropped.
@@ -3824,7 +4839,9 @@ class _LiberoOSCController:
             #      as a hard dependency would break installs without the
             #      optional extras.
             if _is_numba_coverage_clash(e):
-                raise _ControllerInstallError(f"robosuite OSC import hit the numba/coverage clash: {e}") from e
+                raise _ControllerInstallError(
+                    f"robosuite OSC import hit the numba/coverage clash: {e} {_numba_coverage_clash_remedy()}"
+                ) from e
             raise _ControllerDependencyMissing(
                 f"robosuite OSC controller imports unavailable: {type(e).__name__}: {e}"
             ) from e
@@ -4124,10 +5141,10 @@ class _LiberoOSCController:
         # Missing keys default to 0 (no-op delta). Each per-key value
         # may be either a scalar or a 2-element list / array - GR00T-
         # LIBERO packs ALL action channels (x/y/z/roll/pitch/yaw/gripper)
-        # to match the training-data shape, same convention PR #162
-        # introduced for state.gripper. _to_scalar handles both forms
-        # (and defensive against unexpected shapes) - #168 only
-        # fixed gripper; #168 applies the same fix to every key.
+        # to match the training-data shape, the same convention used
+        # for state.gripper. _to_scalar handles both forms (and is
+        # defensive against unexpected shapes) and is applied to
+        # every action key, not just the gripper.
         delta = np.array(
             [
                 _to_scalar(action_dict.get("x", 0.0)),
@@ -4176,11 +5193,11 @@ class _LiberoOSCController:
         #   gripper_in = 0.5             → -sign(0)  =  0 (no motion)
         #   gripper_in = 1.0 (RLDS open)  → -sign(+1) = -1 (LIBERO open)  [ok]
         #
-        # Pre-#168 we passed the raw model output to our OSC's
-        # ``np.sign(gripper_value)`` directly. Since the model's typical
-        # outputs are in [0, 1], every "open" intent (model output ≈ 1)
-        # collapsed to ``sign=+1``, which our OSC interprets as CLOSE - so
-        # the gripper consistently went CLOSED for OPEN commands and
+        # Passing the raw model output to our OSC's
+        # ``np.sign(gripper_value)`` directly is wrong: the model's typical
+        # outputs are in [0, 1], so every "open" intent (model output ≈ 1)
+        # collapses to ``sign=+1``, which our OSC interprets as CLOSE - the
+        # gripper then goes CLOSED for OPEN commands and
         # vice-versa. This is the action-side counterpart to #168's
         # observation-side V-flip bug; both rounds together close the
         # client-pipeline parity gap that left ``success_rate=0`` after
@@ -4215,8 +5232,8 @@ class _LiberoOSCController:
 
         # Cache mujoco module reference for the substep loop. Lazy import
         # is required because the OSC controller path is only exercised
-        # under the `[sim-libero]` extra; the top-level adapter import
-        # must work without mujoco available.
+        # under the ``strands-robots[benchmark-libero]`` extra; the top-level
+        # adapter import must work without mujoco available.
         import mujoco as mj
 
         n_arm = len(self.arm_actuator_ids)
@@ -4234,7 +5251,7 @@ class _LiberoOSCController:
         # #168 - capture pre-step state for diagnostic log.
         # Gated on ``STRANDS_LIBERO_ACTION_LOG=1`` so production eval
         # incurs zero cost (single bool check). The full diagnostic
-        # answers PR #168's "what scale, what frame, what key
+        # answers the "what scale, what frame, what key
         # naming, does motion track delta" questions in one log line
         # per step.
         log_now = self._action_log_enabled and self._action_log_step < self._action_log_max
@@ -4281,7 +5298,7 @@ class _LiberoOSCController:
             #   ctrl = bias + weight * current_action
             # Without this, +1 (close) writes 0.04 to finger1 (range
             # [0, 0.04]) which actually OPENS finger1, breaking every
-            # grasp. See PR #168 investigation.
+            # grasp.
             self._gripper_current_action = np.clip(
                 self._gripper_current_action + ramp_step,
                 -1.0,
@@ -4295,7 +5312,7 @@ class _LiberoOSCController:
 
         # #168 - emit one structured log line per apply()
         # while inside the captured-step window. Captures everything a
-        # reviewer needs to bisect the residual bug: action key names,
+        # needed to bisect a residual tracking bug: action key names,
         # delta scale, gripper polarity end-to-end, EEF tracking
         # (delta vs actual EEF motion), and qpos/ctrl deltas.
         if log_now:
@@ -4553,9 +5570,9 @@ def _to_scalar(value: Any) -> float:
 
     Handles GR00T's training-shape packing where each per-key
     value may be either a scalar (legacy) or a 2-element list /
-    array / ndarray (current GR00T-LIBERO convention - same pattern
-    PR #162 introduced for ``state.gripper``, applied to every
-    action channel).
+    array / ndarray (current GR00T-LIBERO convention - the same
+    pattern used for ``state.gripper``, applied to every action
+    channel).
 
     An earlier commit in #168 fixed only ``gripper``; subsequent
     verification showed the same ``float(list)`` bug raises on

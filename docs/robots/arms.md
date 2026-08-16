@@ -1,11 +1,11 @@
 ---
-description: 22 single-arm manipulators - from a 2-DOF educational toy to industrial UR10e.
+description: 23 single-arm manipulators - from a 2-DOF educational toy to industrial UR10e.
 ---
 
 # Arms
 
 Single-arm manipulators: industrial robots, research arms, educational kits.
-**22 robots in this category.**
+**23 robots in this category.**
 
 ```python
 from strands_robots import Robot
@@ -28,12 +28,12 @@ sim = Robot("so100")            # SO-ARM100 (low-cost Feetech)
 | `kuka_iiwa` | KUKA LBR iiwa 14 (7-DOF collaborative) | 11 | `kuka_iiwa_14` |
 | `omx` | OMX Robot Arm (ROBOTIS, CAN bus motors) _(hardware-only, no sim asset)_ | ? | `omx_follower`, `omx_robot`, `robotis_omx` |
 | `openarm` | Enactic OpenArm (7-DOF, DAMIAO motors, CAN bus) | 9 | `enactic_openarm`, `open_arm`, `openarm_v10` |
-| `panda` | Franka Emika Panda (7-DOF + gripper) | 7 | `bimanual_panda_gripper`, `bimanual_panda_hand`, `franka` |
+| `panda` | Franka Emika Panda (7-DOF + gripper) | 7 | `bimanual_panda_gripper`, `bimanual_panda_hand`, `franka`, `franka_emika_panda`, `franka_panda`, `libero_panda`, `oxe_droid`, `single_panda_gripper` |
 | `piper` | AgileX Piper (6-DOF + gripper) | 11 | `agilex_piper` |
 | `rebot_b601` | Seeed Studio reBot B601-DM (6-DOF + gripper, Damiao CAN motors) _(hardware-only, no sim asset)_ | 7 | `rebot_b601_follower`, `seeed_rebot_b601`, `b601_dm` |
 | `sawyer` | Rethink Robotics Sawyer (7-DOF) | 7 | `rethink_sawyer` |
-| `so100` | TrossenRobotics SO-ARM100 (6-DOF, Feetech servos) | 6 | `so100_4cam`, `so100_dualcam`, `so100_follower` |
-| `so101` | RobotStudio SO-101 (6-DOF, upgraded SO-100) | 6 | `robotstudio_so101`, `so101_dualcam`, `so101_follower` |
+| `so100` | TrossenRobotics SO-ARM100 (6-DOF, Feetech servos) | 6 | `so100_4cam`, `so100_dualcam`, `so100_follower`, `so_arm100`, `trs_so_arm100` |
+| `so101` | RobotStudio SO-101 (6-DOF, upgraded SO-100) | 6 | `robotstudio_so101`, `so101_dualcam`, `so101_follower`, `so101_tricam` |
 | `ur10e` | Universal Robots UR10e (6-DOF industrial) | 6 | - |
 | `ur5e` | Universal Robots UR5e (6-DOF industrial) | 8 | - |
 | `vx300s` | Trossen ViperX 300s (6-DOF + gripper) | 19 | `oxe_widowx`, `trossen_vx300s`, `viper_x300s` |

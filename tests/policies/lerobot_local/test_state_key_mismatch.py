@@ -54,6 +54,24 @@ def _named_obs():
     return obs
 
 
+def _assert_actionable(msg: str) -> None:
+    """The message names the observed keys and a remedy that would bind them.
+
+    ``NAMED_JOINTS`` are bare lowercase SO motor names, which no shipped
+    embodiment declares - the sim configurations use the assets' own joint names
+    (``'1'..'6'`` for so101, ``Rotation``/``Pitch``/... for so100) and ``so_real``
+    uses lerobot's ``'<motor>.pos'``. So the remedy here is deliberately
+    ``set_robot_state_keys`` ONLY, quoted with the observed keys so it can be
+    pasted. This assertion used to require the literal ``embodiment=`` instead,
+    which meant it passed while the message recommended ``embodiment='so101'`` -
+    a configuration that declares none of these keys either, so following the
+    advice landed back on the guard that printed it.
+    """
+    assert "shoulder_pan" in msg
+    assert f"set_robot_state_keys({NAMED_JOINTS!r})" in msg
+    assert "embodiment=" not in msg
+
+
 class TestStrictKeysRaises:
     """strict_keys=True turns a state-key mismatch into a clear, actionable error."""
 
@@ -61,21 +79,15 @@ class TestStrictKeysRaises:
         policy = _policy("molmoact2", strict_keys=True)
         with pytest.raises(ValueError) as exc:
             policy._to_lerobot_observation(_named_obs())
-        msg = str(exc.value)
-        # Names the actual observation keys ...
-        assert "shoulder_pan" in msg
-        # ... and points at the two documented remedies.
-        assert "embodiment=" in msg
-        assert "set_robot_state_keys" in msg
+
+        _assert_actionable(str(exc.value))
 
     def test_strands_native_path_raises_with_actionable_message(self):
         policy = _policy("act", strict_keys=True)
         with pytest.raises(ValueError) as exc:
             policy._build_batch_from_strands_format(_named_obs(), {})
-        msg = str(exc.value)
-        assert "shoulder_pan" in msg
-        assert "embodiment=" in msg
-        assert "set_robot_state_keys" in msg
+
+        _assert_actionable(str(exc.value))
 
 
 class TestNonStrictWarnsAndFallsBack:

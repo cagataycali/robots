@@ -11,11 +11,13 @@ if TYPE_CHECKING:
 
     from strands_robots.rendering import CameraParams
 
+from strands_robots.simulation.models import registry_entry
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _can_render,
     _ensure_mujoco,
     capture_stderr_fd,
+    mj_name_to_id,
 )
 from strands_robots.simulation.safe_output import (
     atomic_write_bytes,
@@ -25,6 +27,7 @@ from strands_robots.simulation.safe_output import (
     validate_output_path,
     video_sandbox_args,
 )
+from strands_robots.utils import FREE_CAMERA_TOKENS, name_list_error
 
 logger = logging.getLogger(__name__)
 
@@ -65,13 +68,20 @@ def _max_render_bytes() -> int:
     return val
 
 
+# Environment variable that re-permits absolute ``render(output_path=...)``
+# destinations outside the render sandbox. One owner for the spelling, so the
+# value read and the name quoted in a refusal cannot drift apart.
+_RENDER_ALLOW_ABS_ENV = "STRANDS_ROBOTS_RENDER_ALLOW_ABS"
+
+
 def _validate_render_output_path(output_path: str) -> Path:
     """Validate an LLM-supplied render path, confined to the render sandbox.
 
     Thin render-specific binding over
     :func:`strands_robots.simulation.safe_output.validate_output_path`: absolute
     paths outside the sandbox are rejected unless ``STRANDS_ROBOTS_RENDER_ALLOW_ABS``
-    opts in.
+    opts in. That variable's name is passed down as well as read, so a
+    confinement refusal quotes the spelling the caller must set.
 
     Raises:
         ValueError: If the path is unsafe (the caller maps this to a tool error).
@@ -79,7 +89,8 @@ def _validate_render_output_path(output_path: str) -> Path:
     return validate_output_path(
         output_path,
         sandbox_root=_render_sandbox_root(),
-        allow_abs=env_flag("STRANDS_ROBOTS_RENDER_ALLOW_ABS"),
+        allow_abs=env_flag(_RENDER_ALLOW_ABS_ENV),
+        allow_abs_env=_RENDER_ALLOW_ABS_ENV,
     )
 
 
@@ -124,6 +135,14 @@ def _cameras_recording_option_error(
     capture thread, ``max_frames_per_camera=0`` made ``len(buffer) >= cap`` true
     for every frame, and a non-positive ``width``/``height`` failed every render
     call - all reported as success by both ``start`` and ``stop``.
+
+    The accepted domain admits any real scalar with an integral value, so
+    passing this guard is a promise the value *can* be honored, not that it is
+    already in the form its consumer needs. Callers must therefore normalize
+    the pixel counts to plain ``int`` before handing them to ``render``, which
+    requires a true ``int``: accepting ``640.0`` here and forwarding it
+    verbatim reproduced the very empty-recording-reported-as-success failure
+    this guard exists to prevent.
 
     Args:
         method: Public method name, used to prefix the error message.
@@ -338,9 +357,9 @@ class RenderingMixin:
         mj = _ensure_mujoco()
         for jnt_name in robot.joint_names:
             lookup = pfx + jnt_name if pfx else jnt_name
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
+            jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
             if jnt_id < 0 and pfx:
-                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id < 0:
                 continue
             body = int(model.jnt_bodyid[jnt_id])
@@ -367,9 +386,9 @@ class RenderingMixin:
         pfx = robot.namespace or ""
         for jnt_name in robot.joint_names:
             lookup = pfx + jnt_name if pfx else jnt_name
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
+            jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
             if jnt_id < 0 and pfx:
-                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0 and model.jnt_type[jnt_id] == mj.mjtJoint.mjJNT_FREE:
                 return int(jnt_id)
         return self._robot_base_free_joint(model, robot, pfx)
@@ -383,7 +402,13 @@ class RenderingMixin:
         (e.g. ``arm0/shoulder_pan`` in MuJoCo to allow multiple same-config
         robots), we look up the prefixed MuJoCo name but return the short
         name in the observation dict so the policy sees a stable, config-level
-        schema regardless of how many robots are in the scene.
+        schema regardless of how many robots are in the scene. That holds for
+        the robot's CAMERAS as well as its joints: ``add_robot`` registers them
+        under their short name (``wrist``) while the compiled model holds them
+        namespaced (``arm0/wrist``), and the registered ``SimCamera`` carries
+        the namespaced name the render lookup needs. A camera key that names
+        nothing in the compiled model is omitted rather than answered with the
+        free camera, per :meth:`SimEngine.get_observation`'s schema.
         """
         mj = _ensure_mujoco()
         assert self._world is not None  # callers must check
@@ -396,9 +421,9 @@ class RenderingMixin:
         for jnt_name in robot.joint_names:
             # Try namespaced name first (multi-robot), fall back to raw.
             lookup = pfx + jnt_name if pfx else jnt_name
-            jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
+            jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, lookup)
             if jnt_id < 0 and pfx:
-                jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
+                jnt_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jnt_name)
             if jnt_id >= 0:
                 # A FREE joint (6-DoF floating base) has no single hinge/slide
                 # position: its qpos is [xyz(3) + quat(4)] and qvel is
@@ -466,8 +491,35 @@ class RenderingMixin:
         for cname in cameras_to_render:
             if not cname:
                 continue
-            cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
-            cam_info = self._world.cameras.get(cname)
+            cam_info = registry_entry(self._world.cameras, cname)
+            # Resolve the MODEL camera this observation key names. The key alone
+            # is not always that name: ``add_robot`` registers a robot's own
+            # MJCF cameras under their SHORT name - the stable, config-level
+            # schema this method documents for joints as well - while the
+            # compiled model holds them namespaced (``arm0/wrist``). The
+            # registered entry carries that namespaced name, so it answers for
+            # the keys the bare lookup cannot.
+            cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, cname)
+            if cam_id < 0:
+                cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, getattr(cam_info, "name", None))
+            if cam_id < 0:
+                # Nothing in the compiled model answers for this key, so there
+                # is no view to report under it. Rendering the FREE camera here
+                # instead published the scene overview under a key that names a
+                # specific camera: every consumer of this schema - a policy
+                # reading ``observation.images.<name>``, a recorded LeRobot
+                # dataset column, the agent-tool observation - was handed the
+                # wrong view under a success result, with no signal that the
+                # camera it asked for had not been rendered. An absent key is
+                # the honest answer and the one the other backends give (the
+                # Newton engine omits a camera whose render yields no frame),
+                # and it leaves the joint state intact for callers that only
+                # need proprioception.
+                logger.debug(
+                    "Camera %r names no camera in the compiled model; omitting it from the observation",
+                    cname,
+                )
+                continue
             h = cam_info.height if cam_info else self.default_height
             w = cam_info.width if cam_info else self.default_width
             try:
@@ -475,10 +527,7 @@ class RenderingMixin:
                 if renderer is None:
                     continue
                 viz_option = self._get_viz_option()
-                if cam_id >= 0:
-                    renderer.update_scene(data, camera=cam_id, scene_option=viz_option)
-                else:
-                    renderer.update_scene(data, scene_option=viz_option)
+                renderer.update_scene(data, camera=cam_id, scene_option=viz_option)
                 obs[cname] = renderer.render().copy()
             except (RuntimeError, ValueError) as e:
                 # Individual camera failure shouldn't stop joint state collection.
@@ -526,7 +575,7 @@ class RenderingMixin:
         mj = _ensure_mujoco()
         assert self._world is not None  # callers must check
         model, data = self._world._model, self._world._data
-        robot = self._world.robots.get(robot_name)
+        robot = registry_entry(self._world.robots, robot_name)
         pfx = robot.namespace if robot else ""
 
         # Action-controller fast path: adapter-installed transform
@@ -627,10 +676,10 @@ class RenderingMixin:
         def _lookup(obj_type: Any, name: str) -> int:
             """Try namespaced lookup first, fall back to raw."""
             if pfx:
-                i = mj.mj_name2id(model, obj_type, pfx + name)
+                i = mj_name_to_id(model, obj_type, pfx + name)
                 if i >= 0:
                     return i
-            return int(mj.mj_name2id(model, obj_type, name))
+            return int(mj_name_to_id(model, obj_type, name))
 
         unresolved: list[str] = []
         for key, value in action_dict.items():
@@ -916,7 +965,10 @@ class RenderingMixin:
         ``~/.strands_robots/renders``); paths with shell metacharacters,
         backslash separators, ``..`` escapes, or a symlinked target, and PNGs
         larger than ``STRANDS_ROBOTS_RENDER_MAX_BYTES`` (default 50 MB) are
-        rejected with ``status=error``. Set ``STRANDS_ROBOTS_RENDER_ALLOW_ABS=1``
+        rejected with ``status=error``. A bare filename (``"frame.png"``) is
+        written INTO the sandbox rather than resolved against the process CWD,
+        so it needs no directory to succeed. Set
+        ``STRANDS_ROBOTS_RENDER_ALLOW_ABS=1``
         to permit absolute paths outside the sandbox. The write is atomic
         (temp file + ``os.replace``), so a crash mid-write cannot corrupt an
         existing file at the destination.
@@ -943,7 +995,7 @@ class RenderingMixin:
         # with get_observation, which already keys off the per-camera config.
         # The free camera ("default"/"free") and model-only cameras that have no
         # SimCamera entry fall back to the engine default.
-        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        cam_cfg = registry_entry(self._world.cameras, camera_name) if camera_name not in FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
@@ -968,11 +1020,11 @@ class RenderingMixin:
             # Special 'default' / 'free' tokens route to the free camera; any
             # other name MUST resolve or we error (prevents the LLM from
             # believing it rendered viewpoint X while actually getting free-cam).
-            if camera_name in (None, "", "default", "free"):
+            if camera_name in FREE_CAMERA_TOKENS:
                 cam_id = -1
                 label = "free (default)"
             else:
-                cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
                 if cam_id < 0:
                     return {
                         "status": "error",
@@ -1080,7 +1132,7 @@ class RenderingMixin:
         # frame render() produces for the same camera (and with get_observation).
         # The free camera and model-only cameras with no SimCamera entry fall
         # back to the engine default.
-        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        cam_cfg = registry_entry(self._world.cameras, camera_name) if camera_name not in FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
@@ -1088,11 +1140,11 @@ class RenderingMixin:
 
         try:
             # strict camera validation (same policy as render())
-            if camera_name in (None, "", "default", "free"):
+            if camera_name in FREE_CAMERA_TOKENS:
                 cam_id = -1
                 label = "free (default)"
             else:
-                cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
                 if cam_id < 0:
                     return {
                         "status": "error",
@@ -1277,7 +1329,7 @@ class RenderingMixin:
             raise RuntimeError(_NO_WORLD_MSG)
 
         mj = _ensure_mujoco()
-        cam_cfg = self._world.cameras.get(camera_name) if camera_name not in (None, "", "default", "free") else None
+        cam_cfg = registry_entry(self._world.cameras, camera_name) if camera_name not in FREE_CAMERA_TOKENS else None
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
         if err := self._validate_render_dims(w, h):
@@ -1292,10 +1344,10 @@ class RenderingMixin:
                     "Rendering unavailable (no OpenGL context). "
                     "Install EGL or OSMesa for offscreen rendering: apt-get install libosmesa6-dev"
                 )
-            if camera_name in (None, "", "default", "free"):
+            if camera_name in FREE_CAMERA_TOKENS:
                 cam_id = -1
             else:
-                cam_id = mj.mj_name2id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                cam_id = mj_name_to_id(self._world._model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
                 if cam_id < 0:
                     raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
 
@@ -1333,11 +1385,11 @@ class RenderingMixin:
         so the pose maps across without correction. Intrinsics ``K``: a
         camera declared with an explicit physical sensor (MJCF
         ``sensorsize`` / ``focal`` / ``principal`` / ``resolution``) gets its
-        ``K`` from ``model.cam_intrinsic`` / ``cam_sensorsize`` /
-        ``cam_resolution`` - non-square pixels (``fx != fy``) and an
-        off-center principal point are honored, matching what MuJoCo actually
-        rasterizes (see :meth:`_explicit_intrinsics_K` for the calibrated
-        sign conventions). All other cameras fall back to the vertical FOV
+        ``K`` from the view frustum MuJoCo computes for that camera, so
+        non-square pixels (``fx != fy``) and an off-center principal point are
+        honored exactly as this MuJoCo build rasterizes them - including the
+        vertical principal-point convention, which MuJoCo 3.6.0 changed.
+        All other cameras fall back to the vertical FOV
         (``model.cam_fovy``, square pixels, principal point at the image
         center). Clip planes are
         ``model.vis.map.{znear,zfar} * model.stat.extent``.
@@ -1389,8 +1441,8 @@ class RenderingMixin:
         model = self._world._model
         # The free camera is not a model camera: it has no name to resolve and
         # no SimCamera entry, so its resolution and default size differ.
-        free_camera = camera_name in (None, "", "default", "free")
-        cam_cfg = None if free_camera else self._world.cameras.get(camera_name)
+        free_camera = camera_name in FREE_CAMERA_TOKENS
+        cam_cfg = None if free_camera else registry_entry(self._world.cameras, camera_name)
 
         w = (cam_cfg.width if cam_cfg is not None else self.default_width) if width is None else width
         h = (cam_cfg.height if cam_cfg is not None else self.default_height) if height is None else height
@@ -1412,8 +1464,8 @@ class RenderingMixin:
                 K_explicit = None
             else:
                 R, t, fovy_deg = self._named_camera_pose(mj, model, self._world._data, camera_name)
-                cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
-                K_explicit = self._explicit_intrinsics_K(_np, model, cam_id, w, h)
+                cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+                K_explicit = self._explicit_intrinsics_K(mj, _np, model, self._world._data, cam_id, w, h)
 
         if K_explicit is not None:
             K = K_explicit
@@ -1427,7 +1479,9 @@ class RenderingMixin:
         return CameraParams(K=K, T_world_cam=T_world_cam, width=w, height=h, znear=znear, zfar=zfar)
 
     @staticmethod
-    def _explicit_intrinsics_K(np: Any, model: Any, cam_id: int, w: int, h: int) -> "np.ndarray | None":
+    def _explicit_intrinsics_K(
+        mj: Any, np: Any, model: Any, data: Any, cam_id: int, w: int, h: int
+    ) -> "np.ndarray | None":
         """``K`` for a camera declared with explicit MJCF intrinsics, else ``None``.
 
         MJCF cameras may declare a physical sensor (``sensorsize`` +
@@ -1435,62 +1489,78 @@ class RenderingMixin:
         ``resolution``). MuJoCo then rasterizes with that intrinsic model -
         ``fovy`` is ignored, pixels may be non-square (``fx != fy``), and the
         principal point moves off the image center - so deriving ``K`` from
-        ``fovy`` silently misplaces every unprojected point (~25 cm on the
-        review's repro camera). This helper builds ``K`` the way MuJoCo
-        actually draws.
+        ``fovy`` silently misplaces every unprojected point (~25 cm on a wide
+        off-centre camera).
 
-        Sign conventions were calibrated empirically against MuJoCo 3.8.1 by
-        least-squares fitting blob centroids of spheres at known camera-frame
-        positions over three sensor configurations (offset principal point,
-        non-square sensor, asymmetric focal): a positive MJCF ``principal``
-        offset shifts the principal point toward NEGATIVE ``u`` and ``v``::
+        ``K`` is read back from the view frustum MuJoCo computes for this
+        camera - ``mjv_updateCamera`` fills ``mjvScene.camera[0].frustum_*``,
+        the exact numbers ``mjr_render`` hands ``glFrustum`` - rather than
+        re-derived from ``cam_intrinsic``. The renderer maps that frustum onto
+        the full viewport, so at ``near = frustum_near`` and
+        ``halfwidth = frustum_width``::
 
-            fx = focal_x / (sensor_w / res_w)     fy = focal_y / (sensor_h / res_h)
-            cx = res_w/2 - principal_x / pixel_w  cy = res_h/2 - principal_y / pixel_h
+            fx = w * near / (2 * halfwidth)
+            fy = h * near / (frustum_top - frustum_bottom)
+            cx = w * (halfwidth - frustum_center) / (2 * halfwidth)
+            cy = h * frustum_top / (frustum_top - frustum_bottom)
 
-        (fitted (fx, fy, cx, cy) = (300, 300, 85, 80) for sensorsize
-        0.0064x0.0048, focal 0.006, principal (0.0015, 0.0008) at 320x240 -
-        exact to two decimals, and the residuals of the other two
-        configurations pin both signs.) The sensor fixes the view frustum;
-        rendering into a ``(w, h)`` viewport maps that same frustum onto the
-        full viewport, so ``K`` scales linearly per axis (verified: the blob
-        centroid at 640x480 lands at exactly 2x its 320x240 coordinates).
+        Reading the frustum is what keeps the principal point on the side of
+        the image center MuJoCo actually draws it: the vertical assignment
+        differs across the supported version range. MuJoCo 3.6.0 fixed swapped
+        vertical frustum bounds for a camera with a principal-point offset, so
+        a positive MJCF ``principal`` y-offset moves the principal point DOWN
+        the image on MuJoCo <= 3.5 and UP from 3.6 on. A closed form over
+        ``cam_intrinsic`` can only match one of the two, and on the other it
+        places ``cy`` exactly as far the wrong side of the image center - a
+        silent unprojection error of twice the offset (~26 cm of world-point
+        error at a 1 m stand-off for a 0.8 mm offset on a 4.8 mm sensor).
+
+        ``frustum_width`` is zero exactly when the camera declares no physical
+        sensor: MuJoCo then derives the horizontal extent from the viewport
+        aspect ratio, which is the ``fovy`` path.
 
         Args:
+            mj: the imported ``mujoco`` module.
             np: the imported numpy module (kept off this module's top level).
             model: compiled ``MjModel``.
+            data: the ``MjData`` whose camera pose the frustum is read at.
             cam_id: camera id in ``model``.
             w: requested image width in pixels.
             h: requested image height in pixels.
 
         Returns:
             ``(3, 3)`` float64 ``K`` at ``(w, h)``, or ``None`` when the
-            camera declares no physical sensor (``cam_sensorsize`` zero -
-            the ``fovy`` path applies).
+            camera declares no physical sensor (the ``fovy`` path applies).
+
+        Raises:
+            ValueError: the camera's frustum has a non-positive vertical
+                extent, so no pinhole ``K`` describes it.
         """
-        sensor_w = float(model.cam_sensorsize[cam_id][0])
-        sensor_h = float(model.cam_sensorsize[cam_id][1])
-        if sensor_w <= 0.0 or sensor_h <= 0.0:
+        cam = mj.MjvCamera()
+        cam.type = mj.mjtCamera.mjCAMERA_FIXED
+        cam.fixedcamid = cam_id
+        # mjv_updateCamera fills only the scene's GL cameras, so the scene needs
+        # no geometry buffers - a default (model-less) mjvScene is enough.
+        scene = mj.MjvScene()
+        mj.mjv_updateCamera(model, data, cam, scene)
+        gl_cam = scene.camera[0]
+        halfwidth = float(gl_cam.frustum_width)
+        if halfwidth <= 0.0:
             return None
-        res_w = float(model.cam_resolution[cam_id][0])
-        res_h = float(model.cam_resolution[cam_id][1])
-        if res_w <= 0.0 or res_h <= 0.0:
-            # sensorsize without resolution does not compile in MuJoCo; be
-            # defensive anyway rather than dividing by zero.
-            return None
-        focal_x, focal_y, pp_x, pp_y = (float(v) for v in model.cam_intrinsic[cam_id])
-        pixel_w = sensor_w / res_w
-        pixel_h = sensor_h / res_h
-        fx = focal_x / pixel_w
-        fy = focal_y / pixel_h
-        cx = res_w / 2.0 - pp_x / pixel_w
-        cy = res_h / 2.0 - pp_y / pixel_h
-        sx = float(w) / res_w
-        sy = float(h) / res_h
-        return np.array(
-            [[fx * sx, 0.0, cx * sx], [0.0, fy * sy, cy * sy], [0.0, 0.0, 1.0]],
-            dtype=np.float64,
-        )
+        top = float(gl_cam.frustum_top)
+        bottom = float(gl_cam.frustum_bottom)
+        near = float(gl_cam.frustum_near)
+        vertical = top - bottom
+        if vertical <= 0.0:
+            raise ValueError(
+                f"Camera id {cam_id} has a non-positive vertical frustum extent "
+                f"(top {top}, bottom {bottom}), which no pinhole K describes."
+            )
+        fx = float(w) * near / (2.0 * halfwidth)
+        fy = float(h) * near / vertical
+        cx = float(w) * (halfwidth - float(gl_cam.frustum_center)) / (2.0 * halfwidth)
+        cy = float(h) * top / vertical
+        return np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]], dtype=np.float64)
 
     def _named_camera_pose(
         self, mj: Any, model: Any, data: Any, camera_name: str | None
@@ -1514,7 +1584,7 @@ class RenderingMixin:
         Raises:
             KeyError: no camera of that name exists in the model.
         """
-        cam_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
+        cam_id = mj_name_to_id(model, mj.mjtObj.mjOBJ_CAMERA, camera_name)
         if cam_id < 0:
             raise KeyError(f"Camera '{camera_name}' not found. Available: {self._list_camera_names()}")
         mj.mj_forward(model, data)
@@ -1610,7 +1680,22 @@ class RenderingMixin:
         return ["default", *[n for n in named if n != "default"]]
 
     def get_contacts(self) -> dict[str, Any]:
-        """Return the list of active geom-geom contacts at the current step.
+        """Return the geom-geom pairs MuJoCo detected at the current step.
+
+        ``mjData.contact`` holds every pair inside the *detection* range,
+        which is the pair's ``margin`` plus its ``gap``. MuJoCo hands only
+        the pairs inside ``margin`` to the constraint solver; a pair between
+        the two thresholds is a proximity report that carries no force at
+        all. Each record therefore reports ``active`` - the solver's own
+        decision, taken from ``mjContact.exclude`` - so a caller asking "are
+        these two touching?" can tell a touch from a near miss. Without it
+        every consumer answered on geometry alone, which reports contact for
+        bodies that are visibly apart whenever an asset declares a ``gap``.
+
+        Proximity reports are still listed: they are what a clearance query
+        wants, and suppressing them would hide the detection set from
+        callers who need it. Use :meth:`get_contact_forces` for the magnitude
+        of the load a touching pair carries.
 
         We run ``mj_forward`` first so the contact list reflects the
         current qpos/qvel even immediately after ``reset`` or ``add_robot``
@@ -1635,6 +1720,11 @@ class RenderingMixin:
                     "geom2": int(data.contact[i].geom2),
                     "dist": float(data.contact[i].dist),
                     "pos": data.contact[i].pos.tolist(),
+                    # ``exclude == 0`` is MuJoCo's own decision to hand the
+                    # pair to the constraint solver, i.e. the pair is close
+                    # enough to push back. Anything else is in the gap and
+                    # carries no force.
+                    "active": int(data.contact[i].exclude) == 0,
                 }
                 for i in range(ncon)
             ]
@@ -1658,12 +1748,16 @@ class RenderingMixin:
         for c in contact_snapshot:
             g1 = _resolve_geom(c["geom1"])
             g2 = _resolve_geom(c["geom2"])
-            contacts.append({"geom1": g1, "geom2": g2, "dist": c["dist"], "pos": c["pos"]})
+            contacts.append({"geom1": g1, "geom2": g2, "dist": c["dist"], "pos": c["pos"], "active": c["active"]})
 
-        text = f"{len(contacts)} contacts" if contacts else "No contacts."
         if contacts:
+            n_active = sum(1 for c in contacts if c["active"])
+            text = f"{len(contacts)} contacts ({n_active} touching)"
             for c in contacts[:10]:
-                text += f"\n  - {c['geom1']} <-> {c['geom2']} (d={c['dist']:.4f})"
+                touch = "" if c["active"] else ", proximity only - no force"
+                text += f"\n  - {c['geom1']} <-> {c['geom2']} (d={c['dist']:.4f}{touch})"
+        else:
+            text = "No contacts."
 
         return {
             "status": "success",
@@ -1749,6 +1843,13 @@ class RenderingMixin:
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
+        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
+        # refused on the shared name-list domain before any camera is resolved. Neither
+        # mistake this catches could be honored as written: a single name passed
+        # as a bare string is iterable per character, so it was read as one
+        # camera per letter, and a repeated name rendered the same view twice.
+        if cameras and (text := name_list_error(cameras, "cameras", "render_all")):
+            return {"status": "error", "content": [{"text": text}]}
         names, unresolved = self._active_camera_list(cameras)
         if cameras is not None and unresolved:
             return {
@@ -1827,7 +1928,8 @@ class RenderingMixin:
                 ``status="success"`` return.
             width/height: per-frame size. ``None`` uses the camera's configured
                 resolution (else the renderer default); an explicit value must
-                be a positive whole number.
+                be a positive whole number, and an integral ``float`` or
+                ``np.int64`` is normalized to ``int`` rather than refused.
             name: filename tag (auto if None). Validated as a single path
                 component - separators / traversal / metacharacters rejected.
             max_frames_per_camera: safety cap on in-memory buffers. Must be a
@@ -1849,6 +1951,28 @@ class RenderingMixin:
             "start_cameras_recording", fps, width, height, max_frames_per_camera
         ):
             return error
+        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
+        # refused on the shared name-list domain before any filesystem or capture-thread work. Neither
+        # mistake this catches could be honored as written: a single name passed
+        # as a bare string is iterable per character, so it was read as one
+        # camera per letter, and a repeated name opened a second encoder on the one output
+        # path, so the artifact ledger reported two files where one exists.
+        if cameras and (text := name_list_error(cameras, "cameras", "start_cameras_recording")):
+            return {"status": "error", "content": [{"text": text}]}
+
+        # The guard above accepts any real scalar with an integral value, so a
+        # ``640.0`` read from a config float and an ``np.int64`` probed from a
+        # camera are both usable pixel counts - honor that by normalizing them
+        # to plain ``int`` here. The capture loop hands these straight to
+        # ``render``, whose ``_validate_render_dims`` requires a true ``int``,
+        # so without this every frame was refused and the recording wrote no
+        # MP4 at all while both ``start`` and ``stop`` reported success. This is
+        # the same normalization every other pixel-count surface in the library
+        # already performs (``VideoConfig.from_dict``, ``HybridCompositor``,
+        # ``mjpeg_frames``). ``None`` keeps its "use the camera's own
+        # resolution" meaning and is passed through untouched.
+        width = None if width is None else int(width)
+        height = None if height is None else int(height)
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]
@@ -1878,9 +2002,15 @@ class RenderingMixin:
             if name is not None:
                 sanitize_name_component(name, label="name")
             if output_dir is not None:
-                _sb_root, _allow_abs = video_sandbox_args()
+                _sb_root, _allow_abs, _allow_abs_env = video_sandbox_args()
                 out_dir = str(
-                    validate_output_path(output_dir, sandbox_root=_sb_root, allow_abs=_allow_abs, label="output_dir")
+                    validate_output_path(
+                        output_dir,
+                        sandbox_root=_sb_root,
+                        allow_abs=_allow_abs,
+                        label="output_dir",
+                        allow_abs_env=_allow_abs_env,
+                    )
                 )
             else:
                 out_dir = _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings")
@@ -2280,6 +2410,28 @@ class RenderingMixin:
             "start_cameras_recording_synchronous", fps, width, height, max_frames_per_camera
         ):
             return error
+        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
+        # refused on the shared name-list domain before any filesystem or capture-thread work. Neither
+        # mistake this catches could be honored as written: a single name passed
+        # as a bare string is iterable per character, so it was read as one
+        # camera per letter, and a repeated name opened a second encoder on the one output
+        # path, so the artifact ledger reported two files where one exists.
+        if cameras and (text := name_list_error(cameras, "cameras", "start_cameras_recording_synchronous")):
+            return {"status": "error", "content": [{"text": text}]}
+
+        # The guard above accepts any real scalar with an integral value, so a
+        # ``640.0`` read from a config float and an ``np.int64`` probed from a
+        # camera are both usable pixel counts - honor that by normalizing them
+        # to plain ``int`` here. The capture loop hands these straight to
+        # ``render``, whose ``_validate_render_dims`` requires a true ``int``,
+        # so without this every frame was refused and the recording wrote no
+        # MP4 at all while both ``start`` and ``stop`` reported success. This is
+        # the same normalization every other pixel-count surface in the library
+        # already performs (``VideoConfig.from_dict``, ``HybridCompositor``,
+        # ``mjpeg_frames``). ``None`` keeps its "use the camera's own
+        # resolution" meaning and is passed through untouched.
+        width = None if width is None else int(width)
+        height = None if height is None else int(height)
 
         if getattr(self, "_cams_rec_state", None) and self._cams_rec_state.get("running"):
             cur = self._cams_rec_state["name"]
@@ -2305,9 +2457,15 @@ class RenderingMixin:
             if name is not None:
                 sanitize_name_component(name, label="name")
             if output_dir is not None:
-                _sb_root, _allow_abs = video_sandbox_args()
+                _sb_root, _allow_abs, _allow_abs_env = video_sandbox_args()
                 out_dir = str(
-                    validate_output_path(output_dir, sandbox_root=_sb_root, allow_abs=_allow_abs, label="output_dir")
+                    validate_output_path(
+                        output_dir,
+                        sandbox_root=_sb_root,
+                        allow_abs=_allow_abs,
+                        label="output_dir",
+                        allow_abs_env=_allow_abs_env,
+                    )
                 )
             else:
                 out_dir = _os.path.join(_tempfile.gettempdir(), "strands_robots", "recordings")

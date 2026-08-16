@@ -316,6 +316,28 @@ def _target_quat(position: list[float], target: list[float]) -> list[float] | No
     return quat.tolist()
 
 
+def _find_spec_body(spec: Any, name: str) -> Any | None:
+    """Resolve a body by name in ``spec``, or ``None`` when it is not there.
+
+    ``spec.body(name)`` only resolves bodies that existed at the last compile,
+    and it RETURNS ``None`` for a body added since (rather than raising), so a
+    lookup that trusts it alone misses every body introduced by
+    ``spec.attach()`` or ``add_body`` in the current editing session. Falling
+    back to a scan of ``spec.bodies`` covers those, mirroring the robustness
+    of ``scene_ops._find_body``.
+    """
+    try:
+        body = spec.body(name)
+    except (KeyError, ValueError):
+        body = None
+    if body is not None:
+        return body
+    for candidate in spec.bodies:
+        if candidate.name == name:
+            return candidate
+    return None
+
+
 # SpecBuilder - the public API
 
 
@@ -348,12 +370,18 @@ class SpecBuilder:
           * mesh assets for any objects with ``shape == "mesh"``
           * lights (``main_light``, ``fill_light``)
           * ground plane (if ``world.ground_plane``)
-          * cameras
+          * world-fixed cameras
           * objects
 
         Robots are NOT included here - they're attached separately via
         :meth:`attach_robot` because each attach consumes a fresh MjSpec
         loaded from the URDF/MJCF file on disk.
+
+        Because no robot is attached yet, a BODY-MOUNTED camera (one with
+        ``parent_body`` set, e.g. a wrist camera) has no parent to mount on
+        and is deferred: the caller must invoke :meth:`add_deferred_cameras`
+        after attaching robots and before compiling, or those cameras are
+        absent from the model.
 
         Caller is responsible for ``spec.compile()`` to produce an MjModel.
         """
@@ -470,12 +498,19 @@ class SpecBuilder:
                     condim=3,
                 )
 
-        # Cameras. Skip cameras that were discovered inside a robot's URDF -
-        # they'll come back automatically via ``spec.attach(robot_spec)``.
-        # Re-adding them at the top level would collide with the attached
-        # namespaced copy at compile time.
+        # Cameras. Two kinds are skipped here.
+        #
+        # Cameras discovered inside a robot's URDF come back automatically via
+        # ``spec.attach(robot_spec)``; re-adding them at the top level would
+        # collide with the attached namespaced copy at compile time.
+        #
+        # Body-mounted cameras are DEFERRED: ``build`` does not attach robots
+        # (see this method's own contract), so a camera whose ``parent_body``
+        # is a robot body has no parent in the spec yet. Adding it here raised
+        # ``ValueError`` and aborted the whole rebuild. The caller mounts them
+        # with :meth:`add_deferred_cameras` once every robot is attached.
         for cam in world.cameras.values():
-            if getattr(cam, "origin_robot", ""):
+            if getattr(cam, "origin_robot", "") or getattr(cam, "parent_body", ""):
                 continue
             SpecBuilder.add_camera(spec, cam)
 
@@ -527,19 +562,13 @@ class SpecBuilder:
         # leaves an orphan body behind.
         material_name = SpecBuilder._build_material(spec, obj) if obj.material is not None else None
 
-        # ``add_body(name=...)`` raises ``repeated name`` on a collision with an
-        # existing scene body BUT still inserts the duplicate, and the steps
-        # after it (the geom type lookup, ``add_geom``) can raise as well. Any
-        # raise in this block must undo only what THIS call inserted, then
-        # re-raise so the caller reports the real reason. Deleting by name
-        # (``spec.body(name)`` / :meth:`remove_body`) is unsafe on the collision
-        # path: that accessor resolves the ORIGINAL body present at the last
-        # compile, so it would delete the pre-existing healthy body and leave
-        # the empty orphan holding its name - a silent scene corruption. Instead
-        # record how many bodies already carry this name and, on failure, delete
-        # only the surplus this call produced (the orphan is appended, so it is
-        # the tail of that run). This can never touch a body it did not create.
-        pre_count = sum(1 for b in spec.bodies if b.name == obj.name)
+        # ``add_body(name=...)`` inserts the duplicate even when the name
+        # collides with an existing scene body, and the steps after it (the geom
+        # type lookup, ``add_geom``) can raise as well. Any raise in this block
+        # must undo only what THIS call inserted, then re-raise so the caller
+        # reports the real reason - hence the body count taken before the insert
+        # and :meth:`remove_surplus_bodies` after it, never a delete by name.
+        pre_count = SpecBuilder.count_bodies_named(spec, obj.name)
         try:
             body = spec.worldbody.add_body(
                 name=obj.name,
@@ -597,8 +626,7 @@ class SpecBuilder:
 
             body.add_geom(**geom_kwargs)
         except (ValueError, RuntimeError):
-            for surplus in [b for b in spec.bodies if b.name == obj.name][pre_count:]:
-                spec.delete(surplus)
+            SpecBuilder.remove_surplus_bodies(spec, obj.name, pre_count)
             raise
 
     # material build
@@ -727,6 +755,14 @@ class SpecBuilder:
 
         If ``cam.target`` is set, the look-at direction is converted to a
         quaternion via :func:`_target_quat`.
+
+        ``add_camera(name=...)`` inserts the duplicate even when the name
+        collides with a camera the scene already declares, so - exactly as in
+        :meth:`add_object` - a raise from the insert rolls only the cameras THIS
+        call appended back out (:meth:`remove_surplus_cameras`) before
+        re-raising. Without that, a refused camera left an orphan in the spec and
+        every later scene mutation kept failing to recompile on the duplicate
+        name, bricking the world after one bad add.
         """
         mujoco = _ensure_mujoco()
         pos = list(cam.position)
@@ -744,28 +780,53 @@ class SpecBuilder:
 
         parent_name = getattr(cam, "parent_body", "") or ""
         if parent_name:
-            # Mount on the named body. spec.body() only resolves bodies that
-            # existed at the last compile; robot bodies introduced via
-            # spec.attach() may not be visible that way, so fall back to a
-            # full scan (mirrors scene_ops._find_body's robustness).
-            parent = None
-            try:
-                parent = spec.body(parent_name)
-            except (KeyError, ValueError):
-                parent = None
-            if parent is None:
-                for body in spec.bodies:
-                    if body.name == parent_name:
-                        parent = body
-                        break
+            # Mount on the named body, so cam.position/target are read in that
+            # body's LOCAL frame and the camera rides along with it.
+            parent = _find_spec_body(spec, parent_name)
             if parent is None:
                 raise ValueError(
                     f"add_camera: parent_body {parent_name!r} not found in scene. "
                     "Pass the fully-qualified body name (e.g. 'so101/gripper')."
                 )
-            parent.add_camera(**kwargs)
+            attach_to = parent
         else:
-            spec.worldbody.add_camera(**kwargs)
+            attach_to = spec.worldbody
+
+        pre_count = SpecBuilder.count_cameras_named(spec, cam.name)
+        try:
+            attach_to.add_camera(**kwargs)
+        except (ValueError, RuntimeError):
+            SpecBuilder.remove_surplus_cameras(spec, cam.name, pre_count)
+            raise
+
+    # deferred (body-mounted) cameras
+    @staticmethod
+    def add_deferred_cameras(spec: Any, world: SimWorld) -> list[str]:
+        """Mount the body-mounted cameras :meth:`build` deferred.
+
+        :meth:`build` deliberately does not attach robots, so a camera whose
+        ``parent_body`` names a robot body cannot be added while the base spec
+        is being assembled. Call this once every robot has been attached and
+        before ``spec.compile()``.
+
+        Returns:
+            The names of cameras that could NOT be mounted because their
+            ``parent_body`` is absent from the rebuilt spec -- which happens
+            when the body belonged to a robot that is being removed. They are
+            reported rather than raised so removing a robot stays possible;
+            the caller decides what to do with the now-parentless entries.
+        """
+        unmounted: list[str] = []
+        for cam in world.cameras.values():
+            # Both fields are declared on SimCamera, so read them directly.
+            parent_name = cam.parent_body
+            if not parent_name or cam.origin_robot:
+                continue
+            if _find_spec_body(spec, parent_name) is None:
+                unmounted.append(cam.name)
+                continue
+            SpecBuilder.add_camera(spec, cam)
+        return unmounted
 
     # body remove
     @staticmethod
@@ -805,6 +866,100 @@ class SpecBuilder:
             return False
         spec.delete(body)
         return True
+
+    # surplus rollback (identify what THIS call inserted, never by name)
+    @staticmethod
+    def count_bodies_named(spec: Any, name: str) -> int:
+        """Count the bodies in ``spec`` that carry ``name``.
+
+        Take this BEFORE an insert that may have to be rolled back, and pass it
+        as the ``keep`` argument of :meth:`remove_surplus_bodies`. A plain count
+        rather than a membership test because a spec can legitimately hold two
+        bodies under one name between an insert and the compile that refuses it.
+
+        Args:
+            spec: The ``mjSpec`` to enumerate.
+            name: The body name to count.
+
+        Returns:
+            How many bodies currently carry ``name`` (0 when none do).
+        """
+        return sum(1 for body in getattr(spec, "bodies", ()) if body.name == name)
+
+    @staticmethod
+    def count_cameras_named(spec: Any, name: str) -> int:
+        """Count the cameras in ``spec`` that carry ``name``.
+
+        The camera-side counterpart of :meth:`count_bodies_named`; pair it with
+        :meth:`remove_surplus_cameras`.
+
+        Args:
+            spec: The ``mjSpec`` to enumerate.
+            name: The camera name to count.
+
+        Returns:
+            How many cameras currently carry ``name`` (0 when none do).
+        """
+        return sum(1 for camera in getattr(spec, "cameras", ()) if camera.name == name)
+
+    @staticmethod
+    def remove_surplus_bodies(spec: Any, name: str, keep: int) -> int:
+        """Delete the bodies named ``name`` beyond the first ``keep`` of them.
+
+        This is the rollback a refused insert needs, and it is deliberately NOT
+        :meth:`remove_body`. A scene injection mutates the live spec before the
+        compile that validates it, so at rollback time a colliding name is
+        carried by TWO bodies: the healthy pre-existing one and the orphan the
+        refused call appended. ``remove_body`` resolves the name through
+        ``spec.body(name)``, which answers with the body present at the last
+        compile - the ORIGINAL - so using it to roll back deleted the healthy
+        body and left the orphan holding its name. The scene then recompiled
+        successfully with the original geometry gone: a rejected add silently
+        rewrote the scene.
+
+        Identifying the surplus by position instead can never touch a body this
+        call did not create. MuJoCo appends new elements, so the bodies to delete
+        are the tail of the run carrying ``name``; ``keep`` is the count taken
+        before the insert (:meth:`count_bodies_named`). ``keep`` at or above the
+        current count is a no-op, so a rollback is safe to attempt on a path that
+        may not have inserted anything.
+
+        Args:
+            spec: The ``mjSpec`` to mutate.
+            name: The body name whose surplus copies to delete.
+            keep: How many bodies with that name to leave in place.
+
+        Returns:
+            The number of bodies deleted.
+        """
+        surplus = [body for body in getattr(spec, "bodies", ()) if body.name == name][keep:]
+        for body in surplus:
+            spec.delete(body)
+        return len(surplus)
+
+    @staticmethod
+    def remove_surplus_cameras(spec: Any, name: str, keep: int) -> int:
+        """Delete the cameras named ``name`` beyond the first ``keep`` of them.
+
+        The camera-side counterpart of :meth:`remove_surplus_bodies`, and for the
+        same reason: :meth:`remove_camera` deletes the FIRST camera carrying the
+        name, which on a collision is the one the scene already declared, so
+        rolling a refused camera back with it moved the scene's camera to the
+        rejected pose. Every later render from that name then answered with a
+        view the caller was told had been refused.
+
+        Args:
+            spec: The ``mjSpec`` to mutate.
+            name: The camera name whose surplus copies to delete.
+            keep: How many cameras with that name to leave in place.
+
+        Returns:
+            The number of cameras deleted.
+        """
+        surplus = [camera for camera in getattr(spec, "cameras", ()) if camera.name == name][keep:]
+        for camera in surplus:
+            spec.delete(camera)
+        return len(surplus)
 
     # camera remove
     @staticmethod
@@ -938,13 +1093,175 @@ class SpecBuilder:
         for top_body in robot_spec.worldbody.bodies:
             _walk(top_body)
 
+        # Read the solver settings the robot model declares for itself. The read
+        # has to happen here, before ``attach`` consumes the child spec, but the
+        # scene is only written once the attach below has succeeded: everything
+        # from ``add_frame`` on can raise (``inject_robot_into_scene`` catches
+        # exactly that and reports a failed add), and the live spec outlives the
+        # failed call, so a scene mutated on the way to an error would keep
+        # solver settings for a robot that never entered the world.
+        declared_options = SpecBuilder.declared_options(robot_spec)
+
         frame = scene_spec.worldbody.add_frame(
             pos=list(robot.position),
             quat=list(robot.orientation),
         )
         scene_spec.attach(robot_spec, prefix=f"{robot.name}/", frame=frame)
 
+        SpecBuilder.adopt_declared_options(scene_spec, declared_options, robot.name)
+
         return source_joint_names
+
+    @staticmethod
+    def declared_options(robot_spec: Any) -> dict[str, Any]:
+        """Read the ``<option>`` fields a robot model declares for itself.
+
+        Call this before ``spec.attach()``, which consumes the child spec. The
+        result is a plain mapping and reading it mutates nothing, so a caller
+        can hold it across the attach and only commit it to the scene once the
+        attach has actually succeeded - see :meth:`adopt_declared_options`.
+
+        Args:
+            robot_spec: the robot's freshly loaded spec.
+
+        Returns:
+            Mapping of field name to declared value, for every field in
+            :data:`_ADOPTED_OPTION_FIELDS` this model sets away from MuJoCo's
+            default. Empty when the model declares nothing beyond the defaults.
+        """
+        mujoco = _ensure_mujoco()
+
+        defaults = mujoco.MjSpec().option
+        declared: dict[str, Any] = {}
+        for field in _ADOPTED_OPTION_FIELDS:
+            value = getattr(robot_spec.option, field)
+            # A field restating MuJoCo's default is indistinguishable from one
+            # the model does not mention, and adopting it would claim the field
+            # against the next robot for no gain.
+            if value != getattr(defaults, field):
+                declared[field] = value
+        return declared
+
+    @staticmethod
+    def adopt_declared_options(
+        scene_spec: Any,
+        declared_options: Mapping[str, Any],
+        robot_name: str,
+    ) -> dict[str, Any]:
+        """Apply a robot's declared ``<option>`` fields onto the scene.
+
+        ``<option>`` is model-global and does not survive ``spec.attach()``, so
+        without this a robot is simulated under solver settings its own model
+        rejects. See :data:`_ADOPTED_OPTION_FIELDS` for the adopted set and the
+        fields deliberately left to the world.
+
+        This writes to ``scene_spec``, so call it only once the robot is
+        actually in the scene - i.e. after a successful ``attach``. The values
+        themselves come from :meth:`declared_options`, which has to run before
+        the attach; splitting the read from the write is what keeps a failed
+        attach from leaving the scene holding this robot's settings.
+
+        Precedence, in order:
+
+        1. A field the scene already sets to a non-default value belongs to
+           whoever set it - the caller's own scene MJCF, or a robot attached
+           earlier. It is kept.
+        2. Otherwise the robot's declared value is adopted.
+
+        A model-global field holds exactly one value, so when an already-set
+        field disagrees with this robot's declaration the scene value wins and
+        the discarded request is logged by field, value and robot: the caller
+        can force the other value by declaring it in their own scene MJCF or by
+        adding that robot first.
+
+        Args:
+            scene_spec: the scene spec to mutate.
+            declared_options: this robot's declared fields, from
+                :meth:`declared_options`.
+            robot_name: robot name, used in the conflict log.
+
+        Returns:
+            Mapping of field name to the value adopted from this robot. Empty
+            when the model declared nothing, or when the scene already owned
+            every field it declared.
+        """
+        mujoco = _ensure_mujoco()
+
+        defaults = mujoco.MjSpec().option
+        adopted: dict[str, Any] = {}
+        for field, declared in declared_options.items():
+            default = getattr(defaults, field)
+            current = getattr(scene_spec.option, field)
+            if current != default:
+                if current != declared:
+                    logger.warning(
+                        "add_robot(%r): scene already sets option %s=%s, so the "
+                        "%s=%s this model declares is not applied. A model-global "
+                        "option holds one value: declare it in the scene MJCF, or "
+                        "attach this robot first, to make it win.",
+                        robot_name,
+                        field,
+                        current,
+                        field,
+                        declared,
+                    )
+                continue
+            setattr(scene_spec.option, field, declared)
+            adopted[field] = declared
+
+        if adopted:
+            logger.debug(
+                "add_robot(%r): adopted declared physics option(s) %r",
+                robot_name,
+                adopted,
+            )
+        return adopted
+
+
+# Model-global ``<option>`` fields adopted from an attached robot model.
+#
+# ``<option>`` is model-global, so it does not come across ``spec.attach()``:
+# a robot MJCF that declares the solver settings its own contacts and actuators
+# were tuned for loses them the moment it is composed into a generated scene.
+# The consequences are physical, not cosmetic - a Franka Panda declares
+# ``integrator="implicitfast"``, and under the default Euler integrator its
+# position servos diverge enough that a top-down grasp pushes the object away on
+# approach and squeezes through it on the lift. ``actuate_robot`` already flips
+# the integrator to ``implicitfast`` scene-wide for the robots it actuates
+# itself, for exactly that reason; a robot that ships the same declaration in
+# its own model deserves the same treatment.
+#
+# Excluded on purpose:
+#   * ``timestep`` / ``gravity`` - owned by ``create_world(timestep=, gravity=)``.
+#     The world always writes both, so a robot's declaration cannot be told
+#     apart from the caller's and adopting it would move the world's dt (and the
+#     rollout duration math built on it) without the caller asking.
+#   * ``wind`` / ``magnetic`` / ``o_solref`` / ``o_solimp`` / ``o_friction`` -
+#     vector-valued environment and contact-override fields that describe the
+#     world a robot is placed in, not the robot.
+#   * ``disableflags`` / ``enableflags`` / ``disableactuator`` - bitfields. One
+#     value per field is a resolvable arbitration; merging bitmasks from several
+#     models is a different decision and is not made here.
+_ADOPTED_OPTION_FIELDS: tuple[str, ...] = (
+    "integrator",
+    "cone",
+    "jacobian",
+    "solver",
+    "iterations",
+    "ls_iterations",
+    "noslip_iterations",
+    "ccd_iterations",
+    "sdf_iterations",
+    "sdf_initpoints",
+    "impratio",
+    "tolerance",
+    "ls_tolerance",
+    "noslip_tolerance",
+    "ccd_tolerance",
+    "density",
+    "viscosity",
+    "o_margin",
+)
 
 
 def _is_z0_ground_plane(geom: Any) -> bool:

@@ -143,7 +143,7 @@
     One agent. Any robot. Closed loop.
   </text>
   <text x="600" y="93" text-anchor="middle" font-size="14" fill="#8a8f99" font-weight="500">
-    perceive &#183; reason &#183; act &#183; in MuJoCo sim or on real hardware &#183; 40+ robots
+    perceive &#183; reason &#183; act &#183; in MuJoCo sim or on real hardware &#183; 70+ robots
   </text>
 
   <!-- ===================== closed control loop ring ===================== -->

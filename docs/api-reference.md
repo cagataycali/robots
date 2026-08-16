@@ -51,7 +51,7 @@ from strands_robots.registry import (
 | `list_policy_providers()` | Providers from `policies.json`. |
 | `resolve_policy(uri)` | URI → provider name. |
 | `import_policy_class(provider)` | Lazy import of provider class. |
-| `build_policy_kwargs(provider, **kw)` | Normalise + validate kwargs. |
+| `build_policy_kwargs(provider, **kw)` | Normalise + validate kwargs. An explicit value beats the provider's registry default; the provider's own key (`host=`) beats the generic parameter (`policy_host=`). |
 
 ## `strands_robots.simulation`
 
@@ -99,9 +99,9 @@ from strands_robots.hardware_robot import Robot, TaskStatus, RobotTaskState
 | Method | What |
 |--------|------|
 | `start_task(instruction, policy_port, ...)` | Async task start. |
-| `stop_task()` | Halt running policy. |
+| `stop_task()` | Halt the current task, including one still in `CONNECTING`. |
 | `get_task_status()` | Return `RobotTaskState`. |
-| `cleanup()` | Stop tasks, close cameras, stop mesh. |
+| `cleanup()` | Stop tasks, disconnect the motors bus and cameras, stop mesh. |
 
 ## `strands_robots.policies`
 
@@ -156,8 +156,9 @@ from strands_robots.dataset_recorder import DatasetRecorder, has_lerobot_dataset
 | `recorder.save_episode()` | Finalise episode. |
 | `recorder.clear_episode_buffer()` | Discard buffer. |
 | `recorder.finalize()` | Flush and close. |
-| `recorder.push_to_hub(tags=None, private=False)` | Upload to HuggingFace. |
-| `has_lerobot_dataset()` | Cached import check. |
+| `recorder.push_to_hub(tags=None, private=False)` | Upload to HuggingFace. `private` must be a boolean — it selects the repo's visibility. |
+| `has_lerobot_dataset()` | Cached import check (True if `LeRobotDataset` imports). |
+| `lerobot_dataset_import_error()` | `None` if it imports, else why not - names the missing package and the install that supplies it. Use this when reporting to a human. |
 
 See [Recording](recording.md).
 

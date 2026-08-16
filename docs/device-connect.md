@@ -129,7 +129,7 @@ You rarely touch more than one or two of these. Grouped by what they control:
 | Variable | Default | What it does |
 |----------|---------|--------------|
 | `MESSAGING_CREDENTIALS_FILE` | unset | **The one var to enable mTLS.** A single `*.creds.json` bundling CA + cert + key. Works D2D or brokered. |
-| `DEVICE_CONNECT_ALLOW_INSECURE` | unset (secure) | `true` = skip auth/encryption. **Trusted, isolated LAN only**; logs a warning. |
+| `DEVICE_CONNECT_ALLOW_INSECURE` | unset (secure) | `true`/`1`/`yes` = skip auth/encryption; every other spelling is secure. **Trusted, isolated LAN only**; logs a warning. The string vocabulary is this variable's - the `allow_insecure=` argument must be a boolean and refuses a string, since `"false"` is truthy. |
 
 #### Authorization & safety — who may do what
 

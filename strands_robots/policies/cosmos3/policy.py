@@ -65,6 +65,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from strands_robots.policies.base import Policy
+from strands_robots.utils import name_list_error, tcp_port_error
 
 from .client import Cosmos3WebsocketClient
 from .embodiments import (
@@ -106,7 +107,10 @@ class Cosmos3Policy(Policy):
         embodiment: Embodiment key/alias (``"droid"``, ``"umi"``, ``"av"``,
             ``"bridge"``). Selects domain, action layout, and defaults.
         host: Policy-server hostname.
-        port: Policy-server WebSocket port.
+        port: Policy-server WebSocket port, an ``int`` in ``[1, 65535]``.
+            Read only when this constructor builds the client; an injected
+            ``client`` owns its own address. A value outside the range is
+            refused rather than interpolated into ``ws://<host>:<port>``.
         action_space: ``"joint_pos"`` or ``"midtrain"`` - must match how the
             server was launched (DROID default = ``joint_pos``).
         observation_mapping: ``{robot_obs_key: "observation/<server_key>"}``.
@@ -289,6 +293,13 @@ class Cosmos3Policy(Policy):
                 mode,
             )
         else:
+            # ``port`` addresses the RoboLab policy server this client dials, so
+            # a value that cannot name one is refused before it reaches
+            # ``ws://<host>:<port>``. An injected ``client`` owns its own
+            # address, so the port is validated only when this constructor is
+            # the one that builds the endpoint.
+            if not client and (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
+                raise ValueError(port_error)
             self._client = client or Cosmos3WebsocketClient(host=host, port=port, api_key=api_key, transport=transport)
             logger.info(
                 "Cosmos3Policy ready [embodiment=%s domain=%s action_space=%s chunk=%d backend=service ws://%s:%d]",
@@ -316,7 +327,18 @@ class Cosmos3Policy(Policy):
         Used (a) as the fallback gripper/joint source when no explicit
         ``observation_mapping`` names them, and (b) as default action actuator
         names when no ``action_mapping`` is supplied and the layout is generic.
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not an ordered list of
+                distinct non-blank names, per
+                :func:`~strands_robots.utils.name_list_error`. A single name
+                passed as a bare string is the mistake this catches: ``str`` is
+                iterable per character, so it would bind one joint per letter.
         """
+        if robot_state_keys and (
+            error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys")
+        ):
+            raise ValueError(error)
         self.robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
@@ -360,6 +382,16 @@ class Cosmos3Policy(Policy):
             observation_dict: Flat robots observation (joint floats + camera
                 ndarrays), per the ``SimEngine.get_observation`` schema.
             instruction: Natural-language task instruction.
+            **kwargs: Extra inference options, honored on the ``diffusers``
+                backend only - they are forwarded verbatim to the world model's
+                ``infer`` call. The ``service`` backend calls the remote client
+                without them, so the same keyword is silently dropped there; the
+                ABC requires a provider to ignore what it cannot honor rather
+                than raise (:meth:`~strands_robots.policies.base.Policy.get_actions`),
+                and this provider's answer depends on the ``backend`` it was
+                constructed with. None of the well-known keys the ABC lists
+                (``target_pose``, ``target_joints``, ``world_update``) is read by
+                either backend.
 
         Returns:
             ``list[dict]`` - one action dict per predicted timestep.

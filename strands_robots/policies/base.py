@@ -24,7 +24,16 @@ non-VLA reference implementation.
 import asyncio
 import concurrent.futures
 from abc import ABC, abstractmethod
+from collections.abc import Iterator, Sequence
 from typing import Any, Protocol, runtime_checkable
+
+import numpy as np
+
+from strands_robots.utils import (
+    non_negative_count_error,
+    positive_count_error,
+    positive_finite_number_error,
+)
 
 
 class Policy(ABC):
@@ -71,13 +80,23 @@ class Policy(ABC):
         chunks at any other control frequency.
 
         Args:
-            hz: Positive control frequency in Hz.
+            hz: Finite positive control frequency in Hz.
 
         Raises:
-            ValueError: If ``hz`` is not strictly positive.
+            ValueError: If ``hz`` is not a finite positive number. The rate is
+                the multiplier that converts a measured latency into a step
+                count, so it has to be checked where it arrives rather than
+                where it is read: ``nan`` and ``inf`` both survive a bare
+                ``hz <= 0`` test (neither compares ``<=`` to anything) and are
+                only discovered later, inside the provider, as a bare
+                ``ValueError``/``OverflowError`` out of the ``int()`` that
+                converts the delay - and not on the first inference, because
+                the estimator returns ``0`` until it has a latency sample.
+                ``bool`` is refused for the same reason it is everywhere else
+                in this domain: ``True`` would install a silent 1 Hz clock.
         """
-        if hz <= 0:
-            raise ValueError(f"control_frequency must be positive, got {hz}")
+        if error := positive_finite_number_error(hz, "control_frequency", "set_control_frequency"):
+            raise ValueError(error)
         self.control_frequency = float(hz)
 
     #: Number of control steps the executing loop runs between issuing an
@@ -111,11 +130,18 @@ class Policy(ABC):
                 estimate.
 
         Raises:
-            ValueError: If ``steps`` is negative.
+            ValueError: If ``steps`` is neither ``None`` nor a non-negative
+                ``int``. The count is an offset into the action chunk, so a
+                fractional value is not a smaller offset and ``bool`` is not a
+                count of one - both were previously coerced by the ``int()``
+                below into a neighbouring value the caller never asked for,
+                which moves the chunk seam silently.
         """
-        if steps is not None and steps < 0:
-            raise ValueError(f"rtc_observed_delay_steps must be >= 0, got {steps}")
-        self.rtc_observed_delay_steps = None if steps is None else int(steps)
+        if steps is not None and (
+            error := non_negative_count_error(steps, "rtc_observed_delay_steps", "set_rtc_observed_delay")
+        ):
+            raise ValueError(error)
+        self.rtc_observed_delay_steps = steps
 
     @abstractmethod
     async def get_actions(
@@ -195,8 +221,34 @@ class Policy(ABC):
 
     @abstractmethod
     def set_robot_state_keys(self, robot_state_keys: list[str]) -> None:
-        """Configure the policy with robot state keys."""
-        pass
+        """Configure the policy with robot state keys.
+
+        These are the ordered joint/motor names the policy emits as its
+        action-dict keys, so they decide which actuator each action value is
+        sent to. An implementation must refuse a malformed list rather than
+        bind it. Most do so through the shared domain
+        :func:`~strands_robots.utils.name_list_error`, gated on a truthy value
+        because an empty list already means "auto-detect" on the providers that
+        support it. :class:`~strands_robots.policies.wbc.policy.WBCPolicy` and
+        :class:`~strands_robots.policies.motionbricks.policy.MotionBricksPolicy`
+        are already total without it: they resolve every joint they drive BY
+        NAME inside the caller's list, so any malformed shape fails that
+        membership check instead - and they deliberately tolerate a repeated
+        name, which resolves to its first occurrence.
+
+        Unlike :meth:`set_control_frequency` and
+        :meth:`set_rtc_observed_delay`, this setter has no shared
+        implementation to carry the domain: each provider binds the names into
+        its own layout, so each refuses at its own entry. That parity is pinned
+        structurally by the policy state-key name-list contract tests.
+
+        Args:
+            robot_state_keys: Ordered list of distinct non-blank joint/motor
+                names.
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not such a list.
+        """
 
     def reset(self, seed: int | None = None) -> None:
         """Reset per-episode policy state.
@@ -266,6 +318,72 @@ class Policy(ABC):
         no cameras are needed.
         """
         return True
+
+    @property
+    def required_bodies(self) -> tuple[str, ...]:
+        """Named rigid bodies whose world pose this policy needs in its observation.
+
+        Default ``()`` - most policies are driven by joint state alone and pay
+        nothing for this. A whole-body **motion-mimic tracker** (ProtoMotions
+        GTP, PHC, OmniH2O and the text-to-motion pipelines built on them) is the
+        motivating case: its network consumes the world orientation of a single
+        *anchor* link - ``torso_link`` on a Unitree G1 - which is NOT derivable
+        from the observation's floating-base signals. ``base_quat`` is the
+        pelvis, and the torso differs from it by the three waist joints, so a
+        tracker written against ``base_quat`` silently feeds the network the
+        wrong frame whenever the waist is not neutral.
+
+        Declaring the bodies here is the same "policy declares, runtime
+        supplies" contract as :attr:`requires_images`: the runtime
+        (:class:`~strands_robots.simulation.policy_runner.PolicyRunner`)
+        resolves the names ONCE before the rollout and merges the pose of each
+        into every observation it hands to :meth:`get_actions`, under the keys
+        documented on
+        :meth:`~strands_robots.simulation.base.SimEngine.get_observation`::
+
+            body.<name>.pos      # world x, y, z (m)
+            body.<name>.quat     # world orientation w, x, y, z
+            body.<name>.lin_vel  # world linear velocity x, y, z (m/s)
+            body.<name>.ang_vel  # world angular velocity x, y, z (rad/s)
+
+        A policy that declares a body the scene does not contain fails at the
+        start of the rollout with the available body names, rather than reading
+        a missing key as a zero pose on every tick.
+
+        Returns:
+            Ordered, de-duplicated body names. Empty (the default) means the
+            observation is left exactly as the backend produced it.
+        """
+        return ()
+
+    @property
+    def children(self) -> tuple["Policy", ...]:
+        """The policies this one delegates to, in the order it consults them.
+
+        Default ``()`` - a leaf policy that runs its own inference. A *wrapper*
+        returns the policies it drives:
+        :class:`~strands_robots.policies.composite.CompositePolicy` its ``lower``
+        and ``upper`` children,
+        :class:`~strands_robots.policies.persistent.PersistentPolicy` the single
+        policy it holds warm.
+
+        This is the same "policy declares, runtime supplies" contract as
+        :attr:`requires_images` and :attr:`required_bodies`, applied to a
+        capability probe rather than an observation. A probe answers about the
+        object it is handed, and a wrapper is a different object than the policy
+        inside it, so an ``isinstance`` test against a wrapper reports the
+        wrapped policy's capability as absent. The MuJoCo backend's WBC torque
+        shim is the motivating case: it is required for a
+        :class:`~strands_robots.policies.wbc.WBCPolicy` to hold a stable gait on
+        a position-servo scene, and the physics does not change when that policy
+        is wrapped - only the type of the object the probe sees does. Declaring
+        the children lets one probe walk to the policy that answers, instead of
+        every probe having to learn the name of every wrapper.
+
+        Returns:
+            The child policies. Empty (the default) means this policy is a leaf.
+        """
+        return ()
 
     @property
     def execution_horizon(self) -> int:
@@ -373,6 +491,57 @@ class ChunkedPolicy(Protocol):
     supports_rtc: bool
 
 
+def align_action_values(
+    values: Sequence[float] | np.ndarray,
+    action_keys: Sequence[str],
+    *,
+    pad_short: bool = False,
+) -> tuple[list[float], list[str]]:
+    """Pair a model's ordered action vector with the actuator keys it drives.
+
+    Every provider maps a policy's flat action vector onto actuator names BY
+    INDEX, and the two lengths are not guaranteed to agree: a checkpoint trained
+    for a 6-DOF arm can be pointed at a 7-actuator robot, or an embodiment can
+    declare a gripper the checkpoint never learned. This centralizes the single
+    rule for that mismatch so providers cannot drift.
+
+    * **More values than keys** - the trailing values are dropped. There is no
+      actuator to receive them.
+    * **Fewer values than keys** (the default) - only the leading keys the model
+      actually produced a value for are returned. The unmatched actuators are
+      left out of the action dict entirely, so they receive no command and hold
+      their current position.
+    * **Fewer values than keys with ``pad_short=True``** - the unmatched keys are
+      returned carrying ``0.0``. That is a COMMAND, not an omission: where the
+      action space is absolute position - a LeRobot ``<motor>.pos`` follower, a
+      MuJoCo position actuator - ``0.0`` means "travel to zero", so those
+      actuators MOVE, at whatever rate the servo will do it. Opt in only when
+      the consumer needs a fixed-width action dict and zero is a meaningful
+      target for every key it pads.
+
+    Args:
+        values: The model's per-step action vector. Any sized, indexable
+            numeric sequence - a list or a 1-D array, as the two providers hand
+            over a NumPy row; entries are coerced with ``float``.
+        action_keys: Ordered actuator keys the vector maps onto, index 0 first.
+        pad_short: Emit ``0.0`` for keys past the end of ``values`` instead of
+            omitting them. See the note above before enabling this.
+
+    Returns:
+        ``(values, keys)``, equal length and aligned 1:1 by index - ready to zip
+        into an action dict after any unit conversion has been applied to the
+        values.
+    """
+    keys = list(action_keys)
+    aligned = [float(values[index]) for index in range(min(len(values), len(keys)))]
+    if len(aligned) < len(keys):
+        if pad_short:
+            aligned.extend(0.0 for _ in range(len(keys) - len(aligned)))
+        else:
+            keys = keys[: len(aligned)]
+    return aligned, keys
+
+
 def resolve_chunk_length(policy: "Policy", action_horizon: int) -> int:
     """Effective number of actions to consume from one ``get_actions`` chunk.
 
@@ -429,3 +598,83 @@ def resolve_chunk_length(policy: "Policy", action_horizon: int) -> int:
         # RTC owns the interval; action_horizon cannot override it.
         return horizon_int
     return max(int(action_horizon), 1, horizon_int)
+
+
+def chunk_count_error(value: object, param: str, provider: str) -> str | None:
+    """Error text when a per-inference chunk count is not one a policy can execute.
+
+    Shared domain for the counts that describe one inference chunk - how many
+    actions a provider emits (``actions_per_chunk``), how many of them a
+    consumer executes before re-querying (``actions_per_step``), and the
+    Real-Time Chunking override of that re-query interval
+    (``rtc_execution_horizon``, which replaces ``actions_per_step`` whenever RTC
+    is active). All are consumed as slice bounds over the action chunk, so only
+    a true positive ``int`` can be honored; :func:`~strands_robots.utils.positive_count_error`
+    supplies that domain (and rejects ``bool``, which as an ``int`` subclass
+    would otherwise pass as a silent count of one).
+
+    It lives here rather than beside one of its callers because the providers
+    that accept these counts sit in sibling packages
+    (:mod:`strands_robots.policies.lerobot_local` and
+    :mod:`strands_robots.policies.lerobot_async`) and the accepted domain must
+    not diverge between them: the same chunk count cannot be refused by a local
+    checkpoint and accepted by the server serving it.
+
+    Why the count has to be checked where it arrives, rather than where it is
+    read: :attr:`Policy.execution_horizon` resolves the re-query interval
+    through ``max(1, int(...))``, which turns a count no consumer can execute
+    into ``1``. That floor is the right default for a duck-typed chunk source
+    that never passed through a provider constructor, but as a guard it is
+    silently destructive - and specifically so for a provider that treats the
+    default count as a request to adopt the checkpoint's own trained chunk
+    length, because a rejected-then-floored value has already suppressed that
+    adoption and cannot be distinguished from a deliberate single-step request.
+
+    Args:
+        value: The caller-supplied count.
+        param: The parameter name it came from, used in the message.
+        provider: Provider name, used as the message prefix.
+
+    Returns:
+        An error message naming the parameter and the remedy, or ``None`` when
+        the count is usable.
+    """
+    error = positive_count_error(value, param, provider)
+    if error:
+        return f"{error} Omit it to use the provider default."
+    return None
+
+
+def iter_policy_tree(policy: Policy) -> Iterator[Policy]:
+    """Yield ``policy`` then every policy reachable through :attr:`Policy.children`.
+
+    Pre-order, so an outer wrapper is visited before the policies it wraps and
+    the outermost policy that answers a capability probe wins. Each object is
+    yielded at most once, so two wrappers sharing one child do not double-report
+    it and a cycle in the graph terminates instead of recursing forever.
+
+    ``children`` is read with :func:`getattr` rather than as an attribute, so a
+    duck-typed policy object that does not subclass :class:`Policy` yields
+    itself instead of raising ``AttributeError``. That input class is one the
+    surrounding call chain deliberately tolerates - ``policy_runner`` probes
+    ``is_chunk_emitting`` the same way "so a duck-typed policy_object that
+    predates is_chunk_emitting() simply stays on the synchronous path" - and
+    the callers of this walk are capability probes whose documented answer for
+    an object declaring no tree is "no match", not a crash.
+
+    Args:
+        policy: Root of the tree to walk. A leaf policy, or any object that
+            declares no ``children``, yields just itself.
+
+    Yields:
+        Each distinct policy in the tree, root first.
+    """
+    seen: set[int] = set()
+    stack = [policy]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        yield current
+        stack.extend(reversed(tuple(getattr(current, "children", ()))))

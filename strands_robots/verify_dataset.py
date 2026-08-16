@@ -10,7 +10,7 @@ recorder bookkeeping.
 Checks performed against a dataset root (the dir containing ``meta/``):
   1. parquet exists and holds at least one distinct episode;
   2. every episode has at least ``--min-frames`` frames (default 1) - flags any
-     zero-length episode;
+     zero-length episode (``--min-frames 0`` disables this one check);
   3. ``meta/info.json`` ``total_episodes`` / ``total_frames`` (when present)
      agree with the parquet ground truth - flags metadata/parquet drift;
   4. when ``--expected N`` is given, the parquet holds exactly N episodes -
@@ -54,6 +54,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from strands_robots.utils import non_negative_count_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -75,6 +77,7 @@ def verify_dataset(
         root: Dataset root directory (the dir that contains ``meta/``).
         expected: If given, require exactly this many distinct episodes.
         min_frames: Minimum frames every episode must contain (default 1).
+            A non-negative int; ``0`` disables this check.
         check_videos: When True (default), verify that every per-episode
             video file referenced by the dataset exists and is non-empty.
         check_stats: When True (default), flag any episode whose ``action``
@@ -122,8 +125,20 @@ def verify_dataset(
     }
     problems: list[str] = report["problems"]
 
-    if expected is not None and (not isinstance(expected, int) or expected < 0):
-        problems.append(f"expected must be a non-negative int, got {expected!r}")
+    # Argument domains. ``expected`` and ``min_frames`` are both discrete counts
+    # whose ``0`` is meaningful rather than degenerate - ``expected=0`` asks that a
+    # dataset be empty, ``min_frames=0`` disables the length check - so they share
+    # :func:`~strands_robots.utils.non_negative_count_error` rather than each
+    # carrying its own comparison. A value outside that domain cannot be honored:
+    # a fractional threshold reports a frame count no episode can have, and one
+    # below zero (or a non-finite one) switches off the very check this gate exists
+    # to run. Both are reported rather than raised, because this checker's contract
+    # is that a bad input yields a report exactly as a corrupt dataset does.
+    if expected is not None and (error := non_negative_count_error(expected, "expected", "verify_dataset")):
+        problems.append(error)
+    if error := non_negative_count_error(min_frames, "min_frames", "verify_dataset"):
+        problems.append(error)
+    if problems:
         return report
 
     # Parquet ground truth. A corrupt or foreign parquet under meta/episodes
@@ -163,6 +178,10 @@ def verify_dataset(
 
     # Check 2: every episode has >= min_frames frames. Only when per-episode
     # lengths are available (the length column is optional in some writers).
+    # ``min_frames == 0`` is the documented way to skip this one check; the value
+    # is an already-validated non-negative int here, so this reads as a mode
+    # selector rather than a guard. Before the domain above it was a guard, and
+    # a negative or non-finite threshold disabled the check silently.
     if min_frames > 0 and info["frames_per_episode"]:
         short = [
             (ep, n)
@@ -566,7 +585,7 @@ def main(argv: list[str] | None = None) -> int:
         "--min-frames",
         type=int,
         default=1,
-        help="Minimum frames every episode must contain (default: 1).",
+        help="Minimum frames every episode must contain (default: 1); 0 disables the check.",
     )
     parser.add_argument(
         "--json",

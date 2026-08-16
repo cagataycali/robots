@@ -52,13 +52,69 @@ sim.add_robot(name="panda", data_config="panda", keyframe="home")  # or keyframe
 ```
 
 The pose is applied to the robot's joints by name and is restored by `reset()`,
-so a keyframe spawn is sticky across episodes. It also survives later
-`add_robot` calls, so incrementally building a multi-robot scene keeps every
-already-spawned arm at its home pose rather than collapsing it to zero. An
+so a keyframe spawn is sticky across episodes. An
 unknown keyframe name/index
 is an error that lists the model's available keyframes. `keyframe=None` (the
 default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
 `keyframe=` as not-yet-supported.)
+
+### Adding a robot does not disturb the scene it joins
+
+Only the robot being added is placed at a defined configuration - its keyframe,
+or the zero pose. Everything already in the world is left exactly as it was: an
+arm keeps the pose it is in (whether that is its keyframe pose or wherever a
+policy or `send_action` has driven it) *and* the actuator setpoints holding it
+there, objects stay where they settled or were carried to, latched `apply_force`
+wrenches persist, and the clock keeps counting.
+
+So a scene can be composed in any order, and a robot can be added mid-session
+without invalidating what has already happened in it:
+
+```python
+sim.run_policy(robot_name="panda", ...)   # arm ends up somewhere useful
+sim.add_robot(name="helper", data_config="so101", position=[0.0, -0.6, 0.0])
+# 'panda' is still where the rollout left it; 'helper' starts at its zero pose
+```
+
+To return the *whole* world to its initial state - every robot, every object and
+the clock - call `reset()`, which is what that method is for.
+
+## Declared physics options
+
+A robot MJCF may declare the solver settings its contacts and actuators were
+tuned for. `add_robot` carries them onto the scene, because MuJoCo's `<option>`
+is model-global and does not survive the spec attach:
+
+```python
+sim.create_world()
+sim.add_robot(name="panda")          # model declares integrator="implicitfast"
+sim.mj_model.opt.integrator          # -> mjINT_IMPLICITFAST
+```
+
+This matters for manipulation. Under the default Euler integrator a Panda's
+position servos diverge enough that a top-down grasp pushes the object away and
+squeezes through it; `so100`, `so101`, `aloha`, `shadow_hand` and `robotiq_2f85`
+likewise declare `cone="elliptic" impratio="10"` so their grippers can hold load.
+
+Precedence, highest first:
+
+| Source | Wins for |
+| --- | --- |
+| `create_world(timestep=, gravity=)` | `timestep`, `gravity` - always |
+| Your own scene MJCF (`replace_scene_mjcf`) | any field it sets |
+| First robot attached that declares the field | everything else |
+
+A model-global field holds one value, so if a second robot declares a different
+value for a field already set, the existing value is kept and the discarded
+request is logged with the field, both values and the robot name. Add that robot
+first, or declare the value in your own scene MJCF, to make it win.
+
+Vector environment fields (`wind`, `magnetic`, contact overrides) and the flag
+bitfields describe the world rather than the robot and are never adopted.
+
+Adoption is committed only once the robot is actually in the scene, so an
+`add_robot` that reports an error leaves the world's solver settings exactly as
+they were - and leaves the field free for the next robot that declares it.
 
 ## Rough terrain
 
@@ -104,10 +160,15 @@ sim.create_world(terrain="rough", difficulty=2.0)  # exaggerated ~16 cm bumps
 ```
 
 `difficulty=1.0` (the default) is the full-height terrain, byte-identical to
-omitting it; `<1` is gentler, `>1` harsher. It must be a finite value `> 0`,
-and it only applies with a `terrain` - setting `difficulty != 1.0` on a flat
-world (no `terrain`) is rejected with an error rather than silently having no
-effect. A locomotion curriculum ramps `difficulty` across resets to grow the
+omitting it; `<1` is gentler, `>1` harsher. It must be a finite *number*
+`> 0` - the same positive-real domain every other continuous knob accepts, so
+`0`, a negative value, `nan`/`inf`, a `bool` (`True` is not a scale, even
+though it is an `int` subclass) and a string (including a numeric one like
+`"0.5"`) are all refused with a structured error naming the parameter. Every
+backend reports through that one domain, so a scale one `create_world` refuses
+cannot be honored by another. It only applies with a `terrain` - setting
+`difficulty != 1.0` on a flat world (no `terrain`) is rejected with an error
+rather than silently having no effect. A locomotion curriculum ramps `difficulty` across resets to grow the
 terrain the policy must handle.
 
 A floating-base robot added to a terrain world (or reset in one) spawns
@@ -159,12 +220,50 @@ sim.add_object("crate", shape="box", size=[0.5])
 sim.add_object("crate", shape="box", size=[0.5, 0.5, 0.5])   # 50 cm crate
 ```
 
+Every component must also be a finite number, and **that** part of the domain is
+shared with the Newton and Isaac backends' `add_object` - word for word, not just
+verdict for verdict - so an extent one backend refuses is refused by all three
+with the same message. A `nan`/`inf`, boolean, `None` or otherwise non-numeric
+component is rejected by name rather than reaching the solver, a NumPy array is
+accepted and normalized to plain floats, and a value that is not a vector at all
+is refused instead of raising from whatever first tries to iterate it:
+
+```python
+sim.add_object("crate", shape="box", size=[float("nan"), 0.1, 0.1])
+# status=error: add_object: 'size' must contain finite numbers (no nan/inf),
+#               got [nan, 0.1, 0.1]
+sim.add_object("crate", shape="box", size=0.5)
+# status=error: add_object: 'size' must be a list/tuple of numbers, got 0.5
+sim.add_object("crate", shape="box", size=np.array([0.5, 0.5, 0.5]))   # accepted
+```
+
+An **empty** `size` is a component count, not an omission, so it is rejected
+rather than quietly taking the default extent - omit `size` (or pass `None`) to
+ask for the default. Here the three backends agree on the verdict but not on the
+wording, because MuJoCo reaches an empty vector through the per-shape count above
+and so names the count the shape needs:
+
+```python
+sim.add_object("crate", shape="box", size=[])
+# status=error: box needs 3 'size' component(s) [x, y, z] full edge lengths,
+#               got 0 (size=[]). ...
+```
+
+The per-shape counts in the table above remain MuJoCo's alone. Newton and Isaac
+accept a short `size` (Isaac documents completing the missing trailing components
+from defaults), and neither bounds a component to be positive, so a vector this
+backend refuses on either of those axes may still be accepted there. Converging
+the three is tracked in
+[#1858](https://github.com/strands-labs/robots/issues/1858).
+
 ## Object mass
 
 `mass` (kg) applies to dynamic objects and must be a finite number greater than
 zero - the same domain `set_body_properties(mass=...)` enforces when it writes
-the same body. A mass outside it is rejected up front, naming the parameter,
-instead of surfacing as a recompile failure:
+the same body, and the same one the Newton and Isaac backends' `add_object`
+applies, so a mass one backend refuses is refused by all three. A mass outside it
+is rejected up front, naming the parameter, instead of surfacing as a recompile
+failure:
 
 ```python
 sim.add_object("crate", shape="box", mass=0)
@@ -177,7 +276,10 @@ This matters beyond the one object: a body's mass divides every force acting on
 it, and the solver keeps a single state vector, so an infinite mass turns the
 whole world's `qpos`/`qvel` to `nan` on the next step - every other body
 included. `is_static=True` needs no mass (MuJoCo derives it from the geom's
-density), so `mass` is ignored there.
+density), so `mass` is ignored there - and not validated, on any backend, since
+nothing reads it. The Newton backend additionally documents `mass=0` as an
+alternative spelling of `is_static=True` and keeps accepting it; MuJoCo and Isaac
+refuse a zero mass and name that flag as the remedy.
 
 Whatever the reason for a rejection - mass, `size`, an unsupported `shape`, an
 unloadable mesh - the scene is rolled back to its previous compilable state and
@@ -193,7 +295,36 @@ file; the extent is defined by the mesh's own units, so `size` is ignored.
 ```python
 sim.add_object(name="bracket", shape="mesh", mesh_path="/abs/path/bracket.stl",
                position=[0.3, 0.0, 0.1])
+# 'bracket' added: mesh at [0.3, 0.0, 0.1], extent=[0.12, 0.08, 0.03]m from the
+# asset (collision uses its convex hull), 0.1kg
 ```
+
+Because no `size` component is consumed, the success text reports the extent
+read back off the compiled geom rather than echoing the request - the request
+carries no extent for a mesh, and the asset can be any size.
+
+### A mesh geom collides as its convex hull
+
+MuJoCo collides a mesh geom as its **convex hull**, not as the triangles that
+render. For a convex asset (a bracket, a mug body, a crate) the two coincide and
+there is nothing to think about. For a concave one - a scanned or generated room
+shell, a tray, a shelf, a bowl - the hull fills every cavity, so:
+
+* an object placed "inside" the cavity starts inside solid geometry and is pushed
+  out, and one dropped in rests on the filled hull instead of on the interior
+  floor;
+* a camera still shows the open interior, because rendering uses the triangles.
+  Nothing looks wrong.
+
+To get load-bearing concave geometry, decompose the asset into convex parts and
+add one mesh object per part:
+
+```python
+for i, part in enumerate(convex_parts):          # e.g. a V-HACD decomposition
+    sim.add_object(name=f"room_{i}", shape="mesh", mesh_path=part, is_static=True)
+```
+
+A single-mesh room is still useful as a visual backdrop; it just is not a floor.
 
 `mesh_path` is required for `shape="mesh"` - a mesh without a path is rejected
 with an actionable error rather than an opaque recompile failure. If the mesh
@@ -256,9 +387,84 @@ an **image texture**; the `checker` builtin reads as a literal checkerboard.
 Materials are currently supported by the MuJoCo backend; the Newton backend
 rejects a non-`None` `material` rather than silently ignoring it.
 
+## Surgical MJCF edits
+
+`patch_scene_mjcf(ops)` applies a list of structured ops to the live spec and
+recompiles once, preserving joint state for untouched joints. Each op accepts
+only the keys it reads:
+
+| Op | Keys |
+|----|------|
+| `add_body` | `parent` (default `"world"`), `name` (required), `pos`, `quat` |
+| `add_geom` | `body` (required), `type` (default `"box"`), `size`, `rgba`, `name`, `pos`, `quat` |
+| `add_site` | `body` (default `"world"`), `name` (required), `pos`, `size`, `rgba` |
+| `set_body_pos` | `name` (required), `pos` |
+| `set_body_quat` | `name` (required), `quat` |
+| `delete_body` | `name` (required) |
+
+Any other key is rejected. Every field above has a fallback default (`pos` the
+origin, `quat` identity, `type` `"box"`, `parent` the worldbody), so a key the op
+does not read is not inert - it would leave that default in place while the patch
+reports success:
+
+```python
+sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "position": [0.4, 0, 0.9]}])
+# status=error: set_body_pos: unknown op key(s): 'position' (did you mean 'pos'?).
+#               Accepted keys: name, op, pos.
+```
+
+Every numeric field an op writes is held to the domain the scene-construction
+calls apply to the same buffer:
+
+| field | accepted |
+| --- | --- |
+| `pos` | exactly 3 finite components |
+| `quat` | exactly 4 finite components |
+| `rgba` | 3 (RGB, completed with an opaque alpha) or 4 finite components |
+| `size` | finite components, in the count the geom's shape consumes |
+
+MuJoCo bakes a `nan`/`inf` component into the model without complaint, so an
+unchecked one reports success and only surfaces later as a poisoned physics
+state. A wrong component count is reported by the library rather than left to
+MuJoCo, which for the two attribute-assigning ops (`set_body_pos`,
+`set_body_quat`) dumps a C++ overload table naming neither the op nor the field:
+
+```python
+sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "pos": [float("nan"), 0, 0.3]}])
+# status=error: set_body_pos: 'pos' must contain finite numbers (no nan/inf),
+#               got [nan, 0, 0.3]
+
+sim.patch_scene_mjcf([{"op": "set_body_pos", "name": "crate", "pos": [0.4, 0.9]}])
+# status=error: set_body_pos: 'pos' must be a 3-element vector, got 2 ([0.4, 0.9])
+```
+
+A three-component `rgba` is the same RGB `add_object(color=...)` accepts, so the
+two surfaces that write `geom_rgba` agree on what a colour is:
+
+```python
+sim.patch_scene_mjcf([{"op": "add_geom", "body": "rig", "type": "box",
+                       "size": [0.1, 0.1, 0.1], "rgba": [0.9, 0.3, 0.1]}])
+# status=success - stored as [0.9, 0.3, 0.1, 1.0]
+```
+
+The batch is atomic: if any op is rejected the world is rolled back to its
+pre-patch state, so a bad key or a non-finite component never leaves a
+half-applied scene. Use
+`replace_scene_mjcf(xml)` for MJCF elements this vocabulary does not cover.
+
 ## Cameras
 
 Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` - no `add_camera` needed.
+
+A discovered camera is registered under its short MJCF name (`wrist`), and the
+compiled model also carries it namespaced (`so101/wrist`); `render` takes the
+namespaced form, `get_observation` keys on the short one. The short name is
+first-come across robots: when a second robot declares a camera whose short name
+is already taken, that camera is registered under its namespaced name instead
+(logged, naming both), so two arms that both declare `wrist` give you `wrist` and
+`arm2/wrist` rather than one of them shadowing the other. Each camera belongs to
+exactly one robot, which is what makes `remove_robot` take that robot's cameras
+with it and leave every other robot's alone.
 
 To mount a camera ON a moving body (a realistic wrist/gripper view that rides with the arm), pass `parent_body`. Body names are namespaced `<robot>/<body>`; discover the exact mount point with `list_bodies` instead of guessing:
 
@@ -270,6 +476,14 @@ sim.add_camera(name="wrist", parent_body=mount,
 ```
 
 `list_bodies()` (no `robot_name`) lists every body in the world; with `robot_name` it scopes to that robot and also returns `gripper_body`, the best-guess end-effector mount.
+
+The guess matches its hint words (`gripper`, `hand`, `ee`, `tool`) on word boundaries, so a short hint cannot fire inside an unrelated word - a `knee` link or a `wheel` hub is not a gripper mount because `ee` occurs in its name. A robot with no gripper-like body reports `gripper_body: None` and omits the mount line rather than naming an unrelated body; pick the mount from the full `bodies` list in that case.
+
+A mounted camera survives `remove_robot`, which rebuilds the whole scene: it is
+re-mounted on its body once every surviving robot is re-attached, keeping its
+local pose and its tracking. Removing the robot the camera is mounted ON leaves
+it with no mount point, so that camera is dropped (with a warning naming it)
+rather than blocking the removal.
 
 ## Multi-robot policies
 

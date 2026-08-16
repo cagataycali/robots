@@ -17,19 +17,27 @@ Exposes the deep MuJoCo C API through clean Python methods:
 
 import logging
 import math
-from typing import TYPE_CHECKING, Any
+import numbers
+from typing import TYPE_CHECKING, Any, cast
 
 import numpy as np
 
+from strands_robots.simulation.base import _BOOLEAN_STATE_REASON, close_match_hint
+from strands_robots.simulation.models import registered
 from strands_robots.simulation.mujoco.backend import (
     _NO_WORLD_MSG,
     _ensure_mujoco,
     filter_mujoco_attach_noise,
+    mj_name_to_id,
 )
 from strands_robots.simulation.mujoco.scene_ops import (
+    fromto_fixed_size_components,
     persist_body_mass,
     persist_geom_properties,
+    refresh_body_inertial_from_geometry,
 )
+from strands_robots.simulation.safe_output import atomic_write_bytes, validate_output_path
+from strands_robots.utils import BOOLEAN_VECTOR_REASON, coerce_rgba, is_boolean
 
 logger = logging.getLogger(__name__)
 
@@ -84,6 +92,22 @@ def _coerce_finite_vector(
         }
     out: list[float] = []
     for elem in seq:
+        # Before float(), which cannot tell a boolean apart afterwards: bool is
+        # an int subclass and numpy.bool_ coerces the same way, so both arrived
+        # as a silent 1.0/0.0 component under status="success". This is the one
+        # chokepoint for every vector the runtime writers take - a raycast
+        # origin and direction, a geom size and friction, an rgba colour, and
+        # each ray of a multi_raycast batch - so the gate belongs here rather
+        # than at the seven call sites.
+        if is_boolean(elem):
+            return None, {
+                "status": "error",
+                "content": [
+                    {
+                        "text": f"{method}: '{name}' elements must be numbers, not a bool (got {values!r}). {BOOLEAN_VECTOR_REASON}"
+                    }
+                ],
+            }
         try:
             f = float(elem)
         except (TypeError, ValueError):
@@ -122,24 +146,15 @@ def _coerce_finite_vector(
     return out, None
 
 
-# A MuJoCo geom stores its colour as a 4-component ``rgba`` row. Alpha is the
-# only component with a meaningful default (opaque), so an RGB triple can be
-# completed without inventing a colour, while any other count cannot.
-_RGBA_ACCEPTED_LENGTHS: tuple[int, ...] = (3, 4)
-_RGBA_LAYOUT = "RGB, or RGBA with alpha"
-
-
 def _coerce_rgba(color: Any, method: str, name: str = "color") -> tuple[list[float] | None, dict[str, Any] | None]:
     """Coerce a caller-supplied colour to the 4 components a geom's rgba stores.
 
-    Single source of the backend's colour contract, shared by the scene creator
-    (``add_object``) and the runtime mutator (``set_geom_properties``) so their
-    accepted domains cannot diverge: 3 components are read as RGB and completed
-    with an opaque alpha -- the one component MuJoCo defines a default for -- 4
-    are read as RGBA verbatim, and any other count is rejected because it can
-    only be applied by fabricating or discarding components the caller did not
-    ask about. An empty vector is rejected for the same reason: substituting the
-    backend default paints a colour nobody requested under a success result.
+    Envelope binding over :func:`strands_robots.utils.coerce_rgba`, which is the
+    single definition of the colour contract for every backend. This wrapper
+    exists only to report the shared reason in the structured-error shape the
+    MuJoCo scene creator (``add_object``) and runtime mutator
+    (``set_geom_properties``) return, so those two agreed domains stay in step
+    with Newton's and Isaac's rather than being a second copy of the rule.
 
     Args:
         color: The caller's colour sequence (list / tuple / NumPy array).
@@ -150,66 +165,122 @@ def _coerce_rgba(color: Any, method: str, name: str = "color") -> tuple[list[flo
         ``(rgba, None)`` with exactly 4 finite floats, or ``(None, error_dict)``
         matching the structured-error tool contract.
     """
-    floats, err = _coerce_finite_vector(
-        color,
-        name,
-        method,
-        accepted_lengths=_RGBA_ACCEPTED_LENGTHS,
-        layout=_RGBA_LAYOUT,
-    )
-    if floats is None:
-        return None, err
-    return (floats if len(floats) == 4 else [*floats, 1.0]), None
+    rgba, reason = coerce_rgba(method, name, color)
+    if reason is not None:
+        return None, {"status": "error", "content": [{"text": reason}]}
+    return rgba, None
 
 
-def _coerce_finite_joint_map(
-    values: dict[str, Any],
-    name: str,
-    method: str,
-) -> tuple[dict[str, float], dict[str, Any] | None]:
-    """Coerce a ``{joint_name: value}`` map to finite floats before any write.
+# A ray batch is a sequence of 3-component direction vectors. Spelling it out in
+# one place keeps the batch-shape rejection and the tool_spec description in
+# agreement about what a castable batch looks like.
+_RAY_BATCH_HINT = "Pass one [dx, dy, dz] direction per ray, e.g. [[0, 0, -1], [1, 0, 0]]."
 
-    Each value must be a real number (Python or NumPy scalar) and finite. A
-    non-numeric value would otherwise raise ``ValueError`` from ``float(value)``
-    past the structured-error dispatch contract, and ``nan`` / ``inf`` would
-    slip straight into ``data.qpos`` / ``data.qvel`` -- ``mj_forward`` then
-    propagates the ``nan`` across the whole kinematic state (or an ``inf``
-    velocity blows up the integrator) while the tool still reports
-    ``status="success"``. Validating up front keeps the write atomic: an invalid
-    value leaves the model untouched.
+
+def _coerce_ray_batch(directions: Any, method: str) -> tuple[list[Any] | None, dict[str, Any] | None]:
+    """Materialize a ray batch, refusing a value that names no castable ray.
+
+    Guards the batch parameter itself, before the per-ray direction checks. A
+    ``str`` is iterable, so ``directions="abc"`` would otherwise be read as three
+    rays - one per character - and a non-iterable raises ``TypeError`` past the
+    structured-error tool contract. An empty batch requests no ray at all, so
+    there is no cast whose result could be reported.
 
     Args:
-        values: The ``{joint_name: value}`` mapping to validate.
-        name: Parameter name (``"positions"`` / ``"velocities"``), used in error text.
+        directions: The caller-supplied batch.
         method: Calling method name, used in error text.
 
     Returns:
-        ``(coerced, None)`` on success, or ``({}, error_dict)`` on the first
-        invalid value -- matching the structured-error tool contract so the
-        caller never raises past dispatch.
+        ``(rays, None)`` with the batch materialized as a list, or
+        ``(None, error_dict)`` when it holds no castable ray.
     """
-    out: dict[str, float] = {}
-    for jnt_name, value in values.items():
-        try:
-            f = float(value)
-        except (TypeError, ValueError):
-            return {}, {
-                "status": "error",
-                "content": [
-                    {"text": f"{method}: '{name}' value for joint '{jnt_name}' must be a number, got {value!r}"}
-                ],
+    if isinstance(directions, (str, bytes, bytearray)):
+        return None, {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: 'directions' must be a sequence of direction vectors, "
+                        f"not {type(directions).__name__} - iterating one casts a ray per "
+                        f"character. {_RAY_BATCH_HINT}"
+                    )
+                }
+            ],
+        }
+    try:
+        rays = list(directions)
+    except TypeError:
+        return None, {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: 'directions' must be a sequence of direction vectors, "
+                        f"got {directions!r}. {_RAY_BATCH_HINT}"
+                    )
+                }
+            ],
+        }
+    if not rays:
+        return None, {
+            "status": "error",
+            "content": [
+                {
+                    "text": (
+                        f"{method}: 'directions' must hold at least one direction - "
+                        f"an empty batch casts no ray. {_RAY_BATCH_HINT}"
+                    )
+                }
+            ],
+        }
+    return rays, None
+
+
+def _coerce_excluded_body(value: Any, method: str, nbody: int) -> tuple[int | None, dict[str, Any] | None]:
+    """Coerce ``exclude_body`` to a body id ``mj_ray`` can honor.
+
+    ``mj_ray`` takes the exclusion as a C ``int`` and skips the geoms whose body
+    id equals it, so only ``-1`` (the documented "exclude nothing") or an id the
+    compiled model actually defines can be honored. A float / str / nan value
+    raises ``TypeError`` out of the pybind11 signature - past the structured-error
+    tool contract - and an id outside ``[0, nbody)`` matches no body, so the cast
+    silently includes the geoms the caller asked to skip and can report a hit on
+    the caller's own robot as an obstacle.
+
+    Accepts any real scalar with an integral value (a NumPy ``np.int64`` body id
+    read back from ``list_bodies`` passes) and rejects ``bool`` explicitly - an
+    ``int`` subclass whose ``True`` would silently exclude body 1.
+
+    Args:
+        value: The caller-supplied exclusion.
+        method: Calling method name, used in error text.
+        nbody: Body count of the compiled model (``model.nbody``).
+
+    Returns:
+        ``(body_id, None)`` on success, or ``(None, error_dict)``.
+    """
+    error = {
+        "status": "error",
+        "content": [
+            {
+                "text": (
+                    f"{method}: 'exclude_body' must be -1 (exclude nothing) or a body id "
+                    f"in [0, {nbody}), got {value!r}. Read an id from list_bodies()."
+                )
             }
-        if not math.isfinite(f):
-            return {}, {
-                "status": "error",
-                "content": [
-                    {
-                        "text": f"{method}: '{name}' value for joint '{jnt_name}' must be finite (no nan/inf), got {value!r}"
-                    }
-                ],
-            }
-        out[jnt_name] = f
-    return out, None
+        ],
+    }
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return None, error
+    numeric = float(value)
+    # ``isfinite`` first: ``int(nan)`` raises, and short-circuiting keeps it out
+    # of the integrality check below.
+    if not math.isfinite(numeric) or numeric != int(numeric):
+        return None, error
+    body_id = int(numeric)
+    if body_id < -1 or body_id >= nbody:
+        return None, error
+    return body_id, None
 
 
 def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
@@ -225,7 +296,11 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     - MuJoCo >= 3.11: ``data.qM`` is removed. The joint-space inertia is kept
       only as the compressed-sparse-row ``data.M``, and ``mju_sym2dense`` is
       the conversion MuJoCo's release notes prescribe for callers that used to
-      pass ``qM`` to ``mj_fullM``.
+      pass ``qM`` to ``mj_fullM``. That helper is only exported from MuJoCo
+      3.10 onwards, while the CSR buffers and their index arrays
+      (``M_rownnz`` / ``M_rowadr`` / ``M_colind``) ship from 3.5, so when the
+      helper is absent the stored lower triangle is expanded through those
+      index arrays instead.
 
     Probe the modern signature first, then the legacy orders - but only on a
     build that still exposes ``qM``, because the CSR ``data.M`` that replaced
@@ -246,7 +321,7 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
     Raises:
         TypeError: If no known ``mj_fullM`` signature accepts the arguments.
         AttributeError: If MjData exposes the joint-space inertia under
-            neither ``qM`` nor ``M``.
+            neither ``qM`` nor ``M`` (MuJoCo < 3.5 predates the CSR buffer).
     """
     nv = model.nv
     dst = np.zeros((nv, nv), dtype=np.float64, order="C")
@@ -269,7 +344,7 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
             mj.mj_fullM(model, dst, qm)
         return dst
     # MuJoCo >= 3.11: no legacy buffer to pass, so convert the CSR inertia
-    # directly. nv is taken from dst's shape by the binding.
+    # directly.
     csr = getattr(data, "M", None)
     if csr is None:
         raise AttributeError(
@@ -277,13 +352,23 @@ def _full_mass_matrix(mj: Any, model: Any, data: Any) -> np.ndarray:
             f"data.qM and data.M) on mujoco {getattr(mj, '__version__', 'unknown')}, "
             "so the dense mass matrix cannot be built."
         )
-    mj.mju_sym2dense(
-        dst,
-        np.ascontiguousarray(csr, dtype=np.float64),
-        model.M_rownnz,
-        model.M_rowadr,
-        model.M_colind,
-    )
+    values = np.ascontiguousarray(csr, dtype=np.float64)
+    sym2dense = getattr(mj, "mju_sym2dense", None)
+    if sym2dense is not None:
+        sym2dense(dst, values, model.M_rownnz, model.M_rowadr, model.M_colind)
+        return dst
+    # MuJoCo 3.5 - 3.9 ship the CSR buffers and their index arrays but not the
+    # conversion, so expand the stored lower triangle through those indices and
+    # mirror it. Same arithmetic mju_sym2dense performs, and it keeps the CSR
+    # rung working across the whole supported MuJoCo range rather than only on
+    # the builds that also export the helper.
+    rownnz, rowadr, colind = model.M_rownnz, model.M_rowadr, model.M_colind
+    for row in range(nv):
+        start = int(rowadr[row])
+        stored = values[start : start + int(rownnz[row])]
+        cols = np.asarray(colind[start : start + int(rownnz[row])], dtype=np.intp)
+        dst[row, cols] = stored
+        dst[cols, row] = stored
     return dst
 
 
@@ -403,11 +488,16 @@ class PhysicsMixin:
         def _require_world(self) -> dict[str, Any] | None:
             """Refuse a call made before ``create_world``."""
 
-        def _unknown_robot_msg(self, requested: str) -> str:
+        def _unknown_robot_msg(self, requested: object) -> str:
             """Build the "robot not found" message with close-match hints."""
 
         def _validate_mass(self, mass: Any, method: str, param: str = "mass") -> dict[str, Any] | None:
             """Reject a body mass the physics engine cannot honor."""
+
+        def _coerce_joint_state_map(
+            self, values: dict[str, Any], name: str, method: str
+        ) -> tuple[dict[str, float], dict[str, Any] | None]:
+            """Coerce a joint-state map to finite floats before any write."""
 
     # State Checkpointing
 
@@ -489,7 +579,7 @@ class PhysicsMixin:
             return err
 
         checkpoints = getattr(self._world, "_checkpoints", {})
-        if name not in checkpoints:
+        if not registered(checkpoints, name):
             available = list(checkpoints.keys()) if checkpoints else ["none"]
             return {
                 "status": "error",
@@ -551,15 +641,25 @@ class PhysicsMixin:
     ) -> dict[str, Any]:
         """Apply an external force and/or torque to a body (latched).
 
-        Uses mj_applyFT for precise force application at a world-frame point.
-        The force is latched in ``qfrc_applied`` and applied on every
-        subsequent ``mj_step`` until overwritten by the next ``apply_force``
-        call. Each call zeroes the buffer first (replacing, not accumulating).
+        The wrench is latched in the target body's own ``xfrc_applied`` row
+        and applied on every subsequent ``mj_step`` until the next
+        ``apply_force`` call for that body. A call replaces the wrench latched
+        on its own target rather than accumulating onto it, and leaves wrenches
+        latched on other bodies alone - so a wind field, two thrusters, or a
+        per-object disturbance sweep can hold several bodies at once.
 
-        To stop the force: ``apply_force(body, force=[0, 0, 0])``.
+        MuJoCo re-maps that Cartesian wrench into joint space on every step,
+        so a latched force keeps pointing the way the caller asked as the body
+        moves. ``force`` and ``torque`` are world-frame; a ``point`` away from
+        the body centre of mass contributes its lever-arm torque.
+
+        To stop the force on one body: ``apply_force(body, force=[0, 0, 0])``.
+        ``reset()`` clears every latched wrench in the world.
 
         Each vector may be a list, a tuple or a NumPy array (a computed wrench
-        is an array), and every element must be a finite real number.
+        is an array), and every element must be a finite real number. A boolean
+        element (python or ``numpy.bool_``) is refused rather than applied as
+        ``1.0`` N - see :data:`_BOOLEAN_STATE_REASON`.
 
         Args:
             body_name: Target body name.
@@ -602,9 +702,21 @@ class PhysicsMixin:
                 # inside np.array(dtype=float64) - escaping the structured-error
                 # contract - and nan/inf or nested lists slip silently into
                 # mj_applyFT, injecting bad state into the physics buffer.
-                # bool is intentionally accepted (subclass of int -> finite);
-                # rejecting it is out of scope for numeric-element validation.
+                # A bool element is refused rather than accepted as finite. The
+                # earlier note here deferred it as "out of scope for numeric-element
+                # validation"; that scope note is what #1838 revisited, because
+                # float(True) is 1.0 and a True force component silently applies
+                # 1 N along that axis while the call reports success.
                 for _elem in _vec:
+                    if is_boolean(_elem):
+                        return {
+                            "status": "error",
+                            "content": [
+                                {
+                                    "text": f"apply_force: '{_name}' elements must be numbers, not a bool (got {_vec!r}). {_BOOLEAN_STATE_REASON}"
+                                }
+                            ],
+                        }
                     try:
                         _f = float(_elem)
                     except (TypeError, ValueError):
@@ -623,7 +735,7 @@ class PhysicsMixin:
                         }
 
         mj = _ensure_mujoco()
-        model, data = self._world._model, self._world._data
+        data = self._world._data
 
         body_id = self._resolve_mj_name(mj.mjtObj.mjOBJ_BODY, body_name)
         if body_id < 0:
@@ -640,12 +752,32 @@ class PhysicsMixin:
         t = np.array([0.0, 0.0, 0.0] if torque is None else torque, dtype=np.float64)
         p = np.array(point, dtype=np.float64) if point is not None else data.xipos[body_id].copy()
 
-        # Zero the buffer first so calls are idempotent (replace, not accumulate).
-        # NOTE: MuJoCo does NOT reset qfrc_applied in mj_step - the force
-        # persists on every subsequent step until the next apply_force call.
+        # Latch the wrench in this body's own row of ``xfrc_applied``.
+        #
+        # The buffer choice is the whole per-body contract. ``qfrc_applied`` is
+        # one world-wide generalized-force vector, and a wrench on a body part
+        # way down a kinematic chain writes into its ancestors' DOFs too - so
+        # there is no slice of it that belongs to one body, and zeroing it to
+        # make a call idempotent revoked every wrench already latched on every
+        # other body. ``xfrc_applied`` is indexed by body, so replacing this
+        # body's wrench cannot touch anyone else's.
+        #
+        # It is also the more faithful latch: MuJoCo re-maps the Cartesian
+        # wrench through the current configuration on every step, whereas a
+        # generalized force frozen by mj_applyFT at call time stops describing
+        # the caller's world-frame wrench as soon as the body moves.
+        #
+        # NOTE: MuJoCo does NOT reset xfrc_applied in mj_step - the wrench
+        # persists on every subsequent step until the next apply_force call
+        # for this body (or a reset()).
         with self._lock:
-            data.qfrc_applied[:] = 0.0
-            mj.mj_applyFT(model, data, f, t, p, body_id, data.qfrc_applied)
+            # xfrc_applied's torque acts about the body centre of mass, so a
+            # force applied at an offset point contributes (point - com) x
+            # force. A caller who named no point asked for the CoM itself,
+            # where that lever arm is exactly zero.
+            com_torque = t if point is None else t + np.cross(p - data.xipos[body_id], f)
+            data.xfrc_applied[body_id, :3] = f
+            data.xfrc_applied[body_id, 3:] = com_torque
 
         return {
             "status": "success",
@@ -680,23 +812,26 @@ class PhysicsMixin:
         which is non-deterministic - this is a deliberate
         "unambiguous or explicit" contract.
         """
-        import mujoco as _mj
 
         assert self._world is not None and self._world._model is not None
         model = self._world._model
-        mid = _mj.mj_name2id(model, obj_type, name)
+        mid = mj_name_to_id(model, obj_type, name)
         if mid >= 0:
             return int(mid)
+        if not isinstance(name, str):
+            # mj_name_to_id already refused it; the namespace retry below
+            # would only reach `in` / `+` on a value that supports neither.
+            return -1
         if "/" in name:  # already namespaced, no point retrying
             return -1
         for robot in self._world.robots.values():
             if robot.namespace:
-                mid = _mj.mj_name2id(model, obj_type, robot.namespace + name)
+                mid = mj_name_to_id(model, obj_type, robot.namespace + name)
                 if mid >= 0:
                     return int(mid)
         return -1
 
-    def _unknown_mj_entity_msg(self, kind: str, requested: str) -> str:
+    def _unknown_mj_entity_msg(self, kind: str, requested: object) -> str:
         """Actionable "<kind> not found" message for the physics/introspection
         lookups (``get_body_state`` / ``get_jacobian`` / ``set_body_properties`` /
         ``set_geom_properties`` / ``get_sensor_data`` ...): name the entity, offer
@@ -711,6 +846,13 @@ class PhysicsMixin:
         error shape (T15 in ``test_agenttool_contract``) is unaffected.
 
         ``kind`` is one of ``"Body" | "Site" | "Geom" | "Sensor" | "Joint"``.
+
+        ``requested`` is typed ``object``: a name of any type reaches here, and
+        only the close match needs a string (see
+        :func:`~strands_robots.simulation.base.close_match_hint`). The
+        available-entity listing is a fact about the compiled model, so it is
+        emitted for every name type rather than being suppressed into a bare
+        ``"<Kind> 'X' not found."`` dead end.
         """
         import mujoco as _mj
 
@@ -727,11 +869,7 @@ class PhysicsMixin:
         }[kind]
         known = [nm for i in range(int(count)) if (nm := _mj.mj_id2name(model, obj_type, i)) and nm != "world"]
         if known:
-            import difflib
-
-            matches = difflib.get_close_matches(requested, known, n=3, cutoff=0.4)
-            if matches:
-                msg += " Did you mean: " + ", ".join(matches) + "?"
+            msg += close_match_hint(requested, known)
             shown = known if len(known) <= 30 else known[:30] + ["..."]
             plural = {
                 "Body": "bodies",
@@ -764,7 +902,11 @@ class PhysicsMixin:
         Args:
             origin: [x, y, z] ray start point in world frame.
             direction: [dx, dy, dz] ray direction (auto-normalized).
-            exclude_body: Body ID to exclude from intersection (-1 = none).
+            exclude_body: Body ID whose geoms the ray passes through (``-1`` =
+                exclude nothing). Any other value must be a body id the compiled
+                model defines - an id outside ``[0, model.nbody)`` matches no
+                body, so the geoms the caller asked to skip would be included
+                and could be reported as the obstacle.
             include_static: Whether to include static geoms.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
@@ -804,6 +946,13 @@ class PhysicsMixin:
         mj = _ensure_mujoco()
         model, data = self._world._model, self._world._data
 
+        # ``exclude_body`` reaches mj_ray as a C int. A non-integral value raises
+        # TypeError out of the pybind11 signature (past the tool contract) and an
+        # out-of-range id matches no body, so the exclusion silently does nothing.
+        exclusion, err = _coerce_excluded_body(exclude_body, "raycast", int(model.nbody))
+        if err is not None:
+            return err
+
         pnt = np.array(origin_f, dtype=np.float64)
         vec = np.array(direction_f, dtype=np.float64)
         # Normalize direction
@@ -833,7 +982,7 @@ class PhysicsMixin:
                 vec,
                 None,  # geom group filter (None = all)
                 1 if include_static else 0,
-                exclude_body,
+                exclusion,
                 geomid,
             )
             hit = dist >= 0
@@ -1215,8 +1364,9 @@ class PhysicsMixin:
           joint count (when ``robot_name`` is given, that robot's joints; otherwise the
           world must contain exactly one robot, or the call errors).
 
-        Every value must be a finite real number (Python or NumPy scalar). A
-        ``nan`` / ``inf`` or a non-numeric value returns a structured
+        Every value must be a finite real number (Python or NumPy scalar), and
+        must not be a boolean. A
+        ``nan`` / ``inf``, a boolean or a non-numeric value returns a structured
         ``status="error"`` and leaves ``qpos`` untouched, rather than corrupting
         the kinematic state (``mj_forward`` propagates a ``nan`` everywhere) or
         raising past the tool-dispatch contract.
@@ -1303,7 +1453,7 @@ class PhysicsMixin:
         # this a non-numeric entry raises ValueError past the structured-error
         # contract, and a nan/inf lands in data.qpos where mj_forward propagates
         # it across the whole kinematic state while the tool still reports success.
-        positions, err = _coerce_finite_joint_map(positions, "positions", "set_joint_positions")
+        positions, err = self._coerce_joint_state_map(positions, "positions", "set_joint_positions")
         if err:
             return err
 
@@ -1334,8 +1484,9 @@ class PhysicsMixin:
         Writes to qvel. Useful for initializing dynamics. Accepts dict or list
         (see set_joint_positions for list semantics).
 
-        Every value must be a finite real number (Python or NumPy scalar). A
-        ``nan`` / ``inf`` or a non-numeric value returns a structured
+        Every value must be a finite real number (Python or NumPy scalar), and
+        must not be a boolean. A
+        ``nan`` / ``inf``, a boolean or a non-numeric value returns a structured
         ``status="error"`` and leaves ``qvel`` untouched, rather than blowing up
         the integrator on the next step or raising past the tool-dispatch contract.
 
@@ -1412,7 +1563,7 @@ class PhysicsMixin:
         # Validate every value is a finite number before any qvel write (see
         # set_joint_positions): a nan/inf velocity blows up the integrator on the
         # next step and a non-numeric entry escapes the structured-error contract.
-        velocities, err = _coerce_finite_joint_map(velocities, "velocities", "set_joint_velocities")
+        velocities, err = self._coerce_joint_state_map(velocities, "velocities", "set_joint_velocities")
         if err:
             return err
 
@@ -1486,7 +1637,7 @@ class PhysicsMixin:
                 "type": int(model.sensor_type[i]),
             }
 
-        if sensor_name and sensor_name not in sensors:
+        if sensor_name and not registered(sensors, sensor_name):
             return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Sensor", sensor_name)}]}
 
         lines = [f"Sensors ({len(sensors)}/{model.nsensor}):"]
@@ -1625,10 +1776,15 @@ class PhysicsMixin:
         to whatever the scene was compiled with - after this call had already
         reported the new one.
 
-        A resize is the one property with a further consequence at recompile time:
-        the model write resizes the geom without re-deriving the owning body's
-        inertia, whereas the recompile integrates the inertia from the persisted
-        shape - the physically consistent value for the new extents.
+        A resize also changes what the owning body's geometry weighs and how it is
+        balanced, so the body's mass, center of mass and inertia tensor - all
+        integrated from its geoms at compile time, and never recomputed by a step -
+        are re-derived from the resized shape. They are read from a compile of the
+        persisted spec, so they equal the values the next scene recompile produces
+        and the resize means the same thing whether or not anything follows it. A
+        body that declares its own ``<inertial>`` takes nothing from geometry and is
+        left alone. The cost is one spec compile per resize; the live model is not
+        swapped, so entity ids and joint state are preserved.
 
         Every vector must carry the exact number of components its target
         defines, because there is no meaningful value to invent for a component
@@ -1640,6 +1796,10 @@ class PhysicsMixin:
           2 for a capsule/cylinder, 3 for a box/ellipsoid/plane. Mesh, height
           field and SDF geoms take their extent from asset data and define no
           ``geom_size`` component, so ``size`` is refused for them.
+          A geom declared with ``<fromto>`` has the compiler fix its extent
+          along that axis (and a box's / ellipsoid's cross-section), so a
+          change to one of those components is refused - pass the value the
+          compiler produces to resize the components it leaves alone.
 
         All numeric inputs are validated before any model write: ``color``,
         ``friction`` and ``size`` must contain only finite numbers (``nan`` /
@@ -1751,6 +1911,43 @@ class PhysicsMixin:
             if err:
                 return err
 
+            # A geom declared with <fromto> has part of its geom_size fixed by
+            # the compiler rather than read from ``size``, and re-derived on
+            # every compile. Writing such a component would report a resize the
+            # next scene recompile discards, and would leave the body's inertial
+            # row - re-derived below from the spec, which the endpoints still
+            # govern - describing the old extent while the model collided as the
+            # requested one. Refused for the same reason an asset-defined extent
+            # is above; the components the fromto leaves alone still apply.
+            # ``_coerce_finite_vector`` returns a value whenever it reports no
+            # error, so the cast carries that proof rather than re-testing it.
+            # It also fixed the length at this geom type's exact component count,
+            # and every component a fromto fixes falls inside that count - 1 of a
+            # capsule's / cylinder's 2, 1 and 2 of a box's / ellipsoid's 3 - so
+            # each index below is in range. A bounds check here would stand in
+            # for that proof while reading as though a short vector could arrive.
+            requested = cast("list[float]", size)
+            for index, (component, follows) in sorted(fromto_fixed_size_components(self._world, gid).items()):
+                expected = float(requested[follows]) if follows is not None else float(model.geom_size[gid][index])
+                if float(requested[index]) == expected:
+                    continue
+                return {
+                    "status": "error",
+                    "content": [
+                        {
+                            "text": (
+                                f"set_geom_properties: geom '{geom_name or gid}' declares a <fromto>, "
+                                f"so the compiler fixes its {component} (size component {index + 1} of "
+                                f"a {gtype}) rather than reading it from 'size'. A change to it cannot "
+                                f"be recorded durably: the next scene recompile restores {expected}. "
+                                f"Pass {expected} for that component to resize the ones the fromto "
+                                f"leaves alone, edit the fromto to resize along its axis, or declare "
+                                f"the geom with an explicit size, pos and quat."
+                            )
+                        }
+                    ],
+                }
+
         label = geom_name or f"geom_{gid}"
         changes = []
 
@@ -1761,6 +1958,9 @@ class PhysicsMixin:
             # geom silently reverts after this call reported the new value.
             # Record it in the spec first, so a scene that cannot carry the
             # change is refused before either representation is touched.
+            # Kept so a refresh that cannot be honored restores the spec to the
+            # size the model is still compiled with, leaving the two in step.
+            prior_size = None if size is None else model.geom_size[gid, : len(size)].tolist()
             if reason := persist_geom_properties(self._world, gid, color=color, friction=friction, size=size):
                 return {"status": "error", "content": [{"text": f"set_geom_properties: {reason}"}]}
 
@@ -1775,6 +1975,17 @@ class PhysicsMixin:
                 changes.append(f"friction → {friction}")
 
             if size is not None:
+                # A resize changes the shape the owning body's inertial row was
+                # integrated from. Re-derive that row from the spec, which now
+                # carries the new size, BEFORE touching the model: a scene whose
+                # resized geometry cannot be compiled is refused with both
+                # representations restored rather than left describing different
+                # shapes. The reported result is then the one the next recompile
+                # reproduces, so the resize does not depend on what follows it.
+                if reason := refresh_body_inertial_from_geometry(self._world, gid):
+                    persist_geom_properties(self._world, gid, size=prior_size)
+                    return {"status": "error", "content": [{"text": f"set_geom_properties: {reason}"}]}
+
                 # Validated as exactly the component count this geom's type
                 # defines; the unused tail of the 3-wide row stays as compiled.
                 model.geom_size[gid, : len(size)] = size
@@ -1869,15 +2080,37 @@ class PhysicsMixin:
         are refreshed once (``mj_kinematics``) and the whole batch is cast under
         the sim lock, so every ray samples one consistent, current snapshot of
         the scene (see ``raycast``).
-        Returns array of distances and hit geoms.
+
+        The batch is all-or-nothing: every direction is validated before any ray
+        is cast, and a direction that cannot be cast (wrong component count,
+        non-numeric, nan/inf, zero-length) refuses the whole call, naming every
+        offending index. Casting the rest and reporting ``distance: None`` for
+        the rejected ones - the previous behavior - makes a ray that was never
+        cast indistinguishable from a ray that found nothing, i.e. free space,
+        which is the dangerous reading for the clearance and obstacle checks this
+        method exists to serve. It matches ``raycast``, which refuses the same
+        directions outright, so a caller does not get two contracts for one
+        malformed vector.
+
+        Args:
+            origin: [x, y, z] ray start point in world frame.
+            directions: One [dx, dy, dz] direction per ray, each auto-normalized.
+                Must be a non-empty sequence of 3-component vectors (a bare
+                string is refused rather than read as one ray per character).
+            exclude_body: Body ID whose geoms every ray passes through (``-1`` =
+                exclude nothing); see :meth:`raycast`.
+
+        Returns:
+            Standard status dict. On success the ``{"json": ...}`` block carries
+            ``rays`` - one ``{"distance", "geom_id"}`` entry per direction, in
+            order, with ``distance`` ``None`` for a genuine miss - plus ``hits``.
+            On rejection it carries ``invalid_directions``, one
+            ``{"index", "error"}`` entry per direction that cannot be cast.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
 
-        mj = _ensure_mujoco()
-        model, data = self._world._model, self._world._data
-
-        # validate origin shape; per-ray zero-direction guard (avoid mj_ray abort)
+        # validate origin shape
         try:
             if len(origin) != 3:
                 return {
@@ -1893,6 +2126,56 @@ class PhysicsMixin:
         if err is not None:
             return err
 
+        rays, batch_err = _coerce_ray_batch(directions, "multi_raycast")
+        if rays is None:
+            return cast("dict[str, Any]", batch_err)
+
+        mj = _ensure_mujoco()
+        model, data = self._world._model, self._world._data
+
+        exclusion, err = _coerce_excluded_body(exclude_body, "multi_raycast", int(model.nbody))
+        if err is not None:
+            return err
+
+        # Validate and normalize EVERY direction before casting anything, so a
+        # batch that cannot be cast in full is refused rather than half-cast. The
+        # loop collects all offending indices instead of returning on the first,
+        # so one round-trip is enough to fix a whole malformed fan.
+        vectors: list[np.ndarray] = []
+        invalid: list[dict[str, Any]] = []
+        for idx, d in enumerate(rays):
+            param = f"directions[{idx}]"
+            floats, d_err = _coerce_finite_vector(d, param, "multi_raycast", accepted_lengths=(3,), layout="dx, dy, dz")
+            if d_err is not None:
+                invalid.append({"index": idx, "error": d_err["content"][0]["text"]})
+                continue
+            vec = np.array(floats, dtype=np.float64)
+            norm = float(np.linalg.norm(vec))
+            if norm < 1e-10:
+                invalid.append(
+                    {
+                        "index": idx,
+                        "error": (f"multi_raycast: '{param}' is zero-length - supply a non-zero direction."),
+                    }
+                )
+                continue
+            vectors.append(vec / norm)
+
+        if invalid:
+            detail = "; ".join(f"[{entry['index']}] {entry['error']}" for entry in invalid)
+            return {
+                "status": "error",
+                "content": [
+                    {
+                        "text": (
+                            f"multi_raycast: {len(invalid)} of {len(rays)} direction(s) cannot be "
+                            f"cast, so no ray was cast (a rejected ray is not a miss): {detail}"
+                        )
+                    },
+                    {"json": {"invalid_directions": invalid}},
+                ],
+            }
+
         pnt = np.array(origin_f, dtype=np.float64)
         results: list[dict[str, Any]] = []
 
@@ -1901,38 +2184,9 @@ class PhysicsMixin:
         # all rays sample one consistent snapshot of the scene.
         with self._lock:
             mj.mj_kinematics(model, data)
-            for idx, d in enumerate(directions):
-                try:
-                    if len(d) != 3:
-                        results.append(
-                            {
-                                "distance": None,
-                                "geom_id": None,
-                                "error": f"ray[{idx}]: direction must have 3 elements, got {len(d)}",
-                            }
-                        )
-                        continue
-                except TypeError:
-                    results.append(
-                        {
-                            "distance": None,
-                            "geom_id": None,
-                            "error": f"ray[{idx}]: direction must be a list of 3 numbers",
-                        }
-                    )
-                    continue
-                d_floats, d_err = _coerce_finite_vector(d, "direction", f"ray[{idx}]")
-                if d_err is not None:
-                    results.append({"distance": None, "geom_id": None, "error": d_err["content"][0]["text"]})
-                    continue
-                vec = np.array(d_floats, dtype=np.float64)
-                norm = np.linalg.norm(vec)
-                if norm < 1e-10:
-                    results.append({"distance": None, "geom_id": None, "error": f"ray[{idx}]: zero-length direction"})
-                    continue
-                vec /= norm
+            for vec in vectors:
                 geomid = np.array([-1], dtype=np.int32)
-                dist = mj.mj_ray(model, data, pnt, vec, None, 1, exclude_body, geomid)
+                dist = mj.mj_ray(model, data, pnt, vec, None, 1, exclusion, geomid)
                 results.append(
                     {
                         "distance": float(dist) if dist >= 0 else None,
@@ -1944,8 +2198,8 @@ class PhysicsMixin:
         return {
             "status": "success",
             "content": [
-                {"text": f"Multi-ray: {hit_count}/{len(directions)} hits from {origin}"},
-                {"json": {"rays": results}},
+                {"text": f"Multi-ray: {hit_count}/{len(results)} hits from {origin}"},
+                {"json": {"rays": results, "hits": hit_count}},
             ],
         }
 
@@ -1973,7 +2227,7 @@ class PhysicsMixin:
             mj.mj_camlight(model, data)
 
             if body_name is not None:
-                bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, body_name)
+                bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, body_name)
                 if bid < 0:
                     return {"status": "error", "content": [{"text": self._unknown_mj_entity_msg("Body", body_name)}]}
                 body_payload = {
@@ -2099,6 +2353,14 @@ class PhysicsMixin:
         ``replace_scene_mjcf`` / ``patch_scene_mjcf`` / the ``inject_*``
         helpers all do this). The serialised XML reflects any runtime
         mutation, so no extra caching or round-tripping is needed.
+
+        ``output_path`` is treated as untrusted (LLM-callable tool): a ``..``
+        traversal segment, a symlinked target, shell metacharacters, and
+        backslash separators are rejected with ``status=error``. An absolute
+        destination is accepted (the historic contract for this sink). The
+        write is atomic and the success text reports the RESOLVED path. A
+        destination the filesystem cannot accept (a directory, an unwritable
+        parent) is reported the same way; a missing parent is created.
         """
         if self._world is None or self._world._model is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2125,9 +2387,32 @@ class PhysicsMixin:
             return {"status": "error", "content": [{"text": f"spec.to_xml() failed: {e}"}]}
 
         if output_path:
-            with open(output_path, "w") as f:
-                f.write(xml)
-            return {"status": "success", "content": [{"text": f"Model exported to {output_path}"}]}
+            # output_path is LLM-supplied (export_xml is an agent-callable
+            # action): reject traversal, a symlinked target, and shell
+            # metacharacters before writing. Guards-only (no sandbox root) keeps
+            # the historic contract that an absolute destination is accepted -
+            # unlike render(), whose output_path is documented as a newer,
+            # sandboxed-by-design feature. The write is atomic so a crash
+            # mid-export cannot truncate an existing file at the destination.
+            try:
+                safe = validate_output_path(output_path, sandbox_root=None, allow_abs=True)
+            except ValueError as e:
+                return {"status": "error", "content": [{"text": f"export_xml: {e}"}]}
+            try:
+                atomic_write_bytes(safe, xml.encode("utf-8"))
+            except OSError as e:
+                # A destination the caller supplied but the filesystem cannot
+                # accept (a directory, an unwritable parent) is the same class
+                # of caller error as an unsafe path, so it is reported through
+                # the envelope rather than raised past it. strerror keeps the
+                # internal temp filename out of the message.
+                return {
+                    "status": "error",
+                    "content": [{"text": f"export_xml: cannot write {safe}: {e.strerror or e}"}],
+                }
+            # Report the RESOLVED path: the raw argument can normalize to a
+            # different location, so echoing it would name a file we did not write.
+            return {"status": "success", "content": [{"text": f"Model exported to {safe}"}]}
 
         return {
             "status": "success",

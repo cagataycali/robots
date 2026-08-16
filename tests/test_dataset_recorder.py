@@ -1098,12 +1098,14 @@ def test_create_passes_vcodec_directly_when_supported(monkeypatch):
     assert recorder.dataset.repo_id == "user/data"
 
 
-def test_create_wraps_vcodec_in_camera_encoder_on_052(monkeypatch):
+def test_create_wraps_vcodec_in_camera_encoder_on_052(monkeypatch, tmp_path):
     """On 0.5.2+ (camera_encoder= kwarg), the vcodec is wrapped in a
     VideoEncoderConfig and the backend kwargs are forwarded."""
     constructed = _install_video_encoder_config(monkeypatch)
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetCameraEncoderCreate)
-    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav")
+    DatasetRecorder.create(
+        "user/data", root=str(tmp_path / "dataset"), joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav"
+    )
 
     sent = _FakeDatasetCameraEncoderCreate.last_create_kwargs
     assert sent["video_backend"] == "pyav"
@@ -1168,7 +1170,7 @@ class _VideoBackendProbeResume:
         return cls(repo_id, root=root)
 
 
-def test_create_omits_video_backend_by_default(monkeypatch):
+def test_create_omits_video_backend_by_default(monkeypatch, tmp_path):
     """Regression: video_backend defaults to None and must NOT be forwarded to
     LeRobot.create() unless explicitly set.
 
@@ -1183,7 +1185,7 @@ def test_create_omits_video_backend_by_default(monkeypatch):
     _install_video_encoder_config(monkeypatch)
     _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeCreate)
 
-    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1")
+    DatasetRecorder.create("user/data", root=str(tmp_path / "dataset"), joint_names=["j1"], vcodec="libsvtav1")
 
     assert _VideoBackendProbeCreate.last_create_kwargs["video_backend"] == "__unset__"
 
@@ -1199,17 +1201,19 @@ def test_resume_omits_video_backend_by_default(monkeypatch):
     assert _VideoBackendProbeResume.last_resume_kwargs["video_backend"] == "__unset__"
 
 
-def test_create_forwards_video_backend_when_explicitly_set(monkeypatch):
+def test_create_forwards_video_backend_when_explicitly_set(monkeypatch, tmp_path):
     """When a caller explicitly passes a valid decode backend, it IS forwarded."""
     _install_video_encoder_config(monkeypatch)
     _patch_lerobot_dataset(monkeypatch, _VideoBackendProbeCreate)
 
-    DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav")
+    DatasetRecorder.create(
+        "user/data", root=str(tmp_path / "dataset"), joint_names=["j1"], vcodec="libsvtav1", video_backend="pyav"
+    )
 
     assert _VideoBackendProbeCreate.last_create_kwargs["video_backend"] == "pyav"
 
 
-def test_create_warns_when_video_encoder_config_missing(monkeypatch, caplog):
+def test_create_warns_when_video_encoder_config_missing(monkeypatch, caplog, tmp_path):
     """If create() wants camera_encoder= but VideoEncoderConfig can't be
     imported, the recorder warns and proceeds with camera_encoder unset rather
     than crashing the recording setup."""
@@ -1219,14 +1223,14 @@ def test_create_warns_when_video_encoder_config_missing(monkeypatch, caplog):
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetCameraEncoderCreate)
 
     with caplog.at_level("WARNING"):
-        DatasetRecorder.create("user/data", joint_names=["j1"], vcodec="libsvtav1")
+        DatasetRecorder.create("user/data", root=str(tmp_path / "dataset"), joint_names=["j1"], vcodec="libsvtav1")
 
     sent = _FakeDatasetCameraEncoderCreate.last_create_kwargs
     assert sent["camera_encoder"] is None
     assert any("VideoEncoderConfig" in rec.message for rec in caplog.records)
 
 
-def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
+def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch, tmp_path):
     """A minimal create() lacking streaming_encoding / video_backend must not be
     handed those kwargs (version-tolerant forwarding, no TypeError)."""
 
@@ -1253,7 +1257,7 @@ def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
             return cls(repo_id, root=root)
 
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetMinimalCreate)
-    recorder = DatasetRecorder.create("user/data", joint_names=["j1"])
+    recorder = DatasetRecorder.create("user/data", root=str(tmp_path / "dataset"), joint_names=["j1"])
 
     sent = _FakeDatasetMinimalCreate.last_create_kwargs
     # The default codec "h264" is already an allowlist-valid codec name and is
@@ -1262,12 +1266,13 @@ def test_create_forwards_optional_kwargs_only_when_supported(monkeypatch):
     assert recorder.dataset.repo_id == "user/data"
 
 
-def test_create_builds_features_from_joints_and_cameras(monkeypatch):
+def test_create_builds_features_from_joints_and_cameras(monkeypatch, tmp_path):
     """create() derives the LeRobot ``features`` schema from joint_names and
     camera_keys and hands it to the underlying dataset constructor."""
     _patch_lerobot_dataset(monkeypatch, _FakeDatasetVcodecCreate)
     DatasetRecorder.create(
         "user/data",
+        root=str(tmp_path / "dataset"),
         joint_names=["shoulder", "elbow"],
         camera_keys=["top"],
         video_height=240,
@@ -1707,11 +1712,11 @@ def test_sync_to_bucket_missing_hf_cli_errors(tmp_path, monkeypatch):
 
 
 def test_sync_to_bucket_old_huggingface_hub_errors(tmp_path, monkeypatch):
-    """huggingface_hub<1.0 -> clear upgrade instruction, never a subprocess call.
+    """A hub too old for the subcommands -> upgrade instruction, never a subprocess call.
 
-    Regression test for the version gate: on 0.x the ``hf`` binary exists but
-    lacks the ``buckets``/``sync`` subcommands, so without the gate the user
-    gets argparse usage noise piped verbatim into the status dict.
+    Regression test for the version gate: on every release before 1.5 the ``hf``
+    binary exists but lacks the ``buckets``/``sync`` subcommands, so without the
+    gate the user gets CLI usage noise piped verbatim into the status dict.
     """
     import subprocess
 
@@ -1731,13 +1736,13 @@ def test_sync_to_bucket_old_huggingface_hub_errors(tmp_path, monkeypatch):
     result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
 
     assert result["status"] == "error"
-    assert "huggingface_hub>=1.0" in result["message"]
+    assert "huggingface_hub>=1.5" in result["message"]
     assert "0.36.2" in result["message"]
-    assert "pip install -U 'huggingface_hub>=1.0'" in result["message"]
+    assert "pip install -U 'huggingface_hub>=1.5'" in result["message"]
 
 
 def test_sync_to_bucket_new_huggingface_hub_passes_version_gate(tmp_path, monkeypatch):
-    """huggingface_hub>=1.0 passes the version gate and proceeds to sync."""
+    """The oldest hub that ships the subcommands passes the gate and proceeds to sync."""
     import subprocess
 
     import huggingface_hub
@@ -1746,7 +1751,7 @@ def test_sync_to_bucket_new_huggingface_hub_passes_version_gate(tmp_path, monkey
 
     _write_meta(tmp_path)
     monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
-    monkeypatch.setattr(huggingface_hub, "__version__", "1.0.0")
+    monkeypatch.setattr(huggingface_hub, "__version__", "1.5.0")
 
     def _fake_run(cmd, *_a, **_k):
         return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
@@ -1756,6 +1761,76 @@ def test_sync_to_bucket_new_huggingface_hub_passes_version_gate(tmp_path, monkey
     result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
 
     assert result["status"] == "success"
+
+
+def test_sync_to_bucket_tolerates_a_bucket_that_already_exists(tmp_path, monkeypatch):
+    """Re-syncing into an existing bucket must succeed, not fail on create.
+
+    ``create=True`` runs ``hf buckets create`` before every sync, so the second
+    sync of a run - the daily re-sync the bucket exists for - always hits an
+    already-created bucket. The hub reports that as a 409 whose body reads "You
+    already created this bucket repo", which does not contain "exists"; matching
+    only that one substring turned the normal case into
+    ``bucket create failed: ... 409 Conflict``.
+    """
+    import subprocess
+
+    from strands_robots import dataset_recorder as dr
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+
+    calls = []
+
+    def _fake_run(cmd, *_a, **_k):
+        calls.append(cmd)
+        if "create" in cmd:
+            return subprocess.CompletedProcess(
+                cmd,
+                1,
+                stdout="",
+                stderr=(
+                    "Error: Client error '409 Conflict' for url "
+                    "'https://huggingface.co/api/buckets/my-org/robot-fave'\n"
+                    "You already created this bucket repo: my-org/robot-fave"
+                ),
+            )
+        return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
+
+    assert result["status"] == "success", result
+    assert any("sync" in cmd for cmd in calls), "the sync must still run after create is skipped"
+
+
+def test_sync_to_bucket_still_reports_a_genuine_create_failure(tmp_path, monkeypatch):
+    """A create failure that is not an already-exists conflict still errors.
+
+    Guards the already-exists tolerance above from widening into "ignore every
+    create failure", which would report success for a sync that never ran.
+    """
+    import subprocess
+
+    from strands_robots import dataset_recorder as dr
+
+    _write_meta(tmp_path)
+    monkeypatch.setattr(dr, "_hf_executable", lambda: "hf")
+
+    def _fake_run(cmd, *_a, **_k):
+        if "create" in cmd:
+            return subprocess.CompletedProcess(
+                cmd, 1, stdout="", stderr="Error: 403 Forbidden - insufficient permissions"
+            )
+        raise AssertionError("sync must not run when bucket creation genuinely failed")
+
+    monkeypatch.setattr(subprocess, "run", _fake_run)
+
+    result = _sync_recorder(tmp_path).sync_to_bucket("my-org/robot-fave")
+
+    assert result["status"] == "error"
+    assert "403" in result["message"]
 
 
 def test_sync_to_bucket_unimportable_huggingface_hub_skips_version_gate(tmp_path, monkeypatch):

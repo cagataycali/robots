@@ -15,6 +15,7 @@ signatures reference them (e.g. ``create_world() → SimWorld``).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -34,7 +35,7 @@ class SimStatus(Enum):
 class SimRobot:
     """A robot instance within the simulation.
 
-    ``mesh`` / ``peer_id`` (post-PR #101): when the parent ``Simulation`` is
+    ``mesh`` / ``peer_id``: when the parent ``Simulation`` is
     itself attached to a Zenoh mesh, every robot added via ``add_robot``
     auto-joins as its own peer so the agent can address it directly
     (e.g. ``robot_mesh tell target=<peer_id>``) instead of having to talk to
@@ -106,11 +107,17 @@ class SimObject:
 class SimCamera:
     """A camera in the simulation.
 
-    ``origin_robot`` (post-PR #85): when the camera was discovered inside a
+    ``origin_robot``: when the camera was discovered inside a
     robot's URDF during ``add_robot``, this is set to the robot's name so the
     scene builder knows NOT to re-add the camera at the top level (it'll be
     re-introduced via ``spec.attach(robot_spec)``). For user-added cameras
     (via the ``add_camera`` tool action) this stays empty.
+
+    A discovered camera belongs to exactly one robot: the one whose namespace
+    prefixes ``name``. Removing a robot removes its cameras and only its
+    cameras, so ``origin_robot`` must never name a robot outside ``name``'s
+    namespace - otherwise the wrong robot's departure strands or drops the
+    entry.
     """
 
     name: str
@@ -188,13 +195,61 @@ class SimWorld:
     # (``_recording``, ``_trajectory``, ``_dataset_recorder``), caches, etc.
     # Prefer this over adding new fields to ``SimWorld``.
     _backend_state: dict[str, Any] = field(default_factory=dict)
-    # Physics state checkpoints (used by save_state/restore_state in PR #85).
-    # Kept as a top-level field - requested by @yinsong1986 during review to
-    # avoid monkey-patching when ``reset()`` creates a fresh ``SimWorld``.
+    # Physics state checkpoints read and written by save_state / load_state.
+    # A top-level field rather than a ``_backend_state`` entry so ``reset()``
+    # can build a fresh ``SimWorld`` without monkey-patching it back in.
     _checkpoints: dict[str, Any] = field(default_factory=dict)
-    # Monotonically-incremented generation counter bumped on every
-    # spec.recompile (scene_ops._recompile_preserving_state). Checkpoints
-    # stamp this value so load_state can detect a same-shape recompile
-    # (remove one free-jointed object, add another) that the nq/nv/na/nu
-    # counts alone cannot distinguish.
+    # Monotonically-incremented generation counter bumped whenever ``_model`` is
+    # swapped, by the one function that installs it
+    # (``scene_ops.install_compiled_model``). Checkpoints stamp this value so
+    # load_state can detect a swap that the nq/nv/na/nu counts alone cannot
+    # distinguish - a same-shape recompile (remove one free-jointed object, add
+    # another), or a whole scene replaced by one with the same counts.
     _recompile_generation: int = 0
+
+
+def registered(registry: Mapping[str, object], name: object) -> bool:
+    """Whether ``name`` is an entity registered in ``registry``.
+
+    A simulation entity is addressed by a ``str`` name, and the registries that
+    hold entities are keyed by one - the :class:`SimWorld` ``robots``,
+    ``objects`` and ``cameras`` maps, and the engine's own per-robot maps such
+    as its policy threads. A name of any other type cannot be one of their
+    keys, so the honest answer is that no such entity exists.
+
+    A bare ``name in registry`` cannot say that: the membership test itself
+    raises ``TypeError: unhashable type`` for a name that is not hashable (a
+    list, a dict, a set), so the unknown-entity error path the test guards is
+    never reached and the exception escapes the agent-tool dict that the
+    surrounding method documents as its only failure channel. This test is
+    total instead: every name resolves to a verdict, and a name that cannot be
+    a key resolves to ``False``, which lets the caller report it with the
+    message it already has.
+
+    Args:
+        registry: A name-keyed registry of simulation entities.
+        name: A caller-supplied entity name, of any type.
+
+    Returns:
+        ``True`` only when ``name`` is a string that keys ``registry``.
+    """
+    return isinstance(name, str) and name in registry
+
+
+def registry_entry[V](registry: Mapping[str, V], name: object) -> V | None:
+    """The entry ``name`` refers to in ``registry``, or ``None`` if there is none.
+
+    The fetching counterpart to :func:`registered`, for the lookups that need
+    the entry rather than only its existence, and total for the same reason:
+    ``registry.get(name)`` raises ``TypeError`` for an unhashable name, so the
+    absent case cannot be reported by the code that handles it.
+
+    Args:
+        registry: A name-keyed registry of simulation entities.
+        name: A caller-supplied entity name, of any type.
+
+    Returns:
+        The registered entry, or ``None`` when ``name`` is not a string or
+        names nothing in ``registry``.
+    """
+    return registry.get(name) if isinstance(name, str) else None

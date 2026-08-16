@@ -18,6 +18,14 @@ capture thread:
   unusable value produced an empty recording that both ``start`` and ``stop``
   reported as ``status="success"``.
 
+The accepted domain deliberately admits any real scalar with an integral value,
+so a ``640.0`` read from a config float and an ``np.int64`` probed from a camera
+are usable pixel counts. Passing the guard therefore has to mean the recording
+actually happens, which is asserted here against the MP4 on disk rather than
+against the ``start`` status: the pixel counts reach ``render``, which requires
+a true ``int``, so accepting ``640.0`` and forwarding it verbatim reproduced the
+exact empty-recording-reported-as-success failure the guard exists to prevent.
+
 These are LLM-facing tool contracts, so the guards return the structured
 ``{"status": "error", ...}`` shape rather than raising. Pinned here so a
 regression that lets a zero-camera or traversal-carrying request slip through
@@ -173,20 +181,37 @@ class TestRecordingOptionValidation:
         assert result["status"] == "success"
         cam_sim.stop_cameras_recording()
 
-    def test_integral_float_and_numpy_options_are_accepted(self, cam_sim, tmp_path):
-        """A ``30.0``/``np.int64`` option is usable and must not be rejected."""
+    def test_integral_float_and_numpy_options_are_honored(self, cam_sim, tmp_path):
+        """A ``30.0``/``np.int64`` option is usable, so frames must reach disk.
+
+        Asserting only ``start``'s status left this passing while the recording
+        captured nothing: the ``np.int64`` pixel counts were forwarded verbatim
+        to ``render``, which requires a true ``int``, so every frame was refused
+        and ``stop`` reported ``0 frames`` with no MP4 - the failure mode this
+        class exists to pin. "Usable" is a claim about the recording, so it is
+        checked against the file on disk.
+        """
         import numpy as np
 
         result = cam_sim.start_cameras_recording(
             cameras=["cam_a"],
             output_dir=str(tmp_path),
+            name="integral",
             fps=30.0,
             width=np.int64(64),
             height=np.int64(48),
             max_frames_per_camera=np.int64(10),
         )
         assert result["status"] == "success"
-        cam_sim.stop_cameras_recording()
+        time.sleep(0.6)
+        stopped = cam_sim.stop_cameras_recording()
+        assert stopped["status"] == "success"
+        artifacts = next(c["json"] for c in stopped["content"] if "json" in c)["artifacts"]
+        artifact = next(a for a in artifacts if a["camera"] == "cam_a")
+        assert artifact["frames"] > 0, artifact
+        assert artifact["errors"] == 0, artifact
+        mp4 = tmp_path / "integral__cam_a.mp4"
+        assert mp4.exists() and mp4.stat().st_size > 0
 
     def test_valid_options_still_write_an_mp4(self, cam_sim, tmp_path):
         """Round trip: the guard does not disturb a recording it should allow."""
@@ -230,6 +255,43 @@ class TestSharedPositiveWholeNumberDomain:
         assert positive_whole_number_error(good, "fps", "start_cameras_recording") is None
         assert VideoConfig.validation_error({"path": "/tmp/a.mp4", "fps": good}) is None
 
+    @pytest.mark.parametrize("good", [64, 64.0])
+    def test_video_config_and_recorder_agree_on_honoring_a_pixel_count(self, good, sim, tmp_path):
+        """Both MP4 surfaces record at a pixel count they both accept.
+
+        ``VideoConfig.from_dict`` has always normalized its ``width``/``height``
+        with ``int(...)``, so ``run_policy(video={"width": 64.0})`` wrote a
+        correct MP4 while the recorder that shares the domain wrote none. The
+        docstring on ``VideoConfig._positive_int_error`` says the shared domain
+        exists so the two surfaces "cannot drift apart on what counts as a
+        usable ``fps`` / ``width`` / ``height``" - they agreed on accepting and
+        drifted on honoring, which this pins.
+        """
+        sim.add_camera("cam_a", position=[-0.3, -0.3, 0.4], target=[0.0, 0.0, 0.1])
+
+        rollout_mp4 = tmp_path / "rollout.mp4"
+        rolled = sim.run_policy(
+            robot_name="arm",
+            policy_provider="mock",
+            n_steps=10,
+            control_frequency=10.0,
+            video={"path": str(rollout_mp4), "fps": 10, "camera": "cam_a", "width": good, "height": 48},
+        )
+        assert rolled["status"] == "success"
+        assert rollout_mp4.exists() and rollout_mp4.stat().st_size > 0
+
+        started = sim.start_cameras_recording(
+            cameras=["cam_a"], output_dir=str(tmp_path), name="recorder", fps=10, width=good, height=48
+        )
+        assert started["status"] == "success"
+        time.sleep(0.6)
+        stopped = sim.stop_cameras_recording()
+        assert stopped["status"] == "success"
+        artifacts = next(c["json"] for c in stopped["content"] if "json" in c)["artifacts"]
+        assert next(a for a in artifacts if a["camera"] == "cam_a")["frames"] > 0
+        recorder_mp4 = tmp_path / "recorder__cam_a.mp4"
+        assert recorder_mp4.exists() and recorder_mp4.stat().st_size > 0
+
     def test_error_text_names_the_receiving_surface(self):
         from strands_robots.utils import positive_whole_number_error
 
@@ -238,3 +300,169 @@ class TestSharedPositiveWholeNumberDomain:
             positive_whole_number_error(0, "fps", "start_cameras_recording")
             == "start_cameras_recording: fps must be a positive whole number, got 0."
         )
+
+
+class TestIntegralPixelCountsAreHonored:
+    """A pixel count the guard accepts is a pixel count the recorder records at.
+
+    ``positive_whole_number_error`` accepts any real scalar with an integral
+    value - by design, so an ``fps`` read out of a config float or a resolution
+    probed off a camera as ``np.int64`` can be honored. The plain-MP4 recorders
+    validated ``width``/``height`` on that domain and then handed the raw value
+    to ``render``, whose ``_validate_render_dims`` requires a true ``int``. So
+    ``width=640.0`` was accepted by ``start`` and refused by every single frame:
+    ``stop`` reported ``0 frames  (N errors)`` and no MP4 existed, with both
+    calls returning ``status="success"``.
+
+    ``fps`` and ``max_frames_per_camera`` never had this problem - the capture
+    loop only divides by / compares against them - which is what made the two
+    pixel counts the odd pair out among four options on one method.
+
+    Every other pixel-count surface in the library already normalizes after
+    validating on this same domain (``VideoConfig.from_dict``'s ``int(...)``,
+    ``HybridCompositor``'s "a np.int64 must not leak through",
+    ``mjpeg_frames``' per-component ``int(...)``), so these tests pin the
+    recorders into that established convention.
+    """
+
+    # An integral ``float`` (resolution arithmetic or a JSON config produces
+    # one) and an ``np.int64`` (what a camera probe returns) are the two value
+    # classes ``positive_whole_number_error``'s docstring names as honorable.
+    _INTEGRAL_KINDS = ["float", "numpy"]
+
+    @staticmethod
+    def _value(kind, number):
+        """The same pixel count spelled as an integral float / an ``np.int64``."""
+        if kind == "float":
+            return float(number)
+        import numpy as np
+
+        return np.int64(number)
+
+    @staticmethod
+    def _artifact(result, camera):
+        """The per-camera ``{frames, errors, path}`` block from stop/finalize.
+
+        Asserted on instead of the human-readable summary line: ``frames`` and
+        ``errors`` are the recorder's own count of what reached the encoder, so
+        a refused frame cannot hide behind a ``status="success"``.
+        """
+        artifacts = next(c["json"] for c in result["content"] if "json" in c)["artifacts"]
+        return next(a for a in artifacts if a["camera"] == camera)
+
+    @pytest.fixture
+    def cam_sim(self, sim):
+        sim.add_camera("cam_a", position=[-0.3, -0.3, 0.4], target=[0.0, 0.0, 0.1])
+        return sim
+
+    @pytest.mark.parametrize("kind", _INTEGRAL_KINDS)
+    @pytest.mark.parametrize("param", ["width", "height"])
+    def test_daemon_recorder_records_at_an_integral_pixel_count(self, cam_sim, param, kind, tmp_path):
+        """One integral pixel count still writes a non-empty MP4."""
+        sizes = {"width": 64, "height": 48}
+        sizes[param] = self._value(kind, sizes[param])
+        started = cam_sim.start_cameras_recording(
+            cameras=["cam_a"], output_dir=str(tmp_path), name="honored", fps=10, **sizes
+        )
+        assert started["status"] == "success"
+        time.sleep(0.6)
+        stopped = cam_sim.stop_cameras_recording()
+        assert stopped["status"] == "success"
+        artifact = self._artifact(stopped, "cam_a")
+        assert artifact["frames"] > 0, artifact
+        assert artifact["errors"] == 0, artifact
+        mp4 = tmp_path / "honored__cam_a.mp4"
+        assert mp4.exists() and mp4.stat().st_size > 0
+
+    @pytest.mark.parametrize("kind", _INTEGRAL_KINDS)
+    def test_recorded_frames_have_the_requested_size(self, cam_sim, kind, tmp_path):
+        """The integral value is honored, not merely tolerated.
+
+        Decodes the MP4 and compares its frame shape against the requested
+        size, so a fix that recorded at some *other* resolution (the camera
+        default, say) fails here rather than passing on "an MP4 exists".
+        """
+        imageio = pytest.importorskip("imageio", reason="imageio not installed")
+        pytest.importorskip("imageio_ffmpeg", reason="imageio-ffmpeg not installed")
+
+        width, height = 96, 64
+        started = cam_sim.start_cameras_recording(
+            cameras=["cam_a"],
+            output_dir=str(tmp_path),
+            name="sized",
+            fps=10,
+            width=self._value(kind, width),
+            height=self._value(kind, height),
+        )
+        assert started["status"] == "success"
+        time.sleep(0.6)
+        stopped = cam_sim.stop_cameras_recording()
+        assert stopped["status"] == "success"
+        assert self._artifact(stopped, "cam_a")["frames"] > 0
+
+        mp4 = tmp_path / "sized__cam_a.mp4"
+        assert mp4.exists() and mp4.stat().st_size > 0
+        reader = imageio.get_reader(str(mp4))
+        try:
+            frame = reader.get_data(0)
+        finally:
+            reader.close()
+        assert frame.shape[:2] == (height, width), frame.shape
+
+    @pytest.mark.parametrize("kind", _INTEGRAL_KINDS)
+    def test_synchronous_recorder_records_at_an_integral_pixel_count(self, cam_sim, kind, tmp_path):
+        """The ``(on_frame, finalize)`` entry point honors the same domain.
+
+        Both recorders share ``_cameras_recording_option_error``, so a
+        normalization applied to only one of them would leave the other
+        accepting a pixel count it cannot render.
+        """
+        result = cam_sim.start_cameras_recording_synchronous(
+            cameras=["cam_a"],
+            output_dir=str(tmp_path),
+            name="sync",
+            fps=10,
+            width=self._value(kind, 64),
+            height=self._value(kind, 48),
+        )
+        assert result["status"] == "success"
+        json_block = next(c["json"] for c in result["content"] if "json" in c)
+        on_frame, finalize = json_block["on_frame"], json_block["finalize"]
+        for step in range(4):
+            on_frame(step, {}, {})
+
+        final = finalize()
+        assert final["status"] == "success"
+        artifact = self._artifact(final, "cam_a")
+        assert artifact["frames"] == 4, artifact
+        assert artifact["errors"] == 0, artifact
+        mp4 = tmp_path / "sync__cam_a.mp4"
+        assert mp4.exists() and mp4.stat().st_size > 0
+
+    # ``None`` is deliberately absent: for a pixel count it is the documented
+    # "use the camera's own resolution" opt-out, pinned by
+    # ``test_an_omitted_pixel_count_still_means_camera_default`` below.
+    @pytest.mark.parametrize("bad", [0, -64, 12.5, float("nan"), float("inf"), "64", True])
+    def test_a_pixel_count_outside_the_domain_is_still_refused(self, cam_sim, bad, tmp_path):
+        """Normalizing the accepted values does not widen the accepted domain.
+
+        ``int(12.5)`` would silently record at 12 pixels, so the guard still
+        runs first: only values it already accepted are normalized.
+        """
+        result = cam_sim.start_cameras_recording(cameras=["cam_a"], output_dir=str(tmp_path), width=bad)
+        assert result["status"] == "error"
+        text = result["content"][0]["text"]
+        assert text.startswith("start_cameras_recording: width must be a positive whole number"), text
+        assert "No active camera recording" in cam_sim.get_cameras_recording_status()["content"][0]["text"]
+
+    def test_an_omitted_pixel_count_still_means_camera_default(self, cam_sim, tmp_path):
+        """``None`` is passed through, not coerced into a ``0``-pixel request."""
+        started = cam_sim.start_cameras_recording(
+            cameras=["cam_a"], output_dir=str(tmp_path), name="defaulted", fps=10, width=None, height=None
+        )
+        assert started["status"] == "success"
+        time.sleep(0.6)
+        stopped = cam_sim.stop_cameras_recording()
+        assert stopped["status"] == "success"
+        assert self._artifact(stopped, "cam_a")["frames"] > 0
+        assert (tmp_path / "defaulted__cam_a.mp4").stat().st_size > 0

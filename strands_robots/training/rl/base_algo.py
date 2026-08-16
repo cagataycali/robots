@@ -67,8 +67,13 @@ class RLTrainSpec(TrainSpec):
         clip_param: PPO clip range (also clips the value loss).
         num_learning_epochs: Optimization epochs over each rollout batch.
         num_mini_batches: Minibatches the rollout batch is split into per epoch.
-        entropy_coef: Entropy-bonus weight (exploration).
-        value_loss_coef: Value-loss weight.
+        entropy_coef: Entropy-bonus weight (exploration). Any finite real;
+            ``0.0`` (the default) disables the bonus and a negative value
+            penalizes entropy. Non-finite and non-numeric values are
+            refused by the preflight rather than reaching the loss.
+        value_loss_coef: Value-loss weight. Any finite real; ``0`` stops
+            training the critic. Non-finite and non-numeric values are
+            refused by the preflight rather than reaching the loss.
         max_grad_norm: Gradient-norm clip.
         hidden_dims: MLP hidden layer sizes for actor and critic.
         init_noise_std: Initial action-distribution standard deviation.

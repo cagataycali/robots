@@ -15,11 +15,50 @@ not as an opaque ONNX shape error mid-rollout.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from strands_robots.utils import require_optional
+from strands_robots.utils import (
+    finite_number_error,
+    positive_finite_number_error,
+    require_optional,
+    sequence_length,
+)
+
+
+def _non_negative_number_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` is not a usable finite number ``>= 0``.
+
+    The domain of a PD feedback gain. :func:`~strands_robots.utils.finite_number_error`
+    decides numeric-ness and finiteness - the whole of the rule bar the floor -
+    so only the floor is decided here, and a value the shared guard rejects is
+    reported in its words. Zero is first-class: ``kp = 0`` with ``kd > 0`` is a
+    pure-damping joint, which is a controller a caller may legitimately ask for.
+    A NEGATIVE gain is not: ``tau = (target_q - q) * kp`` with ``kp < 0`` drives
+    the joint AWAY from its target, so the feedback that exists to hold the
+    stance accelerates the humanoid out of it.
+
+    :func:`~strands_robots.utils.positive_finite_number_error` cannot express
+    this domain (it refuses the first-class zero), and the library's only
+    non-negative continuous guard sits under
+    :mod:`strands_robots.simulation`, which :mod:`strands_robots.policies` must
+    not depend on - hence a local binding over the shared numeric rule rather
+    than a second copy of it.
+
+    Args:
+        value: The caller-supplied value.
+        param: The parameter it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if error := finite_number_error(value, param, context):
+        return error
+    return None if float(value) >= 0.0 else f"{context}: {param} must be >= 0, got {value!r}."
+
 
 # Upstream defaults from the GR00T-WholeBodyControl reference controller
 # (decoupled_wbc/sim2mujoco: run_mujoco_gear_wbc.py + resources/robots/g1/
@@ -76,7 +115,12 @@ class WBCConfig:
         kps: Per-joint proportional gains, length ``num_actions``.
         kds: Per-joint derivative gains, length ``num_actions``.
         action_scale: Scale applied to the raw ONNX output before it becomes a
-            joint-position offset (upstream ``action_scale``).
+            joint-position offset (upstream ``action_scale``). Must be a finite
+            number > 0: it is the only thing that carries the network's decision
+            into the joint targets, so a zero (or a ``False``) discards the
+            policy and holds the nominal stance, a negative value inverts every
+            offset, and a ``nan``/``inf`` reaches ``data.ctrl`` as a poisoned
+            torque on all ``num_actions`` joints.
         obs_scales: Named scale factors applied to observation sub-vectors
             (``ang_vel`` / ``dof_pos`` / ``dof_vel``). Defaults match upstream
             g1_gear_wbc.yaml (ang_vel_scale=0.5, dof_pos_scale=1.0,
@@ -130,6 +174,9 @@ class WBCConfig:
     def __post_init__(self) -> None:
         # Fail-fast on dimension mistakes (AGENTS.md #5: raise on fatal errors,
         # never warn-and-continue with a config that will misbehave later).
+        # Dimensions first, then values: a wrong length is the likelier root
+        # cause (a config paired with the wrong checkpoint) and naming it first
+        # keeps its message the one a mismatched pair reports.
         if self.num_actions < 1:
             raise ValueError(f"WBCConfig.num_actions must be >= 1, got {self.num_actions}")
         if self.obs_history_len < 1:
@@ -153,9 +200,20 @@ class WBCConfig:
         # almost certainly means the config was paired with the wrong checkpoint.
         for name in ("default_angles", "kps", "kds"):
             vec = getattr(self, name)
-            if vec and len(vec) != self.num_actions:
+            length = sequence_length(vec)
+            if length is None:
+                # A value carrying no readable component count cannot be a
+                # per-joint vector. Asking first keeps a scalar or a 0-d array
+                # from reaching ``len()`` as a bare TypeError, and a NumPy
+                # vector from reaching ``if vec`` as the ambiguous-truth
+                # ValueError - neither of which names the field.
                 raise ValueError(
-                    f"WBCConfig.{name} has length {len(vec)} but num_actions={self.num_actions}; "
+                    f"WBCConfig.{name} must be a sequence of {self.num_actions} numbers "
+                    f"(or empty to use defaults), got {type(vec).__name__}."
+                )
+            if length and length != self.num_actions:
+                raise ValueError(
+                    f"WBCConfig.{name} has length {length} but num_actions={self.num_actions}; "
                     "they must match (or leave the field empty to use defaults)."
                 )
 
@@ -163,11 +221,48 @@ class WBCConfig:
         # exactly 3 entries when provided (upstream cmd_scale = [2.0, 2.0, 0.5]).
         # A wrong length is rejected rather than silently tolerated, matching the
         # per-joint vectors above.
-        if self.cmd_scale and len(self.cmd_scale) != 3:
+        cmd_scale_length = sequence_length(self.cmd_scale)
+        if cmd_scale_length is None:
+            raise ValueError(
+                "WBCConfig.cmd_scale must be a sequence of 3 numbers [vx, vy, omega] scale, "
+                f"got {type(self.cmd_scale).__name__}."
+            )
+        if cmd_scale_length and cmd_scale_length != 3:
             raise ValueError(
                 f"WBCConfig.cmd_scale must have exactly 3 entries [vx, vy, omega] scale, "
-                f"got {len(self.cmd_scale)}: {self.cmd_scale}."
+                f"got {cmd_scale_length}: {self.cmd_scale}."
             )
+
+        # Now the VALUES. The dimension rules above catch a config paired with
+        # the wrong checkpoint; these catch one whose numbers cannot be honored
+        # at all. Every field below is read verbatim into either the PD law that
+        # writes ``data.ctrl`` or the observation the network sees, and none of
+        # them is checked anywhere downstream: ``compute_targets`` is called
+        # per-tick from ``get_actions``, so a non-real ``action_scale`` surfaces
+        # as a bare ``TypeError`` from its ``float()`` after the ONNX sessions
+        # have loaded and the rollout has started - the mid-rollout failure this
+        # module exists to convert into a construction-time message - while a
+        # ``nan`` surfaces as nothing at all and silently poisons every torque.
+        if error := positive_finite_number_error(self.action_scale, "action_scale", "WBCConfig"):
+            raise ValueError(error)
+        for scalar_name in ("height_cmd", "freq_cmd"):
+            if error := finite_number_error(getattr(self, scalar_name), scalar_name, "WBCConfig"):
+                raise ValueError(error)
+        for vector_name in ("default_angles", "cmd_scale", "rpy_cmd"):
+            for index, component in enumerate(getattr(self, vector_name)):
+                if error := finite_number_error(component, f"{vector_name}[{index}]", "WBCConfig"):
+                    raise ValueError(error)
+        for gain_name in ("kps", "kds"):
+            for index, gain in enumerate(getattr(self, gain_name)):
+                if error := _non_negative_number_error(gain, f"{gain_name}[{index}]", "WBCConfig"):
+                    raise ValueError(error)
+        if not isinstance(self.obs_scales, Mapping):
+            raise ValueError(
+                f"WBCConfig.obs_scales must be a mapping of scale name to number, got {type(self.obs_scales).__name__}."
+            )
+        for scale_name, scale in self.obs_scales.items():
+            if error := finite_number_error(scale, f"obs_scales[{scale_name!r}]", "WBCConfig"):
+                raise ValueError(error)
 
     @property
     def num_obs(self) -> int:

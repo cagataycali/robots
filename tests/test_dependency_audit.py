@@ -9,7 +9,9 @@ both the live ``pyproject.toml`` and that the reusable audit in
 
 from __future__ import annotations
 
+import ast
 import importlib.util
+import re
 import sys
 from pathlib import Path
 
@@ -145,7 +147,7 @@ def test_direct_reference_check_ignores_extras_specifiers_and_markers(tmp_path):
 # marker that excluded linux aarch64, leaving Thor/Jetson with no video decoder).
 # lerobot 0.6 fixed those markers upstream: torch>=2.7,<2.12 with a
 # ``torchcodec>=0.11,<0.12`` aarch64 marker that pulls the ABI-matched torch 2.11
-# on every platform. Requiring lerobot >= 0.6.0 is therefore what lets those
+# on every platform. Requiring lerobot >= 0.6 is therefore what lets those
 # overrides be dropped: the codec/decoder stack now resolves ABI-consistently
 # (torch 2.11 + torchcodec 0.11.x + torchvision 0.26) on linux x86_64/aarch64 and
 # macOS arm64 with no strands override.
@@ -156,6 +158,7 @@ def test_direct_reference_check_ignores_extras_specifiers_and_markers(tmp_path):
 # resolution. This guard fails if either half regresses.
 import tomllib  # noqa: E402
 
+import pytest  # noqa: E402
 from packaging.requirements import Requirement  # noqa: E402
 from packaging.version import Version  # noqa: E402
 
@@ -170,15 +173,27 @@ def _lerobot_extra_requirement() -> Requirement:
     raise AssertionError("no `lerobot` requirement found in the [lerobot] extra")
 
 
-def test_lerobot_extra_requires_at_least_0_6() -> None:
-    """The ``[lerobot]`` extra must floor lerobot at >= 0.6.0.
+def test_lerobot_extra_requires_at_least_0_6_1() -> None:
+    """The ``[lerobot]`` extra must floor lerobot at >= 0.6.1.
 
-    The 0.5.1-era torch/torchcodec overrides were removed because lerobot 0.6's
-    own markers resolve the decoder stack correctly; that only holds for
-    lerobot >= 0.6, so the floor must not regress below it.
+    Two coupled reasons, either of which alone requires the floor:
+
+    * The 0.5.1-era torch/torchcodec overrides were removed because lerobot
+      0.6's own markers resolve the decoder stack correctly; that only holds
+      for lerobot >= 0.6.
+    * Bucket streaming (``stream_dataset(repo_type="bucket")``) needs a
+      ``StreamingLeRobotDataset`` that accepts ``repo_type``, which 0.6.0 does
+      not and 0.6.1 does - so 0.6.0 must be *excluded*, not merely admitted.
     """
     req = _lerobot_extra_requirement()
-    assert Version("0.6.0") in req.specifier, f"lerobot floor must admit 0.6.0, got {req.specifier}"
+    # The declared lower BOUND, not membership of one version: a later raise
+    # (say >=0.6.2) must not fail a guard whose requirement it still satisfies.
+    lower = min(Version(s.version) for s in req.specifier if s.operator == ">=")
+    assert lower >= Version("0.6.1"), f"lerobot floor must be >= 0.6.1, got {req.specifier}"
+    assert Version("0.6.0") not in req.specifier, (
+        f"lerobot floor must exclude 0.6.0 (its StreamingLeRobotDataset takes no "
+        f"repo_type, so bucket streaming cannot be served), got {req.specifier}"
+    )
     assert Version("0.5.9") not in req.specifier, (
         f"lerobot floor must exclude 0.5.x (the overrides that compensated for "
         f"lerobot 0.5.1's decoder markers were removed), got {req.specifier}"
@@ -365,19 +380,24 @@ _SELF_NAME = "strands-robots"
 _IK_SOLVER_PACKAGES = ("mink", "qpsolvers")
 
 
-def _extra_closure(extra: str) -> set[str]:
-    """Canonical names an extra pulls in, following ``strands-robots[...]`` self-references.
+def _extra_requirements(extra: str) -> dict[str, set[str]]:
+    """Distributions an extra pulls in, each mapped to the extras requested on it.
+
+    Follows ``strands-robots[...]`` self-references, so a composite extra such as
+    ``[all]`` reports its full closure.
 
     Args:
         extra: Name of the extra in ``[project.optional-dependencies]``.
 
     Returns:
-        The set of distribution names reachable from *extra*, lower-cased.
+        Mapping of lower-cased distribution name to the union of extras
+        requested on that distribution (an empty set when it is required
+        without any).
     """
     data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
     extras = data["project"]["optional-dependencies"]
     seen: set[str] = set()
-    names: set[str] = set()
+    requested: dict[str, set[str]] = {}
     pending = [extra]
     while pending:
         current = pending.pop()
@@ -390,8 +410,20 @@ def _extra_closure(extra: str) -> set[str]:
             if req.name.lower() == _SELF_NAME:
                 pending.extend(req.extras)
                 continue
-            names.add(req.name.lower())
-    return names
+            requested.setdefault(req.name.lower(), set()).update(req.extras)
+    return requested
+
+
+def _extra_closure(extra: str) -> set[str]:
+    """Canonical names an extra pulls in, following ``strands-robots[...]`` self-references.
+
+    Args:
+        extra: Name of the extra in ``[project.optional-dependencies]``.
+
+    Returns:
+        The set of distribution names reachable from *extra*, lower-cased.
+    """
+    return set(_extra_requirements(extra))
 
 
 def test_sim_mujoco_extra_declares_the_ik_solver_stack() -> None:
@@ -470,3 +502,603 @@ def test_ik_install_hints_name_only_declared_extras() -> None:
                     closure = _extra_closure(name)
                     missing = [pkg for pkg in _IK_SOLVER_PACKAGES if pkg not in closure]
                     assert not missing, f"{label} hint points at [{name}], which does not provide {missing}"
+
+
+# ---------------------------------------------------------------------------
+# Every extra a reader is told to install must be an extra that exists.
+#
+# History: docs/policies/vera.md led its install section with
+# ``pip install 'strands-robots[vera]'`` -- an extra that pyproject.toml explains
+# at length can never exist, because VERA ships only as a git repository and PyPI
+# rejects metadata carrying a VCS reference. Two further sites named ``[isaac]``
+# and ``[sim-libero]`` for what are really ``sim-isaac`` and ``benchmark-libero``.
+#
+# The failure mode is silent in the worst direction: pip does NOT fail on an
+# unknown extra. ``pip install 'strands-robots[vera]'`` exits 0, prints one
+# ``WARNING: strands-robots does not provide the extra 'vera'``, and installs the
+# base package with none of the dependencies the reader was promised. The reader
+# sees a successful install, then hits an ImportError somewhere unrelated-looking
+# with nothing tying it back to the install step. That makes an extra name in an
+# install hint load-bearing, and a typo in one is not cosmetic.
+#
+# Two guards, one per surface that hands a name to a user: written instructions,
+# and the runtime ``require_optional(extra=...)`` messages.
+# ---------------------------------------------------------------------------
+
+# A qualified mention -- ``strands-robots[NAME]``. Only the qualified form is
+# swept: a bare ``[wbc]`` in prose is ambiguous, because lerobot's own extras
+# (``[smolvla]``, ``[pi]``, ``[dataset]``) are written exactly the same way, so
+# requiring the distribution name keeps the sweep free of false positives.
+_EXTRA_MENTION_RE = re.compile(r"strands[-_]robots\[([^\]\s]+)\]")
+
+# A token that can be an extra name at all. Anything else caught by the mention
+# regex is a template hole rather than an instruction -- ``[{extra}]`` in the
+# message formatters, ``[<extra>]`` in a docstring, ``[...]`` as prose ellipsis --
+# and naming a hole is not naming a missing extra.
+_EXTRA_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+# Trees that can carry an install instruction. CHANGELOG.md and changelog.d/ are
+# deliberately absent, not overlooked: the log is a historical record, so an entry
+# that fixes an extra name has to be free to quote the broken name, and an entry
+# written while an extra existed must not be rewritten when it is later renamed.
+_EXTRA_SCAN_ROOTS = ("strands_robots", "tests", "tests_integ", "examples", "docs", "scripts")
+_EXTRA_SCAN_FILES = ("README.md", "pyproject.toml")
+
+# Skipped by suffix rather than selected by it, so a mention in a file type nobody
+# thought of -- a Dockerfile, a notebook, a compose file -- is still swept.
+_BINARY_SUFFIXES = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".webp",
+        ".ico",
+        ".svg",
+        ".pdf",
+        ".mp4",
+        ".webm",
+        ".mov",
+        ".zip",
+        ".gz",
+        ".tar",
+        ".whl",
+        ".npy",
+        ".npz",
+        ".pt",
+        ".pth",
+        ".onnx",
+        ".safetensors",
+        ".usd",
+        ".usda",
+        ".usdc",
+        ".stl",
+        ".obj",
+        ".dae",
+        ".bin",
+        ".so",
+        ".dylib",
+        ".pyc",
+        ".woff",
+        ".woff2",
+        ".ttf",
+    }
+)
+
+_EXTRA_MENTION_ALLOWED = {
+    # This test states the rule, so it quotes the broken names the rule forbids.
+    "tests/test_dependency_audit.py",
+    # Exercises the require_optional message formatter with a deliberately
+    # synthetic extra ("my-extra"). It asserts the formatting, not the name.
+    "tests/test_utils.py",
+}
+
+
+def _declared_extras() -> set[str]:
+    """Normalized names in ``[project.optional-dependencies]``."""
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    return {_normalize_extra(name) for name in data["project"]["optional-dependencies"]}
+
+
+def _normalize_extra(name: str) -> str:
+    """Normalize an extra the way PEP 685 requires a resolver to compare them.
+
+    ``strands-robots[Sim_Isaac]`` really does install ``sim-isaac``, so comparing
+    raw spelling would report a working command as broken.
+    """
+    return re.sub(r"[-_.]+", "-", name).lower()
+
+
+def _iter_scanned_files() -> list[Path]:
+    files = [_REPO_ROOT / name for name in _EXTRA_SCAN_FILES]
+    for root in _EXTRA_SCAN_ROOTS:
+        files.extend(
+            path
+            for path in (_REPO_ROOT / root).rglob("*")
+            if path.is_file() and path.suffix.lower() not in _BINARY_SUFFIXES and "__pycache__" not in path.parts
+        )
+    return [path for path in files if path.exists()]
+
+
+def test_written_install_hints_name_only_declared_extras() -> None:
+    """Every ``strands-robots[...]`` in the tree must name a declared extra.
+
+    An undeclared name here is an instruction that installs nothing and still
+    exits 0, so the reader is stranded by a command that reported success.
+    """
+    extras = _declared_extras()
+    offenders: list[str] = []
+    mentions = 0
+    for path in _iter_scanned_files():
+        rel = path.relative_to(_REPO_ROOT).as_posix()
+        if rel in _EXTRA_MENTION_ALLOWED:
+            continue
+        for lineno, line in enumerate(path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
+            for match in _EXTRA_MENTION_RE.finditer(line):
+                for raw in (part.strip() for part in match.group(1).split(",")):
+                    if not _EXTRA_NAME_RE.match(raw):
+                        continue
+                    mentions += 1
+                    if _normalize_extra(raw) not in extras:
+                        offenders.append(f"{rel}:{lineno} names [{raw}] -- {line.strip()[:100]}")
+    # The sweep is only meaningful if it is actually reading the tree.
+    assert mentions > 100, f"the extras sweep matched only {mentions} mentions; the scan roots have drifted"
+    assert not offenders, (
+        "these sites tell a reader to install an extra that does not exist; pip exits 0 on an "
+        "unknown extra and installs none of the dependencies, so the failure surfaces later and "
+        f"misattributed. Declared extras: {sorted(extras)}\n" + "\n".join(offenders)
+    )
+
+
+def test_require_optional_call_sites_name_declared_extras() -> None:
+    """``require_optional(extra=...)`` must name a declared extra.
+
+    The value is interpolated straight into the ImportError a user sees
+    (``pip install strands-robots[<extra>]``), so an undeclared name here hands
+    out a no-op install command at the exact moment the user needs a working one.
+    """
+    extras = _declared_extras()
+    offenders: list[str] = []
+    checked = 0
+    for path in sorted((_REPO_ROOT / "strands_robots").rglob("*.py")):
+        if "__pycache__" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", None)
+            if name not in {"require_optional", "require_optionals"}:
+                continue
+            for keyword in node.keywords:
+                if keyword.arg != "extra" or not isinstance(keyword.value, ast.Constant):
+                    continue
+                value = keyword.value.value
+                if not isinstance(value, str):
+                    continue
+                checked += 1
+                if _normalize_extra(value.strip()) not in extras:
+                    rel = path.relative_to(_REPO_ROOT).as_posix()
+                    offenders.append(f"{rel}:{node.lineno} passes extra={value!r}")
+    assert checked > 20, f"only {checked} literal extra= call sites found; the audit has stopped seeing them"
+    assert not offenders, (
+        "these require_optional call sites name an extra that does not exist, so the ImportError "
+        "they raise tells the user to run an install that silently does nothing. Declared extras: "
+        f"{sorted(extras)}\n" + "\n".join(offenders)
+    )
+
+
+# ---------------------------------------------------------------------------
+# Declaring `qpsolvers` is not the same as declaring a QP backend.
+#
+# `qpsolvers` is a solver-agnostic front end: it ships no solver of its own, and
+# each backend arrives through one of its extras (`qpsolvers[daqp]`, `[quadprog]`,
+# ...). With none installed, `qpsolvers.available_solvers` is empty,
+# `mink.solve_ik` cannot run, and `move_to` returns
+#     IK bridge unavailable: No qpsolvers backend is installed; the mink IK
+#     bridge needs one (e.g. 'daqp' or 'quadprog'). Install the sim extra:
+#     uv pip install 'strands-robots[sim-mujoco]'.
+# -- advising the extra that shipped the primitive. So an extra that solves IK
+# has to declare a backend, or its own remedy cannot fix it.
+#
+# The `_IK_SOLVER_PACKAGES` guards above check distribution NAMES, which a bare
+# `qpsolvers` satisfies; these check that a backend comes with it.
+_QP_FRONTEND = "qpsolvers"
+
+#: Extras whose code path calls `mink.solve_ik`: `[sim-mujoco]` ships `move_to`,
+#: `[cosmos3-sim]` ships the Cosmos 3 -> MuJoCo bridge (both via MinkIKBridge).
+_MINK_IK_EXTRAS = ("sim-mujoco", "cosmos3-sim")
+
+
+def _declared_qp_backends(extra: str) -> set[str]:
+    """qpsolvers backend extras that *extra* requests, following self-references."""
+    return _extra_requirements(extra).get(_QP_FRONTEND, set())
+
+
+@pytest.mark.parametrize("extra", _MINK_IK_EXTRAS)
+def test_mink_ik_extra_declares_a_qp_backend(extra: str) -> None:
+    """Every extra that solves IK through mink must declare a QP backend.
+
+    Relying on `mink`'s own `qpsolvers[daqp]` pin leaves the guarantee resting on
+    a transitive of a third-party package: if mink ever drops or renames it, the
+    IK primitives break for anyone who installed exactly what this project asked
+    them to.
+    """
+    backends = _declared_qp_backends(extra)
+    assert backends, (
+        f"[{extra}] solves IK via mink but declares {_QP_FRONTEND!r} with no "
+        f"backend extra, so resolving 'strands-robots[{extra}]' need not install "
+        f"any QP solver and mink.solve_ik cannot run. Declare one, e.g. "
+        f"'{_QP_FRONTEND}[daqp]>=4.0.0'."
+    )
+
+
+def test_all_extra_declares_a_qp_backend() -> None:
+    """`pip install 'strands-robots[all]'` must be able to complete an IK solve.
+
+    `[all]` advertises `move_to` by installing the MuJoCo backend, so the QP
+    backend that action needs has to be part of the same closure.
+    """
+    assert _declared_qp_backends("all"), (
+        "pip install 'strands-robots[all]' advertises move_to but declares no "
+        f"{_QP_FRONTEND} backend, so the action can return 'IK bridge unavailable'"
+    )
+
+
+def test_declared_qp_backends_are_real_qpsolvers_extras() -> None:
+    """A declared backend must be an extra `qpsolvers` actually publishes.
+
+    An unknown extra is not an install error - pip warns and installs nothing -
+    so a typo such as `qpsolvers[dapq]` would resolve "successfully" and leave
+    the solver missing exactly as before.
+    """
+    import importlib.metadata
+
+    provided = importlib.metadata.metadata(_QP_FRONTEND).get_all("Provides-Extra") or []
+    published = {name.lower() for name in provided}
+    assert published, f"could not read {_QP_FRONTEND} extras from installed metadata"
+    declared = {backend for extra in _MINK_IK_EXTRAS for backend in _declared_qp_backends(extra)}
+    unknown = sorted(b for b in declared if b.lower() not in published)
+    assert not unknown, (
+        f"declared {_QP_FRONTEND} backend(s) {unknown} are not published extras of "
+        f"{_QP_FRONTEND}; pip installs nothing for an unknown extra. Published: {sorted(published)}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Environment audit: a downgraded `coverage` next to numba+robosuite (#1803).
+#
+# Installing Isaac Sim via the pip wheels (`isaacsim[all,extscache]`) silently
+# downgrades `coverage` to the 7.4.4 that `isaacsim-kernel` pins. numba's
+# tracer probe then fails, and the first *visible* symptom lands far from the
+# cause: robosuite's OSC controller import dies inside the LIBERO adapter with
+#     AttributeError: module 'coverage.types' has no attribute 'Tracer'
+# The adapter already classifies that clash and appends the remedy (#522,
+# #1803), but only once an eval reaches the import. This guard turns the red
+# herring into a named error at test-collection time instead: if this
+# environment has numba and robosuite installed alongside a `coverage` old
+# enough to trip the clash, fail loudly with the remedy.
+#
+# The floor is the adapter's single source of truth (#1805 measured it:
+# coverage 7.6.0 still names the protocol `TracerCore`; `Tracer` exists only
+# from 7.6.1 onward), so this audit and the runtime remedy can never disagree.
+from strands_robots.benchmarks.libero.adapter import _COVERAGE_TRACER_MIN_VERSION  # noqa: E402
+
+_COVERAGE_CLASH_FLOOR = Version(_COVERAGE_TRACER_MIN_VERSION)
+
+
+def test_environment_coverage_is_compatible_with_numba_robosuite() -> None:
+    """coverage<7.6.1 + numba + robosuite is a known-broken combination (#1803)."""
+    import importlib.metadata
+
+    versions: dict[str, str] = {}
+    for dist in ("coverage", "numba", "robosuite"):
+        try:
+            versions[dist] = importlib.metadata.version(dist)
+        except importlib.metadata.PackageNotFoundError:
+            pytest.skip(f"{dist} not installed; the numba/coverage clash cannot occur here")
+
+    installed = Version(versions["coverage"])
+    assert installed >= _COVERAGE_CLASH_FLOOR, (
+        f"coverage=={versions['coverage']} is installed alongside "
+        f"numba=={versions['numba']} and robosuite=={versions['robosuite']}: numba's "
+        "tracer probe fails on this coverage (AttributeError: module "
+        "'coverage.types' has no attribute 'Tracer'), which breaks robosuite's OSC "
+        "controller import inside the LIBERO adapter with a red-herring error far "
+        "from the cause. This is the collateral of a pip-installed Isaac Sim "
+        "(isaacsim-kernel pins coverage==7.4.4). Remedy: pip install "
+        f"'coverage>={_COVERAGE_TRACER_MIN_VERSION}' "
+        "(the resulting pip conflict warning against isaacsim-kernel is cosmetic - "
+        "coverage is kit test tooling, not a runtime dependency)."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Security floors for transitive packages.
+#
+# ``cbor2``, ``ujson``, ``twisted`` and ``pyopenssl`` each arrive only through
+# another dependency (cbor2/ujson under autobahn, twisted under roslibpy,
+# pyopenssl under twisted), so nothing in ``[project]`` declares a version for
+# them. All four resolve above a HIGH advisory, which is why
+# ``dependency-review-action`` (``fail-on-severity: high``) is green -- but the
+# version was the resolver's choice, not a stated requirement, and cbor2 sits
+# exactly ON its patch floor with no margin at all. Any input that moves one of
+# them down re-introduces a HIGH advisory into the dependency graph GitHub
+# scans: a transitive cap added upstream, a new marker branch, or another fork
+# of the resolution under ``[tool.uv] conflicts`` is each sufficient, and none
+# of them looks like a security change in review.
+#
+# ``[tool.uv] constraint-dependencies`` is the mechanism, and it is a constraint
+# rather than an override for a measured reason. A constraint bounds a version
+# and fails the resolution loudly when something genuinely requires less; an
+# override *replaces* the conflicting requirement and resolves in silence.
+# Measured on this manifest with ``gymnasium>=1.1.1``, which the ``[vera-sim]``
+# extra contradicts by pinning ``gymnasium==0.29.1``:
+#
+#   as a constraint -> `uv lock` exits 1: "Because strands-robots[vera-sim]
+#                      depends on gymnasium==0.29.1 and gymnasium>=1.1.1 ...
+#                      requirements are unsatisfiable"
+#   as an override  -> `uv lock` exits 0: "Updated gymnasium v0.29.1 -> v1.3.0"
+#
+# For a security floor the loud failure is the wanted behaviour: it says a
+# dependency asked for a vulnerable version, which is the thing worth knowing.
+# The floors below cost nothing to state -- adding them changed no resolved
+# version (264 packages, zero differences).
+#
+# Each floor is the first version clearing every HIGH/CRITICAL advisory for that
+# package, deliberately not the version currently resolved: the floor states the
+# requirement, so it stays correct as the resolution moves above it.
+
+_UV_LOCK = _REPO_ROOT / "uv.lock"
+
+#: Transitive package -> the HIGH advisory its floor clears. These are the
+#: packages a floor is *required* for; the constraint table may hold more.
+_SECURITY_FLOORS: dict[str, str] = {
+    "cbor2": "GHSA-3c37-wwvx-h642",
+    "twisted": "GHSA-grgv-6hw6-v9g4",
+    "ujson": "GHSA-c38f-wx89-p2xg",
+    "pyopenssl": "GHSA-5pwr-322w-8jr4",
+}
+
+
+def _uv_requirement_list(key: str) -> list[str]:
+    """A requirement list from ``[tool.uv]`` - the constraints or the overrides."""
+    table = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8")).get("tool", {}).get("uv", {})
+    raw = table.get(key, [])
+    assert isinstance(raw, list), f"[tool.uv] {key} must be a list, got {type(raw).__name__}"
+    return [str(spec) for spec in raw]
+
+
+def _declared_constraints() -> dict[str, Requirement]:
+    """``[tool.uv] constraint-dependencies`` keyed by distribution name."""
+    return {Requirement(spec).name: Requirement(spec) for spec in _uv_requirement_list("constraint-dependencies")}
+
+
+def _locked_versions() -> dict[str, list[Version]]:
+    """Every version ``uv.lock`` resolves, keyed by name.
+
+    A name maps to more than one version when ``[tool.uv] conflicts`` forks the
+    resolution, so a floor has to hold for *each* fork, not just the first.
+    """
+    lock = tomllib.loads(_UV_LOCK.read_text(encoding="utf-8"))
+    out: dict[str, list[Version]] = {}
+    for package in lock.get("package", []):
+        if "version" in package:
+            out.setdefault(package["name"], []).append(Version(package["version"]))
+    return out
+
+
+def _unsatisfied_floors(constraints: dict[str, Requirement], locked: dict[str, list[Version]]) -> list[str]:
+    """Names whose locked version falls below a declared floor.
+
+    Pure so the check itself can be exercised against a synthetic lock; a
+    package absent from the lock is not a violation (a constraint applies only
+    where the package is actually resolved).
+    """
+    return sorted(
+        name for name, req in constraints.items() for version in locked.get(name, []) if version not in req.specifier
+    )
+
+
+def _comment_block_above(entry_substring: str) -> str:
+    """The contiguous ``#`` comment lines directly above a constraint entry."""
+    lines = _PYPROJECT.read_text(encoding="utf-8").splitlines()
+    hits = [i for i, line in enumerate(lines) if entry_substring in line and not line.lstrip().startswith("#")]
+    assert len(hits) == 1, f"expected one entry line containing {entry_substring!r}, got {len(hits)}"
+    index = hits[0] - 1
+    collected: list[str] = []
+    while index >= 0 and lines[index].lstrip().startswith("#"):
+        collected.append(lines[index])
+        index -= 1
+    return "\n".join(reversed(collected))
+
+
+def test_every_transitive_package_clearing_a_high_advisory_declares_a_floor() -> None:
+    """Each of the four must carry a floor, so the version is stated not chosen.
+
+    Without a floor the resolver is free to pick any release the graph allows,
+    including one inside the advisory range. cbor2 makes the point: it resolves
+    to 5.9.0, which *is* the first patched version for GHSA-3c37-wwvx-h642, so
+    there is no margin whatsoever between the current resolution and a HIGH
+    advisory re-entering the dependency graph.
+    """
+    declared = _declared_constraints()
+    missing = sorted(set(_SECURITY_FLOORS) - set(declared))
+    assert not missing, (
+        f"transitive packages with no declared security floor: {missing}. Each "
+        "resolves above a HIGH advisory only because the resolver happened to "
+        "pick that version. Declare the floor in [tool.uv] constraint-dependencies."
+    )
+
+
+def test_every_declared_constraint_is_satisfied_by_the_locked_version() -> None:
+    """A declared floor the lock does not meet is a floor in name only.
+
+    The resolver enforces this when it runs, so a violation means the lock was
+    not regenerated after the floor was raised - the same manifest/lock drift
+    class the parity gate exists for, on the security-relevant field.
+    """
+    constraints = _declared_constraints()
+    assert constraints, "no [tool.uv] constraint-dependencies declared, so this guard checks nothing"
+    locked = _locked_versions()
+    violations = _unsatisfied_floors(constraints, locked)
+    assert not violations, (
+        "uv.lock resolves these below their declared floor: "
+        + ", ".join(f"{n} -> {[str(v) for v in locked[n]]} violates {constraints[n].specifier}" for n in violations)
+        + ". Run `uv lock` and commit the result."
+    )
+
+
+def test_each_security_floor_names_the_advisory_it_clears() -> None:
+    """A bare version pin is indistinguishable from an arbitrary one.
+
+    The advisory id is what lets a later reader tell a security floor from a
+    compatibility pin, and therefore what stops it being dropped as noise on
+    the next dependency sweep.
+    """
+    for name, ghsa in sorted(_SECURITY_FLOORS.items()):
+        comment = _comment_block_above(f'"{name}>=')
+        assert ghsa in comment, f"the {name} floor does not name {ghsa} in the comment above it; got {comment!r}"
+
+
+def test_the_security_floors_are_constraints_and_not_overrides() -> None:
+    """These must bound the version, never replace the requirement.
+
+    An override silently discards a conflicting requirement - measured on this
+    manifest, ``gymnasium>=1.1.1`` as an override resolves cleanly while the
+    ``[vera-sim]`` extra's ``gymnasium==0.29.1`` is dropped without a word. As a
+    constraint the same floor fails the resolution and names the conflict. A
+    security floor that hides "a dependency asked for a vulnerable version" has
+    removed the signal it exists to raise.
+    """
+    overrides = {Requirement(spec).name for spec in _uv_requirement_list("override-dependencies")}
+    misplaced = sorted(set(_SECURITY_FLOORS) & overrides)
+    assert not misplaced, (
+        f"security floors must live in constraint-dependencies, not "
+        f"override-dependencies (an override masks a genuine conflict): {misplaced}"
+    )
+
+
+def test_the_floored_packages_are_transitive_rather_than_declared() -> None:
+    """A floor in ``[tool.uv]`` is the right home only while these stay transitive.
+
+    If one of them ever becomes a direct dependency, its version belongs in
+    ``[project]`` beside the requirement that needs it, where the bound is
+    visible to anyone reading the dependency list. This holds today and is
+    asserted so the constraint table does not outlive its justification.
+    """
+    project = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))["project"]
+    declared_names = {
+        Requirement(spec).name
+        for group in [project.get("dependencies", [])] + list(project.get("optional-dependencies", {}).values())
+        for spec in group
+        if not spec.startswith("strands-robots[")
+    }
+    direct = sorted(set(_SECURITY_FLOORS) & declared_names)
+    assert not direct, (
+        f"these carry a [tool.uv] constraint but are now declared directly, so the "
+        f"bound belongs in [project] beside the requirement: {direct}"
+    )
+
+
+def test_the_floor_check_rejects_a_lock_below_a_declared_floor() -> None:
+    """The satisfaction check must actually fire, not merely find nothing.
+
+    Feeds a synthetic lock so a green suite means the floors hold, rather than
+    meaning the comparison silently matched nothing.
+    """
+    constraints = {"cbor2": Requirement("cbor2>=5.9.0")}
+    assert _unsatisfied_floors(constraints, {"cbor2": [Version("5.9.0")]}) == []
+    assert _unsatisfied_floors(constraints, {"cbor2": [Version("5.8.0")]}) == ["cbor2"]
+    # A fork that resolves one version below the floor is still a violation.
+    assert _unsatisfied_floors(constraints, {"cbor2": [Version("5.9.0"), Version("5.8.0")]}) == ["cbor2"]
+    # A package the lock does not resolve at all is not a violation.
+    assert _unsatisfied_floors(constraints, {}) == []
+
+
+# ---------------------------------------------------------------------------
+# Cosmos 3 diffusers capability floor.
+#
+# The cosmos3-diffusers extra exists so Cosmos3Policy(backend="diffusers") can
+# build a diffusers.Cosmos3OmniPipeline. Measured against the released wheels,
+# that symbol (and CosmosActionCondition) first ships in diffusers 0.39.0 -
+# 0.36.0, 0.37.1 and 0.38.0 carry neither - so a floor below 0.39 resolves to a
+# diffusers the extra cannot use at all, and the backend's only remedy for that
+# state is an ImportError hint the caller reaches after installing. The floor
+# must therefore be the capability floor, not a nominal lower bound.
+#
+# The [tool.uv] override-dependencies diffusers pin cannot be left below that
+# floor: a uv *override* REPLACES a requirement rather than intersecting with it,
+# so it is the effective floor for the whole resolution. At >=0.38.0 it silently
+# discarded the extra's floor and uv locked diffusers 0.38.0 - a release carrying
+# no Cosmos3OmniPipeline at all.
+# ---------------------------------------------------------------------------
+
+_DIFFUSERS_WITHOUT_COSMOS3_OMNI = ("0.30.0", "0.36.0", "0.37.1", "0.38.0")
+_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI = "0.39.0"
+
+
+def test_cosmos3_diffusers_floor_ships_the_omni_pipeline() -> None:
+    """The extra's diffusers floor must exclude every release lacking the pipeline."""
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    extra = data["project"]["optional-dependencies"]["cosmos3-diffusers"]
+    reqs = [Requirement(r) for r in extra]
+    req = next((r for r in reqs if r.name == "diffusers"), None)
+    assert req is not None, f"cosmos3-diffusers must declare diffusers, got {[r.name for r in reqs]}"
+    for lacking in _DIFFUSERS_WITHOUT_COSMOS3_OMNI:
+        assert Version(lacking) not in req.specifier, (
+            f"diffusers {lacking} ships no Cosmos3OmniPipeline, so the cosmos3-diffusers "
+            f"floor must exclude it; got {req.specifier}"
+        )
+    assert Version(_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI) in req.specifier, (
+        f"diffusers {_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI} is the first release shipping "
+        f"Cosmos3OmniPipeline and must stay installable; got {req.specifier}"
+    )
+
+
+def test_the_diffusers_uv_override_does_not_undercut_the_capability_floor() -> None:
+    """The uv override must dominate both the CVE floor and the capability floor.
+
+    A uv ``override-dependencies`` entry *replaces* every requirement for that
+    package instead of intersecting with it, so it is the effective floor for the
+    whole resolution: an override below the ``cosmos3-diffusers`` floor silently
+    discards it. Measured - with the override at ``>=0.38.0`` and the extra at
+    ``>=0.39``, ``uv lock`` pinned diffusers 0.38.0, which ships no
+    ``Cosmos3OmniPipeline``. The override must therefore stay at or above the
+    extra's floor while still excluding the releases the CVE fix predates.
+    """
+    data = tomllib.loads(_PYPROJECT.read_text(encoding="utf-8"))
+    overrides = data.get("tool", {}).get("uv", {}).get("override-dependencies", [])
+    diffusers_overrides = [Requirement(o) for o in overrides if Requirement(o).name == "diffusers"]
+    assert diffusers_overrides, (
+        f"the diffusers override must stay declared in [tool.uv].override-dependencies, got {overrides}"
+    )
+    for req in diffusers_overrides:
+        assert Version("0.37.1") not in req.specifier, (
+            f"the diffusers override must still exclude the unpatched 0.37.1; got {req}"
+        )
+        for lacking in _DIFFUSERS_WITHOUT_COSMOS3_OMNI:
+            assert Version(lacking) not in req.specifier, (
+                f"a uv override replaces the extra's requirement, so it must not admit "
+                f"diffusers {lacking} (no Cosmos3OmniPipeline); got {req}"
+            )
+        assert Version(_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI) in req.specifier, (
+            f"the override must keep diffusers {_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI} installable; got {req}"
+        )
+
+
+def test_the_lockfile_pins_a_diffusers_that_ships_the_omni_pipeline() -> None:
+    """The committed lock must not pin a diffusers the extra cannot use.
+
+    The floors above are declarations; this is the resolved fact a
+    ``uv sync``/``uv run`` user actually gets.
+    """
+    lock = tomllib.loads((_REPO_ROOT / "uv.lock").read_text(encoding="utf-8"))
+    locked = sorted({p["version"] for p in lock.get("package", []) if p["name"] == "diffusers" and p.get("version")})
+    assert locked, "uv.lock must resolve diffusers (the cosmos3-diffusers extra declares it)"
+    for version in locked:
+        assert Version(version) >= Version(_FIRST_DIFFUSERS_WITH_COSMOS3_OMNI), (
+            f"uv.lock pins diffusers {version}, which ships no Cosmos3OmniPipeline; "
+            f"run `uv lock` after raising the floor"
+        )

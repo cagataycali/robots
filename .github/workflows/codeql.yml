@@ -13,6 +13,9 @@ jobs:
   analyze:
     name: Analyze (Python)
     runs-on: ubuntu-latest
+    # 3.8 min median / 4.1 max over the last 49 runs; CodeQL scales with the tree,
+    # so the headroom is deliberate.
+    timeout-minutes: 20
     permissions:
       security-events: write
       contents: read
@@ -33,10 +36,23 @@ jobs:
           # surfaced in PR #85 (MJCF interpolation) and PR #90 (subprocess
           # injection / path traversal).
           queries: security-and-quality
+          # Filters out two note-severity quality rules from that suite whose
+          # every instance in this repository is an idiom the codebase is
+          # obliged to use. The file carries the per-rule reasoning and the
+          # reason a filter is needed at all; see #1810.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@4e828ff8d448a8a6e532957b1811f387a63867e8  # v3.29.4
         with:
           category: "/language:python"
-          # Findings appear in the Security tab; PRs are not blocked on
-          # CodeQL alerts (false-positive rate makes hard-fail noisy).
+          # Findings appear in the Security tab. This job never fails on an
+          # alert, which is NOT the same as a pull request being free to merge
+          # with one: github-advanced-security opens a review thread per new
+          # alert and the default ruleset requires thread resolution, so any
+          # new alert is a hard merge gate whatever its severity. This comment
+          # asserted the opposite until #1810 measured it. The two
+          # note-severity rules whose every instance is an unavoidable idiom
+          # are filtered in codeql-config.yml for exactly that reason; every
+          # other rule -- py/empty-except included -- still gates a merge and
+          # still needs a human read.

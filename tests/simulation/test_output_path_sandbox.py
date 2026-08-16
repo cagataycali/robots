@@ -150,25 +150,29 @@ def test_sandbox_accepts_intermediate_symlink_staying_inside(tmp_path):
 def test_video_sandbox_args_default_allows_abs(monkeypatch):
     """Without STRANDS_ROBOTS_VIDEO_ROOT, video paths are unconfined (historic contract)."""
     monkeypatch.delenv("STRANDS_ROBOTS_VIDEO_ROOT", raising=False)
-    root, allow_abs = video_sandbox_args()
+    root, allow_abs, allow_abs_env = video_sandbox_args()
     assert root is None
     assert allow_abs is True
+    # The opt-in name is reported even when nothing is confined, so a sink can
+    # quote it without re-deriving the spelling.
+    assert allow_abs_env == "STRANDS_ROBOTS_VIDEO_ALLOW_ABS"
 
 
 def test_video_sandbox_args_confines_when_root_set(monkeypatch, tmp_path):
     """Setting STRANDS_ROBOTS_VIDEO_ROOT switches to sandbox-confined mode."""
     monkeypatch.setenv("STRANDS_ROBOTS_VIDEO_ROOT", str(tmp_path / "vids"))
     monkeypatch.delenv("STRANDS_ROBOTS_VIDEO_ALLOW_ABS", raising=False)
-    root, allow_abs = video_sandbox_args()
+    root, allow_abs, allow_abs_env = video_sandbox_args()
     assert root == (tmp_path / "vids").resolve()
     assert allow_abs is False
+    assert allow_abs_env == "STRANDS_ROBOTS_VIDEO_ALLOW_ABS"
 
 
 def test_video_sandbox_args_allow_abs_override(monkeypatch, tmp_path):
     """STRANDS_ROBOTS_VIDEO_ALLOW_ABS re-permits absolute paths inside sandbox mode."""
     monkeypatch.setenv("STRANDS_ROBOTS_VIDEO_ROOT", str(tmp_path / "vids"))
     monkeypatch.setenv("STRANDS_ROBOTS_VIDEO_ALLOW_ABS", "1")
-    _, allow_abs = video_sandbox_args()
+    _, allow_abs, _env = video_sandbox_args()
     assert allow_abs is True
 
 
@@ -223,3 +227,96 @@ def test_atomic_write_preserves_existing_on_failure(tmp_path, monkeypatch):
     assert target.read_bytes() == b"ORIGINAL"
     leftovers = [p for p in target.parent.iterdir() if p.name.endswith(".tmp")]
     assert leftovers == []
+
+
+# --- bare filenames anchor to the sandbox instead of the process CWD ---------
+
+
+def test_sandbox_anchors_bare_filename_to_root(tmp_path):
+    """A one-component name lands in the sandbox, not under the process CWD."""
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    resolved = validate_output_path("frame.png", sandbox_root=root, allow_abs=False)
+    assert resolved == (root / "frame.png").resolve()
+
+
+def test_bare_filename_anchoring_ignores_cwd(tmp_path, monkeypatch):
+    """The destination is the sandbox root wherever the process happens to be."""
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    resolved = validate_output_path("frame.png", sandbox_root=root, allow_abs=False)
+    assert resolved == (root / "frame.png").resolve()
+    assert not str(resolved).startswith(str(elsewhere.resolve()))
+
+
+def test_sandbox_still_rejects_relative_path_with_separator(tmp_path, monkeypatch):
+    """Anchoring is narrow: a multi-component relative path is untouched.
+
+    ``sub/frame.png`` names a directory, so it keeps resolving against the CWD
+    and stays subject to confinement. Only a bare name is anchored.
+    """
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ValueError, match="outside the sandbox"):
+        validate_output_path("sub/frame.png", sandbox_root=root, allow_abs=False)
+
+
+def test_sandbox_rejects_bare_dotdot_before_anchoring(tmp_path):
+    """``..`` is one component, so only the traversal guard's position saves it.
+
+    ``Path("..").parts`` is ``("..",)`` - a single component that is not
+    absolute, i.e. exactly the shape the anchoring branch matches. The traversal
+    check runs first, so the escape is refused rather than anchored.
+    """
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    with pytest.raises(ValueError, match="path traversal"):
+        validate_output_path("..", sandbox_root=root, allow_abs=False)
+
+
+def test_sandbox_refuses_symlink_planted_at_anchored_destination(tmp_path):
+    """The symlink probe inspects the anchored path, not the CWD-relative one.
+
+    A symlink planted inside the sandbox at the bare name's destination is an
+    arbitrary-write vector. Anchoring happens before the symlink check so the
+    check sees the path that would actually be opened.
+    """
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    outside = tmp_path / "outside.png"
+    outside.write_bytes(b"x")
+    (root / "frame.png").symlink_to(outside)
+    # Match the reason, not the word "symlink": pytest derives tmp_path from the
+    # test name, so that word appears in every interpolated path in this test.
+    with pytest.raises(ValueError, match="refusing to follow"):
+        validate_output_path("frame.png", sandbox_root=root, allow_abs=False)
+
+
+def test_anchored_bare_filename_still_rejects_metacharacters(tmp_path):
+    """Anchoring does not bypass the unconditional character guards."""
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    with pytest.raises(ValueError, match="metacharacters"):
+        validate_output_path("frame;rm.png", sandbox_root=root, allow_abs=False)
+
+
+def test_guards_only_leaves_bare_filename_cwd_relative(tmp_path, monkeypatch):
+    """With no sandbox root a bare name stays CWD-relative (historic contract)."""
+    monkeypatch.chdir(tmp_path)
+    resolved = validate_output_path("clip.mp4", sandbox_root=None, allow_abs=True)
+    assert resolved == (tmp_path / "clip.mp4").resolve()
+
+
+def test_allow_abs_leaves_bare_filename_cwd_relative(tmp_path, monkeypatch):
+    """``allow_abs`` opts out of confinement, so anchoring does not apply."""
+    root = tmp_path / "sandbox"
+    root.mkdir()
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    resolved = validate_output_path("clip.mp4", sandbox_root=root, allow_abs=True)
+    assert resolved == (elsewhere / "clip.mp4").resolve()

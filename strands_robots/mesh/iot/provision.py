@@ -53,6 +53,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from strands_robots.utils import boolean_flag_error
+
 logger = logging.getLogger(__name__)
 
 
@@ -426,11 +428,22 @@ def provision_robot(
         region: AWS region. Defaults to the default boto3 session region.
         cert_dir: Where to write certs. Defaults to ``~/.strands_robots/iot``.
         attributes: Optional thing-attribute dict (<=3 keys, <=800 chars total).
+        allow_estop_publish: When True (default) the robot certificate gets the
+            ``strands-robot`` policy, which may publish ``strands/safety/estop``
+            and therefore originate a fleet-wide stop. Pass False for the common
+            case - a robot that should obey fleet stops but never issue one - and
+            the certificate gets ``strands-robot-no-estop`` instead, identical
+            but without the ``AllowSafetyEstop`` publish grant. Must be a
+            boolean: the flag selects a posture rather than scaling a quantity,
+            so a truthy spelling of off is refused rather than read as True.
 
     Returns:
         :class:`ProvisionedThing` describing the artefacts.
 
     Raises:
+        ValueError: If *thing_name* is outside the accepted charset, or
+            *allow_estop_publish* is not a boolean. Both are checked before
+            any AWS call, so a refused call provisions nothing.
         ImportError: If ``boto3`` is not installed.
         botocore.exceptions.ClientError: For AWS-side failures (auth, throttling).
 
@@ -443,6 +456,16 @@ def provision_robot(
     """
 
     _validate_thing_name(thing_name)
+    # Checked before boto3 is even resolved: a refused flag must leave no
+    # Thing, policy or certificate behind. Reading it by truthiness would
+    # send every non-boolean spelling of off - "false", "no", "0" - to the
+    # grant-bearing policy, so the opt-out would fail open.
+    if flag_error := boolean_flag_error(allow_estop_publish, "allow_estop_publish", "provision_robot"):
+        raise ValueError(flag_error)
+    # Normalised so the value handed to _robot_policy_doc, and echoed in the
+    # log below, really is the ``bool`` both are annotated for: is_boolean
+    # also accepts a numpy boolean, which is not a ``bool`` subclass.
+    allow_estop_publish = bool(allow_estop_publish)
     boto3 = _require_boto3()
     iot = boto3.client("iot", region_name=region)
     region = iot.meta.region_name

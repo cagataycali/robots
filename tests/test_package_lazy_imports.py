@@ -65,12 +65,12 @@ class TestUnknownAttribute:
 
     def test_unknown_attribute_raises(self):
         with pytest.raises(AttributeError, match="has no attribute 'does_not_exist'"):
-            strands_robots.does_not_exist
+            _ = strands_robots.does_not_exist
 
     def test_dunder_attribute_raises_attributeerror(self):
         # Spurious dunder lookups (e.g. by copy/pickle) must not be swallowed.
         with pytest.raises(AttributeError):
-            strands_robots.__wrapped__
+            _ = strands_robots.__wrapped__
 
 
 class TestMissingDependencyContract:

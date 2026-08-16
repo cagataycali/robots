@@ -46,6 +46,7 @@ from strands import tool
 from strands.types.tools import ToolContext
 
 from strands_robots.mesh import security as _security
+from strands_robots.utils import positive_count_error, positive_finite_number_error
 
 # Literal peer-id pattern for watch(target=...). Peer ids are an enumerable
 # surface (per AGENTS.md > Review Learnings (PR #92) > "Allowlist enumerable
@@ -312,9 +313,10 @@ def _rate_limit_check(action: str) -> str | None:
     """Return None if a slot is available, else the rejection message.
 
     Inspects the sliding-window history but does NOT consume a slot.
-    Use :func:`_rate_limit_record` after a fleet-wide action's HITL
-    approval is positively granted (or unconditionally for actions
-    that do not require approval).
+    Use :func:`_rate_limit_check_and_record` once the action is known to
+    run - after a HITL approval is positively granted, or directly for an
+    action the operator has taken out of the gated set. Reserving through
+    that helper is what keeps this check from being a TOCTOU.
 
     Splitting check from record means a *declined* HITL approval no
     longer consumes a slot - without the split, three nuisance LLM
@@ -343,26 +345,6 @@ def _rate_limit_check(action: str) -> str | None:
     return None
 
 
-def _rate_limit_record(action: str) -> None:
-    """Append a slot to *action*'s sliding-window history.
-
-    Call this only after a HITL-required action's approval is granted,
-    or unconditionally for actions that do not require an interrupt.
-    Pairs with :func:`_rate_limit_check`.
-    """
-    cfg = _RATE_LIMITS.get(action)
-    if cfg is None:
-        return
-    _, window = cfg
-    now = time.monotonic()
-    with _RATE_LOCK:
-        bucket = _RATE_HISTORY.setdefault(action, collections.deque())
-        cutoff = now - window
-        while bucket and bucket[0] < cutoff:
-            bucket.popleft()
-        bucket.append(now)
-
-
 def _reset_rate_limits() -> None:
     """Test helper: clear sliding-window history."""
     with _RATE_LOCK:
@@ -372,16 +354,18 @@ def _reset_rate_limits() -> None:
 def _rate_limit_check_and_record(action: str) -> str | None:
     """Atomic check+record under a single _RATE_LOCK acquisition.
 
-    Used on the post-HITL-approval path to close the TOCTOU between
-    :func:`_rate_limit_check` (called BEFORE the operator interrupt) and
-    :func:`_rate_limit_record` (called AFTER). Without this, two
-    concurrent emergency_stop or broadcast invocations could each pass
-    the pre-interrupt check, both get operator-approved on different
-    threads, and both record -- briefly exceeding the configured limit.
+    This is the only way a slot is consumed. It closes the TOCTOU left by
+    :func:`_rate_limit_check`, which reports whether a slot is free without
+    taking it: without an atomic reservation two concurrent invocations
+    could each pass that check and each record, briefly exceeding the
+    configured limit. Both gate paths reserve through here - the approved
+    path after the operator interrupt returns, and the ungated path for an
+    action outside ``STRANDS_MESH_HITL_ACTIONS`` - so neither an operator
+    wait nor the validation work in between can be raced past.
 
-    Returns None if the slot was atomically reserved, else the
-    rejection message (caller should treat as 'rate limit raced past us
-    while we were waiting on the operator interrupt; reject this one').
+    Returns None if the slot was atomically reserved, else the rejection
+    message (caller should treat as 'another call took the last slot after
+    our check; reject this one').
     """
     cfg = _RATE_LIMITS.get(action)
     if cfg is None:
@@ -397,7 +381,7 @@ def _rate_limit_check_and_record(action: str) -> str | None:
             wait = window - (now - bucket[0])
             return (
                 f"rate limit exceeded for action '{action}' between check "
-                f"and record (concurrent approval raced past): max {max_calls} "
+                f"and record (a concurrent call raced past): max {max_calls} "
                 f"calls per {window:.0f}s window. Try again in {wait:.1f}s."
             )
         bucket.append(now)
@@ -439,6 +423,77 @@ def _err(text: str) -> dict[str, Any]:
 
 def _ok(text: str) -> dict[str, Any]:
     return {"status": "success", "content": [{"text": text}]}
+
+
+# ── Numeric-option domain ──────────────────────────────────────────────────
+#
+# Which of the two numeric options each action actually consumes. Scoped per
+# action rather than validated unconditionally because a caller must never be
+# refused for a value the requested action never looks at: ``peers`` lists the
+# graph without a wait budget, and ``emergency_stop`` fans out on a fixed
+# internal budget rather than the caller's. An action absent from this table
+# reads neither option and is never refused here.
+#
+# ``duration`` and ``policy_port`` are deliberately absent: they travel inside
+# the command body that :func:`~strands_robots.mesh.security.validate_command`
+# inspects, which already bounds them (``duration`` to ``[0,
+# MAX_DURATION_S]``, ``policy_port`` to ``[1, 65535]``). ``timeout`` and
+# ``limit`` never enter a command body, so nothing on that path can see them.
+_ACTION_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
+    "tell": ("timeout",),
+    "send": ("timeout",),
+    "rpc": ("timeout",),
+    "broadcast": ("timeout",),
+    "stop": ("timeout",),
+    "inbox": ("limit",),
+}
+
+
+def _numeric_option_error(action: str, *, timeout: Any, limit: Any) -> str | None:
+    """Error text for the first numeric option *action* consumes but cannot honor.
+
+    ``timeout`` is a wait budget: every action that reads it hands it to a
+    :class:`threading.Event` wait (:meth:`strands_robots.mesh.core.Mesh.send`)
+    or to a Device Connect ``invoke``, and returns ``{"status": "timeout"}`` when
+    nothing arrived in time. Only a positive finite number can be honored, so it
+    is checked against
+    :func:`~strands_robots.utils.positive_finite_number_error` - the same domain
+    :mod:`~strands_robots.tools._numeric_options` applies to the ROS transports'
+    ``timeout``, which is the same quantity consumed the same way. A fractional
+    budget is perfectly usable, which is why the domain is the continuous one.
+
+    ``limit`` is the number of buffered messages ``inbox`` returns, consumed
+    directly as a slice index, so it is checked against
+    :func:`~strands_robots.utils.positive_count_error`: an integral float raises
+    ``TypeError`` from the slice rather than being coerced.
+
+    This tool keeps its own table and calls the two shared domains directly
+    rather than reusing
+    :func:`~strands_robots.tools._numeric_options.numeric_option_error`, whose
+    documented scope is the three tools that drive a ROS graph and whose options
+    are ``timeout`` / ``count`` / ``rate``. The domains are shared; only the
+    per-action scoping, a property of this tool's transports, is local.
+
+    Args:
+        action: The requested action; decides which options are effective.
+        timeout: Seconds to wait for a response, as supplied.
+        limit: Max messages ``inbox`` returns, as supplied.
+
+    Returns:
+        An error message naming the tool, the action and the option, or ``None``
+        when every option this action reads is usable.
+    """
+    consumed = _ACTION_NUMERIC_OPTIONS.get(action, ())
+    context = f"robot_mesh {action}"
+    if "timeout" in consumed:
+        error = positive_finite_number_error(timeout, "timeout", context)
+        if error:
+            return error
+    if "limit" in consumed:
+        error = positive_count_error(limit, "limit", context)
+        if error:
+            return error
+    return None
 
 
 def _resolve_mesh(target: str) -> Any | None:
@@ -713,6 +768,9 @@ def _device_connect_dispatch(
         if action == "stop":
             if not target:
                 return _DCResult(_err("stop requires target"))
+            # A stop is capped at 5s so it cannot hang. This is a cap over an
+            # already-validated positive finite budget, not a guard: min() would
+            # pass nan straight through (min(nan, 5.0) is nan).
             result = conn.invoke(target, "stop", _with_identity({}), timeout=min(timeout, 5.0))
             r = result.get("result", result)
             _audit_tool_action(action, target, True, "")
@@ -788,9 +846,15 @@ def robot_mesh(
         policy_provider: Policy provider tag forwarded with ``tell``.
         policy_port: Optional policy port forwarded with ``tell``.
         duration: Task duration (seconds) forwarded with ``tell``.
-        timeout: Response timeout for RPC actions (seconds).
+        timeout: Response timeout for RPC actions (seconds). A positive finite
+            number; read by ``tell`` / ``send`` / ``rpc`` / ``broadcast`` /
+            ``stop`` and ignored by the rest. ``stop`` additionally caps it at
+            5s. Zero or negative would report ``{"status": "timeout"}`` without
+            waiting at all, so an unusable value is refused rather than reported
+            as a peer that did not answer.
         name: Optional subscription name for ``subscribe`` / ``inbox``.
-        limit: Max messages returned by ``inbox`` (default: 50).
+        limit: Max messages returned by ``inbox`` (default: 50). A positive
+            integer; read by ``inbox`` only.
         function: Device-native function name for ``rpc`` (e.g. ``nod``).
 
     Returns:
@@ -841,11 +905,21 @@ def robot_mesh(
 
     # Check the per-action rate limit before doing any work - but
     # do NOT consume a slot until we know the action is going to run.
-    # See _rate_limit_check / _rate_limit_record for rationale.
+    # See _rate_limit_check / _rate_limit_check_and_record for rationale.
     rl_err = _rate_limit_check(action)
     if rl_err is not None:
         _audit_tool_action(action, target, False, f"rate_limit: {rl_err}")
         return _err(rl_err)
+
+    # Reject a numeric option this action cannot honor before anything else -
+    # for the same reason the command-body pre-pass below runs early, and one
+    # step sooner because this check needs no parsing. A wait budget of ``nan``
+    # or a message ``limit`` of ``0`` must not burn an operator approval at the
+    # HITL gate, consume a rate-limit slot, or reach a transport.
+    num_err = _numeric_option_error(action, timeout=timeout, limit=limit)
+    if num_err is not None:
+        _audit_tool_action(action, target, False, f"validation: {num_err}")
+        return _err(num_err)
 
     # Parse + validate any command body BEFORE the HITL interrupt so
     # the operator never approves an action the validator then rejects
@@ -992,10 +1066,17 @@ def robot_mesh(
             return _err(rl_race_err)
         _audit_tool_action(action, target, True, f"operator approved: {response!r}")
     else:
-        # No interrupt required for this action - consume the slot
-        # unconditionally (matches the pre-split behaviour for
-        # non-fleet-wide actions like ``tell``, ``send``, ``stop``).
-        _rate_limit_record(action)
+        # No interrupt required for this action - reserve the slot with the
+        # same atomic check+record the approved path uses above. The pre-gate
+        # check does not consume a slot, so a concurrent invocation can take
+        # the last one in between; recording unconditionally here would let
+        # both callers past a full bucket. Once ``STRANDS_MESH_HITL_ACTIONS``
+        # narrows the gated set this limit is the only bound left on
+        # LLM-driven actuation, so it has to hold on this path too.
+        rl_race_err = _rate_limit_check_and_record(action)
+        if rl_race_err is not None:
+            _audit_tool_action(action, target, False, f"rate_limit_race: {rl_race_err}")
+            return _err(rl_race_err)
 
     # ── Device Connect dispatch (primary networking layer) ─────────────────
     # Every safety gate above (rate limit, HITL approval, broadcast
@@ -1092,6 +1173,8 @@ def robot_mesh(
         # Parse + validation already happened in the pre-interrupt pass
         # above (so the operator approves the validated form). Reuse that
         # result rather than re-parsing the LLM string a second time.
+        # Explicit raise, not assert -- see the broadcast handler below for
+        # why the sentinel check must survive ``python -O``.
         if validated_send_cmd is None:
             raise RuntimeError(
                 "send reached its handler without pre-validation -- validate-before-HITL contract broken"
@@ -1109,9 +1192,11 @@ def robot_mesh(
     if action == "broadcast":
         # Pre-validated above before the HITL interrupt fired, so
         # the cmd here is already a clean validated dict.
-        # Use explicit raise (not assert) -- assert is stripped under
-        # ``python -O`` / ``PYTHONOPTIMIZE=1`` which would silently send
-        # an unvalidated cmd to mesh.broadcast.
+        # Use explicit raise (not assert): assert is stripped under
+        # ``python -O`` / ``PYTHONOPTIMIZE=1``, and with the check gone the
+        # handler dispatches the unset sentinel -- mesh.broadcast(None) is
+        # issued fleet-wide, and the cmd.get(...) on the audit line below
+        # then raises, so the dispatch that did happen is never recorded.
         if validated_broadcast_cmd is None:
             raise RuntimeError(
                 "broadcast reached its handler without pre-validation -- validate-before-HITL contract broken"
@@ -1136,6 +1221,8 @@ def robot_mesh(
             _audit_tool_action(action, target, False, "missing target")
             return _err("stop requires target")
         try:
+            # Capped at 5s so a stop cannot hang - a cap over an already-validated
+            # positive finite budget, not a guard (min(nan, 5.0) is nan).
             result = mesh.send(target, {"action": "stop"}, timeout=min(timeout, 5.0))
         except Exception as exc:  # noqa: BLE001
             _audit_tool_action(action, target, False, f"dispatch error: {type(exc).__name__}: {exc}")
@@ -1246,7 +1333,11 @@ def robot_mesh(
             # inbox access (agent read attempt), not just non-empty ones.
             _audit_tool_action(action, sub_name, True, "read=0")
             return _ok(f"[inbox '{sub_name}'] no messages")
-        head = msgs[-limit:] if limit > 0 else msgs
+        # ``limit`` is a validated positive int by here, so the tail slice is
+        # always the cap the caller asked for. The former ``if limit > 0 else
+        # msgs`` fallback returned the WHOLE buffer for a non-positive limit -
+        # the opposite of a cap - and is unreachable now.
+        head = msgs[-limit:]
         # Audit the read: which subscription, how many frames the agent
         # pulled into its context. Gives operators the "agent read N frames
         # from sub X at time T" trail that raw telemetry access otherwise

@@ -57,6 +57,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
+from strands_robots.utils import validation_split_error, validation_split_fraction
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from lerobot.configs.train import TrainPipelineConfig
@@ -453,8 +454,14 @@ class LerobotTrainer(Trainer):
             return spec.dataset_repo_id, (spec.dataset_root or None)
         return "local", spec.dataset_root
 
-    def _val_split_episodes(self, spec: TrainSpec) -> list[int] | None:
-        """Held-out validation split: train on the FIRST (total - N) episodes.
+    def _val_eval_split(self, spec: TrainSpec) -> float | None:
+        """``dataset.eval_split`` reserving the LAST ``val_episodes`` episodes.
+
+        Returns the fraction lerobot needs to hold the tail out of TRAINING and
+        run an evaluation pass over it, so ``val_episodes`` yields a validation
+        loss rather than only a smaller training set. Paired with a non-zero
+        ``eval_steps`` in :meth:`_apply_common_config`; lerobot refuses an
+        ``eval_steps`` that has no ``eval_split`` to draw held-out data from.
 
         Requires a local ``meta/info.json`` to know the episode count, so it is
         a no-op for a Hub dataset with no local cache (``dataset_repo_id`` set,
@@ -466,8 +473,22 @@ class LerobotTrainer(Trainer):
             return None
         total = self._dataset_total_episodes(spec.dataset_root)
         if total is not None and 0 < spec.val_episodes < total:
-            return list(range(0, total - spec.val_episodes))
+            return validation_split_fraction(spec.val_episodes, total)
         return None
+
+    def _dataset_total_tasks(self, dataset_root: str) -> int:
+        """``total_tasks`` from ``meta/info.json``, or 0 when not recorded."""
+        from pathlib import Path
+
+        info_path = Path(dataset_root) / "meta" / "info.json"
+        if not info_path.exists():
+            return 0
+        try:
+            with open(info_path) as f:
+                total = json.load(f).get("total_tasks")
+        except (OSError, ValueError):
+            return 0
+        return total if isinstance(total, int) and not isinstance(total, bool) else 0
 
     def _relative_actions(self, spec: TrainSpec) -> bool:
         """Whether to train with relative (delta) actions (``extra['relative_actions']``).
@@ -526,9 +547,11 @@ class LerobotTrainer(Trainer):
 
         Runs the shared input-safety gate, then checks a data source -
         exactly one of a local LeRobotDataset v3 ``dataset_root`` or a Hub
-        ``dataset_repo_id`` (for streaming) - an ``output_dir``, positive
-        ``steps``, single-node only (``num_nodes == 1``), a ``val_episodes``
-        split below the dataset total, and that ``lerobot.scripts.lerobot_train``
+        ``dataset_repo_id`` (for streaming) - an ``output_dir``, a usable run
+        size (``steps`` / ``global_batch_size``), single-node only
+        (``num_nodes == 1``), a ``val_episodes``
+        split below the dataset total, usable LoRA hyperparameters when
+        ``method == "lora"``, and that ``lerobot.scripts.lerobot_train``
         is importable. ``extra['reward_model']`` switches to reward-model
         preflight; otherwise the default policy path is checked. Returns the
         problem list; empty means launchable. Read-only.
@@ -571,19 +594,40 @@ class LerobotTrainer(Trainer):
         else:
             problems.extend(self._validate_policy(spec))
 
-        if spec.steps <= 0:
-            problems.append(f"steps must be > 0, got {spec.steps}")
+        problems.extend(self._run_size_problems(spec))
+        problems.extend(self._learning_rate_problems(spec))
+        problems.extend(self._seed_problems(spec))
+        # Captured rather than extended blind: the multi-node refusal below
+        # compares num_nodes, which is only a meaningful comparison once this
+        # gate has established it IS a count - a string or None would raise out
+        # of the comparison instead of being reported.
+        topology_problems = self._launch_topology_problems(spec)
+        problems.extend(topology_problems)
 
-        if spec.num_nodes > 1:
+        if not topology_problems and spec.num_nodes > 1:
             problems.append(
                 f"num_nodes={spec.num_nodes}: multi-node lerobot needs a per-node "
                 "launcher and cannot run in-process; use num_nodes=1."
             )
 
-        if spec.val_episodes is not None and spec.dataset_root:
+        # Captured rather than extended blind, for the same reason as the
+        # topology gate above: the two dataset-dependent checks below compare
+        # val_episodes and interpolate it into a split fraction, and both are
+        # only meaningful once this gate has established that it IS a count.
+        val_problems = self._validation_episodes_problems(spec)
+        problems.extend(val_problems)
+
+        if not val_problems and spec.val_episodes is not None and spec.dataset_root:
             total = self._dataset_total_episodes(spec.dataset_root)
             if total is not None and spec.val_episodes >= total:
                 problems.append(f"val_episodes={spec.val_episodes} >= total_episodes={total}")
+            split_err = validation_split_error(
+                spec.val_episodes, self._dataset_total_tasks(spec.dataset_root), "LeRobotTrainer"
+            )
+            if split_err:
+                problems.append(split_err)
+
+        problems.extend(self._lora_hyperparameter_problems(spec))
 
         # lerobot must be importable to actually train.
         try:
@@ -767,9 +811,10 @@ class LerobotTrainer(Trainer):
             cmd.append("--dataset.streaming=true")
         if spec.seed is not None:
             cmd.append(f"--seed={spec.seed}")
-        eps = self._val_split_episodes(spec)
-        if eps is not None:
-            cmd.append(f"--dataset.episodes=[{', '.join(map(str, eps))}]")
+        split = self._val_eval_split(spec)
+        if split is not None:
+            cmd.append(f"--dataset.eval_split={split}")
+            cmd.append(f"--eval_steps={spec.save_freq if spec.save_freq > 0 else spec.steps}")
         if rm is None:
             if spec.base_model:
                 cmd.append(f"--policy.pretrained_path={spec.base_model}")
@@ -924,8 +969,10 @@ class LerobotTrainer(Trainer):
         dataset_kwargs: dict[str, Any] = {
             "repo_id": repo_id,
             "root": root,
-            "episodes": self._val_split_episodes(spec),
         }
+        split = self._val_eval_split(spec)
+        if split is not None:
+            dataset_kwargs["eval_split"] = split
         if spec.streaming:
             dataset_kwargs["streaming"] = True
         return DatasetConfig(**dataset_kwargs)
@@ -938,6 +985,11 @@ class LerobotTrainer(Trainer):
             cfg.seed = spec.seed
         if hasattr(cfg, "wandb") and hasattr(cfg.wandb, "enable"):
             cfg.wandb.enable = False
+        if self._val_eval_split(spec) is not None:
+            # Validate on the caller's own checkpoint cadence so every saved
+            # checkpoint has a validation loss beside it; a non-positive
+            # save_freq disables periodic saving, so evaluate once at the end.
+            cfg.eval_steps = spec.save_freq if spec.save_freq > 0 else spec.steps
         if spec.resume:
             ckpt_cfg = self._resume_config_path(spec.output_dir)
             if ckpt_cfg:
@@ -1016,6 +1068,26 @@ class LerobotTrainer(Trainer):
             reward_cfg = make_reward_model_config(rtype, **reward_kwargs)
         except TypeError as e:
             raise ValueError(f"reward_model type '{rtype}' rejected field(s) {sorted(reward_kwargs)}: {e}") from e
+        except OSError as e:
+            # A reward config may derive a field from a pretrained asset inside
+            # its own __post_init__ (robometer reads its backbone's config and
+            # tokenizer to size ``vlm_config``), so merely CONSTRUCTING it can
+            # need a download. Every huggingface_hub failure class for that is
+            # an OSError subclass (LocalEntryNotFoundError, HfHubHTTPError,
+            # GatedRepoError, OfflineModeIsEnabled), and transformers re-raises
+            # a plain OSError, so this is the narrowest superset that covers
+            # "the asset could not be obtained" without swallowing the
+            # ValueErrors a config raises for a bad field value - those are
+            # already actionable and name the field.
+            raise ValueError(
+                f"reward_model type '{rtype}' could not be constructed: building its config "
+                f"needed a pretrained asset this host could not obtain ({e}). The spec itself "
+                f"is fine - validate() cannot reach the network to see this. Either make the "
+                f"asset available (a warm Hugging Face cache, or network access with "
+                f"HF_HUB_OFFLINE unset), or pass the field the config derives from it in "
+                f"extra['reward_model'] so its constructor fetches nothing. Fields this type "
+                f"accepts: {', '.join(sorted(friendly))}."
+            ) from e
         if hasattr(reward_cfg, "push_to_hub"):
             reward_cfg.push_to_hub = False
         if spec.base_model and hasattr(reward_cfg, "pretrained_path"):

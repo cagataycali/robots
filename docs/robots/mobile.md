@@ -26,6 +26,7 @@ sim = Robot("crazyflie")        # Bitcraze Crazyflie 2 quadcopter
 | `go1` | Unitree Go1 Quadruped (12-DOF) | 13 | `unitree_go1` |
 | `google_robot` | Google Robot (mobile base + arm, RT-X) | 10 | `oxe_google` |
 | `lekiwi` | LeKiwi mobile manipulator (6-DOF arm on 3-omniwheel base, 9 actuators) | 9 | - |
+| `lekiwi_client` | LeKiwi networked client (drives a remote LeKiwi host over ZMQ) _(hardware-only, no sim asset)_ | ? | `lekiwi_remote`, `lekiwi_net` |
 | `robot_soccer_kit` | Robot Soccer Kit (multi-robot soccer, 65-DOF total) | 65 | `rsk` |
 | `skydio_x2` | Skydio X2 Autonomous Drone | 1 | - |
 | `spot` | Boston Dynamics Spot (with arm) | 20 | `boston_dynamics_spot` |

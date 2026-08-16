@@ -37,7 +37,8 @@ class _CapturingRecorder:
     """Stub recorder that records the observation handed to each ``add_frame``.
 
     Mirrors only the surface the MuJoCo ``on_frame`` recording hook touches:
-    ``add_frame(observation=, action=, task=)``. The hook forwards the raw sim
+    ``add_frame(observation=, action=, task=, required_action_keys=)``. The hook
+    forwards the raw sim
     observation (per-joint scalar keys such as ``Rotation`` / ``Pitch`` plus
     their ``.vel`` companions - the real ``DatasetRecorder`` packs these into
     ``observation.state``). We snapshot the scalar proprioceptive vector per
@@ -48,6 +49,7 @@ class _CapturingRecorder:
     def __init__(self) -> None:
         self.states: list[np.ndarray] = []
         self.actions: list[dict[str, Any]] = []
+        self.required_action_keys: list[list[str]] = []
         self.episode_frame_count = 0
         self.frame_count = 0
 
@@ -59,9 +61,16 @@ class _CapturingRecorder:
         )
         return np.array([v for _, v in items], dtype=float)
 
-    def add_frame(self, observation: dict[str, Any], action: dict[str, Any], task: str = "") -> None:
+    def add_frame(
+        self,
+        observation: dict[str, Any],
+        action: dict[str, Any],
+        task: str = "",
+        required_action_keys: list[str] | None = None,
+    ) -> None:
         self.states.append(self._scalar_state(observation))
         self.actions.append(dict(action))
+        self.required_action_keys.append(list(required_action_keys or []))
         self.episode_frame_count += 1
         self.frame_count += 1
 
@@ -132,3 +141,30 @@ def test_recorded_state_advances_within_a_single_chunk(async_rtc: bool) -> None:
         )
     finally:
         sim.cleanup()
+
+
+def test_the_recording_hook_declares_the_driven_robots_action_columns() -> None:
+    """The hook must tell the recorder which columns this rollout owes it.
+
+    Without that scope the recorder cannot tell a column the policy chose not to
+    command from one it commanded to zero, and fills the former with ``0.0`` - a
+    travel-to-zero command on an absolute-position actuator, persisted as though
+    the policy had issued it.
+    """
+    sim, rec = _make_recording_sim()
+    try:
+        expected = sim.robot_action_keys(robot_name="arm")
+        assert expected, "fixture robot must expose action keys"
+        result = sim.run_policy(
+            robot_name="arm",
+            policy_object=MockPolicy(),
+            instruction="t",
+            n_steps=3,
+            control_frequency=50.0,
+        )
+        assert result["status"] == "success"
+    finally:
+        sim.cleanup()
+
+    assert rec.required_action_keys, "no frame was recorded"
+    assert all(keys == expected for keys in rec.required_action_keys)

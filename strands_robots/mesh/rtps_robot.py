@@ -39,6 +39,12 @@ from strands import tool
 from strands.types.tools import AgentTool
 
 from strands_robots.tools.use_rtps import use_rtps
+from strands_robots.utils import (
+    finite_number_error,
+    partial_construction_repr,
+    positive_finite_number_error,
+    positive_whole_number_error,
+)
 
 _TWIST_TYPE = "geometry_msgs/msg/Twist"
 _TOPIC_RE = re.compile(r"^/[A-Za-z0-9_/]*[A-Za-z0-9_]$")
@@ -66,6 +72,10 @@ class RtpsRobot:
         cmd_vel_type: Interface type for ``cmd_vel_topic`` (default
             ``geometry_msgs/msg/Twist``).
         publish_rate: Default rate (Hz) for multi-message :meth:`drive` calls.
+            Must be > 0 and finite: :meth:`drive` multiplies it by ``duration``
+            to size the message burst and ``use_rtps`` publishes at ``1 / rate``,
+            so a non-positive rate removes the pacing entirely rather than
+            slowing it. Raises ``ValueError`` at construction otherwise.
     """
 
     def __init__(
@@ -79,7 +89,9 @@ class RtpsRobot:
         self.node_name = _check("node_name", node_name, _NAME_RE)
         self.cmd_vel_topic = _check("cmd_vel_topic", cmd_vel_topic, _TOPIC_RE)
         self.cmd_vel_type = cmd_vel_type
-        self.publish_rate = publish_rate
+        if rate_err := positive_finite_number_error(publish_rate, "publish_rate", type(self).__name__):
+            raise ValueError(rate_err)
+        self.publish_rate = float(publish_rate)
 
     @classmethod
     def from_rtps(
@@ -111,12 +123,49 @@ class RtpsRobot:
         """Publish a velocity command over RTPS to the robot's ``cmd_vel`` topic.
 
         Args:
-            linear: Forward linear velocity (m/s), mapped to ``linear.x``.
-            angular: Yaw angular velocity (rad/s), mapped to ``angular.z``.
-            duration: When given, hold the command for this many seconds
-                (publishes ``round(duration * publish_rate)`` messages).
-            count: Message count when ``duration`` is omitted.
+            linear: Forward linear velocity (m/s), mapped to ``linear.x``. Must
+                be a finite number; both signs are valid (negative reverses).
+            angular: Yaw angular velocity (rad/s), mapped to ``angular.z``. Must
+                be a finite number; both signs are valid (negative turns the
+                other way).
+            duration: When given, hold the command for this many seconds by
+                publishing ``round(duration * publish_rate)`` messages (at least
+                one). Takes precedence over ``count``, and must be > 0 and
+                finite - a zero or negative hold has no message count that
+                expresses it, and publishing a single velocity command anyway
+                would start the robot moving.
+            count: Number of messages to publish when ``duration`` is omitted.
+                Must be a positive whole number; ``0`` or a negative count
+                publishes nothing, so reporting a successful drive for it hides
+                a command that never left the process.
+
+        Returns:
+            The ``use_rtps`` publish result dict, or an ``{"status": "error"}``
+            result naming the parameter when a value cannot be honored - in
+            which case nothing is published.
         """
+        # A velocity command is the one call on this bridge that physically
+        # moves the robot, so every knob it carries is checked before anything
+        # reaches the wire. ``use_rtps`` validates the topic and interface type
+        # but never sees ``duration`` at all (it receives only the derived
+        # message count), so the horizon knobs have no guard downstream.
+        cmd_err = (
+            finite_number_error(linear, "linear", "drive")
+            or finite_number_error(angular, "angular", "drive")
+            or (
+                positive_finite_number_error(duration, "duration", "drive")
+                if duration is not None
+                # ``duration`` supersedes ``count``, so ``count`` is only the
+                # effective horizon when no duration was given; refusing a
+                # ``count`` this call never reads would reject a valid command.
+                else positive_whole_number_error(count, "count", "drive")
+            )
+        )
+        if cmd_err:
+            return {"status": "error", "content": [{"text": cmd_err}]}
+        # ``duration`` is positive and finite here, so this floor is a rounding
+        # rule and not a substitute for validation: a hold shorter than one
+        # publish period still means "send the command once".
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
         fields = {"linear": {"x": float(linear)}, "angular": {"z": float(angular)}}
         return use_rtps(
@@ -150,7 +199,10 @@ class RtpsRobot:
         return [drive, stop]
 
     def __repr__(self) -> str:
-        return (
-            f"RtpsRobot(node_name={self.node_name!r}, cmd_vel_topic={self.cmd_vel_topic!r}, "
-            f"cmd_vel_type={self.cmd_vel_type!r})"
-        )
+        try:
+            return (
+                f"RtpsRobot(node_name={self.node_name!r}, cmd_vel_topic={self.cmd_vel_topic!r}, "
+                f"cmd_vel_type={self.cmd_vel_type!r})"
+            )
+        except AttributeError:
+            return partial_construction_repr(self)

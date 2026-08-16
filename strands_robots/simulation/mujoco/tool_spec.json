@@ -36,6 +36,7 @@
         "set_gravity",
         "set_timestep",
         "randomize",
+        "set_obs_noise",
         "start_recording",
         "stop_recording",
         "get_recording_status",
@@ -94,7 +95,9 @@
       "type": "array",
       "items": {
         "type": "number"
-      }
+      },
+      "minItems": 3,
+      "maxItems": 3
     },
     "ground_plane": {
       "type": "boolean"
@@ -141,13 +144,18 @@
       "type": "array",
       "items": {
         "type": "number"
-      }
+      },
+      "minItems": 3,
+      "maxItems": 3
     },
     "orientation": {
       "type": "array",
       "items": {
         "type": "number"
-      }
+      },
+      "minItems": 4,
+      "maxItems": 4,
+      "description": "Orientation as a unit quaternion in [w, x, y, z] order - scalar first, MuJoCo's convention. Applied verbatim to the body quat, so an [x, y, z, w] vector has the same accepted length and is silently used as a different rotation."
     },
     "size": {
       "type": "array",
@@ -161,6 +169,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 4,
       "description": "Colour in 0..1: [r, g, b] (opaque alpha added) or [r, g, b, a]. Any other component count, including an empty list, is rejected - omit color entirely for the default mid-grey."
     },
     "mass": {
@@ -193,6 +203,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Camera target point"
     },
     "parent_body": {
@@ -243,7 +255,7 @@
     },
     "output_path": {
       "type": "string",
-      "description": "Trajectory/video export path"
+      "description": "Destination file path. render: PNG still, confined to the render sandbox (~/.strands_robots/renders, or STRANDS_ROBOTS_RENDER_ROOT); set STRANDS_ROBOTS_RENDER_ALLOW_ABS=1 to write outside it. export_xml: MJCF scene, any absolute path accepted. run_policy/start_policy/eval_policy/evaluate_benchmark: rollout MP4. Every sink rejects '..' traversal, a symlinked target, backslash separators and shell metacharacters."
     },
     "fps": {
       "type": "integer",
@@ -267,6 +279,18 @@
     "seed": {
       "type": "integer",
       "description": "Random seed"
+    },
+    "joint_pos_std": {
+      "type": "number",
+      "description": "set_obs_noise: std (radians) of Gaussian noise added to joint positions in get_observation and get_robot_state. Zero (the default) disables it. Must be finite and non-negative."
+    },
+    "joint_vel_std": {
+      "type": "number",
+      "description": "set_obs_noise: std (rad/s) of Gaussian noise added to per-joint velocities. Zero (the default) disables it. Must be finite and non-negative."
+    },
+    "camera_jitter_px": {
+      "type": "number",
+      "description": "set_obs_noise: max pixel shift applied to rendered frames, uniform in [-px, px] per axis. Zero (the default) disables it. Must be finite and non-negative."
     },
     "repo_id": {
       "type": "string",
@@ -306,12 +330,16 @@
     },
     "tol": {
       "type": "number",
-      "description": "move_to / rotate_wrist convergence tolerance: meters for move_to (EE position, default 0.01), radians for rotate_wrist (joint angle, default 0.02)"
+      "description": "move_to / rotate_wrist convergence tolerance: meters for move_to (EE POSITION only - use orientation_tol for the rotation, default 0.01), radians for rotate_wrist (joint angle, default 0.02)"
+    },
+    "orientation_tol": {
+      "type": "number",
+      "description": "move_to orientation convergence tolerance in RADIANS (default 0.1, about 5.7 deg). Bounds the rotational half of a pose request, which 'tol' (meters) cannot: when 'orientation' is given, move_to converges to within tol meters AND orientation_tol radians and reports both errors. Only valid alongside 'orientation' - passing it for a position-only move is refused, not ignored"
     },
     "state": {
       "type": "string",
       "enum": ["open", "close"],
-      "description": "set_gripper set-point: 'open'/'close' drive the gripper actuator(s) to the ctrlrange end declared in the robot registry's gripper metadata when present, else the default convention: 'open' = HIGH end, 'close' = LOW end (SO-100/SO-101 jaw closes toward the low end)"
+      "description": "set_gripper set-point: 'open'/'close' drive the gripper actuator(s) to the set-point-range end declared in the robot registry's gripper metadata when present, else the default convention: 'open' = HIGH end, 'close' = LOW end (SO-100/SO-101 jaw closes toward the low end). The range is the actuator ctrlrange, falling back to the driven joint's limits when the MJCF left the ctrlrange unset"
     },
     "steps": {
       "type": "integer",
@@ -358,6 +386,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Force vector [fx, fy, fz] in Newtons"
     },
     "torque_vec": {
@@ -365,6 +395,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Torque vector [tx, ty, tz] in N\u00b7m"
     },
     "point": {
@@ -372,6 +404,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Point of force application [x, y, z]"
     },
     "origin": {
@@ -379,6 +413,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Ray origin [x, y, z]"
     },
     "direction": {
@@ -386,6 +422,8 @@
       "items": {
         "type": "number"
       },
+      "minItems": 3,
+      "maxItems": 3,
       "description": "Ray direction [dx, dy, dz]"
     },
     "directions": {
@@ -396,11 +434,11 @@
           "type": "number"
         }
       },
-      "description": "Multiple ray directions for multi_raycast"
+      "description": "Multiple ray directions for multi_raycast - one [dx, dy, dz] per ray, at least one. The batch is all-or-nothing: a direction that cannot be cast refuses it, so a rejected ray is never reported as a miss"
     },
     "exclude_body": {
       "type": "integer",
-      "description": "Body ID to exclude from raycast (-1=none)"
+      "description": "Body ID whose geoms a ray passes through (-1 = exclude nothing); any other value must be a body id the model defines - read one from list_bodies"
     },
     "include_static": {
       "type": "boolean",
@@ -449,7 +487,7 @@
     },
     "ops": {
       "type": "array",
-      "description": "List of structured MJCF edit ops for action='patch_scene_mjcf'. Each op is a dict like {'op': 'add_body', 'parent': 'world', 'name': 'foo', 'pos': [0,0,1]}, {'op': 'add_geom', 'body': 'foo', 'type': 'sphere', 'size': [0.1]}, {'op': 'add_site', 'body': 'foo', 'name': 'tip', 'pos': [0,0,0.2]}, {'op': 'set_body_pos', 'name': 'foo', 'pos': [1,0,1]}, {'op': 'set_body_quat', 'name': 'foo', 'quat': [1,0,0,0]}, or {'op': 'delete_body', 'name': 'foo'}. Applied atomically: if any op fails, the whole batch is rolled back.",
+      "description": "List of structured MJCF edit ops for action='patch_scene_mjcf'. Each op is a dict like {'op': 'add_body', 'parent': 'world', 'name': 'foo', 'pos': [0,0,1]}, {'op': 'add_geom', 'body': 'foo', 'type': 'sphere', 'size': [0.1]}, {'op': 'add_site', 'body': 'foo', 'name': 'tip', 'pos': [0,0,0.2]}, {'op': 'set_body_pos', 'name': 'foo', 'pos': [1,0,1]}, {'op': 'set_body_quat', 'name': 'foo', 'quat': [1,0,0,0]}, or {'op': 'delete_body', 'name': 'foo'}. Each op accepts only the keys it reads (add_body: parent, name, pos, quat; add_geom: body, type, size, rgba, name, pos, quat; add_site: body, name, pos, size, rgba; set_body_pos: name, pos; set_body_quat: name, quat; delete_body: name) - any other key is rejected, since an unread key would leave the op running on its default (a misspelled 'pos' would move the body to the origin). Numeric fields: 'pos' takes exactly 3 finite components, 'quat' 4, 'rgba' 3 (RGB, completed with an opaque alpha) or 4, and 'size' the count its shape consumes. Applied atomically: if any op fails, the whole batch is rolled back.",
       "items": {
         "type": "object"
       }

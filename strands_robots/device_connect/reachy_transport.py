@@ -23,7 +23,18 @@ ImuCallback = Callable[[dict[str, Any]], None]
 
 
 def resolve_host(host: str) -> str:
-    """Resolve hostname to IP address."""
+    """Resolve a hostname to an IP address, falling back to the name itself.
+
+    Args:
+        host: The hostname or literal address to resolve.
+
+    Returns:
+        The resolved address, or ``host`` unchanged when the resolver cannot
+        answer for it. An mDNS ``.local`` name is the common case: the stdlib
+        resolver may fail for a name the link's own dialer can still reach, so
+        a lookup failure degrades to passing the name through rather than
+        refusing a host that is very likely reachable.
+    """
     try:
         return socket.gethostbyname(host)
     except socket.gaierror:
@@ -265,6 +276,12 @@ class WebSocketLink(HardwareLink):
         daemon token is configured, warning once when it is not) and spawns the
         background task that dispatches incoming frames to ``on_joints`` /
         ``on_imu``.
+
+        The header keyword is chosen by introspecting ``websockets.connect``:
+        releases >=12 accept ``additional_headers``, older ones
+        ``extra_headers``. When that signature cannot be read the legacy
+        spelling is used, so a configured bearer credential still reaches the
+        daemon instead of the connect losing its ``Authorization`` header.
         """
         import websockets
 

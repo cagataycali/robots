@@ -138,8 +138,8 @@ robot you actually instantiate: `embodiment="so101"` for the sim examples,
 
 ## Debugging "runs but does not move"
 
-The provider surfaces two previously-silent failure modes as `WARNING` logs from
-the `lerobot_local` logger:
+The provider surfaces three previously-silent failure modes as `WARNING` logs
+from the `lerobot_local` logger:
 
 1. **Action-dim mismatch.** Actions are mapped onto actuators by index. If the
    model emits fewer values than the embodiment declares actuators, the
@@ -159,9 +159,30 @@ the `lerobot_local` logger:
    consecutive steps: the robot will not move. ...
    ```
 
-These do not raise (a near-zero action can be legitimate mid-trajectory); they
-point you at the embodiment / rename config. The warnings re-arm on
-`policy.reset()` so each episode is evaluated independently.
+3. **A non-finite action.** If `max(abs(action))` is `nan` or `inf`, the policy
+   logs once - on the first such step, since unlike a near-zero action a
+   non-finite one is never legitimate mid-trajectory:
+
+   ```
+   lerobot_local: Policy emitted a non-finite action (max abs = nan): the robot
+   will not move. This is not the near-zero case ... Check the checkpoint's
+   normalization statistics (a zero divisor yields inf/nan) and whether any
+   observation value is itself non-finite.
+   ```
+
+   This is reported separately because it has a different cause. `nan` compares
+   `False` against every threshold, so it would otherwise advance the near-zero
+   streak and be reported as case 2 - naming the obs/rename pipeline for an
+   action that is not near zero but not a number, and doing so even when only
+   one component of the vector is `nan` and the other five carry real commands.
+   `inf` compares `True` and would instead clear the streak, leaving an action
+   the backends refuse outright entirely unreported.
+
+None of these raise; each points you at the configuration that can cause it -
+cases 1 and 2 at the embodiment / rename config, case 3 at the checkpoint's
+normalization statistics and the observation values. All three re-arm on
+`policy.reset()` so each episode is evaluated independently, and each is emitted
+at most once per episode so a 50 Hz control loop is not spammed.
 
 ### Repro / debug script
 

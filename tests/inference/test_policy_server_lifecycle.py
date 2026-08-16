@@ -115,9 +115,16 @@ def test_serve_foreground_binds_and_shuts_down():
 
 
 def test_main_rejects_out_of_range_port():
-    """The CLI validates the port range before touching the network."""
+    """The CLI validates the port range before touching the network.
+
+    Uses a genuinely out-of-range value. This previously asserted on
+    ``--port 0``, which is not out of range for a *bind* - it is the documented
+    request for an ephemeral port, and the CLI refusing it was the defect fixed
+    alongside this rename. The accepted-zero case is pinned in
+    ``test_bind_and_dial_port_domains``.
+    """
     with pytest.raises(SystemExit) as exc:
-        server_mod.main(["--provider", "mock", "--port", "0"])
+        server_mod.main(["--provider", "mock", "--port", "70000"])
     assert exc.value.code == 2
 
 

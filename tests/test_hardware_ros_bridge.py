@@ -208,6 +208,9 @@ def _make_robot(observation: dict[str, Any], *, ros2_bridge: bool = False, ros2_
     hw._task_state = RobotTaskState()
     hw._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="test_arm_executor")
     hw._shutdown_event = threading.Event()
+    hw._stop_requested = threading.Event()
+    hw._task_admission = threading.Lock()
+    hw._task_claimed = False
     hw.mesh = None
     hw.peer_id = None
     hw.robot = _FakeLeRobot(observation)

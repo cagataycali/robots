@@ -45,15 +45,81 @@ single-render-thread wrapper).
 from __future__ import annotations
 
 import logging
+import math
+import numbers
 from dataclasses import dataclass
 from typing import Any, Protocol
 
 import numpy as np
 
+from ..utils import positive_whole_number_error
 from .backgrounds import BackgroundRenderer, PanoramaBackground
 from .camera import CameraParams
 
 logger = logging.getLogger(__name__)
+
+
+def _feather_pixels_error(value: Any) -> str | None:
+    """Error text when ``value`` is not a usable feather radius.
+
+    A feather radius is a whole number of pixels, with ``0`` meaning "no
+    blend". Nothing else can be honored: :func:`feather_mask` builds a
+    ``2 * radius + 1`` box kernel, so a fractional or non-finite radius has no
+    kernel and a negative one has no edge to soften. Those values used to be
+    coerced with ``max(0, int(value))``, which turned every one of them into
+    ``0`` - silently disabling the very seam blend the caller asked for.
+    ``bool`` is rejected explicitly: it is an ``int`` subclass whose ``True``
+    would act as a 1-pixel radius.
+
+    Args:
+        value: The caller-supplied radius.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    message = f"HybridCompositor: feather_pixels must be a whole number of pixels >= 0, got {value!r}."
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return message
+    numeric = float(value)
+    # ``isfinite`` first: ``int(nan)`` raises, so short-circuit before the
+    # integrality check below.
+    if not math.isfinite(numeric) or numeric != int(numeric) or numeric < 0:
+        return message
+    return None
+
+
+def _depth_epsilon_error(value: Any) -> str | None:
+    """Error text when ``value`` is not a usable no-geometry depth threshold.
+
+    The threshold is compared against the foreground depth buffer
+    (``fg_depth > depth_epsilon`` selects "the simulation saw geometry here"),
+    so only a finite, non-negative distance in meters can be honored:
+
+    * ``nan`` makes that comparison ``False`` for every pixel, so the whole
+      simulation foreground reads as empty and the composite is the background
+      alone - the robot silently disappears from the frame.
+    * ``inf`` discards every pixel for the same reason.
+    * a negative threshold admits the no-hit pixels the parameter exists to
+      exclude (Isaac's RTX annotator reports them as ``0``), painting
+      simulation sky over the background.
+
+    ``0`` is a legitimate setting: it means "only an exactly-zero depth counts
+    as no geometry". ``bool`` is rejected explicitly - a truth value is not a
+    distance, and ``True`` would act as a 1 m threshold.
+
+    Args:
+        value: The caller-supplied threshold, in meters.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    message = f"HybridCompositor: depth_epsilon must be a finite distance in meters >= 0, got {value!r}."
+    if isinstance(value, bool) or not isinstance(value, numbers.Real):
+        return message
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric < 0.0:
+        return message
+    return None
 
 
 class FrameSource(Protocol):
@@ -106,16 +172,29 @@ class HybridCompositor:
             (e.g. ``strands_robots.simulation.Simulation``).
         background: any :class:`BackgroundRenderer`. Defaults to a procedural
             panorama so hybrid rendering works out of the box with zero ML deps.
-        default_width: image width if not overridden per call. ``None`` defers
-            to the engine's per-camera configuration.
-        default_height: image height if not overridden per call.
+        default_width: image width if not overridden per call, a positive
+            whole number of pixels (the shared media domain - see
+            :func:`~strands_robots.utils.positive_whole_number_error`).
+            ``None`` defers to the engine's per-camera configuration.
+        default_height: image height if not overridden per call, same domain.
         feather_pixels: width (in pixels) of a soft edge blend between
             foreground and background to hide the offscreen-renderer's
-            anti-aliasing seam. ``0`` disables feathering. Default ``1``.
+            anti-aliasing seam. A whole number of pixels; ``0`` disables
+            feathering. Default ``1``.
         depth_epsilon: foreground depth at or below this (meters) is treated
             as "no geometry" -- those pixels show the background. Isaac's RTX
             depth annotator reports no-hit pixels as ``0`` (or non-finite);
             MuJoCo pins them to the far clip. Both extremes read as background.
+            A finite distance in meters, ``>= 0``.
+
+    Raises:
+        ValueError: if any option cannot be honored -- a ``feather_pixels``
+            that is not a whole pixel count ``>= 0``, a ``depth_epsilon`` that
+            is not a finite distance ``>= 0`` (a non-finite threshold discards
+            the entire foreground, so the robot would vanish from the frame),
+            or a ``default_width`` / ``default_height`` that is not a positive
+            whole number. Every one of these was previously coerced or clamped
+            into a plausible-but-different render.
 
     Example:
 
@@ -140,11 +219,23 @@ class HybridCompositor:
         feather_pixels: int = 1,
         depth_epsilon: float = 1e-4,
     ) -> None:
+        if text := _feather_pixels_error(feather_pixels):
+            raise ValueError(text)
+        if text := _depth_epsilon_error(depth_epsilon):
+            raise ValueError(text)
+        for label, size in (("default_width", default_width), ("default_height", default_height)):
+            # ``None`` means "defer to the engine"; any supplied size must be a
+            # size the engine can render, checked here rather than at the first
+            # render so the error names the constructor argument.
+            if size is not None and (size_text := positive_whole_number_error(size, label, "HybridCompositor")):
+                raise ValueError(size_text)
         self.sim = sim
         self.background: BackgroundRenderer = background or PanoramaBackground()
-        self.default_width = default_width
-        self.default_height = default_height
-        self.feather_pixels = max(0, int(feather_pixels))
+        # Normalize to plain ints/floats: these flow into the requested camera
+        # size and into status/cache keys, so a np.int64 must not leak through.
+        self.default_width = None if default_width is None else int(default_width)
+        self.default_height = None if default_height is None else int(default_height)
+        self.feather_pixels = int(feather_pixels)
         self.depth_epsilon = float(depth_epsilon)
         # Cache of background renders keyed by (camera_name, W, H, background
         # name) + a rounded hash of the camera pose/intrinsics. The background
@@ -163,15 +254,36 @@ class HybridCompositor:
     ) -> CompositeFrame:
         """Render one depth-composited frame of the current sim state.
 
+        Args:
+            camera_name: the camera to render, as named to the engine.
+            width: image width in pixels, a positive whole number. ``None``
+                falls back to ``default_width``, then to the engine's own
+                per-camera configuration.
+            height: image height in pixels, same domain.
+
+        Returns:
+            The composited :class:`CompositeFrame`.
+
         Raises:
+            ValueError: if ``width`` or ``height`` is supplied but is not a
+                positive whole number of pixels.
             RuntimeError: if the backend's ``get_frame`` returns no depth
                 buffer (e.g. the Newton backend, which renders RGB only) --
                 compositing without depth would silently paint the background
                 over/under the wrong pixels, and silent wrong output is
                 forbidden. Use a depth-capable backend (MuJoCo, Isaac).
         """
+        for label, size in (("width", width), ("height", height)):
+            if size is not None and (text := positive_whole_number_error(size, label, "HybridCompositor.render")):
+                raise ValueError(text)
+        # Read the requested size by membership, not truthiness: ``width or
+        # self.default_width`` read a supplied ``0`` as "not supplied" and fell
+        # back to the default size, so a size no engine can render returned a
+        # frame at a different one.
         cam = self.sim.get_camera_params(
-            camera_name, width=width or self.default_width, height=height or self.default_height
+            camera_name,
+            width=self.default_width if width is None else int(width),
+            height=self.default_height if height is None else int(height),
         )
         fg_rgb, fg_depth = self.sim.get_frame(camera_name, width=cam.width, height=cam.height)
         if fg_depth is None:

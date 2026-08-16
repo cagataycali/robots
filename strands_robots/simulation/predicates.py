@@ -18,6 +18,12 @@ backend does not support them. A predicate that silently evaluates to
 ``False`` because of an unimplemented backend call is a bug in the
 predicate, not the benchmark - file an issue.
 
+Contact predicates count a geom pair only when the physics engine reports it
+as a real touch. ``get_contacts`` also lists pairs inside the detection range
+that carry no force -- see :func:`contact_is_active` -- and counting those
+would make ``contact_any`` / ``contact_between`` / ``grasped`` /
+``body_on(require_contact=True)`` fire for bodies that are visibly apart.
+
 When the backend *does* support a lookup but the referenced ``body`` /
 ``joint`` name cannot be resolved (almost always a spec typo), the term still
 degrades to a constant (``False`` / ``0.0``) but the offending name is logged
@@ -34,7 +40,7 @@ Available predicates (bool):
     inside_region(body, min, max)
     contact_between(geom_a, geom_b)
     contact_any()
-    body_on(body_a, body_b, z_offset=0.02, xy_tol=0.15)
+    body_on(body_a, body_b, z_offset=0.02, xy_tol=0.15, require_contact=False)
     body_inside(body, container, xy_tol=0.15, z_tol=0.15)
     body_upright(body, tol=0.15)
     grasped(body, gripper_prefix)
@@ -64,8 +70,10 @@ from __future__ import annotations
 
 import logging
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
+
+from strands_robots.utils import finite_number_error, finite_vector_error
 
 if TYPE_CHECKING:
     from strands_robots.simulation.base import SimEngine
@@ -122,9 +130,21 @@ def _reset_resolution_warnings() -> None:
 
 
 def _extract_json(result: dict[str, Any] | None) -> dict[str, Any]:
-    """Return the ``json`` content block payload, or ``{}`` if absent."""
+    """Return a backend result's payload mapping, or ``{}`` if there is none.
+
+    Every in-tree backend returns the agent-tool envelope, so the payload is
+    the ``json`` content block -- see
+    :meth:`strands_robots.simulation.base.SimEngine.get_contacts` for the
+    shape. A result that carries no ``content`` at all is not an envelope, so
+    the mapping itself is the payload: a minimal engine can return a plain
+    reading without wrapping it, and every predicate reads both shapes the
+    same way instead of each one guessing.
+    """
     if not isinstance(result, dict):
         return {}
+    if "content" not in result:
+        # Not an envelope - the mapping is the payload.
+        return dict(result)
     for block in result.get("content", []) or []:
         if isinstance(block, dict):
             payload = block.get("json")
@@ -485,6 +505,39 @@ def _inside_region(body: str, min: list[float], max: list[float]) -> BoolPredica
     return check
 
 
+def contact_is_active(record: Mapping[str, Any]) -> bool:
+    """True when a ``get_contacts`` record is a touch rather than a near miss.
+
+    ``get_contacts`` reports every geom pair inside the *detection* range,
+    which is the pair's ``margin`` plus its ``gap``. Only the pairs inside
+    ``margin`` reach the constraint solver; a pair between the two thresholds
+    carries no force, so treating it as contact answers "touching" for bodies
+    that are visibly apart. Assets ship a non-zero ``margin``/``gap`` -- a
+    foot geom fractions of a millimetre off the floor is the usual case -- so
+    this is the difference between a locomotion or placement clause firing on
+    physics and firing on proximity.
+
+    ``dist`` cannot stand in for this: a pair with a wide ``margin`` is
+    load-bearing at a *positive* distance (the body hovers on a real force),
+    while the near miss above is also positive, so the sign of ``dist`` splits
+    neither case. The solver's own admission decision does, and
+    ``get_contacts`` reports it as ``active``.
+
+    This is the single owner of that reading, so every contact predicate
+    agrees about which records count -- the same role
+    :func:`_geom_belongs_to_body` plays for body-to-geom names.
+
+    A record that does not report ``active`` is treated as a touch, so a
+    payload from a backend or test stub that cannot make the distinction keeps
+    its previous verdict rather than silently answering ``False`` for every
+    contact.
+    """
+    flag = record.get("active")
+    if flag is None:
+        return True
+    return bool(flag)
+
+
 def _contact_between(geom_a: str, geom_b: str) -> BoolPredicate:
     """Pairwise contact predicate.
 
@@ -508,7 +561,7 @@ def _contact_between(geom_a: str, geom_b: str) -> BoolPredicate:
             return False
         want = {geom_a, geom_b}
         for c in contacts:
-            if not isinstance(c, dict):
+            if not isinstance(c, dict) or not contact_is_active(c):
                 continue
             pair = {c.get("geom1"), c.get("geom2")}
             if want <= pair:
@@ -531,12 +584,48 @@ def _contact_any() -> BoolPredicate:
             logger.debug("contact_any() failed: %s", e)
             return False
         payload = _extract_json(result)
-        if payload.get("n_contacts", 0) > 0:
-            return True
         contacts = payload.get("contacts")
-        return bool(isinstance(contacts, list) and contacts)
+        if isinstance(contacts, list):
+            # The per-record list wins over a bare count: only a record
+            # carries the touch/proximity flag, which ``n_contacts`` cannot
+            # express. The count is the fallback for payloads that report
+            # nothing else.
+            return any(isinstance(c, dict) and contact_is_active(c) for c in contacts)
+        return bool(payload.get("n_contacts", 0) > 0)
 
     return check
+
+
+def _geom_belongs_to_body(geom: str, body: str) -> bool:
+    """True when geom name ``geom`` is one of ``body``'s geoms.
+
+    This is the single owner of the body-to-geom name mapping: every
+    body-level contact predicate resolves through it, so ``grasped`` and
+    ``body_on(require_contact=True)`` cannot disagree about whether a
+    reported contact belongs to a body.
+
+    Handles the geom-naming conventions across the supported scene sources:
+
+    - exact ``body`` (single-geom scenes whose geom is named after the body),
+    - ``<body>_geom`` (strands :meth:`add_object`),
+    - ``<body>_g<idx>`` (LIBERO / robosuite multi-geom objects), and
+    - ``<body>/geom_<id>`` - the name ``get_contacts`` **synthesizes** for a
+      geom the asset left unnamed, which is the dominant case in real MJCF
+      (a Panda scene has 81 unnamed geoms out of 82).
+
+    The ``<body>_g`` prefix subsumes both ``<body>_geom`` and ``<body>_g<idx>``;
+    the ``_g`` boundary keeps distinct names apart (``cube_1_g`` does not match
+    ``cube_10_g0``). The synthesized form is matched exactly rather than as a
+    ``<body>/`` prefix, because bodies are themselves namespaced: a broad
+    prefix would let body ``panda`` claim ``panda/link0/geom_1``, which belongs
+    to ``panda/link0``.
+    """
+    if geom == body or geom.startswith(f"{body}_g"):
+        return True
+    # ``get_contacts`` names an unnamed geom after its parent body as
+    # ``<body>/geom_<id>``; anything else after ``<body>/`` is a child body.
+    suffix = geom.removeprefix(f"{body}/geom_")
+    return suffix != geom and suffix.isdigit()
 
 
 def _body_contact(sim: SimEngine, body_a: str, body_b: str) -> bool | None:
@@ -548,12 +637,10 @@ def _body_contact(sim: SimEngine, body_a: str, body_b: str) -> bool | None:
     caller can decide whether to gracefully degrade (fall back to
     geometric-only checks) or hard-fail.
 
-    Heuristic: matches contacts by **geom name prefix** (``<bddl_name>_g``
-    for LIBERO scenes; works for any scene whose geoms follow the
-    ``<body_name>_g<idx>`` convention). Mirrors how upstream LIBERO's
-    ``ObjectState.check_contact`` walks the per-object geom list, but
-    avoids hard-coding the body→geom map by using the naming
-    convention.
+    Body-geom matching is delegated to :func:`_geom_belongs_to_body`, which
+    owns every supported geom-naming convention. This mirrors how upstream
+    LIBERO's ``ObjectState.check_contact`` walks the per-object geom list, but
+    avoids hard-coding the body→geom map by using the naming conventions.
 
     Used by the contact-aware branch of :func:`_body_on` (LIBERO's
     ``On(A, B)`` predicate semantics requires
@@ -578,17 +665,16 @@ def _body_contact(sim: SimEngine, body_a: str, body_b: str) -> bool | None:
     if not isinstance(contacts, list):
         return None
 
-    prefix_a = f"{body_a}_g"
-    prefix_b = f"{body_b}_g"
     for c in contacts:
-        if not isinstance(c, dict):
+        if not isinstance(c, dict) or not contact_is_active(c):
             continue
         g1 = c.get("geom1") or ""
         g2 = c.get("geom2") or ""
-        # Geom-prefix matching: ``<bddl_name>_g<idx>`` is LIBERO's
-        # convention. Either direction (a-then-b or b-then-a) counts.
-        if (g1.startswith(prefix_a) and g2.startswith(prefix_b)) or (
-            g1.startswith(prefix_b) and g2.startswith(prefix_a)
+        # Resolve both sides through the shared body-to-geom mapping so this
+        # agrees with ``grasped``. Either direction (a-then-b or b-then-a)
+        # counts.
+        if (_geom_belongs_to_body(g1, body_a) and _geom_belongs_to_body(g2, body_b)) or (
+            _geom_belongs_to_body(g1, body_b) and _geom_belongs_to_body(g2, body_a)
         ):
             return True
     return False
@@ -617,7 +703,7 @@ def _body_on(
     ``get_contacts`` (e.g. test stubs, custom engines), the contact
     check is skipped and only the geometric check fires. This
     preserves backwards compatibility - engines without contact
-    support get the pre-#171 behaviour. LIBERO benchmarks running on
+    support get the geometric-only verdict. LIBERO benchmarks running on
     ``MuJoCoSimEngine`` (which implements ``get_contacts``) get the
     strict upstream-matching semantics.
 
@@ -639,7 +725,7 @@ def _body_on(
         if require_contact:
             in_contact = _body_contact(sim, body_a, body_b)
             # ``None`` ⇒ engine doesn't support contacts; fall back to
-            # geometric-only verdict (preserves pre-#171 behaviour).
+            # geometric-only verdict.
             # ``False`` ⇒ engine reports no contact ⇒ predicate False.
             # ``True`` ⇒ contact confirmed ⇒ predicate True (combined
             # with the passing geometric check above).
@@ -704,23 +790,6 @@ def _body_upright(body: str, tol: float = 0.15) -> BoolPredicate:
     return check
 
 
-def _geom_belongs_to_body(geom: str, body: str) -> bool:
-    """True when geom name ``geom`` is one of ``body``'s geoms.
-
-    Handles the geom-naming conventions across the supported scene sources:
-
-    - exact ``body`` (single-geom scenes whose geom is named after the body),
-    - ``<body>_geom`` (strands :meth:`add_object`), and
-    - ``<body>_g<idx>`` (LIBERO / robosuite multi-geom objects).
-
-    The ``<body>_g`` prefix subsumes both ``<body>_geom`` and ``<body>_g<idx>``;
-    it mirrors the prefix :func:`_body_contact` uses so contact-based
-    predicates agree on what counts as a body's geom. The ``_g`` boundary
-    keeps distinct names apart (``cube_1_g`` does not match ``cube_10_g0``).
-    """
-    return geom == body or geom.startswith(f"{body}_g")
-
-
 def _grasped(body: str, gripper_prefix: str) -> BoolPredicate:
     """True when ``body`` is in contact with any geom whose name starts with ``gripper_prefix``.
 
@@ -729,14 +798,12 @@ def _grasped(body: str, gripper_prefix: str) -> BoolPredicate:
     for Panda covers both fingers. A body is "grasped" as long as any one
     gripper geom is in contact with any geom belonging to ``body``.
 
-    Body-geom matching follows the same naming conventions as
-    :func:`_body_contact`, so ``grasped`` fires on real LIBERO/robosuite
+    Body-geom matching is delegated to :func:`_geom_belongs_to_body`, the
+    shared owner of that mapping, so ``grasped`` fires on real LIBERO/robosuite
     scenes (where a BDDL object ``cube_1`` owns collision geoms
-    ``cube_1_g0`` / ``cube_1_g1`` ...) as well as on strands-native
-    ``add_object`` scenes (``<body>_geom``) and single-geom scenes whose
-    geom is named exactly after the body. Previously only the exact
-    ``body`` / ``<body>_geom`` names matched, so ``(grasped cube_1)`` BDDL
-    goals silently never fired on LIBERO scenes.
+    ``cube_1_g0`` / ``cube_1_g1`` ...), on strands-native ``add_object`` scenes
+    (``<body>_geom``), on single-geom scenes whose geom is named exactly after
+    the body, and on assets whose geoms are unnamed.
 
     Backends must implement ``get_contacts()`` returning the MuJoCo
     ``{"contacts": [{"geom1", "geom2", ...}]}`` shape. Other backends are
@@ -757,18 +824,15 @@ def _grasped(body: str, gripper_prefix: str) -> BoolPredicate:
         if not isinstance(contacts, list):
             return False
         for c in contacts:
-            if not isinstance(c, dict):
+            if not isinstance(c, dict) or not contact_is_active(c):
                 continue
             g1 = c.get("geom1") or ""
             g2 = c.get("geom2") or ""
             # One side must be a geom of the grasped body; the other must
-            # start with the gripper prefix. Match the body's geoms across
-            # the naming conventions in play: an exact ``body`` name, the
-            # strands ``add_object`` ``<body>_geom`` name, and the
-            # LIBERO/robosuite ``<body>_g<idx>`` multi-geom convention
-            # (``<body>_geom`` is itself covered by the ``<body>_g`` prefix).
-            # This mirrors :func:`_body_contact`'s prefix matching so a
-            # LIBERO ``(grasped cube_1)`` goal fires on ``cube_1_g0`` etc.
+            # start with the gripper prefix. ``_geom_belongs_to_body`` owns
+            # every geom-naming convention, so a LIBERO ``(grasped cube_1)``
+            # goal fires on ``cube_1_g0`` and a scene with unnamed geoms
+            # fires on the synthesized ``cube_1/geom_<id>`` name.
             body_match = _geom_belongs_to_body(g1, body) or _geom_belongs_to_body(g2, body)
             gripper_match = any(isinstance(g, str) and g.startswith(gripper_prefix) for g in (g1, g2))
             if body_match and gripper_match:
@@ -1501,7 +1565,8 @@ def _staged_reward(stages: list[Any]) -> RewardTerm:
 
     Raises:
         ValueError: stages is not a non-empty list, a stage is malformed, a
-            non-final stage omits ``advance_when``, or ``bonus`` is non-numeric.
+            non-final stage omits ``advance_when``, or ``bonus`` is not a
+            finite number.
         TypeError: surfaced from :func:`make_predicate` for bad sub-kwargs.
     """
     if not isinstance(stages, list) or not stages:
@@ -1554,8 +1619,10 @@ def _staged_reward(stages: list[Any]) -> RewardTerm:
             advance_fn = make_predicate(advance_name, **advance_kwargs)
 
         bonus_raw = stage.get("bonus", 0.0)
-        if isinstance(bonus_raw, bool) or not isinstance(bonus_raw, (int, float)):
-            raise ValueError(f"staged_reward: stage[{i}].bonus must be a number, got {bonus_raw!r}")
+        # Not a registry factory param, so make_predicate's kwarg-domain check
+        # does not see it - the same domain is applied here directly.
+        if (err := finite_number_error(bonus_raw, "bonus", f"staged_reward: stage[{i}]")) is not None:
+            raise ValueError(err)
 
         compiled.append((reward_fn, advance_fn, float(bonus_raw)))
 
@@ -1623,6 +1690,61 @@ def register_predicate(name: str, factory: PredicateFactory) -> None:
     PREDICATE_REGISTRY[name] = factory
 
 
+# Parameter annotations that carry a numeric domain. Read as the strings the
+# module's ``from __future__ import annotations`` leaves in ``__annotations__``,
+# which is the same mechanism :func:`predicate_kind` uses on the return
+# annotation - so a new predicate is covered by declaring its params, with no
+# separate per-predicate table to drift out of step with the registry.
+_SCALAR_NUMBER_ANNOTATIONS = frozenset({"float", "int"})
+_NUMBER_SEQUENCE_ANNOTATIONS = frozenset({"list[float]", "list[int]", "tuple[float, ...]"})
+
+
+def _kwarg_domain_error(name: str, factory: PredicateFactory, kwargs: dict[str, Any]) -> str | None:
+    """Return an error message if a numeric kwarg for *name* is not a finite number.
+
+    A spec kwarg is coerced with a bare ``float(...)`` inside the factory and
+    then closed over, so a ``nan``/``inf`` threshold or weight compiles clean
+    and only shows up in the evaluated result:
+
+    * In a ``dense_reward`` term it makes the episode's ``cumulative_reward``
+      and the eval's ``avg_reward`` ``nan``/``inf``, reported under
+      ``status="success"`` - the score silently poisons whatever consumes it.
+    * In a ``success`` / ``failure`` / ``stop_when`` clause every comparison
+      against ``nan`` is ``False``, so the clause is unsatisfiable and the
+      rollout burns its whole step budget reporting an honest miss. That is the
+      exact failure mode a typo'd body name is probed against the live sim to
+      prevent (see :func:`can_resolve_body`); a non-finite threshold reaches it
+      by a different route and was not checked.
+    * A non-numeric value (``"abc"``) otherwise escapes as a bare
+      ``ValueError: could not convert string to float: 'abc'`` naming neither
+      the predicate nor the clause it came from.
+
+    Only params the factory annotates as numeric are constrained, so a ``str``
+    body name, a ``bool`` flag and a ``str | None`` robot selector are untouched,
+    and a predicate registered via :func:`register_predicate` without
+    annotations is exempt (the caller opted in by registering it).
+
+    Args:
+        name: Predicate name, used in the message.
+        factory: The registered factory whose annotations declare the domain.
+        kwargs: The spec-supplied kwargs, checked by name.
+
+    Returns:
+        An error message, or ``None`` when every numeric kwarg is usable.
+    """
+    annotations = getattr(factory, "__annotations__", {})
+    context = f"predicate '{name}'"
+    for param, value in kwargs.items():
+        annotation = str(annotations.get(param, ""))
+        if annotation in _SCALAR_NUMBER_ANNOTATIONS:
+            if (err := finite_number_error(value, param, context)) is not None:
+                return err
+        elif annotation in _NUMBER_SEQUENCE_ANNOTATIONS:
+            if (err := finite_vector_error(context, param, value)) is not None:
+                return err
+    return None
+
+
 def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
     """Instantiate a predicate from its name + kwargs.
 
@@ -1630,6 +1752,14 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
     ``eval`` or ``exec``. Unknown names produce a ``ValueError`` listing
     the valid set; bad kwargs surface as whatever ``TypeError`` the factory
     raises.
+
+    Every numeric kwarg is held to a finite domain here rather than in the
+    spec compiler, because this is the only choke point every predicate call
+    passes through: ``staged_reward`` builds its per-stage ``reward`` /
+    ``advance_when`` calls by calling back into this function, so a guard in
+    :func:`~strands_robots.simulation.benchmark_spec._compile_call` would
+    leave nested stage calls unchecked. See :func:`_kwarg_domain_error` for
+    what a non-finite threshold or weight does when it compiles.
 
     Args:
         name: Predicate name. Must be registered in :data:`PREDICATE_REGISTRY`.
@@ -1640,13 +1770,16 @@ def make_predicate(name: str, **kwargs: Any) -> Callable[[SimEngine], Any]:
         predicate.
 
     Raises:
-        ValueError: If ``name`` is unknown.
+        ValueError: If ``name`` is unknown, or a kwarg the factory annotates
+            as numeric is not a finite number.
         TypeError: If required factory kwargs are missing.
     """
     factory = PREDICATE_REGISTRY.get(name)
     if factory is None:
         valid = sorted(PREDICATE_REGISTRY.keys())
         raise ValueError(f"Unknown predicate '{name}'. Valid: {valid}")
+    if (err := _kwarg_domain_error(name, factory, kwargs)) is not None:
+        raise ValueError(err)
     return factory(**kwargs)
 
 
@@ -1745,6 +1878,7 @@ __all__ = [
     "StatefulRewardTerm",
     "can_resolve_body",
     "can_resolve_joint",
+    "contact_is_active",
     "make_predicate",
     "predicate_kind",
     "register_predicate",

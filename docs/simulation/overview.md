@@ -29,7 +29,7 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `replace_scene_mjcf(xml)` | Swap entire world XML |
 | `patch_scene_mjcf(ops)` | Incremental patches, no full recompile |
 | `raycast(origin, direction, ...)` | Single ray–mesh intersection |
-| `multi_raycast(rays, ...)` | Batch ray–mesh intersections |
+| `multi_raycast(origin, directions, ...)` | Batch ray–mesh intersections from one origin; all-or-nothing, a direction it cannot cast refuses the batch |
 
 ## Robots
 
@@ -89,24 +89,79 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
     listed in `sim.describe()["methods"]`, so an agent can enumerate the full
     rendering surface in one call instead of guessing method names.
 
+!!! note "Camera intrinsics follow the renderer"
+    `sim.get_camera_params(camera_name)` returns the pinhole `K` of the frame
+    the renderer actually draws. A camera declaring a physical sensor (MJCF
+    `sensorsize` / `focal` / `principal` / `resolution`) has its `K` read from
+    the view frustum MuJoCo computes for that camera, so non-square pixels
+    (`fx != fy`) and an off-center principal point are honored - including the
+    vertical principal-point convention, which MuJoCo changed in 3.6.0. Every
+    other camera falls back to `fovy`: square pixels, principal point at the
+    image center.
+
 ## Physics
 
 | Action | Key params |
 |--------|-----------|
-| `step` | `n_steps=1` (max 100 000/call) |
+| `step` | `n_steps=1` (MuJoCo: max 100 000/call; Isaac and Newton have no ceiling). Non-negative whole number; `0` is an accepted no-op. Errors if the world is destroyed mid-run, naming the steps completed |
+| `send_action` | `n_substeps=1` - **positive** whole number, no per-call ceiling (see Actions) |
 | `set_gravity` | `gravity=[x,y,z]` or a scalar z-component |
 | `set_timestep` | `timestep` |
-| `get_contacts` / `get_contact_forces` | - |
-| `apply_force` | `body_name`, `force`, `torque`, `point` |
+| `get_contacts` / `get_contact_forces` | - . `get_contacts` lists every geom pair inside the detection range (`margin` + `gap`) and marks each one `active` - MuJoCo hands only the pairs inside `margin` to the solver, so a pair between the two thresholds is a proximity report carrying no force. Contact predicates count only `active` pairs; `get_contact_forces` gives the load a touching pair carries |
+| `apply_force` | `body_name`, `force`, `torque`, `point` - latched on that body and re-applied every step until the next `apply_force` for it, so several bodies can hold wrenches at once (`force=[0,0,0]` stops one, `reset()` stops all) |
 | `get_jacobian` | `body_name` *or* `site_name` *or* `geom_name` |
 | `get_mass_matrix` | - |
 | `inverse_dynamics` | - (compensation torques to hold the current `qpos`/`qvel`) |
 | `forward_kinematics` | `body_name` (optional) |
-| `save_state` / `load_state` | snapshot/restore full physics |
+| `save_state` / `load_state` | `name` - snapshot/restore full physics. A checkpoint is valid only for the model it was taken against: any scene mutation that swaps the compiled model (`add_object`, `add_robot`, `add_camera`, `remove_camera`, `remove_robot`, `patch_scene_mjcf`, `replace_scene_mjcf`) invalidates it, and `load_state` then returns a structured error instead of writing a state vector whose indices now mean something else. Save a fresh checkpoint after mutating the scene |
 | `set_joint_positions` | `positions` (dict or ordered list), `robot_name` (optional) - write `qpos` directly + run FK (teleport / set an initial pose, bypassing actuators) |
 | `set_joint_velocities` | `velocities` (dict or ordered list), `robot_name` (optional) - write `qvel` directly (set an initial dynamic state) |
 | `get_energy` | - |
 | `get_sensor_data` | `sensor_name` (optional) |
+
+!!! note "Numeric domain of the state writers"
+    `set_joint_positions`, `set_joint_velocities` and the `apply_force`
+    vectors take finite real numbers - a python or NumPy scalar - and refuse a
+    boolean. `float(True)` is `1.0`, so a `True` would be written as 1 radian,
+    1 rad/s or 1 N and the call would report success; `nan` / `inf` are refused
+    because `mj_forward` propagates a `nan` across the whole kinematic state
+    and an `inf` velocity blows up the integrator. Each write is
+    all-or-nothing, so a refused value leaves `qpos` / `qvel` and every latched
+    wrench untouched. This is the same domain the scene-construction vectors
+    (`add_object`, `add_camera`) and [`send_action`](#actions) enforce - one
+    library, one answer to "is this a usable number".
+
+!!! note "The same domain applies to the world-configuration parameters"
+    `set_gravity` / `create_world(gravity=...)`, `set_timestep` /
+    `create_world(timestep=...)`, the `mass` on `set_body_properties` and
+    `add_object`, the `randomize` ranges and the `set_obs_noise` magnitudes all
+    refuse a boolean for the same reason, as do the vectors `raycast`,
+    `multi_raycast` and `set_geom_properties` take (a ray origin and direction, a
+    geom size and friction, an rgba colour).
+
+    Passing one is not a near miss. `set_gravity(True)` would have configured a
+    gravity of **+1 m/s^2, pointing up**, and `set_timestep(True)` a 1-second
+    integration step - each reported as `status="success"`. The check is on the
+    type, not the value: `1`, `1.0` and `numpy` scalars remain accepted
+    everywhere, so `set_timestep(1.0)` is still a legal (if unusual) request.
+
+    Both spellings are refused - a python `bool` and a `numpy.bool_`. The second
+    matters more in practice, because it is what a comparison such as
+    `gripper > 0.5` produces, and because `numpy.bool_` is not a `bool` subclass
+    an `isinstance(x, bool)` guard silently misses it.
+
+!!! note "Component count of a vector parameter"
+    Every vector parameter (`position`, `target`, `origin`, `force`, `torque`,
+    `point`, `gravity`, `direction`, `orientation`, `color`, `get_world_point`'s
+    `pixels`, and `send_action`'s ordered-vector form) is checked for its
+    component count before it is read, and a value that carries no readable
+    count is refused with a structured error like any other. That includes a
+    0-d NumPy array or torch tensor - `np.mean(...)`, `np.array(0.5)`, a
+    squeezed observation slice - which *declares* `__len__` and then raises
+    from it, so it is reported as "not a vector of N numbers" rather than
+    escaping as a bare `len() of unsized object`. Correctly sized NumPy arrays
+    are accepted throughout, so an observation slice can be passed straight
+    through.
 
 !!! tip "Discover the sim-state surface"
     `get_state` plus the checkpoint (`save_state` / `load_state`) and
@@ -124,7 +179,11 @@ Newton backend, so a rollout rig can be enumerated instead of guessed.
 | `{joint_or_actuator_name: value}` mapping | applied by name; unresolved keys are reported in an `unresolved_keys` JSON block so a caller can self-correct (no silent drop) |
 | ordered numeric vector (`list` / `tuple` / 1-D `numpy` array) | bound positionally to `robot_action_keys(robot_name)` (the robot's actuator keys) in declaration order - the same convention `replay_episode` uses |
 
-A vector lets a policy's raw action chunk drive the arm directly without first zipping it into a dict. It binds to `robot_action_keys` (not `robot_joint_names`) because those are the keys `send_action` resolves and the ordering the `LeRobotDataset` recorder writes the `action` column in; the two coincide unless a robot has passive/mimic joints or a tendon gripper. The vector length must match the robot's actuator count exactly; a mismatch (or a non-numeric / scalar / string `action`) returns a structured `status="error"` dict naming the actuator count and order, rather than crashing or silently truncating commands. Use a mapping to target a subset of actuators.
+A vector lets a policy's raw action chunk drive the arm directly without first zipping it into a dict. It binds to `robot_action_keys` (not `robot_joint_names`) because those are the keys `send_action` resolves and the ordering the `LeRobotDataset` recorder writes the `action` column in; the two coincide unless a robot has passive/mimic joints, a tendon gripper, or a floating base on the Newton backend (whose 6-DoF free joint is a joint but not a commandable scalar, so it is absent from the action keys). The vector length must match the robot's actuator count exactly; a mismatch (or a non-numeric / scalar / string `action`) returns a structured `status="error"` dict naming the actuator count and order, rather than crashing or silently truncating commands. Use a mapping to target a subset of actuators.
+
+`n_substeps` is the number of physics steps the written targets are held for. It must be a **positive** whole number: a NumPy or integral-float count (`np.int64(3)`, a `3.0` read from a config) is honored and coerced, and a fractional, zero, negative, non-finite, boolean or non-numeric count returns a structured `status="error"` dict. Nothing is written when it does - a refusal arriving after the write would leave the robot commanded and the world un-advanced. The floor is `1` rather than `step`'s `0` because of that write: to advance without commanding, use `step(n)`, whose `0` is an accepted no-op. It is also the floor both producers of this count already enforce (`PolicyRunner`'s `control_substeps` and the RL env's `n_substeps`).
+
+Each action *value* must be a finite number, and must not be a boolean. `nan` / `inf` are refused because they are not clamped into the actuator's range - MuJoCo discards the step and resets every robot in the scene while reporting success. A `bool` (or `numpy.bool_`) is refused because `float(True)` is `1.0`, and each drive reads 1.0 in its own units: a 1-radian target on a joint-position drive, a full-travel command on a normalized or tendon drive (a `[0, 255]` tendon gripper reads it as fully open), and an out-of-range value that is silently clamped where `ctrlrange` excludes 1 - so the same `True` commands a different pose on every actuator. Send the command in the actuator's own units; for a binary gripper, its endpoint value rather than a flag. This is the domain the teleop wire validator already enforces on an input frame, and `InputReceiver` applies those frames through `send_action`.
 
 ## Policy
 
@@ -137,11 +196,11 @@ A vector lets a policy's raw action chunk drive the arm directly without first z
 | `run_multi_policy` | `policies={robot: Policy}`, `instructions`, `duration`, `n_steps` |
 | `eval_policy` | `robot_name` (optional; auto-resolves the sole robot like `run_policy`), `n_episodes=1`, `max_steps=300`, `success_fn=None`, `async_rtc=False`, `rtc_inference_timeout_s=None`, `video=None` |
 
-When a policy is run via `run_policy` / `eval_policy` / `run_multi_policy`, the simulation configures the policy's output keys with the robot's *action keys* via `set_robot_state_keys(robot_action_keys(robot_name))`. `robot_action_keys` returns the actuator short-names that `send_action` resolves - which are not always the robot's joints. Robots with passive / mimic finger joints (no driving actuator) or a tendon-driven gripper (an actuator with no matching joint name) have an actuator set distinct from their joint set, so keying a policy by `robot_joint_names` would emit keys that resolve to nothing and leave those DOFs unmoved. The default `robot_action_keys` mirrors `robot_joint_names` for backends whose actuators match their joints.
+When a policy is run via `run_policy` / `eval_policy` / `run_multi_policy`, the simulation configures the policy's output keys with the robot's *action keys* via `set_robot_state_keys(robot_action_keys(robot_name))`. `robot_action_keys` returns the actuator short-names that `send_action` resolves - which are not always the robot's joints. Robots with passive / mimic finger joints (no driving actuator) or a tendon-driven gripper (an actuator with no matching joint name) have an actuator set distinct from their joint set, so keying a policy by `robot_joint_names` would emit keys that resolve to nothing and leave those DOFs unmoved. The list can also be *narrower* than the joint names rather than differently spelled: on the Newton backend a floating base's 6-DoF free joint is a joint with no scalar target to write, so it is excluded from the action keys (its pose is read as the structured `base_pos` / `base_quat` / `base_lin_vel` / `base_ang_vel` signals instead) and `send_action` refuses it as a command key. The default `robot_action_keys` mirrors `robot_joint_names` for backends whose actuators match their joints; do not assume the two have the same width.
 
-The step horizon is given either as `duration` (seconds) or as `n_steps` (`duration = n_steps / control_frequency`; `n_steps` wins when both are set, and the legacy `max_steps` is an alias for `n_steps`). A non-positive `n_steps` or `control_frequency` is rejected up front with a structured `status="error"` dict naming the bad parameter - `start_policy` validates synchronously before the background rollout starts, so a malformed horizon never returns a false "started" success. `eval_policy` likewise rejects a non-positive `n_episodes`, `max_steps`, or `control_frequency` at the entry point (before `create_policy`), so a typo cannot produce a "successful" evaluation over zero or negative episodes. The same entry-point check covers the two provider keyword bags: `policy_config` (splatted into `create_policy`) and `policy_kwargs` (splatted into `policy.get_actions`) must be dicts, so a `policy_config="host=127.0.0.1"` string returns a structured error naming the parameter instead of a bare `TypeError` from the splat - and, on the `start_policy` path, instead of a false "started" for a rollout that never produced an action.
+The step horizon is given either as `duration` (seconds) or as `n_steps` (`duration = n_steps / control_frequency`; `n_steps` wins when both are set, and the legacy `max_steps` is an alias for `n_steps`). A non-positive `n_steps` or `control_frequency` is rejected up front with a structured `status="error"` dict naming the bad parameter - `start_policy` validates synchronously before the background rollout starts, so a malformed horizon never returns a false "started" success. `eval_policy` likewise rejects a non-positive `n_episodes`, `max_steps`, or `control_frequency` at the entry point (before `create_policy`), so a typo cannot produce a "successful" evaluation over zero or negative episodes. The same entry-point check covers the two provider keyword bags: `policy_config` (splatted into `create_policy`) and `policy_kwargs` (splatted into `policy.get_actions`) must be dicts, so a `policy_config="host=127.0.0.1"` string returns a structured error naming the parameter instead of a bare `TypeError` from the splat - and, on the `start_policy` path, instead of a false "started" for a rollout that never produced an action. The pair resolves the same way one layer down, on `PolicyRunner.run` - the surface those entry points delegate to, which is documented as drivable directly - and both knobs carry their domain there too, raising `ValueError` rather than returning an error dict because a direct caller has no envelope to read a refusal from. `n_steps` is judged whenever it is *given*, which is the condition the entry point's own resolver judges it on; unvalidated, a step count outside the domain did not fail but handed the horizon to the other knob, so `n_steps=0` ran `duration`'s `10.0`s default - 500 control steps and 500 applied actions for a caller who asked for zero. `duration` is judged only when no step count was given, because that is the only case in which it sets the horizon; unvalidated, `0` and a negative value returned `status="success"` with zero steps and `stopped_reason="budget"` - the field a caller reads to decide whether to retry, asserting a horizon was exhausted when there was none.
 
-`action_horizon` (how many actions are consumed from each policy chunk before it is re-queried) is validated the same way at every entry point, so a horizon the rollout cannot run - `0`, a negative value, a float, `nan` - is a structured error rather than a value silently clamped to 1. `run_multi_policy` additionally accepts per-robot mappings (`instructions={robot: text}`, `action_horizon={robot: horizon}`): a key must name a robot driven by that call (i.e. a key of `policies`), because an unmatched key cannot be applied to anything - a robot omitted from a mapping keeps its documented default.
+`action_horizon` (how many actions are consumed from each policy chunk before it is re-queried) is validated the same way at every entry point, so a horizon the rollout cannot run - `0`, a negative value, a float, `nan` - is a structured error rather than a value silently clamped to 1. `run_multi_policy` additionally accepts per-robot mappings (`instructions={robot: text}`, `action_horizon={robot: horizon}`): a key must name a robot driven by that call (i.e. a key of `policies`), because an unmatched key cannot be applied to anything - a robot omitted from a mapping keeps its documented default. The same domain applies one layer down, on `PolicyRunner.run` / `PolicyRunner.evaluate` - the surfaces those entry points delegate to, which are documented as drivable directly. There it raises `ValueError` rather than returning an error dict, matching the sibling `control_substeps` and `control_frequency` guards of the same signature, because a direct caller has no envelope to read a refusal from; unvalidated, the value was clamped to 1 inside the first chunk query or leaked a bare `int()` conversion error naming neither the parameter nor the method. The two bounds of `PolicyRunner.evaluate`'s own episode loop - `n_episodes` and, on the legacy `success_fn` path, `max_steps` - carry that same domain for a stronger reason: a horizon outside it degrades a rollout, while a loop bound outside it removes the evaluation and still reports one. `n_episodes=0` returned `status="success"` over zero episodes and `max_steps=0` over episodes of zero length, both with `success_rate: 0.0` and `success_measured: true` - the flag that exists so a `0.0` cannot be read as a measurement - and with no action ever applied; `max_steps=inf` never terminated at all, since `while steps < max_steps` has no false case. `max_steps` is checked only when it is the horizon actually read, because a `spec=` call takes its horizon off the benchmark (validated at that read) and never reads the parameter.
 
 Pass `seed=` to `run_policy` / `start_policy` for a reproducible single rollout: it reseeds Python / NumPy / torch / cuDNN and forwards `policy.reset(seed=...)`, so a stochastic policy (VLA action-chunk sampling, diffusion noise) produces the same trajectory on re-run of the same scene. Without a seed the rollout draws from the process-global RNG and can differ run to run. `eval_policy` already seeds per episode via the same mechanism.
 
@@ -165,7 +224,7 @@ chunk N+1 exec               |####|
 
 **Auto-enable rule.** `async_rtc=None` (the default) resolves the flag from `policy.is_chunk_emitting()`: chunk-emitting VLA / flow-matching policies (pi0, pi0.5, pi0-FAST, SmolVLA, MolmoAct2) get the overlap automatically, while single-step policies (MockPolicy, classical planners) stay on the synchronous loop, where overlap would gain nothing. An explicit `async_rtc=True` / `async_rtc=False` always wins over the auto-resolution. `Policy.is_chunk_emitting()` defaults to `execution_horizon > 1`; `LerobotLocalPolicy` additionally reports `True` for an RTC model or a checkpoint that must be driven via `predict_action_chunk` (MolmoAct2). See [LeRobot Local -> RTC](../policies/lerobot-local.md#synchronous-vs-async-chunk-execution-in-sim).
 
-**Hardening.** If a prefetched chunk arrives empty, the runner degrades to one synchronous re-query before erroring (a transient hiccup does not kill an otherwise-healthy rollout). When a prefetch blocks at the seam (inference slower than chunk execution) the runner logs a starvation warning so you can shorten the chunk or fire the prefetch earlier. Set `rtc_inference_timeout_s` to bound a stuck inference: the swap then returns a structured `status="error"` result (carrying the telemetry below) instead of waiting for every remaining chunk - bounded by the single in-flight inference the executor joins on shutdown (Python cannot forcibly kill a running worker thread).
+**Hardening.** If a prefetched chunk arrives empty, the runner degrades to one synchronous re-query before erroring (a transient hiccup does not kill an otherwise-healthy rollout). When a prefetch blocks at the seam (inference slower than chunk execution) the runner logs a starvation warning so you can shorten the chunk or fire the prefetch earlier. Set `rtc_inference_timeout_s` to bound a stuck inference: the swap then returns a structured `status="error"` result (carrying the telemetry below) instead of waiting for every remaining chunk - bounded by the single in-flight inference the executor joins on shutdown (Python cannot forcibly kill a running worker thread). That deadline must be a positive finite number of seconds, or `None` (the default) to wait without one - `0`, a negative value and `nan` all make the wait give up before any inference can answer, and `inf` overflows the platform's timestamp arithmetic, so each is refused at the call naming the parameter rather than reported one rollout later as a stuck policy.
 
 **Telemetry.** Every `run_policy` result `{"json": {...}}` block carries six RTC fields so latency masking is provable from the payload, not the logs:
 

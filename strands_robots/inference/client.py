@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.inference import protocol
 from strands_robots.policies.base import Policy
+from strands_robots.utils import name_list_error, positive_finite_number_error, tcp_port_error
 
 if TYPE_CHECKING:
     from websockets.sync.client import ClientConnection
@@ -55,9 +56,24 @@ class RemotePolicy(Policy):
         endpoint: Full server URL, e.g. ``ws://gpu-box:8765``. When given it
             takes precedence over ``host``/``port``.
         host: Server host (used when ``endpoint`` is not given).
-        port: Server port (used when ``endpoint`` is not given).
-        connect_timeout: Seconds to wait for the WebSocket handshake.
-        request_timeout: Seconds to wait for a reply to each request.
+        port: Server port (used when ``endpoint`` is not given). Must be an
+            ``int`` in ``[1, 65535]``: this client has to dial the port, so
+            unlike :class:`~strands_robots.inference.PolicyServer` - which
+            binds one - it cannot accept ``0``, the request for an ephemeral
+            port that only the server side can make.
+        connect_timeout: Seconds to wait for the WebSocket handshake. Only a
+            positive finite number names a budget. The value is handed to
+            ``open_timeout`` on ``connect`` and to the handshake ``recv``, where
+            ``0``, a negative and ``True`` time out against a server that is
+            running and reachable - reported below as a ``ConnectionError``
+            naming the server, not the timeout - while ``nan`` and ``inf`` raise
+            ``ValueError`` / ``OverflowError`` out of ``websockets`` itself.
+        request_timeout: Seconds to wait for a reply to each request. Same
+            domain and the same ``recv`` deadline as ``connect_timeout``.
+
+    ``inf`` is refused rather than read as "no deadline": ``websockets`` raises
+    ``OverflowError`` computing the deadline from it, so an unbounded wait is not
+    something either of these knobs can currently express.
 
     Unrecognized kwargs are ignored (for forward-compatible ``policy_config``
     passthrough via :func:`~strands_robots.policies.create_policy`) but logged
@@ -65,6 +81,9 @@ class RemotePolicy(Policy):
     otherwise leave the client silently connected to the default endpoint.
 
     Raises:
+        ValueError: If ``port`` cannot address a server to dial, or if
+            ``connect_timeout`` / ``request_timeout`` is not a positive finite
+            number.
         ConnectionError: On first use, if the server cannot be reached.
     """
 
@@ -78,6 +97,30 @@ class RemotePolicy(Policy):
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         **ignored_kwargs: Any,
     ) -> None:
+        # ``port`` is interpolated into the URI verbatim, and a WebSocket target
+        # is only resolved on first use - so an unusable value is not refused by
+        # the transport, it fails much later as an unreachable server and
+        # implicates the service the caller was trying to reach. Refuse it while
+        # the caller still holds the value, before ``uri`` exists at all.
+        # ``endpoint`` supersedes ``host``/``port``, so the port is validated
+        # only when it is the effective spelling.
+        if not endpoint and (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
+            raise ValueError(port_error)
+        # A timeout that names no budget is refused here, while the caller still
+        # holds the value, because the transport's own reaction to one is
+        # indistinguishable from an absent server: ``0``, a negative and ``True``
+        # all raise ``TimeoutError`` out of ``connect`` against a server that is
+        # running, and ``_connect`` catches ``TimeoutError`` to report "could not
+        # reach a PolicyServer ... Start one first" - pointing the operator at the
+        # one thing that is not wrong. ``nan``, ``inf`` and a numeric string
+        # instead escape that clause as a ``ValueError`` / ``OverflowError`` /
+        # ``TypeError`` from inside ``websockets``, and since ``_connect`` is
+        # reached lazily they land mid-rollout on the first ``predict``, naming no
+        # parameter. Refused after ``port`` so the more specific "this address
+        # cannot be dialled" still wins when both are wrong.
+        for _param, _value in (("connect_timeout", connect_timeout), ("request_timeout", request_timeout)):
+            if error := positive_finite_number_error(_value, _param, type(self).__name__):
+                raise ValueError(error)
         self.uri = endpoint if endpoint else f"ws://{host}:{port}"
         if not self.uri.startswith(("ws://", "wss://")):
             self.uri = f"ws://{self.uri}"
@@ -235,7 +278,23 @@ class RemotePolicy(Policy):
         server over the open connection so the server-side policy maps
         observations onto the same joints; when not yet connected, they are
         replayed on the next connect handshake.
+
+        Validated here rather than relying on the server: the ``list(...)``
+        below would otherwise flatten a bare string into one name per character
+        and put a well-formed - but wrong - list on the wire, where no
+        server-side check could recognise it as a mis-typed parameter.
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not an ordered list of
+                distinct non-blank names, per
+                :func:`~strands_robots.utils.name_list_error`. A single name
+                passed as a bare string is the mistake this catches: ``str`` is
+                iterable per character, so it would bind one joint per letter.
         """
+        if robot_state_keys and (
+            error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys")
+        ):
+            raise ValueError(error)
         self._robot_state_keys = list(robot_state_keys)
         with self._lock:
             if self._ws is not None:

@@ -73,11 +73,11 @@ def sim_with_two_robots():
     shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def test_start_recording_no_world_returns_graceful_error():
+def test_start_recording_no_world_returns_graceful_error(tmp_path):
     from strands_robots.simulation import Simulation
 
     s = Simulation()
-    r = s.start_recording(repo_id="local/nope", task="t")
+    r = s.start_recording(repo_id="local/nope", root=str(tmp_path / "dataset"), task="t")
     assert r["status"] == "error"
     assert "No world" in r["content"][0]["text"]
     s.destroy()
@@ -646,17 +646,20 @@ def test_get_recording_status_text_is_ascii_idle_and_recording(sim_with_two_robo
 # they pass with or without the lerobot extra installed.
 
 
-def test_start_recording_without_lerobot_points_at_mp4_fallback(sim_with_two_robots, monkeypatch):
+def test_start_recording_without_lerobot_points_at_mp4_fallback(sim_with_two_robots, monkeypatch, tmp_path):
     """When the lerobot extra is absent, start_recording does not crash: it
     returns an error that names the lerobot extra and the plain-MP4 fallback."""
     import strands_robots.dataset_recorder as dr
 
-    monkeypatch.setattr(dr, "has_lerobot_dataset", lambda: False)
+    reason = "lerobot is not installed (ModuleNotFoundError: No module named 'lerobot'). Install lerobot >= 0.6.0 with: pip install 'strands-robots[lerobot]'"
+    monkeypatch.setattr(dr, "lerobot_dataset_import_error", lambda: reason)
 
-    r = sim_with_two_robots.start_recording(repo_id="local/no_lerobot", task="t")
+    r = sim_with_two_robots.start_recording(repo_id="local/no_lerobot", root=str(tmp_path / "dataset"), task="t")
     assert r["status"] == "error"
     text = r["content"][0]["text"]
-    assert "lerobot" in text
+    # The diagnosis is surfaced verbatim: a caller must be told WHICH
+    # dependency is missing, not just that recording is unavailable.
+    assert reason in text
     assert "start_cameras_recording" in text
 
 

@@ -66,9 +66,14 @@ Then annotate it in place with the LeRobot console script:
 
 ```bash
 lerobot-annotate \
-    --root=~/.strands_robots/datasets/user/pick_place \
+    --root="$HF_LEROBOT_HOME/user/pick_place" \
     --vlm.model_id=Qwen/Qwen2.5-VL-7B-Instruct
 ```
+
+`$HF_LEROBOT_HOME` defaults to `~/.cache/huggingface/lerobot` - it is where
+`start_recording` wrote the dataset, resolved by `resolve_dataset_dir` (see
+[Recording & datasets](../recording.md#where-the-dataset-is-written-root-overwrite)).
+Pass the same `root=` you gave `start_recording` if you overrode it.
 
 Common flags:
 

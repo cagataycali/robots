@@ -55,6 +55,7 @@
       "module": "strands_robots.policies.lerobot_local",
       "class": "LerobotLocalPolicy",
       "description": "Direct HuggingFace inference (no server)",
+      "extra": "lerobot",
       "requires": [],
       "config_keys": [
         "pretrained_name_or_path",
@@ -232,7 +233,6 @@
         "text_prompt",
         "ckpt_root",
         "auto_launch_server",
-        "n_action_steps",
         "dynamics_run_id",
         "tracker_backend",
         "motion_plan_scale",
@@ -299,6 +299,51 @@
       "shorthands": [
         "motionbricks",
         "motion_bricks"
+      ]
+    },
+    "kimodo": {
+      "module": "strands_robots.policies.kimodo",
+      "class": "KimodoPolicy",
+      "description": "NVIDIA Kimodo text-to-motion diffusion for the Unitree G1 (prompt-driven kinematic motion, HuggingFace)",
+      "requires": [],
+      "config_keys": [
+        "config",
+        "model_id",
+        "diffusion_steps",
+        "guidance_scale",
+        "num_frames",
+        "native_fps",
+        "tracker_fps",
+        "device",
+        "dtype",
+        "seed",
+        "motion_agent"
+      ],
+      "defaults": {},
+      "shorthands": [
+        "kimodo",
+        "kimodo_g1",
+        "text2motion"
+      ]
+    },
+    "protomotions": {
+      "module": "strands_robots.policies.protomotions",
+      "class": "ProtoMotionsPolicy",
+      "description": "ProtoMotions Generalist Tracking Policy (ONNX, BeyondMimic-trained) for the Unitree G1 — consumes a MotionPlayer reference and emits PD joint targets",
+      "requires": [],
+      "config_keys": [
+        "onnx_path",
+        "yaml_path",
+        "motion",
+        "session",
+        "providers",
+        "history_length"
+      ],
+      "shorthands": [
+        "protomotions",
+        "gtp",
+        "gtp_g1",
+        "protomotions_g1"
       ]
     },
     "remote": {

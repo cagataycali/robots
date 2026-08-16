@@ -93,7 +93,7 @@ class TestValidate:
             (lambda s: setattr(s, "base_model", ""), "base_model is required"),
             (lambda s: setattr(s, "output_dir", ""), "output_dir is required"),
             (lambda s: setattr(s, "method", "bogus"), "unsupported method 'bogus'"),
-            (lambda s: setattr(s, "steps", 0), "steps must be > 0"),
+            (lambda s: setattr(s, "steps", 0), "steps must be a positive integer"),
         ],
     )
     def test_required_field_branch(self, spec, mutate, expected):

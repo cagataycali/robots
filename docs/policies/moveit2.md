@@ -75,6 +75,13 @@ MoveIt2Policy(
 )
 ```
 
+`timeout_ms` is applied as `RCVTIMEO` and `SNDTIMEO` on the REQ socket, so only
+a positive whole number of milliseconds up to `2**31 - 1` names a budget. An
+integral `float` or NumPy integer is accepted and stored as an `int`. `0` is
+ZMQ's "return immediately" spelling and `-1` its "block forever" one; both are
+refused at construction, because each makes `ping()` unable to report a
+reachable sidecar as reachable.
+
 `api_token` falls back to the `MOVEIT2_API_TOKEN` environment variable when not
 passed. The client emits a plaintext-over-TCP warning when `host` is a non-
 loopback address (the token travels unencrypted; terminate TLS at a proxy or

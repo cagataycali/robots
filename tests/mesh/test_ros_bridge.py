@@ -107,8 +107,14 @@ def test_get_scan_with_topic_echoes(rec: _Recorder) -> None:
 
 
 def test_tools_are_named_per_instance() -> None:
+    """Every unconditional capability is exposed, suffixed with the node name.
+
+    ``stop`` is in this set because a drive without a ``duration`` latches:
+    this assertion previously recorded its absence, which is what kept the
+    missing halt tool invisible.
+    """
     names = {t.tool_name for t in _turtle().tools}
-    assert names == {"drive_turtlesim", "get_pose_turtlesim"}
+    assert names == {"drive_turtlesim", "stop_turtlesim", "get_pose_turtlesim"}
 
 
 def test_tools_include_scan_only_when_configured() -> None:

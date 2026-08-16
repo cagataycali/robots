@@ -169,12 +169,31 @@ class TestPeriodIsTheOnlyThrottle:
 
     Pins that ``action_sleep_time`` alone bounds the command rate, so a period
     of ``<= 0`` leaves ``_execute_task_async`` free-running against the servo
-    bus. Bounds are deliberately loose (an unthrottled loop overshoots by
-    orders of magnitude) so the assertion holds on any host.
+    bus.
+
+    Both regimes are pinned on the delay the loop *waits* between two commands,
+    not on how many commands a host managed inside ``duration``. Command
+    throughput is a property of the machine: on a loaded runner the same
+    unthrottled loop applies orders of magnitude fewer actions in the same
+    window, so a fixed throughput floor asserts the runner's speed rather than
+    the loop's contract. The delay the loop asks for is a property of the loop
+    and is identical on every host.
     """
 
     @staticmethod
-    def _drive(period: float, duration: float = 0.2) -> int:
+    def _drive(period: float, duration: float = 0.2, waits: list[float] | None = None) -> int:
+        """Run one task through the real loop with ``action_sleep_time = period``.
+
+        Args:
+            period: The inter-command wait to install, in seconds.
+            duration: Task budget handed to ``_execute_task_async``.
+            waits: When given, collects the delay the loop waits after each
+                command. The recorder delegates to the real ``asyncio.sleep``,
+                so the loop is observed rather than altered.
+
+        Returns:
+            The number of actions that reached the arm.
+        """
         hw = HwRobot.__new__(HwRobot)
         hw.tool_name_str = "test_arm"
         hw.action_horizon = 1
@@ -184,6 +203,9 @@ class TestPeriodIsTheOnlyThrottle:
         hw._task_state = RobotTaskState()
         hw._executor = ThreadPoolExecutor(max_workers=1)
         hw._shutdown_event = threading.Event()
+        hw._stop_requested = threading.Event()
+        hw._task_admission = threading.Lock()
+        hw._task_claimed = False
         hw.mesh = None
         hw.peer_id = None
         hw.robot = _FakeArm()
@@ -216,6 +238,22 @@ class TestPeriodIsTheOnlyThrottle:
         hw._connect_robot = _connected  # type: ignore[method-assign]
         hw._initialize_policy = _init_policy  # type: ignore[method-assign]
         hw._publish_ros_telemetry = _no_telemetry  # type: ignore[method-assign]
+        real_sleep = asyncio.sleep
+        loop_thread = threading.get_ident()
+
+        async def _recording_sleep(delay: float, *args: Any, **kwargs: Any) -> Any:
+            # ``asyncio.sleep`` is module level, so only the loop under test is
+            # recorded: this file shares a process with tests that may leave an
+            # event loop running on another thread, and ``asyncio.run`` below
+            # drives the loop on this one. The real sleep is always awaited, so
+            # the loop is observed rather than altered.
+            if threading.get_ident() == loop_thread:
+                recorded.append(delay)
+            return await real_sleep(delay, *args, **kwargs)
+
+        recorded: list[float] = []
+        if waits is not None:
+            asyncio.sleep = _recording_sleep  # type: ignore[assignment]
         try:
             # ``_Policy`` is a structural stub: it provides the three members the
             # loop reads (supports_rtc / execution_horizon / get_actions) without
@@ -229,19 +267,38 @@ class TestPeriodIsTheOnlyThrottle:
             )
             return len(hw.robot.sent_actions)
         finally:
+            asyncio.sleep = real_sleep  # type: ignore[assignment]
+            if waits is not None:
+                waits.extend(recorded)
             hw._executor.shutdown(wait=False)
 
-    def test_a_positive_period_throttles_the_loop(self):
-        """At 50 Hz a 0.2 s task applies tens of actions, not thousands."""
-        applied = self._drive(1.0 / 50.0)
-        assert 0 < applied < 200
+    def test_a_positive_period_is_waited_between_commands(self):
+        """A 50 Hz rate reaches the bus as a 20 ms wait after every command.
+
+        This is the link the guard protects: ``control_frequency`` is only a
+        throttle because the loop waits ``1 / control_frequency`` between two
+        ``send_action`` calls. The action count is asserted as an upper bound
+        only -- 0.2 s at 50 Hz admits about ten commands and a slower host
+        applies fewer, never more.
+        """
+        waits: list[float] = []
+        applied = self._drive(1.0 / 50.0, waits=waits)
+
+        assert 0 < applied <= 20
+        assert len(waits) == applied
+        assert waits == pytest.approx([1.0 / 50.0] * applied)
 
     def test_a_non_positive_period_leaves_the_loop_unthrottled(self):
-        """The pathology the guard prevents: no throttle at all.
+        """The pathology the guard prevents: no wait between commands at all.
 
         A period of ``0`` is what ``1 / inf`` produces and what
         ``asyncio.sleep`` returns from immediately, so the loop commands the
-        bus as fast as it can be driven.
+        bus as fast as it can be driven -- back to back, with nothing between
+        two writes to the servos.
         """
-        applied = self._drive(0.0)
-        assert applied > 1000
+        waits: list[float] = []
+        applied = self._drive(0.0, waits=waits)
+
+        assert applied >= 1
+        assert len(waits) == applied
+        assert set(waits) == {0.0}

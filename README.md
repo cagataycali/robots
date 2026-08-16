@@ -106,7 +106,7 @@ sim.step(100)   # publishes /so101/joint_states + camera image_raw on the ROS 2 
 
 - **Sim-first, safe by default.** `Robot("so100")` spins up a MuJoCo world. You
   never accidentally drive real servos - `mode="real"` is an explicit opt-in.
-- **50+ robots, 8 categories.** Arms, humanoids, quadrupeds, hands, drones,
+- **70+ robots, 8 categories.** Arms, humanoids, quadrupeds, hands, drones,
   bimanual rigs - resolved from a single registry with auto-download of assets.
 - **Any policy.** VLA models (NVIDIA GR00T, LeRobot ACT/Pi0/SmolVLA/Diffusion),
   plus classical motion planners, MPC, and scripted controllers behind one ABC.
@@ -159,9 +159,9 @@ extras you need:
 
 | Extra | Installs | Use for |
 |-------|----------|---------|
-| `sim-mujoco` | MuJoCo, robot_descriptions, imageio, mink + qpsolvers | Simulation (recommended starting point). mink/qpsolvers are the differential-IK solver behind the `move_to` Cartesian transport primitive. |
+| `sim-mujoco` | MuJoCo, robot_descriptions, imageio, mink + qpsolvers[daqp] | Simulation (recommended starting point). mink/qpsolvers are the differential-IK solver behind the `move_to` Cartesian transport primitive; `qpsolvers` ships no solver of its own, so the `[daqp]` backend extra is declared with it. |
 | `sim-newton` | Newton, Warp, MuJoCo-Warp, trimesh | GPU-native simulation (NVIDIA GPU; batched envs, headless ray-traced render) |
-| `sim-isaac` | usd-core, imageio (Isaac Sim installed out-of-band) | NVIDIA Isaac Sim backend - photorealistic RTX rendering, synthetic data, GPU-batched sensors, USD-native scenes. Isaac Sim itself is **not** pip-installable; install it via the Omniverse Launcher, Isaac Lab, or the NGC docker image. This extra pulls only the pip-installable Python helpers. (NVIDIA RTX GPU; GPU-only, not in `[all]`.) |
+| `sim-isaac` | usd-core, imageio (Isaac Sim installed separately) | NVIDIA Isaac Sim backend - photorealistic RTX rendering, synthetic data, GPU-batched sensors, USD-native scenes. Install Isaac Sim itself separately: via its pip wheels on Python 3.12 (`isaacsim[all,extscache]` from pypi.nvidia.com - see the caveats in [`docs/simulation/isaac.md`](docs/simulation/isaac.md)), the Omniverse Launcher, Isaac Lab, or the NGC docker image. This extra pulls only the pip-installable Python helpers. (NVIDIA RTX GPU; GPU-only, not in `[all]`.) |
 | `sim-gs` | gsplat, plyfile, torch | 3D Gaussian Splatting hybrid rendering (`strands_robots.rendering`): composite any sim backend's robot over a captured photoreal 3DGS scene. `gsplat` ships as a source dist that JIT-compiles CUDA kernels via `nvcc` on first use - probe with `strands_robots.rendering.gsplat_rasterizer_available()`; the zero-GPU `PanoramaBackground` works without this extra. (CUDA GPU; GPU-only, not in `[all]`.) |
 | `lerobot` | LeRobot | Real hardware, local VLA inference, dataset recording |
 | `molmoact2` | LeRobot + transformers, peft, scipy | MolmoAct2 transformers-native VLA (resolves from PyPI via lerobot >= 0.6) |
@@ -192,9 +192,12 @@ uv pip install "strands-robots[all]"
 
 The **Isaac Sim** GPU backend is a built-in, in-tree peer of `mujoco` and
 `newton` (it lives at `strands_robots.simulation.isaac`). Its pip-installable
-helpers ship in the `sim-isaac` extra, but Isaac Sim itself is a ~30 GB
-non-PyPI install you provision out-of-band (Omniverse Launcher, Isaac Lab, or
-the NGC docker image). Install the helpers with
+helpers ship in the `sim-isaac` extra, but the Isaac Sim runtime itself (~30 GB)
+is provisioned separately - via its own pip wheels on Python 3.12
+(`pip install 'isaacsim[all,extscache]==6.0.*' --extra-index-url https://pypi.nvidia.com`,
+with coverage/EULA caveats documented in
+[`docs/simulation/isaac.md`](docs/simulation/isaac.md)), the Omniverse
+Launcher, Isaac Lab, or the NGC docker image. Install the helpers with
 `pip install 'strands-robots[sim-isaac]'`, then select the backend with
 `create_simulation("isaac")` - see
 [Simulation (MuJoCo)](#simulation-mujoco) and
@@ -368,8 +371,15 @@ sim.stop_recording(bucket="your-org/robot-fave")   # → hf://buckets/your-org/r
 ```
 
 Requires the `hf` CLI with the `buckets`/`sync` subcommands
-(`pip install -U "huggingface_hub>=1.0"` + `hf auth login` — 0.x releases of
-`huggingface_hub` ship an `hf` entry point without them).
+(`pip install -U "huggingface_hub>=1.5"` + `hf auth login` — those subcommands
+first ship in 1.5.0; every earlier release, including 1.0–1.4.x, installs an
+`hf` entry point without them).
+
+The bucket **read** side (`stream_dataset(..., repo_type="bucket")`) needs
+`strands-robots >= 0.5.1`, so upgrade with `-U` rather than a bare
+`pip install "strands-robots[...]"` — pip reports `Requirement already satisfied`
+against a pre-existing older release and upgrades nothing, and on 0.4.1 the read
+raises `TypeError: open() got an unexpected keyword argument 'repo_type'`.
 
 Any on-disk dataset directory can be synced (or daily re-synced) without a live
 recording session — one recorded earlier in the process, or on hardware via
@@ -439,7 +449,7 @@ Safety/validation rules:
 
 ## Supported robots
 
-50+ robots across 8 categories, resolved from
+70+ robots across 8 categories, resolved from
 [`registry/robots.json`](strands_robots/registry/robots.json). Assets
 (MJCF + meshes) auto-download from
 [robot_descriptions](https://github.com/robot-descriptions/robot_descriptions.py)
@@ -961,8 +971,13 @@ backend's install, usage, config, and `STRANDS_ISAAC_*` env vars.
 </p>
 
 Every `Robot()` and `Simulation()` is automatically a peer on a local Zenoh
-mesh - no setup. Peers on the same LAN discover each other via multicast
-scouting, sharing a single ref-counted `zenoh.Session` per process.
+mesh - no setup. Peers on the same host discover each other out of the box
+(gossip scouting plus a shared local endpoint), sharing a single ref-counted
+`zenoh.Session` per process. Cross-host discovery is deliberately explicit:
+point peers at each other with `ZENOH_CONNECT` (e.g. `tcp/10.0.0.1:7447`).
+Multicast scouting is **off by default** - it lets any device on the LAN
+enumerate and attract the fleet - and is opt-in via
+`STRANDS_MESH_MULTICAST=true`, which logs a loud warning.
 
 ```python
 from strands_robots import Robot
@@ -1070,8 +1085,8 @@ touches ROS 2.
 | `STRANDS_TRUST_REMOTE_CODE` | Set `1` to allow HF `trust_remote_code` for `lerobot_local` | unset |
 | `STRANDS_ROBOTS_NO_DYLD_SHIM` | Set `1` to disable the macOS auto-fix that puts Homebrew ffmpeg on the dyld path for torchcodec video streaming (see [Recording & streaming datasets](#recording--streaming-datasets)) | unset |
 | `MUJOCO_GL` | MuJoCo GL backend (`egl`, `osmesa`, `glfw`) | auto |
-| `STRANDS_ISAAC_HEADLESS` | Isaac Sim backend: run without a GUI (`true`/`1`/`yes` = headless). Overrides `IsaacConfig(headless=...)` | unset (config default `true`) |
-| `STRANDS_ISAAC_RTX_PATHTRACING` | Isaac Sim backend: set `true`/`1`/`yes` to enable RTX path-tracing (photorealistic, slow) instead of the default render mode | unset |
+| `STRANDS_ISAAC_HEADLESS` | Isaac Sim backend: run without a GUI. On (`1`/`true`/`yes`/`on`) = headless, off (`0`/`false`/`no`/`off`) = windowed, any other spelling is refused. Overrides `IsaacConfig(headless=...)` ([#2062](https://github.com/strands-labs/robots/issues/2062)) | unset (config default `true`) |
+| `STRANDS_ISAAC_RTX_PATHTRACING` | Isaac Sim backend: on (`1`/`true`/`yes`/`on`) enables RTX path-tracing (photorealistic, slow) instead of the default render mode; off leaves the render mode alone, any other spelling is refused | unset |
 | `STRANDS_ISAAC_NUCLEUS_URL` | Isaac Sim backend: override the Omniverse Nucleus asset-server URL | unset (Isaac default) |
 | `GROOT_API_TOKEN` | API token for the GR00T inference service | unset |
 | `STRANDS_MESH` | Set `false` to disable Zenoh mesh globally | `true` |
@@ -1087,6 +1102,7 @@ touches ROS 2.
 | `STRANDS_MESH_PORT` | TCP port for the local Zenoh router | `7447` |
 | `ZENOH_CONNECT` | Comma-separated remote Zenoh endpoints to connect to | unset |
 | `ZENOH_LISTEN` | Comma-separated endpoints for the local Zenoh listener | unset |
+| `STRANDS_MESH_MULTICAST` | Opt in to multicast scouting for LAN discovery. Off by default: any device on the LAN can enumerate and attract the fleet, so enabling it logs a WARNING. Prefer explicit `ZENOH_CONNECT` endpoints | `false` |
 | `STRANDS_MESH_AUDIT_DIR` | Directory for the safety audit log (`mesh_audit.jsonl`) | `~/.strands_robots/` |
 | `STRANDS_MESH_CA_PINS` | Additional SHA-256 CA pins (comma-separated 64-char hex) | unset |
 | `STRANDS_MESH_DISABLE_CA_PIN` | Skip CA pin check on download path (break-glass) | `false` |
@@ -1097,17 +1113,22 @@ touches ROS 2.
 | `STRANDS_MESH_SUBSCRIBE_ALLOW` | Extra Zenoh key-expr patterns the `robot_mesh` `subscribe` action may target, beyond the built-in low-impact set | shared classes only |
 | `STRANDS_MESH_OVERRIDE_CODE` | Shared secret for e-stop resume HMAC proof; unset means no remote resume possible | unset |
 | `STRANDS_MESH_INPUT_VALUE_ABS` | Absolute value clamp for teleop joint commands (radians) | `12.566` (4pi) |
-| `STRANDS_MESH_INPUT_MAX_HZ` | Per-receiver teleop apply-rate ceiling (0 = unlimited) | `100` |
+| `STRANDS_MESH_INPUT_MAX_HZ` | Per-receiver teleop apply-rate ceiling (0 = unlimited). A value no rate check can be built from -- unparsable, or non-finite like `inf`/`nan` -- falls back to the default so the ceiling stays enforced | `100` |
 | `STRANDS_MESH_INPUT_SLEW_ABS` | Per-joint speed bound for teleop commands, in frame units per second (widen for degree-valued or normalized actuators; cannot be disabled) | `25.133` (8pi) |
+| `STRANDS_MESH_POSE_HZ`, `_IMU_HZ`, `_ODOM_HZ`, `_HEALTH_HZ`, `_LIDAR_SUMMARY_HZ`, `_HAND_HZ`, `_MAP_INFO_HZ` | Per-topic sensor publish rate; `0` (or any non-positive value) switches that topic off. A value the loop cannot pace itself with keeps the built-in rate | per topic: `10`/`10`/`10`/`0.5`/`5`/`50`/`0.2` |
+| `STRANDS_MESH_CAMERA_HZ` | Camera publish rate; opt-in because frames are large. Unset, non-positive, or unusable leaves camera publishing off | `0` (off) |
 | `STRANDS_MESH_MAX_PEERS` | Peer registry cap; evicts oldest on overflow | `1024` |
 | `STRANDS_MESH_RESUME_MAX_FAILS` | Failed resume attempts before cooldown engages | `5` |
-| `STRANDS_MESH_RESUME_BACKOFF_S` | Cooldown (seconds) after exceeding resume fail threshold | `30` |
+| `STRANDS_MESH_RESUME_BACKOFF_S` | Cooldown (seconds) after exceeding resume fail threshold. A value no cooldown instant can be built from -- unparsable, negative, or non-finite like `inf`/`nan` -- falls back to the default, so the throttle both engages and expires (shared with `STRANDS_MESH_RESUME_FRESHNESS_S` / `_FORWARD_SKEW_S`) | `30` |
 | `STRANDS_MESH_INPUT_AUDIT_EVERY` | Emit `input_stream_applied` audit event every N frames (0 = off) | `100` |
 | `STRANDS_ESTOP_DEDUP_TTL_S` | E-stop fan-out Lambda dedup window (seconds) | `30` |
+| `STRANDS_MESH_DEDUP_TTL` | Window (seconds) the Zenoh<->IoT bridge remembers a delivered `(sender_id, turn_id, command)` triple for cross-transport deduplication. Unparsable, non-positive or non-finite falls back to the default, so a legitimately recurring heartbeat is forgotten again | `120` |
 | `STRANDS_MESH_BRIDGE_TOPICS` | Comma-separated topic suffixes the Zenoh<->IoT bridge forwards (exact match). Unset = the safe default set (`presence,health,safety/event,safety/estop,safety/resume,cmd,response,broadcast`). High-volume topics (`state,pose,imu,odom,lidar`) and LAN-only topics (`camera,input,hand`) are deliberately NOT bridged | default set |
 | `STRANDS_MESH_BRIDGE_TOPICS_PREFIX` | Comma-separated topic suffixes the bridge matches as a path **prefix** (so `response` matches `response/<turn-id>`). Extend this (not `STRANDS_MESH_BRIDGE_TOPICS`) when adding an RPC-shape topic with a per-turn tail | `response` |
 | `STRANDS_GR00T_IMAGE` | Container image the `gr00t_inference` tool runs (must pass the image allowlist; agent cannot choose it) | `gr00t:latest` |
 | `STRANDS_GR00T_IMAGE_ALLOW` | Extra image-name patterns (trailing `*` = tag wildcard) added to the built-in allowlist (`gr00t:*`, `nvcr.io/nvidia/isaac-gr00t:*`) | built-in only |
+| `STRANDS_GR00T_SERVER_SEED` | Default seed the GR00T determinism wrapper applies at server start and on seedless `reset` calls (used with `gr00t_inference(..., deterministic=True)`; forwarded into the container) | `42` |
+| `STRANDS_GR00T_STRICT_DETERMINISTIC` | `1` makes the determinism wrapper additionally enable `torch.use_deterministic_algorithms(True, warn_only=True)` (slower kernels, strictest reproducibility; forwarded into the container) | `0` |
 
 </details>
 
@@ -1116,14 +1137,19 @@ touches ROS 2.
 
 These are read by the built-in, in-tree Isaac Sim backend
 (`pip install 'strands-robots[sim-isaac]'`) when it builds its
-`IsaacConfig`; an explicit `create_simulation("isaac", ...)` kwarg always wins.
-See [`docs/simulation/isaac.md`](docs/simulation/isaac.md).
+`IsaacConfig`. An explicit `create_simulation("isaac", ...)` kwarg wins for
+`nucleus_url`; the two switches override their field whenever they are set
+([#2062](https://github.com/strands-labs/robots/issues/2062)). Both switches
+accept `1`/`true`/`yes`/`on` and `0`/`false`/`no`/`off` (case-insensitive,
+surrounding whitespace ignored); unset or empty leaves the field alone and any
+other spelling is refused. See
+[`docs/simulation/isaac.md`](docs/simulation/isaac.md).
 
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `STRANDS_ISAAC_NUCLEUS_URL` | Override the Omniverse Nucleus server URL (when `nucleus_url` is not passed) | unset (Isaac defaults) |
-| `STRANDS_ISAAC_HEADLESS` | Truthy (`1`/`true`/`yes`) forces headless; falsy forces a window | unset (uses `headless` kwarg) |
-| `STRANDS_ISAAC_RTX_PATHTRACING` | Truthy forces `render_mode="rtx_pathtracing"` | unset |
+| `STRANDS_ISAAC_HEADLESS` | On forces headless; off forces a window | unset (uses `headless` kwarg) |
+| `STRANDS_ISAAC_RTX_PATHTRACING` | On forces `render_mode="rtx_pathtracing"`; off leaves `render_mode` alone | unset |
 
 </details>
 
@@ -1173,7 +1199,7 @@ strands_robots/
 │   ├── mock.py            # MockPolicy (non-VLA reference)
 │   ├── groot/             # NVIDIA GR00T (ZMQ/HTTP client + data configs)
 │   └── lerobot_local/     # Direct HuggingFace inference (RTC, processors)
-├── registry/              # robots.json (50+) + policies.json + loaders
+├── registry/              # robots.json (70+) + policies.json + loaders
 ├── simulation/
 │   ├── base.py            # SimEngine ABC
 │   ├── factory.py         # create_simulation() + backend registry

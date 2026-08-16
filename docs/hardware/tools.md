@@ -34,6 +34,77 @@ from strands_robots.tools import (
 
 Parse results via `result["content"][0]["text"]`, not custom keys like `result["ports"]`.
 
+### Numeric options are checked before the session starts
+
+A teleop session runs in a detached subprocess, so a value the lerobot CLI
+cannot parse would not be reported by the call that supplied it - the session
+would start, report a pid, and fail minutes later in its log. `lerobot_teleoperate`
+therefore refuses an unusable numeric option up front, and only for the options
+the requested action actually puts on the lerobot command line:
+
+| Option | Accepted | Why the floor is where it is |
+|--------|----------|------------------------------|
+| `dataset_fps`, `fps` | positive whole number | lerobot declares both `int`; an integral float (`30.0`) is accepted and emitted as `30` |
+| `dataset_num_episodes`, `dagger_num_episodes` | positive whole number | a recording of no episodes cannot be produced |
+| `dataset_episode_time_s` | positive whole number | an episode of no length records nothing |
+| `dataset_reset_time_s` | non-negative whole number | `0` is a real setting: no operator pause between episodes |
+| `replay_episode` | non-negative whole number | `0` is the first episode |
+| `teleop_time_s` | positive number, or `None` | lerobot declares it `float \| None`; `None` (the default) means no time limit, and a fractional budget is usable |
+
+`teleop_time_s=0` is refused rather than read as "no limit" - it is the one value
+that means "stop at once", so treating it as unset would invert the request.
+Passing a value an action ignores is never an error: `action="start"` without a
+`dataset_repo_id` teleoperates and reads no `dataset_*` option.
+
+### A raw servo write is bounded by the register it encodes into
+
+`serial_tool` writes Feetech registers by masking the value into fixed-width
+bytes of the outgoing packet, so an out-of-range value was never rejected on the
+wire - it was truncated into a different, reachable command while the success
+message quoted the value the caller supplied. `position=70000` put 4464 on the
+wire and `position=-1` put 65535, the largest the two-byte field holds. Each
+field is therefore bounded before the port is opened:
+
+| Option | Accepted | Why the bound is where it is |
+|--------|----------|------------------------------|
+| `motor_id` | integer in `[1, 254]` | the frame carries the ID in one byte, and `255` is the header value |
+| `position` | integer in `[0, 4095]` | `Goal_Position` is a 12-bit register - the same full scale the reported angle divides by |
+| `velocity` | integer in `[0, 65535]` | `Goal_Velocity` is written as two bytes |
+| `baudrate` | positive integer | pyserial coerces rather than checks, so `2.7` opens the port at 2 baud |
+| `read_bytes` | positive integer | pyserial's read loop is `while len(read) < size`, so a non-positive size returns no bytes and looks like a timeout |
+| `timeout` | finite number >= 0 | `0` is pyserial's non-blocking mode (return what is buffered); `nan` waits no time at all and `inf` overflows the deadline |
+
+The same scoping rule applies: `action="read"` never looks at a servo register,
+so a bad `motor_id` does not refuse it, and `action="list_ports"` reads none of
+these options. An unset `motor_id` / `position` is still reported by the action's
+own "required" message rather than as an unusable value.
+
+`pose_tool` writes the same `Goal_Position` register through the same mask and
+needs no bound of its own - it clamps to each motor's declared range before
+encoding, so the mask only ever sees a value that fits.
+
+### A mesh wait budget is bounded where the command body cannot carry it
+
+`robot_mesh` takes four numeric options. `duration` and `policy_port` travel
+inside the command body that
+[`validate_command`](../security.md) inspects, so that validator already bounds
+them. `timeout` and `limit` never enter a command body, so they are bounded by
+the tool:
+
+| Option | Accepted | Why the floor is where it is |
+|--------|----------|------------------------------|
+| `timeout` | positive finite number | it becomes a `threading.Event` wait; `0`/negative/`nan` return from that wait immediately, so the tool reports `{"status": "timeout"}` for a peer it never gave the chance to answer, and `inf` overflows the deadline |
+| `limit` | positive integer | it is a slice index into the `inbox` buffer; a non-positive or `nan` value selected the *whole* buffer, and a fractional one raised out of the dispatcher |
+
+`stop` additionally caps `timeout` at 5s so a stop cannot hang, but the cap
+cannot replace the domain: `min(nan, 5.0)` is `nan`, so `nan` passed straight
+through it.
+
+The same scoping rule applies: `timeout` is read by `tell` / `send` / `rpc` /
+`broadcast` / `stop`, `limit` only by `inbox`, and the rest are never refused
+for either. `emergency_stop` fans out on a fixed internal budget, so the
+caller's `timeout` is not effective there.
+
 ## Examples
 
 ```python

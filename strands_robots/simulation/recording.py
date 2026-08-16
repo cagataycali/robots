@@ -28,10 +28,11 @@ enforceable protocol.
 
 import logging
 import shutil
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strands_robots.utils import positive_whole_number_error
+from strands_robots.utils import boolean_flag_error, positive_whole_number_error
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,14 @@ def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | No
     dict already enforce
     (:func:`~strands_robots.utils.positive_whole_number_error`):
     a positive whole number.
+
+    The ``fps`` reaching this guard is forwarded to
+    :meth:`~strands_robots.dataset_recorder.DatasetRecorder.create` unchanged, and
+    that method applies the same shared domain to its direct callers - so this is
+    the envelope-returning half of one rule, not a rule of its own. Any narrowing
+    belongs in the shared domain rather than here: a value refused only deeper
+    would raise ``ValueError`` out of a ``start_recording`` that had already
+    reported it usable.
 
     Without this guard an unusable ``fps`` was reported as ``status="success"``
     and then cost the caller the episode: LeRobot only rejects ``fps <= 0``, so
@@ -70,20 +79,67 @@ def dataset_recording_option_error(method: str, fps: Any) -> dict[str, Any] | No
     return None
 
 
-def _resumed_dataset_fps(recorder: Any) -> int | None:
-    """Read the on-disk frame rate of a resumed dataset, or None if unavailable.
+def dataset_recording_posture_error(method: str, param: str, value: Any) -> dict[str, Any] | None:
+    """Reject a recording posture flag that was not supplied as a boolean.
+
+    Sibling of :func:`dataset_recording_option_error` for the two flags in the
+    same ``start_recording`` signature that select a *posture* rather than
+    scaling a quantity, and for the ``push_to_hub`` that
+    :meth:`DatasetRecordingMixin.stop_recording` accepts as an override. Shared
+    by every backend (MuJoCo, Newton, Isaac) for the same reason the ``fps``
+    guard is: the three surfaces must not disagree on what a usable value is.
+
+    The domain is :func:`~strands_robots.utils.boolean_flag_error` - the one the
+    mesh provisioning entry points and ``lerobot_teleoperate``'s execution flags
+    already apply to their own posture flags. Read by truthiness instead, both
+    flags fail toward the branch the caller was opting *out* of, because every
+    non-empty string is truthy:
+
+    * ``overwrite="false"`` (also ``"no"``, ``"off"``, ``"0"``, ``1``, ``nan``)
+      reached :meth:`DatasetRecordingMixin._prepare_dataset_target` as True and
+      deleted the caller's dataset with ``shutil.rmtree``. That method already refuses to
+      clobber a non-empty *non*-dataset directory, so the one path it deleted
+      without asking was a real LeRobotDataset - the recorded episodes the caller
+      meant to append to. ``start_recording`` returned ``status="success"``.
+    * ``push_to_hub="false"`` (same spellings) was stashed on the recording state
+      and *published* the finished dataset to the Hub at ``stop_recording``.
+
+    Neither could be honoured as written, and neither failure is recoverable:
+    the episodes are gone, and an upload cannot be taken back.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        param: Flag name, for the message.
+        value: The flag as supplied.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict naming *param*, or
+        ``None`` when the value is a boolean and can be honoured.
+    """
+    if text := boolean_flag_error(value, param, method):
+        return {"status": "error", "content": [{"text": text}]}
+    return None
+
+
+def recorder_dataset_fps(recorder: Any) -> int | None:
+    """Read the frame rate of a live recorder's dataset, or None if unavailable.
 
     ``LeRobotDataset`` exposes ``fps`` directly and via ``meta.fps``; both are
     probed so a layout that only carries the metadata object still compares.
 
-    Only a positive WHOLE rate is reported. A dataset whose on-disk rate is
-    fractional cannot be appended to at any rate ``start_recording`` accepts
-    (it requires a positive whole number), so there is no value to advise the
-    caller to pass and the comparison is skipped rather than dead-ending a
-    resume - matching the best-effort posture of the rest of the schema check.
+    Only a positive WHOLE rate is reported. A dataset whose rate is fractional
+    cannot be recorded at any rate ``start_recording`` accepts (it requires a
+    positive whole number), so there is no value to advise the caller to pass
+    and the comparison is skipped rather than dead-ending the call - matching
+    the best-effort posture of the rest of the schema check.
+
+    Shared by the two places that must compare a dataset's declared rate
+    against another rate: the resume schema check (against the ``fps`` the
+    caller asked to append at) and :func:`dataset_rate_mismatch_error`
+    (against the ``control_frequency`` a rollout will actually capture at).
 
     Args:
-        recorder: The resumed ``DatasetRecorder``.
+        recorder: The ``DatasetRecorder`` whose dataset rate to read.
 
     Returns:
         The dataset frame rate as an int, or ``None`` when the dataset does not
@@ -97,6 +153,221 @@ def _resumed_dataset_fps(recorder: Any) -> int | None:
         if value > 0 and float(value).is_integer():
             return int(value)
     return None
+
+
+def rate_mismatch_explanation(fps: int, rate: float) -> str:
+    """State why a dataset rate other than the capture rate can only mislabel.
+
+    Shared by both orderings of the same disagreement - a rollout started
+    against an open recording (:func:`dataset_rate_mismatch_reason`) and a
+    recording opened against a running rollout
+    (:func:`rollout_rate_mismatch_reason`) - so the two cannot explain the same
+    physics differently.
+
+    Args:
+        fps: Rate the dataset declares (or would declare) in its metadata.
+        rate: Rate frames are actually captured at, in Hz.
+
+    Returns:
+        One sentence naming both intervals, the resulting distortion factor and
+        what downstream consumes it. Callers supply their own prefix and remedy.
+    """
+    return (
+        f"The dataset recorder writes one frame per control step with no decimation, so "
+        f"frames captured {1.0 / rate:.4f}s apart would be timestamped {1.0 / fps:.4f}s "
+        f"apart - a {rate / fps:.3f}x distortion of the episode duration, which a policy "
+        f"trains on as its control period and which replay_episode reproduces at the wrong "
+        f"speed."
+    )
+
+
+def dataset_rate_mismatch_reason(method: str, recorder: Any, control_frequency: float) -> str | None:
+    """Explain why the active dataset cannot describe a rollout's capture rate.
+
+    ``start_recording(fps=...)`` fixes the frame rate written into the dataset
+    metadata, and LeRobot derives every frame's timestamp from it positionally
+    (``timestamp = frame_index / fps``). The dataset recorder is driven once per
+    control step with **no decimation**, so the rate frames are actually
+    captured at is the rollout's ``control_frequency`` - which means a differing
+    ``fps`` cannot be honored, only mislabelled.
+
+    The two library defaults are exactly such a pair (``fps=30`` against
+    ``control_frequency=50.0``), so the documented record-then-rollout sequence
+    silently produced a distorted episode: frames captured 0.0200 s apart were
+    timestamped 0.0333 s apart, declaring a 1.30 s episode for a 0.78 s capture.
+    Nothing reported it - ``start_recording``, the rollout and
+    ``stop_recording`` all returned ``status="success"``.
+
+    That distortion is not cosmetic. It is the control period a policy trains
+    on, and :meth:`~strands_robots.simulation.base.SimEngine.replay_episode`
+    derives its per-frame physics budget from the dataset rate on the stated
+    invariant that "the recorded control frequency IS the dataset fps" - so a
+    mislabelled episode also replays at the wrong speed. Measured on a
+    position-servo arm, record then replay round-tripped to 0.0000 rad at
+    matching rates and to 0.0317 rad at the two defaults.
+
+    Refusing (rather than warning) matches the sibling rate guard in this
+    module: ``_verify_resume_schema`` already raises for an ``fps`` that
+    disagrees with the dataset on disk, pointing at the rate to pass instead.
+    This is the same disagreement one step earlier, and it is reported before
+    any frame is written so the caller loses nothing.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        recorder: The active ``DatasetRecorder``.
+        control_frequency: Rate the rollout will capture frames at. Assumed
+            already validated as a positive finite number by the caller's own
+            ``control_frequency`` guard.
+
+    Returns:
+        The reason text naming both rates and the remedies, or ``None`` when the
+        rates agree (or the dataset does not report a usable whole rate, which
+        must not block a valid rollout). Callers reporting through a tool
+        envelope want :func:`dataset_rate_mismatch_error`; a caller that must
+        raise - a directly driven ``PolicyRunner`` - uses this text verbatim.
+    """
+    fps = recorder_dataset_fps(recorder)
+    if fps is None:
+        return None
+    rate = float(control_frequency)
+    if abs(rate - fps) < 1e-9:
+        return None
+
+    remedy = f"pass control_frequency={fps} to {method}()"
+    if rate.is_integer():
+        # ``fps`` must be a positive whole number, so only an integral capture
+        # rate has a matching dataset rate to advise re-recording at.
+        remedy += (
+            f", or record at the rollout's rate (stop_recording(), then "
+            f"start_recording(fps={int(rate)}, overwrite=True))"
+        )
+    text = (
+        f"{method}: the active recording declares {fps} fps but this rollout captures at "
+        f"control_frequency={rate:g} Hz. {rate_mismatch_explanation(fps, rate)} "
+        f"Align the two rates: {remedy}."
+    )
+    return text
+
+
+def dataset_rate_mismatch_error(method: str, recorder: Any, control_frequency: float) -> dict[str, Any] | None:
+    """Envelope form of :func:`dataset_rate_mismatch_reason` for tool callers.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        recorder: The active ``DatasetRecorder``.
+        control_frequency: Rate the rollout will capture frames at.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict carrying the reason text,
+        or ``None`` when there is nothing to refuse. See
+        :func:`dataset_rate_mismatch_reason` for the contract and why a mismatch
+        is refused rather than warned.
+    """
+    reason = dataset_rate_mismatch_reason(method, recorder, control_frequency)
+    if reason is None:
+        return None
+    return {"status": "error", "content": [{"text": reason}]}
+
+
+def rollout_rate_mismatch_reason(method: str, fps: Any, rates: Mapping[str, float]) -> str | None:
+    """Explain why an opening recording cannot describe an in-flight rollout.
+
+    The inverse ordering of :func:`dataset_rate_mismatch_reason`. That guard
+    covers a rollout started against an open recording; this one covers a
+    recording opened against a rollout that is already running - which
+    ``start_policy`` makes reachable by design, since it submits the rollout to
+    an executor and returns while it continues.
+
+    Both orderings produce the same distortion, because the frames and the
+    timestamps come from the same two rates whichever call happened first: the
+    recorder is driven once per control step with no decimation, and LeRobot
+    derives each timestamp positionally from the declared ``fps``. Measured on
+    the library defaults - ``start_policy(control_frequency=50.0)`` followed by
+    ``start_recording(fps=30)`` - the episode saved 81 frames captured 0.0200 s
+    apart and declared them 0.0333 s apart: a 2.6667 s episode for a 1.62 s
+    capture, with ``start_policy``, ``start_recording`` and ``stop_recording``
+    all returning ``status="success"``.
+
+    Concurrent rollouts at different rates are refused outright, even when
+    ``fps`` matches one of them: the frames interleave into one episode whose
+    single declared rate can only describe one capture rate, so there is no
+    value the caller could pass instead.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        fps: Caller-supplied dataset frame rate. Validate it with
+            :func:`dataset_recording_option_error` first; a value outside that
+            domain returns ``None`` here so it is reported as the parameter
+            error it is rather than as a rate disagreement.
+        rates: Capture rate in Hz per robot with a rollout in flight, as
+            reported by
+            :meth:`~strands_robots.simulation.base.SimEngine._active_rollout_rates`.
+
+    Returns:
+        The reason text naming the rollout(s), both rates and the remedies, or
+        ``None`` when nothing is running or every running rollout already
+        captures at ``fps``.
+    """
+    if not rates:
+        return None
+    if isinstance(fps, bool) or not isinstance(fps, int | float):
+        return None
+    declared = float(fps)
+    if declared <= 0 or not declared.is_integer():
+        return None
+    fps_int = int(declared)
+
+    listed = ", ".join(f"'{name}' at {rate:g} Hz" for name, rate in sorted(rates.items()))
+    distinct = {round(rate, 9) for rate in rates.values()}
+    if len(distinct) > 1:
+        return (
+            f"{method}: this recording would declare {fps_int} fps but {len(rates)} rollouts are "
+            f"already running at {len(distinct)} different capture rates ({listed}). The dataset "
+            f"recorder writes one frame per control step with no decimation and LeRobot timestamps "
+            f"every frame from the single declared rate, so no fps can describe them all - their "
+            f"frames interleave into one episode on a timebase that mislabels at least one of "
+            f"them. Stop all but one rollout (stop_policy(robot_name=...)), or restart them at a "
+            f"common control_frequency, then record at that rate."
+        )
+
+    rate = float(next(iter(rates.values())))
+    if abs(rate - fps_int) < 1e-9:
+        return None
+
+    remedy = ""
+    if rate.is_integer():
+        # ``fps`` must be a positive whole number, so only an integral capture
+        # rate is one this method could be re-invoked with.
+        remedy = f"record at the rollout's rate ({method}(fps={int(rate)})), or "
+    stop_targets = ", ".join(f"stop_policy(robot_name='{name}')" for name in sorted(rates))
+    remedy += (
+        f"restart the rollout at the recording's rate ({stop_targets}, then "
+        f"start_policy(..., control_frequency={fps_int}))"
+    )
+    return (
+        f"{method}: this recording would declare {fps_int} fps but a rollout is already running "
+        f"({listed}). {rate_mismatch_explanation(fps_int, rate)} Align the two rates: {remedy}."
+    )
+
+
+def rollout_rate_mismatch_error(method: str, fps: Any, rates: Mapping[str, float]) -> dict[str, Any] | None:
+    """Envelope form of :func:`rollout_rate_mismatch_reason` for tool callers.
+
+    Args:
+        method: Public method name, used to prefix the error message.
+        fps: Caller-supplied dataset frame rate.
+        rates: Capture rate in Hz per robot with a rollout in flight.
+
+    Returns:
+        A structured ``{"status": "error", ...}`` dict carrying the reason text,
+        or ``None`` when there is nothing to refuse. See
+        :func:`rollout_rate_mismatch_reason` for the contract and why a mismatch
+        is refused rather than warned.
+    """
+    reason = rollout_rate_mismatch_reason(method, fps, rates)
+    if reason is None:
+        return None
+    return {"status": "error", "content": [{"text": reason}]}
 
 
 def _resume_schema_error(diffs: list[str]) -> str:
@@ -132,6 +403,16 @@ class DatasetRecordingMixin:
         _world: "SimWorld | None"
         default_width: int
         default_height: int
+
+        def _validate_recording_start_rate(self, fps: Any, method: str) -> dict[str, Any] | None:
+            """Type-only stub for the engine-provided rate guard.
+
+            Declared once here rather than in each backend mixin: all three
+            ``start_recording`` implementations call it and all three inherit
+            this class, so one declaration keeps the contract in a single
+            place. Implemented by
+            :meth:`~strands_robots.simulation.base.SimEngine._validate_recording_start_rate`.
+            """
 
     def _recording_state(self) -> dict[str, Any] | None:
         """Mutable recording-state mapping, or ``None`` when no world exists.
@@ -173,9 +454,17 @@ class DatasetRecordingMixin:
         * existing NON-empty, non-dataset dir: raise ``ValueError`` with an
           actionable message instead of clobbering unrelated files.
 
+        ``overwrite`` is a *posture*, and every public caller checks it on
+        :func:`dataset_recording_posture_error` first, so the value arriving here
+        is a boolean. That bound matters because the branch below is the only one
+        that deletes a real LeRobotDataset without asking: a truthy non-boolean -
+        ``"false"``, the spelling an operator reaches for when opting out - used
+        to land in it.
+
         Args:
             dataset_dir: Resolved on-disk dataset root.
-            overwrite: When True, replace any existing target.
+            overwrite: When True, replace any existing target. Bounded to a
+                boolean by every public caller.
 
         Returns:
             True if an existing dataset should be resumed (append), False if a
@@ -288,7 +577,9 @@ class DatasetRecordingMixin:
             push_to_hub: Publish to a versioned HF *dataset* repo (the finished
                 artifact). Overrides the ``push_to_hub`` set at start_recording.
                 Requires an open recording session; on the idle path this
-                returns ``status="error"`` instead of a silent no-op.
+                returns ``status="error"`` instead of a silent no-op. Must be a
+                boolean: a publication posture is not read by truthiness
+                (:func:`dataset_recording_posture_error`).
             bucket: If set (e.g. ``"my-org/robot-fave"``), sync the dataset into
                 a mutable HF Storage Bucket instead of/in addition to the dataset
                 repo - the Phase 1/2 collection target (Xet-deduped, overwrite in
@@ -296,6 +587,12 @@ class DatasetRecordingMixin:
                 sim finalized (errors if there is none).
             run_id: Optional subpath inside the bucket (defaults to dataset name).
         """
+        # ``push_to_hub`` selects whether the finished dataset is published, so
+        # it is checked before it is read - by the idle path just below and by
+        # the upload after the episode is finalized. Read by truthiness a
+        # non-boolean opt-out ("false", "no", "off", "0") published the dataset.
+        if error := dataset_recording_posture_error("stop_recording", "push_to_hub", push_to_hub):
+            return error
         state = self._recording_state()
         if state is None or not state.get("recording", False):
             return self._stop_recording_idle(push_to_hub=push_to_hub, bucket=bucket, run_id=run_id)
@@ -780,7 +1077,7 @@ class DatasetRecordingMixin:
         # Frame rate first: it is carried by the dataset metadata rather than
         # the feature dict, so it is comparable even on a LeRobot layout whose
         # ``features`` mapping is missing (the early return below).
-        disk_fps = _resumed_dataset_fps(recorder)
+        disk_fps = recorder_dataset_fps(recorder)
         if disk_fps is not None and disk_fps != int(fps):
             diffs.append(
                 f"dataset fps differs: on-disk={disk_fps} vs requested={int(fps)} "

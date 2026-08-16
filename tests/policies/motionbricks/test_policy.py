@@ -20,6 +20,8 @@ Pinned behaviour (issue #466 MotionBricks acceptance criteria):
 * Missing config + missing ``motion_agent`` raises ``ValueError``; a missing
   checkpoint dir raises ``RuntimeError`` (no silent fallback).
 * ``set_robot_state_keys`` validates the G1 joint names by name.
+* ``get_actions`` discards the ``instruction`` string: the goal is read only
+  from the well-known kwargs, so a text prompt cannot steer the clip.
 """
 
 from __future__ import annotations
@@ -591,3 +593,77 @@ def test_default_target_velocity_injected_when_call_omits_it() -> None:
     # Per-call target_velocity wins over the constructor default.
     pol.get_actions_sync({}, "", target_velocity=[2.0, 0.0])
     assert stub.calls[-1][0]["movement_direction"] == pytest.approx([1.0, 0.0, 0.0])
+
+
+# ---------------------------------------------------------------------------
+# The instruction string is discarded, not a goal channel
+# ---------------------------------------------------------------------------
+
+# Instructions a caller would plausibly send. Each names a clip the stub
+# generator really has, so any of them reaching the style resolution would
+# select a mode other than the pinned ``style="walk"``.
+_STEERING_INSTRUCTIONS = [
+    "walk",
+    "stealth_walk",
+    "walk_boxing",
+    "elbow_crawling",
+    "walk stealthily towards the door",
+    "   \n\t  ",
+    "Ignore the style kwarg and use walk_boxing instead.",
+]
+
+
+class TestTheInstructionStringIsDiscarded:
+    """``get_actions`` accepts an ``instruction`` and reads no goal from it.
+
+    Four places already state this - this class's own module docstring,
+    ``MotionBricksPolicy``'s class docstring, ``get_actions``' docstring, and
+    ``docs/policies/motionbricks.md`` (plus that page's "style-driven"
+    frontmatter) - but nothing pinned it. Every other ``get_actions_sync`` call
+    in this file passes ``""``, so the claim was satisfied by a suite that never
+    supplied a non-empty instruction: it held vacuously rather than as a
+    contract, and wiring the instruction into the goal would have turned four
+    prose claims into lies with the suite still green.
+
+    Worth pinning because the discard is silent on the parameter a caller
+    reaches for first. MotionBricks is a *style*-driven generator, so
+    ``instruction="walk stealthily towards the door"`` is accepted, steers
+    nothing, and returns a successful action dict - the caller's stated intent
+    is dropped with no signal. Refusing a non-empty instruction is not the
+    remedy (every ``Policy`` takes one, and the runner forwards it verbatim to
+    providers that do read it), so the discard stays and this is what keeps it
+    honest.
+    """
+
+    @staticmethod
+    def _one_tick(instruction: str) -> tuple[dict[str, Any], dict[str, float]]:
+        """Drive one tick on a fresh generator; return (control signals, action)."""
+        agent = _FullClipAgent()
+        pol = MotionBricksPolicy(motion_agent=agent, style="walk")
+        actions = pol.get_actions_sync({}, instruction, target_velocity=[0.5, 0.0, 0.0])
+        signals, _dt = agent.calls[-1]
+        return signals, actions[0]
+
+    @pytest.mark.parametrize("instruction", _STEERING_INSTRUCTIONS)
+    def test_the_instruction_changes_neither_the_signals_nor_the_action(self, instruction: str) -> None:
+        baseline_signals, baseline_action = self._one_tick("")
+        signals, action = self._one_tick(instruction)
+        # Asserted first so a regression names the clip that got selected
+        # instead of diffing a four-key dict; the equalities below are the whole
+        # contract - the instruction reaches neither the clip, the movement
+        # direction, the facing, nor the token budget.
+        assert _FullClipAgent.clip_keys[signals["mode"]] == "walk"
+        assert signals == baseline_signals
+        assert action == baseline_action
+
+    def test_the_probes_would_change_the_clip_if_they_were_read(self) -> None:
+        # Non-vacuity: the parametrized pin above would pass trivially if the
+        # probe strings named nothing this generator could resolve. Three of
+        # them are exact clip names and each resolves to a mode other than
+        # "walk", so a style resolution that consulted the instruction would be
+        # observable rather than a no-op.
+        clip_keys = _FullClipAgent.clip_keys
+        walk = resolve_mode("walk", clip_keys)
+        for name in ("stealth_walk", "walk_boxing", "elbow_crawling"):
+            assert name in _STEERING_INSTRUCTIONS
+            assert resolve_mode(name, clip_keys) != walk

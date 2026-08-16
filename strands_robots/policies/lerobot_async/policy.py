@@ -57,8 +57,8 @@ from typing import Any
 
 import numpy as np
 
-from strands_robots.policies.base import Policy
-from strands_robots.utils import require_optional
+from strands_robots.policies.base import Policy, align_action_values, chunk_count_error
+from strands_robots.utils import name_list_error, positive_finite_number_error, require_optional, tcp_port_error
 
 logger = logging.getLogger(__name__)
 
@@ -115,7 +115,9 @@ class LerobotAsyncPolicy(Policy):
             takes precedence over ``host``/``port``. A ``grpc://`` scheme is
             stripped if present.
         host: Server host (used when ``server_address`` is not given).
-        port: Server port (used when ``server_address`` is not given).
+        port: Server port (used when ``server_address`` is not given), an
+            ``int`` in ``[1, 65535]``. A value outside the range is refused
+            rather than interpolated into the gRPC target.
         policy_type: lerobot policy type the server should load (one of
             :data:`SUPPORTED_POLICY_TYPES`). Required.
         pretrained_name_or_path: HuggingFace model id or path the server loads.
@@ -125,13 +127,27 @@ class LerobotAsyncPolicy(Policy):
             offload inference to a GPU host; override with ``device="cpu"`` for a
             CPU server.
         actions_per_chunk: Max number of actions the server returns per chunk.
+            Must be a positive ``int``; it is also the default for
+            ``actions_per_step``, so it is held to the same domain.
         actions_per_step: Number of actions the consumer executes from one chunk
             before re-querying (the :attr:`execution_horizon`). Defaults to
             ``actions_per_chunk`` so a chunked open-loop policy (ACT, diffusion)
             executes the whole chunk per network round-trip instead of paying a
-            round-trip per control step.
-        connect_timeout: Seconds to wait for the gRPC ``Ready`` handshake.
-        request_timeout: Seconds to wait for each observation/action RPC.
+            round-trip per control step. ``None`` selects that default; any
+            other value must be a positive ``int``, since it bounds a slice of
+            the returned chunk.
+        connect_timeout: Seconds to wait for the gRPC ``Ready`` handshake. Only
+            a positive finite number names a budget. gRPC turns a value that
+            does not into ``DEADLINE_EXCEEDED``, which is what
+            :meth:`_ensure_connected` catches to report "could not reach a
+            lerobot PolicyServer ... Start one first" - so an unusable timeout
+            is reported as an absent server. ``0`` is the worst of them: it
+            succeeds against a server that answers instantly and fails against
+            one that takes a second, so it is load-dependent rather than
+            reproducible.
+        request_timeout: Seconds to wait for each observation/action RPC. Same
+            domain; it also bounds ``Ready`` on :meth:`reset`, where a failure
+            is logged rather than raised.
         rename_map: Optional ``{robot_obs_key: model_feature_key}`` map forwarded
             to the server's ``RemotePolicyConfig.rename_map``. The server applies
             it as a ``RenameObservationsProcessorStep`` (renaming each matching
@@ -148,8 +164,9 @@ class LerobotAsyncPolicy(Policy):
     client pointed at the default address.
 
     Raises:
-        ValueError: If ``policy_type`` / ``pretrained_name_or_path`` are missing
-            or ``policy_type`` is not server-supported.
+        ValueError: If ``policy_type`` / ``pretrained_name_or_path`` are missing,
+            ``policy_type`` is not server-supported, or ``connect_timeout`` /
+            ``request_timeout`` is not a positive finite number.
         ConnectionError: On first use, if the server cannot be reached.
     """
 
@@ -167,8 +184,37 @@ class LerobotAsyncPolicy(Policy):
         connect_timeout: float = DEFAULT_CONNECT_TIMEOUT,
         request_timeout: float = DEFAULT_REQUEST_TIMEOUT,
         rename_map: dict[str, str] | None = None,
+        pad_short_actions: bool = False,
         **ignored_kwargs: Any,
     ) -> None:
+        # ``port`` addresses the lerobot PolicyServer this client dials, so a
+        # value that cannot name one is refused before it is interpolated into
+        # the gRPC target. ``server_address`` supersedes ``host``/``port``, so
+        # the port is validated only when it is the effective spelling.
+        if not server_address and (port_error := tcp_port_error(port, "port", type(self).__name__)) is not None:
+            raise ValueError(port_error)
+        # Refused here rather than left to the RPC, because gRPC's reaction to an
+        # unusable deadline is the same ``RpcError`` an absent server produces:
+        # ``-1``, ``nan`` and ``inf`` all return ``DEADLINE_EXCEEDED`` at once,
+        # and ``_ensure_connected`` turns that into "could not reach a lerobot
+        # PolicyServer ... Start one first" against a server that is running.
+        # ``inf`` is refused deliberately and not read as "no deadline" - gRPC
+        # treats it as already exceeded, so the value that looks like an
+        # unbounded wait is the fastest failure here. Placed before the
+        # ``policy_type`` checks so the transport knobs this client owns are
+        # settled together with ``port``, and well before ``require_optional``
+        # imports grpc, so the same mistake reports identically with and without
+        # the [lerobot-async] extra.
+        # Named apart from the ``actions_per_*`` loop below rather than reusing
+        # its ``_param`` / ``_value``: these are ``float`` and those are
+        # ``int | None``, so one pair of names would bind the narrower type here
+        # and make the later loop an assignment error.
+        for _timeout_param, _timeout_value in (
+            ("connect_timeout", connect_timeout),
+            ("request_timeout", request_timeout),
+        ):
+            if error := positive_finite_number_error(_timeout_value, _timeout_param, type(self).__name__):
+                raise ValueError(error)
         address = server_address or f"{host}:{port}"
         if "://" in address:
             address = address.split("://", 1)[1]
@@ -192,6 +238,16 @@ class LerobotAsyncPolicy(Policy):
         self.policy_type = policy_type
         self.pretrained_name_or_path = pretrained_name_or_path
         self.device = device
+        # ``actions_per_chunk`` is validated too, not just as a sibling knob:
+        # it is the default for ``actions_per_step``, so leaving it unchecked
+        # would let a chunk count the consumer cannot execute reach
+        # ``execution_horizon`` through the omitted parameter.
+        for _param, _value in (("actions_per_chunk", actions_per_chunk), ("actions_per_step", actions_per_step)):
+            if _value is None:
+                continue  # omitted: actions_per_step then defaults to the chunk length
+            error = chunk_count_error(_value, _param, "lerobot_async")
+            if error:
+                raise ValueError(error)
         self.actions_per_chunk = int(actions_per_chunk)
         self.actions_per_step = int(actions_per_step) if actions_per_step is not None else self.actions_per_chunk
         self.connect_timeout = connect_timeout
@@ -202,6 +258,11 @@ class LerobotAsyncPolicy(Policy):
                 f"key to the model's expected feature key, got {type(rename_map).__name__}."
             )
         self.rename_map: dict[str, str] = dict(rename_map) if rename_map else {}
+        # A server chunk narrower than robot_state_keys leaves the trailing
+        # actuators unmatched. False (the default) omits them so they hold
+        # position; True commands them 0.0, which is an absolute target on a
+        # <motor>.pos follower. See align_action_values.
+        self.pad_short_actions = bool(pad_short_actions)
 
         if ignored_kwargs:
             logger.warning(
@@ -237,7 +298,18 @@ class LerobotAsyncPolicy(Policy):
 
         Stored as the state-vector layout sent to the async inference server on
         each observation.
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not an ordered list of
+                distinct non-blank names, per
+                :func:`~strands_robots.utils.name_list_error`. A single name
+                passed as a bare string is the mistake this catches: ``str`` is
+                iterable per character, so it would bind one joint per letter.
         """
+        if robot_state_keys and (
+            error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys")
+        ):
+            raise ValueError(error)
         self.robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:
@@ -416,7 +488,10 @@ class LerobotAsyncPolicy(Policy):
         Each ``TimedAction.action`` is a 1D tensor over the policy's action
         dimensions; values are mapped to :attr:`robot_state_keys` by index and
         the chunk is capped at :attr:`execution_horizon` (the re-query interval
-        the consumer drives).
+        the consumer drives). A chunk narrower than ``robot_state_keys`` leaves
+        the trailing actuators without a command (they hold) unless
+        ``pad_short_actions`` is set - see
+        :func:`~strands_robots.policies.base.align_action_values`.
         """
         if not self.robot_state_keys:
             raise RuntimeError(
@@ -427,9 +502,8 @@ class LerobotAsyncPolicy(Policy):
         for timed_action in chunk[: self.execution_horizon]:
             action = timed_action.get_action() if hasattr(timed_action, "get_action") else timed_action.action
             values = np.asarray(action.detach().cpu().numpy() if hasattr(action, "detach") else action).flatten()
-            result.append(
-                {key: (float(values[i]) if i < len(values) else 0.0) for i, key in enumerate(self.robot_state_keys)}
-            )
+            aligned, keys = align_action_values(values, self.robot_state_keys, pad_short=self.pad_short_actions)
+            result.append(dict(zip(keys, aligned, strict=True)))
         if not result:
             raise RuntimeError("lerobot_async: server returned an empty action chunk.")
         return result

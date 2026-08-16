@@ -9,7 +9,15 @@ Two units are covered, both runnable without real SONIC weights:
   and explicit values always win.
 * ``WBCTorqueController`` - flips the robot's actuators to torque mode (restored
   on uninstall), declares ``owns_stepping``, and on ``apply`` writes PD torques
-  to ``data.ctrl`` and advances physics by the decimation count.
+  to ``data.ctrl`` and advances physics by the decimation count. The arm joints
+  WBC does not drive track whatever target the action dict names for them and
+  hold nominal while unnamed, so one controller can carry the upper body of a
+  ``CompositePolicy`` (legs from WBC, arms from a manipulation policy) rather
+  than overriding it. ``uninstall``
+  releases *both* things ``install_wbc_torque_control`` acquires - the
+  registration in ``world._backend_state["action_controller"]`` and the gains -
+  so the documented manual install/uninstall pair hands the world back as
+  completely as ``run_policy``'s auto-install does.
 
 The end-to-end "does it actually WALK through run_policy" validation needs real
 weights and lives in the gated integration suite.
@@ -219,6 +227,89 @@ class TestWBCTorqueController:
         assert np.all(np.isfinite(ctrls))
 
 
+class TestArmJointsFollowTheCommandedTarget:
+    """The arm joints WBC does not drive must honour a commanded target.
+
+    ``CompositePolicy``'s contract is that each joint is driven by exactly one
+    child and a dropped command is an error, never a silent resolution. The
+    canonical composition puts WBC on the legs+waist and a manipulation policy
+    on the arms - and this controller is what reaches the actuators for BOTH,
+    because it owns the control step. An arm PD pinned to nominal would discard
+    every upper-body command without a word: the robot walks correctly and the
+    arms simply never move.
+
+    The nominal hold is still the default, for the arm joints nothing commands -
+    a bare WBC rollout must be unchanged.
+    """
+
+    def _installed(self):  # type: ignore[no-untyped-def]
+        from strands_robots.policies.wbc import install_wbc_torque_control
+
+        model, data = _build_min_g1()
+        sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
+        policy = _g1_policy()
+        ctrl = install_wbc_torque_control(cast(SimEngine, sim), policy, "unitree_g1")
+        if not ctrl.arm_actuator_ids:
+            pytest.skip("scene resolves no arm actuators for WBC to hold")
+        stance = {
+            name: float(policy.default_angles[i])
+            for i, name in enumerate(WBC_G1_ALL_JOINTS[: policy.config.num_actions])
+        }
+        return ctrl, model, data, stance
+
+    def test_a_commanded_arm_joint_is_driven_toward_that_target(self) -> None:
+        ctrl, model, data, stance = self._installed()
+        arm_joint = ctrl.arm_actuator_ids[0]
+        commanded = 0.8
+        action: dict[str, Any] = dict(stance)
+        action[WBC_G1_ALL_JOINTS[len(ctrl.leg_waist_actuator_ids)]] = commanded
+
+        # One step: the torque must push the joint toward the command, not hold
+        # it at nominal (from rest at ~0 a nominal hold produces ~0 torque).
+        ctrl.apply(action, model, data, "unitree_g1")
+        assert float(data.ctrl[arm_joint]) > 1.0
+
+        # And it converges there over the following control steps.
+        for _ in range(30):
+            ctrl.apply(action, model, data, "unitree_g1")
+        reached = float(data.qpos[ctrl.arm_qpos_addrs[0]])
+        assert abs(reached - commanded) < 0.1, f"arm joint reached {reached:.4f}, commanded {commanded}"
+
+    def test_an_uncommanded_arm_joint_holds_its_nominal_pose(self) -> None:
+        # The bare-WBC path: the action dict names only leg+waist joints, so
+        # every arm joint keeps the nominal hold of the reference deploy loop.
+        ctrl, model, data, stance = self._installed()
+        for _ in range(30):
+            ctrl.apply(dict(stance), model, data, "unitree_g1")
+        held = np.array([float(data.qpos[a]) for a in ctrl.arm_qpos_addrs])
+        assert np.all(np.abs(held) < 0.15), f"uncommanded arms drifted to {held}"
+
+    def test_commanding_one_arm_joint_leaves_its_neighbours_nominal(self) -> None:
+        # Routing check: the command must land on the joint it names, so a
+        # partial upper-body action does not disturb the rest of the arm.
+        ctrl, model, data, stance = self._installed()
+        n_legs = len(ctrl.leg_waist_actuator_ids)
+        action: dict[str, Any] = dict(stance)
+        action[WBC_G1_ALL_JOINTS[n_legs]] = 0.8
+        for _ in range(30):
+            ctrl.apply(action, model, data, "unitree_g1")
+        assert abs(float(data.qpos[ctrl.arm_qpos_addrs[0]]) - 0.8) < 0.1
+        others = np.array([float(data.qpos[a]) for a in ctrl.arm_qpos_addrs[1:]])
+        assert np.all(np.abs(others) < 0.15), f"uncommanded neighbours moved to {others}"
+
+    def test_a_non_numeric_arm_command_holds_the_previous_arm_target(self) -> None:
+        # Same degradation the leg joints get: one malformed value holds that
+        # joint's prior target instead of aborting the control step.
+        ctrl, model, data, stance = self._installed()
+        n_legs = len(ctrl.leg_waist_actuator_ids)
+        name = WBC_G1_ALL_JOINTS[n_legs]
+        ctrl.apply({**stance, name: 0.4}, model, data, "unitree_g1")
+        held = float(ctrl._arm_target_q[0])
+        ctrl.apply({**stance, name: "not-a-number"}, model, data, "unitree_g1")
+        assert float(ctrl._arm_target_q[0]) == held
+        assert np.all(np.isfinite([float(data.ctrl[a]) for a in ctrl.arm_actuator_ids]))
+
+
 # ---------------------------------------------------------------------------
 # Fail-fast resolution contracts
 # ---------------------------------------------------------------------------
@@ -322,3 +413,87 @@ class TestWbcUsesPositionServo:
         model = _model_from_xml(_XML_NO_WBC_JOINTS)
         sim = _FakeSim(_FakeWorld(model, mujoco.MjData(model), ""))
         assert wbc_uses_position_servo(cast(SimEngine, sim), _g1_policy(), "unitree_g1") is False
+
+
+class TestUninstallReleasesBothHalvesOfTheInstall:
+    """The documented manual pair: ``install_wbc_torque_control`` then ``uninstall``.
+
+    ``run_policy``'s auto-install path is covered by the hook's own suite; this
+    is the public API a caller drives directly, and it has to hand the world
+    back just as completely - otherwise the registration outlives the rollout and
+    the hook reads it as a manual install that wins.
+    """
+
+    def test_uninstall_deregisters_the_controller_it_registered(self) -> None:
+        from strands_robots.policies.wbc import install_wbc_torque_control
+
+        model, data = _build_min_g1()
+        sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
+        ctrl = install_wbc_torque_control(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+        assert sim._world._backend_state["action_controller"] is ctrl
+
+        ctrl.uninstall()
+
+        assert "action_controller" not in sim._world._backend_state, (
+            "uninstall left its registration behind; the next run_policy reads it as an "
+            "already-installed controller and dispatches through a finished shim"
+        )
+
+    def test_uninstall_drops_the_registration_before_restoring_the_gains(self) -> None:
+        """Ordering: a failure restoring gains must not leave a live registration.
+
+        The gain restore is the part that can fail, so the registry entry goes
+        first - a controller still registered against actuators that are already
+        position servos again is the state this whole teardown exists to avoid.
+        """
+        from strands_robots.policies.wbc import install_wbc_torque_control
+
+        model, data = _build_min_g1()
+        sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
+        ctrl = install_wbc_torque_control(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+
+        seen: list[bool] = []
+        saved = ctrl._saved_actuator_gains
+
+        class _Boom(dict):  # type: ignore[type-arg]
+            def items(self):  # type: ignore[no-untyped-def]
+                seen.append("action_controller" in sim._world._backend_state)
+                raise RuntimeError("gain restore failed")
+
+        ctrl._saved_actuator_gains = _Boom(saved)  # type: ignore[assignment]
+        with pytest.raises(RuntimeError, match="gain restore failed"):
+            ctrl.uninstall()
+
+        assert seen == [False], "the registration was still live when the gain restore ran"
+        assert "action_controller" not in sim._world._backend_state
+
+    def test_uninstall_leaves_a_controller_installed_since_alone(self) -> None:
+        """Release only what this install acquired.
+
+        The LIBERO adapter shares the same seam, so a later install has to
+        survive an earlier controller's teardown.
+        """
+        from strands_robots.policies.wbc import install_wbc_torque_control
+
+        model, data = _build_min_g1()
+        sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
+        ctrl = install_wbc_torque_control(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+        newer = object()
+        sim._world._backend_state["action_controller"] = newer
+
+        ctrl.uninstall()
+
+        assert sim._world._backend_state["action_controller"] is newer
+
+    def test_a_never_registered_controller_deregisters_nothing(self) -> None:
+        """``from_sim`` builds without registering, so its teardown has nothing to drop."""
+        from strands_robots.policies.wbc import WBCTorqueController
+
+        model, data = _build_min_g1()
+        sim = _FakeSim(_FakeWorld(model, data, _namespace_for(model)))
+        ctrl = WBCTorqueController.from_sim(cast(SimEngine, sim), _g1_policy(), "unitree_g1")
+        assert "action_controller" not in sim._world._backend_state
+
+        ctrl.uninstall()  # must not raise
+
+        assert "action_controller" not in sim._world._backend_state

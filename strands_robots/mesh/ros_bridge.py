@@ -5,7 +5,13 @@ A :class:`RosBridgedRobot` wraps a ROS 2 mobile base (or any robot exposing a
 its state with the same ``Agent(tools=[robot])`` pattern used for simulated and
 hardware robots. All ROS 2 I/O is forwarded through the
 :func:`strands_robots.tools.use_ros.use_ros` tool, so the bridge stays thin and
-inherits ``use_ros``'s in-process ``rclpy`` backend and input validation.
+inherits ``use_ros``'s in-process ``rclpy`` backend and its topic/type
+validation. The parameters ``use_ros`` never sees are validated here: a
+:meth:`RosBridgedRobot.drive` command whose velocity, hold duration or message
+count cannot be honored is refused without publishing anything, and a
+:meth:`RosBridgedRobot.navigate_to` goal whose pose cannot be honored is refused
+without sending anything - the goal coordinates travel inside the request body,
+which ``use_ros`` forwards verbatim.
 
 Typical usage::
 
@@ -38,6 +44,12 @@ from strands import tool
 from strands.types.tools import AgentTool
 
 from strands_robots.tools.use_ros import use_ros
+from strands_robots.utils import (
+    finite_number_error,
+    partial_construction_repr,
+    positive_finite_number_error,
+    positive_whole_number_error,
+)
 
 _TWIST_TYPE = "geometry_msgs/msg/Twist"
 _NAV_ACTION_TYPE = "nav2_msgs/action/NavigateToPose"
@@ -80,6 +92,10 @@ class RosBridgedRobot:
         scan_type: Interface type of ``scan_topic``. Optional - resolved from
             the live graph when omitted.
         publish_rate: Default rate (Hz) for multi-message :meth:`drive` calls.
+            Must be > 0 and finite: :meth:`drive` multiplies it by ``duration``
+            to size the message burst and ``use_ros`` publishes at ``1 / rate``,
+            so a non-positive rate removes the pacing entirely rather than
+            slowing it. Raises ``ValueError`` at construction otherwise.
         nav_action: Optional Nav2-style action server name (e.g.
             ``/navigate_to_pose``). When set, :meth:`navigate_to` sends
             goal-level navigation instead of raw velocity, and a
@@ -109,7 +125,9 @@ class RosBridgedRobot:
         self.cmd_vel_type = cmd_vel_type
         self.odom_type = odom_type
         self.scan_type = scan_type
-        self.publish_rate = publish_rate
+        if rate_err := positive_finite_number_error(publish_rate, "publish_rate", type(self).__name__):
+            raise ValueError(rate_err)
+        self.publish_rate = float(publish_rate)
         self.nav_action = _check_topic("nav_action", nav_action) if nav_action else None
         self.nav_action_type = nav_action_type
 
@@ -141,16 +159,49 @@ class RosBridgedRobot:
         """Publish a velocity command to the robot's ``cmd_vel`` topic.
 
         Args:
-            linear: Forward linear velocity (m/s), mapped to ``linear.x``.
-            angular: Yaw angular velocity (rad/s), mapped to ``angular.z``.
+            linear: Forward linear velocity (m/s), mapped to ``linear.x``. Must
+                be a finite number; both signs are valid (negative reverses).
+            angular: Yaw angular velocity (rad/s), mapped to ``angular.z``. Must
+                be a finite number; both signs are valid (negative turns the
+                other way).
             duration: When given, hold the command for this many seconds by
-                publishing ``round(duration * publish_rate)`` messages. Takes
-                precedence over ``count``.
+                publishing ``round(duration * publish_rate)`` messages (at least
+                one). Takes precedence over ``count``, and must be > 0 and
+                finite - a zero or negative hold has no message count that
+                expresses it, and publishing a single velocity command anyway
+                would start the robot moving.
             count: Number of messages to publish when ``duration`` is omitted.
+                Must be a positive whole number; ``0`` or a negative count
+                publishes nothing, so reporting a successful drive for it hides
+                a command that never left the process.
 
         Returns:
-            The ``use_ros`` publish result dict.
+            The ``use_ros`` publish result dict, or an ``{"status": "error"}``
+            result naming the parameter when a value cannot be honored - in
+            which case nothing is published.
         """
+        # A velocity command is the one call on this bridge that physically
+        # moves the robot, so every knob it carries is checked before anything
+        # reaches the wire. ``use_ros`` validates the topic and interface type
+        # but never sees ``duration`` at all (it receives only the derived
+        # message count), so the horizon knobs have no guard downstream.
+        cmd_err = (
+            finite_number_error(linear, "linear", "drive")
+            or finite_number_error(angular, "angular", "drive")
+            or (
+                positive_finite_number_error(duration, "duration", "drive")
+                if duration is not None
+                # ``duration`` supersedes ``count``, so ``count`` is only the
+                # effective horizon when no duration was given; refusing a
+                # ``count`` this call never reads would reject a valid command.
+                else positive_whole_number_error(count, "count", "drive")
+            )
+        )
+        if cmd_err:
+            return {"status": "error", "content": [{"text": cmd_err}]}
+        # ``duration`` is positive and finite here, so this floor is a rounding
+        # rule and not a substitute for validation: a hold shorter than one
+        # publish period still means "send the command once".
         n = max(1, round(duration * self.publish_rate)) if duration is not None else count
         fields = {"linear": {"x": float(linear)}, "angular": {"z": float(angular)}}
         return use_ros(
@@ -217,21 +268,45 @@ class RosBridgedRobot:
         cancels the goal so the robot does not keep navigating unattended.
 
         Args:
-            x: Goal position x in ``frame_id`` (meters).
-            y: Goal position y in ``frame_id`` (meters).
-            yaw: Goal heading in radians, encoded as a planar quaternion.
+            x: Goal position x in ``frame_id`` (meters). Must be a finite
+                number; both signs are valid.
+            y: Goal position y in ``frame_id`` (meters). Must be a finite
+                number; both signs are valid.
+            yaw: Goal heading in radians, encoded as a planar quaternion. Must
+                be a finite number; both signs are valid (negative turns the
+                other way).
             frame_id: Frame the goal pose is expressed in (default ``map``).
             timeout: End-to-end budget in seconds for the navigation goal.
+                Forwarded to ``use_ros``, which refuses a non-positive or
+                non-finite budget.
 
         Returns:
             The ``use_ros`` action result dict (goal status, result, feedback
-            samples), or an error result when no ``nav_action`` was configured.
+            samples), or an ``{"status": "error"}`` result when no
+            ``nav_action`` was configured or when a pose component cannot be
+            honored - in which case no goal is sent.
         """
         if not self.nav_action:
             return {
                 "status": "error",
                 "content": [{"text": "navigate_to: no nav_action configured for this robot"}],
             }
+        # The goal pose is the part of this call ``use_ros`` never validates: it
+        # checks the action name and interface type, but the coordinates travel
+        # inside ``fields`` and are serialized into the request verbatim. A
+        # non-finite coordinate is a valid IEEE-754 float64 on the wire, so the
+        # goal is accepted and handed to a planner that cannot resolve it, and
+        # ``yaw`` additionally reaches ``math.sin``/``math.cos``, which raise a
+        # bare ``ValueError`` for an infinite angle - out of a method whose
+        # contract is a result dict, and out of the bound ``navigate_*`` tool.
+        # ``timeout`` does reach ``use_ros`` and is guarded there.
+        pose_err = (
+            finite_number_error(x, "x", "navigate_to")
+            or finite_number_error(y, "y", "navigate_to")
+            or finite_number_error(yaw, "yaw", "navigate_to")
+        )
+        if pose_err:
+            return {"status": "error", "content": [{"text": pose_err}]}
         half = 0.5 * float(yaw)
         fields = {
             "pose": {
@@ -257,12 +332,24 @@ class RosBridgedRobot:
         The returned tools are bound to this instance and uniquely named with
         the ``node_name`` suffix so multiple bridged robots can coexist in a
         single ``Agent(tools=[...])`` call without name collisions.
+
+        ``drive`` and ``stop`` are always both present: a velocity command with
+        no ``duration`` latches until another command arrives, so a caller that
+        can start motion must be able to end it without knowing that a
+        zero-velocity drive is the halt idiom.
         """
         suffix = self.node_name.strip("/").replace("/", "_")
 
         @tool(name=f"drive_{suffix}", description=f"Drive the {self.node_name} robot (linear/angular velocity).")
         def drive(linear: float = 0.0, angular: float = 0.0, duration: float | None = None) -> dict[str, Any]:
             return self.drive(linear=linear, angular=angular, duration=duration)
+
+        @tool(
+            name=f"stop_{suffix}",
+            description=f"Immediately stop the {self.node_name} robot (zero velocity).",
+        )
+        def stop() -> dict[str, Any]:
+            return self.stop()
 
         @tool(name=f"get_pose_{suffix}", description=f"Read the current pose/odometry of the {self.node_name} robot.")
         def get_pose() -> dict[str, Any]:
@@ -282,7 +369,7 @@ class RosBridgedRobot:
         def navigate(x: float, y: float, yaw: float = 0.0, timeout: float = 120.0) -> dict[str, Any]:
             return self.navigate_to(x=x, y=y, yaw=yaw, timeout=timeout)
 
-        agent_tools: list[AgentTool] = [drive, get_pose]
+        agent_tools: list[AgentTool] = [drive, stop, get_pose]
         if self.scan_topic:
             agent_tools.append(get_scan)
         if self.nav_action:
@@ -290,7 +377,10 @@ class RosBridgedRobot:
         return agent_tools
 
     def __repr__(self) -> str:
-        return (
-            f"RosBridgedRobot(node_name={self.node_name!r}, cmd_vel_topic={self.cmd_vel_topic!r}, "
-            f"odom_topic={self.odom_topic!r}, scan_topic={self.scan_topic!r})"
-        )
+        try:
+            return (
+                f"RosBridgedRobot(node_name={self.node_name!r}, cmd_vel_topic={self.cmd_vel_topic!r}, "
+                f"odom_topic={self.odom_topic!r}, scan_topic={self.scan_topic!r})"
+            )
+        except AttributeError:
+            return partial_construction_repr(self)

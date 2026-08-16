@@ -36,6 +36,7 @@ have and what you want to do:
 |---------|------|---------|---------------------|-----------|
 | **`use_ros`** tool | client / observer + commander | in-process `rclpy` | yes | List/echo/publish topics, call services on any ROS 2 graph - full type coverage |
 | **`use_rtps`** tool | participant / **act as a robot** | pure `cyclonedds` (pip) | **no** | Join a graph as a DDS peer and publish topics a real stack consumes; works on macOS/CI/Jetson, all distros |
+| **`use_rosbridge`** tool + **`RosbridgeRobot`** | ROS1 / remote robots over a rosbridge WebSocket | pure-pip `roslibpy` | **no** | Drive ROS1 robots (e.g. the NASA Curiosity Gazebo sim) or any remote rosbridge robot from a machine with no ROS install - see [rosbridge integration](rosbridge-integration.md) |
 | **`RosBridgedRobot`** | a ROS 2 robot as a strands `Robot` | `use_ros` | yes | `drive()`/`get_pose()` a `cmd_vel`/odom base with the same `Agent(tools=[robot])` UX as sim/hardware |
 | **`SimEngine(ros2_bridge=True)`** | the **simulation as a ROS node** | `rclpy` | yes | Publish a running MuJoCo sim's `joint_states` + camera `image_raw` so rviz/nav2/agents can subscribe |
 | **`Robot(ros2_bridge=True)`** | a **real robot as a ROS node** (full duplex) | `rclpy` | yes | Publish a physical arm's live `joint_states` + camera `image_raw` so rviz/nav2/agents subscribe to the hardware, **and** subscribe to `joint_command` to drive the arm - symmetric to the sim bridge, plus an inbound command path the sim does not need |
@@ -138,6 +139,19 @@ command-injection or `eval` surface to defend - the validation simply keeps
 malformed names from reaching the ROS 2 client library. Backend and timeout
 failures are returned as structured `{"status": "error"}` results rather than
 raised exceptions.
+
+The numeric options an action consumes are checked in the same place, ahead of
+the backend probe, so a caller mistake reports identically whether or not a ROS 2
+distro is sourced and a refusal happens before a publisher joins the graph:
+
+| Option | Consumed by | Accepted values |
+|--------|-------------|-----------------|
+| `count` | `echo`, `publish` | a positive integer - it is a `range()` bound, so `0` sends nothing and `2.7` or `"3"` cannot be honored |
+| `rate` | `publish` | a positive finite number of Hz - the inter-message period is `1 / rate`, so `0`, a negative value, `nan` and `inf` all leave the burst unthrottled instead of paced |
+| `timeout` | `echo`, `service_call`, `action_send_goal` | a positive finite number of seconds - `0` and negatives wait for nothing, `inf` never expires |
+
+An option the requested action never reads is not second-guessed:
+`use_ros(action="status", count=-1)` still reports the backend.
 
 ## Sim bridge: publish a simulation on a ROS 2 domain
 
@@ -254,7 +268,9 @@ harden it (both threaded through `Robot()`):
 - `joint_limits={motor: (min, max)}` range-checks every inbound command; if any
   commanded joint is outside its declared range the **entire** command is
   rejected (no partial application). Joints without a declared bound are
-  unconstrained. Available on both transports.
+  unconstrained. Every bound must be a finite number - a non-finite one declares
+  a range that admits nothing, so it is refused at construction. Available on
+  both transports.
 - For the pure-RTPS transport (`ros2_transport="rtps"`), a `dds_security_config`
   (or the explicit `STRANDS_ROS2_BRIDGE_I_KNOW_THIS_IS_INSECURE=1` opt-out) is
   **required** to expose the command surface - see the
@@ -292,19 +308,23 @@ print(turtle.get_pose())                 # one odom/pose sample
 turtle.stop()
 
 # Or hand the robot to an agent - its capabilities become named tools
-# (drive_turtlesim, get_pose_turtlesim, ...):
+# (drive_turtlesim, stop_turtlesim, get_pose_turtlesim, ...):
 agent = Agent(tools=turtle.tools)
 agent("drive forward for two seconds, then tell me the pose")
 ```
 
 The bridge is intentionally thin: every method forwards to `use_ros`, so it
-inherits the same in-process rclpy backend and input validation. Construct it
-freely without a ROS 2 environment present - errors surface only when a method
-is actually called and `rclpy` is unavailable.
+inherits the same in-process rclpy backend and its topic/type validation. The
+parameters `use_ros` never sees are checked by the bridge itself - `drive`
+reports an error result without publishing when a velocity is not finite, a
+`duration` is not positive and finite, or a message `count` is not a positive
+whole number, and `publish_rate` is refused at construction. Construct it freely
+without a ROS 2 environment present - errors surface only when a method is
+actually called and `rclpy` is unavailable.
 
 | Method | ROS 2 action | Notes |
 |--------|--------------|-------|
-| `drive(linear, angular, duration=, count=)` | publish `Twist` to `cmd_vel_topic` | `duration` holds the command at `publish_rate` Hz |
+| `drive(linear, angular, duration=, count=)` | publish `Twist` to `cmd_vel_topic` | `duration` holds the command at `publish_rate` Hz; finite velocities, `duration > 0`, `count >= 1` - anything else is refused without publishing |
 | `stop()` | publish zero `Twist` | |
 | `get_pose()` | echo `odom_topic` | |
 | `get_scan()` | echo `scan_topic` | error when no `scan_topic` configured |

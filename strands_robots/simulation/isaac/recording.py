@@ -51,10 +51,13 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from strands_robots.simulation.models import registered
 from strands_robots.simulation.recording import (
     DatasetRecordingMixin,
     dataset_recording_option_error,
+    dataset_recording_posture_error,
 )
+from strands_robots.utils import name_list_error
 
 if TYPE_CHECKING:
     import threading
@@ -149,23 +152,51 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         Requires the ``lerobot`` extra for the dataset schema.
 
         Args:
-            repo_id: HuggingFace dataset id (``owner/name``) or a local path.
-            task: Default task description recorded with every frame.
+            repo_id: HuggingFace dataset id (``owner/name``) or a local path. The
+                directory it records into is resolved by
+                :func:`~strands_robots.dataset_recorder.resolve_dataset_dir` -
+                the same resolver ``DatasetRecorder.create`` uses - so an
+                ``owner/name`` id lands in ``$HF_LEROBOT_HOME/{repo_id}`` while a
+                value that is itself a path is taken as the directory. That home
+                is read from LeRobot's own ``HF_LEROBOT_HOME`` constant, so
+                relocating it moves both this recording and where
+                ``LeRobotDataset`` later reads the dataset back from.
+            task: Task description for frames that do not carry their own. It
+                is the middle of a three-level chain owned by
+                :meth:`~strands_robots.dataset_recorder.DatasetRecorder.add_frame`:
+                the task passed with a frame wins, then this value, then the
+                literal ``"untitled"``. Every rollout hook passes
+                ``run_policy(instruction=...)`` as the frame task, so a non-empty
+                instruction overrides this value; supply neither and each frame is
+                annotated ``"untitled"``, which conditions a
+                language-conditioned policy on a constant instruction.
             fps: Recording frame rate (metadata; see pacing note above).
                 Must be a positive whole number; a rate no dataset can be
                 written at is rejected up front. When an existing dataset is
                 RESUMED (``overwrite=False``) it must equal that dataset's
                 on-disk rate, which a resume cannot change.
-            root: Explicit on-disk dataset directory (overrides the repo_id
-                cache-path resolution).
-            push_to_hub: Publish to the Hub at ``stop_recording``.
+            root: Explicit on-disk dataset directory, used verbatim - it replaces
+                the ``repo_id`` resolution above rather than being joined to it.
+                See :func:`~strands_robots.dataset_recorder.resolve_dataset_dir`
+                for the full precedence.
+            push_to_hub: Publish to the Hub at ``stop_recording``. Must be a
+                boolean - a publication posture is not read by truthiness
+                (:func:`~strands_robots.simulation.recording.dataset_recording_posture_error`).
             vcodec: Video codec for the per-camera MP4 streams. Defaults to
                 "h264" (H.264), universally decodable including by OpenCV's
                 VideoCapture. Use "libsvtav1" (AV1) for smaller files;
                 LeRobot read-back handles AV1 but OpenCV wheels commonly
                 cannot decode it and silently yield 0 frames.
-            overwrite: Wipe and recreate an existing dataset dir instead of
-                appending to it.
+            overwrite: When True, wipe any existing dataset at the resolved
+                directory and record from scratch. When False (default) an
+                existing dataset is RESUMED (episodes appended), a pre-existing
+                EMPTY directory (e.g. from ``tempfile.mkdtemp()``) is cleared and
+                recorded into, and a non-empty non-dataset directory is reported
+                as an error rather than clobbered - the four outcomes of
+                :meth:`~strands_robots.simulation.recording.DatasetRecordingMixin._prepare_dataset_target`.
+                Must be a boolean: a truthy non-boolean opt-out reached the
+                wipe branch and deleted the dataset it was meant to append
+                to (:func:`~strands_robots.simulation.recording.dataset_recording_posture_error`).
             cameras: Camera names to record into the dataset. When ``None``
                 (default) every registered RTX camera is recorded. Pass a
                 subset to scope the dataset to exactly those views - matching
@@ -197,26 +228,58 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         # which optional extras this install has.
         if error := dataset_recording_option_error("start_recording", fps):
             return error
+        # ``push_to_hub`` and ``overwrite`` select postures, not quantities, so
+        # each is checked on the shared boolean-flag domain before any dataset is
+        # created, resumed or wiped - and before the lerobot-extra probe, so the
+        # same caller mistake reports the same way on every install. Read by
+        # truthiness both failed toward the branch the caller was opting out of:
+        # ``overwrite="false"`` deleted the dataset it was meant to append to,
+        # and ``push_to_hub="false"`` published it (see
+        # dataset_recording_posture_error).
+        for _flag, _value in (("push_to_hub", push_to_hub), ("overwrite", overwrite)):
+            if error := dataset_recording_posture_error("start_recording", _flag, _value):
+                return error
+        # ``cameras`` names an ordered list of DISTINCT camera names, so it is
+        # refused on the shared name-list domain before any dataset is created. Neither
+        # mistake this catches could be honored as written: a single name passed
+        # as a bare string is iterable per character, so it was read as one
+        # camera per letter, and a repeated name collapsed in the feature dict, declaring
+        # fewer camera columns than the caller asked for.
+        if cameras and (text := name_list_error(cameras, "cameras", "start_recording")):
+            return {"status": "error", "content": [{"text": text}]}
+
+        # Reject a rate a rollout already in flight is not capturing at. The
+        # rollout entry points cover the record-then-rollout ordering; this is
+        # the same disagreement with the calls the other way round, refused
+        # before any dataset is created so a refusal leaves nothing on disk.
+        if error := self._validate_recording_start_rate(fps, "start_recording"):
+            return error
 
         _DatasetRecorder: Any = None
-        _has_lerobot = False
+        unavailable: str | None = None
         try:
             from strands_robots.dataset_recorder import DatasetRecorder as _DatasetRecorder
-            from strands_robots.dataset_recorder import has_lerobot_dataset as _check_lerobot
+            from strands_robots.dataset_recorder import lerobot_dataset_import_error
 
-            _has_lerobot = _check_lerobot()
-        except ImportError:
-            # lerobot extra not installed; handled by the _has_lerobot guard below.
-            pass
+            unavailable = lerobot_dataset_import_error()
+        except ImportError as exc:
+            # strands_robots.dataset_recorder itself did not import (a partial or
+            # drifted install); report that rather than blaming the lerobot extra.
+            unavailable = f"strands_robots.dataset_recorder is unavailable ({exc})."
+        if unavailable is None and _DatasetRecorder is None:
+            unavailable = "strands_robots.dataset_recorder did not provide DatasetRecorder."
 
-        if not _has_lerobot or _DatasetRecorder is None:
+        if unavailable is not None:
             return {
                 "status": "error",
                 "content": [
                     {
                         "text": (
-                            "start_recording produces a LeRobotDataset (parquet + video) and "
-                            "requires the lerobot extra: pip install 'strands-robots[lerobot]'.\n"
+                            "start_recording produces a LeRobotDataset (parquet + video), which "
+                            "needs lerobot's dataset stack:\n"
+                            "\n"
+                            f"  {unavailable}\n"
+                            "\n"
                             "For plain MP4 video, use start_cameras_recording instead."
                         )
                     }
@@ -457,7 +520,7 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         from strands_robots.simulation.models import TrajectoryStep
 
         state = self._recording_state()
-        if state is None or robot_name not in self._robots:
+        if state is None or not registered(self._robots, robot_name):
             return None
 
         robot = self._robots[robot_name]
@@ -465,6 +528,29 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
         robot.policy_instruction = instruction
         robot.policy_steps = 0
         multi_robot = len(self._robots) > 1
+
+        # Action columns this rollout is responsible for: the driven robot's own
+        # actuators. A declared column the policy never produced cannot be written
+        # as a placeholder without persisting a command nobody issued, so
+        # ``add_frame`` refuses it.
+        #
+        # Resolved on the first recorded frame and cached, rather than up front:
+        # ``robot_action_keys`` is explicitly best-effort for the runner's
+        # fail-fast probe (a backend quirk or a mid-rollout teardown may make it
+        # raise, and that must not mask the primary "robot has not moved" signal),
+        # so the hook must not call it for a rollout that is not recording. Where a
+        # recording IS attached the keys are load-bearing - without them the frame
+        # cannot be checked - so a raise there correctly fails the recording.
+        action_key_cache: dict[bool, list[str]] = {}
+
+        def _required_action_keys(prefixed: bool) -> list[str]:
+            """Action columns this frame owes the recorder, resolved once."""
+            cached = action_key_cache.get(prefixed)
+            if cached is None:
+                keys = self.robot_action_keys(robot_name)
+                cached = [f"{robot_name}__{key}" for key in keys] if prefixed else list(keys)
+                action_key_cache[prefixed] = cached
+            return cached
 
         def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             robot.policy_steps = step + 1
@@ -505,10 +591,20 @@ class IsaacRecordingMixin(DatasetRecordingMixin):
                 obs = {f"{robot_name}__{k}": v for k, v in scalars.items()}
                 obs.update(images)
                 act = {f"{robot_name}__{k}": v for k, v in action.items()}
-                rec.add_frame(observation=obs, action=act, task=instruction)
+                rec.add_frame(
+                    observation=obs,
+                    action=act,
+                    task=instruction,
+                    required_action_keys=_required_action_keys(True),
+                )
             else:
                 obs = dict(scalars)
                 obs.update(images)
-                rec.add_frame(observation=obs, action=action, task=instruction)
+                rec.add_frame(
+                    observation=obs,
+                    action=action,
+                    task=instruction,
+                    required_action_keys=_required_action_keys(False),
+                )
 
         return _hook

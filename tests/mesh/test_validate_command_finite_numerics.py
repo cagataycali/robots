@@ -8,11 +8,20 @@ Two defences in the numeric coercion helpers in
   (IEEE-754), so a payload like ``{"duration": NaN}`` would pass the
   bounds clamp, reach the robot adapter, and turn ``time.sleep(nan)``
   / ``time.monotonic() + nan`` into a never-terminating deadline.
-* ``_coerce_int`` wraps ``int(...)`` so NaN/inf and overflowing values
-  raise :class:`ValidationError` instead of bare ``ValueError`` /
-  ``OverflowError``. ``_exec_cmd`` only catches ``ValidationError``,
-  so a bare exception would bypass the structured ``command_rejected``
-  audit + wire response and surface as a generic "dispatch error".
+* ``_coerce_int`` refuses the same values, but through the explicit
+  guards above its ``int(...)`` call rather than through the wrap: a
+  non-finite float is rejected by the ``math.isfinite`` check, and an
+  int too large for the bound is rejected by the range compare. The
+  wrap is what makes ``_coerce_float`` fail closed -- ``float(10**400)``
+  really does raise ``OverflowError`` there -- and its ``_coerce_int``
+  twin is unreachable for values that clear those guards, because
+  ``int()`` on a finite int or float cannot raise. Either way the
+  rejection class is :class:`ValidationError`, which is what matters:
+  ``_exec_cmd`` only catches that, so a bare exception would bypass
+  the structured ``command_rejected`` audit + wire response and
+  surface as a generic "dispatch error". The tests below pin the
+  guard that does the work, so removing it is caught here rather than
+  silently promoting the wrap into the load-bearing check.
 
 These tests pin the rejection class + path on every numeric field
 that flows through ``validate_command`` so a future refactor that
@@ -114,3 +123,26 @@ def test_isnan_check_independent_from_bounds():
     assert not math.isfinite(float("nan")), "sanity"
     with pytest.raises(ValidationError, match="finite"):
         validate_command(_execute_cmd(duration=float("nan")))
+
+
+def test_the_int_finite_guard_is_what_refuses_a_non_finite_step_count():
+    """Pin the guard, not just the rejection class.
+
+    ``_coerce_int``'s explicit ``math.isfinite`` check is what refuses
+    NaN; the ``try``/``except`` around ``int(...)`` never sees it. If
+    that check is removed the wrap catches ``int(nan)`` instead and the
+    message changes, so asserting the message keeps the guard in place.
+    """
+    with pytest.raises(ValidationError, match="must be finite"):
+        validate_command({"action": "step", "steps": float("nan")})
+
+
+def test_an_out_of_range_int_step_count_is_refused_by_the_bound_not_by_overflow():
+    """An int has no float range to overflow, so the bound is the guard.
+
+    ``float(10**400)`` raises ``OverflowError`` and is why
+    ``_coerce_float`` needs its wrap; ``int(10**400)`` is the identity,
+    so the same value reaches the range compare here instead.
+    """
+    with pytest.raises(ValidationError, match="out of bounds"):
+        validate_command({"action": "step", "steps": 10**400})

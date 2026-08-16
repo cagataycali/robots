@@ -32,6 +32,8 @@ from strands_robots.mesh.security import (
     validate_input_frame,
     validate_mesh_identifier,
 )
+from strands_robots.mesh.session import hz_from_env
+from strands_robots.utils import partial_construction_repr, positive_finite_number_error
 
 _log_safety_event: Callable[..., None] | None
 try:  # audit is best-effort; never let an import issue break teleop apply
@@ -62,19 +64,19 @@ def _input_max_hz() -> float:
 
     Bad / missing input falls back to the default ceiling; an explicit
     non-positive value (0) disables the cap for trusted closed networks.
-    """
-    import os
+    A non-finite override falls back too: ``inf`` makes the caller's
+    ``1.0 / max_hz`` interval zero and ``nan`` makes ``max_hz > 0`` false, so
+    either one would silently switch the ceiling off -- the opposite of what an
+    operator raising a rate limit is asking for.
 
-    raw = os.getenv("STRANDS_MESH_INPUT_MAX_HZ")
-    if raw is None:
+    This resolver is evaluated per applied frame in a 50 Hz-plus loop, so an
+    unusable value is not logged here; it resolves to the default ceiling,
+    which keeps the servos protected.
+    """
+    hz, reason = hz_from_env("STRANDS_MESH_INPUT_MAX_HZ")
+    if hz is None or reason is not None or hz < 0:
         return INPUT_MAX_HZ_DEFAULT
-    try:
-        val = float(raw)
-    except (TypeError, ValueError):
-        return INPUT_MAX_HZ_DEFAULT
-    if val < 0:
-        return INPUT_MAX_HZ_DEFAULT
-    return val  # 0 => disabled
+    return hz  # 0 => disabled
 
 
 #: M-5: the teleop input path is high-rate (up to 50Hz),
@@ -124,6 +126,28 @@ class InputPublisher:
         method: str = "arm",
         hz: float = INPUT_HZ_DEFAULT,
     ) -> None:
+        """Bind a teleoperator to a mesh topic at a fixed publish rate.
+
+        Args:
+            mesh: Live mesh used as the single publish chokepoint.
+            teleoperator: Any object exposing ``get_action() -> dict``.
+            device_name: Input-stream name; becomes the last topic segment.
+            method: Input-method label ("arm", "gamepad", "keyboard", "phone").
+            hz: Publish rate. Must be a positive finite number - the loop
+                period is ``1 / hz``, so ``0`` raises inside the background
+                thread and a negative/``nan``/``inf`` rate leaves the loop
+                unthrottled, flooding every subscribed peer.
+
+        Raises:
+            ValueError: If ``hz`` is not a positive finite number. Refusing at
+                construction is what keeps the rate a contract:
+                :meth:`_publish_loop` runs on a background thread, where the
+                same mistake would surface as a dead publisher that still
+                reports ``running``.
+        """
+        error = positive_finite_number_error(hz, "hz", "InputPublisher")
+        if error:
+            raise ValueError(error)
         self.mesh = mesh
         self.teleoperator = teleoperator
         # ``device_name`` is interpolated into this publisher's key expression
@@ -142,8 +166,11 @@ class InputPublisher:
         self._start_time = 0.0
 
     def __repr__(self) -> str:
-        state = "running" if self._running else "stopped"
-        return f"InputPublisher(device={self.device_name!r}, method={self.method!r}, {state})"
+        try:
+            state = "running" if self._running else "stopped"
+            return f"InputPublisher(device={self.device_name!r}, method={self.method!r}, {state})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     @property
     def topic(self) -> str:
@@ -207,7 +234,8 @@ class InputPublisher:
         return self.stats
 
     def _publish_loop(self) -> None:
-        period = 1.0 / self.hz
+        # ``hz`` is validated in __init__, so the division is safe.
+        period = 1.0 / float(self.hz)
         while self._running and not self._stop_event.is_set():
             loop_start = time.perf_counter()
             try:
@@ -327,8 +355,11 @@ class InputReceiver:
         self._start_time = 0.0
 
     def __repr__(self) -> str:
-        state = "running" if self._running else "stopped"
-        return f"InputReceiver(source={self.source_peer_id!r}, device={self.device_name!r}, {state})"
+        try:
+            state = "running" if self._running else "stopped"
+            return f"InputReceiver(source={self.source_peer_id!r}, device={self.device_name!r}, {state})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     @property
     def topic(self) -> str:

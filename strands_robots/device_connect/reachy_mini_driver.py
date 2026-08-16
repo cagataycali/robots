@@ -24,6 +24,7 @@ from strands_robots.device_connect.reachy_transport import (
     identity_pose,
     rpy_to_pose,
 )
+from strands_robots.utils import finite_number_error, tcp_port_error
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +32,47 @@ logger = logging.getLogger(__name__)
 # path, so restrict them to a safe charset to prevent path traversal and
 # query/parameter injection into the daemon API.
 _MOVE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]{1,128}$")
+
+
+def _motion_domain_error(rpc_name: str, values: dict[str, Any]) -> dict[str, str] | None:
+    """Structured rejection when a motion argument cannot reach the robot.
+
+    Every value in *values* is a signed physical quantity -- an angle in degrees
+    or an offset in millimetres -- that the movement RPCs carry verbatim into a
+    command dict and hand to the active :class:`HardwareLink`. Both links put
+    that dict on the wire as JSON, and Python's encoder emits ``nan`` / ``inf``
+    as the bare tokens ``NaN`` / ``Infinity``, which RFC 8259 does not define.
+    So a non-finite argument is not refused by the transport: it produces a
+    frame the daemon must either reject whole -- losing the command with the
+    call already reported as ``success`` -- or parse leniently, handing a
+    non-finite target to the servos.
+
+    Shared by all three movement RPCs so their accepted domain cannot diverge:
+    :meth:`ReachyMiniDriver.look` alone carries six of these values, and before
+    this helper the same unusable argument behaved differently depending on
+    which one it landed in -- an ``inf`` angle raised ``ValueError: math domain
+    error`` out of the RPC from ``math.cos``, while an ``inf`` offset was
+    divided by 1000 and reported as a successful move.
+
+    The bound is finiteness and numeric-ness only, via the shared
+    :func:`~strands_robots.utils.finite_number_error`. Both signs and zero are
+    legitimate (a negative pitch looks down, zero re-centres), and the robot's
+    reachable workspace is the daemon's to enforce -- it depends on hardware
+    this library does not model.
+
+    Args:
+        rpc_name: The RPC that received the values, used as the message prefix.
+        values: Parameter name to caller-supplied value, in signature order.
+
+    Returns:
+        The rejection dict for the first unusable value, or ``None`` when every
+        value can be honored.
+    """
+    for param, value in values.items():
+        if (message := finite_number_error(value, param, rpc_name)) is not None:
+            logger.warning("Rejected Reachy Mini %s: %s", rpc_name, message)
+            return {"status": "error", "reason": message}
+    return None
 
 
 class ReachyMiniDriver(DeviceDriver):
@@ -48,6 +90,26 @@ class ReachyMiniDriver(DeviceDriver):
         prefix: str = "reachy_mini",
         api_port: int = 8000,
     ):
+        """Configure the driver for a Reachy Mini reachable at ``host``.
+
+        Args:
+            host: Hostname or IP of the Reachy Mini daemon.
+            prefix: Zenoh key prefix used by the Wireless variant.
+            api_port: TCP port the daemon serves its REST API and WebSocket on.
+                Must name a port: an ``int`` in ``[1, 65535]``.
+
+        Raises:
+            ValueError: If ``api_port`` cannot address a TCP port.
+        """
+        # Refused here rather than at first use, and before any base-class state
+        # is allocated. This port is interpolated verbatim into both the daemon
+        # REST URL (``reachy_transport.api``) and the Lite WebSocket target, and
+        # neither refuses it: ``api`` reports every failure as an ``{"error":
+        # ...}`` result rather than raising, so an unusable port is reported as
+        # an unreachable daemon - identically to a reachable port with the
+        # daemon down. Naming the port is the only point a caller can act on.
+        if (port_error := tcp_port_error(api_port, "api_port", type(self).__name__)) is not None:
+            raise ValueError(port_error)
         super().__init__()
         self._host = host
         self._prefix = prefix
@@ -133,11 +195,23 @@ class ReachyMiniDriver(DeviceDriver):
             yaw: Yaw angle in degrees
             x: X offset in mm
             y: Y offset in mm
-            z: Z offset in mm
+            z: Z offset in mm. Every value must be a finite number of
+                either sign; the workspace bound is the daemon's.
+
+        Returns:
+            ``{"status": "success", ...}``, or a ``{"status": "error",
+            "reason": ...}`` dict naming the first argument that cannot be
+            carried to the robot.
         """
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc"):
             return authz_error(caller, "look")
+        if (
+            rejection := _motion_domain_error(
+                "look", {"pitch": pitch, "roll": roll, "yaw": yaw, "x": x, "y": y, "z": z}
+            )
+        ) is not None:
+            return rejection
         await self._send_cmd({"head_pose": rpy_to_pose(pitch, roll, yaw, x, y, z)})
         return {"status": "success", "pitch": pitch, "roll": roll, "yaw": yaw}
 
@@ -147,11 +221,18 @@ class ReachyMiniDriver(DeviceDriver):
 
         Args:
             left: Left antenna angle in degrees
-            right: Right antenna angle in degrees
+            right: Right antenna angle in degrees. Both must be finite
+                numbers of either sign.
+
+        Returns:
+            ``{"status": "success", ...}``, or a ``{"status": "error",
+            "reason": ...}`` dict naming the argument that was refused.
         """
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc"):
             return authz_error(caller, "antennas")
+        if (rejection := _motion_domain_error("antennas", {"left": left, "right": right})) is not None:
+            return rejection
         await self._send_cmd({"antennas_joint_positions": [math.radians(left), math.radians(right)]})
         return {"status": "success", "left": left, "right": right}
 
@@ -160,11 +241,18 @@ class ReachyMiniDriver(DeviceDriver):
         """Set body yaw angle.
 
         Args:
-            yaw: Body yaw angle in degrees
+            yaw: Body yaw angle in degrees. Must be a finite number of
+                either sign.
+
+        Returns:
+            ``{"status": "success", ...}``, or a ``{"status": "error",
+            "reason": ...}`` dict naming the argument that was refused.
         """
         caller = get_rpc_source_device()
         if not is_authorized_caller(caller, scope="rpc"):
             return authz_error(caller, "body")
+        if (rejection := _motion_domain_error("body", {"yaw": yaw})) is not None:
+            return rejection
         await self._send_cmd({"body_yaw": math.radians(yaw)})
         return {"status": "success", "yaw": yaw}
 

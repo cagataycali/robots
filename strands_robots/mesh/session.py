@@ -15,7 +15,11 @@ Connection strategy (when no explicit endpoint is configured):
    first process the local router.
 2. If the port is already bound, fall back to **client** mode and connect to the
    same endpoint.
-3. Zenoh scouting (multicast) handles LAN discovery automatically.
+3. Zenoh gossip scouting propagates peers reachable through those endpoints.
+   Multicast scouting is **disabled by default** (LAN discovery attack
+   surface); operators on a controlled LAN can opt in with
+   ``STRANDS_MESH_MULTICAST=true``. Cross-host peers otherwise need explicit
+   ``ZENOH_CONNECT`` endpoints.
 
 Environment variables
 ---------------------
@@ -27,6 +31,9 @@ Environment variables
     Local auto-mesh port (default ``7447``).
 ``STRANDS_MESH``
     Set to ``false`` to disable mesh globally.
+``STRANDS_MESH_MULTICAST``
+    ``true`` to opt into LAN multicast scouting (logs a warning).
+    Default ``false``.
 """
 
 from __future__ import annotations
@@ -34,11 +41,14 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import math
 import os
 import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
+
+from strands_robots.utils import partial_construction_repr
 
 logger = logging.getLogger(__name__)
 
@@ -113,6 +123,45 @@ HAND_HZ: float = 50.0
 
 #: Map info publishing frequency (Hz).
 MAP_INFO_HZ: float = 0.2
+
+
+def hz_from_env(name: str) -> tuple[float | None, str | None]:
+    """Read a loop rate (Hz) held in an environment variable.
+
+    Every mesh loop rate is operator-tunable through an environment variable,
+    and each reader has its own documented fallback for a value it cannot use:
+    a sensor loop keeps its built-in rate, the camera loop stays off, the
+    teleop apply ceiling reverts to its default. What they share is which
+    values are usable at all.
+    Every consumer turns the rate into a period with ``1.0 / hz``, and
+    ``float()`` accepts ``"inf"``, overflows ``"1e999"`` to ``inf`` and accepts
+    ``"nan"`` -- none of which survives that division. ``inf`` yields a zero
+    period, so a loop that meant to wait between ticks never waits; ``nan``
+    yields a period that compares ``False`` against every bound, so a cap
+    built from it never trips. Both read as "no rate limit" rather than as the
+    misconfiguration they are, which is why non-finite input is reported here
+    instead of being passed on.
+
+    Args:
+        name: Environment variable to read.
+
+    Returns:
+        ``(hz, None)`` when *name* holds a finite number, ``(None, None)`` when
+        it is unset or blank, and ``(None, reason)`` when it holds a value no
+        loop can honor. *reason* names the variable and the offending value so
+        a caller can log it alongside whichever fallback it documents; callers
+        decide the fallback, this decides only what is usable.
+    """
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return None, None
+    try:
+        hz = float(raw)
+    except (TypeError, ValueError):
+        return None, f"{name}={raw!r} is not a number"
+    if not math.isfinite(hz):
+        return None, f"{name}={raw!r} is not a finite rate"
+    return hz, None
 
 
 # Backend selection helpers - when STRANDS_MESH_BACKEND is "iot" or "bridge",
@@ -204,7 +253,10 @@ class PeerInfo:
         }
 
     def __repr__(self) -> str:
-        return f"PeerInfo(peer_id={self.peer_id!r}, type={self.peer_type!r}, age={self.age:.1f}s)"
+        try:
+            return f"PeerInfo(peer_id={self.peer_id!r}, type={self.peer_type!r}, age={self.age:.1f}s)"
+        except AttributeError:
+            return partial_construction_repr(self)
 
 
 # Peer registry - shared across all Mesh instances in the same process
@@ -783,6 +835,16 @@ def release_session() -> None:
 
     Delegates to the transport factory when the active backend is
     ``iot`` / ``bridge``; otherwise falls back to the legacy Zenoh refcount.
+
+    On the Zenoh path the final release closes the session. That close is
+    fail-soft over the surface :func:`zenoh_error_types` documents - a broker
+    drop or socket teardown race is logged at WARNING and the reference is
+    still dropped, because nothing can retry a close once the only handle to
+    the session is gone. A failure outside that surface (a ``TypeError`` or
+    ``AttributeError``, i.e. a bug rather than a transport fault) propagates,
+    matching how :meth:`strands_robots.mesh.core.Mesh.stop` treats its
+    ``undeclare`` calls. The "session closed" INFO line is emitted only when
+    the close actually completed.
     """
     global _SESSION, _SESSION_REFS  # noqa: PLW0603
 
@@ -797,13 +859,25 @@ def release_session() -> None:
             return
         _SESSION_REFS -= 1
         if _SESSION_REFS <= 0 and _SESSION is not None:
+            closed = True
             try:
                 _SESSION.close()
-            except Exception:
-                pass
+            except zenoh_error_types() as exc:
+                # Narrow surface per :func:`zenoh_error_types`, whose docstring
+                # names ``close`` among the operations it covers and excludes
+                # programmer errors so they surface loudly instead of being
+                # swallowed by a best-effort teardown. The session reference is
+                # dropped below either way, so nothing can retry the close and
+                # this record is the only evidence it did not complete -
+                # WARNING (not the DEBUG a per-entity cleanup uses) because the
+                # INFO line below otherwise reports a clean close, and a record
+                # must be at least as loud as the claim it contradicts.
+                closed = False
+                logger.warning("Zenoh mesh session close failed: %s", exc)
             _SESSION = None
             _SESSION_REFS = 0
-            logger.info("Zenoh mesh session closed")
+            if closed:
+                logger.info("Zenoh mesh session closed")
 
 
 def session_alive() -> bool:
@@ -854,14 +928,24 @@ def put(key: str, data: dict[str, Any]) -> None:
 
 
 def _atexit_cleanup() -> None:
-    """Best-effort session teardown on process exit."""
+    """Best-effort session teardown on process exit.
+
+    Same close contract as :func:`release_session`, logged at DEBUG: this path
+    reports nothing on success, so there is no claim for the record to
+    contradict. A programmer error still propagates rather than being swallowed
+    at interpreter shutdown.
+    """
     global _SESSION, _SESSION_REFS  # noqa: PLW0603
     with _SESSION_LOCK:
         if _SESSION is not None:
             try:
                 _SESSION.close()
-            except Exception:
-                pass
+            except zenoh_error_types() as exc:
+                # Same narrow surface as :func:`release_session`. DEBUG here
+                # because this path makes no success claim to contradict and
+                # runs during interpreter shutdown, matching the level
+                # ``BridgeTransport.close`` uses for its per-backend close.
+                logger.debug("Zenoh mesh session close failed at exit: %s", exc)
             _SESSION = None
             _SESSION_REFS = 0
 

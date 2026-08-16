@@ -31,6 +31,7 @@ from strands_robots.mesh.session import (
     STATE_HZ,
     current_session,
     get_session,
+    hz_from_env,
     prune_peers,
     put,
     release_session,
@@ -40,6 +41,7 @@ from strands_robots.mesh.session import (
 from strands_robots.mesh.session import (
     get_peers as _session_get_peers,
 )
+from strands_robots.utils import partial_construction_repr
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,39 @@ def _parse_positive_float_env(name: str, default: str, *, minimum: float = 0.0) 
     Catches the case where an operator sets ``STRANDS_MESH_RESUME_FRESHNESS_S=abc``
     or a negative value. The module would otherwise fail to import with an opaque
     ``ValueError`` (found by running the module under bad env locally).
+
+    A non-finite value falls back too, and that test cannot be folded into the
+    range check below: ``float`` accepts ``"nan"``, ``"inf"`` and ``"1e999"``
+    (which overflows to ``inf``), and ``nan < minimum`` is ``False``, so a
+    ``nan`` passed a bare range test and was returned as the resolved knob.
+
+    Every knob resolved here is one side of a comparison on a safety path, and
+    a ``nan`` does not widen those comparisons but removes them. It makes the
+    presence stale/future test (``age > window or age < -skew``) ``False`` for
+    **every** envelope, so a year-old presence is accepted. It reaches
+    :func:`_evict_replay_cache` as ``ttl_s``, where ``cutoff = now - nan``
+    leaves every stale replay entry in the cache. And it reaches the resume
+    brute-force cooldown as ``locked_until = monotonic() + nan``, which no
+    later ``now < locked_until`` test can satisfy, so the throttle protecting
+    the E-stop override code never engages. ``inf`` fails open on the first two
+    and closed on the third: that cooldown never expires, so a resume can never
+    be granted again.
+
+    This is the rule :func:`~strands_robots.mesh.security._env_pos_float`
+    already documents and applies for the teleop input bound, and which
+    :func:`~strands_robots.mesh._zenoh_config._float_env` and
+    :func:`~strands_robots.mesh.session.hz_from_env` also apply. Those three
+    resolvers and this one answer the same question about the same kind of
+    operator input, so what counts as usable must not differ between them.
+
+    The floor is deliberately left alone: ``0`` is still accepted (``minimum``
+    defaults to ``0.0``) because what a zero means differs per knob - a zero
+    backoff is arguably "no cooldown" while a zero freshness window drops every
+    envelope - and that is a per-knob decision rather than this domain's.
+
+    The companion :func:`_parse_positive_int_env` needs no such test: ``int``
+    refuses ``"nan"``, ``"inf"`` and ``"1e999"`` outright, so every non-finite
+    spelling already reaches its ``ValueError`` fallback.
     """
     raw = os.getenv(name, default)
     try:
@@ -76,6 +111,14 @@ def _parse_positive_float_env(name: str, default: str, *, minimum: float = 0.0) 
             "Invalid %s=%r (not a float); falling back to default %r.",
             name,
             raw,
+            default,
+        )
+        return float(default)
+    if not math.isfinite(value):
+        logger.warning(
+            "Invalid %s=%r (must be finite); falling back to default %r.",
+            name,
+            value,
             default,
         )
         return float(default)
@@ -452,8 +495,11 @@ class Mesh(SensorLoopsMixin):
         self._safety_sn_lock = threading.Lock()
 
     def __repr__(self) -> str:
-        state = "alive" if self._running else "stopped"
-        return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
+        try:
+            state = "alive" if self._running else "stopped"
+            return f"Mesh(peer_id={self.peer_id!r}, type={self.peer_type!r}, {state})"
+        except AttributeError:
+            return partial_construction_repr(self)
 
     def _refuse_under_permissive_default_acl(self) -> bool:
         """Refuse-to-start gate per issue #218.
@@ -1082,21 +1128,22 @@ class Mesh(SensorLoopsMixin):
 
     # Cameras - outgoing (opt-in)
     def _resolve_camera_hz(self) -> float:
-        env = os.getenv("STRANDS_MESH_CAMERA_HZ")
-        if env is None or env.strip() == "":
+        """Resolve the camera publish rate from the environment.
+
+        Returns:
+            The ``STRANDS_MESH_CAMERA_HZ`` override when it names a rate
+            :meth:`_camera_loop` can pace itself with, and ``0.0`` -- camera
+            publishing off -- when it is unset, non-positive, or holds a value
+            no loop can honor. Frames are large, so an unusable override
+            disables the loop rather than falling back to a rate the operator
+            did not ask for.
+        """
+        hz, reason = hz_from_env("STRANDS_MESH_CAMERA_HZ")
+        if reason is not None:
+            logger.warning("%s; camera loop disabled", reason)
+            return 0.0
+        if hz is None:
             hz = CAMERA_HZ
-        else:
-            try:
-                hz = float(env)
-            except ValueError:
-                logger.warning("STRANDS_MESH_CAMERA_HZ=%r invalid; camera loop disabled", env)
-                return 0.0
-            if not math.isfinite(hz):
-                # float() accepts "inf"/"nan"/"1e999"; a non-finite rate would
-                # make _camera_loop compute period = 1.0/hz = 0.0 and busy-spin
-                # (or silently disable on nan). Treat it as invalid.
-                logger.warning("STRANDS_MESH_CAMERA_HZ=%r is not finite; camera loop disabled", env)
-                return 0.0
         return hz if hz > 0 else 0.0
 
     def _camera_loop(self, hz: float) -> None:
@@ -3219,6 +3266,13 @@ class Mesh(SensorLoopsMixin):
         path falls back to the body-level HMAC binding alone -- the
         cross-session-forgery defence is Zenoh-specific because only
         Zenoh exposes a TLS-bound publisher identity.
+
+        Also returns ``None`` if the session module import fails. That arm is
+        defence in depth rather than a reachable configuration: this module
+        imports ``strands_robots.mesh.session`` at module scope, so by the time
+        any method runs the module is already resolved and the local import
+        cannot raise. It is kept so a future refactor that drops the
+        module-scope import degrades here instead of raising on the safety path.
         """
         try:
             from strands_robots.mesh.session import _current_zenoh_session_directly
@@ -3241,10 +3295,12 @@ class Mesh(SensorLoopsMixin):
         """Return the wire ``source_zid`` a safety envelope on *key* will carry.
 
         Returns the local Zenoh session ZID only when the full native
-        publish path is ready (session open, publisher declarable, and the
-        ``zenoh.SourceInfo`` constructor present). Returns ``None`` when the
-        SourceInfo-less fallback ``put()`` path -- which strips ``source_zid``
-        from the body -- will be taken instead.
+        publish path is ready (session open, publisher declarable, ``zenoh``
+        importable, and the ``zenoh.SourceInfo`` constructor present). Returns
+        ``None`` when the SourceInfo-less fallback ``put()`` path -- which
+        strips ``source_zid`` from the body -- will be taken instead. An install
+        without the ``mesh`` extra has no ``zenoh`` to import, so every envelope
+        there is bound to, and published as, a zid-less body.
 
         This is the single decision point an issuer must consult BEFORE
         binding ``source_zid`` into an HMAC (the resume override proof) so the
@@ -3285,9 +3341,11 @@ class Mesh(SensorLoopsMixin):
           predictably; a replay across the same session is bounded by
           our own ``_safety_sn`` counter (bound into ``source_sn``).
 
-        Returns ``None`` for non-Zenoh transports or when no session
-        is currently open. The caller falls back to the legacy
-        ``put()`` path in that case.
+        Returns ``None`` for non-Zenoh transports, when no session is
+        currently open, and when ``declare_publisher`` fails. The caller falls
+        back to the legacy ``put()`` path in that case. A failing session
+        module import is handled the same way, but is defence in depth rather
+        than a reachable configuration -- see :meth:`_local_session_zid`.
         """
         try:
             from strands_robots.mesh.session import _current_zenoh_session_directly
@@ -3369,6 +3427,8 @@ class Mesh(SensorLoopsMixin):
         * no Zenoh session is currently open,
         * ``declare_publisher`` failed for any reason (logged at
           WARNING by ``_safety_publisher_for``),
+        * ``zenoh`` is not importable at all -- an install without the
+          ``mesh`` extra still publishes the envelope, stripped,
         * the ``zenoh.SourceInfo`` constructor is unavailable on the
           installed zenoh-python version.
 

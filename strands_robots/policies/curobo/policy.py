@@ -70,8 +70,8 @@ import math
 import re
 from typing import Any
 
-from strands_robots.policies.base import Policy
-from strands_robots.utils import require_optional
+from strands_robots.policies.base import Policy, chunk_count_error
+from strands_robots.utils import name_list_error, require_optional
 
 logger = logging.getLogger(__name__)
 
@@ -194,7 +194,11 @@ class CuroboPolicy(Policy):
             :meth:`get_actions`. Matches the chunked-action contract used
             by the 50Hz execution loop in :class:`~strands_robots.robot.Robot`.
             Default 16 - same as :class:`~strands_robots.policies.groot.policy.Gr00tPolicy`'s
-            inner-loop horizon.
+            inner-loop horizon. Must be a positive ``int``: it is consumed as
+            a slice bound over the cached trajectory, and it shares
+            :func:`~strands_robots.policies.base.chunk_count_error` with the
+            ``actions_per_step`` of every other provider, so the same chunk
+            count cannot be refused by one policy and accepted by another.
         device_cfg: Optional cuRobo ``DeviceCfg`` controlling the device
             (e.g. ``torch.device('cuda:0')``) and dtype. When omitted, a
             ``DeviceCfg`` is constructed for ``cuda:0`` if CUDA is
@@ -226,8 +230,8 @@ class CuroboPolicy(Policy):
     Raises:
         ImportError: If ``[curobo]`` extra is not installed and no
             pre-built ``motion_gen`` is supplied.
-        ValueError: If ``action_horizon`` < 1, or both ``robot_config``
-            and ``motion_gen`` are missing.
+        ValueError: If ``action_horizon`` is not a positive ``int``, or both
+            ``robot_config`` and ``motion_gen`` are missing.
 
     Examples:
         Direct construction::
@@ -271,8 +275,21 @@ class CuroboPolicy(Policy):
         motion_gen_kwargs: dict[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
-        if action_horizon < 1:
-            raise ValueError(f"action_horizon must be >= 1, got {action_horizon}")
+        # ``action_horizon`` is the slice width ``_next_chunk`` takes out of the
+        # cached trajectory, which is the same quantity every other provider
+        # calls ``actions_per_step`` - so it shares their domain rather than
+        # carrying one of its own. A bare ``action_horizon < 1`` admitted
+        # everything that comparison happens to answer False for: ``True``
+        # became a silent horizon of 1 while ``False`` was refused, and ``2.7``
+        # was truncated to 2 by an ``int()`` coercion on the way to the
+        # attribute - which this makes dead, since only an ``int`` now reaches
+        # it. Everything the comparison cannot answer at all escaped this
+        # constructor as whatever ``<`` or that ``int()`` raised: ``TypeError``
+        # for a numeric string, ``None`` or a list, ``OverflowError`` for
+        # ``inf``. None of those is the ``ValueError`` the ``Raises`` section
+        # promises, and none of them names the parameter.
+        if error := chunk_count_error(action_horizon, "action_horizon", "curobo"):
+            raise ValueError(error)
 
         # Reconcile the legacy aliases. Supplying both forms is an error
         # rather than a silent precedence rule - the user almost certainly
@@ -291,7 +308,7 @@ class CuroboPolicy(Policy):
 
         self.robot_config = robot_config
         self.world_config = world_config
-        self.action_horizon = int(action_horizon)
+        self.action_horizon = action_horizon
         self._motion_planner_kwargs = dict(resolved_planner_kwargs or {})
 
         # State for trajectory chunking: cache the full plan, yield
@@ -368,7 +385,18 @@ class CuroboPolicy(Policy):
         action dicts. When unset, ``get_actions`` falls back to
         ``observation.state`` length and emits ``"joint_<i>"`` keys
         (consistent with :class:`MockPolicy` / :class:`MoveIt2Policy`).
+
+        Raises:
+            ValueError: If ``robot_state_keys`` is not an ordered list of
+                distinct non-blank names, per
+                :func:`~strands_robots.utils.name_list_error`. A single name
+                passed as a bare string is the mistake this catches: ``str`` is
+                iterable per character, so it would bind one joint per letter.
         """
+        if robot_state_keys and (
+            error := name_list_error(robot_state_keys, "robot_state_keys", "set_robot_state_keys")
+        ):
+            raise ValueError(error)
         self._robot_state_keys = list(robot_state_keys)
 
     def reset(self, seed: int | None = None) -> None:

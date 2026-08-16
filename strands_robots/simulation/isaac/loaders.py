@@ -1,6 +1,6 @@
 """Robot description file loaders -> :class:`ProceduralRobot`.
 
-Follow-up to the R7 Phase 1 procedural-builder slice (PR #46): instead of
+Follow-up to the R7 Phase 1 procedural-builder slice (robots-sim#46): instead of
 hardcoding ``_build_so100`` / ``_build_panda`` / ``_build_unitree_g1`` in
 :mod:`strands_robots.simulation.isaac.procedural`, drive the same
 ``ProceduralRobot`` dataclass from existing
@@ -539,7 +539,7 @@ def _extract_mjcf_shape(body_el: ET.Element) -> tuple[str, tuple[float, ...]]:
 
 
 def _lazy_import_usd() -> tuple[Any, Any, Any]:
-    """Lazy-import pxr.Usd / Sdf / UsdPhysics. Mirrors the pattern from PR #44.
+    """Lazy-import pxr.Usd / Sdf / UsdPhysics. Mirrors the pattern from robots-sim#44.
 
     Returns (Usd, Sdf, UsdPhysics) tuple. Raises ImportError with an install
     hint when the modules are unavailable (Pixar USD ships only via the
@@ -784,6 +784,14 @@ class SceneObject:
     quat : tuple[float, float, float, float]
         Orientation quaternion ``[w, x, y, z]`` from the body's ``quat``
         attribute (identity when absent).
+    offset : tuple[float, float, float]
+        Body-frame offset of the AABB centre from the MJCF body origin
+        (``position = body_pos + offset`` at load time). Needed by pose
+        appliers (#1820): LIBERO init states carry per-episode *body*
+        poses, but the realized box prim sits at the AABB centre, so a
+        new body pose maps to prim pose ``body_pos + R(body_quat) @
+        offset``. Without this field the offset is unrecoverable from
+        ``position`` alone once the body moves.
     """
 
     name: str
@@ -791,6 +799,7 @@ class SceneObject:
     size: tuple[float, float, float]
     is_static: bool
     quat: tuple[float, float, float, float] = (1.0, 0.0, 0.0, 0.0)
+    offset: tuple[float, float, float] = (0.0, 0.0, 0.0)
 
 
 def _parse_quat(quat_str: str | None) -> tuple[float, float, float, float]:
@@ -1005,6 +1014,7 @@ def load_mjcf_scene_objects(path: str) -> list[SceneObject]:
                 size=size,  # type: ignore[arg-type]
                 is_static=not has_freejoint,
                 quat=body_quat,
+                offset=center,  # type: ignore[arg-type]
             )
         )
 

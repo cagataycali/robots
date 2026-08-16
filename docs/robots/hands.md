@@ -20,6 +20,7 @@ sim = Robot("robotiq_2f85")     # Robotiq 2F-85 gripper
 | `ability_hand` | PSYONIC Ability Hand (5-finger prosthetic, 11-DOF) | 11 | `psyonic_ability_hand` |
 | `aero_hand` | Tetheria Aero Hand Open (16-DOF dexterous) | 16 | `tetheria_aero_hand`, `aero_hand_open` |
 | `allegro_hand` | Wonik Allegro Hand (16-DOF dexterous) | 16 | `wonik_allegro` |
+| `hope_jr_hand` | HopeJR Hand (dexterous anthropomorphic hand, Feetech) _(hardware-only, no sim asset)_ | ? | `hopejr_hand`, `hope_junior_hand` |
 | `leap_hand` | LEAP Hand (16-DOF dexterous) | 41 | - |
 | `robotiq_2f85` | Robotiq 2F-85 Gripper (2-finger adaptive) | 16 | `robotiq` |
 | `robotiq_2f85_v4` | Robotiq 2F-85 v4 Gripper (updated model) | 6 | - |

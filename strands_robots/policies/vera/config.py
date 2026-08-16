@@ -16,7 +16,13 @@ from __future__ import annotations
 import dataclasses
 import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
+
+from strands_robots.utils import (
+    positive_finite_number_error,
+    positive_whole_number_error,
+    tcp_port_error,
+)
 
 Embodiment = Literal["pusht", "mimicgen", "allegro", "droid"]
 # "mimicgen" is the working, faithful embodiment end-to-end (eef-delta -> IK
@@ -67,6 +73,35 @@ def _env_int(name: str) -> int | None:
         return None
 
 
+def _viewer_port_error(value: Any, param: str, context: str) -> str | None:
+    """Error text when ``value`` cannot address the MJPEG live-viewer port.
+
+    :func:`~strands_robots.utils.tcp_port_error` owns the range and the scalar
+    policy; this wrapper decides only the floor, because ``vis_port`` documents
+    ``0`` as "disable the live viewer" rather than as a port to bind - the
+    runner omits the ``--vis-port`` flag entirely for a falsy value. A genuine
+    ``int`` zero is therefore accepted here and every other value is deferred,
+    so the two ports cannot drift apart on what counts as an addressable one.
+
+    ``bool`` is deliberately not spelled in the zero test: ``False == 0``, so a
+    bare ``value == 0`` would read ``False`` as the disable spelling. The type
+    identity is checked first, and a boolean falls through to
+    :func:`~strands_robots.utils.tcp_port_error`, which refuses it for the same
+    reason it refuses one for ``server_port``.
+
+    Args:
+        value: The caller-supplied value, after the default has been applied.
+        param: The field name it came from, used in the message.
+        context: Message prefix identifying the surface that received it.
+
+    Returns:
+        An error message, or ``None`` when the value is usable.
+    """
+    if isinstance(value, int) and not isinstance(value, bool) and value == 0:
+        return None
+    return tcp_port_error(value, param, context)
+
+
 def _env_float(name: str) -> float | None:
     v = os.environ.get(name)
     if v is None or v.strip() == "":
@@ -89,8 +124,20 @@ class VeraConfig:
         embodiment: VERA embodiment - selects the WAN/DFoT planner + Jacobian
             IDM pair and the client-side action adapter.
         host: Policy-server hostname.
-        server_port: Policy-server websocket port (per-embodiment default).
-        vis_port: MJPEG live-viewer port; ``None`` / ``0`` disables it.
+        server_port: Policy-server websocket port. ``None`` applies the
+            per-embodiment default; any other value must be an ``int`` in
+            ``[1, 65535]``, because the client dials it and the server binds it.
+        vis_port: MJPEG live-viewer port. ``None`` applies the per-embodiment
+            default; ``0`` disables the viewer (the runner omits
+            ``--vis-port``); any other value must be an ``int`` in
+            ``[1, 65535]``.
+        render_width: Per-view width, in pixels, each camera frame is resized
+            to before it is sent to the planner. ``None`` applies
+            ``VERA_RENDER_WIDTH`` else the per-embodiment default; any other
+            value must be a positive whole number of pixels - the shared media
+            domain (:func:`~strands_robots.utils.positive_whole_number_error`)
+            that the recorders' ``width``/``height`` and
+            :class:`~strands_robots.rendering.HybridCompositor` already use.
         algo_config: WAN planner ``algo_config.yaml`` path. Point at the omni
             config to swap the planner without retraining the IDM.
         dynamics_run_id: Jacobian/IDM checkpoint id (wandb run id); falls back
@@ -101,9 +148,12 @@ class VeraConfig:
             ``VERA_CKPT_ROOT`` for the server subprocess.
         sample_steps: WAN denoise steps (deploy default is 10; ``None`` uses the
             planner yaml's value).
-        n_action_steps: Deploy chunk size (actions executed per infer).
         tracker_backend: IDM point tracker backend override.
         motion_plan_scale: IDM motion-plan scale override (live-tunable).
+            ``None`` - the default, and what an unset ``VERA_MOTION_PLAN_SCALE``
+            resolves to - leaves the server's own scale alone. Any other value
+            must be a positive finite number, because it multiplies the motion
+            plan the IDM turns into actions.
         teacache: Enable the near-lossless DiT teacache speedup (default True).
         teacache_thresh: teacache rel_l1 threshold (>0.15 hits a quality cliff).
         auto_launch_server: Launch + manage the server subprocess on first use.
@@ -117,14 +167,13 @@ class VeraConfig:
     host: str = "127.0.0.1"
     server_port: int | None = None
     vis_port: int | None = None
-    render_width: int | None = None  # per-view width sent to the server (per-embodiment default)
+    render_width: int | None = None  # per-view pixel width sent to the server (per-embodiment default)
     algo_config: Path | None = None
     dynamics_run_id: str | None = None
     text_prompt: str | None = None
     ckpt_root: Path | None = None
     wan_ckpt_root: Path | None = None  # frozen Wan2.1-T2V-1.3B base (mimicgen/omni); env VERA_WAN_CKPT_ROOT
     sample_steps: int | None = None
-    n_action_steps: int | None = None
     tracker_backend: str | None = None
     motion_plan_scale: float | None = None
     teacache: bool = True
@@ -148,8 +197,54 @@ class VeraConfig:
             env_vis = _env_int("VERA_VIS_PORT")
             self.vis_port = env_vis if env_vis is not None else default_vis
 
+        # Both ports are validated here, on the effective value, because this is
+        # the one funnel every caller passes through - the ``VeraPolicy``
+        # keywords, a pre-built config handed to it, and the ``VERA_*_PORT``
+        # environment overrides above - and because a port reaches three
+        # consumers under three different coercions: the provider dials
+        # ``int(server_port or 0)``, :attr:`server_uri` interpolates the field
+        # verbatim, and the runner's argv carries ``str(server_port)``. An
+        # unusable value is therefore not merely refused late; it is applied as
+        # three different ports (``2.7`` dials ``:2``, reports
+        # ``ws://host:2.7`` and launches ``--port 2.7``, so the client cannot
+        # reach the server it just started). Refusing before any client or
+        # runner is built leaves nothing half-configured behind.
+        if (err := tcp_port_error(self.server_port, "server_port", type(self).__name__)) is not None:
+            raise ValueError(err)
+        if (err := _viewer_port_error(self.vis_port, "vis_port", type(self).__name__)) is not None:
+            raise ValueError(err)
+
+        # ``render_width`` is a pixel count, so it takes the shared media domain
+        # rather than a local rule: it is the same quantity as the recorders'
+        # ``width``/``height`` and ``HybridCompositor.default_width``, and
+        # ``positive_whole_number_error`` names pixels as one of the two families
+        # it exists for. Applied here, on the effective value, for the reason the
+        # ports above are - ``render_width`` is read only inside
+        # ``_extract_frame``, which runs per frame *after* ``_ensure_started``
+        # has launched the WAN server subprocess and completed the handshake, so
+        # an unusable width surfaced there costs a model load (up to
+        # ``server_ready_timeout``) before reporting a value that was wrong at
+        # construction.
+        #
+        # The env override is read with ``is not None``, matching ``vis_port``
+        # above rather than the ``or`` this line used to carry. The two spellings
+        # are not interchangeable here: ``VERA_RENDER_WIDTH=0`` is falsy, so the
+        # override was discarded and the per-embodiment default silently applied
+        # in its place - a width of 0 cannot be honored, and the caller who asked
+        # for it is owed the refusal below, not 128 under a success.
         if self.render_width is None:
-            self.render_width = _env_int("VERA_RENDER_WIDTH") or _DEFAULT_RENDER_WIDTH.get(self.embodiment, 128)
+            env_width = _env_int("VERA_RENDER_WIDTH")
+            self.render_width = env_width if env_width is not None else _DEFAULT_RENDER_WIDTH.get(self.embodiment, 128)
+        if (err := positive_whole_number_error(self.render_width, "render_width", type(self).__name__)) is not None:
+            raise ValueError(err)
+        # Normalized to a plain ``int`` here because the domain accepts any real
+        # scalar with an integral value - a ``128.0`` or a ``np.int64`` passes -
+        # and the consumer requires a true ``int``: ``_resize_frame`` compares it
+        # against ``frame.shape`` and hands it to ``Image.resize``, and it is
+        # sent to the server as ``view_widths``. This is the normalization the
+        # shared domain documents as the caller's obligation, and it is why the
+        # ``int()`` at each read site is no longer needed.
+        self.render_width = int(self.render_width)
 
         # Environment overrides (deploy/CI win over code defaults).
         if self.algo_config is None:
@@ -171,12 +266,41 @@ class VeraConfig:
             self.wan_ckpt_root = Path(wr) if wr else None
         if self.sample_steps is None:
             self.sample_steps = _env_int("VERA_SAMPLE_STEPS")
-        if self.n_action_steps is None:
-            self.n_action_steps = _env_int("VERA_N_ACTION_STEPS")
         if self.tracker_backend is None:
             self.tracker_backend = _env("VERA_TRACKER_BACKEND")
         if self.motion_plan_scale is None:
             self.motion_plan_scale = _env_float("VERA_MOTION_PLAN_SCALE")
+        # Checked here, on the effective value, for the reason the two ports and
+        # ``render_width`` above are: this is the one funnel every caller passes
+        # through, and the only place the ``VERA_MOTION_PLAN_SCALE`` override just
+        # applied can still be refused. ``_env_float`` returns whatever ``float()``
+        # accepts, so ``nan``, ``inf``, ``1e999`` and a negative all reach the field
+        # from the environment; the field was checked nowhere, so a ``str`` or a
+        # ``list`` reached it from a keyword too.
+        #
+        # It is the third scale in this package and takes the domain the other two
+        # already take (``translation_scale``, ``ik_smoothing``): a multiplier on a
+        # motion plan has no usable non-positive or non-finite value. ``None`` stays
+        # valid because it is the documented opt-out - it gates the ``configure``
+        # call away entirely, so "leave the server's scale alone" and "scale the
+        # plan to nothing" stay different requests.
+        #
+        # Leaving it to be refused downstream is not an option, because nothing
+        # downstream refuses it: ``_ensure_started`` sends the value with
+        # ``self._client.configure(...)`` inside a best-effort ``except Exception``
+        # that logs at INFO and marks the policy started regardless. A value
+        # ``float()`` cannot convert is therefore neither applied nor reported -
+        # the rollout proceeds at whatever scale the server already had while the
+        # config says otherwise.
+        if self.motion_plan_scale is not None:
+            if (
+                err := positive_finite_number_error(self.motion_plan_scale, "motion_plan_scale", type(self).__name__)
+            ) is not None:
+                raise ValueError(err)
+            # Normalized for the reason ``render_width`` is: the shared domain admits
+            # any real scalar, so an ``int`` 1 or a ``np.float64`` passes it, while
+            # the field is declared ``float``.
+            self.motion_plan_scale = float(self.motion_plan_scale)
         if self.python_executable is None:
             self.python_executable = _env("VERA_PYTHON")
         _sm = _env("VERA_SERVER_MODE")

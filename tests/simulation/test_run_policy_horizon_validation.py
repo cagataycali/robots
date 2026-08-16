@@ -10,8 +10,8 @@ Per the agent-tool contract every method returns a structured
 ``{"status": ..., "content": [...]}`` dict rather than raising past dispatch,
 so each guard is asserted to return ``status="error"`` with an actionable,
 ASCII-only message naming the offending parameter. The legacy ``max_steps``
-alias is asserted to behave identically to ``n_steps`` (it is normalized to
-``n_steps`` before the guards run).
+alias shares ``n_steps``'s domain but is validated *before* it is normalized
+away, so the refusal names whichever of the two the caller actually wrote.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class TestRunPolicyHorizonGuards:
     @pytest.mark.parametrize("bad", [0, -1, -50])
     def test_non_positive_n_steps_errors(self, sim, bad):
         text = _err_text(sim.run_policy("arm1", n_steps=bad))
-        assert "n_steps must be > 0" in text
+        assert "n_steps must be a positive integer" in text
         assert str(bad) in text
 
     @pytest.mark.parametrize("bad_freq", [0, -10.0])
@@ -62,11 +62,15 @@ class TestRunPolicyHorizonGuards:
         text = _err_text(sim.run_policy("arm1", n_steps=5, control_frequency=bad_freq))
         assert "control_frequency must be > 0" in text
 
-    def test_legacy_max_steps_alias_is_validated_like_n_steps(self, sim):
-        # max_steps is normalized to n_steps before the guards, so a
-        # non-positive max_steps surfaces the same n_steps error.
+    def test_legacy_max_steps_alias_is_refused_under_its_own_name(self, sim):
+        # max_steps is normalized to n_steps, but it is validated BEFORE that
+        # normalization so the refusal names the parameter the caller actually
+        # wrote. This assertion used to expect the n_steps message: the alias
+        # was normalized first, so a caller who passed max_steps was pointed at
+        # a parameter they never passed.
         text = _err_text(sim.run_policy("arm1", max_steps=0))
-        assert "n_steps must be > 0" in text
+        assert "max_steps must be a positive integer" in text
+        assert "n_steps" not in text
 
     def test_error_message_is_ascii(self, sim):
         text = _err_text(sim.run_policy("arm1", n_steps=-1))
@@ -77,7 +81,7 @@ class TestRunPolicyHorizonGuards:
         # wrong: the horizon guard short-circuits ahead of the robot lookup,
         # so the caller sees the horizon problem first.
         text = _err_text(sim.run_policy("ghost", n_steps=0))
-        assert "n_steps must be > 0" in text
+        assert "n_steps must be a positive integer" in text
 
 
 class TestStartPolicyHorizonGuards:
@@ -91,7 +95,7 @@ class TestStartPolicyHorizonGuards:
 
     def test_non_positive_n_steps_errors_synchronously(self, sim):
         text = _err_text(sim.start_policy("arm1", n_steps=-1))
-        assert "n_steps must be > 0" in text
+        assert "n_steps must be a positive integer" in text
 
     def test_non_positive_control_frequency_errors_synchronously(self, sim):
         text = _err_text(sim.start_policy("arm1", n_steps=5, control_frequency=0))
@@ -496,7 +500,7 @@ class TestStartPolicyDurationGuard:
 
     def test_horizon_error_names_start_policy(self, sim):
         text = _err_text(sim.start_policy("arm1", n_steps=0))
-        assert "start_policy: n_steps must be > 0" in text
+        assert "start_policy: n_steps must be a positive integer" in text
 
 
 class TestRunMultiPolicyHorizonGuards:
@@ -521,7 +525,7 @@ class TestRunMultiPolicyHorizonGuards:
 
     def test_non_positive_n_steps_errors(self, sim, policies):
         text = _err_text(sim.run_multi_policy(policies, n_steps=0))
-        assert "run_multi_policy: n_steps must be > 0" in text
+        assert "run_multi_policy: n_steps must be a positive integer" in text
 
     def test_non_positive_control_frequency_errors_on_duration_path(self, sim, policies):
         # Pre-fix the frequency was only checked alongside n_steps, so the

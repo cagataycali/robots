@@ -8,12 +8,22 @@ loader.
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 from pathlib import Path
 
 import pytest
 
 from strands_robots.mesh import _acl_config as ac
+
+_ENABLED_ACL = {
+    "enabled": True,
+    "default_permission": "deny",
+    "rules": [],
+    "subjects": [],
+    "policies": [],
+}
 
 
 @pytest.fixture(autouse=True)
@@ -439,11 +449,22 @@ class TestACLFileSymlinkAndTOCTOU:
     """Pin regressions for review feedback: ACL load must defeat symlink
     swap and TOCTOU on the size check.
 
-    Mirrors the audit-log discipline (O_NOFOLLOW + bounded read).
+    Mirrors the audit-log discipline (O_NOFOLLOW + bounded read). That
+    discipline is two checks, and each is pinned separately here
+    because only one of them is reachable without racing the loader:
+    ``test_acl_load_refuses_symlink`` exercises the static
+    ``is_symlink`` reject, and
+    ``test_acl_load_refuses_a_symlink_that_raced_past_the_static_check``
+    exercises the ``O_NOFOLLOW`` half that exists for the window
+    between the two syscalls.
     """
 
     def test_acl_load_refuses_symlink(self, tmp_path):
-        """A symlink at STRANDS_MESH_ACL_FILE must be rejected, not followed."""
+        """The static ``is_symlink`` check rejects a symlink, not follows it.
+
+        This pins the first of the two checks. The second is pinned by
+        ``test_acl_load_refuses_a_symlink_that_raced_past_the_static_check``.
+        """
         import os as _os
 
         from strands_robots.mesh._acl_config import _load_acl_file
@@ -466,7 +487,19 @@ class TestACLFileSymlinkAndTOCTOU:
         try:
             _load_acl_file(link)
         except ValueError as exc:
-            assert "SYMLINK" in str(exc) or "symlink" in str(exc).lower(), exc
+            # Match the uppercase word the static branch uses rather than a
+            # lowercase "symlink". pytest derives ``tmp_path`` from the test
+            # name, and this test's name contains that word, so a lowercase
+            # match is satisfied by the path in the message rather than by
+            # its reason -- including for the O_NOFOLLOW refusal, whose
+            # reason reads "Too many levels of symbolic links". That is why
+            # the two checks were previously indistinguishable here.
+            msg = str(exc)
+            assert "it is a SYMLINK" in msg, msg
+            # The static branch raises directly; the raced branch chains the
+            # OSError it caught, so the absence of a cause is the other half
+            # of telling them apart.
+            assert exc.__cause__ is None, exc.__cause__
         else:
             raise AssertionError(
                 "loader followed symlink instead of refusing -- ACL file gate must "
@@ -489,6 +522,58 @@ class TestACLFileSymlinkAndTOCTOU:
             assert "bytes" in str(exc) or "refusing" in str(exc).lower(), exc
         else:
             raise AssertionError("loader accepted oversized ACL file -- size cap not enforced")
+
+    @pytest.mark.skipif(
+        not getattr(os, "O_NOFOLLOW", 0),
+        reason="symlink semantics differ on Windows; O_NOFOLLOW is 0 there",
+    )
+    def test_acl_load_refuses_a_symlink_that_raced_past_the_static_check(self, tmp_path, monkeypatch):
+        """``O_NOFOLLOW`` refuses when the static check is raced.
+
+        ``is_symlink()`` and ``os.open()`` are two syscalls, so a
+        regular file can be swapped for a symlink between them --
+        which is the window ``O_NOFOLLOW`` exists to close, and the
+        half the static-check test above cannot reach. Racing the
+        static check is the only way to exercise it, so it is made to
+        answer False for this path while the file on disk is a symlink.
+        """
+        from strands_robots.mesh._acl_config import _load_acl_file
+
+        target = tmp_path / "real.json5"
+        target.write_text(json.dumps(_ENABLED_ACL))
+        link = tmp_path / "link.json5"
+        os.symlink(str(target), str(link))
+
+        real_is_symlink = Path.is_symlink
+        monkeypatch.setattr(
+            Path,
+            "is_symlink",
+            lambda self: False if str(self) == str(link) else real_is_symlink(self),
+        )
+
+        with pytest.raises(ValueError) as exc:
+            _load_acl_file(link)
+
+        msg = str(exc.value)
+        assert "refusing to load ACL file" in msg, msg
+        # Not the static branch: that one names the word SYMLINK, so
+        # matching it here would mean the race was not modelled.
+        assert "SYMLINK" not in msg, msg
+        cause = exc.value.__cause__
+        assert isinstance(cause, OSError), cause
+        assert cause.errno == errno.ELOOP, cause
+
+    def test_the_raced_refusal_is_about_the_symlink_not_the_contents(self, tmp_path):
+        """Control: the same file loads when it is reached directly.
+
+        Without this, a loader that refused every file would satisfy
+        the test above.
+        """
+        from strands_robots.mesh._acl_config import _load_acl_file
+
+        target = tmp_path / "real.json5"
+        target.write_text(json.dumps(_ENABLED_ACL))
+        assert _load_acl_file(target)["enabled"] is True
 
 
 class TestJSON5DepSwap:

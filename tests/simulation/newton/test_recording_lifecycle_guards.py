@@ -11,8 +11,9 @@ happy-path recording never exercises:
   rather than raising past the tool boundary.
 * The default ``root=None`` resolves the on-disk dataset dir from ``repo_id``.
 * An existing on-disk dataset resumes (appends) instead of recreating.
-* The per-frame capture hook is a safe no-op when the robot is unknown or no
-  recorder is attached, so it never raises inside the run-policy loop.
+* The per-frame capture hook is a safe no-op in every state it can be called
+  in with nothing to write, so it never raises inside the run-policy loop: an
+  unknown robot, no recorder attached, and recording already stopped.
 
 The engine is built through ``__new__`` (as in ``test_dataset_recording``) so
 the recording lifecycle runs without the optional Newton/Warp physics stack.
@@ -50,25 +51,27 @@ def _world_with_robot(name: str = "so100") -> SimWorld:
 
 
 class TestStartRecordingGuards:
-    def test_missing_lerobot_extra_returns_actionable_error(self, monkeypatch):
+    def test_missing_lerobot_extra_returns_actionable_error(self, monkeypatch, tmp_path):
         # When the lerobot extra is absent, start_recording must not dead-end in
         # dataset creation - it returns an error that names the install extra.
-        monkeypatch.setattr(dataset_recorder, "has_lerobot_dataset", lambda: False)
+        reason = "lerobot is not installed (ModuleNotFoundError: No module named 'lerobot'). Install lerobot >= 0.6.0 with: pip install 'strands-robots[lerobot]'"
+        monkeypatch.setattr(dataset_recorder, "lerobot_dataset_import_error", lambda: reason)
         engine = _make_engine(_world_with_robot())
 
-        result = engine.start_recording(repo_id="local/sim_recording")
+        result = engine.start_recording(repo_id="local/sim_recording", root=str(tmp_path / "dataset"))
 
         assert result["status"] == "error"
         text = result["content"][0]["text"]
-        assert "lerobot" in text
+        # Surfaced verbatim, so the caller sees which dependency is missing.
+        assert reason in text
         assert "strands-robots[lerobot]" in text
 
-    def test_no_world_returns_error(self):
+    def test_no_world_returns_error(self, tmp_path):
         engine = NewtonSimEngine.__new__(NewtonSimEngine)
         engine._world = None
         engine._model = None
 
-        result = engine.start_recording(repo_id="local/sim_recording")
+        result = engine.start_recording(repo_id="local/sim_recording", root=str(tmp_path / "dataset"))
 
         assert result["status"] == "error"
         assert "create_world" in result["content"][0]["text"]
@@ -120,6 +123,24 @@ class TestStartRecordingGuards:
         assert created == []  # create() must not run on the resume branch
 
 
+class _RejectingRecorder:
+    """Recorder mid-flush: any further frame write is a hard error.
+
+    ``DatasetRecordingMixin.stop_recording`` flips ``recording`` to False and
+    only then flushes the trailing episode, leaving the recorder attached
+    across ``save_episode()``. A rollout thread whose hook fires inside that
+    window holds exactly this object, so the write the flag guard prevents is
+    not hypothetical.
+    """
+
+    def __init__(self):
+        self.add_frame_calls = 0
+
+    def add_frame(self, *_args, **_kwargs):
+        self.add_frame_calls += 1
+        raise RuntimeError("add_frame after the episode was saved")
+
+
 class TestRunPolicyHookGuards:
     def test_hook_is_none_for_unknown_robot(self):
         engine = _make_engine(_world_with_robot())
@@ -139,3 +160,23 @@ class TestRunPolicyHookGuards:
         hook(0, obs, action)  # must not raise
 
         assert engine._world.robots["so100"].policy_steps == 1
+
+    def test_hook_is_noop_after_recording_stops(self):
+        # The state stop_recording leaves while it flushes the trailing episode:
+        # the flag is already False and the recorder is still attached. The flag
+        # is read first, so the hook must return before touching the recorder.
+        engine = _make_engine(_world_with_robot())
+        hook = engine._make_run_policy_hook("so100", "pick")
+        assert hook is not None
+        recorder = _RejectingRecorder()
+        engine._world._backend_state["recording"] = False
+        engine._world._backend_state["dataset_recorder"] = recorder
+
+        obs = {j: 0.0 for j in _SO100_JOINTS}
+        action = {j: 0.0 for j in _SO100_JOINTS}
+        hook(4, obs, action)  # must not raise
+
+        assert recorder.add_frame_calls == 0
+        # The counter still advances: the hook ran and returned early rather
+        # than not having been called at all.
+        assert engine._world.robots["so100"].policy_steps == 5

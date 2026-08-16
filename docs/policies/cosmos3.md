@@ -60,13 +60,25 @@ Cosmos3Policy can run Cosmos 3 two ways. The default is unchanged.
 | backend | how it runs | install | extra outputs |
 |---------|-------------|---------|---------------|
 | `service` (default) | WebSocket to the Cosmos Framework RoboLab policy server (holds the GPU out-of-process) | `strands-robots[cosmos3-service]` (msgpack + websockets, numpy-agnostic) | none (server video discarded) |
-| `diffusers` | in-process via native `diffusers` (`Cosmos3OmniPipeline`) | `strands-robots[cosmos3-diffusers]` + diffusers-from-source | world video + sound on `last_rollout` |
+| `diffusers` | in-process via native `diffusers` (`Cosmos3OmniPipeline`) | `strands-robots[cosmos3-diffusers]` (floors diffusers 0.39, the first release shipping the pipeline) | world video + sound on `last_rollout` |
 
 ```bash
 # in-process backend (heavy GPU stack: diffusers + torch)
-uv pip install "strands-robots[cosmos3-diffusers]" \
-    'diffusers @ git+https://github.com/huggingface/diffusers'
+uv pip install "strands-robots[cosmos3-diffusers]"
 ```
+
+`Cosmos3OmniPipeline` and `CosmosActionCondition` first ship in diffusers 0.39.0,
+which the extra floors. A checkpoint newer than that floor can need a newer
+diffusers still - `nvidia/Cosmos3-Edge` is built against 0.40.0.dev0, which at the
+time of writing ships only from source:
+
+```bash
+uv pip install 'diffusers @ git+https://github.com/huggingface/diffusers'
+```
+
+Loading a checkpoint the installed diffusers cannot build is refused, naming the
+tensors it could not fill - `from_pretrained` itself only warns and leaves them
+uninitialized, so without that check the pipeline would run on random weights.
 
 The `cosmos3-diffusers` extra is native `diffusers` + `torch` + `transformers`
 (no extra wrapper package). It composes with `numpy>=2` (and therefore with
@@ -194,6 +206,38 @@ trajectory tracks to **mean ≈ 11.5 mm / max ≈ 42.8 mm** — the bar pinned b
 `tests/policies/cosmos3/test_sim_ik.py` regression. (Errors grow only when the
 de-normalized deltas are scaled past the ~0.85 m Franka reach — a workspace
 concern, not an IK one.)
+
+#### De-normalization stats are per domain
+
+The de-normalize step needs that domain's own `q01`/`q99` quantiles. Two domains
+ship them bundled; the other two registered embodiments do not:
+
+| embodiment | domain | raw dim | bundled stats |
+|---|---|---|---|
+| `droid` | `droid_lerobot` | 10 | yes |
+| `bridge` | `bridge_orig_lerobot` | 10 | yes |
+| `umi` | `umi` | 10 | no |
+| `av` | `av` | 9 | no |
+
+`nvidia/Cosmos3-Edge` documents its forward-dynamics example on `umi` and its
+inverse-dynamics example on `av` — exactly the two without bundled quantiles — so
+driving the sim bridge from Edge means supplying that domain's stats yourself:
+
+```python
+out = decode_cosmos_chunk_to_targets(
+    raw_chunk, get_embodiment("umi"), bridge, q_init,
+    stats={"q01": q01, "q99": q99},   # this domain's own quantiles
+    stats_domain="umi",               # required: which domain they describe
+)
+```
+
+`stats_domain` is required whenever `stats` is passed, and must match the
+embodiment's domain. It is not bookkeeping: `umi`, `droid_lerobot` and
+`bridge_orig_lerobot` are all 10 columns, so the width check cannot tell one
+domain's quantiles from another's, and the two bundled domains disagree by up to
+**2.77x** on the physical translation they decode from the same normalized
+action. Substituting another domain's stats would rescale every commanded pose
+delta with nothing reported.
 
 > **The Cosmos "modes" are not FK/IK.** `policy` / `forward_dynamics` /
 > `inverse_dynamics` are world-model *conditioning* modes (video↔action), not a

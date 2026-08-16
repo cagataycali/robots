@@ -123,8 +123,9 @@ class Gr00tTrainer(Trainer):
 
         Runs the shared input-safety gate, then checks a LeRobotDataset v3
         ``dataset_root``, a ``base_model``, an ``output_dir``, a required
-        ``embodiment`` tag, a supported ``method``, positive ``steps``,
-        single-node only (``num_nodes == 1``), a resolvable Isaac-GR00T
+        ``embodiment`` tag, a supported ``method``, a usable run size (``steps``
+        / ``global_batch_size``), single-node only (``num_nodes == 1``), a
+        resolvable Isaac-GR00T
         checkout (GR00T_ROOT / ``groot_root`` / ``extra['groot_root']``),
         and an optional ``extra['modality_config_path']`` that exists.
         Returns the problem list; empty means launchable. Read-only.
@@ -152,10 +153,16 @@ class Gr00tTrainer(Trainer):
                 f"(expected one of {sorted(_SUPPORTED_METHODS)}); "
                 f"use tune={{...}} for fine-grained control"
             )
-        if spec.steps <= 0:
-            problems.append(f"steps must be > 0, got {spec.steps}")
+        problems.extend(self._run_size_problems(spec))
+        problems.extend(self._learning_rate_problems(spec))
+        # Captured rather than extended blind: the multi-node refusal below
+        # compares num_nodes, which is only a meaningful comparison once this
+        # gate has established it IS a count - a string or None would raise out
+        # of the comparison instead of being reported.
+        topology_problems = self._launch_topology_problems(spec)
+        problems.extend(topology_problems)
 
-        if spec.num_nodes > 1:
+        if not topology_problems and spec.num_nodes > 1:
             problems.append(
                 f"num_nodes={spec.num_nodes}: multi-node GR00T needs a per-node "
                 "rendezvous launcher; this in-process trainer runs single-node only. "

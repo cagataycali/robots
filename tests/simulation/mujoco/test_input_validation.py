@@ -47,11 +47,19 @@ def sim_with_robot():
 
 class TestStepValidation:
     def test_step_negative_errors(self, sim_with_world):
-        """step(n_steps=-5) must error and NOT decrement step_count."""
+        """step(n_steps=-5) must error and NOT decrement step_count.
+
+        The wording is the shared cross-backend one
+        (:func:`~strands_robots.utils.non_negative_whole_number_error`) rather
+        than this backend's own: Newton and Isaac state the same refusal
+        verbatim, which is what
+        ``tests/simulation/test_step_count_domain_across_backends.py`` pins. The
+        refusal itself, and the untouched ``step_count``, are unchanged.
+        """
         initial = sim_with_world._world.step_count
         res = sim_with_world.step(n_steps=-5)
         assert res["status"] == "error"
-        assert "n_steps must be >= 0" in res["content"][0]["text"]
+        assert "n_steps must be a non-negative whole number" in res["content"][0]["text"]
         assert sim_with_world._world.step_count == initial, "step_count must not change on rejected call"
 
     def test_step_zero_is_noop(self, sim_with_world):
@@ -75,13 +83,18 @@ class TestStepValidation:
         assert sim_with_world._world.step_count == 3
 
     def test_step_non_coercible_type_errors(self, sim_with_world):
-        """A non-int n_steps that cannot be coerced errors and names the type."""
+        """A non-numeric n_steps errors and names the value it was given.
+
+        Names the VALUE rather than its type name, which is the convention of
+        every helper in this family (``got {value!r}``) and the more actionable
+        half: a caller who passed the wrong variable learns which one it was.
+        """
         initial = sim_with_world._world.step_count
         res = sim_with_world.step(n_steps="not-a-number")
         assert res["status"] == "error"
         msg = res["content"][0]["text"]
-        assert "n_steps must be an integer" in msg
-        assert "str" in msg
+        assert "n_steps must be a non-negative whole number" in msg
+        assert "'not-a-number'" in msg
         assert sim_with_world._world.step_count == initial, "step_count must not change on rejected call"
 
     def test_step_exceeds_max_per_call_errors(self, sim_with_world):
@@ -118,18 +131,21 @@ class TestRaycastValidation:
         res = sim_with_robot.raycast(origin=[0, 0, 5], direction=[0, 0, -1])
         assert res["status"] == "success"
 
-    def test_multi_raycast_zero_direction_isolates_error(self, sim_with_robot):
-        """A zero-length direction in one ray must not abort the whole batch."""
+    def test_multi_raycast_zero_direction_refuses_the_batch(self, sim_with_robot):
+        """A zero-length direction refuses the batch instead of half-casting it.
+
+        Reporting the other two rays under ``status: "success"`` gave ray[1] the
+        same ``distance: None`` a genuine miss carries, so the bearing that was
+        never cast read as clear.
+        """
         res = sim_with_robot.multi_raycast(
             origin=[0, 0, 5],
             directions=[[0, 0, -1], [0, 0, 0], [1, 0, -1]],
         )
-        assert res["status"] == "success"
-        # The JSON payload should show error on ray[1] only
-        rays = res["content"][1]["json"]["rays"]
-        assert len(rays) == 3
-        assert rays[1].get("error") is not None
-        assert "zero-length" in rays[1]["error"]
+        assert res["status"] == "error"
+        invalid = res["content"][1]["json"]["invalid_directions"]
+        assert [entry["index"] for entry in invalid] == [1]
+        assert "zero-length" in invalid[0]["error"]
 
     @pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
     def test_nonfinite_direction_errors(self, sim_with_robot, bad):
@@ -170,21 +186,17 @@ class TestRaycastValidation:
         assert res["status"] == "error"
         assert "finite" in res["content"][0]["text"].lower()
 
-    def test_multi_raycast_nonfinite_direction_isolates_error(self, sim_with_robot):
-        """A nan direction in one ray must be reported per-ray, not abort the
-        batch or silently pass a poisoned vector to mj_ray."""
+    def test_multi_raycast_nonfinite_direction_refuses_the_batch(self, sim_with_robot):
+        """A nan direction refuses the batch, naming its index, and never reaches
+        mj_ray as a poisoned vector."""
         res = sim_with_robot.multi_raycast(
             origin=[0, 0, 5],
             directions=[[0, 0, -1], [float("nan"), 0.0, 0.0], [1, 0, -1]],
         )
-        assert res["status"] == "success"
-        rays = res["content"][1]["json"]["rays"]
-        assert len(rays) == 3
-        assert rays[1].get("error") is not None
-        assert "finite" in rays[1]["error"].lower()
-        # Valid rays around the bad one are unaffected.
-        assert rays[0].get("error") is None
-        assert rays[2].get("error") is None
+        assert res["status"] == "error"
+        invalid = res["content"][1]["json"]["invalid_directions"]
+        assert [entry["index"] for entry in invalid] == [1]
+        assert "finite" in invalid[0]["error"].lower()
 
 
 class TestApplyForceValidation:
@@ -232,8 +244,8 @@ class TestApplyForceValidation:
     @pytest.mark.parametrize(
         "kwargs",
         [
-            # nan/inf pass the length check and, pre-fix, are silently applied to
-            # qfrc_applied - poisoning every subsequent mj_step.
+            # nan/inf pass the length check and, pre-fix, were silently latched
+            # on the body - poisoning every subsequent mj_step.
             {"force": [float("nan"), 0.0, 0.0]},
             {"force": [float("inf"), 0.0, 0.0]},
             {"torque": [0.0, float("-inf"), 0.0]},

@@ -69,6 +69,8 @@ from typing import Any
 from strands import tool
 from strands.types.tools import ToolContext
 
+from strands_robots.tools._numeric_options import numeric_option_error
+
 logger = logging.getLogger(__name__)
 
 # Validation allowlists. ROS 2 graph names are alnum plus _ / ~ (and the {ns}
@@ -172,6 +174,16 @@ def _gate_publish(topic: str, tool_context: ToolContext | None) -> dict[str, Any
     logger.info("publish to %s approved via operator interrupt", topic)
     return None
 
+# Which numeric options each action actually consumes. An action that reads none
+# of them (``status``, the ``list_*`` queries, ``info``) must not be refused for
+# a value it never looks at, so the guard below is driven by this table rather
+# than validating the whole signature unconditionally.
+_ACTION_NUMERIC_OPTIONS: dict[str, tuple[str, ...]] = {
+    "echo": ("timeout", "count"),
+    "publish": ("count", "rate"),
+    "service_call": ("timeout",),
+    "action_send_goal": ("timeout",),
+}
 
 _INSTALL_HINT = (
     "rclpy is not importable - source a ROS 2 distro before launching the agent "
@@ -527,8 +539,13 @@ def use_ros(
             For ``action_send_goal`` this is the end-to-end budget (discovery +
             acceptance + execution); size it to the goal (e.g. 120 for a Nav2
             navigation), and note the goal is cancelled when it expires.
-        count: Number of messages to echo or publish.
-        rate: Publish rate in Hz.
+            A positive finite number of seconds.
+        count: Number of messages to echo or publish. A positive integer;
+            it is consumed as a ``range()`` bound, so ``0`` publishes nothing
+            and a float or a numeric string cannot be honored.
+        rate: Publish rate in Hz. A positive finite number - the inter-message
+            period is ``1 / rate``, so ``0``, a negative value, ``nan`` and
+            ``inf`` all leave the burst unthrottled rather than paced.
 
     Returns:
         A Strands tool result dict ``{"status": ..., "content": [{"text": ...}]}``.
@@ -544,6 +561,14 @@ def use_ros(
         return _err(f"invalid action name: {action_name!r}")
     if type is not None and not _TYPE_RE.match(type):
         return _err(f"invalid interface type: {type!r} (expected pkg/msg/Name or pkg/srv/Name)")
+
+    # Numeric options are checked here, alongside the names and ahead of the
+    # backend probe, so the same caller mistake is reported identically whether
+    # or not rclpy is installed - and so a refusal happens before a publisher
+    # joins the graph.
+    numeric_error = numeric_option_error(action, _ACTION_NUMERIC_OPTIONS, timeout=timeout, count=count, rate=rate)
+    if numeric_error:
+        return _err(numeric_error)
 
     if action == "status":
         if _backend.available():

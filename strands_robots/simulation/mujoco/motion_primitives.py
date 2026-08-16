@@ -49,75 +49,46 @@ from __future__ import annotations
 
 import logging
 import math
-import numbers
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
 from strands_robots.registry.robots import get_robot
-from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG
+from strands_robots.simulation.models import registered, registry_entry
+
+# The backend-agnostic half (parameter domains, registry gripper metadata,
+# shared envelopes and name-hint constants) lives in
+# :mod:`strands_robots.simulation.motion_primitives_base` (GH #2123) so the
+# Isaac adapter answers identically. The redundant aliases re-export the
+# moved names at their historical import path.
+from strands_robots.simulation.motion_primitives_base import (
+    _GRIPPER_HINTS as _GRIPPER_HINTS,
+)
+from strands_robots.simulation.motion_primitives_base import (
+    _IK_RESTART_SEEDS as _IK_RESTART_SEEDS,
+)
+from strands_robots.simulation.motion_primitives_base import (
+    _WRIST_HINTS as _WRIST_HINTS,
+)
+from strands_robots.simulation.motion_primitives_base import (
+    MotionPrimitivesCore,
+    _err,
+    _quat_angle_error,
+)
+from strands_robots.simulation.mujoco.backend import _NO_WORLD_MSG, mj_name_to_id
 
 logger = logging.getLogger(__name__)
-
-# Name hints (lowercased substring match on the namespace-stripped actuator /
-# joint name) used to resolve the gripper DOF when the robot registry carries
-# no gripper metadata for the robot's ``data_config``. Matches the existing
-# runtime precedent (vera provider / cosmos3 policy use gripper|finger;
-# SO-100's gripper joint is the "Jaw"). Registry metadata
-# (``robots.json`` -> ``<robot>.gripper``, GH #1658) is authoritative when
-# present; the heuristic is the zero-config fallback for user URDFs / injected
-# MJCF, and an unresolvable gripper returns a structured error listing the
-# actuators so the agent can fall back to send_action.
-_GRIPPER_HINTS = ("gripper", "finger", "jaw")
-
-# Valid values for the registry gripper metadata ``closed`` / ``open`` fields:
-# which ctrlrange END the state maps to. The registry integrity tests
-# shape-check the shipped robots.json against the same two values.
-_CTRLRANGE_ENDS = ("low", "high")
-
-# Wrist-yaw joint hints, most-specific first. Fallback: the last non-gripper
-# hinge joint in the robot's chain (the distal roll joint on most serial
-# arms). "Non-gripper" is decided by the shared registry-metadata-first
-# classification (_resolve_gripper_actuators), not by _GRIPPER_HINTS alone.
-_WRIST_HINTS = ("wrist_roll", "wrist_yaw", "wrist_rotate", "wrist")
 
 # Physics substeps per control tick. Each move_to/rotate_wrist "step" (and each
 # set_gripper "step") re-asserts ctrl then advances this many mj_step calls, so
 # the default budgets stay bounded: move_to(max_steps=200) is at most
 # 200 * 5 = 1000 physics steps (2 s of sim time at the 0.002 s default).
+# Deliberately NOT in motion_primitives_base: it is a MuJoCo physics-substep
+# detail, not part of the backend-agnostic primitive contract.
 _SUBSTEPS_PER_TICK = 5
 
-# Hard ceiling on max_steps / steps to prevent unbounded primitive runtime.
-_MAX_PRIMITIVE_STEPS = 10_000
 
-# Workspace sanity radius: a move_to target further than this from the robot's
-# spawn position is rejected up front (meters). Generous on purpose - it guards
-# against unit mistakes (mm vs m), not reachability; true reachability is
-# checked by the IK residual.
-_WORKSPACE_SANITY_RADIUS_M = 5.0
-
-# Deterministic IK restart seeds tried when the direct solve from the live
-# configuration stalls in a local minimum (see move_to). Bounded so the worst
-# case is still a sub-second solve budget.
-_IK_RESTART_SEEDS = 8
-
-
-def _is_finite_real(value: Any) -> bool:
-    """True when ``value`` is a real, finite scalar (bool rejected)."""
-    if isinstance(value, bool) or not isinstance(value, numbers.Real):
-        return False
-    return math.isfinite(float(value))
-
-
-def _err(text: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Structured error tool-result, optionally with a json details block."""
-    content: list[dict[str, Any]] = [{"text": text}]
-    if payload is not None:
-        content.append({"json": payload})
-    return {"status": "error", "content": content}
-
-
-class MotionPrimitivesMixin:
+class MotionPrimitivesMixin(MotionPrimitivesCore):
     """Analytic motion primitives mixed into ``Simulation``.
 
     **Coupling** (see the :mod:`simulation` top-level docstring): reaches into
@@ -136,7 +107,7 @@ class MotionPrimitivesMixin:
         def _require_no_running_policy(self, action_name: str, robot_name: str | None = None) -> dict[str, Any] | None:
             """Provided by ``Simulation``; declared here for type-checkers."""
 
-        def _unknown_robot_msg(self, requested: str) -> str:
+        def _unknown_robot_msg(self, requested: object) -> str:
             """Provided by ``Simulation``; declared here for type-checkers."""
 
         def _resolve_single_robot(self, robot_name: str | None) -> str:
@@ -160,7 +131,7 @@ class MotionPrimitivesMixin:
                 robot_name = self._resolve_single_robot(None)
             except ValueError as e:
                 return None, _err(str(e))
-        if robot_name not in self._world.robots:
+        if not registered(self._world.robots, robot_name):
             return None, _err(self._unknown_robot_msg(robot_name))
         guard = self._require_no_running_policy(action, robot_name=robot_name)
         if guard is not None:
@@ -178,7 +149,7 @@ class MotionPrimitivesMixin:
         world = self._world
         if world is None or world._model is not model or world._data is None:
             return _err(f"{action}: world was destroyed or the model was recompiled mid-run; aborting.")
-        robot = world.robots.get(robot_name)
+        robot = registry_entry(world.robots, robot_name)
         if robot is None:
             return _err(f"{action}: robot '{robot_name}' was removed mid-run; aborting.")
         if robot.policy_running:
@@ -215,6 +186,12 @@ class MotionPrimitivesMixin:
         actuator are included (the DOFs a position set-point can drive).
         Tendon-driven actuators (e.g. a Franka split gripper) have no matching
         joint and are excluded - ``set_gripper`` resolves those by name instead.
+
+        That exclusion is load-bearing twice over: it is also what scopes
+        :meth:`_gripper_setpoint_range`'s driven-joint substitution to the
+        transmissions where ``ctrl`` is the joint target, so a tendon gripper
+        with an unusable ctrlrange keeps refusing rather than being commanded
+        in the wrong units.
         """
         mj = self._mj
         joint_trn = {int(mj.mjtTrn.mjTRN_JOINT), int(mj.mjtTrn.mjTRN_JOINTINPARENT)}
@@ -229,50 +206,100 @@ class MotionPrimitivesMixin:
                 out[jnt_id] = act_id
         return out
 
+    def _gripper_setpoint_range(
+        self, model: Any, act_id: int, jnt_id: int | None
+    ) -> tuple[tuple[float, float] | None, str]:
+        """Open/close set-point bounds for a gripper actuator, and their source.
+
+        Returns ``((lo, hi), source)`` - *source* naming where the bounds came
+        from, for the success payload - or ``(None, reason)`` when every source
+        is exhausted, *reason* then naming each one that was tried so the
+        refusal says what it looked at.
+
+        The actuator ``ctrlrange`` is authoritative whenever it is usable. When
+        it is not, MuJoCo's encoding is the thing to read carefully: a position
+        servo whose MJCF declares neither ``ctrlrange`` nor ``inheritrange="1"``
+        compiles to ``ctrlrange == (0, 0)`` with ``actuator_ctrllimited == 0``,
+        and that is the UNLIMITED actuator - a different claim from "this
+        actuator accepts nothing". For a JOINT / JOINTINPARENT transmission
+        ``ctrl`` IS the joint target, so the driven joint's own limits are the
+        open/close set-points, and they are precisely what ``inheritrange="1"``
+        would have compiled the ctrlrange to. Both sibling primitives already
+        make that substitution (``rotate_wrist`` and ``move_to`` read
+        ``jnt_range`` under ``jnt_limited``); ``set_gripper`` read only the
+        ctrlrange and so refused on so101, whose shipped MJCF authors neither
+        attribute while so100's sets ``inheritrange="1"`` on every actuator -
+        the only reason so100 was unaffected (GH #1942).
+
+        Three shapes keep refusing, and none of them is an omission to repair:
+
+        * ``actuator_ctrllimited == 1`` alongside a degenerate range is a claim
+          about the actuator, so it is respected rather than second-guessed.
+          The MJCF compiler cannot produce that combination - it rejects an
+          explicit ``ctrllimited="true"`` whose range is not strictly increasing
+          with *invalid control range for actuator*, and it compiles a bare
+          degenerate range (``"0 0"``, ``"0.5 0.5"``) to ``ctrllimited == 0`` -
+          so this guard bites only on a model mutated after compilation, which
+          this package does do: :mod:`strands_robots.policies.wbc.sim_control`
+          rewrites ``ctrlrange`` to hand control to a whole-body controller and
+          restores it afterwards.
+        * A driven joint that is itself unlimited has no limits to lend.
+        * A tendon actuator's ctrlrange is a normalised command space, not joint
+          units - the shipped Franka gripper is ``(0, 255)`` - so a joint range
+          would command the wrong quantity. *jnt_id* is ``None`` for one by
+          construction: only JOINT / JOINTINPARENT transmissions appear in
+          :meth:`_joint_actuator_map`.
+
+        A degenerate range *stored* under ``ctrllimited == 0`` is inert rather
+        than restrictive - MuJoCo clamps ``ctrl`` only when
+        ``ctrllimited == 1`` - so such an actuator genuinely accepts any
+        command, and substituting the joint range restricts nothing that was
+        previously free and widens nothing that was previously enforced.
+        """
+        lo = float(model.actuator_ctrlrange[act_id][0])
+        hi = float(model.actuator_ctrlrange[act_id][1])
+        if hi > lo:
+            return (lo, hi), "actuator ctrlrange"
+        if bool(model.actuator_ctrllimited[act_id]):
+            return None, (
+                f"its ctrlrange ({lo}, {hi}) is degenerate and ctrllimited=1 declares that "
+                "as a real limit rather than an unset one"
+            )
+        if jnt_id is None:
+            return None, (
+                f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and it drives no joint "
+                "whose limits could substitute - a tendon actuator's ctrlrange is a normalised "
+                "command space, not joint units"
+            )
+        if not bool(model.jnt_limited[jnt_id]):
+            return None, (
+                f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and the joint it drives is itself unlimited"
+            )
+        jnt_lo = float(model.jnt_range[jnt_id][0])
+        jnt_hi = float(model.jnt_range[jnt_id][1])
+        if jnt_hi > jnt_lo:
+            return (jnt_lo, jnt_hi), "driven joint range"
+        return None, (
+            f"its ctrlrange ({lo}, {hi}) is unset (ctrllimited=0) and the joint it drives has "
+            f"a degenerate range ({jnt_lo}, {jnt_hi})"
+        )
+
     def _short_name(self, name: str | None, namespace: str) -> str:
         """Strip the robot namespace prefix for hint matching."""
         if name and namespace and name.startswith(namespace):
             return name[len(namespace) :]
         return name or ""
 
-    def _registry_gripper_metadata(self, robot: Any) -> tuple[dict[str, Any] | None, str | None]:
-        """Registry ``gripper`` block for *robot*'s ``data_config``, shape-checked.
+    @staticmethod
+    def _get_registry_robot(data_config: str) -> dict[str, Any] | None:
+        """Registry lookup seam (see ``MotionPrimitivesCore._get_registry_robot``).
 
-        Returns ``(metadata, None)`` when the robot's ``data_config`` resolves
-        to a registry entry with a well-formed ``gripper`` block,
-        ``(None, None)`` when there is no metadata (heuristic fallback
-        applies), and ``(None, reason)`` when a block exists but is malformed
-        (possible via the user-local registry overlay; the shipped
-        ``robots.json`` is shape-checked by tests). A malformed block is a
-        loud error, never a silent heuristic fallback - half-applying it
-        could reintroduce the silent-DOF bug this metadata exists to fix.
+        Resolves through this module's ``get_robot`` global so the historical
+        patch point
+        (``strands_robots.simulation.mujoco.motion_primitives.get_robot``)
+        keeps working for tests and user code.
         """
-        data_config = getattr(robot, "data_config", None)
-        if not data_config:
-            return None, None
-        info = get_robot(data_config)
-        if not info or "gripper" not in info:
-            return None, None
-        meta = info["gripper"]
-        actuators = meta.get("actuators") if isinstance(meta, dict) else None
-        closed_end = meta.get("closed", "low") if isinstance(meta, dict) else None
-        open_end = meta.get("open", "high") if isinstance(meta, dict) else None
-        if (
-            isinstance(actuators, list)
-            and actuators
-            and all(isinstance(a, str) and a for a in actuators)
-            and closed_end in _CTRLRANGE_ENDS
-            and open_end in _CTRLRANGE_ENDS
-            and closed_end != open_end
-        ):
-            return meta, None
-        return None, (
-            f"registry gripper metadata for data_config '{data_config}' is malformed: {meta!r}. "
-            "Expected {'actuators': [non-empty names], 'closed': 'low'|'high', "
-            "'open': 'low'|'high'} with 'closed' != 'open'. Fix the registry entry "
-            "(user overlay: user_robots.json), or drive the gripper directly with "
-            "action='send_action'."
-        )
+        return get_robot(data_config)
 
     def _resolve_gripper_actuators(
         self, model: Any, robot: Any
@@ -351,18 +378,81 @@ class MotionPrimitivesMixin:
     ) -> tuple[np.ndarray, np.ndarray]:
         """World position + wxyz quaternion of a site/body frame from live data.
 
+        For ``frame_type="body"`` this reads the body's FRAME ORIGIN
+        (``data.xpos`` / ``data.xquat``), not its inertial/CoM frame
+        (``data.xipos``) - the two are distinct whenever the body's mass is not
+        centred on its origin. mink optimizes the frame origin, and
+        :meth:`move_to` decides ``reached`` by comparing this readback against
+        the same target the solver was given, so reading the inertial frame here
+        would leave the solver and the convergence check measuring points that
+        are metres-scale apart on some models and never converge.
+
         Callers must have run a kinematics pass so ``xpos``/``xmat`` are
         current, and must hold ``self._lock``.
         """
         mj = self._mj
         if frame_type == "site":
-            sid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, frame_name)
+            sid = mj_name_to_id(model, mj.mjtObj.mjOBJ_SITE, frame_name)
             pos = np.array(data.site_xpos[sid], dtype=np.float64)
             quat = np.zeros(4, dtype=np.float64)
             mj.mju_mat2Quat(quat, np.asarray(data.site_xmat[sid], dtype=np.float64).reshape(9))
             return pos, quat
-        bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, frame_name)
+        bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, frame_name)
         return np.array(data.xpos[bid], dtype=np.float64), np.array(data.xquat[bid], dtype=np.float64)
+
+    def _diagnose_unreachable(
+        self,
+        model: Any,
+        frame_name: str,
+        frame_type: str,
+        target_quat: np.ndarray | None,
+        target_pose: np.ndarray,
+        target: np.ndarray,
+        q0: np.ndarray,
+        arm_jact: dict[int, int],
+        namespace: str,
+    ) -> tuple[float, list[str]]:
+        """Best residual with every model DOF free, and the DOFs that took it.
+
+        Runs on the ``move_to`` refusal path only (see
+        :meth:`MotionPrimitivesCore._move_to_unreachable_error`): the primitive
+        solves over its commanded joints, and this reports what an unrestricted
+        solve could have done, so the refusal distinguishes a point outside the
+        robot's workspace from one that needs uncommanded motion.
+
+        Args:
+            model: The world ``mujoco.MjModel``.
+            frame_name: End-effector frame the solve tracks.
+            frame_type: ``"site"`` / ``"body"`` / ``"geom"``.
+            target_quat: Requested orientation, or ``None`` for position-only.
+            target_pose: The ``(4, 4)`` target the restricted solve was given.
+            target: World-frame target position.
+            q0: The live configuration the solve seeded from.
+            arm_jact: Commanded joint id -> actuator id map.
+            namespace: Robot namespace, stripped from reported joint names.
+
+        Returns:
+            ``(residual_m, uncommanded_joint_names)``. On a fully actuated
+            fixed-base arm the name list is empty and the residual matches the
+            restricted one, which is what keeps the refusal text unchanged
+            there.
+        """
+        from strands_robots.simulation.ik import MinkIKBridge
+
+        try:
+            reference = MinkIKBridge(
+                model,
+                frame_name,
+                frame_type,
+                orientation_cost=1.0 if target_quat is not None else 0.0,
+                max_iters=200,
+            )
+        except (ImportError, RuntimeError, ValueError):  # pragma: no cover - the restricted build succeeded
+            return math.inf, []
+        q_free = reference.solve(target_pose, q0)
+        residual = float(np.linalg.norm(reference.ee_pose(q_free)[:3, 3] - target))
+        moved = self._uncommanded_joints_moved(self._mj, model, arm_jact, q0, q_free, namespace)
+        return residual, moved
 
     # -- primitives ----------------------------------------------------------
 
@@ -373,6 +463,7 @@ class MotionPrimitivesMixin:
         orientation: list[float] | None = None,
         tol: float = 0.01,
         max_steps: int = 200,
+        orientation_tol: float | None = None,
     ) -> dict[str, Any]:
         """Move the end-effector to a world-frame Cartesian target via IK.
 
@@ -384,9 +475,12 @@ class MotionPrimitivesMixin:
         elapse (each tick advances a few physics substeps).
 
         The end-effector frame is auto-discovered per robot namespace
-        (:func:`strands_robots.simulation.ik.discover_ee_frame`: TCP-like site,
-        else hand/tool body, else the chain's leaf body) - the same heuristic
-        eef-delta policies use, so multi-robot scenes resolve the right arm.
+        (:func:`strands_robots.simulation.ik.discover_ee_frame`: a site naming
+        the tool point or the end effector, else a body naming the end effector,
+        else the chain's leaf body) - the same heuristic eef-delta policies use,
+        so multi-robot scenes resolve the right arm. A site outranks a body of
+        the same name: it is placed at the tool point, while the body origin
+        sits at the link's mount.
 
         GRASP PRESERVATION (contract): gripper actuators (resolved by the same
         registry-metadata-first classification ``set_gripper`` uses, see
@@ -395,6 +489,19 @@ class MotionPrimitivesMixin:
         whole servo descent - a closed gripper stays closed through staging
         and transport, so ``set_gripper("close") -> move_to(...)`` carries the
         held object rather than releasing it.
+
+        COMMANDED-DOF SOLVE (contract): the IK solve is restricted to the
+        joints this primitive drives, so ``ik_residual_m`` is the error the
+        servo descent is actually left with. mink optimizes over every degree
+        of freedom in the model, and an unrestricted solve borrows whatever is
+        cheapest - a floating/mobile base, a second robot in the same world
+        model, the gripper this primitive holds - none of which ``move_to``
+        commands. A borrowed solve reports a near-zero residual for a pose the
+        arm cannot hold, which reads as a solved target whose servo merely
+        "needs more steps". When the restricted solve cannot reach the target,
+        the refusal re-solves unrestricted and names the degrees of freedom
+        that would have to move first, so an out-of-workspace point is
+        distinguishable from one that needs base motion.
 
         NOT collision-aware: the straight servo descent can sweep through
         obstacles. Collision-aware transport is the curobo provider's job; this
@@ -406,40 +513,67 @@ class MotionPrimitivesMixin:
             robot_name: Robot to move; defaults to the single robot in the
                 world (errors if ambiguous).
             position: World-frame target ``[x, y, z]`` in meters (required).
-            orientation: Optional target orientation quaternion ``[w, x, y, z]``.
+                Validated by the same rule the scene-construction calls use
+                (:func:`strands_robots.utils.coerce_pose_vector`): three finite
+                real components, a NumPy array accepted, a ``bool`` refused.
+            orientation: Optional target orientation quaternion ``[w, x, y, z]``,
+                validated the same way and normalized before it enters the solve
+                (a non-unit quaternion is fine; a ~zero-norm one is refused).
                 When omitted the solve is position-only - the right choice for
                 arms with fewer than 6 DOF (e.g. SO-100/SO-101), which cannot
                 realize an arbitrary full pose.
-            tol: Position convergence tolerance in meters (> 0).
+            tol: Position convergence tolerance in meters (> 0). Bounds the
+                TRANSLATION only; ``orientation_tol`` bounds the rotation.
             max_steps: Max control ticks before returning a not-reached error
                 (1..10000).
+            orientation_tol: Orientation convergence tolerance in radians
+                (> 0), defaulting to
+                :data:`~strands_robots.simulation.motion_primitives_base._DEFAULT_ORIENTATION_TOL_RAD`.
+                Only meaningful alongside an ``orientation`` target, and
+                REFUSED without one rather than silently ignored.
+
+        POSE CONVERGENCE (contract): a requested ``orientation`` is measured,
+        not merely fed to the solver. Both the IK accept gate and the servo
+        descent require the position within ``tol`` AND the orientation within
+        ``orientation_tol``, so ``reached`` is never ``True`` with the wrist
+        pointing somewhere the caller did not ask for. This matters because the
+        servo stops at the tick both components converge: gating on the
+        position alone cut the descent short while the orientation was still
+        settling, which made the achieved orientation a function of ``tol`` - a
+        tolerance documented in meters - with the miss reported nowhere.
 
         Returns:
             ``{"status": "success", ...}`` with a json block
             ``{reached, steps, position_error_m, ik_residual_m, ee_position,
-            ee_orientation_wxyz, frame, frame_type}`` on arrival;
+            ee_orientation_wxyz, frame, frame_type}`` on arrival, plus
+            ``{orientation_error_rad, orientation_tol_rad,
+            ik_orientation_residual_rad}`` when an ``orientation`` was
+            requested (absent for a position-only call, which has no
+            orientation to report);
             ``{"status": "error", ...}`` with the same json block (including
-            the residual) when the target is unreachable (IK residual > tol)
-            or servo convergence times out. Never raises.
+            the residuals) when the pose is unreachable or servo convergence
+            times out. An unreachable refusal names what is out of reach on two
+            independent axes. WHICH HALF of a pose: a damped least-squares solve
+            trades position against orientation, so a full-pose request on an
+            arm with too few DOF typically satisfies the ROTATION and leaves the
+            POSITION short - the refusal reports the same point solved
+            position-only (``position_only_ik_residual_m``) and recommends
+            omitting ``orientation`` when that alone is reachable. WHOSE REACH:
+            ``unrestricted_ik_residual_m`` and ``uncommanded_joints_moved``
+            report what a solve over the whole model could have reached and
+            which uncommanded joints it needed, so the caller can tell an
+            out-of-workspace target from one needing base motion. Never raises.
         """
         # ---- parameter validation (before touching the world) ----
-        if position is None:
-            return _err("move_to requires 'position' ([x, y, z] target in meters).")
-        if len(position) != 3 or not all(_is_finite_real(c) for c in position):
-            return _err("move_to: 'position' must be 3 finite numbers [x, y, z] in meters.")
-        if orientation is not None:
-            if len(orientation) != 4 or not all(_is_finite_real(c) for c in orientation):
-                return _err("move_to: 'orientation' must be 4 finite numbers [w, x, y, z] (unit quaternion).")
-            quat_norm = float(np.linalg.norm(np.asarray(orientation, dtype=np.float64)))
-            if quat_norm < 1e-8:
-                return _err("move_to: 'orientation' quaternion has ~zero norm; pass a valid [w, x, y, z].")
-        if not _is_finite_real(tol) or float(tol) <= 0.0:
-            return _err(f"move_to: 'tol' must be a positive number of meters, got {tol!r}.")
-        err = self._validate_step_budget("move_to", "max_steps", max_steps)
-        if err is not None:
-            return err
-        max_steps = int(max_steps)
-        target = np.asarray([float(c) for c in position], dtype=np.float64)
+        # Shared with the Isaac adapter (motion_primitives_base): same
+        # pose-vector rule the scene-construction calls use, same tol /
+        # max_steps domains, same wording.
+        target, target_quat, max_steps, orientation_tol, arg_err = self._validate_move_to_args(
+            position, orientation, tol, max_steps, orientation_tol
+        )
+        if arg_err is not None:
+            return arg_err
+        assert target is not None  # no error implies a coerced target
 
         # ---- setup under the lock: guards, EE frame, IK solve ----
         with self._lock:
@@ -454,13 +588,9 @@ class MotionPrimitivesMixin:
             namespace = robot.namespace or ""
 
             base = np.asarray(robot.position or (0.0, 0.0, 0.0), dtype=np.float64)
-            base_dist = float(np.linalg.norm(target - base))
-            if base_dist > _WORKSPACE_SANITY_RADIUS_M:
-                return _err(
-                    f"move_to: target {target.tolist()} is {base_dist:.2f} m from robot "
-                    f"'{robot_name}' base - outside the {_WORKSPACE_SANITY_RADIUS_M:.0f} m workspace "
-                    "sanity box. Check units (meters, world frame)."
-                )
+            sanity_err = self._workspace_sanity_error(robot_name, target, base)
+            if sanity_err is not None:
+                return sanity_err
 
             from strands_robots.simulation.ik import discover_ee_frame
 
@@ -509,12 +639,21 @@ class MotionPrimitivesMixin:
                 # whereas move_to jumps from the current pose to an arbitrary
                 # workspace point in one solve and needs the extra integration
                 # budget to converge from far seeds.
+                # commanded_dofs restricts the solve to the joints the servo
+                # loop below actually drives. mink optimizes over the whole
+                # world model, so an unrestricted solve satisfies the Cartesian
+                # task with whatever DOF is cheapest - a floating base, a
+                # second robot, the held gripper - and then reports a residual
+                # for a configuration move_to never commands. On a mobile
+                # manipulator that reads as a solved target followed by a servo
+                # that "just needs more steps"; it never arrives.
                 bridge = MinkIKBridge(
                     model,
                     frame_name,
                     frame_type,
-                    orientation_cost=1.0 if orientation is not None else 0.0,
+                    orientation_cost=1.0 if target_quat is not None else 0.0,
                     max_iters=200,
+                    commanded_dofs=self._commanded_dof_indices(model, arm_jact),
                 )
             except (ImportError, RuntimeError, ValueError) as e:
                 return _err(f"move_to: IK bridge unavailable: {e}")
@@ -522,9 +661,8 @@ class MotionPrimitivesMixin:
             q0 = np.array(data.qpos, dtype=np.float64, copy=True)
             target_pose = np.eye(4, dtype=np.float64)
             target_pose[:3, 3] = target
-            if orientation is not None:
-                quat = np.asarray([float(c) for c in orientation], dtype=np.float64)
-                quat = quat / np.linalg.norm(quat)
+            if target_quat is not None:
+                quat = target_quat / np.linalg.norm(target_quat)
                 rot = np.zeros(9, dtype=np.float64)
                 self._mj.mju_quat2Mat(rot, quat)
                 target_pose[:3, :3] = rot.reshape(3, 3)
@@ -533,8 +671,27 @@ class MotionPrimitivesMixin:
                 # pose (the zero orientation cost makes it a soft no-op).
                 target_pose[:3, :3] = bridge.ee_pose(q0)[:3, :3]
 
+            def pose_residuals(q: np.ndarray) -> tuple[float, float | None]:
+                """(position residual in m, orientation residual in rad) of a solve.
+
+                The orientation half is measured only when one was requested;
+                a position-only solve has no rotational target to miss.
+                """
+                ee = bridge.ee_pose(q)
+                pos_res = float(np.linalg.norm(ee[:3, 3] - target))
+                if target_quat is None:
+                    return pos_res, None
+                ee_quat_solved = np.zeros(4, dtype=np.float64)
+                self._mj.mju_mat2Quat(ee_quat_solved, np.ascontiguousarray(ee[:3, :3], dtype=np.float64).reshape(9))
+                return pos_res, _quat_angle_error(target_quat, ee_quat_solved)
+
             q_star = bridge.solve(target_pose, q0)
-            ik_residual = float(np.linalg.norm(bridge.ee_pose(q_star)[:3, 3] - target))
+            ik_residual, ik_orientation_residual = pose_residuals(q_star)
+            # ONE scalar ranks a candidate solve against a target that is up to
+            # two independent quantities, and is <= 1 exactly when every
+            # requested component is within its own tolerance. Position-only
+            # calls reduce to ik_residual / tol, i.e. the historical ordering.
+            violation = self._pose_violation(ik_residual, float(tol), ik_orientation_residual, orientation_tol)
 
             # Damped-least-squares IK is a local method: from a distant seed it
             # can stall in a joint-limit / elbow-branch local minimum even for a
@@ -546,7 +703,7 @@ class MotionPrimitivesMixin:
             # uniformly within their ranges. Gripper DOFs and everything else
             # (other robots, object free joints) stay at the live state.
             # Bounded and reproducible: same target, same answer.
-            if ik_residual > float(tol):
+            if violation > 1.0:
                 # The RNG is deliberately reconstructed with a fixed seed PER
                 # CALL (not module-level): identical calls draw identical seed
                 # sequences, which is what makes move_to reproducible. Two
@@ -570,24 +727,66 @@ class MotionPrimitivesMixin:
                         for qadr, (lo, hi) in zip(settable_qadr, ranges, strict=True):
                             q_seed[qadr] = rng.uniform(lo, hi)
                     q_try = bridge.solve(target_pose, q_seed)
-                    residual_try = float(np.linalg.norm(bridge.ee_pose(q_try)[:3, 3] - target))
-                    if residual_try < ik_residual:
-                        q_star, ik_residual = q_try, residual_try
-                    if ik_residual <= float(tol):
+                    residual_try, orientation_residual_try = pose_residuals(q_try)
+                    violation_try = self._pose_violation(
+                        residual_try, float(tol), orientation_residual_try, orientation_tol
+                    )
+                    if violation_try < violation:
+                        q_star, ik_residual, ik_orientation_residual, violation = (
+                            q_try,
+                            residual_try,
+                            orientation_residual_try,
+                            violation_try,
+                        )
+                    if violation <= 1.0:
                         break
 
-            if ik_residual > float(tol):
-                return _err(
-                    f"move_to: target {target.tolist()} is unreachable for '{robot_name}' "
-                    f"within tol={float(tol)} m - best IK solution leaves a residual of "
-                    f"{ik_residual:.4f} m. Choose a closer target or loosen tol.",
-                    {
-                        "reached": False,
-                        "steps": 0,
-                        "ik_residual_m": ik_residual,
-                        "frame": frame_name,
-                        "frame_type": frame_type,
-                    },
+            # `violation` is the pose-aware miss metric: max(position/tol,
+            # orientation/orientation_tol). With no orientation requested it
+            # degenerates to position/tol, so this is exactly `ik_residual >
+            # tol` there - and with one it also catches a solve that hit the
+            # point while pointing the wrong way.
+            if violation > 1.0:
+                # Two independent refusal-path diagnoses. Neither may turn a
+                # structured refusal into a raise.
+                #
+                # (a) WHICH HALF: a pose solve trades position against
+                # orientation, so the residual alone cannot say which half is
+                # out of reach. Solve the same point with the orientation task
+                # switched off - that residual is the evidence for the remedy
+                # the refusal recommends.
+                position_only_residual: float | None = None
+                if target_quat is not None:
+                    try:
+                        reference = MinkIKBridge(model, frame_name, frame_type, orientation_cost=0.0, max_iters=200)
+                        reference_pose = np.eye(4, dtype=np.float64)
+                        reference_pose[:3, 3] = target
+                        reference_pose[:3, :3] = reference.ee_pose(q0)[:3, :3]
+                        position_only_residual = float(
+                            np.linalg.norm(reference.ee_pose(reference.solve(reference_pose, q0))[:3, 3] - target)
+                        )
+                    except (ImportError, RuntimeError, ValueError) as e:
+                        logger.debug("move_to: position-only reference solve unavailable: %s", e)
+                # (b) WHOSE REACH: solve the same target with every model DOF
+                # free. If THAT fits tol, the point is inside the robot's reach
+                # and outside this primitive's, so the refusal can name the
+                # degrees of freedom that have to move first instead of
+                # advising a closer target.
+                unrestricted_residual, uncommanded = self._diagnose_unreachable(
+                    model, frame_name, frame_type, target_quat, target_pose, target, q0, arm_jact, namespace
+                )
+                return self._move_to_unreachable_error(
+                    robot_name,
+                    target,
+                    float(tol),
+                    ik_residual=ik_residual,
+                    frame_name=frame_name,
+                    frame_type=frame_type,
+                    orientation_tol=orientation_tol,
+                    ik_orientation_residual=ik_orientation_residual,
+                    position_only_residual=position_only_residual,
+                    unrestricted_residual=unrestricted_residual,
+                    uncommanded_joints=uncommanded,
                 )
 
             # Command ARM joints to the solve; HOLD gripper joints at their
@@ -609,6 +808,7 @@ class MotionPrimitivesMixin:
         steps_used = 0
         reached = False
         position_error = math.inf
+        orientation_error: float | None = None if target_quat is None else math.inf
         ee_pos = target
         ee_quat = np.array([1.0, 0.0, 0.0, 0.0])
         for _ in range(max_steps):
@@ -620,40 +820,33 @@ class MotionPrimitivesMixin:
                 ee_pos, ee_quat = self._frame_world_pose(model, data, frame_name, frame_type)
             steps_used += 1
             position_error = float(np.linalg.norm(ee_pos - target))
-            if position_error <= float(tol):
+            # Convergence is measured on EVERY component the caller asked for.
+            # Breaking on the position alone stops the descent while the
+            # orientation is still settling, which made the achieved
+            # orientation a function of `tol` - a tolerance documented in
+            # meters - and left the miss unreported.
+            if target_quat is not None:
+                orientation_error = _quat_angle_error(target_quat, ee_quat)
+            if self._pose_violation(position_error, float(tol), orientation_error, orientation_tol) <= 1.0:
                 reached = True
                 break
 
-        payload = {
-            "reached": reached,
-            "steps": steps_used,
-            "position_error_m": position_error,
-            "ik_residual_m": ik_residual,
-            "ee_position": [float(v) for v in ee_pos],
-            "ee_orientation_wxyz": [float(v) for v in ee_quat],
-            "frame": frame_name,
-            "frame_type": frame_type,
-        }
-        if reached:
-            return {
-                "status": "success",
-                "content": [
-                    {
-                        "text": (
-                            f"move_to: '{robot_name}' EE ({frame_type} '{frame_name}') reached "
-                            f"{target.tolist()} within {float(tol)} m in {steps_used} steps "
-                            f"(error {position_error:.4f} m)."
-                        )
-                    },
-                    {"json": payload},
-                ],
-            }
-        return _err(
-            f"move_to: '{robot_name}' did not reach {target.tolist()} within tol={float(tol)} m "
-            f"after max_steps={max_steps} (residual {position_error:.4f} m; IK residual was "
-            f"{ik_residual:.4f} m). The servo may need more steps, or the pose fights joint "
-            "limits/contacts.",
-            payload,
+        return self._move_to_result(
+            robot_name,
+            target,
+            float(tol),
+            max_steps,
+            reached=reached,
+            steps_used=steps_used,
+            position_error=position_error,
+            ik_residual=ik_residual,
+            ee_pos=ee_pos,
+            ee_quat=ee_quat,
+            frame_name=frame_name,
+            frame_type=frame_type,
+            orientation_error=orientation_error,
+            orientation_tol=orientation_tol,
+            ik_orientation_residual=ik_orientation_residual,
         )
 
     def set_gripper(
@@ -667,7 +860,9 @@ class MotionPrimitivesMixin:
         Resolves the gripper actuator(s) via :meth:`_resolve_gripper_actuators`
         (registry ``gripper`` metadata for the robot's ``data_config`` when
         present, else the ``gripper`` / ``finger`` / ``jaw`` name heuristic)
-        and commands the actuator ctrlrange end-point. With no metadata,
+        and commands an end-point of its set-point range - the actuator
+        ctrlrange, or the driven joint's limits when the MJCF left the
+        ctrlrange unset (see :meth:`_gripper_setpoint_range`). With no metadata,
         ``"open"`` drives to the HIGH end and ``"close"`` to the LOW end -
         the convention for SO-100/SO-101 (the jaw closes toward the
         low/negative end of its range - the sign trap documented in the
@@ -685,16 +880,17 @@ class MotionPrimitivesMixin:
 
         Returns:
             ``{"status": "success", ...}`` with a json block
-            ``{state, actuators, targets, gripper_joint_positions}``;
-            structured error when the gripper cannot be resolved or the
-            ctrlrange gives no usable set-points. Never raises.
+            ``{state, actuators, targets, setpoint_sources,
+            gripper_joint_positions}`` - ``setpoint_sources`` naming, per
+            actuator, where its bounds came from, so a substituted joint range
+            is visible rather than silent; structured error when the gripper
+            cannot be resolved or no source gives usable set-points. Never
+            raises.
         """
-        if state not in ("open", "close"):
-            return _err(f'set_gripper: \'state\' must be "open" or "close", got {state!r}.')
-        err = self._validate_step_budget("set_gripper", "steps", steps)
-        if err is not None:
-            return err
-        steps = int(steps)
+        steps, arg_err = self._validate_set_gripper_args(state, steps)
+        if arg_err is not None:
+            return arg_err
+        assert state is not None  # narrowed by the shared validator
 
         with self._lock:
             robot_name_resolved, error = self._primitive_resolve_robot("set_gripper", robot_name)
@@ -729,28 +925,25 @@ class MotionPrimitivesMixin:
                     "Drive it directly with action='send_action' instead."
                 )
 
-            # Which ctrlrange END each state maps to: the registry metadata's
-            # `closed`/`open` fields when present, else the open=HIGH /
-            # close=LOW convention (correct for SO-100/SO-101 and Franka, but
-            # a convention, not a law - the metadata field exists to remove
-            # that sign trap for robots with an inverted gripper).
-            if grip_meta is not None:
-                end = grip_meta.get("open", "high") if state == "open" else grip_meta.get("closed", "low")
-            else:
-                end = "high" if state == "open" else "low"
+            # Which END of the set-point range each state maps to: shared
+            # registry-metadata-first mapping (open=HIGH / close=LOW
+            # convention when no metadata; see
+            # MotionPrimitivesCore._gripper_state_end).
+            end = self._gripper_state_end(state, grip_meta)
 
             targets: dict[int, float] = {}
+            setpoint_sources: dict[int, str] = {}
             for act_id in gripper_acts:
-                lo = float(model.actuator_ctrlrange[act_id][0])
-                hi = float(model.actuator_ctrlrange[act_id][1])
-                if not (hi > lo):
+                span, detail = self._gripper_setpoint_range(model, act_id, jnt_by_act.get(act_id))
+                if span is None:
                     act_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, act_id)
                     return _err(
-                        f"set_gripper: actuator '{act_name}' has no usable ctrlrange "
-                        f"({lo}, {hi}); cannot infer open/close set-points. Drive it directly "
-                        "with action='send_action'."
+                        f"set_gripper: actuator '{act_name}' has no usable open/close set-points - "
+                        f"{detail}. Drive it directly with action='send_action'."
                     )
+                lo, hi = span
                 targets[act_id] = hi if end == "high" else lo
+                setpoint_sources[act_id] = detail
 
         for _ in range(steps):
             with self._lock:
@@ -769,21 +962,15 @@ class MotionPrimitivesMixin:
             act_names = [
                 self._short_name(mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, a), namespace) for a in gripper_acts
             ]
-        payload = {
-            "state": state,
-            "actuators": act_names,
-            "targets": {n: targets[a] for n, a in zip(act_names, gripper_acts, strict=True)},
-            "gripper_joint_positions": joint_positions,
-        }
-        return {
-            "status": "success",
-            "content": [
-                {
-                    "text": f"set_gripper: '{robot_name}' gripper commanded {state} ({steps} ticks, actuators {act_names})."
-                },
-                {"json": payload},
-            ],
-        }
+        return self._set_gripper_result(
+            robot_name,
+            state,
+            steps,
+            act_names,
+            {n: targets[a] for n, a in zip(act_names, gripper_acts, strict=True)},
+            {n: setpoint_sources[a] for n, a in zip(act_names, gripper_acts, strict=True)},
+            joint_positions,
+        )
 
     def rotate_wrist(
         self,
@@ -824,17 +1011,9 @@ class MotionPrimitivesMixin:
             the target is out of range, or servo convergence times out.
             Never raises.
         """
-        if target_yaw is None:
-            return _err("rotate_wrist requires 'target_yaw' (wrist joint set-point in radians).")
-        if not _is_finite_real(target_yaw):
-            return _err(f"rotate_wrist: 'target_yaw' must be a finite number of radians, got {target_yaw!r}.")
-        if not _is_finite_real(tol) or float(tol) <= 0.0:
-            return _err(f"rotate_wrist: 'tol' must be a positive number of radians, got {tol!r}.")
-        err = self._validate_step_budget("rotate_wrist", "max_steps", max_steps)
-        if err is not None:
-            return err
-        max_steps = int(max_steps)
-        target_yaw = float(target_yaw)
+        target_yaw, max_steps, arg_err = self._validate_rotate_wrist_args(target_yaw, tol, max_steps)
+        if arg_err is not None:
+            return arg_err
 
         with self._lock:
             robot_name_resolved, error = self._primitive_resolve_robot("rotate_wrist", robot_name)
@@ -926,40 +1105,14 @@ class MotionPrimitivesMixin:
                 reached = True
                 break
 
-        payload = {
-            "reached": reached,
-            "steps": steps_used,
-            "wrist_joint": wrist_name,
-            "target_yaw": target_yaw,
-            "final_yaw": final_yaw,
-            "yaw_error_rad": yaw_error,
-        }
-        if reached:
-            return {
-                "status": "success",
-                "content": [
-                    {
-                        "text": (
-                            f"rotate_wrist: '{robot_name}' joint '{wrist_name}' reached "
-                            f"{target_yaw:.3f} rad within {float(tol)} rad in {steps_used} steps."
-                        )
-                    },
-                    {"json": payload},
-                ],
-            }
-        return _err(
-            f"rotate_wrist: '{robot_name}' joint '{wrist_name}' did not reach {target_yaw:.3f} rad "
-            f"within tol={float(tol)} rad after max_steps={max_steps} (residual {yaw_error:.4f} rad).",
-            payload,
+        return self._rotate_wrist_result(
+            robot_name,
+            float(tol),
+            max_steps,
+            reached=reached,
+            steps_used=steps_used,
+            wrist_name=wrist_name,
+            target_yaw=target_yaw,
+            final_yaw=final_yaw,
+            yaw_error=yaw_error,
         )
-
-    # -- validation helpers ---------------------------------------------------
-
-    @staticmethod
-    def _validate_step_budget(action: str, param: str, value: Any) -> dict[str, Any] | None:
-        """Validate an integer control-tick budget (1..``_MAX_PRIMITIVE_STEPS``)."""
-        if isinstance(value, bool) or not isinstance(value, numbers.Integral):
-            return _err(f"{action}: '{param}' must be an integer, got {type(value).__name__}.")
-        if not (1 <= int(value) <= _MAX_PRIMITIVE_STEPS):
-            return _err(f"{action}: '{param}' must be between 1 and {_MAX_PRIMITIVE_STEPS}, got {int(value)}.")
-        return None
