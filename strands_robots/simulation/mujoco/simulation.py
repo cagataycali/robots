@@ -4595,7 +4595,11 @@ class MuJoCoSimEngine(
         # topic), fall back to the parent sim's mesh.
         _mesh = getattr(robot, "mesh", None) or getattr(self, "mesh", None)
         _stream_state = {"last": 0.0}
-        _stream_min_period = 1.0 / float(os.environ.get("STRANDS_MESH_STREAM_HZ", "10") or 10)
+        from strands_robots.mesh.session import hz_from_env
+        _stream_hz, _stream_hz_err = hz_from_env("STRANDS_MESH_STREAM_HZ")
+        if _stream_hz_err:
+            logger.warning("%s; sim step telemetry disabled", _stream_hz_err)
+        _stream_min_period = (1.0 / _stream_hz) if (_stream_hz is not None and _stream_hz > 0) else (float("inf") if _stream_hz is not None else 1.0 / 10.0)
 
         def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             # Cooperative cancellation: stop_policy flips this flag.
