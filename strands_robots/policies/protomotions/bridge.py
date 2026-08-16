@@ -172,8 +172,9 @@ def qpos_to_motion_data(
         control_dt: Target control period, seconds (default 0.02 = 50Hz).
 
     Returns:
-        A dict with the keys :class:`~strands_robots.policies.protomotions.
-        motion_utils.MotionPlayer` accepts.
+        A dict with the keys
+        :class:`~strands_robots.policies.protomotions.motion_utils.MotionPlayer`
+        accepts.
 
     Raises:
         FileNotFoundError: If ``proto_mjcf_path`` does not exist.

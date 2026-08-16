@@ -1,10 +1,10 @@
 """MotionPlayer - a fixed-rate reference-motion window for the ProtoMotions tracker.
 
-The ONNX Generalist Tracking Policy (GTP) that :class:`~strands_robots.policies.
-protomotions.policy.ProtoMotionsPolicy` wraps expects, each control tick, a
-window of FUTURE reference frames: joint pos + joint vel + anchor rotation at a
-handful of step-offsets ahead (default ``[1, 2, 4, 8]`` control steps). This
-module is the source of that window.
+The ONNX Generalist Tracking Policy (GTP) that
+:class:`~strands_robots.policies.protomotions.policy.ProtoMotionsPolicy` wraps
+expects, each control tick, a window of FUTURE reference frames: joint pos +
+joint vel + anchor rotation at a handful of step-offsets ahead (default
+``[1, 2, 4, 8]`` control steps). This module is the source of that window.
 
 Two input modes:
 

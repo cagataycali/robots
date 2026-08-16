@@ -11,11 +11,11 @@ Two entry points:
 * Direct construction with a ``.pt`` / ``.npz`` motion cache:
   ``ProtoMotionsPolicy(onnx_path=..., yaml_path=..., motion_path=...)``.
 * Chained after :class:`~strands_robots.policies.kimodo.KimodoPolicy` - Kimodo
-  samples a qpos trajectory, :func:`~strands_robots.policies.protomotions.
-  bridge.qpos_to_motion_data` converts it to a MotionPlayer cache, this policy
-  tracks it under physics. See :issue:`279` for why this is the correct
-  pairing for a whole-body kinematic generator (WBC would overwrite Kimodo's
-  leg+waist reference).
+  samples a qpos trajectory,
+  :func:`~strands_robots.policies.protomotions.bridge.qpos_to_motion_data`
+  converts it to a MotionPlayer cache, this policy tracks it under physics.
+  See :issue:`279` for why this is the correct pairing for a whole-body
+  kinematic generator (WBC would overwrite Kimodo's leg+waist reference).
 
 The pretrained artifact lives on HuggingFace at
 ``cagataydev/protomotions-gtp-unitree-g1`` (``unified_pipeline.onnx`` +
