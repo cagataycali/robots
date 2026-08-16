@@ -227,27 +227,45 @@ _POLICY_TYPE_ENTRY_RE = re.compile(r"^[a-z][a-z0-9_]*$")
 #: in sync with the registry so a provider that ``create_policy`` can build can
 #: also be driven over the mesh ``tell()`` path and Device Connect. Operators
 #: extend via ``STRANDS_MESH_POLICY_TYPE_ALLOW`` (comma-separated).
-_DEFAULT_POLICY_TYPES: frozenset[str] = frozenset(
-    {
-        "mock",
-        "groot",
-        "lerobot",
-        "lerobot_local",
-        "act",
-        "diffusion",
-        "tdmpc",
-        "vqbet",
-        "pi0",
-        "pi0fast",
-        "smolvla",
-        "sac",
-        # GR00T Whole-Body-Control (SONIC) locomotion provider (registry: wbc,
-        # shorthand sonic). Without these, tell(..., policy_provider="wbc") and
-        # the Device Connect drivers reject WBC at the security gate.
-        "wbc",
-        "sonic",
-    }
+#: LeRobot policy-family names that are valid ``policy_type`` values but are
+#: not registry providers (they select a policy class inside lerobot_local).
+_LEROBOT_FAMILIES: frozenset[str] = frozenset(
+    {"lerobot", "act", "diffusion", "tdmpc", "vqbet", "pi0", "pi0fast", "smolvla", "sac"}
 )
+
+#: Hand-maintained floor - the historical hardcoded set - so a registry
+#: read failure can never *shrink* the allowlist below its historical value.
+_POLICY_TYPES_FLOOR: frozenset[str] = frozenset({"mock", "groot", "lerobot_local", "wbc", "sonic"}) | _LEROBOT_FAMILIES
+
+
+def _registry_policy_types() -> frozenset[str]:
+    """Providers + aliases + shorthands from registry/policies.json.
+
+    The hand-maintained allowlist had drifted from the registry - 9 of 13
+    registered providers (lerobot_async, cosmos3, moveit2, curobo, vera,
+    kimodo, motionbricks, ...) were rejected at the security gate even though
+    ``create_policy`` builds them and the docstring above states the sync
+    contract. Deriving the set FROM the registry keeps the two surfaces
+    identical by construction. Read failure falls back to the floor - never
+    narrower than the historical hand-written set.
+    """
+    names: set[str] = set()
+    try:
+        from strands_robots.registry.policies import get_policy_provider, list_policy_providers
+
+        for provider in list_policy_providers():
+            names.add(provider)
+            spec = get_policy_provider(provider) or {}
+            for key in ("aliases", "shorthands"):
+                for alias in spec.get(key) or ():
+                    if isinstance(alias, str) and _POLICY_TYPE_ENTRY_RE.match(alias):
+                        names.add(alias)
+    except Exception:  # noqa: BLE001 - registry read is enrichment, floor is safety
+        pass
+    return frozenset(names)
+
+
+_DEFAULT_POLICY_TYPES: frozenset[str] = _POLICY_TYPES_FLOOR | _registry_policy_types()
 
 #: Action vocabulary accepted by :func:`validate_command`. Mirrors the
 #: dispatch table in :meth:`Mesh._dispatch`. Keep these two sets in sync

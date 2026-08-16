@@ -21,6 +21,7 @@ import difflib
 import functools
 import importlib
 import logging
+import os
 import pkgutil
 import shutil
 import threading
@@ -546,6 +547,9 @@ class Robot(TeleopMixin, AgentTool):
 
         # Task execution state
         self._task_state = RobotTaskState()
+        # Stream-telemetry throttle (publish_step from the control loop).
+        self._last_stream_pub: float = 0.0
+        self._stream_min_period: float = 1.0 / float(os.environ.get("STRANDS_MESH_STREAM_HZ", "10") or 10)
         # Annotated with the base class rather than the concrete pool: the two
         # uses below are ``submit`` and ``shutdown``, so a caller substituting a
         # different Executor is honouring the contract, not evading it.
@@ -1159,7 +1163,11 @@ class Robot(TeleopMixin, AgentTool):
             ) from e
 
     async def _get_policy(
-        self, policy_port: int | None = None, policy_host: str = "localhost", policy_provider: str = "groot"
+        self,
+        policy_port: int | None = None,
+        policy_host: str = "localhost",
+        policy_provider: str = "groot",
+        **policy_kwargs: Any,
     ) -> Policy:
         """Create policy on-the-fly from invocation parameters.
 
@@ -1168,15 +1176,46 @@ class Robot(TeleopMixin, AgentTool):
         is the floor for a direct call to this private helper rather than the
         first place a caller's port is judged.
         """
+        from strands_robots.registry.policies import get_policy_provider
+
         from .policies import create_policy
 
-        if not policy_port:
-            raise ValueError("policy_port is required for robot operation")
+        # Per-provider port requirement: the registry's "requires"
+        # field is the source of truth - groot/lerobot_async dial a server
+        # and need a port, while mock/lerobot_local build in-process and
+        # need none. Hardcoding the port demand here made every port-less
+        # provider unrunnable on hardware through the mesh execute path.
+        requires: tuple[str, ...] = ()
+        try:
+            spec = get_policy_provider(policy_provider) or {}
+            requires = tuple(spec.get("requires", ()) or ()) if spec else ("port",)
+        except Exception:
+            # Unknown provider or registry unavailable - preserve the
+            # historical conservative behaviour (demand the port).
+            requires = ("port",)
 
-        policy_config = {"port": policy_port, "host": policy_host}
+        if "port" in requires and not policy_port:
+            raise ValueError(
+                f"policy_port is required for policy_provider={policy_provider!r} (it dials a policy server)"
+            )
+
+        policy_config: dict[str, Any] = {}
+        if policy_port:
+            policy_config["port"] = policy_port
+            policy_config["host"] = policy_host
 
         if self.data_config:
             policy_config["data_config"] = self.data_config
+
+        # Forward checkpoint/provider kwargs (model_path, policy_type,
+        # pretrained_name_or_path, server_address, ...) that the mesh
+        # dispatch collects from the wire command. Previously the hardware
+        # entry points had no way to receive them (TypeError -> generic
+        # "dispatch error"), making checkpoint providers (lerobot_local)
+        # unrunnable on hardware over the mesh while sim peers accepted the
+        # same command. Per-provider validity is create_policy's contract
+        # (unknown kwargs are the provider's own refusal to make).
+        policy_config.update({k: v for k, v in policy_kwargs.items() if v is not None})
 
         return create_policy(policy_provider, **policy_config)
 
@@ -1392,6 +1431,7 @@ class Robot(TeleopMixin, AgentTool):
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
+        **policy_kwargs: Any,
     ) -> None:
         """Execute robot task in background thread (internal method).
 
@@ -1445,7 +1485,7 @@ class Robot(TeleopMixin, AgentTool):
             if policy_object is not None:
                 policy_instance = policy_object
             else:
-                policy_instance = await self._get_policy(policy_port, policy_host, policy_provider)
+                policy_instance = await self._get_policy(policy_port, policy_host, policy_provider, **policy_kwargs)
 
             # Initialize policy with robot state keys
             if not await self._initialize_policy(policy_instance):
@@ -1542,6 +1582,24 @@ class Robot(TeleopMixin, AgentTool):
                         break
                     await asyncio.to_thread(self.robot.send_action, action_dict)
                     self._task_state.step_count += 1
+                    # Per-step mesh telemetry: publish_step had consumers
+                    # (robot_mesh watch, dashboards) but no producers. Rate-
+                    # limited; failures never touch the control loop.
+                    _mesh = getattr(self, "mesh", None)
+                    if _mesh is not None:
+                        _now_stream = time.time()
+                        if _now_stream - getattr(self, "_last_stream_pub", 0.0) >= self._stream_min_period:
+                            self._last_stream_pub = _now_stream
+                            try:
+                                _mesh.publish_step(
+                                    self._task_state.step_count,
+                                    observation,
+                                    action_dict,
+                                    instruction=instruction,
+                                    policy=policy_provider,
+                                )
+                            except Exception:  # noqa: BLE001 - telemetry only
+                                pass
                     # Wait for action to complete before sending next action
                     # Default 50Hz (0.02s)
                     await asyncio.sleep(self.action_sleep_time)
@@ -1664,7 +1722,7 @@ class Robot(TeleopMixin, AgentTool):
         return None
 
     @staticmethod
-    def _policy_port_error(policy_port: Any, method: str) -> dict[str, Any] | None:
+    def _policy_port_error(policy_port: Any, method: str, policy_provider: str | None = None) -> dict[str, Any] | None:
         """Reject a ``policy_port`` no policy can be built from.
 
         ``policy_port`` is the one caller-supplied value that decides whether a
@@ -1708,6 +1766,18 @@ class Robot(TeleopMixin, AgentTool):
             policy can be built from the value.
         """
         if policy_port is None:
+            # #13: port-less providers (mock, lerobot_local - registry
+            # "requires" without "port") legally build with no port; only
+            # server-dialing providers refuse None here.
+            if policy_provider:
+                try:
+                    from strands_robots.registry.policies import get_policy_provider
+
+                    spec = get_policy_provider(policy_provider)
+                    if spec is not None and "port" not in (spec.get("requires") or ()):
+                        return None
+                except Exception:  # noqa: BLE001 - registry read is best-effort
+                    pass
             return {
                 "status": "error",
                 "content": [
@@ -1836,6 +1906,7 @@ class Robot(TeleopMixin, AgentTool):
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
+        **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Execute task synchronously in thread - no new event loop.
 
@@ -1876,7 +1947,7 @@ class Robot(TeleopMixin, AgentTool):
         # ``policy_object``, because a pre-built policy makes the port inert -
         # ``_execute_task_async`` never reads it on that path - and refusing a
         # value the call ignores would be a false rejection.
-        if policy_object is None and (err := self._policy_port_error(policy_port, "execute_task")):
+        if policy_object is None and (err := self._policy_port_error(policy_port, "execute_task", policy_provider)):
             return err
         if err := self._claim_task(instruction):
             return err
@@ -1889,6 +1960,7 @@ class Robot(TeleopMixin, AgentTool):
             duration,
             policy_object=policy_object,
             n_steps=n_steps,
+            **policy_kwargs,
         )
 
     def _drive_claimed_task(
@@ -1900,6 +1972,7 @@ class Robot(TeleopMixin, AgentTool):
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
+        **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Run the control loop for an already-admitted task and report it.
 
@@ -1918,6 +1991,7 @@ class Robot(TeleopMixin, AgentTool):
                 policy_host,
                 policy_provider,
                 duration,
+                **policy_kwargs,
                 policy_object=policy_object,
                 n_steps=n_steps,
             )
@@ -1933,6 +2007,7 @@ class Robot(TeleopMixin, AgentTool):
         duration: float = 30.0,
         policy_object: Policy | None = None,
         n_steps: int | None = None,
+        **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Drive the rollout on its own event loop and report the outcome."""
         # Import here to avoid conflicts
@@ -1948,6 +2023,7 @@ class Robot(TeleopMixin, AgentTool):
                 duration,
                 policy_object=policy_object,
                 n_steps=n_steps,
+                **policy_kwargs,
             )
 
         # Probe for a running loop separately from dispatching onto one. An
@@ -2007,6 +2083,7 @@ class Robot(TeleopMixin, AgentTool):
         policy_host: str = "localhost",
         policy_provider: str = "groot",
         duration: float = 30.0,
+        **policy_kwargs: Any,
     ) -> dict[str, Any]:
         """Start robot task asynchronously and return immediately.
 
@@ -2052,7 +2129,7 @@ class Robot(TeleopMixin, AgentTool):
         # policy can be built from. Pre-fix every unusable value returned
         # "Task started" and failed on the executor thread after the arm was
         # already connected.
-        if err := self._policy_port_error(policy_port, "start_task"):
+        if err := self._policy_port_error(policy_port, "start_task", policy_provider):
             return err
 
         # Claim the bus here, not on the executor thread: this method returns
@@ -2067,7 +2144,12 @@ class Robot(TeleopMixin, AgentTool):
         # fails (a shut-down executor) nothing would ever run to release it.
         try:
             self._task_state.task_future = self._executor.submit(
-                self._drive_claimed_task, instruction, policy_port, policy_host, policy_provider, duration
+                functools.partial(self._drive_claimed_task, **policy_kwargs),
+                instruction,
+                policy_port,
+                policy_host,
+                policy_provider,
+                duration,
             )
         except BaseException:
             self._release_task()
@@ -2722,76 +2804,6 @@ class Robot(TeleopMixin, AgentTool):
             ],
         }
 
-    def start_teleop_receive(
-        self,
-        source_peer_id: str,
-        device_name: str = "leader",
-        apply_fn: Any | None = None,
-    ) -> dict[str, Any]:
-        """Start receiving teleoperator actions from a remote peer and applying to hardware.
-
-        This makes the robot a *teleop follower*: it listens for input frames
-        published by the source peer and applies them to its own hardware via
-        ``self.robot.send_action(action)``.
-
-        Args:
-            source_peer_id: The peer ID of the publishing robot.
-            device_name: Name of the input stream to subscribe to.
-            apply_fn: Optional custom function ``(robot, action_dict) -> None``.
-                Defaults to calling ``robot.send_action(action)``.
-
-        Returns:
-            Status dict, or an error dict when the mesh is inactive or
-            ``source_peer_id`` / ``device_name`` is not a valid mesh
-            identifier.
-        """
-        if not self.mesh or not self.mesh.alive:
-            return {"status": "error", "content": [{"text": "Mesh not active. Cannot receive input."}]}
-
-        from strands_robots.mesh.security import ValidationError, validate_mesh_identifier
-
-        # Both identifiers become segments of the subscribed key expression, so
-        # a Zenoh wildcard here would make this follower apply joint commands
-        # from every peer instead of the named leader. Validate before stopping
-        # any existing receiver for that key so a rejected call cannot tear
-        # down a live stream, and report through the tool envelope rather than
-        # raising past dispatch.
-        try:
-            validate_mesh_identifier(source_peer_id, "start_teleop_receive.source_peer_id")
-            validate_mesh_identifier(device_name, "start_teleop_receive.device_name")
-        except ValidationError as exc:
-            return {"status": "error", "content": [{"text": str(exc)}]}
-
-        from strands_robots.mesh import InputReceiver
-
-        if not hasattr(self, "_input_receivers"):
-            self._input_receivers: dict[str, InputReceiver] = {}
-
-        key = f"{source_peer_id}/{device_name}"
-        if key in self._input_receivers:
-            self._input_receivers[key].stop()
-
-        receiver = InputReceiver(
-            mesh=self.mesh,
-            robot=self.robot,
-            source_peer_id=source_peer_id,
-            device_name=device_name,
-            apply_fn=apply_fn,
-        )
-        receiver.start()
-        self._input_receivers[key] = receiver
-
-        return {
-            "status": "success",
-            "content": [
-                {
-                    "text": f"Input receiver started: listening to {source_peer_id}/{device_name}\n"
-                    f"Topic: {receiver.topic}\n"
-                    f"Actions will be applied to: {self.tool_name_str}"
-                }
-            ],
-        }
-
     def stop_teleop(self, device_name: str | None = None) -> dict[str, Any]:
         """Stop all or a specific teleop publisher/receiver.
 
@@ -2839,37 +2851,4 @@ class Robot(TeleopMixin, AgentTool):
         return {
             "status": "success",
             "content": [{"text": f"Teleop stopped:\n{stats_text}"}],
-        }
-
-    def get_teleop_status(self) -> dict[str, Any]:
-        """Get status of all active teleop sessions."""
-        publishers = {}
-        receivers = {}
-
-        if hasattr(self, "_input_publishers"):
-            for name, pub in self._input_publishers.items():
-                publishers[name] = pub.stats
-
-        if hasattr(self, "_input_receivers"):
-            for key, rcv in self._input_receivers.items():
-                receivers[key] = rcv.stats
-
-        return {
-            "status": "success",
-            "content": [
-                {
-                    "text": f"Teleop status:\n"
-                    f"  Publishers: {len(publishers)} active\n"
-                    f"  Receivers: {len(receivers)} active\n"
-                    + "".join(
-                        f"  [pub] {n}: {s.get('frames', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n"
-                        for n, s in publishers.items()
-                    )
-                    + "".join(
-                        f"  [rcv] {k}: {s.get('frames_received', 0)} frames @ {s.get('hz_actual', 0):.1f}Hz\n"
-                        for k, s in receivers.items()
-                    )
-                },
-                {"json": {"publishers": publishers, "receivers": receivers}},
-            ],
         }

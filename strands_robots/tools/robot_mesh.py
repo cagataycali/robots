@@ -496,6 +496,52 @@ def _numeric_option_error(action: str, *, timeout: Any, limit: Any) -> str | Non
     return None
 
 
+# ── #10: robot-less gateway mesh ───────────────────────────────────────────
+# A dashboard / coordinator / logger process has no Robot()/Simulation() in
+# _LOCAL_ROBOTS, so historically every robot_mesh action failed with "no local
+# mesh found" even with live peers on the wire. The gateway is a Mesh with
+# robot=None: it subscribes presence (populating session peer tracking, so
+# ``peers`` works), and its send()/broadcast() path is fully functional. It
+# is never a task target itself - incoming execute/... simply report
+# "unknown action" like any robot-less peer.
+_GATEWAY_LOCK = threading.Lock()
+_GATEWAY: Any | None = None
+
+
+def _gateway_mesh() -> Any | None:
+    """Lazily create the robot-less gateway Mesh (None if zenoh unavailable)."""
+    global _GATEWAY
+    with _GATEWAY_LOCK:
+        if _GATEWAY is not None and getattr(_GATEWAY, "alive", False):
+            return _GATEWAY
+        try:
+            import socket as _socket
+            import uuid as _uuid
+
+            from strands_robots.mesh.core import Mesh
+
+            gw = Mesh(
+                None,
+                peer_id=f"gateway-{_socket.gethostname().split('.')[0]}-{_uuid.uuid4().hex[:4]}",
+                peer_type="gateway",
+            )
+            gw.start()
+            if not gw.alive:
+                return None
+            _GATEWAY = gw
+            logger.info("robot_mesh: started robot-less gateway mesh %s", gw.peer_id)
+            # First bring-up: wait one heartbeat period so presence
+            # subscription can populate session peer tracking before the
+            # caller reads peers. Once, here, rather than per call - a
+            # per-call wait stretches a burst of calls past the rate-limit
+            # window and silently raises the effective cap.
+            time.sleep(float(os.environ.get("STRANDS_MESH_GATEWAY_DISCOVERY_WAIT_S", "3")))
+            return gw
+        except Exception as exc:  # noqa: BLE001 - gateway is best-effort
+            logger.debug("robot_mesh: gateway mesh unavailable: %s", exc)
+            return None
+
+
 def _resolve_mesh(target: str) -> Any | None:
     """Return a local Mesh in this process to use as the gateway for RPC.
 
@@ -514,7 +560,10 @@ def _resolve_mesh(target: str) -> Any | None:
 
     locals_ = get_local_robots()
     if not locals_:
-        return None
+        # #10: no in-process robot - fall back to the robot-less gateway so
+        # coordinator processes (dashboards, schedulers) can still reach the
+        # fleet. Returns None only when zenoh itself is unavailable.
+        return _gateway_mesh()
     if target:
         # Prefer a local mesh whose peer_id is NOT the target so we don't
         # send-to-self via the target's own session.
@@ -1105,6 +1154,11 @@ def robot_mesh(
         return _err(f"mesh module unavailable: {exc}")
 
     locals_ = get_local_robots()
+    if not locals_:
+        # #10: robot-less process - bring up the gateway BEFORE reading peers
+        # so presence subscription populates session peer tracking. The
+        # gateway itself waits one heartbeat period on first bring-up.
+        _gateway_mesh()
     peers = get_peers()
 
     # ── action: peers ─────────────────────────────────────────────────────

@@ -687,24 +687,41 @@ def get_session() -> Any | None:
                     exc,
                 )
 
-            # Fall back to client mode - connect to the existing listener.
+            # Fall back to PEER mode on an ephemeral listener with a
+            # background connect-retry to the hub endpoint (#9). The previous
+            # client-mode fallback never retried: when the hub process died,
+            # every client kept a dead session with no error surfaced - peers
+            # just went stale until the process was restarted. Peer mode keeps
+            # retrying ``connect/endpoints`` in the background, so a restarted
+            # hub (or any new listener on the port) re-links automatically,
+            # and surviving peers can also route to each other directly.
             # Build cfg OUTSIDE the try so a config-shape ValueError
             # (NaN env clamp, missing TLS file, bad ACL) propagates
             # loudly to Mesh.start instead of being silently downgraded
             # to "session unavailable".
             cfg = _build_config()
-            cfg.insert_json5("mode", '"client"')
+            ephemeral_ep = f"{scheme}/127.0.0.1:0"
+            cfg.insert_json5("listen/endpoints", json.dumps([ephemeral_ep]))
             cfg.insert_json5("connect/endpoints", json.dumps([local_ep]))
+            # Never give up on the hub endpoint; retry with gentle backoff.
+            cfg.insert_json5("connect/exit_on_failure", "false")
+            cfg.insert_json5(
+                "connect/retry",
+                json.dumps({"period_init_ms": 1000, "period_max_ms": 8000, "period_increase_factor": 2}),
+            )
             try:
                 _SESSION = zenoh.open(cfg)
                 _SESSION_REFS = 1
-                logger.info("Zenoh mesh session opened (client -> %s)", local_ep)
+                logger.info(
+                    "Zenoh mesh session opened (peer, ephemeral listener, retrying -> %s)",
+                    local_ep,
+                )
                 return _SESSION
             except zenoh_error_types() as exc:
                 # Narrow tuple per AGENTS.md > Review Learnings (#86):
                 # transport-level failures only; config-shape ValueError
                 # propagates to caller so misconfigured mTLS surfaces loudly.
-                logger.warning("Zenoh session open failed (client mode): %s", exc)
+                logger.warning("Zenoh session open failed (peer fallback): %s", exc)
                 return None
 
         # Explicit endpoints provided via env vars.

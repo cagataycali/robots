@@ -745,6 +745,23 @@ class Mesh(SensorLoopsMixin):
 
             # Optional camera loop
             camera_hz = self._resolve_camera_hz()
+            if camera_hz <= 0:
+                # Opt-in surface (#7): frames are heavy, so publishing stays
+                # off by default - but say so ONCE when the robot actually has
+                # cameras, otherwise "no camera tiles" is undiagnosable.
+                _has_cams = False
+                try:
+                    inner = getattr(self.robot, "robot", None)
+                    cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
+                    _has_cams = bool(cam_cfg) or getattr(self.robot, "_world", None) is not None
+                except Exception:
+                    pass
+                if _has_cams:
+                    logger.info(
+                        "[mesh] %s: camera publishing is OFF (opt-in). "
+                        "Set STRANDS_MESH_CAMERA_HZ=5 to stream frames on the mesh.",
+                        self.peer_id,
+                    )
             if camera_hz > 0:
                 cam_thread = threading.Thread(
                     target=self._camera_loop,
@@ -1670,11 +1687,50 @@ class Mesh(SensorLoopsMixin):
         if action == "status":
             if hasattr(r, "get_task_status"):
                 return dict(r.get_task_status())
+            # Sim peer: synthesize a structured status from the running-
+            # policy registry so a rollout is wire-visible. Previously sims
+            # answered {"status": "unknown"} and their state topic hardcoded
+            # active=True - a running sim policy was invisible on the wire.
+            if hasattr(r, "_active_policy_robots"):
+                try:
+                    active = list(r._active_policy_robots())
+                    return {
+                        "status": "running" if active else "idle",
+                        "robots_running": active,
+                    }
+                except Exception:  # noqa: BLE001 - status must not raise
+                    pass
             ts = getattr(r, "_task_state", None)
             return {"status": getattr(getattr(ts, "status", None), "value", "unknown")}
         if action == "stop":
             if hasattr(r, "stop_task"):
                 return dict(r.stop_task())
+            # Sim peer: route to stop_policy (cooperative cancellation).
+            # Without this branch every sim peer was UNSTOPPABLE over the
+            # mesh - {"action": "stop"} answered "peer exposes no stop_task"
+            # while the rollout kept running, and emergency_stop() counted
+            # every sim in peers_not_stopped.
+            if hasattr(r, "stop_policy"):
+                robot_name = cmd.get("robot_name", "")
+                try:
+                    if robot_name:
+                        return dict(r.stop_policy(robot_name))
+                    # No robot_name: stop every active rollout in the world.
+                    active = list(r._active_policy_robots()) if hasattr(r, "_active_policy_robots") else []
+                    if not active:
+                        return {"ok": True, "stopped": [], "note": "no policies running"}
+                    results = {name: dict(r.stop_policy(name)) for name in active}
+                    return {"ok": True, "stopped": list(results), "results": results}
+                except Exception as exc:  # noqa: BLE001 - stop must answer, not raise
+                    return {"ok": False, "error": f"stop_policy failed: {exc}"}
+            # Child SimRobot peer: delegate stop to the parent sim
+            # scoped to this robot.
+            _sp = getattr(r, "_sim_parent", None)
+            if _sp is not None and hasattr(_sp, "stop_policy"):
+                try:
+                    return dict(_sp.stop_policy(getattr(r, "name", "")))
+                except Exception as exc:  # noqa: BLE001
+                    return {"ok": False, "error": f"stop_policy failed: {exc}"}
             # No stop_task means NOTHING was stopped. Reporting ok=True here was
             # an affirmative lie on the fleet safety path: an operator issuing
             # emergency_stop counted this peer as having halted while its robot
@@ -1729,6 +1785,24 @@ class Mesh(SensorLoopsMixin):
             # passes them to the Policy constructor; per the #300 contract
             # planner-style providers consume them and VLA providers ignore
             # unknown kwargs without raising.
+            # Child SimRobot peer: a SimRobot dataclass carries no
+            # run_policy/list_robots of its own - delegate to the parent
+            # Simulation with robot_name pre-bound to this robot, so a task
+            # sent to the addressable child peer actually executes instead
+            # of answering "unknown action: execute".
+            _sim_parent = getattr(r, "_sim_parent", None)
+            if action in ("execute", "start") and _sim_parent is not None:
+                child_cmd = dict(cmd)
+                child_cmd.setdefault("robot_name", getattr(r, "name", None))
+                return self._dispatch_sim_policy_on(
+                    _sim_parent,
+                    action=action,
+                    cmd=child_cmd,
+                    instruction=instruction,
+                    policy_provider=policy_provider,
+                    duration=duration,
+                    extra=extra,
+                )
             if (
                 action in ("execute", "start")
                 and hasattr(r, "run_policy")
@@ -1847,8 +1921,32 @@ class Mesh(SensorLoopsMixin):
         the receiving Policy ignores unknown per-call kwargs rather than
         raising, so VLA providers stay compatible.
         """
-        sim = self.robot
+        return self._dispatch_sim_policy_on(
+            self.robot,
+            action=action,
+            cmd=cmd,
+            instruction=instruction,
+            policy_provider=policy_provider,
+            duration=duration,
+            extra=extra,
+        )
 
+    def _dispatch_sim_policy_on(
+        self,
+        sim: Any,
+        *,
+        action: str,
+        cmd: dict[str, Any],
+        instruction: str,
+        policy_provider: str,
+        duration: Any,
+        extra: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Body of :meth:`_dispatch_sim_policy`, parameterised on the sim.
+
+        Split out so a child SimRobot peer's dispatch can route to its
+        parent Simulation without owning one itself.
+        """
         if sim._world is None:
             return {"error": "sim peer has no world; call create_world first"}
 
@@ -2762,6 +2860,31 @@ class Mesh(SensorLoopsMixin):
                 raise ValueError("send: target may not equal BROADCAST_RESPONDER or contain NUL")
             self._expected_responders[turn] = target
         msg = {"sender_id": self.peer_id, "turn_id": turn, "command": cmd, "timestamp": time.time()}
+        # The transport's low-pass filter silently drops cmd-topic
+        # messages above its byte cap (default 16 KiB) BOTH ways, while the
+        # validator admits world_update payloads up to 64 KiB - a valid
+        # command in that gap timed out with zero diagnostics. Check the
+        # encoded size here and answer with a structured error instead.
+        try:
+            from strands_robots.mesh._zenoh_config import cmd_bytes_cap as _cmd_cap
+
+            _encoded_len = len(json.dumps(msg).encode("utf-8"))
+            _cap = _cmd_cap()
+            if _encoded_len > _cap:
+                with self._rpc_lock:
+                    self._pending.pop(turn, None)
+                    self._responses.pop(turn, None)
+                    self._expected_responders.pop(turn, None)
+                return {
+                    "status": "error",
+                    "error": (
+                        f"command message is {_encoded_len} bytes; the transport drops "
+                        f"cmd messages over {_cap} bytes (STRANDS_MESH_MAX_CMD_BYTES). "
+                        "Shrink world_update/instruction or raise the cap on BOTH peers."
+                    ),
+                }
+        except ImportError:
+            pass
         try:
             self.publish(f"strands/{target}/cmd", msg)
             event.wait(timeout=timeout)

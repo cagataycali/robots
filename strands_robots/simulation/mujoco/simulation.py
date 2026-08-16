@@ -1155,7 +1155,13 @@ class MuJoCoSimEngine(
             child_mesh = init_mesh(
                 robot,
                 peer_id=child_peer_id,
-                peer_type="robot",
+                # "sim", not "robot": presence publishes this as robot_type,
+                # and a simulated arm announcing itself as real hardware makes
+                # every consumer (dashboard badges, fleet-agent "is this real
+                # hardware?" checks, e-stop triage) treat a sim as actuating
+                # metal. Parent sim peers already announce "sim"; the child
+                # is the same MuJoCo world scoped to one robot.
+                peer_type="sim",
                 mesh=True,
             )
             if child_mesh is not None:
@@ -1166,6 +1172,12 @@ class MuJoCoSimEngine(
                 # from the MuJoCo world data (without this, the child mesh
                 # publishes only presence heartbeats - no state topic).
                 robot._world = self._world
+                # Parent-sim backref: the child peer's Mesh._dispatch
+                # delegates execute/start to this Simulation (with
+                # robot_name pre-bound) - a bare SimRobot has no run_policy
+                # of its own, so without this the addressable child peer
+                # answered "unknown action: execute".
+                robot._sim_parent = self
         except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
             logger.warning(
                 "Failed to attach robot %r to mesh (sim peer_id=%s): %s",
@@ -4576,12 +4588,30 @@ class MuJoCoSimEngine(
                 action_key_cache[prefixed] = cached
             return cached
 
+        # N4: stream per-step telemetry on the mesh. publish_step existed with
+        # consumers (robot_mesh watch, dashboards) but ZERO producers - no
+        # rollout ever emitted it. Rate-limited to ~10 Hz to respect the
+        # transport caps. Prefer the robot's own child-peer mesh (per-robot
+        # topic), fall back to the parent sim's mesh.
+        _mesh = getattr(robot, "mesh", None) or getattr(self, "mesh", None)
+        _stream_state = {"last": 0.0}
+        _stream_min_period = 1.0 / float(os.environ.get("STRANDS_MESH_STREAM_HZ", "10") or 10)
+
         def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             # Cooperative cancellation: stop_policy flips this flag.
             if not robot.policy_running:
                 raise CooperativeStop(f"Policy stopped on '{robot_name}'")
 
             robot.policy_steps = step + 1
+
+            if _mesh is not None:
+                _now = time.time()
+                if _now - _stream_state["last"] >= _stream_min_period:
+                    _stream_state["last"] = _now
+                    try:
+                        _mesh.publish_step(step, observation, action, instruction=instruction)
+                    except Exception:  # noqa: BLE001 - telemetry must not kill the rollout
+                        pass
 
             with lock:
                 if world._backend_state.get("recording", False):
