@@ -17,10 +17,9 @@ and the agent-tool observation all received the wrong view under a success
 result, with nothing to distinguish it from the camera they asked for. Two short
 keys on one robot were byte-identical to each other for the same reason.
 
-The same branch answered for a key that names no compiled camera at all, which
-``remove_robot`` leaves behind: it deletes the entries whose ``origin_robot`` is
-the departing robot, and a key registered against a different robot survives
-pointing at a camera that left with the model.
+The same branch answered for a key that names no compiled camera at all. The
+registry is an input to the render loop, so an entry naming a camera the compiled
+model does not have must yield no image rather than the overview.
 
 So the contract is one sentence - an observation key that names a camera carries
 that camera's view, or is absent - and it is pinned here from both directions:
@@ -56,6 +55,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from strands_robots.simulation.models import SimCamera
 from strands_robots.simulation.mujoco.simulation import Simulation
 from tests.simulation.mujoco._gl_probe import requires_gl
 
@@ -208,26 +208,35 @@ def test_two_short_keys_carry_two_different_views(sim: Simulation) -> None:
 def test_key_naming_no_compiled_camera_is_absent(sim: Simulation) -> None:
     """A camera key the compiled model cannot answer for is omitted, not filled in.
 
-    ``remove_robot`` drops the entries owned by the departing robot, so the
-    duplicate key another robot owns outlives the camera it names. There is no
-    view to report under it, and the overview is not a stand-in.
+    The registry is an input to the render loop, so a key in it that the compiled
+    model cannot answer for must produce no image rather than some other camera's
+    view - the overview is not a stand-in.
+
+    The condition is constructed directly on the registry instead of through an
+    ``add_robot`` / ``remove_robot`` sequence. That route used to strand a key
+    (a robot claimed a camera outside its own namespace, so the owner's departure
+    left the entry behind), and :class:`~strands_robots.simulation.models.SimCamera`
+    now pins that ``origin_robot`` never names a robot outside the camera's
+    namespace - removing a robot removes its cameras and only its cameras. Driving
+    this case through a path that is now guaranteed not to strand keys would assert
+    on a premise the registry contract forbids, so the entry is registered here.
     """
     assert sim.add_robot("arm0", urdf_path=_write(TWO_CAMERA_ROBOT_XML))["status"] == "success"
-    assert sim.add_robot("arm1", urdf_path=_write(CAMERALESS_ROBOT_XML))["status"] == "success"
-    assert sim.remove_robot("arm0")["status"] == "success"
 
     world = sim._world
     assert world is not None
-    stranded = [key for key, cam in world.cameras.items() if key.startswith("arm0/")]
-    assert stranded, "premise: removing the camera-bearing robot strands a camera key"
+    orphan = "arm0/departed"
+    assert orphan not in sim.list_cameras(), "premise: the compiled model has no such camera"
+    world.cameras[orphan] = SimCamera(name=orphan, origin_robot="arm0")
 
     observation = sim.get_observation()
     images = _image_keys(observation)
-    for key in stranded:
-        assert key not in images, (
-            f"observation[{key!r}] names a camera that is no longer in the model, so it must be "
-            "absent rather than carrying some other camera's view"
-        )
+    assert orphan not in images, (
+        f"observation[{orphan!r}] names a camera the model does not have, so it must be "
+        "absent rather than carrying some other camera's view"
+    )
+    # The unanswerable key must not cost the answerable ones their frames.
+    assert {"wrist", "side"} <= set(images), "the cameras the model does have still report"
 
 
 @requires_gl
