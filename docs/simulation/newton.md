@@ -96,8 +96,12 @@ no-op until then.
   from `list_bodies`) mounts the camera ON that body so a wrist camera tracks
   the arm. `remove_camera(name)` / `list_cameras()` round out the API and
   `describe()["cameras"]` lists every registered camera.
-- `run_policy` / `eval_policy` / `replay_episode` are inherited from the
-  `SimEngine` ABC - no backend-specific re-implementation.
+- `run_policy` / `eval_policy` / `replay_episode` / `start_policy` are
+  inherited from the `SimEngine` ABC - no backend-specific re-implementation.
+  `start_policy` is the ABC's synchronous passthrough to `run_policy` here;
+  only the MuJoCo backend runs a policy on a background thread. All four are
+  advertised in `describe()["methods"]`, as is every other base-contract
+  method this backend delivers.
 - `describe()` reports the active solver, available solvers, device, and
   the current gravity vector and timestep.
 - Gravity configured via `create_world(gravity=[x, y, z])` or `set_gravity`
