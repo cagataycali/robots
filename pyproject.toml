@@ -397,8 +397,18 @@ sim-gs = [
 benchmark-libero = [
     "libero>=0.1.0,<1.0.0",
 ]
+# Peer-to-peer robot mesh. The floor is set by the wire-level source
+# attribution the safety handlers depend on: `zenoh.SourceInfo` (publisher
+# side) and `Sample.source_info` (receiver side) both first ship in
+# eclipse-zenoh 1.6.1. Every release from 1.0.0 through 1.5.1 exposes
+# neither, so a resolve there silently drops the cross-session forgery
+# defence, and a receiver on such a release refuses an e-stop published by
+# a capable peer. See
+# tests/test_zenoh_floor_ships_wire_source_attribution.py, which owns the
+# measurement and fails if the mesh reaches for a newer zenoh name without
+# raising this floor.
 mesh = [
-    "eclipse-zenoh>=1.0.0,<2.0.0",
+    "eclipse-zenoh>=1.6.1,<2.0.0",
     "json5>=0.9.0,<1.0.0",
 ]
 # AWS IoT Core integration for the mesh - MQTT5/mTLS transport, Device
