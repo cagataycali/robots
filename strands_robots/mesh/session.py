@@ -124,6 +124,12 @@ HAND_HZ: float = 50.0
 #: Map info publishing frequency (Hz).
 MAP_INFO_HZ: float = 0.2
 
+#: Per-step telemetry publishing frequency (Hz) -- the ``publish_step`` throttle
+#: on the hardware control loop and the simulation ``run_policy`` hook. Used
+#: when ``STRANDS_MESH_STREAM_HZ`` is unset; see
+#: :func:`stream_min_period_from_env`.
+STREAM_HZ: float = 10.0
+
 
 def hz_from_env(name: str) -> tuple[float | None, str | None]:
     """Read a loop rate (Hz) held in an environment variable.
@@ -162,6 +168,55 @@ def hz_from_env(name: str) -> tuple[float | None, str | None]:
     if not math.isfinite(hz):
         return None, f"{name}={raw!r} is not a finite rate"
     return hz, None
+
+
+def stream_min_period_from_env() -> float:
+    """Resolve the minimum period between per-step telemetry publishes.
+
+    Two call sites throttle ``publish_step`` against the wall clock -- the
+    hardware control loop (``HardwareRobot.__init__``) and the simulation
+    ``run_policy`` hook -- and both did it by dividing
+    ``STRANDS_MESH_STREAM_HZ`` straight from the environment. That raises
+    ``ZeroDivisionError`` on ``0`` and ``ValueError`` on any non-numeric value,
+    and one of those divisions runs in a constructor, so the failure is not
+    "telemetry degraded" but "every ``Robot(..., mode="real")`` construction
+    raises". ``0`` is a realistic input rather than an adversarial one: the
+    sibling knob ``STRANDS_MESH_CAMERA_HZ`` advertises non-positive as off, so
+    an operator disabling step telemetry the same way bricked hardware
+    bring-up.
+
+    A period rather than a rate is returned because that is what both callers
+    hold, and it lets "off" be expressed as ``inf``: no elapsed time ever
+    reaches an infinite period, so the throttle simply never fires and neither
+    caller needs a second flag to test.
+
+    The fallback for an unusable value follows :meth:`Mesh._resolve_camera_hz`,
+    the other opt-out publishing loop: warn naming the variable and the
+    offending value, then leave publishing off rather than substitute a rate
+    the operator did not ask for. Step telemetry is observability, not control,
+    so nothing downstream misbehaves when it stops -- and the warning is what
+    makes "no step tiles" diagnosable.
+
+    Returns:
+        ``1.0 / STREAM_HZ`` when ``STRANDS_MESH_STREAM_HZ`` is unset or blank,
+        ``1.0 / hz`` when it names a positive finite rate, and ``math.inf`` --
+        publishing off -- when it is non-positive or holds a value no loop can
+        honor.
+    """
+    hz, reason = hz_from_env("STRANDS_MESH_STREAM_HZ")
+    if reason is not None:
+        logger.warning(
+            "[mesh] %s; per-step telemetry publishing is OFF. "
+            "Set STRANDS_MESH_STREAM_HZ to a positive rate to enable it.",
+            reason,
+        )
+        return math.inf
+    if hz is None:
+        return 1.0 / STREAM_HZ
+    if hz <= 0:
+        # Explicit operator opt-out, same spelling as STRANDS_MESH_CAMERA_HZ.
+        return math.inf
+    return 1.0 / hz
 
 
 # Backend selection helpers - when STRANDS_MESH_BACKEND is "iot" or "bridge",

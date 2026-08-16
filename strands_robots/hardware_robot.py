@@ -21,7 +21,6 @@ import difflib
 import functools
 import importlib
 import logging
-import os
 import pkgutil
 import shutil
 import threading
@@ -549,17 +548,15 @@ class Robot(TeleopMixin, AgentTool):
         self._task_state = RobotTaskState()
         # Stream-telemetry throttle (publish_step from the control loop).
         self._last_stream_pub: float = 0.0
-        # Stream-telemetry rate: hz_from_env handles non-numeric, non-finite,
-        # and 0 (which means "off") without raising.
-        from strands_robots.mesh.session import hz_from_env
-        _stream_hz, _stream_hz_err = hz_from_env("STRANDS_MESH_STREAM_HZ")
-        if _stream_hz_err:
-            logger.warning("%s; step telemetry disabled", _stream_hz_err)
-        if _stream_hz is not None and _stream_hz > 0:
-            self._stream_min_period: float = 1.0 / _stream_hz
-        else:
-            # Unset, 0, or negative: telemetry publishing disabled.
-            self._stream_min_period: float = float("inf") if _stream_hz is not None else 1.0 / 10.0
+        # Imported here rather than at module top for the reason every other
+        # mesh import in this file is: ``strands_robots.mesh`` pulls the
+        # transport package, and a hardware Robot must construct without it.
+        from strands_robots.mesh.session import stream_min_period_from_env
+
+        # inf when the operator turned step telemetry off or named a rate no
+        # loop can honor. Never a bare division: this runs in __init__, so a
+        # ZeroDivisionError here fails the whole Robot(mode="real") bring-up.
+        self._stream_min_period: float = stream_min_period_from_env()
         # Annotated with the base class rather than the concrete pool: the two
         # uses below are ``submit`` and ``shutdown``, so a caller substituting a
         # different Executor is honouring the contract, not evading it.
