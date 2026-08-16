@@ -91,12 +91,12 @@ supports and **ignores the rest** (the same tolerance rule as
 |-------|---------|-------|
 | `dataset_root` | LeRobotDataset v3 root | a data source; has `meta/info.json` (optional when `dataset_repo_id` is set) |
 | `dataset_repo_id` | Hub dataset id `org/name` | alternative data source; train from the Hub (lerobot) |
-| `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local) |
+| `streaming` | stream frames, no full materialize | lerobot `StreamingLeRobotDataset`; bounded disk (Hub) / RAM (local); mutually exclusive with `val_episodes` |
 | `base_model` | HF id / local ckpt to tune from | required for GR00T & Cosmos |
 | `steps` / `global_batch_size` | the run size: optimizer steps x batch | each must be a positive integer; `validate()` refuses `0`, a fractional or non-finite value, and a `bool` (`True` would read as a silent one-step run) before anything is loaded |
 | `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` | `lora`+`expert_only` are mutually exclusive |
 | `tune` | `{llm,visual,projector,diffusion}` | GR00T only |
-| `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count, and that count must be readable from a local `meta/info.json` (see the Hub-source note below). `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating) |
+| `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count, and that count must be readable from a local `meta/info.json` (see the Hub-source note below). `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating); mutually exclusive with `streaming` |
 | `num_gpus` / `num_nodes` | multi-GPU / multi-node | selects the launcher |
 | `seed` | reproducibility seed | must be a non-negative integer; `validate()` refuses a negative (`torch.manual_seed` would take it modulo `2**64`, so `-1` silently becomes `2**64 - 1`), a fractional or non-finite value, and a `bool`. `None` uses the backend's own default |
 | `extra["policy_type"]` | lerobot `--policy.type` | act/diffusion/smolvla/pi0/pi05/... |
@@ -314,6 +314,15 @@ than launch a run that trains on every episode and logs no validation loss. The
 refusal names the two ways to get the split: point `dataset_root` at a populated
 local copy of the dataset, or pass lerobot's own knobs directly with
 `extra={"dataset.eval_split": 0.1, "eval_steps": 1000}`.
+
+`streaming` and `val_episodes` cannot both be honored, so `validate()` refuses
+the pair. A non-zero `eval_split` routes lerobot into `make_train_eval_datasets`,
+which rebuilds BOTH splits as map-style `LeRobotDataset` objects without
+consulting `dataset.streaming` - the streaming dataset it opened first is
+discarded. The run therefore materializes the whole dataset, which is exactly
+what `streaming` exists to avoid, and nothing reports it: an annulled stream is
+indistinguishable from `streaming=False`. Set `streaming=False` to keep the
+validation split, or `val_episodes=None` to keep the stream.
 
 ### GR00T (`groot`)
 

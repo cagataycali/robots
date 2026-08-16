@@ -505,6 +505,35 @@ class LerobotTrainer(Trainer):
             "directly with extra={'dataset.eval_split': <fraction>, 'eval_steps': <steps>}."
         )
 
+    def _streaming_validation_split_problem(self, spec: TrainSpec) -> str:
+        """Refusal text for ``streaming`` and ``val_episodes`` asked for together.
+
+        Each field is honored on its own, and neither survives the pair.
+        :meth:`_val_eval_split` turns ``val_episodes`` into lerobot's
+        ``dataset.eval_split``, and a non-zero ``eval_split`` sends lerobot down
+        ``make_train_eval_datasets``, which rebuilds BOTH splits as map-style
+        ``LeRobotDataset`` objects without consulting ``dataset.streaming`` - the
+        ``StreamingLeRobotDataset`` it built first is discarded. So the run
+        materializes the whole dataset, which is the outcome ``streaming``
+        exists to avoid, and it does so while reporting nothing: an annulled
+        stream is indistinguishable from ``streaming=False``.
+
+        Refusing here mirrors :meth:`_unreadable_episode_count_problem`, which
+        refuses rather than let a requested validation split be silently
+        dropped. Both remedies named here are honored by this backend: dropping
+        either field delivers the other one whole, and the raw ``extra``
+        passthrough still reaches lerobot's own knobs for a caller who wants the
+        combination anyway.
+        """
+        return (
+            f"{self.provider_name}: streaming=True cannot be combined with "
+            f"val_episodes={spec.val_episodes}. A held-out split makes lerobot rebuild both "
+            "splits as map-style datasets, so the whole dataset is materialized and the stream "
+            "is dropped - the disk/RAM blowup streaming exists to avoid. Either set "
+            "streaming=False to keep the validation split, or val_episodes=None to keep the "
+            "stream."
+        )
+
     def _dataset_total_tasks(self, dataset_root: str) -> int:
         """``total_tasks`` from ``meta/info.json``, or 0 when not recorded."""
         from pathlib import Path
@@ -579,7 +608,8 @@ class LerobotTrainer(Trainer):
         ``dataset_repo_id`` (for streaming) - an ``output_dir``, a usable run
         size (``steps`` / ``global_batch_size``), single-node only
         (``num_nodes == 1``), a ``val_episodes``
-        split below the dataset total, usable LoRA hyperparameters when
+        split below the dataset total and not asked for alongside ``streaming``
+        (lerobot's split path is map-style only), usable LoRA hyperparameters when
         ``method == "lora"``, and that ``lerobot.scripts.lerobot_train``
         is importable. ``extra['reward_model']`` switches to reward-model
         preflight; otherwise the default policy path is checked. Returns the
@@ -666,6 +696,12 @@ class LerobotTrainer(Trainer):
                 )
                 if split_err:
                     problems.append(split_err)
+                if spec.streaming and self._val_eval_split(spec) is not None:
+                    # Both fields were honored in isolation and neither survives
+                    # the pair: lerobot's split path rebuilds the dataset
+                    # map-style, so the stream is dropped. Refuse rather than
+                    # emit a config that silently delivers one of the two.
+                    problems.append(self._streaming_validation_split_problem(spec))
 
         problems.extend(self._lora_hyperparameter_problems(spec))
 
