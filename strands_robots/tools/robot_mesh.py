@@ -505,15 +505,22 @@ def _numeric_option_error(action: str, *, timeout: Any, limit: Any) -> str | Non
 # is never a task target itself - incoming execute/... simply report
 # "unknown action" like any robot-less peer.
 _GATEWAY_LOCK = threading.Lock()
-_GATEWAY: Any | None = None
+
+#: Single-slot cache for the process-wide gateway, keyed ``"mesh"``. A mutable
+#: container rather than a rebound module global: the cache is written from
+#: ``_gateway_mesh`` and read there on every later call, and a ``global``
+#: rebinding makes that write look dead to any single-function analysis -- which
+#: is what code scanning reported it as. The dict is also the shape the rest of
+#: the tree already uses for lock-guarded module state.
+_GATEWAY: dict[str, Any] = {}
 
 
 def _gateway_mesh() -> Any | None:
     """Lazily create the robot-less gateway Mesh (None if zenoh unavailable)."""
-    global _GATEWAY
     with _GATEWAY_LOCK:
-        if _GATEWAY is not None and getattr(_GATEWAY, "alive", False):
-            return _GATEWAY
+        cached = _GATEWAY.get("mesh")
+        if cached is not None and getattr(cached, "alive", False):
+            return cached
         try:
             import socket as _socket
             import uuid as _uuid
@@ -528,7 +535,7 @@ def _gateway_mesh() -> Any | None:
             gw.start()
             if not gw.alive:
                 return None
-            _GATEWAY = gw
+            _GATEWAY["mesh"] = gw
             logger.info("robot_mesh: started robot-less gateway mesh %s", gw.peer_id)
             # First bring-up: wait one heartbeat period so presence
             # subscription can populate session peer tracking before the

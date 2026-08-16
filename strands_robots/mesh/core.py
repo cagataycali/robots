@@ -754,7 +754,14 @@ class Mesh(SensorLoopsMixin):
                     inner = getattr(self.robot, "robot", None)
                     cam_cfg = getattr(getattr(inner, "config", None), "cameras", None)
                     _has_cams = bool(cam_cfg) or getattr(self.robot, "_world", None) is not None
-                except Exception:
+                except Exception:  # noqa: BLE001
+                    # Whether to emit one advisory log line is the only thing
+                    # this probe decides, so an unreadable robot config leaves
+                    # _has_cams False and the line unsaid. Raising here would
+                    # let a third-party robot whose .config property throws
+                    # fail mesh bring-up over a diagnostic, and naming the
+                    # exception types would couple this to whichever
+                    # attribute chain a future robot class exposes.
                     pass
                 if _has_cams:
                     logger.info(
