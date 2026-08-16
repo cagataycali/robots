@@ -475,9 +475,12 @@ class MotionPrimitivesMixin(MotionPrimitivesCore):
         elapse (each tick advances a few physics substeps).
 
         The end-effector frame is auto-discovered per robot namespace
-        (:func:`strands_robots.simulation.ik.discover_ee_frame`: TCP-like site,
-        else hand/tool body, else the chain's leaf body) - the same heuristic
-        eef-delta policies use, so multi-robot scenes resolve the right arm.
+        (:func:`strands_robots.simulation.ik.discover_ee_frame`: a site naming
+        the tool point or the end effector, else a body naming the end effector,
+        else the chain's leaf body) - the same heuristic eef-delta policies use,
+        so multi-robot scenes resolve the right arm. A site outranks a body of
+        the same name: it is placed at the tool point, while the body origin
+        sits at the link's mount.
 
         GRASP PRESERVATION (contract): gripper actuators (resolved by the same
         registry-metadata-first classification ``set_gripper`` uses, see
