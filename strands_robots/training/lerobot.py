@@ -57,7 +57,7 @@ from typing import TYPE_CHECKING, Any
 
 from strands_robots.training._inproc import call_callable, elastic_launch_callable, resume_argv
 from strands_robots.training.base import Trainer, TrainResult, TrainSpec
-from strands_robots.utils import validation_split_error, validation_split_fraction
+from strands_robots.utils import lerobot_version, validation_split_error, validation_split_fraction
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from lerobot.configs.train import TrainPipelineConfig
@@ -111,6 +111,34 @@ _QUANTILE_NORM_POLICY_TYPES_FALLBACK = frozenset({"molmoact2", "pi05"})
 # stats when ANY feature's stats dict holds one of these keys (mirrors lerobot's
 # own ``augment_dataset_quantile_stats.has_quantile_stats``).
 _QUANTILE_STAT_KEYS = ("q01", "q10", "q50", "q90", "q99")
+
+#: The LeRobotDataset format version the installed lerobot reads, mirrored for
+#: the offline case.
+#:
+#: lerobot REFUSES to load a dataset whose declared ``codebase_version`` has an
+#: older MAJOR than this one: ``check_version_compatibility`` raises
+#: ``BackwardCompatibilityError``, and that class only builds a message for
+#: exactly v2.1 - for any other older major its constructor itself raises
+#: ``NotImplementedError("Contact the maintainer on [Discord](...)")``, naming
+#: neither the dataset nor the version. An older MINOR only logs a warning and
+#: still loads, so only the major is a refusal.
+#:
+#: Read live off the installed lerobot (:func:`_lerobot_codebase_version`), which
+#: reads it from the same module the loader enforces it in; this is the offline
+#: FALLBACK for the ``validate()``-without-lerobot case.
+_LEROBOT_CODEBASE_VERSION_FALLBACK = "v3.0"
+
+#: The one dataset format version lerobot's converter accepts as its source.
+#: ``BackwardCompatibilityError`` builds a message for exactly this version and
+#: raises ``NotImplementedError`` for every other older one, so it is also the
+#: boundary between the two remedies the preflight below can honestly offer.
+_V21_TO_V30_SOURCE_VERSION = "2.1"
+
+#: lerobot's own converter that upgrades a v2.1 dataset in place to the v3
+#: format, quoted by the preflight below so the advice names lerobot's remedy
+#: rather than describing one. It is the only conversion lerobot ships; a root
+#: older than v2.1 has no automated path forward.
+_V21_TO_V30_CONVERTER = "lerobot.scripts.convert_dataset_v21_to_v30"
 
 # RA-BC (Reward-Aligned Behavior Cloning) is surfaced to the agent through the
 # ``extra['sample_weighting']`` dict. lerobot >= 0.6.0 configures sample
@@ -267,6 +295,53 @@ def _dataset_quantile_stats_present(dataset_root: str) -> bool | None:
     except (OSError, json.JSONDecodeError):
         return None
     return _stats_have_quantiles(stats)
+
+
+def _format_version_major(version: str) -> int | None:
+    """MAJOR component of a ``vN.M`` / ``N.M`` dataset format version, or None.
+
+    Returns ``None`` for anything this cannot read a leading major out of, so an
+    unrecognized version string fails OPEN (no problem reported) rather than
+    blocking a possibly-loadable dataset on a cosmetic format - the same posture
+    as :func:`~strands_robots.dataset_recorder._huggingface_hub_version_error`.
+    """
+    match = re.match(r"v?(\d+)", version.strip())
+    return int(match.group(1)) if match else None
+
+
+def _lerobot_codebase_version() -> str:
+    """Dataset format version the installed lerobot reads.
+
+    Read off ``lerobot.datasets.dataset_metadata``, the module whose
+    ``_load_metadata`` enforces it, so the preflight compares against the very
+    constant the loader will compare against. Falls back to the documented
+    :data:`_LEROBOT_CODEBASE_VERSION_FALLBACK` when lerobot is unavailable, so
+    ``validate()`` still produces a useful offline verdict.
+    """
+    try:
+        from lerobot.datasets.dataset_metadata import CODEBASE_VERSION
+    except ImportError:
+        return _LEROBOT_CODEBASE_VERSION_FALLBACK
+    return CODEBASE_VERSION if isinstance(CODEBASE_VERSION, str) else _LEROBOT_CODEBASE_VERSION_FALLBACK
+
+
+def _dataset_codebase_version(dataset_root: str) -> str | None:
+    """Declared ``codebase_version`` of a local LeRobotDataset root, or None.
+
+    Reads ``meta/info.json`` (the file lerobot's ``load_info`` reads, and the one
+    :meth:`LerobotTrainer._dataset_total_episodes` already reads for the episode
+    count). Returns ``None`` when the file is absent, unreadable, or carries no
+    string ``codebase_version`` - the unknown case, e.g. a Hub dataset with no
+    materialized local cache - so a DEFINITE mismatch can be reported without
+    false positives on the unknown one.
+    """
+    info_path = os.path.join(dataset_root, "meta", "info.json")
+    try:
+        with open(info_path, encoding="utf-8") as fh:
+            declared = json.load(fh).get("codebase_version")
+    except (OSError, json.JSONDecodeError):
+        return None
+    return declared if isinstance(declared, str) else None
 
 
 def _reward_registry() -> dict[str, type] | None:
@@ -609,7 +684,8 @@ class LerobotTrainer(Trainer):
         size (``steps`` / ``global_batch_size``), single-node only
         (``num_nodes == 1``), a ``val_episodes``
         split below the dataset total and not asked for alongside ``streaming``
-        (lerobot's split path is map-style only), usable LoRA hyperparameters when
+        (lerobot's split path is map-style only), a local dataset format version
+        the installed lerobot can read, usable LoRA hyperparameters when
         ``method == "lora"``, and that ``lerobot.scripts.lerobot_train``
         is importable. ``extra['reward_model']`` switches to reward-model
         preflight; otherwise the default policy path is checked. Returns the
@@ -703,6 +779,9 @@ class LerobotTrainer(Trainer):
                     # emit a config that silently delivers one of the two.
                     problems.append(self._streaming_validation_split_problem(spec))
 
+        # Shared by BOTH run types: policy and reward-model training load the
+        # same dataset, so an unreadable format version refuses either one.
+        problems.extend(self._dataset_codebase_version_problems(spec))
         problems.extend(self._lora_hyperparameter_problems(spec))
 
         # lerobot must be importable to actually train.
@@ -789,6 +868,59 @@ class LerobotTrainer(Trainer):
             "lerobot would mis-normalize or fail at train time. Add quantile stats first: "
             f"python -m lerobot.scripts.augment_dataset_quantile_stats --repo-id={repo_id} "
             f"--root={spec.dataset_root} (datasets recorded with current lerobot already include them)."
+        ]
+
+    def _dataset_codebase_version_problems(self, spec: TrainSpec) -> list[str]:
+        """Preflight a local dataset root's format version against lerobot's.
+
+        lerobot reads ``meta/info.json``'s ``codebase_version`` and refuses a root
+        whose MAJOR is older than its own ``CODEBASE_VERSION``. That refusal is a
+        poor place to learn this: only a v2.1 root gets a message naming the
+        dataset and the converter, and every OTHER older major dies inside
+        ``BackwardCompatibilityError.__init__`` with a bare
+        ``NotImplementedError: Contact the maintainer on [Discord](...)`` that
+        names neither the dataset nor the version nor the problem. This lifts the
+        refusal to spec-validation time with a message that names the root, both
+        versions, and the remedy - the same job :meth:`_quantile_stats_problems`
+        does for the dataset's quantile stats.
+
+        Read-only and conservative, mirroring that sibling: it flags only a
+        DEFINITE mismatch (a local ``meta/info.json`` declaring an older major).
+        A Hub dataset with no materialized local cache is left unflagged (its
+        metadata is not knowable without a download - ``validate()`` does not
+        reach the network), and an unparseable version on either side fails open.
+        Only the major is checked, because an older minor loads with a warning.
+        """
+        if not spec.dataset_root:
+            return []
+        declared = _dataset_codebase_version(spec.dataset_root)
+        if declared is None:
+            return []
+        current = _lerobot_codebase_version()
+        declared_major = _format_version_major(declared)
+        current_major = _format_version_major(current)
+        if declared_major is None or current_major is None or declared_major >= current_major:
+            return []
+
+        # lerobot ships exactly one converter (v2.1 -> v3.0), so an older root
+        # gets an honest "no automated path" rather than a command that would
+        # fail. The repo id is the CONVERTER's argument, and it is a Hub id: a
+        # local-only root has none (``_dataset_source`` calls it "local", which
+        # is not a repo anyone can convert), so name the placeholder instead -
+        # the same substitution ``_quantile_stats_problems`` makes.
+        repo_id = spec.dataset_repo_id or "<your-dataset-repo-id>"
+        if declared.strip().lstrip("v") == _V21_TO_V30_SOURCE_VERSION:
+            remedy = f"Convert it with lerobot's own converter: python -m {_V21_TO_V30_CONVERTER} --repo-id={repo_id}"
+        else:
+            remedy = (
+                f"lerobot ships no converter for {declared}; its only dataset conversion is "
+                f"v2.1 -> v3.0 ({_V21_TO_V30_CONVERTER}). Re-record the dataset, or bring it to "
+                "v2.1 first."
+            )
+        return [
+            f"dataset_root '{spec.dataset_root}' declares codebase_version '{declared}' in "
+            f"meta/info.json, which lerobot {lerobot_version()} cannot read (it loads "
+            f"'{current}' and refuses an older major). {remedy}"
         ]
 
     def _validate_reward_model(self, spec: TrainSpec, rm: dict[str, Any]) -> list[str]:
