@@ -295,7 +295,36 @@ file; the extent is defined by the mesh's own units, so `size` is ignored.
 ```python
 sim.add_object(name="bracket", shape="mesh", mesh_path="/abs/path/bracket.stl",
                position=[0.3, 0.0, 0.1])
+# 'bracket' added: mesh at [0.3, 0.0, 0.1], extent=[0.12, 0.08, 0.03]m from the
+# asset (collision uses its convex hull), 0.1kg
 ```
+
+Because no `size` component is consumed, the success text reports the extent
+read back off the compiled geom rather than echoing the request - the request
+carries no extent for a mesh, and the asset can be any size.
+
+### A mesh geom collides as its convex hull
+
+MuJoCo collides a mesh geom as its **convex hull**, not as the triangles that
+render. For a convex asset (a bracket, a mug body, a crate) the two coincide and
+there is nothing to think about. For a concave one - a scanned or generated room
+shell, a tray, a shelf, a bowl - the hull fills every cavity, so:
+
+* an object placed "inside" the cavity starts inside solid geometry and is pushed
+  out, and one dropped in rests on the filled hull instead of on the interior
+  floor;
+* a camera still shows the open interior, because rendering uses the triangles.
+  Nothing looks wrong.
+
+To get load-bearing concave geometry, decompose the asset into convex parts and
+add one mesh object per part:
+
+```python
+for i, part in enumerate(convex_parts):          # e.g. a V-HACD decomposition
+    sim.add_object(name=f"room_{i}", shape="mesh", mesh_path=part, is_static=True)
+```
+
+A single-mesh room is still useful as a visual backdrop; it just is not a floor.
 
 `mesh_path` is required for `shape="mesh"` - a mesh without a path is rejected
 with an actionable error rather than an opaque recompile failure. If the mesh

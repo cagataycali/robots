@@ -180,6 +180,31 @@ def _jnt_dof_width(mj: Any, jnt_type: int) -> int:
     return 1
 
 
+def _compiled_geom_extent(mj: Any, model: Any, geom_name: str) -> list[float] | None:
+    """Full extent in meters of a compiled geom's local bounding box.
+
+    Reads MuJoCo's own ``geom_aabb`` row (centre plus half-extent per local
+    axis) rather than re-deriving the extent from the request, so the number
+    describes the geometry that actually compiled. For a primitive that
+    reproduces the caller's ``size``; for a mesh it is the asset's own extent,
+    which no request component defines.
+
+    Args:
+        mj: the cached ``mujoco`` module.
+        model: a compiled ``MjModel``.
+        geom_name: name of the geom to measure.
+
+    Returns:
+        ``[x, y, z]`` full extents, or ``None`` when ``geom_name`` resolves to
+        no geom -- a caller then reports no extent rather than a wrong one.
+    """
+    geom_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, geom_name)
+    if geom_id < 0:
+        return None
+    aabb = model.geom_aabb[geom_id]
+    return [round(float(2.0 * aabb[3 + axis]), 4) for axis in range(3)]
+
+
 def _validated_mesh_handle(mesh: Any) -> Any:
     """Normalize the constructor ``mesh`` argument to a stoppable client or None.
 
@@ -2699,7 +2724,9 @@ class MuJoCoSimEngine(
         * ``plane``: ``size[0]`` / ``size[1]`` are visual half-widths; planes are
           infinite for collision and are forced static.
         * ``mesh``: ``size`` is ignored -- the asset's own units define the
-          extent (requires ``mesh_path``).
+          extent (requires ``mesh_path``). Because no component is consumed, the
+          success text reports the compiled extent read back off the geom
+          instead of echoing the request.
 
         A free (non-static) body rests on a horizontal support at
         ``rest_z = support_top + size_z / 2`` -- e.g. a 5 cm cube on a table
@@ -2752,7 +2779,15 @@ class MuJoCoSimEngine(
             is_static: Fix the body in the world. ``shape="plane"`` forces this
                 True; other shapes default to dynamic.
             mesh_path: Mesh asset path; required and only used when
-                ``shape="mesh"``.
+                ``shape="mesh"``. The asset defines the geom's extent, and
+                MuJoCo collides a mesh geom as its **convex hull** -- not as the
+                triangles that render. For a convex asset the two coincide; for
+                a concave one (a room shell, a tray, a shelf, a bowl) the hull
+                fills every cavity, so an object dropped "inside" rests on the
+                filled hull and a camera still shows the open interior. To get
+                load-bearing concave geometry, decompose the asset into convex
+                parts and add one mesh object per part. The success text names
+                the hull for this reason.
             material: Optional MuJoCo material for the object's geom, given as
                 a mapping of material attribute to value. The accepted keys are
                 ``builtin``, ``reflectance``, ``rgb1``, ``rgb2``, ``shininess``,
@@ -2973,11 +3008,27 @@ class MuJoCoSimEngine(
                 "content": [{"text": f"Failed to inject '{name}' into live scene: {e}"}],
             }
 
+        # A mesh consumes no 'size' component (``_SIZE_LAYOUT["mesh"]`` is 0),
+        # so echoing the request back reports an extent this add never applied:
+        # the default read as a 5 cm object for an asset of any size, and an
+        # explicit vector read as honoured. Report what compiled instead -- the
+        # asset's own extent, and the collision geometry, which for every mesh
+        # geom is its convex hull rather than the surface that renders. Both are
+        # what a caller placing a robot or an object against the asset needs, and
+        # neither is derivable from the request. Primitive shapes keep echoing
+        # ``size``: there it is the extent, and the geom compiles to it.
+        if shape == "mesh":
+            extent = _compiled_geom_extent(self._mj, self._world._model, f"{name}_geom")
+            geometry = "extent unavailable" if extent is None else f"extent={extent}m from the asset"
+            detail = f"{geometry} (collision uses its convex hull)"
+        else:
+            detail = f"size={obj.size}"
+
         return {
             "status": "success",
             "content": [
                 {
-                    "text": f"'{name}' added: {shape} at {obj.position}, size={obj.size}, {'static' if is_static else f'{mass}kg'}"
+                    "text": f"'{name}' added: {shape} at {obj.position}, {detail}, {'static' if is_static else f'{mass}kg'}"
                 }
             ],
         }
