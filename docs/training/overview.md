@@ -283,6 +283,38 @@ computes them by default), so they train `molmoact2` / `pi05` with no manual
 stats surgery. The check is conservative: a Hub dataset with no local cache is
 left unflagged (its quantiles are verified by lerobot when the shards load).
 
+#### Dataset format version (`codebase_version`)
+
+Every LeRobotDataset declares the format version it was written in as
+`codebase_version` in `meta/info.json`. lerobot compares it against its own
+`CODEBASE_VERSION` and refuses a dataset whose MAJOR is older - an older *minor*
+loads with a warning. Only a `v2.1` root gets a message naming the dataset and
+the converter; for any other older major lerobot raises
+`NotImplementedError: Contact the maintainer on [Discord](...)` from inside the
+exception constructor, naming neither the dataset nor the version.
+
+The version sits in the same `meta/info.json` the trainer already reads for the
+episode count, so `validate()` decides this offline and returns an actionable
+problem instead:
+
+```
+dataset_root '/data/old_dataset' declares codebase_version 'v2.1' in
+meta/info.json, which lerobot 0.6.2 cannot read (it loads 'v3.0' and refuses an
+older major). Convert it with lerobot's own converter: python -m
+lerobot.scripts.convert_dataset_v21_to_v30 --repo-id=<your-dataset-repo-id>
+```
+
+lerobot ships exactly one conversion (`v2.1` -> `v3.0`), so a root older than
+`v2.1` is told so plainly rather than handed a command that would fail. Datasets
+recorded by `Robot.start_recording()` / `DatasetRecorder` are written in the
+installed lerobot's own format, so they pass cleanly.
+
+Like the quantile-stats check, this one is conservative: it flags only a
+definite mismatch. A Hub dataset with no local cache is left unflagged -
+`validate()` does not reach the network, so Hub-side metadata (the format
+version, and the git tag lerobot resolves the revision from) is verified by
+lerobot when the dataset loads.
+
 #### Streaming a large Hub dataset (no full download)
 
 Real datasets (BitRobot / HIW-500, ~50-500 GB) do not fit on a single edge node.
