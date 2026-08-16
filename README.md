@@ -816,10 +816,13 @@ actions = policy.get_actions_sync(
 )
 ```
 
-Agents share one goal vocabulary across VLA and planner providers:
-`Robot.start_task(..., policy_provider="curobo", target_pose=[...])` and
-`mesh.tell(peer, "...", policy_provider="curobo", target_pose=[...])` flow the
-same `target_pose` / `target_joints` / `world_update` kwargs through.
+`mesh.tell(peer, "...", policy_provider="curobo", target_pose=[...])` forwards
+the same `target_pose` / `target_joints` / `world_update` vocabulary to a sim
+peer. In-process, the goal goes to `run_policy(policy_kwargs={...})`, which the
+runner hands to every `get_actions()` call - `run_policy` itself has no
+`target_pose` parameter. `Robot.start_task` takes no goal payload: its
+parameters are `instruction`, `policy_port`, `policy_host`, `policy_provider`
+and `duration`.
 
 </details>
 
