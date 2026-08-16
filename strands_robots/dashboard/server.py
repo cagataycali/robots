@@ -152,9 +152,14 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         }
 
     @app.get("/api/devices")
-    async def devices() -> dict[str, Any]:
-        """Local USB serial ports (servo buses) + cameras + managed robots."""
-        return await asyncio.to_thread(app.state.devices.devices)
+    async def devices(refresh: bool = False) -> dict[str, Any]:
+        """Local USB serial ports (servo buses) + cameras + managed robots.
+
+        Camera probe results are cached ~30s and indices owned by running
+        robots are never re-opened (BUGS.md #16); ``?refresh=1`` forces a
+        fresh probe of the unclaimed indices.
+        """
+        return await asyncio.to_thread(app.state.devices.devices, refresh)
 
     @app.post("/api/devices/spawn")
     async def spawn(body: dict[str, Any]) -> dict[str, Any]:

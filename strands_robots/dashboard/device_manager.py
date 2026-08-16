@@ -109,14 +109,20 @@ def scan_serial_ports() -> list[dict[str, Any]]:
     return out
 
 
-def scan_cameras(max_index: int = 4) -> list[dict[str, Any]]:
-    """Probe OpenCV camera indices. Cheap open/read/release per index."""
+def scan_cameras(max_index: int = 4, skip: set[int] | None = None) -> list[dict[str, Any]]:
+    """Probe OpenCV camera indices. Cheap open/read/release per index.
+
+    ``skip`` indices are NOT opened (BUGS.md #16: probing an index owned by a
+    running robot's camera thread steals/flaps its frames mid-episode).
+    """
     try:
         import cv2
     except ImportError:
         return []
     cams: list[dict[str, Any]] = []
     for i in range(max_index):
+        if skip and i in skip:
+            continue
         cap = cv2.VideoCapture(i)
         try:
             if cap.isOpened():
@@ -179,14 +185,53 @@ else:
 class DeviceManager:
     """Owns local device discovery + robot child processes."""
 
+    CAMERA_CACHE_TTL_S = 30.0  # bug #16: don't re-open /dev cameras per request
+
     def __init__(self) -> None:
         self.robots: dict[str, ManagedRobot] = {}
         self._lock = threading.Lock()
+        self._camera_cache: list[dict[str, Any]] = []
+        self._camera_cache_t = 0.0
 
-    def devices(self) -> dict[str, Any]:
+    def _claimed_camera_indices(self) -> dict[int, str]:
+        """OpenCV indices owned by LIVE managed robots -> peer_id.
+
+        Camera configs are lerobot-shaped: {name: {type: "opencv",
+        index_or_path: <int|str>, ...}} (see robot.py docstring). Only
+        integer / digit-string index_or_path values claim an index; device
+        paths (/dev/video0) never collide with index probing on macOS.
+        """
+        claimed: dict[int, str] = {}
+        for m in self.robots.values():
+            if not m.alive():
+                continue
+            for cfg in (m.cameras or {}).values():
+                iop = cfg.get("index_or_path") if isinstance(cfg, dict) else None
+                if isinstance(iop, bool):
+                    continue
+                if isinstance(iop, int):
+                    claimed[iop] = m.peer_id
+                elif isinstance(iop, str) and iop.isdigit():
+                    claimed[int(iop)] = m.peer_id
+        return claimed
+
+    def _cameras(self, refresh: bool = False) -> list[dict[str, Any]]:
+        """Cached camera list. Claimed indices are reported, never probed."""
+        claimed = self._claimed_camera_indices()
+        now = time.time()
+        if refresh or (now - self._camera_cache_t) > self.CAMERA_CACHE_TTL_S:
+            self._camera_cache = scan_cameras(skip=set(claimed))
+            self._camera_cache_t = now
+        cams = [c for c in self._camera_cache if c["index"] not in claimed]
+        cams.extend(
+            {"index": i, "claimed_by": peer} for i, peer in sorted(claimed.items())
+        )
+        return sorted(cams, key=lambda c: c["index"])
+
+    def devices(self, refresh: bool = False) -> dict[str, Any]:
         return {
             "serial_ports": scan_serial_ports(),
-            "cameras": scan_cameras(),
+            "cameras": self._cameras(refresh=refresh),
             "managed": {
                 pid: {
                     "peer_id": m.peer_id, "robot_name": m.robot_name, "mode": m.mode,
