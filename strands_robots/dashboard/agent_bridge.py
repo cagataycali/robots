@@ -18,10 +18,13 @@ human typed the instruction themselves, so we default the gate to "none"
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import queue
+import tempfile
 import threading
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -44,6 +47,32 @@ Rules:
 
 _agent_lock = threading.Lock()
 _agent: Any = None
+_turn_lock = threading.Lock()   # one agent turn at a time (chat + voice share the agent)
+
+# Conversation history survives dashboard restarts.
+HISTORY_FILE = Path(os.getenv(
+    "DASHBOARD_HISTORY_FILE",
+    os.path.join(tempfile.gettempdir(), "strands_dashboard", "chat_history.json"),
+))
+
+
+def _load_history() -> list:
+    try:
+        if HISTORY_FILE.exists():
+            data = json.loads(HISTORY_FILE.read_text())
+            if isinstance(data, list):
+                return data
+    except Exception as e:
+        logger.warning("could not load chat history: %s", e)
+    return []
+
+
+def _save_history(messages: list) -> None:
+    try:
+        HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        HISTORY_FILE.write_text(json.dumps(messages[-200:], default=str))
+    except Exception as e:
+        logger.debug("could not save chat history: %s", e)
 
 # Set by server.py at startup - the dashboard's mesh gateway. robot_mesh
 # cannot be used here: it requires an in-process Robot()/Simulation() as its
@@ -113,6 +142,13 @@ def _make_fleet_tool() -> Any:
                 "action": "execute", "instruction": instruction,
                 "policy_provider": policy_provider, "duration": float(duration),
             }
+            # Child sim peers ("<parent>__<robot>") cannot execute themselves
+            # (upstream BUGS.md #11) - route to the parent Simulation peer with
+            # robot_name so _dispatch_sim_policy handles it.
+            if "__" in target:
+                parent, _, robot_name = target.partition("__")
+                cmd["robot_name"] = robot_name
+                target = parent
             res = _bridge.send_cmd(target, cmd, timeout=float(duration) + 30.0)
             return {"status": "success", "content": [{"text": _json.dumps(res)[:1500]}]}
 
@@ -146,11 +182,21 @@ def _build_agent() -> Any:
 
     from strands import Agent
 
-    return Agent(
+    agent = Agent(
         tools=[_make_fleet_tool()],
         system_prompt=os.getenv("DASHBOARD_SYSTEM_PROMPT", DEFAULT_SYSTEM_PROMPT),
         callback_handler=None,
     )
+    # Restore conversation history from disk so the fleet agent survives
+    # dashboard restarts (BUGS.md #12 - "amnesiac agent").
+    history = _load_history()
+    if history:
+        try:
+            agent.messages = history
+            logger.info("restored %d chat messages", len(history))
+        except Exception as e:
+            logger.warning("history restore failed: %s", e)
+    return agent
 
 
 def get_agent() -> Any:
@@ -211,9 +257,14 @@ class WSStreamHandler:
 def run_turn_blocking(prompt: str, q: "queue.Queue[dict]") -> None:
     """Run one agent turn in a worker thread, streaming events into q."""
     try:
-        agent = get_agent()
-        agent.callback_handler = WSStreamHandler(q)
-        result = agent(prompt)
+        with _turn_lock:
+            agent = get_agent()
+            agent.callback_handler = WSStreamHandler(q)
+            result = agent(prompt)
+            try:
+                _save_history(list(agent.messages))
+            except Exception:
+                pass
         text = ""
         try:
             msg = getattr(result, "message", None)
