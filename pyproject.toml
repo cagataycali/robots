@@ -460,7 +460,21 @@ vera-sim = [
     # install it from source:
     #     pip install "mimicgen @ git+https://github.com/NVlabs/mimicgen.git"
     "mujoco>=3.5.0,<4.0.0",
-    "imageio",
+    # Clip encoder for this extra's MuJoCo rollouts (the VERA MimicGen example
+    # ships its rollout as a GIF). encode_clip (strands_robots.rendering.video)
+    # imports `imageio.v2` and passes the GIF writer a per-frame duration in
+    # MILLISECONDS, which is imageio's reading only from 2.28.0 on. Measured
+    # against the released wheels on Python 3.12: `imageio.v2` does not exist
+    # before 2.16.0, so encode_clip raises a bare ModuleNotFoundError one line
+    # after its require_optional probe has already reported imageio installed
+    # (require_optional takes no minimum version, so it cannot refuse); 2.16.0 -
+    # 2.19.0 raise out of mimsave; and 2.20.0 - 2.27.0 read that duration as
+    # seconds, silently encoding the clip 1000x too slow (fps=12 -> 83330 ms per
+    # frame instead of 83) while returning a valid GIF that encode_clip's
+    # "the encoder wrote no clip" check accepts. Same specifier as
+    # [sim-mujoco]/[sim-isaac]: one environment resolves one imageio, so a
+    # looser range here describes an install nobody gets.
+    "imageio>=2.28.0,<3.0.0",
 ]
 # Local-LLM agent path (no API key / no AWS -- the natural choice on an edge
 # device): strands.models.ollama.OllamaModel does a top-level `import ollama`.
