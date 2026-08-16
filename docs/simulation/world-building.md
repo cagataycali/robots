@@ -213,6 +213,14 @@ differently-sized object while `add_object` reports success:
 
 At most 3 components are accepted; omit `size` entirely for the 5 cm default.
 
+`set_geom_properties(size=...)` resizes an existing geom and takes a *different*
+convention for the same word: the compiled geom's own MuJoCo `geom_size`
+components. The two are not interchangeable - `size=[0.2, 0.2, 0.2]` builds a
+20 cm box here and resizes that same box to 40 cm there, and this table's
+`[diameter, unused, height]` capsule triple is refused there (it wants
+`[radius, half-length]`). See
+[Domain randomization](domain-randomization.md).
+
 ```python
 sim.add_object("crate", shape="box", size=[0.5])
 # status=error: box needs 3 'size' component(s) [x, y, z] full edge lengths,
