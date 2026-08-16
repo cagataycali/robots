@@ -96,7 +96,7 @@ supports and **ignores the rest** (the same tolerance rule as
 | `steps` / `global_batch_size` | the run size: optimizer steps x batch | each must be a positive integer; `validate()` refuses `0`, a fractional or non-finite value, and a `bool` (`True` would read as a silent one-step run) before anything is loaded |
 | `method` | `full` \| `lora` \| `expert_only` \| `frozen_backbone` | `lora`+`expert_only` are mutually exclusive |
 | `tune` | `{llm,visual,projector,diffusion}` | GR00T only |
-| `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count. `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating) |
+| `val_episodes` | hold out the LAST N episodes | deterministic split; must be a positive integer below the dataset's episode count, and that count must be readable from a local `meta/info.json` (see the Hub-source note below). `validate()` refuses `0` or a negative (they produced no split and no eval cadence at all - the run trained on everything and logged no validation loss), a `bool`, and a fractional value (`2.7` reserved 3 episodes, `0.5` reserved none while still evaluating) |
 | `num_gpus` / `num_nodes` | multi-GPU / multi-node | selects the launcher |
 | `seed` | reproducibility seed | must be a non-negative integer; `validate()` refuses a negative (`torch.manual_seed` would take it modulo `2**64`, so `-1` silently becomes `2**64 - 1`), a fractional or non-finite value, and a `bool`. `None` uses the backend's own default |
 | `extra["policy_type"]` | lerobot `--policy.type` | act/diffusion/smolvla/pi0/pi05/... |
@@ -303,9 +303,17 @@ TrainSpec(
 
 `dataset_root` is optional here - if given it is used as a local cache root.
 `streaming=True` also works with a local `dataset_root` (streams from disk with
-bounded RAM). Held-out `val_episodes` splitting needs a local `meta/info.json`
-to count episodes, so it is a no-op when streaming a Hub dataset with no local
-cache (the full Hub dataset is used).
+bounded RAM).
+
+Held-out `val_episodes` splitting needs a local `meta/info.json` to count
+episodes, because lerobot's split is a FRACTION and the count is what turns an
+episode number into one. `validate()` therefore refuses `val_episodes` whenever
+that count is unreadable - a Hub source with no `dataset_root`, or a
+`dataset_root` cache directory nothing has been downloaded into yet - rather
+than launch a run that trains on every episode and logs no validation loss. The
+refusal names the two ways to get the split: point `dataset_root` at a populated
+local copy of the dataset, or pass lerobot's own knobs directly with
+`extra={"dataset.eval_split": 0.1, "eval_steps": 1000}`.
 
 ### GR00T (`groot`)
 
