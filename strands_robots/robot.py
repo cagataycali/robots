@@ -458,6 +458,14 @@ def _run_device_connect_foreground(instance: Any) -> None:
     Device Connect is the primary networking layer in server mode, so the
     auto-started built-in mesh (if any) is stopped first to avoid running two
     Zenoh presence systems in one process.
+
+    A bring-up that fails keeps the process alive - the operator asked for a
+    server and a transient broker outage is not worth losing the process over -
+    but the status line reports what actually came up. Claiming the device is
+    online is only true of the path where the runtime started; on the other one
+    the mesh has already been stopped for a replacement that never arrived, so
+    the process serves no transport at all and the operator has to be told
+    that rather than the opposite.
     """
     import time
 
@@ -466,6 +474,7 @@ def _run_device_connect_foreground(instance: Any) -> None:
 
     # Device Connect supersedes the built-in mesh in run() mode.
     mesh = getattr(instance, "mesh", None)
+    mesh_was_stopped = mesh is not None
     if mesh is not None:
         with contextlib.suppress(Exception):
             mesh.stop()
@@ -480,9 +489,24 @@ def _run_device_connect_foreground(instance: Any) -> None:
             peer_type=peer_type,
         )
     except Exception as e:  # noqa: BLE001 - surface but keep the process alive
-        logger.warning("Device Connect init failed: %s", e)
+        # An absent extra is the common cause and the only one with a one-line
+        # remedy, so name it here: on its own the ImportError names the
+        # distribution's internal module, not the extra that installs it.
+        remedy = " Install it with: pip install 'strands-robots[device-connect]'." if isinstance(e, ImportError) else ""
+        logger.warning("Device Connect init failed: %s.%s", e, remedy)
 
-    print(f"{peer_id} is online. Ctrl+C to stop.")
+    if getattr(instance, "_device_connect_runtime", None) is None:
+        lost_transport = (
+            "The built-in mesh was stopped for it, so this process now serves no transport."
+            if mesh_was_stopped
+            else "This process serves no transport."
+        )
+        print(
+            f"{peer_id} is NOT online: the Device Connect runtime did not start "
+            f"(see the warning above). {lost_transport} Ctrl+C to stop."
+        )
+    else:
+        print(f"{peer_id} is online. Ctrl+C to stop.")
     try:
         while True:
             time.sleep(1)
