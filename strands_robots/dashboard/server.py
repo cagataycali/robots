@@ -198,7 +198,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             "source_peer_id": source,
             "device_name": body.get("device_name", "leader"),
         }
-        result = await app.state.bridge.send_cmd_async(peer_id, cmd, timeout=15.0)
+        # First declare_subscriber on a peer can take >15s (zenoh declare +
+        # gossip propagation) - not a deadlock, just slow. 45s budget.
+        result = await app.state.bridge.send_cmd_async(peer_id, cmd, timeout=45.0)
         return {"peer_id": peer_id, "result": result}
 
     @app.post("/api/robots/{peer_id}/teleop/stop")
