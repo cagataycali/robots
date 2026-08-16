@@ -1703,6 +1703,20 @@ class Mesh(SensorLoopsMixin):
             ts = getattr(r, "_task_state", None)
             return {"status": getattr(getattr(ts, "status", None), "value", "unknown")}
         if action == "stop":
+            # A robot-less peer -- the coordinator gateway of
+            # ``robot_mesh._gateway_mesh`` -- is subscribed to
+            # ``strands/broadcast`` like every other peer, so the
+            # ``{"action": "stop"}`` fanout from :meth:`emergency_stop` reaches
+            # it too. It has nothing to halt, which makes "did not stop"
+            # affirmatively wrong rather than conservative: falling through to
+            # the terminal ``ok=False`` answer below put the operator's own
+            # dashboard in ``peers_not_stopped`` and fired the CRITICAL
+            # "robots may still be executing" warning on every e-stop -- the
+            # standing false alarm ``_peers_that_did_not_stop`` documents as
+            # the thing that trains operators to ignore the warning. An empty
+            # ``stopped`` list is the truth the aggregation needs.
+            if r is None:
+                return {"ok": True, "stopped": [], "note": "no robot registered on this peer"}
             if hasattr(r, "stop_task"):
                 return dict(r.stop_task())
             # Sim peer: route to stop_policy (cooperative cancellation).
