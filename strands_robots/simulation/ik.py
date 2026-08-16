@@ -359,7 +359,8 @@ class MinkIKBridge:
 # ee-frame, so we discover it from the compiled ``mujoco.MjModel`` with a
 # robust, namespace-aware heuristic - making Cartesian control zero-config.
 #
-# Hints match name *components*, not bare substrings (see ``_hint_matches``),
+# Hints match name *components*, not bare substrings (see
+# :func:`hint_matches_name`),
 # so the short hints cannot fire inside an unrelated word - a ``knee`` or a
 # ``wheel`` is not an end-effector just because ``ee`` occurs in its name.
 #
@@ -406,7 +407,7 @@ def _name_tokens(name: str) -> list[str]:
     return [tok for tok in _TOKEN_BOUNDARY.split(_CAMEL_BOUNDARY.sub("_", name).lower()) if tok]
 
 
-def _hint_matches(hint: str, name: str) -> bool:
+def hint_matches_name(hint: str, name: str) -> bool:
     """True when ``hint``'s tokens occur as a consecutive token run in ``name``.
 
     Matching a hint on word boundaries keeps a short hint from firing inside an
@@ -420,8 +421,11 @@ def _hint_matches(hint: str, name: str) -> bool:
     hint vocabulary; only the matching rule is shared.
 
     Args:
-        hint: A hint from :data:`_SITE_HINTS` / :data:`_BODY_HINTS`.
-        name: The candidate element name (namespace already stripped).
+        hint: An end-effector hint word, e.g. one of :data:`_SITE_HINTS` /
+            :data:`_BODY_HINTS`. A multi-token hint (``"end_effector"``)
+            matches as a phrase.
+        name: The candidate element name, with any robot namespace already
+            stripped - a namespace must not supply a match.
 
     Returns:
         Whether the hint names a component of ``name``.
@@ -486,7 +490,7 @@ def discover_ee_frame(model: Any, namespace: str | None = None) -> tuple[str, st
     sites = [(i, n) for i, n in _names_of(model, _site_obj()) if _scoped(n, namespace)]
     for hint in _SITE_HINTS:
         for _i, name in sites:
-            if _hint_matches(hint, _basename(name, namespace)):
+            if hint_matches_name(hint, _basename(name, namespace)):
                 logger.info("ee-frame: site %r (hint %r)", name, hint)
                 return name, "site"
 
@@ -494,7 +498,7 @@ def discover_ee_frame(model: Any, namespace: str | None = None) -> tuple[str, st
     bodies = [(i, n) for i, n in _names_of(model, _body_obj()) if _scoped(n, namespace)]
     for hint in _BODY_HINTS:
         for _i, name in bodies:
-            if _hint_matches(hint, _basename(name, namespace)):
+            if hint_matches_name(hint, _basename(name, namespace)):
                 logger.info("ee-frame: body %r (hint %r)", name, hint)
                 return name, "body"
 

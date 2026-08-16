@@ -60,7 +60,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.simulation.base import SimEngine, close_match_hint, reject_setup_kwargs
-from strands_robots.simulation.ik import _hint_matches
+from strands_robots.simulation.ik import hint_matches_name
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
@@ -268,6 +268,13 @@ def _resolve_policy_stop_timeout(policy_stop_timeout: float | None, default: flo
 # when the caller gives no per-robot override. Single-sourced so the signature
 # default and the per-robot mapping fallback cannot drift apart.
 _DEFAULT_ACTION_HORIZON = 8
+
+# Hint words for the best-guess gripper/EEF mount ``list_bodies`` advertises.
+# Matched on word boundaries by
+# :func:`~strands_robots.simulation.ik.hint_matches_name` - the same rule
+# :func:`~strands_robots.simulation.ik.discover_ee_frame` applies - so the short
+# hint "ee" cannot fire inside "knee" or "wheel".
+_GRIPPER_BODY_HINTS = ("gripper", "hand", "ee", "tool")
 
 
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
@@ -2658,7 +2665,7 @@ class MuJoCoSimEngine(
             gripper_body: str | None = None
             for name in bodies:
                 short = name.rsplit("/", 1)[-1]
-                if any(_hint_matches(hint, short) for hint in ("gripper", "hand", "ee", "tool")):
+                if any(hint_matches_name(hint, short) for hint in _GRIPPER_BODY_HINTS):
                     gripper_body = name
                     break
             json_payload["gripper_body"] = gripper_body

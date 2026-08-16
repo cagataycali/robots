@@ -277,3 +277,55 @@ def test_newton_list_bodies_still_advertises_a_jaw() -> None:
     """Newton's own extra hint (``jaw``) keeps matching a real jaw body."""
     labels = ["bot/base/left_knee_link", "bot/base/Moving_Jaw"]
     assert _newton_gripper_body(labels) == "bot/base/Moving_Jaw"
+
+
+@pytest.mark.parametrize(
+    "links,expected",
+    [
+        ("shoulder_link gripper_body", "gripper_body"),
+        ("shoulder_link left_hand", "left_hand"),
+        ("shoulder_link tool_flange", "tool_flange"),
+        ("shoulder_link ee_link", "ee_link"),
+        ("shoulder_link EE_BODY_R", "EE_BODY_R"),
+        ("shoulder_link wristYawLeft toolTip", "toolTip"),
+        ("shoulder_link tool0", "tool0"),
+    ],
+)
+def test_list_bodies_still_advertises_every_mount_spelling(tmp_path, links: str, expected: str) -> None:
+    """Every legitimate gripper-mount spelling still resolves at this surface.
+
+    snake_case, SCREAMING_CASE, camelCase, a trailing digit, and a short hint
+    that is one whole token of a longer name. The rule narrows what matches
+    *inside* a word, not which names are gripper mounts, so narrowing it must
+    not cost a single real mount.
+    """
+    assert _mujoco_gripper_body(tmp_path, "arm", links) == f"arm/{expected}"
+
+
+def test_both_surfaces_agree_on_the_same_robot(tmp_path) -> None:
+    """The IK target frame and the advertised mount resolve the same body.
+
+    The two surfaces keep separate hint vocabularies but answer one question,
+    so a robot whose only end-effector-like body is its gripper must resolve to
+    that body at both. While each carried its own bare-substring scan a drive
+    wheel could be the end-effector to one surface and not to the other - this
+    measures the agreement through the two public surfaces rather than through
+    the shared helper, so it holds regardless of how the rule is factored.
+    """
+    from strands_robots.simulation.mujoco.simulation import MuJoCoSimEngine
+
+    path = tmp_path / "mobile.xml"
+    path.write_text(_chain("", "link_right_wheel lift_link link_gripper_slider"))
+    sim = MuJoCoSimEngine()
+    try:
+        sim.create_world(ground_plane=False)
+        assert sim.add_robot(name="mobile", urdf_path=str(path))["status"] == "success"
+        advertised = sim.list_bodies(robot_name="mobile")["content"][1]["json"]["gripper_body"]
+        discovered = discover_ee_frame(sim.mj_model, "mobile/")
+    finally:
+        sim.destroy()
+
+    assert discovered is not None
+    frame, kind = discovered
+    assert (frame, kind) == ("mobile/link_gripper_slider", "body")
+    assert advertised == frame, (advertised, frame)
