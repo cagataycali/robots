@@ -175,6 +175,57 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
             raise HTTPException(500, "policy registry unavailable")
         return {"providers": catalog, "names": [p["name"] for p in catalog]}
 
+    @app.get("/api/training/trainers")
+    async def training_trainers() -> dict[str, Any]:
+        from strands_robots.dashboard import training
+
+        return {"trainers": await asyncio.to_thread(training.list_trainers)}
+
+    @app.get("/api/training/datasets")
+    async def training_datasets(q: str = "") -> dict[str, Any]:
+        """Local LeRobotDataset roots for the submit form's dataset picker."""
+        from strands_robots.dashboard import training
+
+        return {"datasets": await asyncio.to_thread(training.local_datasets, q)}
+
+    @app.get("/api/training/jobs")
+    async def training_jobs() -> dict[str, Any]:
+        from strands_robots.dashboard import training
+
+        return {"jobs": await asyncio.to_thread(training.jobs)}
+
+    @app.post("/api/training/validate")
+    async def training_validate(body: dict[str, Any]) -> dict[str, Any]:
+        from strands_robots.dashboard import training
+
+        return await asyncio.to_thread(training.validate, body)
+
+    @app.post("/api/training/submit")
+    async def training_submit(body: dict[str, Any]) -> dict[str, Any]:
+        """Launch a training job (train_policy validates the spec first)."""
+        from strands_robots.dashboard import training
+
+        return await asyncio.to_thread(training.submit, body)
+
+    @app.get("/api/training/status")
+    async def training_status(provider: str, job_id: str) -> dict[str, Any]:
+        from strands_robots.dashboard import training
+
+        return await asyncio.to_thread(training.status, provider, job_id)
+
+    @app.post("/api/training/export")
+    async def training_export(body: dict[str, Any]) -> dict[str, Any]:
+        """Export the latest checkpoint as a loadable policy artifact."""
+        from strands_robots.dashboard import training
+
+        return await asyncio.to_thread(
+            training.export,
+            body.get("provider", "lerobot_local"),
+            body.get("output_dir", ""),
+            body.get("dataset_root", ""),
+            body.get("dataset_repo_id"),
+        )
+
     @app.get("/api/checkpoints/search")
     async def checkpoints_search(q: str = "", limit: int = 15) -> dict[str, Any]:
         """Type-ahead checkpoint search for the run form.

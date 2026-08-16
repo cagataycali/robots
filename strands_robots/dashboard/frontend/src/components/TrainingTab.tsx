@@ -1,0 +1,162 @@
+import { useEffect, useState } from 'react'
+
+interface Dataset { root: string; repo_id: string; total_episodes?: number; robot_type?: string; fps?: number }
+interface Job { job_id: string; provider: string; dataset?: string; base_model?: string; output_dir?: string; steps?: number; submitted_at?: number }
+interface JobStatus { status: string; data: { status?: string; metrics?: Record<string, unknown> }; text: string }
+
+/**
+ * Training tab - submit / monitor / export policy training jobs.
+ *
+ * Backed by train_policy, the one workflow tool with structured JSON
+ * results (job_id, status, metrics) - no prose parsing. Dataset picker
+ * scans local LeRobotDataset roots; the trained checkpoint feeds straight
+ * back into the run form's checkpoint search (record → train → deploy).
+ */
+export default function TrainingTab({ onClose }: { onClose: () => void }) {
+  const [trainers, setTrainers] = useState<string[]>([])
+  const [datasets, setDatasets] = useState<Dataset[]>([])
+  const [jobs, setJobs] = useState<Job[]>([])
+  const [statuses, setStatuses] = useState<Record<string, JobStatus>>({})
+  const [form, setForm] = useState({ provider: 'lerobot_local', dataset_root: '', base_model: 'lerobot/smolvla_base', output_dir: '', steps: '10000', method: 'lora' })
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState<string | null>(null)
+
+  const refresh = async () => {
+    try {
+      const [t, d, j] = await Promise.all([
+        fetch('/api/training/trainers').then(r => r.json()),
+        fetch('/api/training/datasets').then(r => r.json()),
+        fetch('/api/training/jobs').then(r => r.json()),
+      ])
+      setTrainers(t.trainers ?? [])
+      setDatasets(d.datasets ?? [])
+      setJobs((j.jobs ?? []).slice().reverse())
+    } catch (e) { setMsg(`⚠ ${e}`) }
+  }
+  useEffect(() => { refresh() }, [])
+
+  // poll running job statuses every 5s
+  useEffect(() => {
+    const id = setInterval(async () => {
+      for (const job of jobs.slice(0, 5)) {
+        if (!job.job_id) continue
+        try {
+          const s = await fetch(`/api/training/status?provider=${job.provider}&job_id=${encodeURIComponent(job.job_id)}`).then(r => r.json())
+          setStatuses(prev => ({ ...prev, [job.job_id]: s }))
+        } catch { /* transient */ }
+      }
+    }, 5000)
+    return () => clearInterval(id)
+  }, [jobs])
+
+  const set = (k: string, v: string) => setForm(f => ({ ...f, [k]: v }))
+
+  const submit = async (validateOnly: boolean) => {
+    setBusy(true); setMsg(null)
+    const body = {
+      provider: form.provider,
+      dataset_root: form.dataset_root || undefined,
+      base_model: form.base_model || undefined,
+      output_dir: form.output_dir || undefined,
+      steps: Number(form.steps) || 10000,
+      method: form.method || undefined,
+    }
+    try {
+      const r = await fetch(validateOnly ? '/api/training/validate' : '/api/training/submit', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+      })
+      const j = await r.json()
+      setMsg(j.status === 'success' ? `✓ ${j.text?.slice(0, 200)}` : `✗ ${j.text?.slice(0, 300)}`)
+      if (!validateOnly && j.status === 'success') refresh()
+    } catch (e) { setMsg(`⚠ ${e}`) }
+    setBusy(false)
+  }
+
+  const exportCkpt = async (job: Job) => {
+    setBusy(true)
+    try {
+      const r = await fetch('/api/training/export', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: job.provider, output_dir: job.output_dir, dataset_root: job.dataset }),
+      })
+      const j = await r.json()
+      setMsg(j.status === 'success' ? `✓ ${j.text?.slice(0, 250)}` : `✗ ${j.text?.slice(0, 250)}`)
+    } catch (e) { setMsg(`⚠ ${e}`) }
+    setBusy(false)
+  }
+
+  return (
+    <div className="train-sheet">
+      <div className="train-head">
+        <h2>🎓 Training</h2>
+        <button className="dock-min" onClick={onClose}>✕</button>
+      </div>
+
+      <div className="train-form">
+        <label className="field"><span>provider</span>
+          <select value={form.provider} onChange={e => set('provider', e.target.value)} disabled={busy}>
+            {trainers.map(t => <option key={t}>{t}</option>)}
+          </select>
+        </label>
+        <label className="field"><span>dataset</span>
+          <select value={form.dataset_root} onChange={e => set('dataset_root', e.target.value)} disabled={busy}>
+            <option value="">— pick a local dataset —</option>
+            {datasets.map(d => (
+              <option key={d.root} value={d.root}>
+                {d.repo_id} ({d.total_episodes ?? '?'} eps{d.robot_type && d.robot_type !== 'unknown' ? `, ${d.robot_type}` : ''})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field"><span>base model</span>
+          <input value={form.base_model} onChange={e => set('base_model', e.target.value)} disabled={busy} placeholder="lerobot/smolvla_base" />
+        </label>
+        <label className="field"><span>output dir</span>
+          <input value={form.output_dir} onChange={e => set('output_dir', e.target.value)} disabled={busy} placeholder="/tmp/my_policy_ckpt" />
+        </label>
+        <div className="train-row">
+          <label className="field"><span>steps</span>
+            <input type="number" value={form.steps} onChange={e => set('steps', e.target.value)} disabled={busy} />
+          </label>
+          <label className="field"><span>method</span>
+            <select value={form.method} onChange={e => set('method', e.target.value)} disabled={busy}>
+              <option value="lora">lora</option>
+              <option value="full">full</option>
+            </select>
+          </label>
+        </div>
+        <div className="train-actions">
+          <button className="btn ghost" onClick={() => submit(true)} disabled={busy}>✓ validate</button>
+          <button className="btn go wide" onClick={() => submit(false)} disabled={busy || !form.dataset_root || !form.output_dir}>▶ train</button>
+        </div>
+        {msg && <div className="train-msg">{msg}</div>}
+      </div>
+
+      <div className="train-jobs">
+        <h3>Jobs</h3>
+        {jobs.length === 0 && <div className="dock-hint">No training jobs yet.</div>}
+        {jobs.map(job => {
+          const st = statuses[job.job_id]
+          const state = st?.data?.status ?? '…'
+          return (
+            <div className="train-job" key={job.job_id ?? Math.random()}>
+              <div className="train-job-head">
+                <b>{job.provider}</b>
+                <span className={`jstate ${state}`}>{state}</span>
+              </div>
+              <div className="train-job-meta">
+                {job.dataset?.split('/').slice(-2).join('/')} → {job.output_dir} · {job.steps} steps
+              </div>
+              {st?.data?.metrics && Object.keys(st.data.metrics).length > 0 && (
+                <div className="train-job-metrics">{JSON.stringify(st.data.metrics).slice(0, 140)}</div>
+              )}
+              <div className="train-job-actions">
+                <button className="btn ghost" onClick={() => exportCkpt(job)} disabled={busy}>📦 export checkpoint</button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
