@@ -27,6 +27,7 @@ from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 
+from strands_robots.dashboard.device_manager import DeviceManager
 from strands_robots.dashboard.mesh_bridge import MeshBridge
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     app.state.bridge = bridge or MeshBridge()
     app.state.mesh_online = False
+    app.state.devices = DeviceManager()
 
     @app.on_event("startup")
     async def _startup() -> None:
@@ -54,6 +56,7 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
 
     @app.on_event("shutdown")
     async def _shutdown() -> None:
+        app.state.devices.shutdown()
         await asyncio.to_thread(app.state.bridge.stop)
 
     # ------------------------------------------------------------------
@@ -136,6 +139,33 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
                 for p, r in zip(peers, results)
             }
         }
+
+    @app.get("/api/devices")
+    async def devices() -> dict[str, Any]:
+        """Local USB serial ports (servo buses) + cameras + managed robots."""
+        return await asyncio.to_thread(app.state.devices.devices)
+
+    @app.post("/api/devices/spawn")
+    async def spawn(body: dict[str, Any]) -> dict[str, Any]:
+        robot_name = body.get("robot_name")
+        if not robot_name:
+            raise HTTPException(422, "robot_name required")
+        return await asyncio.to_thread(
+            app.state.devices.spawn,
+            robot_name,
+            body.get("mode", "sim"),
+            body.get("peer_id"),
+            body.get("port"),
+            body.get("cameras"),
+            body.get("robot_id"),
+        )
+
+    @app.post("/api/devices/despawn")
+    async def despawn(body: dict[str, Any]) -> dict[str, Any]:
+        peer_id = body.get("peer_id")
+        if not peer_id:
+            raise HTTPException(422, "peer_id required")
+        return await asyncio.to_thread(app.state.devices.despawn, peer_id)
 
     @app.get("/api/frame/{peer_id}/{cam}")
     async def frame(peer_id: str, cam: str) -> Response:
