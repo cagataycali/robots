@@ -653,8 +653,18 @@ def iter_policy_tree(policy: Policy) -> Iterator[Policy]:
     yielded at most once, so two wrappers sharing one child do not double-report
     it and a cycle in the graph terminates instead of recursing forever.
 
+    ``children`` is read with :func:`getattr` rather than as an attribute, so a
+    duck-typed policy object that does not subclass :class:`Policy` yields
+    itself instead of raising ``AttributeError``. That input class is one the
+    surrounding call chain deliberately tolerates - ``policy_runner`` probes
+    ``is_chunk_emitting`` the same way "so a duck-typed policy_object that
+    predates is_chunk_emitting() simply stays on the synchronous path" - and
+    the callers of this walk are capability probes whose documented answer for
+    an object declaring no tree is "no match", not a crash.
+
     Args:
-        policy: Root of the tree to walk. A leaf policy yields just itself.
+        policy: Root of the tree to walk. A leaf policy, or any object that
+            declares no ``children``, yields just itself.
 
     Yields:
         Each distinct policy in the tree, root first.
@@ -667,4 +677,4 @@ def iter_policy_tree(policy: Policy) -> Iterator[Policy]:
             continue
         seen.add(id(current))
         yield current
-        stack.extend(reversed(tuple(current.children)))
+        stack.extend(reversed(tuple(getattr(current, "children", ()))))

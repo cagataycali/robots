@@ -98,3 +98,45 @@ class TestIterPolicyTree:
 
         loop = _SelfReferencing("loop")
         assert list(iter_policy_tree(loop)) == [loop]
+
+    def test_a_duck_typed_policy_object_yields_itself_instead_of_raising(self) -> None:
+        # `iter_policy_tree` is reached from the default MuJoCo `run_policy`
+        # path (the WBC torque-shim probe runs whenever the [wbc] import
+        # succeeds), and its argument there is typed `Any`. A policy object that
+        # does not subclass Policy therefore arrives with no `children`
+        # attribute at all - the input class `policy_runner` names when it
+        # probes `is_chunk_emitting` via getattr ("a duck-typed test double may
+        # have neither hook"). Reading `.children` directly turned that into an
+        # `AttributeError` from inside a capability probe whose documented
+        # answer is "no match".
+        class _DuckTyped:
+            """A policy-shaped object that predates the `children` declaration."""
+
+        duck = _DuckTyped()
+        assert list(iter_policy_tree(duck)) == [duck]  # type: ignore[arg-type]
+
+    def test_a_duck_typed_policy_object_answers_a_capability_probe_as_no_match(self) -> None:
+        # The probe's shape at the call site: `next((p for p in
+        # iter_policy_tree(policy) if isinstance(p, ...)), None)`. For an object
+        # declaring no tree the answer is None - the documented no-op - rather
+        # than an exception that names nothing about the capability being
+        # probed.
+        class _DuckTyped:
+            pass
+
+        duck = _DuckTyped()
+        found = next((p for p in iter_policy_tree(duck) if isinstance(p, _Leaf)), None)  # type: ignore[arg-type]
+        assert found is None
+
+    def test_a_declared_child_is_still_walked_when_children_is_a_plain_attribute(self) -> None:
+        # The getattr read must not quietly stop walking a duck-typed object
+        # that DOES declare children as an instance attribute rather than a
+        # Policy property.
+        leaf = _Leaf("declared")
+
+        class _DuckTypedWrapper:
+            def __init__(self, child: Policy) -> None:
+                self.children = (child,)
+
+        wrapper = _DuckTypedWrapper(leaf)
+        assert list(iter_policy_tree(wrapper)) == [wrapper, leaf]  # type: ignore[arg-type]
