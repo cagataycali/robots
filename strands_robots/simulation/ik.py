@@ -343,6 +343,12 @@ def _hint_matches(hint: str, name: str) -> bool:
     unrelated word: ``"ee"`` matches ``"ee_link"`` and ``"gripper_ee"`` but not
     ``"left_knee_link"`` or ``"wheel_hub_back_link"``.
 
+    This is the one matcher for every surface that answers "which element names
+    an end-effector" - :func:`discover_ee_frame` here, and the ``gripper_body``
+    each backend's ``list_bodies`` advertises - so the same name cannot be an
+    end-effector to one surface and not to another. Each caller keeps its own
+    hint vocabulary; only the matching rule is shared.
+
     Args:
         hint: A hint from :data:`_SITE_HINTS` / :data:`_BODY_HINTS`.
         name: The candidate element name (namespace already stripped).

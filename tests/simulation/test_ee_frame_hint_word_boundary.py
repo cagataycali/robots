@@ -166,3 +166,107 @@ def test_leaf_fallback_when_no_component_matches() -> None:
     body, so a robot with no tool-like name keeps a usable frame."""
     xml = _chain("plain/", "link1 link2 link3")
     assert discover_ee_frame(_model(xml), "plain/") == ("plain/link3", "body")
+
+
+# --------------------------------------------------------------------------
+# ``list_bodies`` advertises the same mount, under the same rule.
+#
+# ``list_bodies(robot_name=...)`` answers "which body is this robot's gripper /
+# end-effector mount" in its ``gripper_body`` field - the discovery surface a
+# caller uses to resolve ``add_camera(parent_body=...)`` for a wrist view. It
+# asked that question with its own bare-substring scan, so the same short hint
+# fired inside the same unrelated words, and the mount it advertised for a
+# humanoid or a mobile manipulator was a knee or a drive wheel. Both backends
+# now match through the matcher above, so one rule answers the question
+# wherever it is asked.
+# --------------------------------------------------------------------------
+
+import types  # noqa: E402
+
+from strands_robots.simulation.newton.simulation import NewtonSimEngine  # noqa: E402
+
+
+def _mujoco_gripper_body(tmp_path, robot: str, links: str) -> str | None:
+    """``list_bodies(robot_name=robot)["gripper_body"]`` for an inline chain.
+
+    Drives the real backend end to end - ``create_world``, ``add_robot`` from a
+    written MJCF, then ``list_bodies`` - so the namespacing and the model
+    traversal are the production ones. Renders nothing, downloads nothing.
+    """
+    from strands_robots import create_simulation
+
+    path = tmp_path / f"{robot}.xml"
+    path.write_text(_chain("", links))
+    sim = create_simulation(backend="mujoco")
+    try:
+        sim.create_world(ground_plane=False)
+        added = sim.add_robot(name=robot, urdf_path=str(path))
+        assert added["status"] == "success", added["content"][0]["text"]
+        payload = sim.list_bodies(robot_name=robot)["content"][1]["json"]
+        assert payload["bodies"], "the chain must contribute bodies to search"
+        return payload["gripper_body"]
+    finally:
+        sim.destroy()
+
+
+def test_list_bodies_does_not_advertise_a_knee_as_the_end_effector_mount(tmp_path) -> None:
+    """A legged robot with no gripper-like body advertises no mount at all.
+
+    Pre-fix ``ee`` matched inside ``left_knee_link`` and the surface named a
+    leg link as the robot's gripper/EEF mount - so a caller resolving a wrist
+    camera mount from discovery aimed it at the knee.
+    """
+    assert _mujoco_gripper_body(tmp_path, "g1", "left_knee_link left_ankle_link torso_link") is None
+
+
+def test_list_bodies_advertises_the_gripper_over_a_drive_wheel(tmp_path) -> None:
+    """A wheeled base carrying an arm advertises the arm's gripper.
+
+    The wheel comes first in body order, so pre-fix the ``ee`` in ``wh-ee-l``
+    won and the gripper further down the chain was never reached.
+    """
+    got = _mujoco_gripper_body(tmp_path, "stretch", "link_right_wheel link_arm link_gripper_slider")
+    assert got == "stretch/link_gripper_slider"
+
+
+@pytest.mark.parametrize(
+    "leaf",
+    ["gripper", "hand", "ee_link", "gripper_ee", "tool0", "toolFlange", "left_hand_link"],
+)
+def test_list_bodies_still_advertises_a_hinted_body(tmp_path, leaf: str) -> None:
+    """Every spelling of a hint this surface accepts still resolves, including a
+    short hint that really is a whole name component - the fix narrows where a
+    hint may fire, not which names carry one."""
+    assert _mujoco_gripper_body(tmp_path, "arm", f"link1 {leaf}") == f"arm/{leaf}"
+
+
+def _newton_gripper_body(labels: list[str]) -> str | None:
+    """``gripper_body`` from Newton's ``list_bodies`` for ``labels``.
+
+    Newton's ``list_bodies`` reads only the robot registry and the per-robot
+    body map, so a stand-in ``self`` carrying those exercises the real method
+    without a Newton runtime - the pattern its sibling backend-parity tests use.
+    """
+    engine = NewtonSimEngine.__new__(NewtonSimEngine)
+    engine._world = types.SimpleNamespace(robots={"bot": object()})
+    engine._model = types.SimpleNamespace(body_label=list(labels))
+    engine._robot_body_map = {"bot": list(labels)}
+    result = NewtonSimEngine.list_bodies(engine, "bot")
+    assert result["status"] == "success"
+    return result["content"][1]["json"]["gripper_body"]
+
+
+def test_newton_list_bodies_does_not_advertise_a_knee_or_a_wheel() -> None:
+    """The Newton backend answers the mount question under the same rule.
+
+    It carried its own copy of the bare-substring scan, so the parity that
+    matters to a caller - the same robot reports the same mount on either
+    backend - held only for robots whose names happened not to contain ``ee``.
+    """
+    assert _newton_gripper_body(["bot/base/left_knee_link", "bot/base/wheel_hub_back_link"]) is None
+
+
+def test_newton_list_bodies_still_advertises_a_jaw() -> None:
+    """Newton's own extra hint (``jaw``) keeps matching a real jaw body."""
+    labels = ["bot/base/left_knee_link", "bot/base/Moving_Jaw"]
+    assert _newton_gripper_body(labels) == "bot/base/Moving_Jaw"

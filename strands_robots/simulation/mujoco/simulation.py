@@ -60,6 +60,7 @@ from strands.types._events import ToolResultEvent
 from strands.types.tools import ToolSpec, ToolUse
 
 from strands_robots.simulation.base import SimEngine, close_match_hint, reject_setup_kwargs
+from strands_robots.simulation.ik import _hint_matches
 from strands_robots.simulation.model_registry import (
     count_sim_robots,
     list_available_models,
@@ -2595,8 +2596,12 @@ class MuJoCoSimEngine(
             ``bodies`` is the ordered list of body names; the ``text`` block
             mirrors it for human display. When ``robot_name`` is given the
             json also carries ``"gripper_body"`` -- the best-guess gripper/
-            end-effector mount (a body whose short name contains ``gripper``,
-            ``hand``, ``ee``, or ``tool``), or ``null`` if none matches.
+            end-effector mount (a body one of whose *name components* is
+            ``gripper``, ``hand``, ``ee``, or ``tool``), or ``null`` if none
+            matches. Hints match components rather than bare substrings, so a
+            short hint cannot fire inside an unrelated word: a ``knee`` or a
+            drive ``wheel`` is not an end-effector because ``ee`` occurs in its
+            name.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -2630,8 +2635,8 @@ class MuJoCoSimEngine(
         if robot_name is not None:
             gripper_body: str | None = None
             for name in bodies:
-                short = name.rsplit("/", 1)[-1].lower()
-                if any(tok in short for tok in ("gripper", "hand", "ee", "tool")):
+                short = name.rsplit("/", 1)[-1]
+                if any(_hint_matches(hint, short) for hint in ("gripper", "hand", "ee", "tool")):
                     gripper_body = name
                     break
             json_payload["gripper_body"] = gripper_body

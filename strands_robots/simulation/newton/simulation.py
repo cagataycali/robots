@@ -39,6 +39,7 @@ import numpy as np
 from strands_robots.assets import resolve_model_path, resolve_robot_name
 from strands_robots.registry.discovery import discover_urdf_path, list_urdf_discoverable
 from strands_robots.simulation.base import SimEngine, reject_setup_kwargs
+from strands_robots.simulation.ik import _hint_matches
 from strands_robots.simulation.model_registry import (
     list_available_models,
     resolve_model,
@@ -2115,8 +2116,11 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         mount body without guessing. Newton labels bodies by their full MJCF
         path (``so_arm100/.../Moving_Jaw``); the ``json`` block returns the
         full labels and, when ``robot_name`` is given, a best-guess
-        ``gripper_body`` whose trailing path segment contains ``gripper``,
-        ``hand``, ``jaw``, ``ee``, or ``tool``.
+        ``gripper_body`` one of whose trailing segment's *name components* is
+        ``gripper``, ``hand``, ``jaw``, ``ee``, or ``tool``. Hints match
+        components rather than bare substrings, so a short hint cannot fire
+        inside an unrelated word: a ``knee`` or a drive ``wheel`` is not an
+        end-effector because ``ee`` occurs in its name.
 
         Args:
             robot_name: When set, return only that robot's bodies. When
@@ -2150,8 +2154,8 @@ class NewtonSimEngine(DomainRandomizationMixin, NewtonRecordingMixin, SimEngine)
         if robot_name is not None:
             gripper_body: str | None = None
             for name in bodies:
-                short = _short_joint_name(name).lower()
-                if any(tok in short for tok in ("gripper", "hand", "jaw", "ee", "tool")):
+                short = _short_joint_name(name)
+                if any(_hint_matches(hint, short) for hint in ("gripper", "hand", "jaw", "ee", "tool")):
                     gripper_body = name
                     break
             json_payload["gripper_body"] = gripper_body
