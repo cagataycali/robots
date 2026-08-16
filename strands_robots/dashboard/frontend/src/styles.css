@@ -57,7 +57,7 @@ body {
 .safety.estop { color: var(--red); }
 .safety.resume { color: var(--green); }
 
-/* ── grid (GOAL.md sketch) ─────────────────────────── */
+/* ── grid layout ───────────────────────────────────── */
 .grid {
   display: grid; gap: 12px; padding: 12px;
   grid-template-columns: 1fr;

@@ -1,7 +1,7 @@
 """Speech-to-speech fleet control - browser mic <-> Strands bidi agent.
 
-PCM16 audio flows over /ws/voice (binary in, base64 JSON out - the scout
-dashboard pattern). The voice agent carries the same robot_mesh toolset as
+PCM16 audio flows over /ws/voice (binary in, base64 JSON out). The voice
+agent carries the same robot_mesh toolset as
 the chat agent, so "hey, make arm one pick up the red cube" actuates the
 mesh directly from speech.
 

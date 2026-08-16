@@ -5,9 +5,9 @@ Detects:
   - 0x1a86 WCH CH34x  (SO-100/SO-101 controller boards - enumerate as
     "USB Single Serial" on macOS, so keyword matching alone misses them)
   - 0x0403 FTDI
-* Local cameras via OpenCV index probe (dashboard is the sole owner of
-  local USB cams - the neon lesson; robots opened by the dashboard get
-  camera configs pointing at these indices).
+* Local cameras via OpenCV index probe (the dashboard is the sole owner of
+  local USB cams - two readers on one index steal each other's frames; robots
+  opened by the dashboard get camera configs pointing at these indices).
 
 Robot lifecycle: spawns `Robot(..., mode="real"|"sim").run()`-style child
 processes and tracks them, so a detected arm becomes a mesh peer with one

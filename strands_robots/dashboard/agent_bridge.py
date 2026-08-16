@@ -2,13 +2,13 @@
 
 The agent's toolset is the ``robot_mesh`` tool (peers/tell/send/broadcast/
 stop/emergency_stop/...) so a single natural-language instruction can target
-one robot or the whole fleet, exactly the GOAL.md bottom bar:
+one robot or the whole fleet straight from the chat bar:
 
     > everyone pick up your cube      -> robot_mesh broadcast
     > tell so101-arm-1 to wave        -> robot_mesh tell target=so101-arm-1
 
 Chat turns stream over a queue (token / reasoning / tool events) drained by
-the /ws/chat websocket handler - the scout dashboard pattern.
+the /ws/chat websocket handler.
 
 HITL note: robot_mesh actuation actions are gated behind Strands interrupts
 by default and FAIL CLOSED outside an approving host. For the dashboard the

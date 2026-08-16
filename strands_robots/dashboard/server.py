@@ -1,6 +1,6 @@
 """FastAPI app for the Strands Robots Dashboard.
 
-Endpoints (Phase 0/1):
+Endpoints:
     GET  /api/health                     liveness + mesh status
     GET  /api/fleet                      current fleet snapshot
     GET  /api/robots/registry            registered robot names (spawnable)
@@ -148,9 +148,9 @@ def create_app(bridge: MeshBridge | None = None) -> FastAPI:
         """Fleet-wide stop: broadcast {action: stop} to every known peer.
 
         Note: the signed strands/safety/estop envelope requires a Mesh
-        instance with a robot; Phase 0 sends per-peer stop commands. The
-        full lockout-engaging e-stop lands when the dashboard embeds a
-        local sim peer (Phase 3) or we lift envelope signing into the bridge.
+        instance with a robot, so the dashboard sends per-peer stop commands
+        instead. The full lockout-engaging e-stop lands once the dashboard
+        embeds a local sim peer or lifts envelope signing into the bridge.
         """
         bridge: MeshBridge = app.state.bridge
         peers = list(bridge.peers.keys())

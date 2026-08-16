@@ -35,8 +35,7 @@ PEER_STALE_S = 15.0  # presence heartbeat timeout before a card greys out
 
 #: Transport low-pass filter on ``**/cmd`` (_zenoh_config.DEFAULT_MAX_CMD_BYTES).
 #: Anything larger is dropped pre-deserialise and the sender only ever sees a
-#: timeout, so we check before publishing and return a real error instead
-#: (NEW-BUGS N1).
+#: timeout, so we check before publishing and return a real error instead.
 MAX_CMD_BYTES = int(os.getenv("STRANDS_MESH_MAX_CMD_BYTES", str(16 * 1024)))
 
 #: How many fleet actions to keep for the activity panel.

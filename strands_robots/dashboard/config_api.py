@@ -195,7 +195,7 @@ def _policy_catalog() -> list[dict[str, Any]]:
             # the operator discover it as a wire rejection.
             "wire_safe": bool(is_safe_policy_provider(name)),
             # Hardware peers cannot build checkpoint policies over the wire
-            # (they only accept {port, host, data_config}) - NEW-BUGS N2.
+            # (they only accept {port, host, data_config}).
             "server_based": bool({"port", "policy_port", "server_address", "host"}
                                 & set(spec.get("requires") or [])),
         })
