@@ -1,0 +1,97 @@
+import { useEffect, useRef, useState } from 'react'
+import type { Peer, StopResult } from '../types'
+import { HttpError, post } from './endpoints'
+import type { RunBody } from '../components/RunForm'
+
+/**
+ * What we believe about this robot's task.
+ *
+ * `starting` and `stopping` exist because the mesh RPC is not instant: without
+ * them the ▶ button re-enables while the command is still in flight, and a
+ * double tap sends the task twice.
+ */
+export type TaskPhase = 'idle' | 'starting' | 'running' | 'stopping' | 'failed' | 'done'
+
+export interface Outcome { ok: boolean; text: string; detail?: string }
+
+/**
+ * Run/stop for one peer, shared by the card and the detail view so both report
+ * the *same* verdict. A response can arrive and still be a refusal
+ * (`{error: …}` or `ok: false`), and a stop that got no answer is not a stop -
+ * collapsing either into "started"/"stopped" is the most dangerous thing this
+ * UI can do.
+ */
+export function useTask(peer: Peer) {
+  const [phase, setPhase] = useState<TaskPhase>('idle')
+  const [outcome, setOutcome] = useState<Outcome | null>(null)
+  const [twinBusy, setTwinBusy] = useState(false)
+  const mounted = useRef(true)
+  useEffect(() => () => { mounted.current = false }, [])
+
+  const reported = peer.state?.task?.status ?? peer.presence?.task_status
+  const reportedRunning = reported === 'running' || reported === 'executing'
+  // The peer's own status wins over our optimistic phase - it is the robot
+  // telling us what it is doing, we are only guessing.
+  const running = reportedRunning || phase === 'starting' || phase === 'running'
+  const busy = phase === 'starting' || phase === 'stopping' || twinBusy
+
+  useEffect(() => {
+    if (reportedRunning && phase !== 'running') setPhase('running')
+    if (!reportedRunning && phase === 'running') setPhase('done')
+  }, [reportedRunning])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const fail = (e: unknown): Outcome => {
+    if (e instanceof HttpError) {
+      return { ok: false, text: e.message, detail: e.status ? `HTTP ${e.status}` : 'unreachable' }
+    }
+    return { ok: false, text: e instanceof Error ? e.message : String(e) }
+  }
+
+  const run = async (body: RunBody) => {
+    setPhase('starting'); setOutcome(null)
+    try {
+      const res = await post<{ ok: boolean; result: any; routed_to?: string; mirrored_to_twin?: boolean }>(
+        `/api/robots/${encodeURIComponent(peer.peer_id)}/task`, body,
+      )
+      if (!mounted.current) return
+      const err = res.result?.error ?? res.result?.result?.error
+      setOutcome(res.ok
+        ? { ok: true, text: `running${res.routed_to ? ` via ${res.routed_to}` : ''}${res.mirrored_to_twin ? ' + twin' : ''}` }
+        : { ok: false, text: err ? String(err) : 'refused', detail: JSON.stringify(res.result).slice(0, 300) })
+      setPhase(res.ok ? 'running' : 'failed')
+    } catch (e) {
+      if (!mounted.current) return
+      setOutcome(fail(e)); setPhase('failed')
+    }
+  }
+
+  const stop = async () => {
+    setPhase('stopping'); setOutcome(null)
+    try {
+      const res = await post<StopResult>(`/api/robots/${encodeURIComponent(peer.peer_id)}/stop`)
+      if (!mounted.current) return
+      // stopped / not_stopped / no_answer - never a bare "stopped" on silence.
+      const text = res.state === 'stopped' ? 'stopped'
+        : res.state === 'no_answer' ? 'no answer - robot may still be moving'
+        : `not stopped: ${typeof res.detail === 'string' ? res.detail : JSON.stringify(res.detail ?? {})}`
+      setOutcome({ ok: res.state === 'stopped', text })
+      setPhase(res.state === 'stopped' ? 'idle' : 'failed')
+    } catch (e) {
+      if (!mounted.current) return
+      setOutcome(fail(e)); setPhase('failed')
+    }
+  }
+
+  const toggleTwin = async () => {
+    setTwinBusy(true)
+    try {
+      await post(`/api/robots/${encodeURIComponent(peer.peer_id)}/twin`, {})
+    } catch (e) {
+      setOutcome(fail(e))
+    } finally {
+      if (mounted.current) setTwinBusy(false)
+    }
+  }
+
+  return { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin, setOutcome }
+}

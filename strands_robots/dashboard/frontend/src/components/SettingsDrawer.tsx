@@ -1,0 +1,442 @@
+import { useEffect, useState } from 'react'
+import type { MeshInfo } from '../types'
+import {
+  authToken, backendBase, backendLabel, normalize, post,
+  setAuthToken, setBackendBase,
+} from '../lib/endpoints'
+import { useConfig, type ApplyResult } from '../lib/useConfig'
+
+type Tab = 'connection' | 'agent' | 'voice' | 'mesh' | 'env' | 'security'
+
+const TABS: { id: Tab; label: string }[] = [
+  { id: 'connection', label: 'Connection' },
+  { id: 'agent', label: 'Agent' },
+  { id: 'voice', label: 'Voice' },
+  { id: 'mesh', label: 'Mesh' },
+  { id: 'env', label: 'Env' },
+  { id: 'security', label: 'Security' },
+]
+
+/**
+ * Everything that used to require an env var and a restart.
+ *
+ * Two stores sit behind this: `settings.json` for preferences and `.env` for
+ * credentials. Secrets arrive masked and a value that still looks masked is not
+ * written back - typing over a mask with bullets would otherwise destroy a live
+ * API key.
+ */
+export default function SettingsDrawer({ open, onClose, mesh }: {
+  open: boolean; onClose: () => void; mesh: MeshInfo
+}) {
+  const { config, loading, error, reload, save } = useConfig()
+  const [tab, setTab] = useState<Tab>('connection')
+  const [status, setStatus] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+
+  // --- connection (client-side only: which backend this browser talks to)
+  const [base, setBase] = useState(backendBase())
+  const [token, setToken] = useState(authToken())
+
+  // --- server-side drafts, seeded from the loaded config
+  const [modelId, setModelId] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [temperature, setTemperature] = useState('')
+  const [maxTokens, setMaxTokens] = useState('')
+  const [voiceProvider, setVoiceProvider] = useState('')
+  const [voiceName, setVoiceName] = useState('')
+  const [connect, setConnect] = useState('')
+  const [listen, setListen] = useState('')
+  const [meshPort, setMeshPort] = useState('')
+  const [meshBackend, setMeshBackend] = useState('')
+  const [cameraHz, setCameraHz] = useState('')
+  const [trustRemote, setTrustRemote] = useState(false)
+  const [envDraft, setEnvDraft] = useState<Record<string, string>>({})
+  const [newKey, setNewKey] = useState('')
+  const [newValue, setNewValue] = useState('')
+  const [serverToken, setServerToken] = useState('')
+  const [corsOrigins, setCorsOrigins] = useState('')
+
+  useEffect(() => {
+    if (!config) return
+    setModelId(config.agent.model_id ?? '')
+    setPrompt(config.agent.system_prompt ?? '')
+    setTemperature(config.agent.temperature === null ? '' : String(config.agent.temperature))
+    setMaxTokens(config.agent.max_tokens === null ? '' : String(config.agent.max_tokens))
+    setVoiceProvider(config.voice.provider)
+    setVoiceName(config.voice.voice_name ?? '')
+    const ms = (config.mesh.settings ?? {}) as Record<string, any>
+    setConnect((ms.connect ?? []).join(', '))
+    setListen((ms.listen ?? []).join(', '))
+    setMeshPort(ms.port ? String(ms.port) : '')
+    setMeshBackend(ms.backend ?? '')
+    setCameraHz(ms.camera_hz ? String(ms.camera_hz) : '')
+    setTrustRemote(config.runtime.trust_remote_code)
+    setCorsOrigins((config.security.cors_origins ?? []).join(', '))
+    setEnvDraft({})
+    setServerToken('')
+  }, [config])
+
+  if (!open) return null
+
+  const report = (r: ApplyResult) => {
+    const parts: string[] = []
+    if (r.applied.length) parts.push(`applied ${r.applied.join(', ')}`)
+    if (r.env_written.length) parts.push(`wrote ${r.env_written.join(', ')} to .env`)
+    if (r.agent_reset) parts.push('agent will rebuild on the next turn')
+    if (r.skipped_masked.length) parts.push(`skipped unchanged secrets: ${r.skipped_masked.join(', ')}`)
+    if (r.restart_required.length) parts.push(`needs a mesh restart: ${r.restart_required.join(', ')}`)
+    if (r.mesh_restart) {
+      parts.push(r.mesh_restart.mesh_online ? 'mesh re-pointed' : 'mesh re-point FAILED (offline)')
+      if (r.mesh_restart.orphaned?.length) parts.push(`orphaned local robots: ${r.mesh_restart.orphaned.join(', ')}`)
+    }
+    if (r.errors.length) parts.push(`errors: ${r.errors.join('; ')}`)
+    setStatus(parts.join(' · ') || 'nothing changed')
+  }
+
+  const apply = async (body: Record<string, any>) => {
+    setSaving(true); setStatus(null)
+    try {
+      report(await save(body))
+    } catch (e: any) {
+      setStatus(`⚠ ${e?.message ?? String(e)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const applyConnection = () => {
+    setBackendBase(base)
+    setAuthToken(token)
+    // Remounting the app is the point: sockets, peer map and frame buffers all
+    // belong to the backend we were talking to.
+    location.reload()
+  }
+
+  const restartMesh = async (force = false) => {
+    setSaving(true); setStatus(null)
+    try {
+      const r = await post<{ mesh_online: boolean; orphaned: string[] }>('/api/mesh/restart', { force })
+      setStatus(r.mesh_online ? 'mesh re-opened' : '⚠ mesh is offline after restart')
+      await reload()
+    } catch (e: any) {
+      setStatus(`⚠ ${e?.message ?? String(e)}`)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="drawer-backdrop" onClick={onClose}>
+      <aside className="drawer" onClick={e => e.stopPropagation()}>
+        <header className="drawer-head">
+          <h2>Settings</h2>
+          <button className="btn ghost" onClick={onClose}>✕</button>
+        </header>
+
+        <nav className="tabs">
+          {TABS.map(t => (
+            <button key={t.id} className={tab === t.id ? 'tab on' : 'tab'} onClick={() => setTab(t.id)}>
+              {t.label}
+            </button>
+          ))}
+        </nav>
+
+        {loading && !config && <div className="drawer-body"><p className="hint">loading…</p></div>}
+        {error && <div className="drawer-body"><div className="result bad">⚠ {error}</div></div>}
+
+        <div className="drawer-body">
+          {tab === 'connection' && (
+            <section>
+              <h3>Backend</h3>
+              <p className="hint">
+                Currently talking to <b>{backendLabel()}</b>. The dashboard API can run on any
+                machine — leave this empty to use the origin that served this page.
+              </p>
+              <label className="field">
+                <span>API base URL</span>
+                <input
+                  placeholder={`${location.host} (this origin)`}
+                  value={base}
+                  onChange={e => setBase(e.target.value)}
+                  onBlur={e => setBase(normalize(e.target.value) || e.target.value)}
+                />
+              </label>
+              <label className="field">
+                <span>Auth token (this browser)</span>
+                <input type="password" placeholder="only if the server requires one"
+                       value={token} onChange={e => setToken(e.target.value)} />
+              </label>
+              <div className="sheet-actions">
+                <button className="btn go" onClick={applyConnection}>connect &amp; reload</button>
+                {(base || token) && (
+                  <button className="btn ghost" onClick={() => { setBase(''); setToken('') }}>clear</button>
+                )}
+              </div>
+              <p className="hint">
+                Tip: <code>?backend=https://robot.lan:8080&amp;token=…</code> in the URL sets both,
+                so a bookmark or QR code points a phone straight at one robot.
+              </p>
+            </section>
+          )}
+
+          {tab === 'agent' && config && (
+            <section>
+              <h3>Fleet agent</h3>
+              <p className="hint">
+                {config.agent.built ? 'built' : 'not built yet'} ·{' '}
+                {config.agent.busy ? 'busy' : 'idle'} · {config.agent.messages ?? 0} messages ·
+                tools: {(config.agent.tools ?? []).join(', ') || 'fleet'}
+                {config.agent.bridge_online === false && ' · ⚠ mesh bridge not attached'}
+              </p>
+              <label className="field">
+                <span>Model id</span>
+                <input list="known-models" value={modelId} placeholder="(provider default)"
+                       onChange={e => setModelId(e.target.value)} />
+                <datalist id="known-models">
+                  {config.agent.known_models.map(m => <option key={m} value={m} />)}
+                </datalist>
+              </label>
+              <div className="row">
+                <label className="field">
+                  <span>Temperature</span>
+                  <input type="number" step="0.1" min="0" max="2" value={temperature}
+                         placeholder="default" onChange={e => setTemperature(e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Max tokens</span>
+                  <input type="number" min="1" value={maxTokens}
+                         placeholder="default" onChange={e => setMaxTokens(e.target.value)} />
+                </label>
+              </div>
+              <label className="field">
+                <span>System prompt {config.agent.is_default_prompt && <em>(default)</em>}</span>
+                <textarea rows={10} value={prompt} onChange={e => setPrompt(e.target.value)} />
+              </label>
+              <div className="sheet-actions">
+                <button className="btn go" disabled={saving} onClick={() => apply({
+                  agent: {
+                    model_id: modelId || null,
+                    system_prompt: prompt,
+                    temperature: temperature === '' ? null : Number(temperature),
+                    max_tokens: maxTokens === '' ? null : Number(maxTokens),
+                  },
+                })}>save</button>
+                <button className="btn ghost" disabled={saving}
+                        onClick={() => apply({ reset_prompt: true })}>reset prompt</button>
+                <button className="btn ghost" disabled={saving}
+                        onClick={() => apply({ reset_agent: true, clear_history: true })}>
+                  clear conversation
+                </button>
+              </div>
+              <p className="hint">
+                Model and prompt changes take effect on the next turn. Sampling knobs are applied
+                to the resolved model, so a provider that ignores one will say so in the log.
+              </p>
+            </section>
+          )}
+
+          {tab === 'voice' && config && (
+            <section>
+              <h3>Voice</h3>
+              <label className="field">
+                <span>Provider</span>
+                <select value={voiceProvider} onChange={e => setVoiceProvider(e.target.value)}>
+                  {config.voice.providers.map(p => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </label>
+              <label className="field">
+                <span>Voice name</span>
+                <input value={voiceName} placeholder="provider default"
+                       onChange={e => setVoiceName(e.target.value)} />
+              </label>
+              <div className="sheet-actions">
+                <button className="btn go" disabled={saving} onClick={() => apply({
+                  voice: { provider: voiceProvider, voice_name: voiceName || null },
+                })}>save</button>
+              </div>
+              <p className="hint">
+                Each provider needs its own credential in the Env tab
+                (<code>OPENAI_API_KEY</code>, <code>GOOGLE_API_KEY</code>, or AWS for Nova Sonic).
+              </p>
+            </section>
+          )}
+
+          {tab === 'mesh' && (
+            <section>
+              <h3>Mesh</h3>
+              <dl className="kv">
+                <dt>status</dt><dd>{mesh.online ? `online as ${mesh.peer_id}` : 'offline'}</dd>
+                <dt>peers</dt><dd>{mesh.live_peers ?? 0} live / {mesh.peers ?? 0} known</dd>
+                <dt>wire security</dt>
+                <dd className={mesh.local_dev ? 'bad' : 'ok'}>{mesh.wire_security ?? 'unknown'}</dd>
+                <dt>backend</dt><dd>{mesh.backend ?? 'zenoh'}</dd>
+                <dt>cmd cap</dt><dd>{mesh.max_cmd_bytes ?? 0} B</dd>
+                {mesh.policy_allow?.length ? (
+                  <><dt>policy allowlist</dt><dd className="mono">{mesh.policy_allow.join(', ')}</dd></>
+                ) : null}
+              </dl>
+
+              <label className="field">
+                <span>Connect endpoints</span>
+                <input placeholder="tls/robot.lan:7447, tls/10.0.0.5:7447"
+                       value={connect} onChange={e => setConnect(e.target.value)} />
+              </label>
+              <label className="field">
+                <span>Listen endpoints</span>
+                <input placeholder="tls/0.0.0.0:7447"
+                       value={listen} onChange={e => setListen(e.target.value)} />
+              </label>
+              <div className="row">
+                <label className="field">
+                  <span>Port</span>
+                  <input type="number" value={meshPort} placeholder="7447"
+                         onChange={e => setMeshPort(e.target.value)} />
+                </label>
+                <label className="field">
+                  <span>Transport</span>
+                  <select value={meshBackend} onChange={e => setMeshBackend(e.target.value)}>
+                    <option value="">zenoh (default)</option>
+                    <option value="iot">AWS IoT Core</option>
+                    <option value="bridge">bridge</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span>Camera Hz</span>
+                  <input type="number" step="1" value={cameraHz} placeholder="default"
+                         onChange={e => setCameraHz(e.target.value)} />
+                </label>
+              </div>
+              {!mesh.local_dev && (
+                <p className="hint">
+                  With mTLS wire security, only <code>tls/</code> and <code>quic/</code> endpoints are
+                  accepted — a <code>tcp/</code> endpoint is refused at session open.
+                </p>
+              )}
+              <div className="sheet-actions">
+                <button className="btn go" disabled={saving} onClick={() => apply({
+                  mesh: {
+                    connect, listen,
+                    port: meshPort === '' ? null : Number(meshPort),
+                    backend: meshBackend || null,
+                    camera_hz: cameraHz === '' ? null : Number(cameraHz),
+                  },
+                  restart_mesh: true,
+                })}>save &amp; re-point</button>
+                <button className="btn ghost" disabled={saving} onClick={() => restartMesh(false)}>
+                  restart mesh
+                </button>
+              </div>
+              <p className="hint">
+                Re-pointing re-opens the shared mesh session. Locally spawned robots hold their own
+                reference to the old one, so the server refuses unless they are despawned — or you
+                force it and accept that they stay on the old endpoints.
+              </p>
+              <div className="sheet-actions">
+                <button className="btn ghost danger" disabled={saving} onClick={() => restartMesh(true)}>
+                  force restart (orphan local robots)
+                </button>
+              </div>
+            </section>
+          )}
+
+          {tab === 'env' && config && (
+            <section>
+              <h3>Environment</h3>
+              <p className="hint">
+                Written to <code>{config.env_file}</code> (chmod 600). Secrets show masked; leaving a
+                mask untouched leaves the stored value alone.
+              </p>
+              <div className="envlist">
+                {config.env.map(row => (
+                  <label className="field env" key={row.key}>
+                    <span>
+                      {row.key}
+                      {row.secret && <em title="masked on read"> 🔒</em>}
+                      {!row.in_file && row.set && <em title="from the process environment"> (env)</em>}
+                    </span>
+                    <input
+                      // Shown as text on purpose: the value is already masked
+                      // server-side, and a password field would hide *which*
+                      // characters are the mask.
+                      value={envDraft[row.key] ?? row.value}
+                      placeholder={row.set ? '' : 'not set'}
+                      onChange={e => setEnvDraft(d => ({ ...d, [row.key]: e.target.value }))}
+                    />
+                  </label>
+                ))}
+              </div>
+              <div className="row">
+                <label className="field">
+                  <span>New key</span>
+                  <input value={newKey} placeholder="MY_API_KEY"
+                         onChange={e => setNewKey(e.target.value.toUpperCase())} />
+                </label>
+                <label className="field">
+                  <span>Value</span>
+                  <input value={newValue} onChange={e => setNewValue(e.target.value)} />
+                </label>
+              </div>
+              <label className="field check">
+                <input type="checkbox" checked={trustRemote} onChange={e => setTrustRemote(e.target.checked)} />
+                <span>
+                  Allow HuggingFace <code>trust_remote_code</code> (lerobot_local, kimodo) —
+                  executes code from the model repo
+                </span>
+              </label>
+              <div className="sheet-actions">
+                <button className="btn go" disabled={saving} onClick={() => {
+                  const env = { ...envDraft }
+                  if (newKey.trim()) env[newKey.trim()] = newValue
+                  void apply({ env, runtime: { trust_remote_code: trustRemote } })
+                  setNewKey(''); setNewValue('')
+                }}>save</button>
+              </div>
+            </section>
+          )}
+
+          {tab === 'security' && config && (
+            <section>
+              <h3>Security</h3>
+              <div className={config.security.auth_enabled ? 'result ok' : 'result bad'}>
+                {config.security.auth_enabled
+                  ? '✓ a token is required on /api and /ws'
+                  : '⚠ no auth: anyone who can reach this port can move motors'}
+              </div>
+              <label className="field">
+                <span>Server auth token</span>
+                <input type="password" value={serverToken} placeholder={config.security.auth_enabled ? '•••••• (set)' : 'not set'}
+                       onChange={e => setServerToken(e.target.value)} />
+              </label>
+              <label className="field">
+                <span>CORS origins</span>
+                <input value={corsOrigins} placeholder="* (any origin)"
+                       onChange={e => setCorsOrigins(e.target.value)} />
+              </label>
+              <div className="sheet-actions">
+                <button className="btn go" disabled={saving} onClick={async () => {
+                  await apply({ security: { auth_token: serverToken || null, cors_origins: corsOrigins } })
+                  // Lock ourselves out otherwise: the token we just set is what
+                  // every subsequent request must carry.
+                  if (serverToken) { setAuthToken(serverToken); setToken(serverToken) }
+                }}>save</button>
+                {config.security.auth_enabled && (
+                  <button className="btn ghost danger" disabled={saving}
+                          onClick={() => apply({ security: { auth_token: null } })}>
+                    remove token
+                  </button>
+                )}
+              </div>
+              <p className="hint">
+                CORS origins apply at startup; the token applies immediately (and is saved into this
+                browser so you are not locked out). <code>STRANDS_MESH_LOCAL_DEV=1</code> is separate
+                and disables mesh <em>wire</em> security — see the Mesh tab.
+              </p>
+            </section>
+          )}
+        </div>
+
+        {status && <footer className="drawer-foot">{status}</footer>}
+      </aside>
+    </div>
+  )
+}

@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState } from 'react'
+import { wsUrl } from './endpoints'
 
 export type VoiceState = 'idle' | 'connecting' | 'live' | 'error'
 
@@ -30,8 +31,9 @@ export function useVoice() {
     setState('connecting')
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      const ws = new WebSocket(`${proto}://${location.host}/ws/voice`)
+      // Same backend (and token) as every other channel - the dashboard API can
+      // be on another host entirely.
+      const ws = new WebSocket(wsUrl('/ws/voice'))
       wsRef.current = ws
 
       ws.onmessage = (msg) => {
@@ -43,7 +45,14 @@ export function useVoice() {
           else if (ev.type === 'error') { setTranscript(`⚠ ${ev.error}`); setState('error') }
         } catch { /* ignore */ }
       }
-      ws.onclose = () => setState(s => (s === 'error' ? s : 'idle'))
+      ws.onclose = (e) => {
+        if (e.code === 1008) {
+          setTranscript('⚠ unauthorized — set the dashboard token in Settings')
+          setState('error')
+          return
+        }
+        setState(s => (s === 'error' ? s : 'idle'))
+      }
       ws.onopen = () => {
         setState('live')
         // mic capture → downsample to 16k PCM16 → binary WS

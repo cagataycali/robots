@@ -156,6 +156,60 @@ def env_view() -> list[dict[str, Any]]:
 # Combined document
 # ----------------------------------------------------------------------
 
+#: Keys ``mesh.security.validate_command()`` admits for execute/start, minus
+#: the ones the dashboard sets itself (action/instruction/policy_provider/
+#: duration). The validator builds its output from this allowlist and drops
+#: every other key *silently*, so a form field outside this set would look
+#: accepted and never reach the policy. Keep in sync with
+#: ``validate_command``'s execute/start branch.
+WIRE_CMD_KEYS: tuple[str, ...] = (
+    "policy_host",
+    "policy_port",
+    "policy_type",
+    "server_address",
+    "model_path",
+    "pretrained_name_or_path",
+    "robot_name",
+    "target_pose",
+    "target_joints",
+    "world_update",
+    "control_frequency",
+    "action_horizon",
+    "fast_mode",
+    "n_steps",
+)
+
+#: How each wire key should be rendered / parsed by the run form.
+WIRE_KEY_TYPES: dict[str, str] = {
+    "policy_host": "string",
+    "policy_port": "int",
+    "policy_type": "string",
+    "server_address": "string",
+    "model_path": "string",
+    "pretrained_name_or_path": "string",
+    "robot_name": "string",
+    "target_pose": "json",
+    "target_joints": "json",
+    "world_update": "json",
+    "control_frequency": "float",
+    "action_horizon": "int",
+    "fast_mode": "bool",
+    "n_steps": "int",
+}
+
+#: Registry key -> the wire key that actually carries it. The registry names a
+#: provider's constructor kwargs; the wire schema names its own fields, and the
+#: two only partly overlap.
+_WIRE_ALIASES = {
+    "port": "policy_port",
+    "host": "policy_host",
+    "checkpoint": "model_path",
+    "policy_path": "model_path",
+    "repo_id": "pretrained_name_or_path",
+    "server_address": "server_address",
+}
+
+
 def _policy_catalog() -> list[dict[str, Any]]:
     """Full provider objects from ``registry/policies.json``.
 
@@ -180,16 +234,37 @@ def _policy_catalog() -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for name in list_policy_providers():
         spec = get_policy_provider(name) or {}
+        requires = list(spec.get("requires") or [])
+        config_keys = list(spec.get("config_keys") or [])
+        # Split the provider's inputs by what the wire will actually carry, so
+        # the form can render the deliverable fields and *say* that the rest
+        # only work when the policy is built locally.
+        wire_fields: list[dict[str, Any]] = []
+        unsettable: list[str] = []
+        for key in dict.fromkeys(requires + config_keys):
+            wire_key = _WIRE_ALIASES.get(key, key)
+            if wire_key in WIRE_CMD_KEYS:
+                wire_fields.append({
+                    "key": key,
+                    "wire_key": wire_key,
+                    "type": WIRE_KEY_TYPES.get(wire_key, "string"),
+                    "required": key in requires,
+                    "default": (spec.get("defaults") or {}).get(key),
+                })
+            else:
+                unsettable.append(key)
         out.append({
             "name": name,
             "description": spec.get("description", ""),
-            "requires": list(spec.get("requires") or []),
-            "config_keys": list(spec.get("config_keys") or []),
+            "requires": requires,
+            "config_keys": config_keys,
             "defaults": dict(spec.get("defaults") or {}),
             "shorthands": list(spec.get("shorthands") or []),
             "url_patterns": list(spec.get("url_patterns") or []),
             "extra": spec.get("extra"),
             "trainable": bool(spec.get("trainer")),
+            "wire_fields": wire_fields,
+            "unsettable_over_mesh": unsettable,
             # False -> the mesh security gate rejects it; the card shows a lock
             # and points at STRANDS_MESH_POLICY_TYPE_ALLOW rather than letting
             # the operator discover it as a wire rejection.

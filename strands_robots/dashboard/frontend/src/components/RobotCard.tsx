@@ -1,68 +1,61 @@
-import { useState } from 'react'
+import { useEffect } from 'react'
 import type { Peer } from '../types'
+import { useTask } from '../lib/useTask'
 import CameraTile from './CameraTile'
 import JointStrip from './JointStrip'
+import TelemetryStrip from './TelemetryStrip'
+import RunForm from './RunForm'
 
-const PROVIDERS = ['mock', 'lerobot_local', 'lerobot_async', 'groot', 'cosmos3']
-
-export default function RobotCard({ peer }: { peer: Peer }) {
-  const [provider, setProvider] = useState('mock')
-  const [instruction, setInstruction] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [result, setResult] = useState<string | null>(null)
+export default function RobotCard({ peer, onOpen, onBusyChange }: {
+  peer: Peer
+  onOpen?: (peerId: string) => void
+  onBusyChange?: (peerId: string, running: boolean) => void
+}) {
+  const { phase, outcome, running, busy, twinBusy, run, stop, toggleTwin } = useTask(peer)
 
   const p = peer.presence
   const type = p?.robot_type ?? '?'
   const cams = Object.keys(peer.cameras ?? {})
-  const taskStatus = peer.state?.task?.status ?? p?.task_status
-  const running = taskStatus === 'running' || taskStatus === 'executing'
+  const offline = !!peer.stale
 
-  const start = async () => {
-    if (!instruction.trim()) return
-    setBusy(true); setResult(null)
-    try {
-      const res = await fetch(`/api/robots/${peer.peer_id}/task`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ instruction, policy_provider: provider }),
-      })
-      const j = await res.json()
-      setResult(JSON.stringify(j.result).slice(0, 120))
-    } catch (e) { setResult(String(e)) }
-    setBusy(false)
-  }
-
-  const stop = async () => {
-    setBusy(true)
-    try { await fetch(`/api/robots/${peer.peer_id}/stop`, { method: 'POST' }) } catch {}
-    setBusy(false)
-  }
-
-  const toggleTwin = async () => {
-    setBusy(true)
-    try { await fetch(`/api/robots/${peer.peer_id}/twin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }) } catch {}
-    setBusy(false)
-  }
+  // The app keeps a screen wake lock while anything is moving.
+  useEffect(() => { onBusyChange?.(peer.peer_id, running) }, [running, peer.peer_id])  // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <div className={peer.stale ? 'card stale' : 'card'}>
+    <div className={`card${offline ? ' stale' : ''}${phase === 'failed' ? ' failed' : ''}${running ? ' running' : ''}`}>
       <div className="card-head">
         <span className={`typebadge ${type}`}>{type}</span>
-        <span className="peername" title={peer.peer_id}>{peer.peer_id}</span>
+        <button className="peername" title={`open ${peer.peer_id}`} onClick={() => onOpen?.(peer.peer_id)}>
+          {peer.peer_id}
+        </button>
         {p?.hostname && <span className="host">{p.hostname}</span>}
-        {type === 'robot' && !peer.peer_id.includes('__') && !peer.peer_id.endsWith('-twin') && (
-          <button className="twinbtn" onClick={toggleTwin} disabled={busy} title="Toggle sim twin">⿻</button>
+        {p?.connected === false && type === 'robot' && (
+          <span className="badge warn" title="peer is online but its hardware is not connected">hw off</span>
         )}
-        <span className={peer.stale ? 'dot off' : 'dot on'} />
+        {type === 'robot' && !peer.peer_id.includes('__') && !peer.peer_id.endsWith('-twin') && (
+          <button className="twinbtn" onClick={toggleTwin} disabled={twinBusy} title="Toggle sim twin">⿻</button>
+        )}
+        <span className={offline ? 'dot off' : running ? 'dot busy' : 'dot on'}
+              title={offline ? 'no heartbeat for 15s' : running ? 'task running' : 'idle'} />
       </div>
 
-      {cams.length > 0 && (
-        <div className={cams.length > 1 ? 'cams multi' : 'cams'}>
-          {cams.slice(0, 4).map(c => <CameraTile key={c} peerId={peer.peer_id} cam={c} />)}
+      {offline && (
+        <div className="stale-note">
+          no heartbeat — last seen{' '}
+          {peer.last_seen ? `${Math.round(Date.now() / 1000 - peer.last_seen)}s ago` : 'unknown'}
         </div>
       )}
 
-      <JointStrip state={peer.state} />
+      {cams.length > 0 && (
+        <div className={cams.length > 1 ? 'cams multi' : 'cams'}>
+          {cams.slice(0, 4).map(c => (
+            <CameraTile key={c} peerId={peer.peer_id} cam={c} meta={peer.cameras?.[c]} />
+          ))}
+        </div>
+      )}
+
+      <JointStrip state={peer.state} presence={p} />
+      <TelemetryStrip peer={peer} />
 
       {peer.stream && (
         <div className="streamline">
@@ -70,23 +63,21 @@ export default function RobotCard({ peer }: { peer: Peer }) {
         </div>
       )}
 
-      <div className="controls">
-        <select value={provider} onChange={e => setProvider(e.target.value)} disabled={busy}>
-          {PROVIDERS.map(pr => <option key={pr} value={pr}>{pr}</option>)}
-        </select>
-        <input
-          placeholder="pick up the red cube"
-          value={instruction}
-          onChange={e => setInstruction(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && start()}
-          disabled={busy}
-        />
-        {running
-          ? <button className="btn stop" onClick={stop} disabled={busy}>■</button>
-          : <button className="btn go" onClick={start} disabled={busy || !instruction.trim()}>▶</button>}
-      </div>
+      <RunForm
+        peerId={peer.peer_id}
+        running={running}
+        busy={busy}
+        disabled={offline}
+        onRun={run}
+        onStop={stop}
+      />
 
-      {result && <div className="result">{result}</div>}
+      {outcome && (
+        <div className={outcome.ok ? 'result ok' : 'result bad'}>
+          <span>{outcome.ok ? '✓' : '⚠'} {outcome.text}</span>
+          {outcome.detail && <details><summary>details</summary><pre>{outcome.detail}</pre></details>}
+        </div>
+      )}
     </div>
   )
 }

@@ -1,14 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
-import type { MeshEvent, Peer } from '../types'
+import type { ActivityEntry, MeshEvent, MeshInfo, Peer } from '../types'
+import { wsUrl } from './endpoints'
 
-export type ConnState = 'connecting' | 'open' | 'closed'
+export type ConnState = 'connecting' | 'open' | 'closed' | 'unauthorized'
 
 export interface MeshStore {
   conn: ConnState
   dashboardId: string
   peers: Record<string, Peer>
   safetyFlash: string | null
+  mesh: MeshInfo
+  activity: ActivityEntry[]
+  /** true once a snapshot has arrived - "no robots" only means something then. */
+  loaded: boolean
 }
+
+const ACTIVITY_CAP = 200
 
 /** One WebSocket to /ws/mesh → normalized reactive fleet store. */
 export function useMesh(): MeshStore {
@@ -16,6 +23,9 @@ export function useMesh(): MeshStore {
   const [dashboardId, setDashboardId] = useState('')
   const [peers, setPeers] = useState<Record<string, Peer>>({})
   const [safetyFlash, setSafetyFlash] = useState<string | null>(null)
+  const [mesh, setMesh] = useState<MeshInfo>({})
+  const [activity, setActivity] = useState<ActivityEntry[]>([])
+  const [loaded, setLoaded] = useState(false)
   const retryRef = useRef(0)
 
   useEffect(() => {
@@ -24,12 +34,14 @@ export function useMesh(): MeshStore {
     let flashTimer: ReturnType<typeof setTimeout>
 
     const connect = () => {
-      const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-      ws = new WebSocket(`${proto}://${location.host}/ws/mesh`)
+      ws = new WebSocket(wsUrl('/ws/mesh'))
       setConn('connecting')
 
       ws.onopen = () => { setConn('open'); retryRef.current = 0 }
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
+        // 1008 is the server refusing our token. Retrying forever just hides a
+        // fixable problem behind a spinner.
+        if (ev.code === 1008) { setConn('unauthorized'); return }
         setConn('closed')
         if (!closed) {
           const delay = Math.min(1000 * 2 ** retryRef.current++, 15000)
@@ -43,6 +55,8 @@ export function useMesh(): MeshStore {
           case 'snapshot':
             setDashboardId(ev.dashboard_peer_id)
             setPeers(ev.peers)
+            if (ev.mesh) setMesh(ev.mesh)
+            setLoaded(true)
             break
           case 'presence':
             setPeers(p => ({ ...p, [ev.peer_id]: { ...p[ev.peer_id], peer_id: ev.peer_id, presence: ev.data, last_seen: Date.now() / 1000, stale: false } }))
@@ -63,6 +77,15 @@ export function useMesh(): MeshStore {
             setSafetyFlash(ev.kind)
             clearTimeout(flashTimer)
             flashTimer = setTimeout(() => setSafetyFlash(null), 5000)
+            break
+          case 'activity':
+            setActivity(a => [ev.data, ...a].slice(0, ACTIVITY_CAP))
+            break
+          case 'mesh_reconfigured':
+            // The session was re-pointed under us: the old peer list belongs to
+            // the old mesh, so drop it rather than show ghosts.
+            setMesh(ev.mesh)
+            setPeers({})
             break
         }
       }
@@ -86,5 +109,5 @@ export function useMesh(): MeshStore {
     return () => { closed = true; clearInterval(sweep); ws?.close() }
   }, [])
 
-  return { conn, dashboardId, peers, safetyFlash }
+  return { conn, dashboardId, peers, safetyFlash, mesh, activity, loaded }
 }
