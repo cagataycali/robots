@@ -346,6 +346,70 @@ def _snapshot_body_wrenches(model: Any, data: Any, mj: Any) -> dict[str, list[fl
     return wrenches
 
 
+def _snapshot_joint_forces(model: Any, data: Any, mj: Any) -> dict[_JointKey, list[float]]:
+    """Capture every latched generalized force, keyed by joint.
+
+    The joint-space sibling of :func:`_snapshot_body_wrenches`. ``spec.recompile``
+    drops ``qfrc_applied`` for the same reason it drops ``xfrc_applied`` -- it
+    carries neither applied-force buffer -- so a grow needs this pass just as the
+    eject does. Keyed the same way as :class:`_SceneState`'s joints, because a
+    rebuild renumbers dofs. Only non-zero slices are captured: all-zero is "no
+    force latched here", which a fresh allocation already holds.
+
+    Args:
+        model: The compiled model the slices are being read against.
+        data: The ``MjData`` holding the latched forces.
+        mj: The resolved ``mujoco`` module.
+
+    Returns:
+        ``joint key -> qfrc_applied`` slice, at the dof width the joint uses.
+    """
+    forces: dict[_JointKey, list[float]] = {}
+    for jid in range(int(model.njnt)):
+        key = _joint_key(model, jid, mj)
+        if key is None:
+            continue
+        dof_adr = int(model.jnt_dofadr[jid])
+        _, dof_w = _joint_state_widths(int(model.jnt_type[jid]), mj)
+        row = data.qfrc_applied[dof_adr : dof_adr + dof_w]
+        if not row.any():
+            continue
+        forces[key] = [float(x) for x in row]
+    return forces
+
+
+def _restore_joint_forces(model: Any, data: Any, forces: dict[_JointKey, list[float]], mj: Any) -> None:
+    """Re-apply ``forces`` to the joints that still answer to those keys.
+
+    A joint the rebuilt model no longer has is skipped: its absence is the point
+    of a rebuild that removed it. A joint whose type changed is skipped rather
+    than written with a mismatched slice, which would put one dof's force on
+    another.
+
+    Args:
+        model: The rebuilt compiled model.
+        data: The rebuilt ``MjData`` receiving the forces.
+        forces: A snapshot from :func:`_snapshot_joint_forces`.
+        mj: The resolved ``mujoco`` module.
+    """
+    for key, vals in forces.items():
+        jid = _resolve_joint_key(model, key, mj)
+        if jid < 0:
+            continue
+        _, dof_w = _joint_state_widths(int(model.jnt_type[jid]), mj)
+        if len(vals) != dof_w:
+            logger.warning(
+                "_restore_joint_forces: dof width mismatch for %r (%d!=%d), skipping",
+                key,
+                len(vals),
+                dof_w,
+            )
+            continue
+        dof_adr = int(model.jnt_dofadr[jid])
+        for i, v in enumerate(vals):
+            data.qfrc_applied[dof_adr + i] = v
+
+
 def _restore_body_wrenches(model: Any, data: Any, wrenches: dict[str, list[float]], mj: Any) -> None:
     """Re-latch ``wrenches`` onto the bodies that still carry those names.
 
@@ -388,6 +452,13 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
       model on any step where a single entry is non-finite, so one uninitialized
       entry can silently release every held pose in the scene, only on the runs
       where the leftover memory happens to be NaN.
+    * ``qfrc_applied`` and ``xfrc_applied`` -- ``spec.recompile`` transfers
+      neither applied-force buffer at all, so unlike the buffers above these are
+      not a tail problem: every entry is lost, including the slices of joints and
+      bodies that never moved. Both are therefore snapshotted by name before the
+      recompile and re-applied after it, rather than merely having a tail
+      defined. A force a caller latched otherwise stopped acting the moment
+      anything entered the scene, under a ``"status": "success"``.
     * ``qpos`` -- a new joint that no name-keyed pass reaches keeps the tail as
       its pose. The robot-scoped reset in
       :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine._reset_robot_to_reference`
@@ -402,12 +473,30 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
       were applied either way, so the only symptom was a quadruped lying down
       under a ``"status": "success"``.
 
-    One buffer is not transferred at all rather than only in its tail:
-    ``xfrc_applied``, the per-body row
-    :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
-    latches a wrench in, comes back entirely zero. That wrench is documented to
-    hold until the next ``apply_force`` on the same body or a ``reset()``, so it
-    is snapshotted by body name before the recompile and re-latched after.
+    TWO buffers are not transferred at all rather than only in their tail --
+    both applied-force buffers come back entirely zero, so for these the tail
+    initialization above is beside the point: every entry is lost, including the
+    rows of elements that were there all along. Measured by growing a scene by
+    one body on mujoco 3.5.0 (the floor this package declares), 3.10.0 (the
+    locked version) and 3.11.0, identically on all three -- ``qpos``, ``qvel``,
+    ``ctrl`` and the clock carried, ``qfrc_applied`` and ``xfrc_applied``
+    zeroed.
+
+    * ``xfrc_applied``, the per-body row
+      :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
+      latches a wrench in, IS carried here. That wrench is documented to hold
+      until the next ``apply_force`` on the same body or a ``reset()``, and a
+      scene rebuild is neither, so it is snapshotted by body name before the
+      recompile and re-latched after.
+    * ``qfrc_applied``, its joint-space sibling, is deliberately NOT carried
+      here: nothing in this package ever writes a non-zero value into it.
+      ``apply_force`` documents why it latches the per-body buffer instead (one
+      world-wide generalized-force vector has no slice that belongs to one
+      body), and no other caller touches it, so there is no value for the
+      recompile to lose and a carry here could only be exercised by writing the
+      buffer from outside the public API. A joint-force API added later must add
+      the carry with it -- ``_SceneState`` already carries this buffer on the
+      eject path, where it is free because that path snapshots joints anyway.
 
     Also re-discovers per-robot joint and actuator IDs (they may have shifted
     as new bodies were inserted earlier in the body tree). Returns True on
@@ -430,14 +519,12 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     old_nv = int(world._model.nv) if world._model is not None else 0
     old_nu = int(world._model.nu) if world._model is not None else 0
     old_na = int(world._model.na) if world._model is not None else 0
-    # ``spec.recompile`` carries no part of ``xfrc_applied`` -- the whole buffer
-    # comes back zero -- so the latched wrenches are read off the outgoing data
-    # here and re-latched by name below.
-    wrenches = (
-        _snapshot_body_wrenches(world._model, world._data, mj)
-        if world._model is not None and world._data is not None
-        else {}
-    )
+    # ``spec.recompile`` carries no part of EITHER applied-force buffer -- both
+    # ``xfrc_applied`` and ``qfrc_applied`` come back zero -- so the latched
+    # forces are read off the outgoing data here and re-applied by name below.
+    _have_state = world._model is not None and world._data is not None
+    wrenches = _snapshot_body_wrenches(world._model, world._data, mj) if _have_state else {}
+    joint_forces = _snapshot_joint_forces(world._model, world._data, mj) if _have_state else {}
     try:
         with filter_mujoco_attach_noise():
             new_model, new_data = spec.recompile(world._model, world._data)
@@ -461,8 +548,9 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
         new_data.ctrl[old_nu:] = 0.0
     if new_model.na > old_na:
         new_data.act[old_na:] = 0.0
-    # Re-latch the external wrenches, before the forward pass reads them.
+    # Re-apply the latched external forces, before the forward pass reads them.
     _restore_body_wrenches(new_model, new_data, wrenches, mj)
+    _restore_joint_forces(new_model, new_data, joint_forces, mj)
     # Forward pass so newly-injected bodies have valid xpos/xquat and any
     # camera xforms are populated. Without this, the next render() call
     # after add_object / add_robot / add_camera returns a 100% black frame
@@ -1225,7 +1313,10 @@ class _SceneState:
             wrench :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
             latches in a body's own ``xfrc_applied`` row. ``qfrc_applied``
             above is its joint-space sibling; both are part of the state
-            ``save_state`` checkpoints, so both are carried.
+            ``save_state`` checkpoints, so both are carried -- on the eject path
+            by this snapshot, and on the grow path by
+            :func:`_snapshot_joint_forces` and :func:`_snapshot_body_wrenches`,
+            since ``spec.recompile`` carries neither.
         time: ``data.time``, the clock the physics reads.
     """
 

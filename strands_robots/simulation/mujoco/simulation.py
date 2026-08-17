@@ -1259,7 +1259,13 @@ class MuJoCoSimEngine(
             child_mesh = init_mesh(
                 robot,
                 peer_id=child_peer_id,
-                peer_type="robot",
+                # "sim", not "robot": presence publishes this as robot_type,
+                # and a simulated arm announcing itself as real hardware makes
+                # every consumer (dashboard badges, fleet-agent "is this real
+                # hardware?" checks, e-stop triage) treat a sim as actuating
+                # metal. Parent sim peers already announce "sim"; the child
+                # is the same MuJoCo world scoped to one robot.
+                peer_type="sim",
                 mesh=True,
             )
             if child_mesh is not None:
@@ -1270,6 +1276,12 @@ class MuJoCoSimEngine(
                 # from the MuJoCo world data (without this, the child mesh
                 # publishes only presence heartbeats - no state topic).
                 robot._world = self._world
+                # Parent-sim backref: the child peer's Mesh._dispatch
+                # delegates execute/start to this Simulation (with
+                # robot_name pre-bound) - a bare SimRobot has no run_policy
+                # of its own, so without this the addressable child peer
+                # answered "unknown action: execute".
+                robot._sim_parent = self
         except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
             logger.warning(
                 "Failed to attach robot %r to mesh (sim peer_id=%s): %s",
@@ -1468,6 +1480,34 @@ class MuJoCoSimEngine(
             msg += " No robots in the scene; add one with action='add_robot'."
         return msg
 
+    def _unknown_action_msg(self, requested: str) -> str:
+        """Actionable 'unknown action' message: name it, offer a close-match over
+        the published enum, and point at where that enum is written - consistent
+        with ``_unknown_model_msg`` / ``_unknown_object_msg`` /
+        ``_unknown_camera_msg`` / ``_unknown_robot_msg`` rather than a dead-end
+        "Unknown action: X." that forces an agent driving the tool blind to
+        re-read its own schema to recover from a one-character typo.
+
+        ``action`` is the parameter every call must supply and the only one with
+        no usable default, so it is where a typo is most likely to land - and it
+        was the one parameter whose refusal named neither a candidate nor a way
+        to find one, while a misspelled *robot* one frame away got both.
+
+        The suggestion is drawn from the published enum rather than from every
+        dispatchable method, because the enum is what an agent was handed: a
+        name outside it is refused at this boundary even when it resolves
+        (#2093), so offering one would send the caller to a second refusal. The
+        count travels with the pointer so a caller who gets no suggestion still
+        learns that the vocabulary is closed and enumerated, not open-ended.
+        """
+        msg = f"Unknown action: {requested}."
+        msg += close_match_hint(requested, sorted(_PUBLISHED_ACTIONS))
+        msg += (
+            f" This tool publishes {len(_PUBLISHED_ACTIONS)} actions in the 'action' enum "
+            "of its schema; see tool_spec for the actions you can use."
+        )
+        return msg
+
     def add_robot(
         self,
         name: str | None = None,
@@ -1524,6 +1564,20 @@ class MuJoCoSimEngine(
         (nan/inf) vector returns an actionable ``{"status": "error"}`` and
         leaves the simulation unchanged, rather than baking a degenerate pose
         into the robot's base transform. NumPy scalar components are accepted.
+
+        ``position`` OFFSETS the model's own authored root pose rather than
+        replacing it: it is written as the attach frame's translation, which
+        MuJoCo composes with the ``pos`` the model's root body declares. A
+        ground-bolted arm declares ``pos="0 0 0"``, so for those the offset IS
+        the world position - but a locomotion model is authored standing, and
+        ``position=[0, 0, 0.4]`` on a Unitree Go2 (base ``pos`` ``z=0.445``)
+        compiles its base at ``z=0.845``. This differs from
+        :meth:`add_object`, whose ``position`` does place its body at exactly
+        that world point. The returned message reports the MEASURED world
+        position of the robot's root body, and names the request and the
+        model's own offset beside it whenever the two differ, so a spawn that
+        did not land where it was asked is visible in the result instead of
+        having to be measured with :meth:`get_body_state`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1785,7 +1839,7 @@ class MuJoCoSimEngine(
                         "text": (
                             f"Robot '{name}' added to simulation\n"
                             f"Source: {source} -> {os.path.basename(resolved_path)}\n"
-                            f"Position: {robot.position}\n"
+                            f"Position: {self._describe_robot_placement(robot)}\n"
                             f"Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
                             f"Actuators: {len(robot.actuator_ids)}\n"
                             f"Cameras: {list(self._world.cameras.keys())}"
@@ -1975,6 +2029,69 @@ class MuJoCoSimEngine(
                     continue
                 adr = int(model.jnt_qposadr[jid])
                 data.qpos[adr : adr + len(vals)] = vals
+
+    def _describe_robot_placement(self, robot: SimRobot) -> str:
+        """Describe where ``robot`` actually stands, and why it differs.
+
+        ``add_robot`` used to echo the requested ``position`` back as the
+        robot's placement. For a model whose root body declares a non-zero
+        ``pos`` that names a place the robot is not: ``position=[0, 0, 0.4]``
+        on a Unitree Go2 compiles its base at ``z=0.845``, and the reported
+        ``0.4`` is the one number the caller had to go on. The sibling call
+        ``add_object(position=...)`` does place its body at exactly that world
+        point, so one parameter name meant two different things depending on
+        which entity it addressed, with nothing in the result to say so.
+
+        Report the measured world position, and - only when it differs from
+        the request - name the request and the model's own root offset beside
+        it, so the caller can see both what it asked for and what the model
+        added. A robot whose root offset is zero (every ground-bolted arm) or
+        whose roots cannot be reduced to one pose keeps the original one-vector
+        form, so their messages are unchanged.
+        """
+        requested = list(robot.position or (0.0, 0.0, 0.0))
+        actual = self._robot_root_world_position(robot)
+        if actual is None:
+            return f"{requested}"
+        offset = [round(a - r, 4) for a, r in zip(actual, requested, strict=False)]
+        if not any(abs(component) > 1e-9 for component in offset):
+            return f"{actual}"
+        return f"{actual} (position={requested} + model root offset {offset})"
+
+    def _robot_root_world_position(self, robot: SimRobot) -> list[float] | None:
+        """Return the world position of ``robot``'s single root body, or ``None``.
+
+        ``position`` is written as the attach FRAME's translation, and MuJoCo
+        COMPOSES that frame with the model's own authored root pose - it does
+        not replace it. So for any model whose root body declares a non-zero
+        ``pos`` (30 of the 55 single-root robots in the built-in registry, e.g.
+        the Unitree Go2 base at ``z=0.445``, the JVRC pelvis at ``z=1.4``) the
+        robot does not stand where ``position`` names, and the requested vector
+        alone cannot tell the caller where it does stand. Read the compiled
+        placement back out of ``data.xpos`` so the answer is measured rather
+        than assumed - the same value :meth:`get_body_state` would report.
+
+        ``None`` when there is no compiled world yet, or when the robot has no
+        single root body: an ``aloha`` attaches two independent arm bases and an
+        ``rby1`` six, and a set of roots has no one base pose to name. Requires
+        a preceding ``mj_forward`` so ``data.xpos`` is current.
+        """
+        mj = self._mj
+        world = self._world
+        if world is None or world._model is None or world._data is None:
+            return None
+        model, data = world._model, world._data
+        prefix = robot.namespace or ""
+        roots = [
+            body
+            for body in range(1, model.nbody)
+            if int(model.body_parentid[body]) == 0
+            and (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body)) is not None
+            and name.startswith(prefix)
+        ]
+        if len(roots) != 1:
+            return None
+        return [round(float(v), 4) for v in data.xpos[roots[0]]]
 
     def _seat_floating_bases_on_terrain(self, only: SimRobot | None = None) -> None:
         """Raise each floating-base robot onto the local terrain surface.
@@ -4339,7 +4456,7 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
-        return {"status": "error", "content": [{"text": f"Unknown action: {action}"}]}
+        return {"status": "error", "content": [{"text": self._unknown_action_msg(action)}]}
 
     def __call__(self, action: str = "", **kwargs: Any) -> dict[str, Any]:
         """Dispatch an action directly: ``sim(action="render", camera_name="topdown")``.
@@ -4761,12 +4878,35 @@ class MuJoCoSimEngine(
                 action_key_cache[prefixed] = cached
             return cached
 
+        # N4: stream per-step telemetry on the mesh. publish_step existed with
+        # consumers (robot_mesh watch, dashboards) but ZERO producers - no
+        # rollout ever emitted it. Rate-limited to ~10 Hz to respect the
+        # transport caps. Prefer the robot's own child-peer mesh (per-robot
+        # topic), fall back to the parent sim's mesh.
+        _mesh = getattr(robot, "mesh", None) or getattr(self, "mesh", None)
+        _stream_state = {"last": 0.0}
+        from strands_robots.mesh.session import stream_min_period_from_env
+
+        # inf when step telemetry is off / misconfigured, so the throttle below
+        # simply never fires. A bare division here killed run_policy hook setup
+        # on STRANDS_MESH_STREAM_HZ=0.
+        _stream_min_period = stream_min_period_from_env()
+
         def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             # Cooperative cancellation: stop_policy flips this flag.
             if not robot.policy_running:
                 raise CooperativeStop(f"Policy stopped on '{robot_name}'")
 
             robot.policy_steps = step + 1
+
+            if _mesh is not None:
+                _now = time.time()
+                if _now - _stream_state["last"] >= _stream_min_period:
+                    _stream_state["last"] = _now
+                    try:
+                        _mesh.publish_step(step, observation, action, instruction=instruction)
+                    except Exception:  # noqa: BLE001 - telemetry must not kill the rollout
+                        pass
 
             with lock:
                 if world._backend_state.get("recording", False):
