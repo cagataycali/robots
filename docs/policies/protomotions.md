@@ -97,6 +97,34 @@ Joint velocities are treated the same way: an absent `<joint>.vel` is refused
 rather than substituted with zero. Velocity is tracker feedback, and zeros are a
 plausible-looking value that quietly degrades tracking.
 
+### Orientations need not be exactly unit
+
+Every rotation the tracker derives — body-framing the root angular velocity,
+and extracting a yaw for heading alignment — is computed from a formula that
+mixes a quadratic term in the quaternion components with a constant, so the
+quaternion's scale does not cancel. Both helpers therefore normalise their
+input, and a quaternion scaled by any positive factor gives the same answer:
+
+```python
+from strands_robots.policies.protomotions import extract_yaw_quat
+
+extract_yaw_quat(q)          # same heading as
+extract_yaw_quat(q * 0.92)   # this
+```
+
+That is worth knowing when assembling observations by hand. An IMU reading
+drifts off unit, and an orientation obtained by *linearly* interpolating two
+samples is short by up to about 8% — for two samples 90 degrees apart the
+midpoint has `|q| = 0.924`, which read as-is would be a heading 6.2 degrees off
+and an angular velocity 29% short of its true magnitude. (Linear interpolation
+is why the clip loader slerps and renormalises rather than lerping.)
+
+An orientation that cannot define a rotation at all — all zeros, which is how a
+never-written or dropped orientation reads, or a non-finite component — is
+refused with a `ValueError` naming the helper and the value. Scaling cannot
+recover a direction from it, and standing in an arbitrary rotation would feed
+the network a plausible-looking wrong frame.
+
 ## Bridging a qpos clip
 
 `qpos_to_motion_data` turns a `[T, 7 + 29]` MuJoCo `qpos` sequence into the
