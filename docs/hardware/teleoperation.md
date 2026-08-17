@@ -113,8 +113,25 @@ Every hardware `Robot` and `Simulation` host exposes:
 - **`duration`** - auto-stop after N seconds (`None` = until stopped).
 
 Each tick: poll every selected device's `get_action()` → apply its `map_fn` →
-**merge** (last-wins on key conflict, with a one-time warning) → apply via
+**merge** (last-wins on key conflict, with a one-time warning) → check the
+merged frame against the **per-joint slew bound** → apply via
 `self.send_action(merged, robot_name=...)`.
+
+The slew bound is the same one the mesh receive path applies
+(`STRANDS_MESH_INPUT_SLEW_ABS`, default 8π units/second): the fastest any single
+joint may be commanded to travel. It is above what a leader arm's own servos can
+produce, so a physical leader never trips it - what does is a frame no arm could
+have generated, such as an encoder glitch or a USB re-enumerate reading
+full-scale. Such a frame is **refused and counted** in `slew_rejected`, not
+clamped: clamping toward the commanded value would silently alter an actuator
+command. Because the bound is a speed measured from each joint's last applied
+value, the allowance grows while a joint is still, so a refused stream resumes
+by itself once the commanded pose is reachable safely - there is no resync step.
+
+Refusals are not errors, but a session with any of them does not report
+`success`, so a device whose units the bound does not expect (degree-valued or
+normalized-percent) cannot look like a clean run while moving nothing - widen
+the bound for those.
 
 ## Action-key compatibility
 
@@ -245,6 +262,15 @@ robot.stop_teleoperate()                     # stop loop + publishers + disconne
 `start_teleop_receive`) is the **transport** for streaming actions between
 peers. `teleoperate(publish=True)` composes the two: drive locally **and**
 publish so remote followers mirror.
+
+Because that composition drives both followers from one `get_action()` stream,
+both paths hold a frame to the same per-joint slew bound
+(`STRANDS_MESH_INPUT_SLEW_ABS`) - otherwise one device would be judged by two
+rules, and the follower physically next to the operator would be the unguarded
+one. The mesh receive path adds guards the local path has no need of, since it
+accepts frames from another host: sender scoping, replay freshness, an
+apply-rate ceiling (`STRANDS_MESH_INPUT_MAX_HZ`) and a magnitude clamp
+(`STRANDS_MESH_INPUT_VALUE_ABS`).
 
 ## See also
 
