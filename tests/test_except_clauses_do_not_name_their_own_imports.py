@@ -32,12 +32,12 @@ non-``ImportError`` failure, and the load path
 ``NameError``, so it aborted the policy load outright for a condition the
 handler was written to absorb.
 
-Neither merge gate refuses the shape. ``ruff`` has no rule for it. ``mypy``
-reports it under ``possibly-undefined``, which is off by default and not enabled
-here. CodeQL's ``py/uninitialized-local-variable`` does fire, but it is one
-finding among many rather than a deterministic gate, and the shape had already
-survived on ``main`` long enough to be among the lowest-numbered open alerts.
-So it is refused here, in the gate that blocks a merge.
+Nothing else refuses the shape. ``ruff`` has no rule for it. ``mypy`` reports it
+under ``possibly-undefined``, which is off by default and not enabled here. Code
+scanning has a rule for it, ``py/uninitialized-local-variable``, and it did not
+report either of the two sites above -- every one of its open alerts is in test
+code. So the shape reached shipped source with no gate naming it, and is refused
+here, in the gate that blocks a merge.
 
 Scope is imports only. A name bound by ordinary assignment in a try body and
 named in its handler is a different question with different answers, and this
