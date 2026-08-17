@@ -1407,12 +1407,15 @@ class PhysicsMixin:
         rate, so the same number is a different physical quantity there: written
         into a motor it commands a torque numerically equal to an angle in
         radians, and written into a velocity drive it commands a rate that moves
-        the joint straight off the pose just written. Those joints are left alone
-        and the success text says how many were. The split is per actuator rather
-        than per robot - ``openarm`` carries 2 servos beside 16 motors - and
-        comes from
+        the joint straight off the pose just written. A joint a tendon couples to
+        one ``ctrl`` - every stock gripper, and the ``stretch3`` telescoping arm -
+        is left alone for two further reasons: that ``ctrl`` is in the tendon's
+        units, and it drives several joints at once, so it cannot carry any one
+        joint's angle. Those joints are left alone and the success text says how
+        many were. The split is per actuator rather than per robot - ``openarm``
+        carries 2 servos beside 16 motors - and comes from
         :func:`~strands_robots.simulation.mujoco.scene_ops.joint_drive_map`,
-        which spells out the three terms that separate the two.
+        which spells out the terms that separate the two.
 
         Accepts EITHER form:
 
@@ -1572,8 +1575,9 @@ class PhysicsMixin:
             if not_a_pose:
                 text += (
                     f". {len(not_a_pose)} written joint(s) are driven by a non-position actuator "
-                    f"({_joint_name_sample(not_a_pose)}), whose ctrl is a torque, a rate or a target "
-                    "behind an actuator state rather than a pose, so their setpoints were left alone"
+                    f"({_joint_name_sample(not_a_pose)}), whose ctrl is a torque, a rate, a tendon "
+                    "length or a target behind an actuator state rather than a pose, so their setpoints "
+                    "were left alone"
                 )
         elif stale:
             text += (

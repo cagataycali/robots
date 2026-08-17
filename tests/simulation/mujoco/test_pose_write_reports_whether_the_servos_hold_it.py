@@ -38,6 +38,20 @@ radians. 14 registry robots are motor-driven throughout (unitree_go2, unitree_h1
 jvrc, cassie) and ``openarm`` carries 2 servos beside 16 motors, so the split has
 to be per actuator - which is what
 :func:`~strands_robots.simulation.mujoco.scene_ops.joint_drive_map` owns.
+
+A joint a *tendon* couples to one ``ctrl`` is the case that no gain inspection
+can classify. Every stock tendon gripper is authored as a ``<position>`` actuator
+on its tendon, so it clears all three gain terms a servo is tested by
+(``panda/actuator8`` and ``robotiq_2f85/fingers_actuator`` compile to
+``biasprm = [0, -100, 0]``): it really is a position servo, just on the tendon
+rather than on any joint. Two facts disqualify its ``ctrl`` from carrying a joint
+angle - the units are the tendon's (``[0, 255]`` for those grippers, ``[0, 0.52]``
+metres for ``stretch3/arm``) and one ``ctrl`` drives 2 joints (4 on the
+``stretch3`` telescoping arm), so there is no single angle to write. 7 registry
+robots reach this: ``panda``, ``xarm7``, ``robotiq_2f85``, ``robotiq_2f85_v4``,
+``shadow_hand``, ``stretch`` and ``stretch3``, 26 joints between them. Those
+joints are reported on the same terms as any other non-position drive, and their
+setpoints are left alone.
 """
 
 import re
@@ -91,6 +105,55 @@ DRIVE_MIX_XML = """
 """
 
 POSE = {"served": 0.5, "motored": 0.6, "undriven": 0.7}
+
+# The stock gripper idiom: one <position> actuator on a <fixed> tendon that wraps
+# two joints. It clears every gain term a position servo is tested by, so only the
+# transmission tells it apart - and its ctrlrange is in the tendon's units, not the
+# joints'. Menagerie authors panda/actuator8, robotiq_2f85/fingers_actuator and
+# shadow_hand/lh_A_FFJ0 exactly this way.
+TENDON_GRIP_XML = """
+<mujoco model="tendon_grip">
+  <compiler angle="radian"/>
+  <option gravity="0 0 0"/>
+  <worldbody>
+    <light name="main" pos="0 0 3" dir="0 0 -1"/>
+    <body name="palm" pos="0 0 0.4">
+      <geom name="palm_geom" type="box" size="0.05 0.03 0.02" mass="0.5"/>
+      <body name="left_finger" pos="0.04 0 0.03">
+        <joint name="left_driver" type="hinge" axis="0 1 0" range="0 1.2" damping="0.2"/>
+        <geom name="left_geom" type="capsule" size="0.008 0.03" mass="0.05"/>
+      </body>
+      <body name="right_finger" pos="-0.04 0 0.03">
+        <joint name="right_driver" type="hinge" axis="0 1 0" range="0 1.2" damping="0.2"/>
+        <geom name="right_geom" type="capsule" size="0.008 0.03" mass="0.05"/>
+      </body>
+    </body>
+    <body name="elbow_link" pos="0.4 0 0.4">
+      <joint name="elbow" type="hinge" axis="0 1 0" range="-2 2"/>
+      <geom name="elbow_geom" type="capsule" size="0.02 0.08" mass="0.3"/>
+    </body>
+  </worldbody>
+  <tendon>
+    <fixed name="grip">
+      <joint joint="left_driver" coef="0.5"/>
+      <joint joint="right_driver" coef="0.5"/>
+    </fixed>
+  </tendon>
+  <actuator>
+    <position name="grip_actuator" tendon="grip" kp="100" ctrlrange="0 255"/>
+    <position name="elbow_servo" joint="elbow" kp="60" kv="6"/>
+  </actuator>
+</mujoco>
+"""
+
+
+@pytest.fixture
+def grip_sim():
+    s = Simulation(tool_name="test_pose_write_tendon_grip", mesh=False)
+    s.create_world()
+    assert s.replace_scene_mjcf(TENDON_GRIP_XML)["status"] == "success"
+    yield s
+    s.cleanup()
 
 
 @pytest.fixture
@@ -297,3 +360,114 @@ class TestTheDriveSplitIsPerActuator:
 
         servos, other = joint_drive_map(sim._world._model, mj)
         assert not set(servos) & set(other)
+
+
+class TestAJointATendonDrivesIsReportedNotSilent:
+    """A tendon-coupled joint is a joint whose written pose will not hold."""
+
+    def test_hold_names_the_tendon_coupled_joints_it_left_alone(self, grip_sim):
+        """The whole point of ``hold=True`` is that the pose survives stepping.
+
+        A tendon-coupled joint cannot be held that way, and reporting nothing
+        reads exactly like a joint no actuator drives at all - so the caller
+        gets a success text that implies the request was honoured.
+        """
+        text = _text(grip_sim.set_joint_positions({"left_driver": 0.6, "right_driver": 0.6}, hold=True))
+        assert "left_driver" in text and "right_driver" in text, text
+        assert "left alone" in text, text
+
+    def test_the_pose_it_reports_on_really_does_not_survive_stepping(self, grip_sim):
+        """The report's claim, measured: the tendon actuator pulls the pose back."""
+        assert _text(grip_sim.set_joint_positions({"left_driver": 0.6, "right_driver": 0.6}, hold=True))
+        grip_sim.step(300)
+        assert _qpos(grip_sim, "left_driver") == pytest.approx(0.0, abs=0.05)
+        assert _qpos(grip_sim, "right_driver") == pytest.approx(0.0, abs=0.05)
+
+    def test_a_tendon_coupled_joint_lands_in_other_drives(self, grip_sim):
+        """It is driven, so it belongs in a bucket - and not in *servos*."""
+        from strands_robots.simulation.mujoco.scene_ops import joint_drive_map
+
+        model = grip_sim._world._model
+        servos, other = joint_drive_map(model, mj)
+        for joint in ("left_driver", "right_driver"):
+            assert _jnt(model, joint) in other, joint
+            assert _jnt(model, joint) not in servos, joint
+
+    def test_both_coupled_joints_report_the_one_actuator_driving_them(self, grip_sim):
+        """One ``ctrl`` for two joints is itself why it cannot carry a pose."""
+        from strands_robots.simulation.mujoco.scene_ops import joint_drive_map
+
+        model = grip_sim._world._model
+        _, other = joint_drive_map(model, mj)
+        grip = _act(model, "grip_actuator")
+        assert other[_jnt(model, "left_driver")] == grip
+        assert other[_jnt(model, "right_driver")] == grip
+
+    def test_the_tendon_ctrl_never_receives_a_joint_angle(self, grip_sim):
+        """The safety half, and the term a permissive fix would break.
+
+        ``grip_actuator`` clears every gain term a position servo is tested by,
+        so resolving the tendon in the *servo* test rather than only in "is this
+        joint driven" would write ``0.6`` rad into a ``[0, 255]`` slot. Passes
+        both before and after this change: it fails only if that is done.
+        """
+        before = _ctrl(grip_sim, "grip_actuator")
+        assert _text(grip_sim.set_joint_positions({"left_driver": 0.6, "right_driver": 0.6}, hold=True))
+        assert _ctrl(grip_sim, "grip_actuator") == before
+
+    def test_the_gain_terms_alone_would_call_it_a_servo(self, grip_sim):
+        """Why the transmission has to be a term of its own.
+
+        This asserts the premise the classification rests on rather than the
+        classification: the actuator's gains are a position servo's gains, so
+        nothing about them separates it from ``elbow_servo``.
+        """
+        model = grip_sim._world._model
+        grip, elbow = _act(model, "grip_actuator"), _act(model, "elbow_servo")
+        for act_id in (grip, elbow):
+            assert int(model.actuator_biastype[act_id]) == int(mj.mjtBias.mjBIAS_AFFINE)
+            assert float(model.actuator_biasprm[act_id, 1]) < 0.0
+            assert int(model.actuator_dyntype[act_id]) == int(mj.mjtDyn.mjDYN_NONE)
+        assert int(model.actuator_trntype[grip]) == int(mj.mjtTrn.mjTRN_TENDON)
+        assert int(model.actuator_trntype[elbow]) == int(mj.mjtTrn.mjTRN_JOINT)
+
+    def test_a_directly_served_joint_in_the_same_scene_is_still_held(self, grip_sim):
+        """No overreach: the tendon does not make its neighbours unholdable."""
+        from strands_robots.simulation.mujoco.scene_ops import joint_drive_map
+
+        model = grip_sim._world._model
+        assert _text(grip_sim.set_joint_positions({"elbow": 0.5}, hold=True))
+        assert _jnt(model, "elbow") in joint_drive_map(model, mj)[0]
+        assert _ctrl(grip_sim, "elbow_servo") == pytest.approx(0.5)
+        grip_sim.step(300)
+        assert _qpos(grip_sim, "elbow") == pytest.approx(0.5, abs=0.02)
+
+    def test_the_default_write_text_is_unchanged_for_a_tendon_joint(self, grip_sim):
+        """Without ``hold`` the call is kinematics-only and says so, as before."""
+        text = _text(grip_sim.set_joint_positions({"left_driver": 0.6}))
+        assert text == "Set 1/1 joint positions, FK updated"
+        assert _ctrl(grip_sim, "grip_actuator") == 0.0
+
+
+class TestAStockGripperReportsItsFingerJoints:
+    """The shape reaches built-in robots, not just a hand-authored scene."""
+
+    @pytest.mark.parametrize(
+        ("robot", "joints"),
+        [
+            ("panda", ("panda/finger_joint1", "panda/finger_joint2")),
+            ("robotiq_2f85", ("robotiq_2f85/left_driver_joint", "robotiq_2f85/right_driver_joint")),
+        ],
+    )
+    def test_hold_names_the_gripper_joints_it_cannot_move(self, robot, joints):
+        sim = Simulation(tool_name=f"test_pose_write_{robot}", mesh=False)
+        try:
+            sim.create_world()
+            if sim.add_robot(robot)["status"] != "success":
+                pytest.skip(f"{robot} assets unavailable")
+            text = _text(sim.set_joint_positions(dict.fromkeys(joints, 0.03), hold=True))
+            for joint in joints:
+                assert joint in text, text
+            assert "left alone" in text, text
+        finally:
+            sim.cleanup()

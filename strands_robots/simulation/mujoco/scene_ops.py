@@ -197,6 +197,19 @@ def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]
       stateful drive puts an ``act`` state in between: ``<intvelocity>`` carries
       ``-kp`` yet integrates ``ctrl`` as a *rate*, so it clears the first two
       terms while its command is not a pose.
+    * the transmission is the joint itself, which is why the joint is resolved
+      through :func:`actuator_joint_id` (``-1`` for a tendon) rather than through
+      :func:`actuator_driven_joint_ids`. No gain inspection can supply this term:
+      every stock tendon gripper measured clears all three terms above
+      (``panda/actuator8`` and ``robotiq_2f85/fingers_actuator`` both compile to
+      ``biasprm = [0, -100, 0]``, ``shadow_hand/lh_A_FFJ0`` to ``[0, -0.5, 0]``),
+      so they are position servos *on their tendon* and read as one here unless
+      the transmission is checked. Two independent facts disqualify them:
+      ``ctrl`` is in the tendon's units rather than the joint's (``[0, 255]`` for
+      those two grippers, ``[0, 0.52]`` metres for ``stretch3/arm``), and one
+      ``ctrl`` drives several joints at once (2 for a gripper, 4 for the
+      ``stretch3`` telescoping arm), so no single joint angle can be written into
+      it at all.
 
     Getting this wrong in the permissive direction is what a pose write cannot
     afford: a joint angle written into a velocity drive's ``ctrl`` is commanded
@@ -228,34 +241,40 @@ def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]
 
     Returns:
         ``(servos, other_drives)`` - two disjoint ``{joint id: actuator id}``
-        maps. A joint with no joint-transmission actuator appears in neither. A
-        joint driven by both a position servo and another drive appears only in
-        *servos*, because a setpoint written there does govern the pose it
-        settles to. Where several actuators of one kind drive a joint the last
-        in model order is reported.
+        maps covering every joint some actuator drives, including the joints a
+        tendon couples to one ``ctrl``; those land in *other_drives*, whose
+        ``ctrl`` a caller must not write a joint angle into. A joint no actuator
+        drives appears in neither. A joint driven by both a position servo and
+        another drive appears only in *servos*, because a setpoint written there
+        does govern the pose it settles to. Where several actuators of one kind
+        drive a joint the last in model order is reported.
     """
     servos: dict[int, int] = {}
     other: dict[int, int] = {}
     affine = int(mj.mjtBias.mjBIAS_AFFINE)
     stateless = int(mj.mjtDyn.mjDYN_NONE)
     for act_id in range(int(model.nu)):
-        jnt_id = actuator_joint_id(model, act_id, mj)
-        if jnt_id < 0:
+        driven = actuator_driven_joint_ids(model, act_id, mj)
+        if not driven:
             continue
-        commands_a_pose = (
+        target = actuator_joint_id(model, act_id, mj)
+        commands_a_pose = target >= 0 and (
             int(model.actuator_biastype[act_id]) == affine
             and float(model.actuator_biasprm[act_id, 1]) < 0.0
             and int(model.actuator_dyntype[act_id]) == stateless
         )
         if commands_a_pose:
-            servos[jnt_id] = act_id
+            servos[target] = act_id
         else:
-            other[jnt_id] = act_id
+            for jnt_id in driven:
+                other[jnt_id] = act_id
     # Disjoint: a servo's setpoint governs the pose even when another drive also
     # pulls on the joint, so the servo is the drive a pose write can move.
     for jnt_id in servos:
         other.pop(jnt_id, None)
     return servos, other
+
+
 def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:
     """Return every joint id actuator ``act_id`` drives.
 

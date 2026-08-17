@@ -11,4 +11,9 @@ already performs when it adds an actuator. Only position servos move, identified
 the position-feedback gain and a stateless drive rather than by the affine bias alone
 (`<velocity>` and `<intvelocity>` are affine-bias too, and their `ctrl` is a rate): a
 joint whose drive takes a torque or a rate is left alone and named, so a pose is never
-written into a command that means something else. The default write is unchanged.
+written into a command that means something else. A joint a tendon couples to one `ctrl`
+is left alone on the same terms - its `ctrl` is in the tendon's units and drives several
+joints at once, so no single joint angle can be written into it - which covers every
+stock gripper (`panda`, `xarm7`, `robotiq_2f85`, `shadow_hand`) and the `stretch`/
+`stretch3` telescoping arms, 26 joints across 7 registry robots. The default write is
+unchanged.
