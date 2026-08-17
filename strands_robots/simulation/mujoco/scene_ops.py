@@ -271,6 +271,16 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
       model on any step where a single entry is non-finite, so one uninitialized
       entry can silently release every held pose in the scene, only on the runs
       where the leftover memory happens to be NaN.
+    * ``qfrc_applied`` and ``xfrc_applied`` -- ``spec.recompile`` does not
+      transfer either applied-force buffer at all (measured on MuJoCo 3.5), so
+      unlike the buffers above these are not a tail problem: every entry is
+      lost, including the rows of bodies that never moved. A wrench latched by
+      :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
+      simply stopped pushing the moment anything was added to the scene, under a
+      ``"status": "success"`` -- contradicting this method's own promise that "a
+      latched ``apply_force`` wrench persists". They are restored by name after
+      the recompile (:func:`_restore_applied_forces`), because a body index can
+      shift when a new body is inserted earlier in the tree.
     * ``qpos`` -- a new joint that no name-keyed pass reaches keeps the tail as
       its pose. The robot-scoped reset in
       :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine._reset_robot_to_reference`
@@ -306,6 +316,10 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     old_nv = int(world._model.nv) if world._model is not None else 0
     old_nu = int(world._model.nu) if world._model is not None else 0
     old_na = int(world._model.na) if world._model is not None else 0
+    # Taken BEFORE the recompile because it reads the buffers the recompile
+    # discards. Empty unless a caller actually latched a force, so the restore
+    # below is a no-op for a scene nobody pushed on.
+    applied_forces = _snapshot_scene_state(world) if world._model is not None else None
     try:
         with filter_mujoco_attach_noise():
             new_model, new_data = spec.recompile(world._model, world._data)
@@ -329,6 +343,10 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
         new_data.ctrl[old_nu:] = 0.0
     if new_model.na > old_na:
         new_data.act[old_na:] = 0.0
+    # Put back what the recompile dropped outright rather than merely grew (see
+    # the docstring). By name, and before the forward pass that reads it.
+    if applied_forces is not None:
+        _restore_applied_forces(world, applied_forces)
     # Forward pass so newly-injected bodies have valid xpos/xquat and any
     # camera xforms are populated. Without this, the next render() call
     # after add_object / add_robot / add_camera returns a 100% black frame
@@ -1087,11 +1105,20 @@ class _SceneState:
         actuators: ``actuator name -> (ctrl, act)``. ``ctrl`` is the servo
             setpoint holding a robot's pose; ``act`` is the internal activation
             of a stateful actuator, its effective command.
+        body_wrenches: ``body name -> xfrc_applied`` row (6 values, force then
+            torque about the body centre of mass). This is the buffer
+            :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
+            latches a wrench in, and it is keyed by BODY because that is how
+            MuJoCo indexes it -- ``qfrc_applied`` above is the joint-space
+            sibling of the same concept and is keyed by joint. Only rows a
+            caller actually set are carried, so a scene nobody pushed on stores
+            nothing.
         time: ``data.time``, the clock the physics reads.
     """
 
     joints: dict[_JointKey, tuple[list[float], list[float], list[float]]]
     actuators: dict[str, tuple[float, list[float]]]
+    body_wrenches: dict[str, list[float]]
     time: float
 
 
@@ -1124,11 +1151,13 @@ def _joint_key(model: Any, jid: int, mj: Any) -> _JointKey | None:
 def _snapshot_scene_state(world: SimWorld) -> _SceneState:
     """Capture ``world``'s dynamic state keyed by name, for a scene rebuild.
 
-    Used by :func:`eject_robot_from_scene`. See :class:`_SceneState` for what is
-    captured and why it is keyed by name rather than by index.
+    Used by :func:`eject_robot_from_scene` for the whole state, and by
+    :func:`_recompile_preserving_state` for the applied-force half that
+    ``spec.recompile`` discards. See :class:`_SceneState` for what is captured
+    and why it is keyed by name rather than by index.
     """
     if world._model is None or world._data is None:
-        return _SceneState(joints={}, actuators={}, time=0.0)
+        return _SceneState(joints={}, actuators={}, body_wrenches={}, time=0.0)
     mj = _ensure_mujoco()
     model = world._model
     data = world._data
@@ -1164,7 +1193,31 @@ def _snapshot_scene_state(world: SimWorld) -> _SceneState:
         act_vals = [float(x) for x in data.act[act_adr : act_adr + act_num]] if act_adr >= 0 else []
         actuators[name] = (float(data.ctrl[aid]), act_vals)
 
-    return _SceneState(joints=joints, actuators=actuators, time=float(data.time))
+    # xfrc_applied is indexed by body, so the body name is its only stable key
+    # across a rebuild that shifts body indices. Body 0 is the world, which no
+    # caller can push on. An all-zero row is the absence of a wrench, not a
+    # value worth carrying, so skipping it keeps this dict empty for the common
+    # scene and makes the restore a no-op there.
+    body_wrenches: dict[str, list[float]] = {}
+    for bid in range(1, int(model.nbody)):
+        row = data.xfrc_applied[bid]
+        if not row.any():
+            continue
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, bid)
+        if not name:
+            logger.debug(
+                "snapshot_scene_state: body id %d has no name, its latched wrench is not carried over",
+                bid,
+            )
+            continue
+        body_wrenches[name] = [float(x) for x in row]
+
+    return _SceneState(
+        joints=joints,
+        actuators=actuators,
+        body_wrenches=body_wrenches,
+        time=float(data.time),
+    )
 
 
 def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
@@ -1185,6 +1238,9 @@ def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
 
     restored = 0
     for key, (qpos_vals, qvel_vals, qfrc_vals) in snapshot.joints.items():
+        # ``qfrc_vals`` is width-checked here beside its siblings but written by
+        # _restore_applied_forces below, the one owner of the applied-force
+        # buffers (both rebuild paths share it).
         jid = _resolve_joint_key(model, key, mj)
         if jid < 0:
             continue  # element no longer exists (expected for the ejected robot)
@@ -1208,8 +1264,6 @@ def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
             data.qpos[qpos_adr + i] = v
         for i, v in enumerate(qvel_vals):
             data.qvel[dof_adr + i] = v
-        for i, v in enumerate(qfrc_vals):
-            data.qfrc_applied[dof_adr + i] = v
         restored += 1
 
     for name, (ctrl_val, act_vals) in snapshot.actuators.items():
@@ -1233,8 +1287,77 @@ def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
         for i, v in enumerate(act_vals):
             data.act[act_adr + i] = v
 
+    _restore_applied_forces(world, snapshot)
     data.time = snapshot.time
     return restored
+
+
+def _restore_applied_forces(world: SimWorld, snapshot: _SceneState) -> None:
+    """Write the externally applied forces in ``snapshot`` back, keyed by name.
+
+    The single owner of both applied-force buffers, shared by the two paths that
+    rebuild a scene's ``MjData``:
+    :func:`_recompile_preserving_state` (a scene GROWS -- ``add_robot``,
+    ``add_object``, ``add_camera``) and :func:`eject_robot_from_scene` (a scene
+    SHRINKS). Neither carries these buffers on its own:
+
+    * ``spec.recompile`` transfers ``qpos``, ``qvel``, ``ctrl``, ``act`` and the
+      clock, but drops ``qfrc_applied`` and ``xfrc_applied`` -- measured on
+      MuJoCo 3.5, growing a two-body scene by one body.
+    * a fresh ``mj.MjData`` zero-fills them, so the name-keyed restore beside
+      this call is the only thing that can put them back.
+
+    Dropping them contradicts what the scene already promises a caller:
+    :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
+    documents that MuJoCo never clears a latched wrench, so it "persists on
+    every subsequent step until the next apply_force call for this body (or a
+    ``reset()``)" -- a list a scene rebuild is not on -- and ``add_robot``
+    documents that "a latched ``apply_force`` wrench persists" across the
+    recompile it performs. A dropped wrench is silent: the push simply stops,
+    under a ``"status": "success"``.
+
+    Entries whose element the rebuilt model no longer has are skipped: for an
+    eject that is the departing robot, which is the point of the rebuild.
+
+    Args:
+        world: The scene whose ``_data`` receives the forces.
+        snapshot: State captured by :func:`_snapshot_scene_state` before the
+            rebuild.
+    """
+    if world._model is None or world._data is None:
+        return
+    mj = _ensure_mujoco()
+    model = world._model
+    data = world._data
+
+    for key, (_qpos_vals, _qvel_vals, qfrc_vals) in snapshot.joints.items():
+        jid = _resolve_joint_key(model, key, mj)
+        if jid < 0:
+            continue
+        dof_adr = int(model.jnt_dofadr[jid])
+        _, expect_dof = _joint_state_widths(int(model.jnt_type[jid]), mj)
+        if len(qfrc_vals) != expect_dof:
+            # The joint type changed across the rebuild; a mismatched slice would
+            # write one dof's force into another's. _restore_scene_state logs the
+            # width mismatch for this key already.
+            continue
+        for i, v in enumerate(qfrc_vals):
+            data.qfrc_applied[dof_adr + i] = v
+
+    for name, wrench in snapshot.body_wrenches.items():
+        bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, name)
+        if bid < 0:
+            continue  # body belonged to the ejected robot
+        if len(wrench) != data.xfrc_applied.shape[1]:
+            logger.warning(
+                "_restore_applied_forces: wrench width mismatch for body %r (%d!=%d), skipping",
+                name,
+                len(wrench),
+                data.xfrc_applied.shape[1],
+            )
+            continue
+        for i, v in enumerate(wrench):
+            data.xfrc_applied[bid, i] = v
 
 
 def _resolve_joint_key(model: Any, key: _JointKey, mj: Any) -> int:

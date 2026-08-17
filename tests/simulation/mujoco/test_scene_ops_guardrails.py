@@ -194,7 +194,7 @@ class TestSnapshotRestoreWithoutModel:
         assert (snap.joints, snap.actuators, snap.time) == ({}, {}, 0.0)
 
     def test_restore_empty_world_restores_nothing(self) -> None:
-        empty = scene_ops._SceneState(joints={}, actuators={}, time=0.0)
+        empty = scene_ops._SceneState(joints={}, actuators={}, body_wrenches={}, time=0.0)
         assert scene_ops._restore_scene_state(SimWorld(), empty) == 0
 
 
