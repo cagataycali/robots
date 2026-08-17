@@ -72,10 +72,12 @@ startup when it is unset. Set it to the same value on every peer.
 **2. Fleet clocks have to agree.** A resume envelope is stamped with the
 operator's wall clock, and a receiver refuses one that is stale or future-dated:
 older than `STRANDS_MESH_RESUME_FRESHNESS_S` (default 60s) or more than
-`STRANDS_MESH_RESUME_FORWARD_SKEW_S` (default 5s) ahead. The forward bound is the
-tight one and it is asymmetric: a robot whose clock is only **6 seconds behind**
-the operator sees a correct, correctly-signed resume as future-dated and refuses
-it, logging
+`STRANDS_MESH_RESUME_FORWARD_SKEW_S` (default 5s) ahead. Each bound catches one
+direction of skew - a receiver *ahead of* the operator trips the freshness
+window, a receiver *behind* it trips the forward bound - so widening the other
+one does not help. The forward bound is the tight one, which is the trap: a robot
+whose clock is only **6 seconds behind** the operator sees a correct,
+correctly-signed resume as future-dated and refuses it, logging
 
 ```
 [safety] robot-1: refusing remote resume -- ``t``=... in future (forward_skew_s=5.0, now=...)
