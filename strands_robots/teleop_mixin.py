@@ -37,6 +37,7 @@ Design
 from __future__ import annotations
 
 import contextlib
+import importlib
 import logging
 import math
 import os
@@ -416,7 +417,10 @@ class TeleopMixin:
                 call returns immediately with a handle/status.
             duration: Stop automatically after N seconds. Must be a positive
                 finite number when given; ``None`` = run until
-                ``stop_teleoperate()`` (background) / Ctrl+C (block).
+                ``stop_teleoperate()`` (background) / Ctrl+C (block). Measured
+                from the end of setup, so it is time spent teleoperating: device
+                connection and the one-time resolution of the slew helpers happen
+                before the clock starts and are not charged to it.
 
         Returns:
             Status dict. Background mode returns immediately; ``block=True``
@@ -519,6 +523,22 @@ class TeleopMixin:
         self._teleop_errors = 0
         self._teleop_slew_rejected = 0
         self._teleop_slew_baseline = {}
+        # Resolve the mesh slew module before the session clock starts. The loop
+        # judges every frame with helpers from strands_robots.mesh.security, which
+        # it imports lazily (the mesh package reaches strands_robots.simulation,
+        # which this mixin must not depend on - see the layering note in
+        # _teleop_loop). Resolving it there put ~2s of one-time import cost on a
+        # cold process INSIDE the window ``duration`` bounds, because the deadline
+        # is ``self._teleop_start_mono + duration`` and that stamp is taken here,
+        # before the loop runs at all. A session shorter than the import ended
+        # without polling the leader once and still reported success; a longer one
+        # was silently shortened by the same amount. Resolving it here - with the
+        # rest of setup, which already includes connecting every device - leaves
+        # the loop's import a sys.modules lookup, so ``duration`` measures
+        # teleoperation rather than teleoperation plus setup. Stated as a call
+        # rather than an unused ``import`` so the effect is the statement.
+        importlib.import_module("strands_robots.mesh.security")
+
         self._teleop_start_mono = time.monotonic()
         self._teleop_running = True
 
@@ -646,7 +666,9 @@ class TeleopMixin:
         # pulls :mod:`strands_robots.simulation` in, and this mixin must not
         # depend on it (see
         # :func:`strands_robots.utils.positive_finite_number_error`). One import
-        # per session, not per tick.
+        # per session, not per tick - and :meth:`teleoperate` resolves the module
+        # before it stamps the session clock, so this reads an already-imported
+        # module rather than charging its cost to the caller's ``duration``.
         from strands_robots.mesh.security import (
             input_frame_slew_violation,
             merge_slew_baseline,
