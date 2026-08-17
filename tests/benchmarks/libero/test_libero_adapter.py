@@ -3361,11 +3361,19 @@ class TestInstallActionController:
         libero = pytest.importorskip("libero")
         import mujoco
 
-        # Resolve the canonical LIBERO Panda home pose. Skip if libero
-        # version doesn't expose MountedPanda (e.g. future rename).
-        try:
-            from libero.libero.envs.robots.mounted_panda import MountedPanda
-        except ImportError:
+        # Resolve the canonical LIBERO Panda home pose. Skip if this libero
+        # version does not expose MountedPanda (e.g. a future rename). The
+        # module and the attribute are two separate skips because
+        # ``importorskip`` covers only the module: reading the attribute with
+        # ``getattr`` and skipping on ``None`` keeps a rename a skip rather
+        # than turning it into an ``AttributeError``, and it binds the name on
+        # every path that reaches the use below.
+        mounted_panda = pytest.importorskip(
+            "libero.libero.envs.robots.mounted_panda",
+            reason=f"libero {libero.__version__} does not expose the mounted_panda module",
+        )
+        MountedPanda = getattr(mounted_panda, "MountedPanda", None)
+        if MountedPanda is None:
             pytest.skip(f"libero {libero.__version__} does not expose MountedPanda")
         expected_home_qpos = np.asarray(MountedPanda().init_qpos, dtype=np.float64)
         assert expected_home_qpos.shape == (7,), (
