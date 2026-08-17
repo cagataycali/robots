@@ -225,9 +225,10 @@ class TestTheCreationSiteGuardIsStillTheGuardOnThePythonPath:
     path -- so the creation-site guard is not made unreachable by this.
     """
 
-    def test_the_python_path_still_reaches_the_creation_site_guard(self, sim: Simulation) -> None:
+    @pytest.mark.parametrize("bad", _NON_STRINGS)
+    def test_the_python_path_still_reaches_the_creation_site_guard(self, sim: Simulation, bad: Any) -> None:
         """A direct call does not pass through the dispatcher, so its guard reports."""
-        result = sim.add_object(name=7, shape="box", size=[0.05, 0.05, 0.05])
+        result = sim.add_object(name=bad, shape="box", size=[0.05, 0.05, 0.05])
         assert result["status"] == "error"
         text = " ".join(b.get("text", "") for b in result["content"])
         assert "must be a non-empty string" in text, text
