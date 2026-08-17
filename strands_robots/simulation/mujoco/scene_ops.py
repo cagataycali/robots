@@ -176,6 +176,55 @@ def actuator_joint_id(model: Any, act_id: int, mj: Any) -> int:
     return int(model.actuator_trnid[act_id, 0])
 
 
+def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]]:
+    """Split the joint-driving actuators into position servos and other drives.
+
+    A MuJoCo *position* actuator carries the ``-kp`` feedback term in its bias,
+    i.e. ``biastype == mjBIAS_AFFINE``, and its ``ctrl`` IS the joint target in
+    the joint's own units. A *motor* (``mjBIAS_NONE``) or velocity drive takes a
+    torque or a rate instead, so the same number is a different physical
+    quantity: writing a joint angle into one commands a torque numerically equal
+    to an angle in radians. Telling the two apart is therefore a precondition
+    for any caller that wants to move a setpoint alongside a pose, and it is not
+    a per-robot property - ``openarm`` ships 2 position servos beside 16 motors,
+    so the classification has to be per actuator.
+
+    The same bias term is what
+    :func:`~strands_robots.policies.wbc.sim_control.wbc_uses_position_servo`
+    reads to decide whether a scene needs the whole-body torque shim; keeping
+    the rule here lets both sides of the package share one definition of "this
+    actuator's command is a pose".
+
+    Args:
+        model: The compiled ``MjModel``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        ``(servos, other_drives)`` - two disjoint ``{joint id: actuator id}``
+        maps. A joint with no joint-transmission actuator appears in neither. A
+        joint driven by both a position servo and a motor appears only in
+        *servos*, because a setpoint written there does govern the pose it
+        settles to. Where several actuators of one kind drive a joint the last
+        in model order is reported.
+    """
+    servos: dict[int, int] = {}
+    other: dict[int, int] = {}
+    affine = int(mj.mjtBias.mjBIAS_AFFINE)
+    for act_id in range(int(model.nu)):
+        jnt_id = actuator_joint_id(model, act_id, mj)
+        if jnt_id < 0:
+            continue
+        if int(model.actuator_biastype[act_id]) == affine:
+            servos[jnt_id] = act_id
+        else:
+            other[jnt_id] = act_id
+    # Disjoint: a servo's setpoint governs the pose even when a motor also pulls
+    # on the joint, so the servo is the drive a pose write can move.
+    for jnt_id in servos:
+        other.pop(jnt_id, None)
+    return servos, other
+
+
 def robot_owned_actuator_ids(model: Any, robot: SimRobot, mj: Any) -> list[int]:
     """Return the actuator ids ``robot`` owns, in model order.
 
