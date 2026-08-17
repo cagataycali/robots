@@ -339,12 +339,30 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
       were applied either way, so the only symptom was a quadruped lying down
       under a ``"status": "success"``.
 
-    One buffer is not transferred at all rather than only in its tail:
-    ``xfrc_applied``, the per-body row
-    :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
-    latches a wrench in, comes back entirely zero. That wrench is documented to
-    hold until the next ``apply_force`` on the same body or a ``reset()``, so it
-    is snapshotted by body name before the recompile and re-latched after.
+    TWO buffers are not transferred at all rather than only in their tail --
+    both applied-force buffers come back entirely zero, so for these the tail
+    initialization above is beside the point: every entry is lost, including the
+    rows of elements that were there all along. Measured by growing a scene by
+    one body on mujoco 3.5.0 (the floor this package declares), 3.10.0 (the
+    locked version) and 3.11.0, identically on all three -- ``qpos``, ``qvel``,
+    ``ctrl`` and the clock carried, ``qfrc_applied`` and ``xfrc_applied``
+    zeroed.
+
+    * ``xfrc_applied``, the per-body row
+      :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
+      latches a wrench in, IS carried here. That wrench is documented to hold
+      until the next ``apply_force`` on the same body or a ``reset()``, and a
+      scene rebuild is neither, so it is snapshotted by body name before the
+      recompile and re-latched after.
+    * ``qfrc_applied``, its joint-space sibling, is deliberately NOT carried
+      here: nothing in this package ever writes a non-zero value into it.
+      ``apply_force`` documents why it latches the per-body buffer instead (one
+      world-wide generalized-force vector has no slice that belongs to one
+      body), and no other caller touches it, so there is no value for the
+      recompile to lose and a carry here could only be exercised by writing the
+      buffer from outside the public API. A joint-force API added later must add
+      the carry with it -- ``_SceneState`` already carries this buffer on the
+      eject path, where it is free because that path snapshots joints anyway.
 
     Also re-discovers per-robot joint and actuator IDs (they may have shifted
     as new bodies were inserted earlier in the body tree). Returns True on
