@@ -304,6 +304,18 @@ _DEFAULT_ACTION_HORIZON = 8
 # hint "ee" cannot fire inside "knee" or "wheel".
 _GRIPPER_BODY_HINTS = ("gripper", "hand", "ee", "tool")
 
+# The ``create_world`` parameters a LIVE world can still adopt, paired with the
+# published action that applies each one in place without discarding the scene.
+# ``ground_plane`` / ``terrain`` / ``difficulty`` are absent by construction:
+# they shape the compiled scene at creation time and have no setter, so the only
+# way to change them is to build a new world. Single-sourced here so the refusal
+# below cannot advertise a setter that does not exist - the dead end it exists to
+# close.
+_WORLD_PARAM_SETTERS: tuple[tuple[str, str], ...] = (
+    ("timestep", "set_timestep"),
+    ("gravity", "set_gravity"),
+)
+
 
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
 
@@ -663,6 +675,82 @@ class MuJoCoSimEngine(
             logger.warning("Could not count sim robots: %s", e)
             return 0
 
+    def _world_contents(self) -> str:
+        """Name what a live world holds, for a refusal whose remedy would drop it.
+
+        Returns:
+            A human-readable inventory such as ``"robots: so101; objects:
+            none"``. Reported by :meth:`_world_exists_error` so ``destroy`` is
+            offered with its cost stated rather than as a bare instruction.
+        """
+        world = self._world
+        robots = ", ".join(world.robots) if world is not None and world.robots else "none"
+        objects = ", ".join(world.objects) if world is not None and world.objects else "none"
+        return f"robots: {robots}; objects: {objects}"
+
+    def _world_exists_error(
+        self,
+        *,
+        timestep: float | None,
+        gravity: list[float] | None,
+        ground_plane: bool,
+        terrain: str | None,
+        difficulty: float,
+    ) -> dict[str, Any]:
+        """Refuse a second ``create_world``, routing by what the caller asked for.
+
+        A world cannot be rebuilt under a live scene, so the call is refused.
+        Which remedy applies, though, depends entirely on the arguments: the
+        parameters in :data:`_WORLD_PARAM_SETTERS` can be applied to the world
+        that already exists, while ``ground_plane`` / ``terrain`` /
+        ``difficulty`` are compiled in at creation and can only be changed by
+        building a new world. ``reset`` applies NONE of them - it restores the
+        initial state at the values the world was built with - so advertising it
+        as an alternative to ``create_world`` sends a caller who asked for a
+        different world to a call that reports success and changes nothing.
+
+        Args:
+            timestep: The ``create_world`` argument, unmodified.
+            gravity: The ``create_world`` argument, unmodified.
+            ground_plane: The ``create_world`` argument, unmodified.
+            terrain: The ``create_world`` argument, unmodified.
+            difficulty: The ``create_world`` argument, unmodified.
+
+        Returns:
+            A ``{status: "error", content: [...]}`` tool result naming the live
+            world's contents and only the remedies that can satisfy the request.
+        """
+        requested = {"timestep": timestep, "gravity": gravity}
+        contents = self._world_contents()
+        lines = [f"create_world: a world already exists ({contents})."]
+
+        in_place = [
+            f"{param}={requested[param]!r} with {action}"
+            for param, action in _WORLD_PARAM_SETTERS
+            if requested[param] is not None
+        ]
+        structural = []
+        if terrain is not None:
+            structural.append(f"terrain={terrain!r}")
+        if not ground_plane:
+            structural.append("ground_plane=False")
+        if float(difficulty) != 1.0:
+            structural.append(f"difficulty={difficulty!r}")
+
+        if in_place:
+            lines.append(f"Apply {' and '.join(in_place)} on the live world; its contents stay.")
+        if structural:
+            lines.append(
+                f"{' and '.join(structural)} can only be set when a world is built: "
+                f"destroy (this discards {contents}), then create_world with it."
+            )
+        if not in_place and not structural:
+            lines.append(
+                "It is ready to use: add_robot / add_object build on it and reset restarts "
+                f"the rollout in place. destroy, then create_world, starts empty and discards {contents}."
+            )
+        return {"status": "error", "content": [{"text": " ".join(lines)}]}
+
     def create_world(
         self,
         timestep: float | None = None,
@@ -693,6 +781,19 @@ class MuJoCoSimEngine(
         height beneath it) at ``add_robot`` and on every ``reset()``, rather
         than at the flat-ground keyframe height that would leave its feet
         buried below the raised terrain.
+
+        A world can only be built once: a second call while one is live is
+        refused rather than rebuilding under the live scene (``Robot("so101")``
+        returns an instance whose world is already created and populated, so this
+        refusal is the first thing such a caller meets). The refusal names what
+        the live world holds and routes by the arguments actually passed:
+        ``timestep`` / ``gravity`` are applied to the live world with
+        :meth:`set_timestep` / :meth:`set_gravity`, keeping its contents, while
+        ``ground_plane`` / ``terrain`` / ``difficulty`` are compiled in at
+        creation and need :meth:`destroy` first. :meth:`reset` applies no
+        ``create_world`` parameter - it restores the initial state at the values
+        the world was built with - so it is never offered as a way to obtain a
+        different world.
 
         ``timestep`` and ``gravity`` are validated exactly as
         :meth:`set_timestep` / :meth:`set_gravity` validate them - a finite
@@ -729,10 +830,13 @@ class MuJoCoSimEngine(
             }
 
         if self._world is not None and self._world._model is not None:
-            return {
-                "status": "error",
-                "content": [{"text": "World already exists. Use action='destroy' first, or action='reset'."}],
-            }
+            return self._world_exists_error(
+                timestep=timestep,
+                gravity=gravity,
+                ground_plane=ground_plane,
+                terrain=terrain,
+                difficulty=difficulty,
+            )
 
         # Validate the physics parameters on the same terms set_timestep /
         # set_gravity enforce: a world must not be created with a dt or a
