@@ -20,7 +20,7 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 | `reset` | - | State to t=0, keep model |
 | `get_state` | - | Sim time, joint positions, object poses |
 | `destroy` | - | Tear down model, data, executor |
-| `export_xml` | - | Serialise model to MJCF string |
+| `export_xml` | `output_path` | Serialise live scene to MJCF; reloadable via `load_scene` (assets referenced by absolute path) |
 
 ## Scene-MJCF
 

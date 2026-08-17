@@ -507,6 +507,30 @@ pre-patch state, so a bad key or a non-finite component never leaves a
 half-applied scene. Use
 `replace_scene_mjcf(xml)` for MJCF elements this vocabulary does not cover.
 
+## Exporting a scene
+
+`export_xml(output_path=...)` serialises the live scene - including every runtime
+mutation - as MJCF. It is the read sibling of `replace_scene_mjcf`, so the file it
+writes is meant to be reloadable:
+
+```python
+sim.export_xml(output_path="/tmp/handoff.xml")
+other.load_scene(scene_path="/tmp/handoff.xml")   # same scene, same structure
+```
+
+Mesh, texture and height-field assets are referenced by ABSOLUTE path. MuJoCo
+resolves a relative `file=` against the model's own directory (plus `meshdir` /
+`texturedir`), and that directory is not part of the serialised XML - so a
+relative reference would resolve against wherever the export happened to be
+written. Absolute references keep the export reloadable from any location, and a
+scene composed from several models needs them: each model contributes assets from
+its own root, so no single `meshdir` could cover them all.
+
+The consequence is that an export names paths on the machine that produced it.
+Copying the XML alone to another machine will not carry the assets with it;
+copy the referenced asset trees too, or re-compose the scene there from the same
+`add_robot` calls.
+
 ## Cameras
 
 Free cameras look from `position` toward `target` (`fov=60.0`, `width=640`, `height=480`). Robot-URDF cameras (wrist, etc.) are auto-discovered on `add_robot` - no `add_camera` needed.
