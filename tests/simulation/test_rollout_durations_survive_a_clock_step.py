@@ -44,12 +44,14 @@ of dicts.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import pytest
 
 from strands_robots import dataset_recorder as dataset_recorder_module
 from strands_robots.simulation import policy_runner as policy_runner_module
+from strands_robots.simulation.base import SimEngine
 from strands_robots.simulation.policy_runner import PolicyRunner
 
 #: Recorded rate of the fake dataset, and therefore the rate replay must pace at.
@@ -110,7 +112,7 @@ class _SteppingClock:
         self._wall += self._wall_step
 
 
-class _FakeEngine:
+class _FakeEngine(SimEngine):
     """The smallest engine ``replay()`` drives, plus a per-frame clock hook.
 
     Records the monotonic reading at the top of every applied frame; the
@@ -132,7 +134,12 @@ class _FakeEngine:
     def physics_timestep(self) -> float:
         return 0.002
 
-    def send_action(self, action: dict[str, float], robot_name: str | None = None, n_substeps: int = 1) -> dict:
+    def send_action(
+        self,
+        action: dict[str, Any] | Sequence[float],
+        robot_name: str | None = None,
+        n_substeps: int = 1,
+    ) -> dict[str, Any]:
         self.frame_starts_mono.append(self._clock.monotonic())
         self.substeps.append(n_substeps)
         # Applying a frame costs time on every clock in the process.
@@ -141,8 +148,43 @@ class _FakeEngine:
             self._clock.apply_step()
         return {"status": "success"}
 
-    def step(self, n_steps: int = 1) -> None:  # pragma: no cover - no actionless frames here
+    def step(self, n_steps: int = 1) -> dict[str, Any]:  # pragma: no cover - no actionless frames here
         raise AssertionError("every fake frame carries an action")
+
+    # -- SimEngine abstract boilerplate: replay() reaches none of it -- #
+
+    def create_world(self, timestep=None, gravity=None, ground_plane=True):
+        return {"status": "success"}
+
+    def destroy(self):
+        return {"status": "success"}
+
+    def reset(self):
+        return {"status": "success"}
+
+    def get_state(self):
+        return {"sim_time": 0.0, "step_count": 0}
+
+    def add_robot(self, name, **kw):
+        return {"status": "success"}
+
+    def remove_robot(self, name):
+        return {"status": "success"}
+
+    def robot_joint_names(self, robot_name: str) -> list[str]:
+        return ["j1", "j2"]
+
+    def add_object(self, name, **kw):
+        return {"status": "success"}
+
+    def remove_object(self, name):
+        return {"status": "success"}
+
+    def get_observation(self, robot_name=None, *, skip_images=False):
+        return {}
+
+    def render(self, camera_name="default", width=None, height=None):
+        return {"status": "success"}
 
 
 class _FakeDataset:
