@@ -3368,13 +3368,22 @@ class TestInstallActionController:
         # ``getattr`` and skipping on ``None`` keeps a rename a skip rather
         # than turning it into an ``AttributeError``, and it binds the name on
         # every path that reaches the use below.
+        #
+        # ``reason`` is an argument, so it is built before the call it is
+        # passed to - on every run where ``libero`` imports, not only on the
+        # skipping one. Read the version defensively once: the released
+        # distribution (0.1.1, the only one the ``benchmark-libero`` extra can
+        # resolve) ships an empty top-level ``libero/__init__.py`` with no
+        # ``__version__``, so a bare read here is an ``AttributeError`` on
+        # exactly the hosts where this test runs for real.
+        libero_version = getattr(libero, "__version__", "unknown")
         mounted_panda = pytest.importorskip(
             "libero.libero.envs.robots.mounted_panda",
-            reason=f"libero {libero.__version__} does not expose the mounted_panda module",
+            reason=f"libero {libero_version} does not expose the mounted_panda module",
         )
         MountedPanda = getattr(mounted_panda, "MountedPanda", None)
         if MountedPanda is None:
-            pytest.skip(f"libero {libero.__version__} does not expose MountedPanda")
+            pytest.skip(f"libero {libero_version} does not expose MountedPanda")
         expected_home_qpos = np.asarray(MountedPanda().init_qpos, dtype=np.float64)
         assert expected_home_qpos.shape == (7,), (
             f"MountedPanda.init_qpos must be 7-DoF for Panda, got {expected_home_qpos.shape}"
