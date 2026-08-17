@@ -27,6 +27,11 @@ from tests.test_teleop import FakeHost, FakeTeleop
 #: Loop rate every test drives, so the charged interval is floored at 1/50 s.
 HZ = 50.0
 
+#: One frame of a full-scale 12-bit encoder glitch, in the driver units a
+#: leader arm actually streams. Over one 1/50 s tick this is 102400
+#: units/second, 200x the local default bound - a speed no servo produces.
+GLITCH = -2048.0
+
 
 class SteppingLeader:
     """Emits a scripted sequence of values for one joint, then holds the last."""
@@ -58,18 +63,17 @@ def _drive(host: FakeHost, leader: object, ticks: int, hz: float = HZ) -> dict:
 class TestAnOverSpeedFrameIsNotApplied:
     def test_a_full_scale_jump_never_reaches_send_action(self) -> None:
         # A leader that reads one full-scale value - an encoder glitch, a USB
-        # re-enumerate - then returns to rest. 2.8 units in one 1/50 s tick is
-        # 140 units/s, past the bound by more than 5x.
+        # re-enumerate - then returns to rest, at a speed no servo produces.
         host = FakeHost()
-        _drive(host, SteppingLeader([0.0, 0.0, -2.8, 0.0, 0.0, 0.0]), ticks=12)
+        _drive(host, SteppingLeader([0.0, 0.0, GLITCH, 0.0, 0.0, 0.0]), ticks=12)
 
         applied = [a["joint1"] for a, _ in host.sent]
         assert applied, "premise: the loop must apply something"
-        assert -2.8 not in applied, f"the glitched frame was applied: {applied}"
+        assert GLITCH not in applied, f"the glitched frame was applied: {applied}"
 
     def test_the_refusal_is_counted_and_reported_not_silent(self) -> None:
         host = FakeHost()
-        result = _drive(host, SteppingLeader([0.0, 0.0, -2.8, 0.0, 0.0, 0.0]), ticks=12)
+        result = _drive(host, SteppingLeader([0.0, 0.0, GLITCH, 0.0, 0.0, 0.0]), ticks=12)
 
         telemetry = result["content"][1]["json"]
         assert telemetry["slew_rejected"] >= 1
@@ -81,7 +85,7 @@ class TestAnOverSpeedFrameIsNotApplied:
         # After refusing the jump, the loop must keep measuring from the last
         # value it actually applied, so the stream resumes on its own.
         host = FakeHost()
-        _drive(host, SteppingLeader([0.0, 0.0, -2.8, 0.01, 0.02, 0.03]), ticks=14)
+        _drive(host, SteppingLeader([0.0, 0.0, GLITCH, 0.01, 0.02, 0.03]), ticks=14)
 
         applied = [a["joint1"] for a, _ in host.sent]
         assert 0.03 in applied, f"the stream never resumed: {applied}"
@@ -108,12 +112,12 @@ class TestTheBoundIsTheMeshBoundNotACopy:
         # STRANDS_TELEOP_SLEW_ABS is the documented way to widen the local
         # bound for a device whose driver units exceed the 500 units/s default.
         # (The mesh path uses its own STRANDS_MESH_INPUT_SLEW_ABS.)
-        monkeypatch.setenv("STRANDS_TELEOP_SLEW_ABS", "10000")
+        monkeypatch.setenv("STRANDS_TELEOP_SLEW_ABS", "200000")
         host = FakeHost()
-        result = _drive(host, SteppingLeader([0.0, 0.0, -2.8, 0.0, 0.0, 0.0]), ticks=12)
+        result = _drive(host, SteppingLeader([0.0, 0.0, GLITCH, 0.0, 0.0, 0.0]), ticks=12)
 
         assert result["content"][1]["json"]["slew_rejected"] == 0
-        assert -2.8 in [a["joint1"] for a, _ in host.sent]
+        assert GLITCH in [a["joint1"] for a, _ in host.sent]
 
 
 class TestAPhysicalLeaderIsUntouched:
@@ -139,10 +143,10 @@ class TestAPhysicalLeaderIsUntouched:
         # There is no baseline to measure the first frame against, so it cannot
         # be refused however far from the follower's pose it reaches.
         host = FakeHost()
-        _drive(host, SteppingLeader([-2.8]), ticks=4)
+        _drive(host, SteppingLeader([GLITCH]), ticks=4)
 
         assert host.sent, "the first frame was refused with no baseline to judge it"
-        assert host.sent[0][0]["joint1"] == -2.8
+        assert host.sent[0][0]["joint1"] == GLITCH
 
 
 class TestRefusalsAreVisibleInTheSessionStatus:
@@ -160,14 +164,14 @@ class TestRefusalsAreVisibleInTheSessionStatus:
 
     def test_a_partially_refused_session_is_degraded(self) -> None:
         host = FakeHost()
-        result = _drive(host, SteppingLeader([0.0, 0.0, -2.8, 0.0, 0.0, 0.0]), ticks=12)
+        result = _drive(host, SteppingLeader([0.0, 0.0, GLITCH, 0.0, 0.0, 0.0]), ticks=12)
 
         assert result["status"] == "degraded"
         assert result["content"][1]["json"]["frames"] > 0
 
     def test_the_live_status_surface_reports_refusals(self) -> None:
         host = FakeHost()
-        _drive(host, SteppingLeader([0.0, 0.0, -2.8, 0.0, 0.0, 0.0]), ticks=12)
+        _drive(host, SteppingLeader([0.0, 0.0, GLITCH, 0.0, 0.0, 0.0]), ticks=12)
 
         live = host.get_teleoperate_status()
         assert live["content"][1]["json"]["slew_rejected"] >= 1
