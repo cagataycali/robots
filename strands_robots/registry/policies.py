@@ -27,6 +27,31 @@ def _build_alias_map() -> dict[str, str]:
     return alias_map
 
 
+def _canonical_provider_name(provider: str) -> str:
+    """Resolve a provider spelling to the canonical name the registry keys on.
+
+    ``policies.json`` lets a provider declare ``aliases`` and ``shorthands``,
+    and every lookup surface accepts them as readily as the canonical name. The
+    canonical name is the one the registry is keyed on, so anything that keys a
+    decision on a provider -- a config lookup, a module import, the
+    trust-remote-code gate -- has to resolve the caller's spelling first or it
+    answers for a name the registry does not hold.
+
+    This is the one place that rule lives. An unknown spelling is returned
+    unchanged: resolution is the caller's next step, and reporting the name the
+    caller actually passed is what lets that caller quote it back.
+
+    Args:
+        provider: Any spelling the registry accepts - a canonical name, a
+            declared alias, or a shorthand.
+
+    Returns:
+        The canonical provider name, or ``provider`` unchanged when no provider
+        declares that spelling.
+    """
+    return _build_alias_map().get(provider, provider)
+
+
 def get_policy_provider(name: str) -> dict[str, Any] | None:
     """Get policy provider config by name or alias.
 
@@ -38,9 +63,7 @@ def get_policy_provider(name: str) -> dict[str, Any] | None:
         None if not found.
     """
     reg = _load("policies")
-    alias_map = _build_alias_map()
-    canonical = alias_map.get(name, name)
-    return reg.get("providers", {}).get(canonical)
+    return reg.get("providers", {}).get(_canonical_provider_name(name))
 
 
 def list_policy_providers() -> list[str]:
@@ -246,8 +269,7 @@ def import_policy_class(provider: str) -> type:
     if config:
         # Resolve alias to canonical for module lookup
         reg = _load("policies")
-        alias_map = _build_alias_map()
-        canonical = alias_map.get(provider, provider)
+        canonical = _canonical_provider_name(provider)
         config = reg.get("providers", {}).get(canonical, config)
 
         try:

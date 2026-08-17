@@ -7,6 +7,11 @@ from collections.abc import Callable, Mapping
 from strands_robots.policies.base import Policy
 from strands_robots.registry import import_policy_class, list_policy_providers, resolve_policy
 
+# The one canonicalisation rule, shared rather than restated: a decision keyed
+# on a provider name has to resolve the caller's spelling first, and a second
+# copy of that rule here is a second thing to keep in step with policies.json.
+from strands_robots.registry.policies import _canonical_provider_name
+
 logger = logging.getLogger(__name__)
 
 #
@@ -135,8 +140,14 @@ def _resolve_policy_class(provider: str, **kwargs) -> tuple[str, type[Policy], d
         if resolved_provider:
             return resolved_provider, import_policy_class(resolved_provider), dict(resolved_kwargs)
 
-    # 3. Standard lookup from policies.json.
-    return provider, import_policy_class(provider), dict(kwargs)
+    # 3. Standard lookup from policies.json. The name returned is the canonical
+    #    one, not the caller's spelling: create_policy keys the
+    #    trust-remote-code gate on it and that gate membership-tests a set of
+    #    canonical names, so returning a declared alias would skip the gate for
+    #    every spelling but one. Stages 1 and 2 already canonicalise (the
+    #    runtime alias map, and resolve_policy's shorthand stage); this is the
+    #    third.
+    return _canonical_provider_name(provider), import_policy_class(provider), dict(kwargs)
 
 
 # ``policy_config`` (and the per-call ``policy_kwargs``) are opaque provider
