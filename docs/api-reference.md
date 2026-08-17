@@ -51,7 +51,7 @@ from strands_robots.registry import (
 | `list_policy_providers()` | Providers from `policies.json`. |
 | `resolve_policy(uri)` | URI → provider name. |
 | `import_policy_class(provider)` | Lazy import of provider class. |
-| `build_policy_kwargs(provider, **kw)` | Normalise + validate kwargs. An explicit value beats the provider's registry default; the provider's own key (`host=`) beats the generic parameter (`policy_host=`). |
+| `build_policy_kwargs(provider, **kw)` | Normalise + validate kwargs. An explicit value beats the provider's registry default; the provider's own key (`host=`) beats the generic parameter (`policy_host=`). Every generic parameter defaults to `None`, meaning "unset", so an omitted one leaves the provider's own default -- registry, else constructor -- in place. |
 
 ## `strands_robots.simulation`
 
