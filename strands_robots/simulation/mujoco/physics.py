@@ -1402,13 +1402,17 @@ class PhysicsMixin:
           to manage, the same reason :meth:`zero_dynamics` is a separate call
           rather than folded in here.
 
-        Only position servos are moved. A motor or velocity drive takes a torque
-        or a rate, so writing a joint angle into its ``ctrl`` would command a
-        torque numerically equal to an angle in radians; those joints are left
-        alone and the success text says how many were. The split is per actuator
-        rather than per robot - ``openarm`` carries 2 servos beside 16 motors -
-        and comes from
-        :func:`~strands_robots.simulation.mujoco.scene_ops.joint_drive_map`.
+        Only position servos are moved, meaning an actuator whose ``ctrl`` is the
+        joint target itself. A motor takes a torque and a velocity drive takes a
+        rate, so the same number is a different physical quantity there: written
+        into a motor it commands a torque numerically equal to an angle in
+        radians, and written into a velocity drive it commands a rate that moves
+        the joint straight off the pose just written. Those joints are left alone
+        and the success text says how many were. The split is per actuator rather
+        than per robot - ``openarm`` carries 2 servos beside 16 motors - and
+        comes from
+        :func:`~strands_robots.simulation.mujoco.scene_ops.joint_drive_map`,
+        which spells out the three terms that separate the two.
 
         Accepts EITHER form:
 
@@ -1568,8 +1572,8 @@ class PhysicsMixin:
             if not_a_pose:
                 text += (
                     f". {len(not_a_pose)} written joint(s) are driven by a non-position actuator "
-                    f"({_joint_name_sample(not_a_pose)}), whose ctrl is a torque or a rate rather "
-                    "than a pose, so their setpoints were left alone"
+                    f"({_joint_name_sample(not_a_pose)}), whose ctrl is a torque, a rate or a target "
+                    "behind an actuator state rather than a pose, so their setpoints were left alone"
                 )
         elif stale:
             text += (

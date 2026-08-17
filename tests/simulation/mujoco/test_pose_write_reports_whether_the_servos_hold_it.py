@@ -70,10 +70,22 @@ DRIVE_MIX_XML = """
       <joint name="undriven" type="hinge" axis="0 1 0" range="-2 2"/>
       <geom name="link3_geom" type="capsule" size="0.015 0.08" mass="0.2"/>
     </body>
+    <body name="link4" pos="1.0 0 0.4">
+      <joint name="rated" type="hinge" axis="0 1 0" range="-2 2"/>
+      <geom name="link4_geom" type="capsule" size="0.015 0.08" mass="0.2"/>
+    </body>
+    <body name="link5" pos="1.5 0 0.4">
+      <joint name="integrated" type="hinge" axis="0 1 0" range="-2 2"/>
+      <geom name="link5_geom" type="capsule" size="0.015 0.08" mass="0.2"/>
+    </body>
   </worldbody>
   <actuator>
     <position name="served_servo" joint="served" kp="60" kv="6"/>
     <motor name="motored_motor" joint="motored"/>
+    <!-- Both of these carry mjBIAS_AFFINE, so a classifier reading the bias type
+         alone reads them as position servos; neither takes a pose in ctrl. -->
+    <velocity name="rated_drive" joint="rated" kv="5"/>
+    <intvelocity name="integrated_drive" joint="integrated" kp="20" actrange="-2 2"/>
   </actuator>
 </mujoco>
 """
@@ -95,6 +107,18 @@ def _qpos(sim, joint: str) -> float:
     jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, joint)
     assert jnt_id >= 0, joint
     return float(data.qpos[model.jnt_qposadr[jnt_id]])
+
+
+def _jnt(model, joint: str) -> int:
+    jnt_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, joint)
+    assert jnt_id >= 0, joint
+    return int(jnt_id)
+
+
+def _act(model, actuator: str) -> int:
+    act_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, actuator)
+    assert act_id >= 0, actuator
+    return int(act_id)
 
 
 def _ctrl(sim, actuator: str) -> float:
@@ -179,6 +203,26 @@ class TestHoldMovesTheSetpointsWithThePose:
         assert "motored" in text, text
         assert "torque" in text, text
 
+    def test_a_velocity_drive_keeps_its_rate_command_and_the_pose_stands(self, sim):
+        """A joint angle written into a velocity drive's ctrl is a rate command.
+
+        This is the failure a bias-type-only classification produces on the write
+        path: the report names the joint as servo-held, ``hold=True`` writes the
+        angle into a rate, and the joint then moves away from the pose the call
+        just reported success for (under gravity ``mj_step`` reports
+        ``Nan, Inf or huge value in QACC``). Gravity is off in this scene, so a
+        rate command of zero is the only thing holding the pose - which makes the
+        drift the assertion below measures attributable to the ctrl write alone.
+        """
+        text = _text(sim.set_joint_positions(positions={"rated": 0.7}, hold=True))
+        assert _ctrl(sim, "rated_drive") == 0.0, "a pose must never land in a rate command"
+        assert "rated" in text, text
+        assert "rate" in text, text
+
+        assert sim.step(n_steps=200)["status"] == "success"
+        assert _qpos(sim, "rated") == pytest.approx(0.7, abs=1e-3), "the written pose stands"
+        assert np.isfinite(sim._world._data.qacc).all(), "the sim stays stable"
+
     def test_hold_must_be_a_boolean(self, sim):
         """A flag read by truthiness inverts for the spellings an opt-out uses."""
         result = sim.set_joint_positions(positions=POSE, hold="false")
@@ -208,18 +252,45 @@ class TestTheDriveSplitIsPerActuator:
     the helper, and the rest of the file reports its own verdict there.
     """
 
-    def test_a_servo_and_a_motor_in_one_model_land_in_different_maps(self, sim):
+    def test_only_the_actuator_whose_ctrl_is_a_pose_lands_in_servos(self, sim):
+        """Exact equality, so any drive misread as a servo fails here.
+
+        The scene carries one of each kind that matters: a position servo, a
+        motor, a velocity drive, an integrated-velocity drive and an undriven
+        joint.
+        """
         from strands_robots.simulation.mujoco.scene_ops import joint_drive_map
 
         model = sim._world._model
         servos, other = joint_drive_map(model, mj)
-        served = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "served")
-        motored = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "motored")
         undriven = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, "undriven")
 
-        assert servos == {served: mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, "served_servo")}
-        assert other == {motored: mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, "motored_motor")}
+        assert servos == {_jnt(model, "served"): _act(model, "served_servo")}
+        assert other == {
+            _jnt(model, "motored"): _act(model, "motored_motor"),
+            _jnt(model, "rated"): _act(model, "rated_drive"),
+            _jnt(model, "integrated"): _act(model, "integrated_drive"),
+        }
         assert undriven not in servos and undriven not in other
+
+    def test_an_affine_bias_alone_does_not_make_an_actuator_a_servo(self, sim):
+        """The premise: the rejected drives do clear the bias-type term.
+
+        Without this the test above would pass against a classifier that happened
+        to exclude them for the wrong reason, and the regression it guards
+        (a rate command receiving a joint angle) would be invisible again.
+        """
+        from strands_robots.simulation.mujoco.scene_ops import joint_drive_map
+
+        model = sim._world._model
+        affine = int(mj.mjtBias.mjBIAS_AFFINE)
+        for actuator in ("rated_drive", "integrated_drive"):
+            act_id = _act(model, actuator)
+            assert int(model.actuator_biastype[act_id]) == affine, actuator
+
+        servos, other = joint_drive_map(model, mj)
+        assert _jnt(model, "rated") in other, "a velocity drive commands a rate, not a pose"
+        assert _jnt(model, "integrated") in other, "an integrated-velocity drive integrates a rate"
 
     def test_the_two_maps_never_share_a_joint(self, sim):
         from strands_robots.simulation.mujoco.scene_ops import joint_drive_map

@@ -179,21 +179,48 @@ def actuator_joint_id(model: Any, act_id: int, mj: Any) -> int:
 def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]]:
     """Split the joint-driving actuators into position servos and other drives.
 
-    A MuJoCo *position* actuator carries the ``-kp`` feedback term in its bias,
-    i.e. ``biastype == mjBIAS_AFFINE``, and its ``ctrl`` IS the joint target in
-    the joint's own units. A *motor* (``mjBIAS_NONE``) or velocity drive takes a
-    torque or a rate instead, so the same number is a different physical
-    quantity: writing a joint angle into one commands a torque numerically equal
-    to an angle in radians. Telling the two apart is therefore a precondition
-    for any caller that wants to move a setpoint alongside a pose, and it is not
-    a per-robot property - ``openarm`` ships 2 position servos beside 16 motors,
-    so the classification has to be per actuator.
+    A *position servo* is an actuator whose ``ctrl`` IS the joint target in the
+    joint's own units, so a caller may write a pose into it. That takes three
+    terms, because MuJoCo's actuator shortcuts overlap on any one of them
+    (measured values below are what ``mujoco`` compiles each shortcut to):
 
-    The same bias term is what
-    :func:`~strands_robots.policies.wbc.sim_control.wbc_uses_position_servo`
-    reads to decide whether a scene needs the whole-body torque shim; keeping
-    the rule here lets both sides of the package share one definition of "this
-    actuator's command is a pose".
+    * ``biastype == mjBIAS_AFFINE`` - the force carries a bias computed from the
+      joint's own state rather than from ``ctrl`` alone. Necessary but far from
+      sufficient: ``<velocity kv>`` (``biasprm = [0, 0, -kv]``) and
+      ``<intvelocity kp>`` (``biasprm = [0, -kp, 0]``) are both affine-bias too.
+    * ``biasprm[1] < 0`` - that slot is ``-kp``, the *position* feedback gain, so
+      a negative value is what makes the bias restore toward ``ctrl`` as a pose.
+      It is zero for ``<velocity>``, whose feedback is on the rate, and positive
+      bias here is not a restoring term at all (``<cylinder bias>`` is free to
+      set it).
+    * ``dyntype == mjDYN_NONE`` - ``ctrl`` reaches the force law directly. A
+      stateful drive puts an ``act`` state in between: ``<intvelocity>`` carries
+      ``-kp`` yet integrates ``ctrl`` as a *rate*, so it clears the first two
+      terms while its command is not a pose.
+
+    Getting this wrong in the permissive direction is what a pose write cannot
+    afford: a joint angle written into a velocity drive's ``ctrl`` is commanded
+    as a *rate*, which drives the joint away from the pose that was just written
+    (measured on a single ``<velocity kv="5">`` scene: the joint spins off the
+    written pose, and under gravity ``mj_step`` reports
+    ``Nan, Inf or huge value in QACC``). The reverse error only declines to
+    help - the joint is reported as left alone - so every term above is required
+    rather than assumed.
+
+    Stock assets reach this path: Menagerie's ``pal_tiago`` ships a
+    ``tiago_velocity.xml`` variant whose arm is driven by 9 ``<velocity>``
+    actuators, and any caller MJCF loaded through ``replace_scene_mjcf`` /
+    ``patch_scene_mjcf`` may carry one.
+
+    The classification is not a per-robot property - ``openarm`` ships 2 position
+    servos beside 16 motors - so it is per actuator.
+
+    Note:
+        :func:`~strands_robots.policies.wbc.sim_control.wbc_uses_position_servo`
+        tests the bias type alone and so reads a velocity drive as a servo too.
+        That is a pre-existing read-only heuristic - it only decides whether to
+        install the whole-body torque shim, and never writes a setpoint - so it
+        is left to its own change rather than widened into this one.
 
     Args:
         model: The compiled ``MjModel``.
@@ -202,7 +229,7 @@ def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]
     Returns:
         ``(servos, other_drives)`` - two disjoint ``{joint id: actuator id}``
         maps. A joint with no joint-transmission actuator appears in neither. A
-        joint driven by both a position servo and a motor appears only in
+        joint driven by both a position servo and another drive appears only in
         *servos*, because a setpoint written there does govern the pose it
         settles to. Where several actuators of one kind drive a joint the last
         in model order is reported.
@@ -210,16 +237,22 @@ def joint_drive_map(model: Any, mj: Any) -> tuple[dict[int, int], dict[int, int]
     servos: dict[int, int] = {}
     other: dict[int, int] = {}
     affine = int(mj.mjtBias.mjBIAS_AFFINE)
+    stateless = int(mj.mjtDyn.mjDYN_NONE)
     for act_id in range(int(model.nu)):
         jnt_id = actuator_joint_id(model, act_id, mj)
         if jnt_id < 0:
             continue
-        if int(model.actuator_biastype[act_id]) == affine:
+        commands_a_pose = (
+            int(model.actuator_biastype[act_id]) == affine
+            and float(model.actuator_biasprm[act_id, 1]) < 0.0
+            and int(model.actuator_dyntype[act_id]) == stateless
+        )
+        if commands_a_pose:
             servos[jnt_id] = act_id
         else:
             other[jnt_id] = act_id
-    # Disjoint: a servo's setpoint governs the pose even when a motor also pulls
-    # on the joint, so the servo is the drive a pose write can move.
+    # Disjoint: a servo's setpoint governs the pose even when another drive also
+    # pulls on the joint, so the servo is the drive a pose write can move.
     for jnt_id in servos:
         other.pop(jnt_id, None)
     return servos, other
