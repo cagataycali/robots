@@ -53,6 +53,7 @@ fakes and the policy is a structural stub.
 
 from __future__ import annotations
 
+import importlib
 import threading
 import time as real_time
 from concurrent.futures import ThreadPoolExecutor
@@ -60,17 +61,18 @@ from typing import Any, cast
 
 import pytest
 
-# The teleop loop lazily imports strands_robots.mesh.security on its first
-# tick. That import is heavy, and paying it inside a short session would eat
-# the very budget under test, so it is resolved here instead - which is what a
-# process that has already teleoperated once looks like.
-import strands_robots.mesh.security  # noqa: F401
 from strands_robots import hardware_robot as hardware_robot_module
 from strands_robots import teleop_mixin as teleop_mixin_module
 from strands_robots.hardware_robot import Robot as HardwareRobot
 from strands_robots.hardware_robot import RobotTaskState, TaskStatus
 from tests.test_hardware_control_loop_rate_guard import _FakeArm
 from tests.test_teleop import FakeHost, FakeTeleop
+
+# The teleop loop lazily imports strands_robots.mesh.security on its first tick.
+# That import is heavy, and paying it inside a short session would eat the very
+# budget under test, so it is resolved here instead - which is what a process
+# that has already teleoperated once looks like.
+importlib.import_module("strands_robots.mesh.security")
 
 #: Rollout/session budget every test hands the loop, in seconds. Short enough
 #: to keep the suite quick, long enough that a loop honoring it applies many
