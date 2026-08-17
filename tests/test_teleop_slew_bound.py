@@ -250,8 +250,7 @@ class TestDefaultBoundAccommodatesDriverUnits:
 
         telemetry = result["content"][1]["json"]
         assert telemetry["slew_rejected"] == 0, (
-            f"a 90 deg/s degree-valued stream was refused at the default bound: "
-            f"{telemetry}"
+            f"a 90 deg/s degree-valued stream was refused at the default bound: {telemetry}"
         )
 
     def test_a_half_second_gripper_close_is_not_refused(self) -> None:
@@ -263,8 +262,7 @@ class TestDefaultBoundAccommodatesDriverUnits:
 
         telemetry = result["content"][1]["json"]
         assert telemetry["slew_rejected"] == 0, (
-            f"a 200 units/s gripper close was refused at the default bound: "
-            f"{telemetry}"
+            f"a 200 units/s gripper close was refused at the default bound: {telemetry}"
         )
 
     def test_sts3215_no_load_max_in_degrees_is_not_refused(self) -> None:
@@ -276,8 +274,7 @@ class TestDefaultBoundAccommodatesDriverUnits:
 
         telemetry = result["content"][1]["json"]
         assert telemetry["slew_rejected"] == 0, (
-            f"a 372 deg/s stream (STS3215 max) was refused at the default bound: "
-            f"{telemetry}"
+            f"a 372 deg/s stream (STS3215 max) was refused at the default bound: {telemetry}"
         )
 
     def test_a_2000_units_per_second_glitch_is_still_refused(self) -> None:
@@ -288,6 +285,5 @@ class TestDefaultBoundAccommodatesDriverUnits:
 
         telemetry = result["content"][1]["json"]
         assert telemetry["slew_rejected"] >= 1, (
-            f"a 2000 units/s glitch was NOT refused at the default bound: "
-            f"{telemetry}"
+            f"a 2000 units/s glitch was NOT refused at the default bound: {telemetry}"
         )

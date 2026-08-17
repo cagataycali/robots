@@ -38,6 +38,8 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import math
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -544,17 +546,15 @@ class TeleopMixin:
         # (deg, range-0-100, rad) while still catching encoder glitches and
         # full-scale jumps that would strip gears.
         _LOCAL_SLEW_DEFAULT = 500.0
-        import os as _os_slew
-        _local_slew_str = _os_slew.environ.get("STRANDS_TELEOP_SLEW_ABS", "")
+        _local_slew_str = os.environ.get("STRANDS_TELEOP_SLEW_ABS", "")
         if _local_slew_str:
             try:
                 _local_slew = float(_local_slew_str)
-                if _local_slew <= 0 or not __import__("math").isfinite(_local_slew):
+                if _local_slew <= 0 or not math.isfinite(_local_slew):
                     raise ValueError
             except (ValueError, TypeError):
                 logger.warning(
-                    "[teleop] STRANDS_TELEOP_SLEW_ABS=%r is not a positive finite "
-                    "number; using default %.1f",
+                    "[teleop] STRANDS_TELEOP_SLEW_ABS=%r is not a positive finite number; using default %.1f",
                     _local_slew_str,
                     _LOCAL_SLEW_DEFAULT,
                 )
@@ -596,7 +596,9 @@ class TeleopMixin:
                     # still and a refused stream resumes by itself once the
                     # commanded pose is reachable safely - no resync handshake.
                     apply_mono = time.perf_counter()
-                    slew_reason = input_frame_slew_violation(merged, self._teleop_slew_baseline, apply_mono, period, max_slew=_local_slew)
+                    slew_reason = input_frame_slew_violation(
+                        merged, self._teleop_slew_baseline, apply_mono, period, max_slew=_local_slew
+                    )
                     if slew_reason is not None:
                         self._teleop_slew_rejected += 1
                         if self._teleop_slew_rejected <= 5:
