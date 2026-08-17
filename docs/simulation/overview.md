@@ -44,7 +44,7 @@ For walkthroughs see [Simulation overview](../simulation/overview.md).
 
 | Action | Key params |
 |--------|-----------|
-| `add_object` | `name`, `shape="box"\|"sphere"\|"cylinder"\|"plane"\|"mesh"`, `size`, `position=[x,y,z]`, `color=[r,g,b,a]`, `orientation=[w,x,y,z]`, `mass=0.1`, `is_static=False`, `mesh_path=None` - `plane` requires `is_static=True` |
+| `add_object` | `name`, `shape="box"\|"sphere"\|"cylinder"\|"plane"\|"mesh"`, `size`, `position=[x,y,z]`, `color=[r,g,b,a]`, `orientation=[w,x,y,z]`, `mass=0.1`, `is_static=None`, `mesh_path=None` - omitted lets the shape decide: `plane` is made static and refuses an explicit `is_static=False`, every other shape is dynamic |
 | `remove_object` | `name` |
 | `move_object` | `name`, `position`, `orientation` (NOT `pos`/`quat`) |
 | `list_objects` | - |
