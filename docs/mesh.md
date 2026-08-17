@@ -8,7 +8,7 @@ description: Two Robot() instances coordinating over the Zenoh mesh - peer disco
   ![Robot peers discovering and coordinating over the Zenoh mesh](assets/mesh_network.svg){ .brand-svg }
 </figure>
 
-Every `Robot()` auto-joins a Zenoh mesh. Peers discover each other on the LAN and can query, command, and e-stop one another.
+`Robot(name, mesh=True)` joins a Zenoh mesh - joining is opt-in, so a bare `Robot()` leaves `robot.mesh` as `None` unless `STRANDS_MESH` is `true`/`1`/`yes`. Peers then discover each other on the LAN and can query, command, and e-stop one another.
 
 !!! info "Device Connect is the recommended networking layer"
     What's described here is the built-in **Zenoh mesh** — the automatic fallback. When the [`device-connect`](device-connect.md) extra is installed, `Robot().run()` and `robot_mesh()` use [**Device Connect**](device-connect.md) (structured RPC, presence, registry, safety) and fall back to this mesh only when it's unavailable. Both ride on Zenoh.
@@ -16,11 +16,11 @@ Every `Robot()` auto-joins a Zenoh mesh. Peers discover each other on the LAN an
 ```python
 # process A
 from strands_robots import Robot
-sim_a = Robot("so100")
+sim_a = Robot("so100", mesh=True)
 print(sim_a.mesh.peers)          # discovers sim_b within ~1 s
 
 # process B
-sim_b = Robot("aloha")
+sim_b = Robot("aloha", mesh=True)
 sim_a.mesh.tell(sim_b.mesh.peer_id, "pick up the cube",
                 policy_provider="mock", duration=10.0)
 ```
@@ -124,12 +124,12 @@ agent("E-STOP all peers")
 
 ```python
 # Machine A - leader publishes at 50 Hz  # requires hardware
-leader = Robot("so100", mode="real")
+leader = Robot("so100", mode="real", mesh=True)
 leader.start_teleop_publish(teleoperator=leader.teleoperator,
                             device_name="leader", method="arm", hz=50)
 
 # Machine B - follower applies incoming actions  # requires hardware
-follower = Robot("so100", mode="real")
+follower = Robot("so100", mode="real", mesh=True)
 follower.start_teleop_receive(source_peer_id=leader.mesh.peer_id,
                               device_name="leader", apply_fn=None)
 
@@ -167,12 +167,18 @@ it is not a boolean opt-in switch, and a truthy value with no `.stop()` (notably
 tears down MuJoCo; a stop that fails is logged and stepped over, so the world,
 renderers and executor are always released.
 
-## Disable
+## Enable and disable
 
 | Method | Scope |
 |--------|-------|
-| `STRANDS_MESH=false` | process-wide kill switch |
+| `Robot("so100", mesh=True)` | per-robot opt-in |
+| `STRANDS_MESH=true` (or `1`/`yes`) | process-wide opt-in for a bare `Robot()` |
+| `sim.mesh = init_mesh(sim, ...)` | a `Simulation` built directly (see above) |
+| `STRANDS_MESH=false` | process-wide kill switch, overrides `mesh=True` |
 | `Robot("so100", mesh=False)` | per-robot opt-out |
+
+Unset `STRANDS_MESH` with no `mesh=` argument is the default, and it leaves the
+mesh off.
 
 Mesh failures are non-fatal - `robot.mesh` becomes `None`; the sim/hardware instance still works.
 
