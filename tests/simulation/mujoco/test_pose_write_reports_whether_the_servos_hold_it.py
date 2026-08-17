@@ -119,11 +119,17 @@ TENDON_GRIP_XML = """
     <light name="main" pos="0 0 3" dir="0 0 -1"/>
     <body name="palm" pos="0 0 0.4">
       <geom name="palm_geom" type="box" size="0.05 0.03 0.02" mass="0.5"/>
-      <body name="left_finger" pos="0.04 0 0.03">
+      <!-- z clears the palm: the capsule spans +/-0.03 about its own origin plus a
+           0.008 radius, and the palm box top is at z=0.02, so an origin at 0.065
+           leaves the finger out of contact through the whole 0..1.2 range. At the
+           original 0.03 both fingers began 0.018 embedded in the palm, and the
+           contact force that resolves that penetration - not the tendon servo -
+           was what set where the pair came to rest. -->
+      <body name="left_finger" pos="0.04 0 0.065">
         <joint name="left_driver" type="hinge" axis="0 1 0" range="0 1.2" damping="0.2" armature="0.005"/>
         <geom name="left_geom" type="capsule" size="0.008 0.03" mass="0.05"/>
       </body>
-      <body name="right_finger" pos="-0.04 0 0.03">
+      <body name="right_finger" pos="-0.04 0 0.065">
         <joint name="right_driver" type="hinge" axis="0 1 0" range="0 1.2" damping="0.2" armature="0.005"/>
         <geom name="right_geom" type="capsule" size="0.008 0.03" mass="0.05"/>
       </body>
@@ -142,7 +148,9 @@ TENDON_GRIP_XML = """
   <!-- One tendon over two joints constrains only their weighted sum, so their
        difference is a zero-stiffness mode. robotiq_2f85 pins it with exactly this
        equality (plus the armature above), and without it the pair is free to drift
-       apart under an integrator change. -->
+       apart under an integrator change. With the mode locked and the fingers clear
+       of the palm, the only thing left acting on the pair is the tendon servo, so
+       where they settle is the setpoint rather than a solver artifact. -->
   <equality>
     <joint joint1="left_driver" joint2="right_driver"/>
   </equality>
@@ -196,6 +204,17 @@ def _ctrl(sim, actuator: str) -> float:
     act_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, actuator)
     assert act_id >= 0, actuator
     return float(data.ctrl[act_id])
+
+
+def _ten_length(sim, tendon: str) -> float:
+    model, data = sim._world._model, sim._world._data
+    ten_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_TENDON, tendon)
+    assert ten_id >= 0, tendon
+    return float(data.ten_length[ten_id])
+
+
+def _ncon(sim) -> int:
+    return int(sim._world._data.ncon)
 
 
 def _text(result: dict) -> str:
@@ -447,6 +466,41 @@ class TestAJointATendonDrivesIsReportedNotSilent:
         text = _text(grip_sim.set_joint_positions({"left_driver": 0.6}))
         assert text == "Set 1/1 joint positions, FK updated"
         assert _ctrl(grip_sim, "grip_actuator") == 0.0
+
+    def test_the_fixture_settles_by_the_tendon_and_not_by_contact(self, grip_sim):
+        """Premise: nothing but the tendon servo acts on the coupled pair.
+
+        An earlier version of this scene started both fingers 0.018 embedded in
+        the palm, so the contact force resolving that penetration - not the
+        servo - set where the pair came to rest: about 1.44 rad, outside their
+        own ``range="0 1.2"``, at a point that moved with the mujoco build. Any
+        settling assertion on such a scene pins a solver artifact rather than the
+        behaviour under test, so the premise is asserted directly here and the
+        collapse is measured in the test below.
+        """
+        assert _ncon(grip_sim) == 0, "the fixture starts in contact"
+        assert _text(grip_sim.set_joint_positions({"left_driver": 0.6, "right_driver": 0.6}, hold=True))
+        for _ in range(8):
+            grip_sim.step(50)
+            assert _ncon(grip_sim) == 0, "a contact appeared while the pose collapsed"
+
+    def test_the_written_pose_collapses_to_what_the_tendon_servo_commands(self, grip_sim):
+        """The report's claim, on the quantity the servo actually controls.
+
+        Asserted against the tendon length returning to its stale setpoint rather
+        than against a per-joint landing point: the servo drives the length
+        ``0.5*q_left + 0.5*q_right`` toward ``ctrl``, so that is the term whose
+        target is build-independent. Each joint separately is pinned only by the
+        equality locking their difference, which is why the per-joint half is
+        asserted as "far from what was asked for" and not as a landing point.
+        """
+        assert _text(grip_sim.set_joint_positions({"left_driver": 0.6, "right_driver": 0.6}, hold=True))
+        assert _ten_length(grip_sim, "grip") == pytest.approx(0.6, abs=1e-9)
+        assert _ctrl(grip_sim, "grip_actuator") == 0.0, "hold must not write the tendon ctrl"
+        grip_sim.step(400)
+        assert _ten_length(grip_sim, "grip") == pytest.approx(0.0, abs=0.01)
+        for joint in ("left_driver", "right_driver"):
+            assert abs(_qpos(grip_sim, joint) - 0.6) > 0.3, joint
 
 
 class TestAStockGripperReportsItsFingerJoints:
