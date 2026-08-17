@@ -72,6 +72,27 @@ def _every_accepted_spelling() -> list[str]:
     return sorted(set(_build_alias_map()) | set(list_policy_providers()))
 
 
+def _reported_provider_or_skip(spelling: str) -> str:
+    """Return the provider name resolution reports for ``spelling``, or skip.
+
+    Resolution imports the provider's module, so a spelling whose optional
+    dependency is absent cannot be resolved in every environment. Skipping
+    reports that the spelling went unchecked, where passing quietly would report
+    a checked name the run never read.
+
+    Args:
+        spelling: Any spelling the registry accepts.
+
+    Returns:
+        The provider name ``_resolve_policy_class`` reports for ``spelling``.
+    """
+    try:
+        reported, _cls, _kwargs = _resolve_policy_class(spelling)
+        return reported
+    except (ImportError, ValueError) as exc:
+        pytest.skip(f"{spelling!r} is not resolvable in this environment: {exc}")
+
+
 def test_a_gated_provider_really_has_a_non_canonical_spelling() -> None:
     """Premise: without an alias on a gated provider these tests prove nothing."""
     extra = [s for s, canonical in _gated_spellings() if s != canonical]
@@ -107,10 +128,7 @@ def test_resolution_reports_the_canonical_name_for_every_accepted_spelling(spell
     returned name -- the trust gate today, anything added later -- is only
     correct if the name is the one the registry is keyed on.
     """
-    try:
-        reported, _cls, _kwargs = _resolve_policy_class(spelling)
-    except (ImportError, ValueError) as exc:  # optional dependency absent, etc.
-        pytest.skip(f"{spelling!r} is not resolvable in this environment: {exc}")
+    reported = _reported_provider_or_skip(spelling)
     assert reported in set(list_policy_providers()), (
         f"_resolve_policy_class({spelling!r}) reported {reported!r}, which is not a "
         f"canonical provider name; its docstring promises canonical_provider_name"
