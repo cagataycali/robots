@@ -60,9 +60,11 @@ def test_clear_episode_buffer_prefers_native_clear():
 
     assert rec.clear_episode_buffer() is True
     assert ds.cleared == 1
-    # Next episode starts at frame 0; cumulative frame_count is untouched
-    # (those frames were only ever in the open buffer, not flushed to disk).
+    # Next episode starts at frame 0, and because those frames were only ever in
+    # the open buffer - never flushed to disk - they come back out of the
+    # cumulative total too. add_frame counted them when it buffered them.
     assert rec.episode_frame_count == 0
+    assert rec.frame_count == 0
 
 
 def test_clear_episode_buffer_falls_back_to_create_buffer():
@@ -85,8 +87,12 @@ def test_clear_episode_buffer_warns_when_no_surface(caplog):
         result = rec.clear_episode_buffer()
 
     assert result is False
-    # Counter still resets so reporting does not carry over the discarded frames.
-    assert rec.episode_frame_count == 0
+    # Nothing was discarded, so those 5 frames are still queued in the open
+    # episode and the warning tells the caller to drain them with
+    # save_episode()/stop_recording(). Both counters keep describing them:
+    # zeroing either here would make that save under-report its own episode.
+    assert rec.episode_frame_count == 5
+    assert rec.frame_count == 5
     assert any("partial episode" in r.message for r in caplog.records)
 
 
@@ -107,7 +113,10 @@ def test_clear_episode_buffer_swallows_dataset_error(caplog):
         result = rec.clear_episode_buffer()
 
     assert result is False
-    assert rec.episode_frame_count == 0
+    # The clear raised, so the buffer still holds the frames; the counters must
+    # not pretend they were discarded.
+    assert rec.episode_frame_count == 5
+    assert rec.frame_count == 5
 
 
 def test_clear_episode_buffer_ascii_only_warnings(caplog):
