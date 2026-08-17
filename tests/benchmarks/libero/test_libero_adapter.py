@@ -3359,6 +3359,7 @@ class TestInstallActionController:
         pytest.importorskip("mujoco")
         pytest.importorskip("robosuite")
         libero = pytest.importorskip("libero")
+        libero_version = getattr(libero, "__version__", "unknown")
         import mujoco
 
         # Resolve the canonical LIBERO Panda home pose. Skip if this libero
