@@ -1259,7 +1259,13 @@ class MuJoCoSimEngine(
             child_mesh = init_mesh(
                 robot,
                 peer_id=child_peer_id,
-                peer_type="robot",
+                # "sim", not "robot": presence publishes this as robot_type,
+                # and a simulated arm announcing itself as real hardware makes
+                # every consumer (dashboard badges, fleet-agent "is this real
+                # hardware?" checks, e-stop triage) treat a sim as actuating
+                # metal. Parent sim peers already announce "sim"; the child
+                # is the same MuJoCo world scoped to one robot.
+                peer_type="sim",
                 mesh=True,
             )
             if child_mesh is not None:
@@ -1270,6 +1276,12 @@ class MuJoCoSimEngine(
                 # from the MuJoCo world data (without this, the child mesh
                 # publishes only presence heartbeats - no state topic).
                 robot._world = self._world
+                # Parent-sim backref: the child peer's Mesh._dispatch
+                # delegates execute/start to this Simulation (with
+                # robot_name pre-bound) - a bare SimRobot has no run_policy
+                # of its own, so without this the addressable child peer
+                # answered "unknown action: execute".
+                robot._sim_parent = self
         except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
             logger.warning(
                 "Failed to attach robot %r to mesh (sim peer_id=%s): %s",
@@ -1468,6 +1480,34 @@ class MuJoCoSimEngine(
             msg += " No robots in the scene; add one with action='add_robot'."
         return msg
 
+    def _unknown_action_msg(self, requested: str) -> str:
+        """Actionable 'unknown action' message: name it, offer a close-match over
+        the published enum, and point at where that enum is written - consistent
+        with ``_unknown_model_msg`` / ``_unknown_object_msg`` /
+        ``_unknown_camera_msg`` / ``_unknown_robot_msg`` rather than a dead-end
+        "Unknown action: X." that forces an agent driving the tool blind to
+        re-read its own schema to recover from a one-character typo.
+
+        ``action`` is the parameter every call must supply and the only one with
+        no usable default, so it is where a typo is most likely to land - and it
+        was the one parameter whose refusal named neither a candidate nor a way
+        to find one, while a misspelled *robot* one frame away got both.
+
+        The suggestion is drawn from the published enum rather than from every
+        dispatchable method, because the enum is what an agent was handed: a
+        name outside it is refused at this boundary even when it resolves
+        (#2093), so offering one would send the caller to a second refusal. The
+        count travels with the pointer so a caller who gets no suggestion still
+        learns that the vocabulary is closed and enumerated, not open-ended.
+        """
+        msg = f"Unknown action: {requested}."
+        msg += close_match_hint(requested, sorted(_PUBLISHED_ACTIONS))
+        msg += (
+            f" This tool publishes {len(_PUBLISHED_ACTIONS)} actions in the 'action' enum "
+            "of its schema; see tool_spec for the actions you can use."
+        )
+        return msg
+
     def add_robot(
         self,
         name: str | None = None,
@@ -1508,9 +1548,12 @@ class MuJoCoSimEngine(
 
         ``keyframe`` (name ``str`` or index ``int``) spawns the robot in a
         canonical pose declared by a ``<keyframe>`` in its source model
-        (e.g. panda ``"home"``) instead of the all-zero configuration, and the
-        pose is restored by ``reset()``. An unknown keyframe is a hard error
-        naming the available keyframes; ``None`` (default) keeps the zero pose.
+        (e.g. panda ``"home"``) instead of the all-zero configuration, and that
+        state is restored by ``reset()``. The keyed actuator command is applied
+        with the pose, so a gravity-loaded arm HOLDS its home configuration
+        instead of sagging out of it on the first step. An unknown keyframe is a
+        hard error naming the available keyframes; ``None`` (default) keeps the
+        zero pose.
 
         A ``name``/``data_config`` that resolves to no model is reported as an
         actionable error naming the requested robot, offering close-match
@@ -1524,6 +1567,20 @@ class MuJoCoSimEngine(
         (nan/inf) vector returns an actionable ``{"status": "error"}`` and
         leaves the simulation unchanged, rather than baking a degenerate pose
         into the robot's base transform. NumPy scalar components are accepted.
+
+        ``position`` OFFSETS the model's own authored root pose rather than
+        replacing it: it is written as the attach frame's translation, which
+        MuJoCo composes with the ``pos`` the model's root body declares. A
+        ground-bolted arm declares ``pos="0 0 0"``, so for those the offset IS
+        the world position - but a locomotion model is authored standing, and
+        ``position=[0, 0, 0.4]`` on a Unitree Go2 (base ``pos`` ``z=0.445``)
+        compiles its base at ``z=0.845``. This differs from
+        :meth:`add_object`, whose ``position`` does place its body at exactly
+        that world point. The returned message reports the MEASURED world
+        position of the robot's root body, and names the request and the
+        model's own offset beside it whenever the two differ, so a spawn that
+        did not land where it was asked is visible in the result instead of
+        having to be measured with :meth:`get_body_state`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1671,8 +1728,9 @@ class MuJoCoSimEngine(
             # cleanly (naming the available keyframes) without leaving a
             # half-added robot behind.
             home_by_short: dict[str, list[float]] | None = None
+            home_actuators_by_short: dict[str, tuple[float, list[float]]] | None = None
             if keyframe is not None:
-                home_by_short, kf_err = self._keyframe_home_qpos(resolved_path, keyframe)
+                home_by_short, home_actuators_by_short, kf_err = self._keyframe_home_state(resolved_path, keyframe)
                 if kf_err is not None:
                     return kf_err
 
@@ -1758,7 +1816,7 @@ class MuJoCoSimEngine(
             # a partial repair that only covered robots spawned with a keyframe.
             self._reset_robot_to_reference(robot)
             if home_by_short:
-                self._apply_home_qpos_to_robot(robot, home_by_short)
+                self._apply_home_state_to_robot(robot, home_by_short, home_actuators_by_short or {})
             # Seat only the new base: the others are wherever the scene left
             # them, and re-seating a base that is not at its reference height
             # would stack the terrain offset onto it again.
@@ -1785,7 +1843,7 @@ class MuJoCoSimEngine(
                         "text": (
                             f"Robot '{name}' added to simulation\n"
                             f"Source: {source} -> {os.path.basename(resolved_path)}\n"
-                            f"Position: {robot.position}\n"
+                            f"Position: {self._describe_robot_placement(robot)}\n"
                             f"Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
                             f"Actuators: {len(robot.actuator_ids)}\n"
                             f"Cameras: {list(self._world.cameras.keys())}"
@@ -1802,59 +1860,114 @@ class MuJoCoSimEngine(
             logger.error("Failed to add robot '%s': %s", name, e)
             return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
 
-    def _keyframe_home_qpos(
+    def _keyframe_home_state(
         self, resolved_path: str, keyframe: str | int
-    ) -> tuple[dict[str, list[float]] | None, dict[str, Any] | None]:
-        """Read a robot's ``<keyframe>`` home pose from its SOURCE model.
+    ) -> tuple[
+        dict[str, list[float]] | None,
+        dict[str, tuple[float, list[float]]] | None,
+        dict[str, Any] | None,
+    ]:
+        """Read a robot's ``<keyframe>`` home state from its SOURCE model.
 
-        Returns ``(home_by_short_joint, None)`` mapping each source joint's
-        short name to its qpos slice, or ``(None, error_result)`` when the
-        source model cannot be compiled or the keyframe name/index is unknown
-        (the error names the available keyframes so the caller can fix it).
+        Returns ``(qpos_by_short_joint, actuators_by_short_name, None)`` -- each
+        source joint's short name mapped to its qpos slice, and each source
+        actuator's short name mapped to its keyed ``(ctrl, act)`` pair -- or
+        ``(None, None, error_result)`` when the source model cannot be compiled
+        or the keyframe name/index is unknown (the error names the available
+        keyframes so the caller can fix it).
+
+        A MuJoCo ``<key>`` pairs a pose with the actuator command that HOLDS
+        that pose, and ``mj_resetDataKeyframe`` -- MuJoCo's own definition of
+        what a keyframe restores -- writes both. Reading ``key_qpos`` alone
+        leaves a gravity-loaded arm standing at its home pose while every
+        actuator is commanded to the zero configuration, so the first step
+        drives it off home: the pose is not self-holding, which is the whole
+        point of a canonical home. 28 of the 31 built-in registry robots that
+        ship a ``<keyframe>`` declare a non-zero ``ctrl`` in it.
+
+        The keyed command is captured VERBATIM and never classified by actuator
+        type. The MJCF author chose those numbers for those actuators, so a
+        servo's setpoint, a motor's torque and a stateful actuator's activation
+        each carry across as whatever quantity their own actuator reads -- the
+        same reason ``_snapshot_scene_state`` carries ``ctrl``/``act`` as one
+        pair per named actuator on the eject path.
+
+        Not read here, because a per-robot apply cannot own them:
+
+        * ``qvel`` -- the robot-scoped reset that runs immediately before the
+          apply (:meth:`_reset_robot_to_reference`) zeroes it deliberately, so
+          that a freshly added robot starts from a defined configuration and
+          "callers that want a pre-settled pose call step()". Spawning a robot
+          already in motion is a different contract, and no built-in registry
+          keyframe declares a non-zero ``qvel``.
+        * ``time`` and the mocap pools -- world-scope buffers with no slice that
+          belongs to one robot. :meth:`reset` owns the clock.
         """
         mj = self._mj
         fname = os.path.basename(resolved_path)
         # ``bool`` is an ``int`` subclass; reject it explicitly so True/False is
         # never silently taken as keyframe index 1/0.
         if isinstance(keyframe, bool):
-            return None, {
-                "status": "error",
-                "content": [{"text": "keyframe must be a keyframe name (str) or index (int), not a bool."}],
-            }
+            return (
+                None,
+                None,
+                {
+                    "status": "error",
+                    "content": [{"text": "keyframe must be a keyframe name (str) or index (int), not a bool."}],
+                },
+            )
         try:
             src = mj.MjModel.from_xml_path(resolved_path)
         except Exception as e:  # noqa: BLE001 - surface any compile failure to the caller
-            return None, {
-                "status": "error",
-                "content": [{"text": f"Cannot read keyframe from '{fname}': {e}"}],
-            }
+            return (
+                None,
+                None,
+                {
+                    "status": "error",
+                    "content": [{"text": f"Cannot read keyframe from '{fname}': {e}"}],
+                },
+            )
         names = [mj.mj_id2name(src, mj.mjtObj.mjOBJ_KEY, i) for i in range(src.nkey)]
         if src.nkey == 0:
-            return None, {
-                "status": "error",
-                "content": [{"text": f"Model '{fname}' declares no <keyframe>; cannot apply keyframe={keyframe!r}."}],
-            }
-        if isinstance(keyframe, int):
-            if keyframe < 0 or keyframe >= src.nkey:
-                return None, {
+            return (
+                None,
+                None,
+                {
                     "status": "error",
                     "content": [
-                        {
-                            "text": (
-                                f"keyframe index {keyframe} out of range; '{fname}' has "
-                                f"{src.nkey} keyframe(s): {names}."
-                            )
-                        }
+                        {"text": f"Model '{fname}' declares no <keyframe>; cannot apply keyframe={keyframe!r}."}
                     ],
-                }
+                },
+            )
+        if isinstance(keyframe, int):
+            if keyframe < 0 or keyframe >= src.nkey:
+                return (
+                    None,
+                    None,
+                    {
+                        "status": "error",
+                        "content": [
+                            {
+                                "text": (
+                                    f"keyframe index {keyframe} out of range; '{fname}' has "
+                                    f"{src.nkey} keyframe(s): {names}."
+                                )
+                            }
+                        ],
+                    },
+                )
             idx = keyframe
         else:
             if keyframe not in names:
                 avail = ", ".join(repr(n) for n in names)
-                return None, {
-                    "status": "error",
-                    "content": [{"text": f"Keyframe {keyframe!r} not found in '{fname}'. Available: {avail}."}],
-                }
+                return (
+                    None,
+                    None,
+                    {
+                        "status": "error",
+                        "content": [{"text": f"Keyframe {keyframe!r} not found in '{fname}'. Available: {avail}."}],
+                    },
+                )
             idx = names.index(keyframe)
         kq = src.key_qpos[idx]
         home: dict[str, list[float]] = {}
@@ -1865,12 +1978,50 @@ class MuJoCoSimEngine(
             adr = int(src.jnt_qposadr[j])
             width = _jnt_qpos_width(mj, int(src.jnt_type[j]))
             home[jn] = [float(x) for x in kq[adr : adr + width]]
-        return home, None
+        kc = src.key_ctrl[idx]
+        ka = src.key_act[idx]
+        actuators: dict[str, tuple[float, list[float]]] = {}
+        for a in range(int(src.nu)):
+            an = mj.mj_id2name(src, mj.mjtObj.mjOBJ_ACTUATOR, a)
+            if not an:
+                # Nothing names it, so it cannot be matched inside the merged
+                # model -- the same limit ``_snapshot_scene_state`` records for
+                # an unnamed actuator. Its joint keeps the keyed pose; only the
+                # command holding it is lost, so say which one rather than
+                # failing the spawn (no built-in registry robot has one).
+                logger.debug(
+                    "_keyframe_home_state: actuator id %d in '%s' has no name; its keyed ctrl/act is not applied",
+                    a,
+                    fname,
+                )
+                continue
+            act_adr = int(src.actuator_actadr[a])
+            act_num = int(src.actuator_actnum[a])
+            act_vals = [float(x) for x in ka[act_adr : act_adr + act_num]] if act_adr >= 0 else []
+            actuators[an] = (float(kc[a]), act_vals)
+        return home, actuators, None
 
-    def _apply_home_qpos_to_robot(self, robot: SimRobot, home_by_short: dict[str, list[float]]) -> None:
-        """Write ``home_by_short`` onto ``robot``'s joints in the live model and
-        record the applied pose (keyed by namespaced joint name) on the robot so
-        :meth:`reset` can restore it. The caller runs ``mj_forward`` afterwards.
+    def _apply_home_state_to_robot(
+        self,
+        robot: SimRobot,
+        home_by_short: dict[str, list[float]],
+        actuators_by_short: dict[str, tuple[float, list[float]]],
+    ) -> None:
+        """Write a captured keyframe home state onto ``robot`` in the live model
+        and record it on the robot so :meth:`reset` can restore it.
+
+        Both halves of the keyframe are written: the pose, and the actuator
+        command that holds the pose (see :meth:`_keyframe_home_state` for why
+        one without the other is not a home pose). The applied state is recorded
+        keyed by NAMESPACED name, which is what :meth:`_restore_home_state`
+        resolves against the merged model.
+
+        Matching is by name under ``robot.namespace``, so only the joints and
+        actuators this robot contributed are written and a robot already in the
+        world keeps the pose it is in and the setpoints holding it there -- the
+        guarantee :meth:`add_robot` states for the scene it joins.
+
+        The caller runs ``mj_forward`` afterwards.
         """
         mj = self._mj
         assert self._world is not None and self._world._model is not None and self._world._data is not None
@@ -1895,6 +2046,37 @@ class MuJoCoSimEngine(
             data.qpos[adr : adr + width] = vals
             stored[jn] = vals
         robot.home_qpos = stored
+        stored_actuators: dict[str, tuple[float, list[float]]] = {}
+        for a in range(int(model.nu)):
+            an = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, a)
+            if not an:
+                continue
+            short = an[len(pfx) :] if pfx and an.startswith(pfx) else an
+            keyed = actuators_by_short.get(short)
+            if keyed is None:
+                continue
+            ctrl_val, act_vals = keyed
+            data.ctrl[a] = ctrl_val
+            act_adr = int(model.actuator_actadr[a])
+            act_num = int(model.actuator_actnum[a])
+            if act_adr < 0 or len(act_vals) != act_num:
+                # The activation width the source model declared does not match
+                # the merged one (unexpected for a matching source model): keep
+                # the setpoint, and leave the fresh zero rather than write a
+                # mismatched slice into a neighbouring actuator's activation.
+                if act_vals or act_num:
+                    logger.warning(
+                        "_apply_home_state_to_robot: act width mismatch for actuator %r (%d!=%d), skipping activation",
+                        an,
+                        len(act_vals),
+                        act_num,
+                    )
+                stored_actuators[an] = (ctrl_val, [])
+                continue
+            for i, v in enumerate(act_vals):
+                data.act[act_adr + i] = v
+            stored_actuators[an] = (ctrl_val, act_vals)
+        robot.home_actuators = stored_actuators
 
     def _reset_robot_to_reference(self, robot: SimRobot) -> None:
         """Put one robot's joints and velocities at the model's reference
@@ -1956,10 +2138,18 @@ class MuJoCoSimEngine(
             dadr = int(model.jnt_dofadr[jid])
             data.qvel[dadr : dadr + _jnt_dof_width(mj, jnt_type)] = 0.0
 
-    def _restore_home_poses(self) -> None:
-        """Re-apply every robot's captured keyframe home pose onto the live
-        ``qpos`` (a no-op for robots spawned without a keyframe). The caller
-        holds the model lock and runs ``mj_forward`` afterwards.
+    def _restore_home_state(self) -> None:
+        """Re-apply every robot's captured keyframe home state onto the live
+        data: the pose, and the actuator command that holds it.
+
+        ``mj_resetData`` zeroes ``ctrl`` and ``act`` along with everything else,
+        so restoring the pose alone puts a gravity-loaded arm at its home
+        configuration with every actuator commanded to zero -- it sags off home
+        over the first steps of the new rollout, which is the state a policy's
+        FIRST inference of every episode then sees.
+
+        A no-op for robots spawned without a keyframe (both records are empty).
+        The caller holds the model lock and runs ``mj_forward`` afterwards.
         """
         mj = self._mj
         assert self._world is not None and self._world._model is not None and self._world._data is not None
@@ -1975,6 +2165,78 @@ class MuJoCoSimEngine(
                     continue
                 adr = int(model.jnt_qposadr[jid])
                 data.qpos[adr : adr + len(vals)] = vals
+            for an, (ctrl_val, act_vals) in getattr(robot, "home_actuators", {}).items():
+                aid = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, an)
+                if aid < 0:
+                    continue
+                data.ctrl[aid] = ctrl_val
+                act_adr = int(model.actuator_actadr[aid])
+                if act_adr < 0 or len(act_vals) != int(model.actuator_actnum[aid]):
+                    continue
+                data.act[act_adr : act_adr + len(act_vals)] = act_vals
+
+    def _describe_robot_placement(self, robot: SimRobot) -> str:
+        """Describe where ``robot`` actually stands, and why it differs.
+
+        ``add_robot`` used to echo the requested ``position`` back as the
+        robot's placement. For a model whose root body declares a non-zero
+        ``pos`` that names a place the robot is not: ``position=[0, 0, 0.4]``
+        on a Unitree Go2 compiles its base at ``z=0.845``, and the reported
+        ``0.4`` is the one number the caller had to go on. The sibling call
+        ``add_object(position=...)`` does place its body at exactly that world
+        point, so one parameter name meant two different things depending on
+        which entity it addressed, with nothing in the result to say so.
+
+        Report the measured world position, and - only when it differs from
+        the request - name the request and the model's own root offset beside
+        it, so the caller can see both what it asked for and what the model
+        added. A robot whose root offset is zero (every ground-bolted arm) or
+        whose roots cannot be reduced to one pose keeps the original one-vector
+        form, so their messages are unchanged.
+        """
+        requested = list(robot.position or (0.0, 0.0, 0.0))
+        actual = self._robot_root_world_position(robot)
+        if actual is None:
+            return f"{requested}"
+        offset = [round(a - r, 4) for a, r in zip(actual, requested, strict=False)]
+        if not any(abs(component) > 1e-9 for component in offset):
+            return f"{actual}"
+        return f"{actual} (position={requested} + model root offset {offset})"
+
+    def _robot_root_world_position(self, robot: SimRobot) -> list[float] | None:
+        """Return the world position of ``robot``'s single root body, or ``None``.
+
+        ``position`` is written as the attach FRAME's translation, and MuJoCo
+        COMPOSES that frame with the model's own authored root pose - it does
+        not replace it. So for any model whose root body declares a non-zero
+        ``pos`` (30 of the 55 single-root robots in the built-in registry, e.g.
+        the Unitree Go2 base at ``z=0.445``, the JVRC pelvis at ``z=1.4``) the
+        robot does not stand where ``position`` names, and the requested vector
+        alone cannot tell the caller where it does stand. Read the compiled
+        placement back out of ``data.xpos`` so the answer is measured rather
+        than assumed - the same value :meth:`get_body_state` would report.
+
+        ``None`` when there is no compiled world yet, or when the robot has no
+        single root body: an ``aloha`` attaches two independent arm bases and an
+        ``rby1`` six, and a set of roots has no one base pose to name. Requires
+        a preceding ``mj_forward`` so ``data.xpos`` is current.
+        """
+        mj = self._mj
+        world = self._world
+        if world is None or world._model is None or world._data is None:
+            return None
+        model, data = world._model, world._data
+        prefix = robot.namespace or ""
+        roots = [
+            body
+            for body in range(1, model.nbody)
+            if int(model.body_parentid[body]) == 0
+            and (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body)) is not None
+            and name.startswith(prefix)
+        ]
+        if len(roots) != 1:
+            return None
+        return [round(float(v), 4) for v in data.xpos[roots[0]]]
 
     def _seat_floating_bases_on_terrain(self, only: SimRobot | None = None) -> None:
         """Raise each floating-base robot onto the local terrain surface.
@@ -3873,7 +4135,9 @@ class MuJoCoSimEngine(
     def reset(self) -> dict[str, Any]:
         """Reset the world to its initial state, beginning a new rollout.
 
-        Restores the initial pose and re-forwards derived state so the world is
+        Restores the initial pose -- together with the actuator command that
+        holds it, for a robot spawned with ``add_robot(keyframe=...)`` -- and
+        re-forwards derived state so the world is
         render- and observation-ready on return. If a recording is active with
         buffered frames, flushes them as their own episode first, so a
         ``run_policy`` + ``reset`` collection loop records one episode per
@@ -3931,11 +4195,15 @@ class MuJoCoSimEngine(
             # matching the mj_resetData -> mj_forward idiom used by
             # _compile_world and load_scene.
             #
-            # Re-apply any per-robot keyframe home pose captured at add_robot
+            # Re-apply any per-robot keyframe home state captured at add_robot
             # time (mj_resetData alone drops it back to the zero configuration),
             # so a keyframe spawn is sticky across resets -- mirroring how a
-            # benchmark restores its canonical start pose each episode.
-            self._restore_home_poses()
+            # benchmark restores its canonical start pose each episode. That
+            # covers the actuator command the keyframe pairs with the pose as
+            # well: without it every episode begins with the servos commanded to
+            # zero, so the arm is already sagging off home as the policy takes
+            # its first inference of the episode.
+            self._restore_home_state()
             self._seat_floating_bases_on_terrain()
             mj.mj_forward(self._world._model, self._world._data)
             self._world.sim_time = 0.0
@@ -4343,7 +4611,7 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
-        return {"status": "error", "content": [{"text": f"Unknown action: {action}"}]}
+        return {"status": "error", "content": [{"text": self._unknown_action_msg(action)}]}
 
     def __call__(self, action: str = "", **kwargs: Any) -> dict[str, Any]:
         """Dispatch an action directly: ``sim(action="render", camera_name="topdown")``.
@@ -4765,12 +5033,35 @@ class MuJoCoSimEngine(
                 action_key_cache[prefixed] = cached
             return cached
 
+        # N4: stream per-step telemetry on the mesh. publish_step existed with
+        # consumers (robot_mesh watch, dashboards) but ZERO producers - no
+        # rollout ever emitted it. Rate-limited to ~10 Hz to respect the
+        # transport caps. Prefer the robot's own child-peer mesh (per-robot
+        # topic), fall back to the parent sim's mesh.
+        _mesh = getattr(robot, "mesh", None) or getattr(self, "mesh", None)
+        _stream_state = {"last": 0.0}
+        from strands_robots.mesh.session import stream_min_period_from_env
+
+        # inf when step telemetry is off / misconfigured, so the throttle below
+        # simply never fires. A bare division here killed run_policy hook setup
+        # on STRANDS_MESH_STREAM_HZ=0.
+        _stream_min_period = stream_min_period_from_env()
+
         def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             # Cooperative cancellation: stop_policy flips this flag.
             if not robot.policy_running:
                 raise CooperativeStop(f"Policy stopped on '{robot_name}'")
 
             robot.policy_steps = step + 1
+
+            if _mesh is not None:
+                _now = time.time()
+                if _now - _stream_state["last"] >= _stream_min_period:
+                    _stream_state["last"] = _now
+                    try:
+                        _mesh.publish_step(step, observation, action, instruction=instruction)
+                    except Exception:  # noqa: BLE001 - telemetry must not kill the rollout
+                        pass
 
             with lock:
                 if world._backend_state.get("recording", False):
