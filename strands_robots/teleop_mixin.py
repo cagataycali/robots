@@ -22,7 +22,8 @@ Design
   ``start_teleop_publish`` (hardware Robot) so remote followers can mirror.
 * **Slew-bounded** - every merged frame is held to the same per-joint speed
   bound the mesh receive path applies to an inbound frame
-  (``STRANDS_MESH_INPUT_SLEW_ABS``, default 8pi units/second). One device can
+  (``STRANDS_TELEOP_SLEW_ABS``, default 500 units/second -- wide enough for
+  degree-valued and range-0-100 devices at shipped defaults). One device can
   drive a local follower and, via ``publish=True``, remote ones from the same
   ``get_action()`` stream, so the two paths have to judge a frame identically
   or the follower next to the operator is the only unguarded one. The bound is
@@ -519,8 +520,9 @@ class TeleopMixin:
         # from one device, so without this the same frame was bounded on every
         # remote follower and unbounded on the local one. The bound is a speed
         # above what a leader arm's own servos can produce, so only a synthetic
-        # or glitched frame trips it; ``STRANDS_MESH_INPUT_SLEW_ABS`` widens it
-        # for degree-valued or normalized-percent devices.
+        # or glitched frame trips it. The local path defaults to 500 units/s
+        # (``STRANDS_TELEOP_SLEW_ABS``) so it accommodates degree-valued and
+        # range-0-100 devices at their shipped defaults without env-var tuning.
         #
         # Imported here rather than at module scope because the mesh package
         # pulls :mod:`strands_robots.simulation` in, and this mixin must not
@@ -531,6 +533,34 @@ class TeleopMixin:
             input_frame_slew_violation,
             merge_slew_baseline,
         )
+
+        # The local path uses a wider default than the mesh path because the
+        # shipped SO hardware defaults speak degrees (90 deg/s for a calm sweep,
+        # 372 deg/s for the STS3215 no-load max) and the gripper speaks 0-100.
+        # The mesh path's 8*pi default is radian-scoped and already requires
+        # explicit widening for driver-unit devices; imposing it on the local
+        # loop would refuse ordinary human teleop at default hardware settings.
+        # 500 units/s is above the fastest servo in any shipped unit system
+        # (deg, range-0-100, rad) while still catching encoder glitches and
+        # full-scale jumps that would strip gears.
+        _LOCAL_SLEW_DEFAULT = 500.0
+        import os as _os_slew
+        _local_slew_str = _os_slew.environ.get("STRANDS_TELEOP_SLEW_ABS", "")
+        if _local_slew_str:
+            try:
+                _local_slew = float(_local_slew_str)
+                if _local_slew <= 0 or not __import__("math").isfinite(_local_slew):
+                    raise ValueError
+            except (ValueError, TypeError):
+                logger.warning(
+                    "[teleop] STRANDS_TELEOP_SLEW_ABS=%r is not a positive finite "
+                    "number; using default %.1f",
+                    _local_slew_str,
+                    _LOCAL_SLEW_DEFAULT,
+                )
+                _local_slew = _LOCAL_SLEW_DEFAULT
+        else:
+            _local_slew = _LOCAL_SLEW_DEFAULT
 
         while self._teleop_running and not self._teleop_stop_event.is_set():
             loop_start = time.perf_counter()
@@ -566,7 +596,7 @@ class TeleopMixin:
                     # still and a refused stream resumes by itself once the
                     # commanded pose is reachable safely - no resync handshake.
                     apply_mono = time.perf_counter()
-                    slew_reason = input_frame_slew_violation(merged, self._teleop_slew_baseline, apply_mono, period)
+                    slew_reason = input_frame_slew_violation(merged, self._teleop_slew_baseline, apply_mono, period, max_slew=_local_slew)
                     if slew_reason is not None:
                         self._teleop_slew_rejected += 1
                         if self._teleop_slew_rejected <= 5:

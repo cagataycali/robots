@@ -2,7 +2,7 @@
 
 ``teleoperate(publish=True)`` drives a local follower and, from the same
 ``get_action()`` stream, every remote one. The mesh receive path bounds each
-inbound frame's per-joint speed (``STRANDS_MESH_INPUT_SLEW_ABS``); the local
+inbound frame's per-joint speed; the local path uses ``STRANDS_TELEOP_SLEW_ABS``
 merge+apply loop applied its frames straight to ``send_action``. So one device
 was judged by two different rules, and the follower physically next to the
 operator was the unguarded one.
@@ -105,10 +105,10 @@ class TestTheBoundIsTheMeshBoundNotACopy:
         assert all("joint1" in frame for frame in seen)
 
     def test_the_operator_env_knob_widens_the_local_bound_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # STRANDS_MESH_INPUT_SLEW_ABS is the documented way to admit a
-        # degree-valued or normalized-percent device. It has to reach this path
-        # as well, or such a device is usable remotely and refused locally.
-        monkeypatch.setenv("STRANDS_MESH_INPUT_SLEW_ABS", "10000")
+        # STRANDS_TELEOP_SLEW_ABS is the documented way to widen the local
+        # bound for a device whose driver units exceed the 500 units/s default.
+        # (The mesh path uses its own STRANDS_MESH_INPUT_SLEW_ABS.)
+        monkeypatch.setenv("STRANDS_TELEOP_SLEW_ABS", "10000")
         host = FakeHost()
         result = _drive(host, SteppingLeader([0.0, 0.0, -2.8, 0.0, 0.0, 0.0]), ticks=12)
 
@@ -150,7 +150,7 @@ class TestRefusalsAreVisibleInTheSessionStatus:
         # A device whose units the bound does not expect has every frame
         # refused. 0 frames / 0 errors used to derive "success": a silent
         # no-op, which is what this derivation exists to refuse.
-        monkeypatch.setenv("STRANDS_MESH_INPUT_SLEW_ABS", "0.0001")
+        monkeypatch.setenv("STRANDS_TELEOP_SLEW_ABS", "0.0001")
         host = FakeHost()
         result = _drive(host, SteppingLeader([0.0, 1.0, 2.0, 3.0, 4.0, 5.0]), ticks=12)
 
@@ -231,3 +231,63 @@ class TestTheMixinStaysLight:
         source = inspect.getsource(teleop_mixin.TeleopMixin._teleop_loop)
         assert "from strands_robots.mesh.security import" in source
         assert "input_frame_slew_violation" in source
+
+
+class TestDefaultBoundAccommodatesDriverUnits:
+    """The default local slew bound (500 units/s) must accommodate degree-valued
+    and range-0-100 devices at their shipped defaults without env-var tuning.
+
+    These are the streams that `robot.attach_teleop("so101_leader", port=...).
+    teleoperate()` produces: joints in degrees, gripper in 0-100 range.
+    """
+
+    def test_a_90_degree_sweep_over_1s_is_not_refused(self) -> None:
+        # A calm 90-degree arm sweep at 50 Hz: each tick moves 1.8 degrees,
+        # producing 90 deg/s peak speed. The 500 units/s default must accept it.
+        positions = [i * 1.8 for i in range(50)]  # 0.0, 1.8, ... 88.2
+        host = FakeHost()
+        result = _drive(host, SteppingLeader(positions), ticks=50)
+
+        telemetry = result["content"][1]["json"]
+        assert telemetry["slew_rejected"] == 0, (
+            f"a 90 deg/s degree-valued stream was refused at the default bound: "
+            f"{telemetry}"
+        )
+
+    def test_a_half_second_gripper_close_is_not_refused(self) -> None:
+        # Gripper in range-0-100: close from 0 to 100 in 0.5 s at 50 Hz is
+        # 25 ticks of 4 units each = 200 units/s peak. Must be accepted.
+        positions = [i * 4.0 for i in range(25)]  # 0, 4, 8, ... 96
+        host = FakeHost()
+        result = _drive(host, SteppingLeader(positions), ticks=25)
+
+        telemetry = result["content"][1]["json"]
+        assert telemetry["slew_rejected"] == 0, (
+            f"a 200 units/s gripper close was refused at the default bound: "
+            f"{telemetry}"
+        )
+
+    def test_sts3215_no_load_max_in_degrees_is_not_refused(self) -> None:
+        # STS3215 no-load max is 6.5 rad/s = ~372 deg/s. At 50 Hz that is
+        # 7.44 deg/tick. Must be accepted at the default bound.
+        positions = [i * 7.44 for i in range(20)]
+        host = FakeHost()
+        result = _drive(host, SteppingLeader(positions), ticks=20)
+
+        telemetry = result["content"][1]["json"]
+        assert telemetry["slew_rejected"] == 0, (
+            f"a 372 deg/s stream (STS3215 max) was refused at the default bound: "
+            f"{telemetry}"
+        )
+
+    def test_a_2000_units_per_second_glitch_is_still_refused(self) -> None:
+        # An encoder glitch that jumps 40 units in one tick at 50 Hz =
+        # 2000 units/s. This MUST still be caught even at the wider default.
+        host = FakeHost()
+        result = _drive(host, SteppingLeader([0.0, 0.0, 40.0, 0.0, 0.0, 0.0]), ticks=12)
+
+        telemetry = result["content"][1]["json"]
+        assert telemetry["slew_rejected"] >= 1, (
+            f"a 2000 units/s glitch was NOT refused at the default bound: "
+            f"{telemetry}"
+        )
