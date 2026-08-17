@@ -1,0 +1,194 @@
+"""Prerequisites an operator must satisfy to recover a fleet from an e-stop.
+
+``Mesh.emergency_stop`` latches a lockout on every peer that receives it, and
+nothing clears it on a timer - an e-stop that expired by itself would not be an
+e-stop. The only way back is an explicit ``resume``, so every precondition that
+resume depends on is a precondition for recovering the fleet at all.
+
+Two of those preconditions are invisible until the fleet is already locked out:
+
+1. ``STRANDS_MESH_OVERRIDE_CODE`` must be set on every peer. The mesh already
+   logs a WARNING at startup when it is unset.
+2. Fleet clocks must agree. A resume envelope carries the issuer's wall clock and
+   a receiver refuses one that is stale (older than
+   ``STRANDS_MESH_RESUME_FRESHNESS_S``) or future-dated (more than
+   ``STRANDS_MESH_RESUME_FORWARD_SKEW_S`` ahead). The forward bound is the tight
+   one and the asymmetry is the trap: a receiver whose clock is a few seconds
+   *behind* the operator reads a correct, correctly-signed resume as future-dated
+   and refuses it, and every retry fails identically. Nothing in the process
+   recovers from that - the fleet stays stopped until the clock is corrected or
+   the bound is widened on every peer.
+
+The clock precondition has no startup warning, so documentation is the only place
+an operator can learn it before it matters. These tests pin the behaviour and pin
+that the knobs it depends on are documented, so the numbers in the docs cannot
+drift away from the numbers the receiver enforces.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+import time
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+import strands_robots
+from strands_robots.mesh import core
+
+_REPO_ROOT = Path(strands_robots.__file__).resolve().parent.parent
+
+#: Long enough to be a realistic operator secret rather than a crackable PIN.
+_CODE = "operator-code-1234567890abcdef"
+
+
+def _mesh(peer_id: str) -> Any:
+    """A Mesh wired for the safety handlers without joining a real session."""
+    m = core.Mesh.__new__(core.Mesh)
+    core.Mesh.__init__(m, MagicMock(), peer_id)
+    m.publish_safety_event = lambda **kw: None  # type: ignore[method-assign]
+    return m
+
+
+def _mint_resume(*, issuer_clock_offset_s: float = 0.0) -> dict[str, Any]:
+    """Return the resume envelope the real issuer publishes.
+
+    ``issuer_clock_offset_s`` models an operator whose wall clock runs ahead of
+    the receiver's, which is the same relative skew as a receiver running behind.
+    The offset is applied only while the issuer mints the envelope, so the
+    receiver under test always runs on the real clock.
+    """
+    operator = _mesh("operator-1")
+    captured: dict[str, Any] = {}
+    operator._publish_safety_envelope = lambda key, env: captured.update(env)
+    operator._estop_lockout.set()
+    operator._last_estop_ts = time.time() - 3.0
+    real_time = time.time
+    with patch.object(core.time, "time", lambda: real_time() + issuer_clock_offset_s):
+        result = operator._resume_lockout(_CODE)
+    assert result["status"] == "ok", result
+    assert captured, "the issuer published no resume envelope"
+    return captured
+
+
+def _deliver(envelope: dict[str, Any]) -> bool:
+    """Deliver *envelope* to a locked-out receiver; True if it recovered."""
+    robot = _mesh("robot-1")
+    robot._estop_lockout.set()
+    sample = MagicMock()
+    sample.payload.to_bytes.return_value = json.dumps(envelope).encode()
+    robot._on_safety_resume(sample)
+    return not robot._estop_lockout.is_set()
+
+
+class TestClockSkewBlocksEstopRecovery:
+    """A receiver behind the operator refuses a resume it should honour."""
+
+    @pytest.fixture(autouse=True)
+    def _code(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
+
+    def test_a_receiver_within_the_forward_bound_recovers(self) -> None:
+        """Control: with clocks in sync the correct code clears the lockout."""
+        assert _deliver(_mint_resume()) is True
+
+    def test_a_receiver_seconds_behind_the_operator_stays_locked_out(self, caplog: pytest.LogCaptureFixture) -> None:
+        """One second past the forward bound is enough to refuse recovery."""
+        skew = core._resume_forward_skew_s() + 1.0
+        with caplog.at_level("WARNING"):
+            recovered = _deliver(_mint_resume(issuer_clock_offset_s=skew))
+        assert recovered is False, (
+            f"a receiver {skew:.0f}s behind the operator accepted the resume; "
+            "the forward-skew bound is what makes this refusal happen"
+        )
+        assert any("in future" in r.message for r in caplog.records), (
+            "the refusal must say the envelope looked future-dated so an "
+            f"operator can tell a clock problem from a bad code: {caplog.text}"
+        )
+
+    def test_retrying_does_not_help_because_every_envelope_is_refused(self) -> None:
+        """The failure is not transient - a retry loop cannot recover the fleet."""
+        skew = core._resume_forward_skew_s() + 1.0
+        assert [_deliver(_mint_resume(issuer_clock_offset_s=skew)) for _ in range(3)] == [
+            False,
+            False,
+            False,
+        ]
+
+    def test_widening_the_documented_bound_restores_recovery(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The documented remedy works: raise the bound and the same skew passes.
+
+        This is what makes the knob worth documenting - it is the only in-process
+        way out of a skew-induced lockout.
+        """
+        skew = core._resume_forward_skew_s() + 1.0
+        monkeypatch.setenv("STRANDS_MESH_RESUME_FORWARD_SKEW_S", str(skew + 10.0))
+        assert _deliver(_mint_resume(issuer_clock_offset_s=skew)) is True
+
+
+def _env_table_rows() -> list[tuple[str, str]]:
+    """Return ``(name_cell, description_cell)`` for every env-var README row."""
+    readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    rows = []
+    for name_cell, desc_cell, _default in re.findall(r"^\|\s*(.+?)\s*\|(.*)\|(.*)\|\s*$", readme, re.M):
+        if re.search(r"`(?:STRANDS|ZENOH)_[A-Z0-9_]+`", name_cell):
+            rows.append((name_cell, desc_cell))
+    return rows
+
+
+class TestTheRecoveryKnobsAreDocumented:
+    """The knobs a locked-out operator needs must be findable."""
+
+    def test_every_knob_the_resume_freshness_gate_consults_is_documented(self) -> None:
+        """Each bound the receiver enforces needs a row of its own.
+
+        A knob that only exists in the source cannot be reached for by an
+        operator whose fleet is already refusing every resume.
+        """
+        documented = {
+            name for name_cell, _desc in _env_table_rows() for name in re.findall(r"`([A-Z_][A-Z0-9_]*)`", name_cell)
+        }
+        assert documented, "found no env-var rows in README.md; the scan is broken"
+        required = (
+            "STRANDS_MESH_OVERRIDE_CODE",
+            "STRANDS_MESH_RESUME_FRESHNESS_S",
+            "STRANDS_MESH_RESUME_FORWARD_SKEW_S",
+        )
+        missing = [name for name in required if name not in documented]
+        assert not missing, (
+            f"these govern whether a resume is accepted but have no README row: {missing}. "
+            "An operator can only discover them once the fleet is already locked out."
+        )
+
+    def test_the_env_table_names_no_variable_it_never_lists(self) -> None:
+        """A row that cites another variable implies the reader can look it up.
+
+        Citing a name the table never lists sends the reader looking for a row
+        that does not exist, which is worst on a safety knob a locked-out
+        operator is trying to reach.
+        """
+        rows = _env_table_rows()
+        assert rows, "found no env-var rows in README.md; the scan is broken"
+        listed = {name for name_cell, _desc in rows for name in re.findall(r"`([A-Z_][A-Z0-9_]*)`", name_cell)}
+        dangling = sorted(
+            {
+                (re.findall(r"`([A-Z_][A-Z0-9_]*)`", name_cell)[0], cited)
+                for name_cell, desc in rows
+                for cited in re.findall(r"`((?:STRANDS|ZENOH)_[A-Z0-9_]+)`", desc)
+                if cited not in listed
+            }
+        )
+        assert not dangling, (
+            f"these env vars are cited in a description but have no row of their own (cited_by, missing): {dangling}"
+        )
+
+    def test_the_recovery_procedure_is_documented_beside_the_estop_call(self) -> None:
+        """``docs/mesh.md`` shows ``emergency_stop()``; it must show the way back."""
+        mesh_doc = (_REPO_ROOT / "docs" / "mesh.md").read_text(encoding="utf-8")
+        assert "emergency_stop()" in mesh_doc, "premise: mesh.md documents emergency_stop"
+        assert '"action": "resume"' in mesh_doc, "mesh.md documents how to stop a fleet but not how to resume it"
+        for knob in ("STRANDS_MESH_OVERRIDE_CODE", "STRANDS_MESH_RESUME_FORWARD_SKEW_S"):
+            assert knob in mesh_doc, f"mesh.md's recovery guidance omits {knob}"

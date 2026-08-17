@@ -1126,6 +1126,9 @@ touches ROS 2.
 | `STRANDS_MESH_MAX_PEERS` | Peer registry cap; evicts oldest on overflow | `1024` |
 | `STRANDS_MESH_RESUME_MAX_FAILS` | Failed resume attempts before cooldown engages | `5` |
 | `STRANDS_MESH_RESUME_BACKOFF_S` | Cooldown (seconds) after exceeding resume fail threshold. A value no cooldown instant can be built from -- unparsable, negative, or non-finite like `inf`/`nan` -- falls back to the default, so the throttle both engages and expires (shared with `STRANDS_MESH_RESUME_FRESHNESS_S` / `_FORWARD_SKEW_S`) | `30` |
+| `STRANDS_MESH_RESUME_FRESHNESS_S` | How far in the past a resume envelope's timestamp may be before a receiver refuses it as stale. A receiver whose clock is more than this *behind* the operator refuses every resume and stays locked out, so keep fleet clocks in NTP sync or widen this on every peer | `60` |
+| `STRANDS_MESH_RESUME_FORWARD_SKEW_S` | How far in the future a resume envelope's timestamp may be before a receiver refuses it. This is the tighter of the two bounds: a receiver whose clock is more than this *behind* the operator sees every resume as future-dated and stays locked out | `5` |
+| `STRANDS_MESH_RESUME_REPLAY_CACHE_MAX` | Entries in the per-receiver resume replay cache; also bounds the per-issuer fairness cap (max/4) so one flooding issuer cannot evict a legitimate operator's slot | `4096` |
 | `STRANDS_MESH_INPUT_AUDIT_EVERY` | Emit `input_stream_applied` audit event every N frames (0 = off) | `100` |
 | `STRANDS_ESTOP_DEDUP_TTL_S` | E-stop fan-out Lambda dedup window (seconds) | `30` |
 | `STRANDS_MESH_DEDUP_TTL` | Window (seconds) the Zenoh<->IoT bridge remembers a delivered `(sender_id, turn_id, command)` triple for cross-transport deduplication. Unparsable, non-positive or non-finite falls back to the default, so a legitimately recurring heartbeat is forgotten again | `120` |
