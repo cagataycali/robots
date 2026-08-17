@@ -562,6 +562,28 @@ class TeleopMixin:
         else:
             _local_slew = _LOCAL_SLEW_DEFAULT
 
+        # Magnitude envelope for the baseline prune, and the reason it is
+        # infinite here. ``merge_slew_baseline`` drops an entry once enough time
+        # has passed that it "can no longer refuse anything", computing that
+        # horizon as ``(value_abs + abs(value)) / max_slew`` - a premise that
+        # holds only while the pruner and the checker are parameterised alike.
+        # The mesh path pairs its bound with ``validate_input_frame``'s
+        # magnitude clamp, so a permissible command there can only reach
+        # ``STRANDS_MESH_INPUT_VALUE_ABS``. The local path runs no such clamp
+        # (``input_frame_slew_violation`` takes no envelope, and nothing else
+        # bounds a leader's reach), so no finite displacement exists after which
+        # an entry provably cannot refuse: the only envelope that keeps the
+        # prune a no-verdict-change operation is an unbounded one, under which
+        # it prunes nothing.
+        #
+        # That costs no unbounded growth, because the prune's own motive does
+        # not apply here. It exists because a *remote* stream chooses its key
+        # names; these keys are the attached devices' motor names plus whatever
+        # ``map_fn`` emits - a set fixed by the session's own hardware - and the
+        # baseline is reset per session (see :meth:`teleoperate`). The size
+        # bound is that key set, not a time window.
+        _LOCAL_VALUE_ABS = math.inf
+
         while self._teleop_running and not self._teleop_stop_event.is_set():
             loop_start = time.perf_counter()
             if deadline is not None and time.time() >= deadline:
@@ -610,7 +632,16 @@ class TeleopMixin:
                             if self._teleop_errors <= 5:
                                 txt = result.get("content", [{}])[0].get("text", "")
                                 logger.warning("[teleop] send_action error: %s", txt)
-                        self._teleop_slew_baseline = merge_slew_baseline(self._teleop_slew_baseline, merged, apply_mono)
+                        # Explicitly parameterised, like the check above: a
+                        # mesh default reaching either call site describes a
+                        # bound this path does not enforce.
+                        self._teleop_slew_baseline = merge_slew_baseline(
+                            self._teleop_slew_baseline,
+                            merged,
+                            apply_mono,
+                            max_slew=_local_slew,
+                            value_abs=_LOCAL_VALUE_ABS,
+                        )
                         self._teleop_frames += 1
             except Exception as exc:  # noqa: BLE001 - hot loop, count + rate-limit
                 self._teleop_errors += 1

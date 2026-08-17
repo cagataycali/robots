@@ -291,3 +291,161 @@ class TestDefaultBoundAccommodatesDriverUnits:
         assert telemetry["slew_rejected"] >= 1, (
             f"a 2000 units/s glitch was NOT refused at the default bound: {telemetry}"
         )
+
+
+class QuietThenGlitchLeader:
+    """A device that stamps one joint, goes quiet, then returns full-scale.
+
+    The shape of a USB re-enumerate or a disconnect in a multi-device session:
+    ``get_action()`` returns ``{}`` for a while - the device commands nothing,
+    so nothing of its own is applied - and its first read on return is a
+    full-scale garbage value.
+    """
+
+    name, id, is_connected = "quiet", None, False
+
+    def __init__(self, first: float, quiet_ticks: int, comeback: float, joint: str = "joint1") -> None:
+        self.first, self.quiet_ticks, self.comeback, self.joint = first, quiet_ticks, comeback, joint
+        self.calls = 0
+
+    def connect(self, calibrate: bool = True) -> None:  # noqa: ARG002
+        self.is_connected = True
+
+    def disconnect(self) -> None:
+        self.is_connected = False
+
+    def get_action(self) -> dict[str, float]:
+        self.calls += 1
+        if self.calls == 1:
+            return {self.joint: self.first}
+        if self.calls <= 1 + self.quiet_ticks:
+            return {}  # quiet: commands nothing
+        return {self.joint: self.comeback}
+
+
+class SteadyLeader:
+    """Holds one joint at a constant value, so frames keep being applied."""
+
+    name, id, is_connected = "steady", None, False
+
+    def __init__(self, value: float = 0.0, joint: str = "joint2") -> None:
+        self.value, self.joint = value, joint
+
+    def connect(self, calibrate: bool = True) -> None:  # noqa: ARG002
+        self.is_connected = True
+
+    def disconnect(self) -> None:
+        self.is_connected = False
+
+    def get_action(self) -> dict[str, float]:
+        return {self.joint: self.value}
+
+
+class TestAQuietDeviceKeepsItsBaselineWhileOthersMove:
+    """A joint that stops being commanded must not lose the entry that guards it.
+
+    ``merge_slew_baseline`` prunes an entry once it "can no longer refuse
+    anything" - a horizon computed from the bound it is *passed*. Parameterised
+    with the mesh defaults while the check runs at the local bound, the horizon
+    is 0.5 s for a joint resting near zero, but under the local bound that same
+    entry can still refuse a full-scale glitch for seconds. Entries were
+    therefore dropped while they could still refuse frames, and the prune only
+    fires when *some other* device keeps a session applying frames - which is
+    why every single-device test above passes either way.
+    """
+
+    @staticmethod
+    def _drive_two(host: FakeHost, quiet: object, steady: object, ticks: int) -> dict:
+        host.attach_teleop(quiet, name="quiet")
+        host.attach_teleop(steady, name="steady")
+        return host.teleoperate(block=True, hz=HZ, duration=ticks / HZ)
+
+    def test_a_glitch_from_a_returning_device_is_still_refused(self) -> None:
+        # joint1 rests at 0.0, then its device goes quiet for 30 ticks (0.6 s,
+        # past the 0.5 s mesh-default horizon for a joint at rest) while joint2
+        # keeps the loop applying frames. joint1's comeback read is full-scale.
+        host = FakeHost()
+        quiet = QuietThenGlitchLeader(first=0.0, quiet_ticks=30, comeback=GLITCH)
+        result = self._drive_two(host, quiet, SteadyLeader(), ticks=40)
+
+        # Premise: the loop kept applying frames through the quiet window, so
+        # the prune was actually exercised. Without this the test proves nothing.
+        assert len(host.sent) > 30, f"the prune was never exercised: {len(host.sent)} frames"
+
+        applied_j1 = [a["joint1"] for a, _ in host.sent if "joint1" in a]
+        assert GLITCH not in applied_j1, (
+            f"the returning device's full-scale frame was applied: {applied_j1}. Its baseline "
+            f"entry was pruned at the mesh horizon while the check runs at the local bound."
+        )
+        assert result["content"][1]["json"]["slew_rejected"] >= 1, (
+            f"the glitch passed with no refusal counted: {result['content'][1]['json']}"
+        )
+
+    def test_the_session_does_not_report_success_for_a_refused_glitch(self) -> None:
+        # The failure this pins was silent: the frame applied, nothing counted,
+        # status still success. Status must reflect the refusal.
+        host = FakeHost()
+        quiet = QuietThenGlitchLeader(first=0.0, quiet_ticks=30, comeback=GLITCH)
+        result = self._drive_two(host, quiet, SteadyLeader(), ticks=40)
+
+        assert "refused" in result["content"][0]["text"]
+
+
+class TestBothCallSitesCarryTheLocalBound:
+    """Neither mesh helper may be called on its own defaults from this loop.
+
+    This is the class of bug, not one instance of it: the loop enforces a local
+    bound, and every mesh helper it calls has to be told so, because each one
+    silently falls back to the mesh path's radian-scoped defaults. The checker
+    inheriting them refuses ordinary degree-valued teleop; the pruner inheriting
+    them discards entries that can still refuse. Both are invisible in review -
+    the call reads fine - so the rule is pinned over the AST rather than left to
+    a reviewer noticing a missing keyword.
+    """
+
+    #: Helper to the parameters that describe the bound it must be judged by.
+    _REQUIRED: dict[str, set[str]] = {
+        "input_frame_slew_violation": {"max_slew"},
+        "merge_slew_baseline": {"max_slew", "value_abs"},
+    }
+
+    def test_every_mesh_slew_helper_call_passes_the_local_parameters(self) -> None:
+        import textwrap
+
+        source = textwrap.dedent(inspect.getsource(teleop_mixin.TeleopMixin._teleop_loop))
+        tree = ast.parse(source)
+
+        found: dict[str, int] = {}
+        offenders: list[str] = []
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            required = self._REQUIRED.get(node.func.id)
+            if required is None:
+                continue
+            found[node.func.id] = found.get(node.func.id, 0) + 1
+            passed = {kw.arg for kw in node.keywords if kw.arg is not None}
+            missing = sorted(required - passed)
+            if missing:
+                offenders.append(f"{node.func.id} (line {node.lineno}) omits {missing}")
+
+        # Premise: both helpers are actually called, so the pin cannot pass by
+        # matching nothing if the loop is refactored.
+        assert set(found) == set(self._REQUIRED), (
+            f"expected calls to {sorted(self._REQUIRED)} in _teleop_loop, found {sorted(found)}"
+        )
+        assert not offenders, (
+            f"mesh slew helper(s) called on mesh defaults from the local loop: {offenders}. "
+            f"Each falls back to STRANDS_MESH_INPUT_* - a bound this path does not enforce - "
+            f"so pass the local bound explicitly at every call site."
+        )
+
+    def test_the_prune_envelope_is_unbounded_because_the_path_has_no_clamp(self) -> None:
+        # The envelope is what makes the prune safe: it is the furthest a
+        # permissible command may reach. The local path runs no magnitude clamp,
+        # so a finite envelope would prune entries that can still refuse.
+        source = inspect.getsource(teleop_mixin.TeleopMixin._teleop_loop)
+        assert "math.inf" in source, (
+            "the local prune envelope must be unbounded: input_frame_slew_violation applies no "
+            "magnitude clamp, so no finite displacement makes a baseline entry unable to refuse."
+        )
