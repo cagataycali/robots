@@ -58,6 +58,16 @@ class SimRobot:
     # for robots spawned without a keyframe (the default zero pose), so reset()
     # stays byte-identical for those robots.
     home_qpos: dict[str, list[float]] = field(default_factory=dict)
+    # The actuator command captured alongside ``home_qpos`` from the same
+    # ``<keyframe>``, and re-applied with it on ``reset()``. Maps each
+    # (namespaced) actuator name to its keyed ``(ctrl, act)`` pair: the setpoint
+    # a position servo holds the home pose with, and the activation a stateful
+    # actuator holds it with. A pose without it is not self-holding -- a
+    # gravity-loaded arm stands at its home pose while every actuator is
+    # commanded to the zero configuration, so the first step drives it off home.
+    # Empty for robots spawned without a keyframe, so reset() stays
+    # byte-identical for those robots.
+    home_actuators: dict[str, tuple[float, list[float]]] = field(default_factory=dict)
     policy_running: bool = False
     policy_steps: int = 0
     policy_instruction: str = ""

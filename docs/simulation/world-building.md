@@ -67,8 +67,14 @@ sim.add_robot(name="panda", data_config="panda", keyframe="home")  # or keyframe
 ```
 
 The pose is applied to the robot's joints by name and is restored by `reset()`,
-so a keyframe spawn is sticky across episodes. An
-unknown keyframe name/index
+so a keyframe spawn is sticky across episodes. A MuJoCo `<key>` pairs that pose
+with the actuator command that *holds* it, and both are applied and restored
+together - so a gravity-loaded arm stays at its home configuration instead of
+sagging out of it as soon as the world steps. 28 of the 31 built-in robots that
+ship a `<keyframe>` declare a non-zero `ctrl` in it. The keyed command is applied
+verbatim, whatever quantity each actuator reads it as (a servo setpoint, a motor
+torque, a stateful actuator's activation); the keyed `qvel` is not applied, since
+a robot is added at rest. An unknown keyframe name/index
 is an error that lists the model's available keyframes. `keyframe=None` (the
 default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
 `keyframe=` as not-yet-supported.)
