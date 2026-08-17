@@ -23,6 +23,21 @@ the world and adds the named robot for you. Constructing a backend directly -
 `create_simulation("mujoco")` or `Simulation()` - gives an **empty** engine; you
 then call `create_world()` and `add_robot("so100")` yourself.
 
+Because `Robot(...)` has already built the world, calling `create_world()` on
+what it returns is refused - a world cannot be rebuilt under a live scene. The
+refusal names what that world holds and which call applies the arguments you
+passed:
+
+| You asked for | What applies it |
+|---------------|-----------------|
+| `timestep=`, `gravity=` | `set_timestep` / `set_gravity` on the live world - contents kept |
+| `ground_plane=`, `terrain=`, `difficulty=` | compiled in at creation: `destroy()`, then `create_world(...)` |
+| nothing | the world is ready; `reset()` restarts the rollout in place |
+
+`reset()` applies no `create_world` parameter - it restores the initial state at
+the values the world was built with - so it is never the way to get a *different*
+world.
+
 `robot_name` therefore belongs to `Robot(...)` and `add_robot(...)`, never to a
 backend constructor. Passing it to the constructor
 (`Simulation(robot_name="so100")`) is rejected with a `TypeError` rather than
