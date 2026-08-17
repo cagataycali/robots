@@ -37,6 +37,7 @@ import difflib
 import logging
 import math
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from strands_robots.simulation.models import SimCamera, SimObject, SimRobot, SimWorld
@@ -1051,97 +1052,203 @@ def reposition_body_in_scene(
     return _recompile_preserving_state(world, spec)
 
 
-def _snapshot_joint_state(world: SimWorld) -> dict[str, tuple[list[float], list[float]]]:
-    """Snapshot per-joint ``(qpos, qvel)`` slices keyed by fully-qualified
-    MuJoCo joint name.
+# A joint is identified across a scene rebuild by the name of whichever
+# namespace can name it. ``("joint", <joint name>)`` covers every named joint.
+# ``("body", <body name>)`` covers an UNNAMED ``<freejoint/>`` -- the standard
+# MJCF floating-base idiom, used by the Unitree Go2 and by LeKiwi -- which no
+# joint-name lookup can reach. The owning body identifies it exactly because
+# the compiler refuses a free joint alongside any other joint on the same body
+# ("more than 6 dofs in body"), so such a body carries exactly one joint.
+#
+# The two namespaces are kept apart in the key because MuJoCo's joint and body
+# names are independent: a joint may be named exactly like some body, so a
+# single flat string key could collide.
+_JointKey = tuple[str, str]
 
-    Used by :func:`eject_robot_from_scene` to preserve the state of surviving
-    robots and object freejoints across a scene rebuild. Flat-index slicing
-    is unsafe here because the body-tree order may shift when a robot is
-    removed (see AGENTS.md "Per-name state copy" rule).
 
-    Returns a dict mapping ``<joint_name> -> (qpos_slice, qvel_slice)`` where
-    each slice has the appropriate width for the joint type (1 for hinge/
-    slide, 4 for ball, 7 for free).
+@dataclass(frozen=True)
+class _SceneState:
+    """The dynamic state of a scene, keyed by name so a rebuild can restore it.
+
+    :func:`eject_robot_from_scene` compiles a fresh model and allocates a fresh
+    ``MjData``, so every buffer starts at its reset value. What is captured here
+    is what has to be carried over that gap for the scene to continue as it was:
+    the same state :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.save_state`
+    checkpoints, minus the entries a rebuilt scene cannot have a surviving
+    instance of.
+
+    Flat-index slicing cannot do this: removing a robot shifts every joint, dof
+    and actuator index that came after it, so a positional copy would re-assign
+    one element's state to another. Every field below is therefore keyed by name.
+
+    Attributes:
+        joints: ``key -> (qpos, qvel, qfrc_applied)`` slices, each at the width
+            its joint type uses (free 7/6/6, ball 4/3/3, hinge or slide 1/1/1).
+        actuators: ``actuator name -> (ctrl, act)``. ``ctrl`` is the servo
+            setpoint holding a robot's pose; ``act`` is the internal activation
+            of a stateful actuator, its effective command.
+        time: ``data.time``, the clock the physics reads.
+    """
+
+    joints: dict[_JointKey, tuple[list[float], list[float], list[float]]]
+    actuators: dict[str, tuple[float, list[float]]]
+    time: float
+
+
+def _joint_state_widths(jtype: int, mj: Any) -> tuple[int, int]:
+    """Return the ``(qpos, dof)`` width MuJoCo uses for a joint of ``jtype``."""
+    if jtype == mj.mjtJoint.mjJNT_FREE:
+        return 7, 6
+    if jtype == mj.mjtJoint.mjJNT_BALL:
+        return 4, 3
+    return 1, 1
+
+
+def _joint_key(model: Any, jid: int, mj: Any) -> _JointKey | None:
+    """Identify joint ``jid`` by name, or by its owning body when it has none.
+
+    Returns ``None`` for a joint no namespace can name -- an unnamed non-free
+    joint (its body may carry several, so the body does not single it out), or
+    an unnamed free joint on an unnamed body. Such a joint cannot be matched
+    across a rebuild, so it is reported rather than guessed at.
+    """
+    name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid)
+    if name:
+        return ("joint", name)
+    if int(model.jnt_type[jid]) != mj.mjtJoint.mjJNT_FREE:
+        return None
+    body_name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, int(model.jnt_bodyid[jid]))
+    return ("body", body_name) if body_name else None
+
+
+def _snapshot_scene_state(world: SimWorld) -> _SceneState:
+    """Capture ``world``'s dynamic state keyed by name, for a scene rebuild.
+
+    Used by :func:`eject_robot_from_scene`. See :class:`_SceneState` for what is
+    captured and why it is keyed by name rather than by index.
     """
     if world._model is None or world._data is None:
-        return {}
+        return _SceneState(joints={}, actuators={}, time=0.0)
     mj = _ensure_mujoco()
     model = world._model
     data = world._data
-    snap: dict[str, tuple[list[float], list[float]]] = {}
+
+    joints: dict[_JointKey, tuple[list[float], list[float], list[float]]] = {}
     for jid in range(model.njnt):
-        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_JOINT, jid)
-        if not name:
+        key = _joint_key(model, jid, mj)
+        if key is None:
+            logger.debug(
+                "snapshot_scene_state: joint id %d has no name and no single owning body, state not carried over",
+                jid,
+            )
             continue
         qpos_adr = int(model.jnt_qposadr[jid])
-        qvel_adr = int(model.jnt_dofadr[jid])
-        jtype = int(model.jnt_type[jid])
-        # qpos width: free=7, ball=4, hinge/slide=1
-        # qvel width: free=6, ball=3, hinge/slide=1
-        if jtype == mj.mjtJoint.mjJNT_FREE:
-            qpos_w, qvel_w = 7, 6
-        elif jtype == mj.mjtJoint.mjJNT_BALL:
-            qpos_w, qvel_w = 4, 3
-        else:
-            qpos_w, qvel_w = 1, 1
-        snap[name] = (
+        dof_adr = int(model.jnt_dofadr[jid])
+        qpos_w, dof_w = _joint_state_widths(int(model.jnt_type[jid]), mj)
+        joints[key] = (
             [float(x) for x in data.qpos[qpos_adr : qpos_adr + qpos_w]],
-            [float(x) for x in data.qvel[qvel_adr : qvel_adr + qvel_w]],
+            [float(x) for x in data.qvel[dof_adr : dof_adr + dof_w]],
+            [float(x) for x in data.qfrc_applied[dof_adr : dof_adr + dof_w]],
         )
-    return snap
+
+    actuators: dict[str, tuple[float, list[float]]] = {}
+    for aid in range(int(model.nu)):
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, aid)
+        if not name:
+            # No namespace names it, and its transmission target may drive
+            # several actuators, so it cannot be matched across the rebuild.
+            logger.debug("snapshot_scene_state: actuator id %d has no name, ctrl/act not carried over", aid)
+            continue
+        act_adr = int(model.actuator_actadr[aid])
+        act_num = int(model.actuator_actnum[aid])
+        act_vals = [float(x) for x in data.act[act_adr : act_adr + act_num]] if act_adr >= 0 else []
+        actuators[name] = (float(data.ctrl[aid]), act_vals)
+
+    return _SceneState(joints=joints, actuators=actuators, time=float(data.time))
 
 
-def _restore_joint_state(
-    world: SimWorld,
-    snapshot: dict[str, tuple[list[float], list[float]]],
-) -> int:
-    """Restore per-joint state from a snapshot into ``world._data`` by name.
+def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
+    """Write ``snapshot`` back into ``world._data`` by name.
 
-    Joints that no longer exist in the compiled model (e.g. those belonging
-    to the ejected robot) are silently skipped. Joints that exist in the
-    new model but were not in the snapshot keep their fresh-compile defaults
-    (body pos/quat for freejoints, 0 for hinge/slide).
+    Elements that no longer exist in the compiled model (those belonging to the
+    ejected robot) are silently skipped -- their absence is the point of the
+    rebuild. Elements present in the new model but absent from the snapshot keep
+    their fresh-compile values.
 
-    Returns the number of joints actually restored, for logging.
+    Returns the number of joints restored, for logging.
     """
     if world._model is None or world._data is None:
         return 0
     mj = _ensure_mujoco()
     model = world._model
     data = world._data
+
     restored = 0
-    for name, (qpos_vals, qvel_vals) in snapshot.items():
-        jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, name)
+    for key, (qpos_vals, qvel_vals, qfrc_vals) in snapshot.joints.items():
+        jid = _resolve_joint_key(model, key, mj)
         if jid < 0:
-            continue  # joint no longer exists (expected for ejected robot)
+            continue  # element no longer exists (expected for the ejected robot)
         qpos_adr = int(model.jnt_qposadr[jid])
-        qvel_adr = int(model.jnt_dofadr[jid])
-        # Width sanity check: if joint type changed (should not happen for
-        # same-name joints across an eject), skip to avoid corrupting state.
-        jtype = int(model.jnt_type[jid])
-        if jtype == mj.mjtJoint.mjJNT_FREE:
-            expect_qp, expect_qv = 7, 6
-        elif jtype == mj.mjtJoint.mjJNT_BALL:
-            expect_qp, expect_qv = 4, 3
-        else:
-            expect_qp, expect_qv = 1, 1
-        if len(qpos_vals) != expect_qp or len(qvel_vals) != expect_qv:
+        dof_adr = int(model.jnt_dofadr[jid])
+        # Width sanity check: if the joint type changed (should not happen for a
+        # same-key joint across an eject), skip rather than corrupt the DOFs.
+        expect_qp, expect_dof = _joint_state_widths(int(model.jnt_type[jid]), mj)
+        if len(qpos_vals) != expect_qp or len(qvel_vals) != expect_dof or len(qfrc_vals) != expect_dof:
             logger.warning(
-                "_restore_joint_state: width mismatch for %r (qpos %d!=%d or qvel %d!=%d), skipping",
-                name,
+                "_restore_scene_state: width mismatch for %r (qpos %d!=%d or dof %d/%d!=%d), skipping",
+                key,
                 len(qpos_vals),
                 expect_qp,
                 len(qvel_vals),
-                expect_qv,
+                len(qfrc_vals),
+                expect_dof,
             )
             continue
         for i, v in enumerate(qpos_vals):
             data.qpos[qpos_adr + i] = v
         for i, v in enumerate(qvel_vals):
-            data.qvel[qvel_adr + i] = v
+            data.qvel[dof_adr + i] = v
+        for i, v in enumerate(qfrc_vals):
+            data.qfrc_applied[dof_adr + i] = v
         restored += 1
+
+    for name, (ctrl_val, act_vals) in snapshot.actuators.items():
+        aid = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, name)
+        if aid < 0:
+            continue  # actuator belonged to the ejected robot
+        data.ctrl[aid] = ctrl_val
+        act_adr = int(model.actuator_actadr[aid])
+        act_num = int(model.actuator_actnum[aid])
+        if act_adr < 0 or len(act_vals) != act_num:
+            # An actuator whose activation width changed across the rebuild:
+            # leave the fresh zero rather than write a mismatched slice.
+            if act_vals or act_num:
+                logger.warning(
+                    "_restore_scene_state: act width mismatch for actuator %r (%d!=%d), skipping activation",
+                    name,
+                    len(act_vals),
+                    act_num,
+                )
+            continue
+        for i, v in enumerate(act_vals):
+            data.act[act_adr + i] = v
+
+    data.time = snapshot.time
     return restored
+
+
+def _resolve_joint_key(model: Any, key: _JointKey, mj: Any) -> int:
+    """Resolve a :data:`_JointKey` to a joint id in ``model``, or ``-1``."""
+    kind, name = key
+    if kind == "joint":
+        return mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, name)
+    bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, name)
+    if bid < 0 or int(model.body_jntnum[bid]) != 1:
+        # The body is gone, or no longer carries exactly the one joint that made
+        # it an unambiguous handle for its unnamed free joint.
+        return -1
+    jid = int(model.body_jntadr[bid])
+    return jid if int(model.jnt_type[jid]) == mj.mjtJoint.mjJNT_FREE else -1
 
 
 def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
@@ -1154,18 +1261,37 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     ``world.robots`` / ``world.objects`` / ``world.cameras`` state, then
     re-attach the remaining robots.
 
-    Joint state preservation: before the rebuild we snapshot every joint's
-    ``(qpos, qvel)`` keyed by fully-qualified name; after the fresh compile
-    we restore state for every joint that still exists in the new model.
-    Joints belonging to the ejected robot are naturally dropped (their name
-    no longer resolves). This keeps surviving robots at their current pose
-    and object freejoints at their current world pose - the behaviour the
-    agent expects when calling ``remove_robot`` mid-scene.
+    State preservation: the fresh compile below allocates a fresh ``MjData``,
+    so every buffer starts at its reset value. Before the rebuild we snapshot
+    the scene's dynamic state keyed by name (:func:`_snapshot_scene_state`) and
+    restore it afterwards, so a surviving element continues exactly as it was --
+    which is what :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.add_robot`
+    already guarantees for the composition in the other direction ("an arm
+    already in the world keeps the pose it is in and the actuator setpoints
+    holding it there ... and the clock keeps counting"). Elements belonging to
+    the ejected robot are naturally dropped: their names no longer resolve.
+
+    Restoring the pose alone is not enough for the scene to continue:
+
+    * ``ctrl`` -- the setpoint a position servo holds a pose with. Dropped, it
+      reads as zero, and the next ``mj_step`` drives every actuator of every
+      SURVIVING robot toward its zero configuration: an arm parked mid-air sags
+      to the floor while ``remove_robot`` reported ``"success"`` and the pose
+      read back correct, because nothing had stepped yet. ``act`` carries the
+      same command for a stateful actuator.
+    * an UNNAMED ``<freejoint/>`` -- the standard MJCF floating-base idiom, used
+      by the Unitree Go2 and by LeKiwi -- is invisible to a joint-name lookup,
+      so a surviving mobile base was re-seated at its spawn pose with zero
+      velocity: measured on ``go2`` driven to ``(0.8, -0.4, 0.30)``, removing a
+      DIFFERENT robot teleported it back to ``(0, 0, 0.445)``. The recompile
+      path names this same hazard (see :func:`_recompile_preserving_state`).
+    * ``data.time`` -- reset to 0 while ``world.sim_time`` kept counting, so the
+      clock the physics reads and the clock ``get_state`` reports disagreed.
 
     Flat-index slicing is **not** safe here: removing a robot shifts every
-    body/joint index that comes after it in the kinematic tree, so
-    ``data.qpos[:]`` copies across compiles would mis-assign DOFs. Per-name
-    lookup is the only correct approach (see AGENTS.md).
+    body/joint/dof/actuator index that comes after it, so ``data.qpos[:]``-style
+    copies across compiles would mis-assign one element's state to another.
+    Per-name lookup is the only correct approach (see AGENTS.md).
     """
     spec = _get_spec(world)
     if spec is None or world._model is None:
@@ -1177,7 +1303,7 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
     # Snapshot joint state BEFORE we rebuild. Keyed by the fully-qualified
     # MuJoCo joint name (prefix/joint for attached robots, bare name for
     # object freejoints).
-    state_snapshot = _snapshot_joint_state(world)
+    state_snapshot = _snapshot_scene_state(world)
 
     # First drop cameras that originated from the robot being ejected.
     # They're in world.cameras with origin_robot == robot_name. Without this,
@@ -1233,7 +1359,7 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
 
     # Step 4: restore state for every joint that survived the rebuild. Joints
     # belonging to the ejected robot simply don't resolve and get skipped.
-    restored = _restore_joint_state(world, state_snapshot)
+    restored = _restore_scene_state(world, state_snapshot)
 
     # Step 5: run a forward pass so derived quantities (xpos, cam xforms)
     # reflect the restored state. Without this, the next render() call can
@@ -1261,7 +1387,7 @@ def eject_robot_from_scene(world: SimWorld, robot_name: str) -> bool:
         "eject_robot %r: scene rebuilt, restored state for %d/%d joints",
         robot_name,
         restored,
-        len(state_snapshot),
+        len(state_snapshot.joints),
     )
     return True
 
