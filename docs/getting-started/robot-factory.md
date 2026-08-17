@@ -1,5 +1,5 @@
 ---
-description: Robot(name, mode, backend, urdf_path, cameras, position, data_config, mesh, peer_id, **kwargs) - the full signature with every kwarg explained.
+description: Robot(name, mode, backend, urdf_path, cameras, position, data_config, mesh, peer_id, orientation, keyframe, **kwargs) - the full signature with every kwarg explained.
 ---
 
 # Robot factory
@@ -27,6 +27,8 @@ robot = Robot("so100", mode="auto")  # probes USB, falls back to sim
 | `data_config` | str | `None` | GR00T data_config name. |
 | `mesh` | bool \| None | `None` | Join the Zenoh fleet mesh. `None` consults `STRANDS_MESH`, which leaves it **off** unless set to `true`/`1`/`yes` - pass `mesh=True` to opt in per robot. |
 | `peer_id` | str | `None` | Stable mesh peer id. Auto-generated if omitted. |
+| `orientation` | list | `None` | Robot base orientation `[w, x, y, z]` in sim world. |
+| `keyframe` | str \| int | `None` | Spawn in a model `<keyframe>` pose (name or index) instead of the zero configuration. |
 | `**kwargs` | | | Forwarded to the backend or driver constructor as given. A name it does not recognize is ignored, not refused, so check the spelling against the forwardable list below. |
 
 ## Name resolution
