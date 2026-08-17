@@ -13,4 +13,8 @@ and refuses every retry identically, so it stays stopped until its clock is
 corrected or the bound is widened on every peer. `docs/mesh.md` showed
 `emergency_stop()` with no documented way back. Adds rows for the three
 `_resume_*` knobs, a recovery section beside the `emergency_stop()` call, and
-tests pinning both the behaviour and that the knobs stay documented.
+tests pinning both the behaviour and that the knobs stay documented. Each bound
+is documented against the clock direction it actually governs: a receiver
+*behind* the operator is refused as future-dated by the forward-skew bound,
+while only a receiver *ahead* of the operator is refused as stale by the
+freshness window, so widening one does not clear the other's refusal.

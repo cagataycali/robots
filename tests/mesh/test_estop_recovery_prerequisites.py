@@ -129,6 +129,68 @@ class TestClockSkewBlocksEstopRecovery:
         assert _deliver(_mint_resume(issuer_clock_offset_s=skew)) is True
 
 
+class TestTheFreshnessBoundGovernsAReceiverAheadOfTheOperator:
+    """The two bounds are not interchangeable: each governs one clock direction.
+
+    ``_on_safety_resume`` refuses on ``envelope_t > now + forward_skew_s``
+    (the envelope reads future-dated, which happens when the receiver's clock
+    trails the operator's) and separately on ``now - envelope_t >
+    freshness_window_s`` (the envelope reads stale, which happens when the
+    receiver's clock *leads* the operator's). Documenting either bound against
+    the wrong direction hands a locked-out operator a knob that cannot clear
+    the refusal they are looking at, so the direction is pinned here.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _code(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("STRANDS_MESH_OVERRIDE_CODE", _CODE)
+
+    def test_a_receiver_ahead_of_the_operator_is_refused_as_stale(self, caplog: pytest.LogCaptureFixture) -> None:
+        """A negative issuer offset models a receiver whose clock leads."""
+        lead = core._resume_freshness_window_s() + 1.0
+        with caplog.at_level("WARNING"):
+            recovered = _deliver(_mint_resume(issuer_clock_offset_s=-lead))
+        assert recovered is False, (
+            f"a receiver {lead:.0f}s ahead of the operator accepted the resume; "
+            "the freshness window is what makes this refusal happen"
+        )
+        assert any("too old" in r.message for r in caplog.records), (
+            "the refusal must say the envelope looked stale, which is the "
+            f"direction STRANDS_MESH_RESUME_FRESHNESS_S governs: {caplog.text}"
+        )
+
+    def test_widening_the_freshness_window_recovers_a_receiver_that_leads(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The documented remedy clears the refusal for the direction it names."""
+        lead = core._resume_freshness_window_s() + 1.0
+        monkeypatch.setenv("STRANDS_MESH_RESUME_FRESHNESS_S", str(lead + 10.0))
+        assert _deliver(_mint_resume(issuer_clock_offset_s=-lead)) is True
+
+    def test_widening_the_freshness_window_does_not_recover_a_receiver_that_trails(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """Why the direction matters: the wrong knob leaves the fleet stopped.
+
+        A receiver *behind* the operator is refused by the forward-skew bound,
+        so raising the freshness window -- however far -- changes nothing. This
+        is the concrete cost of describing the freshness bound as the one that
+        governs a trailing receiver.
+        """
+        trail = core._resume_forward_skew_s() + 1.0
+        monkeypatch.setenv("STRANDS_MESH_RESUME_FRESHNESS_S", "300")
+        with caplog.at_level("WARNING"):
+            recovered = _deliver(_mint_resume(issuer_clock_offset_s=trail))
+        assert recovered is False, (
+            "widening the freshness window recovered a trailing receiver; if "
+            "that ever becomes true the README remedy for each direction changes"
+        )
+        assert any("in future" in r.message for r in caplog.records), (
+            "a trailing receiver must still be refused by the forward-skew "
+            f"bound, not the freshness window: {caplog.text}"
+        )
+
+
 def _env_table_rows() -> list[tuple[str, str]]:
     """Return ``(name_cell, description_cell)`` for every env-var README row."""
     readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
@@ -183,6 +245,35 @@ class TestTheRecoveryKnobsAreDocumented:
         )
         assert not dangling, (
             f"these env vars are cited in a description but have no row of their own (cited_by, missing): {dangling}"
+        )
+
+    def test_each_timestamp_bound_is_documented_against_the_clock_it_governs(self) -> None:
+        """The rows must not swap the two directions.
+
+        Behaviour tests above pin which bound refuses which skew; nothing
+        otherwise ties that to the prose an operator actually reads, so a row
+        can invert while the suite stays green.
+        """
+        rows = dict(_env_table_rows())
+        assert rows, "found no env-var rows in README.md; the scan is broken"
+
+        def _row_for(name: str) -> str:
+            matches = [desc for name_cell, desc in rows.items() if f"`{name}`" in name_cell]
+            assert matches, f"premise: README has a row for {name}"
+            return matches[0]
+
+        freshness = _row_for("STRANDS_MESH_RESUME_FRESHNESS_S")
+        lockout_claim = freshness.split("stays locked out")[0]
+        assert "ahead of* the operator" in lockout_claim, (
+            "the freshness row must attribute the stale-envelope lockout to a "
+            "receiver whose clock is AHEAD of the operator -- that is the "
+            f"direction `now - envelope_t > freshness_window_s` trips on: {freshness!r}"
+        )
+
+        skew = _row_for("STRANDS_MESH_RESUME_FORWARD_SKEW_S")
+        assert "*behind* the operator" in skew, (
+            "the forward-skew row must attribute its lockout to a receiver "
+            f"whose clock is BEHIND the operator: {skew!r}"
         )
 
     def test_the_recovery_procedure_is_documented_beside_the_estop_call(self) -> None:
