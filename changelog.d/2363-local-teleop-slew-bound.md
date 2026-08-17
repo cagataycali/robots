@@ -12,4 +12,7 @@
   over-speed frame is refused and counted in a new `slew_rejected` stat rather than clamped, since
   clamping would silently alter an actuator command. Refusals are counted apart from errors but still
   move the session off `success`, so a device whose units the bound does not expect cannot report a
-  clean run while moving nothing.
+  clean run while moving nothing. The baseline a joint is measured against is kept for as long
+  as it can still refuse a frame at the bound in force, so a device that stops reporting for a while
+  -- a disconnect, a USB re-enumerate -- has its first read back on reconnecting measured against where
+  it left the follower rather than applied unchecked.

@@ -449,3 +449,69 @@ class TestBothCallSitesCarryTheLocalBound:
             "the local prune envelope must be unbounded: input_frame_slew_violation applies no "
             "magnitude clamp, so no finite displacement makes a baseline entry unable to refuse."
         )
+
+
+class TestNarrowingTheBoundDoesNotShortenTheBaseline:
+    """Narrowing the local bound widens the window an entry can still refuse in.
+
+    ``merge_slew_baseline`` keeps an entry for ``(value_abs + abs(value)) /
+    max_slew`` seconds. A *narrower* bound makes that horizon longer, so an
+    operator who tightens ``STRANDS_TELEOP_SLEW_ABS`` needs the prune to track
+    the tightening too - otherwise the entries it relies on are discarded
+    earlier, relative to the bound in force, than at the default.
+    """
+
+    #: How long the mesh defaults keep a resting joint's entry: ``value_abs /
+    #: max_slew`` seconds. A gap longer than this drops the entry when the prune
+    #: runs on those defaults.
+    MESH_HORIZON_AT_REST_S = security._input_value_abs() / security._input_slew_abs()
+
+    def test_a_returning_device_is_refused_under_a_narrowed_bound(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("STRANDS_TELEOP_SLEW_ABS", "5.0")
+        quiet_ticks = 40
+        assert quiet_ticks / HZ > self.MESH_HORIZON_AT_REST_S, (
+            "premise: the gap must outlast the mesh prune horizon, or the entry survives "
+            "for reasons unrelated to which parameters the prune was given"
+        )
+
+        host = FakeHost()
+        host.attach_teleop(QuietThenGlitchLeader(0.0, quiet_ticks, GLITCH), name="quiet")
+        host.attach_teleop(SteadyLeader(), name="steady")
+        ticks = 2 + quiet_ticks + 4
+        result = host.teleoperate(block=True, hz=HZ, duration=ticks / HZ)
+
+        applied = [a["joint1"] for a, _ in host.sent if "joint1" in a]
+        assert applied, "premise: the quiet device must have applied its resting frames"
+        assert GLITCH not in applied, (
+            f"a full-scale jump was applied under a narrowed bound after a {quiet_ticks / HZ:.2f}s gap: {applied}"
+        )
+        assert result["content"][1]["json"]["slew_rejected"] >= 1
+
+    def test_the_baseline_only_holds_joints_that_reached_the_robot(self) -> None:
+        # The local prune is a no-op, so what bounds the baseline is that an
+        # entry is only ever stamped for a key that was applied - the claim the
+        # unbounded envelope rests on.
+        host = FakeHost()
+        host.attach_teleop(QuietThenGlitchLeader(0.0, 10, GLITCH), name="quiet")
+        host.attach_teleop(SteadyLeader(), name="steady")
+        host.teleoperate(block=True, hz=HZ, duration=16 / HZ)
+
+        applied_keys = {k for a, _ in host.sent for k in a}
+        assert applied_keys, "premise: the loop must have applied something"
+        assert set(host._teleop_slew_baseline) <= applied_keys, (
+            f"the baseline holds keys that never reached the robot: "
+            f"{sorted(set(host._teleop_slew_baseline) - applied_keys)}"
+        )
+
+
+class TestTheMeshPathKeepsItsOwnPruneHorizon:
+    """Parameterising the local call site changes nothing for the mesh path."""
+
+    def test_called_without_overrides_the_prune_still_uses_the_mesh_horizon(self) -> None:
+        # This is how the mesh receive path calls it: no overrides, so the
+        # horizon stays the one its own magnitude clamp justifies.
+        horizon = security._input_value_abs() / security._input_slew_abs()
+        at_rest = {"joint1": (0.0, 1000.0)}
+
+        assert "joint1" in security.merge_slew_baseline(at_rest, {}, 1000.0 + horizon * 0.9)
+        assert "joint1" not in security.merge_slew_baseline(at_rest, {}, 1000.0 + horizon * 1.1)
