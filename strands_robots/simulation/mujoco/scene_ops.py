@@ -332,6 +332,60 @@ def install_compiled_model(world: SimWorld, model: Any, data: Any) -> None:
     world._recompile_generation += 1
 
 
+def _snapshot_body_wrenches(model: Any, data: Any, mj: Any) -> dict[str, list[float]]:
+    """Capture every latched ``apply_force`` wrench, keyed by body name.
+
+    ``xfrc_applied`` is indexed by body, and a scene rebuild renumbers bodies,
+    so the wrench is carried by NAME for the same reason every other field of
+    :class:`_SceneState` is. Only non-zero rows are captured: an all-zero row is
+    "no wrench latched here", which is exactly what a fresh allocation already
+    holds, so a scene with no wrench in it costs an empty dict.
+
+    Args:
+        model: The compiled model the rows are being read against.
+        data: The ``MjData`` holding the latched wrenches.
+        mj: The resolved ``mujoco`` module.
+
+    Returns:
+        ``body name -> [fx, fy, fz, tx, ty, tz]`` for each body with a wrench.
+    """
+    wrenches: dict[str, list[float]] = {}
+    for bid in range(int(model.nbody)):
+        row = data.xfrc_applied[bid]
+        if not row.any():
+            continue
+        name = mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, bid)
+        if not name:
+            # No namespace names it, so it cannot be matched across the rebuild.
+            # ``apply_force`` resolves its target by name and so cannot latch
+            # one here; a wrench on an unnamed body came from elsewhere.
+            logger.debug("snapshot_body_wrenches: body id %d has no name, wrench not carried over", bid)
+            continue
+        wrenches[name] = [float(x) for x in row]
+    return wrenches
+
+
+def _restore_body_wrenches(model: Any, data: Any, wrenches: dict[str, list[float]], mj: Any) -> None:
+    """Re-latch ``wrenches`` onto the bodies that still carry those names.
+
+    A body that no longer exists is skipped: its absence is the point of a
+    rebuild that removed it. Bodies absent from ``wrenches`` keep their
+    fresh-compile zero row, which is the same "no wrench" the snapshot read.
+
+    Args:
+        model: The freshly compiled model to resolve names against.
+        data: The ``MjData`` to write the wrenches into.
+        wrenches: A snapshot from :func:`_snapshot_body_wrenches`.
+        mj: The resolved ``mujoco`` module.
+    """
+    for name, row in wrenches.items():
+        bid = mj_name_to_id(model, mj.mjtObj.mjOBJ_BODY, name)
+        if bid < 0:
+            continue  # body no longer exists (expected for a removed robot)
+        for i, v in enumerate(row):
+            data.xfrc_applied[bid, i] = v
+
+
 def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal: bool = False) -> bool:
     """Recompile ``spec`` in place, replacing ``world._model`` and ``_data``.
 
@@ -367,6 +421,13 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
       were applied either way, so the only symptom was a quadruped lying down
       under a ``"status": "success"``.
 
+    One buffer is not transferred at all rather than only in its tail:
+    ``xfrc_applied``, the per-body row
+    :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
+    latches a wrench in, comes back entirely zero. That wrench is documented to
+    hold until the next ``apply_force`` on the same body or a ``reset()``, so it
+    is snapshotted by body name before the recompile and re-latched after.
+
     Also re-discovers per-robot joint and actuator IDs (they may have shifted
     as new bodies were inserted earlier in the body tree). Returns True on
     success, False on compile failure (logged).
@@ -388,6 +449,14 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
     old_nv = int(world._model.nv) if world._model is not None else 0
     old_nu = int(world._model.nu) if world._model is not None else 0
     old_na = int(world._model.na) if world._model is not None else 0
+    # ``spec.recompile`` carries no part of ``xfrc_applied`` -- the whole buffer
+    # comes back zero -- so the latched wrenches are read off the outgoing data
+    # here and re-latched by name below.
+    wrenches = (
+        _snapshot_body_wrenches(world._model, world._data, mj)
+        if world._model is not None and world._data is not None
+        else {}
+    )
     try:
         with filter_mujoco_attach_noise():
             new_model, new_data = spec.recompile(world._model, world._data)
@@ -411,6 +480,8 @@ def _recompile_preserving_state(world: SimWorld, spec: Any, *, raise_on_refusal:
         new_data.ctrl[old_nu:] = 0.0
     if new_model.na > old_na:
         new_data.act[old_na:] = 0.0
+    # Re-latch the external wrenches, before the forward pass reads them.
+    _restore_body_wrenches(new_model, new_data, wrenches, mj)
     # Forward pass so newly-injected bodies have valid xpos/xquat and any
     # camera xforms are populated. Without this, the next render() call
     # after add_object / add_robot / add_camera returns a 100% black frame
@@ -1169,11 +1240,17 @@ class _SceneState:
         actuators: ``actuator name -> (ctrl, act)``. ``ctrl`` is the servo
             setpoint holding a robot's pose; ``act`` is the internal activation
             of a stateful actuator, its effective command.
+        body_wrenches: ``body name -> [fx, fy, fz, tx, ty, tz]``, the external
+            wrench :meth:`~strands_robots.simulation.mujoco.MuJoCoSimEngine.apply_force`
+            latches in a body's own ``xfrc_applied`` row. ``qfrc_applied``
+            above is its joint-space sibling; both are part of the state
+            ``save_state`` checkpoints, so both are carried.
         time: ``data.time``, the clock the physics reads.
     """
 
     joints: dict[_JointKey, tuple[list[float], list[float], list[float]]]
     actuators: dict[str, tuple[float, list[float]]]
+    body_wrenches: dict[str, list[float]]
     time: float
 
 
@@ -1210,7 +1287,7 @@ def _snapshot_scene_state(world: SimWorld) -> _SceneState:
     captured and why it is keyed by name rather than by index.
     """
     if world._model is None or world._data is None:
-        return _SceneState(joints={}, actuators={}, time=0.0)
+        return _SceneState(joints={}, actuators={}, body_wrenches={}, time=0.0)
     mj = _ensure_mujoco()
     model = world._model
     data = world._data
@@ -1246,7 +1323,12 @@ def _snapshot_scene_state(world: SimWorld) -> _SceneState:
         act_vals = [float(x) for x in data.act[act_adr : act_adr + act_num]] if act_adr >= 0 else []
         actuators[name] = (float(data.ctrl[aid]), act_vals)
 
-    return _SceneState(joints=joints, actuators=actuators, time=float(data.time))
+    return _SceneState(
+        joints=joints,
+        actuators=actuators,
+        body_wrenches=_snapshot_body_wrenches(model, data, mj),
+        time=float(data.time),
+    )
 
 
 def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
@@ -1315,6 +1397,7 @@ def _restore_scene_state(world: SimWorld, snapshot: _SceneState) -> int:
         for i, v in enumerate(act_vals):
             data.act[act_adr + i] = v
 
+    _restore_body_wrenches(model, data, snapshot.body_wrenches, mj)
     data.time = snapshot.time
     return restored
 
