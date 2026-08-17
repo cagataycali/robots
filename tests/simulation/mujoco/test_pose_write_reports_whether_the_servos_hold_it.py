@@ -120,11 +120,11 @@ TENDON_GRIP_XML = """
     <body name="palm" pos="0 0 0.4">
       <geom name="palm_geom" type="box" size="0.05 0.03 0.02" mass="0.5"/>
       <body name="left_finger" pos="0.04 0 0.03">
-        <joint name="left_driver" type="hinge" axis="0 1 0" range="0 1.2" damping="0.2"/>
+        <joint name="left_driver" type="hinge" axis="0 1 0" range="0 1.2" damping="0.2" armature="0.005"/>
         <geom name="left_geom" type="capsule" size="0.008 0.03" mass="0.05"/>
       </body>
       <body name="right_finger" pos="-0.04 0 0.03">
-        <joint name="right_driver" type="hinge" axis="0 1 0" range="0 1.2" damping="0.2"/>
+        <joint name="right_driver" type="hinge" axis="0 1 0" range="0 1.2" damping="0.2" armature="0.005"/>
         <geom name="right_geom" type="capsule" size="0.008 0.03" mass="0.05"/>
       </body>
     </body>
@@ -139,6 +139,13 @@ TENDON_GRIP_XML = """
       <joint joint="right_driver" coef="0.5"/>
     </fixed>
   </tendon>
+  <!-- One tendon over two joints constrains only their weighted sum, so their
+       difference is a zero-stiffness mode. robotiq_2f85 pins it with exactly this
+       equality (plus the armature above), and without it the pair is free to drift
+       apart under an integrator change. -->
+  <equality>
+    <joint joint1="left_driver" joint2="right_driver"/>
+  </equality>
   <actuator>
     <position name="grip_actuator" tendon="grip" kp="100" ctrlrange="0 255"/>
     <position name="elbow_servo" joint="elbow" kp="60" kv="6"/>
@@ -376,13 +383,6 @@ class TestAJointATendonDrivesIsReportedNotSilent:
         assert "left_driver" in text and "right_driver" in text, text
         assert "left alone" in text, text
 
-    def test_the_pose_it_reports_on_really_does_not_survive_stepping(self, grip_sim):
-        """The report's claim, measured: the tendon actuator pulls the pose back."""
-        assert _text(grip_sim.set_joint_positions({"left_driver": 0.6, "right_driver": 0.6}, hold=True))
-        grip_sim.step(300)
-        assert _qpos(grip_sim, "left_driver") == pytest.approx(0.0, abs=0.05)
-        assert _qpos(grip_sim, "right_driver") == pytest.approx(0.0, abs=0.05)
-
     def test_a_tendon_coupled_joint_lands_in_other_drives(self, grip_sim):
         """It is driven, so it belongs in a bucket - and not in *servos*."""
         from strands_robots.simulation.mujoco.scene_ops import joint_drive_map
@@ -469,5 +469,33 @@ class TestAStockGripperReportsItsFingerJoints:
             for joint in joints:
                 assert joint in text, text
             assert "left alone" in text, text
+        finally:
+            sim.cleanup()
+
+    @pytest.mark.parametrize(
+        ("robot", "joints", "target"),
+        [
+            ("panda", ("panda/finger_joint1", "panda/finger_joint2"), 0.04),
+            ("robotiq_2f85", ("robotiq_2f85/left_driver_joint", "robotiq_2f85/right_driver_joint"), 0.6),
+        ],
+    )
+    def test_the_pose_it_reports_on_really_does_not_survive_stepping(self, robot, joints, target):
+        """The report's claim, measured on the asset it is reporting about.
+
+        Asserted as "far from what was asked for" rather than against a settling
+        point: where the tendon takes the joint is the model's business, and only
+        that the written pose is not what the next step keeps is this call's.
+        """
+        sim = Simulation(tool_name=f"test_pose_drift_{robot}", mesh=False)
+        try:
+            sim.create_world()
+            if sim.add_robot(robot)["status"] != "success":
+                pytest.skip(f"{robot} assets unavailable")
+            assert _text(sim.set_joint_positions(dict.fromkeys(joints, target), hold=True))
+            for joint in joints:
+                assert _qpos(sim, joint) == pytest.approx(target, abs=1e-9)
+            sim.step(400)
+            for joint in joints:
+                assert abs(_qpos(sim, joint) - target) > target / 2
         finally:
             sim.cleanup()
