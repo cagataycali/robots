@@ -14,6 +14,15 @@ keyframe spawn is sticky across resets, matching how a benchmark restores its
 canonical start each episode). ``keyframe=None`` (the default) keeps the
 historical zero-pose spawn byte-for-byte.
 
+A ``<key>`` declares ``qpos`` and ``ctrl`` as a matched pair -- the ctrl are the
+position-servo setpoints authored to HOLD that pose against gravity, which is
+why ``mj_resetDataKeyframe`` (MuJoCo's own way to apply a keyframe) sets both.
+Applying the pose alone leaves the servos commanded to the zero configuration,
+so the robot is placed at its home pose and then immediately driven off it; the
+setpoints therefore travel with the pose at spawn and across ``reset()``. A
+keyframe that declares no ctrl (or an all-zero row, which MuJoCo also produces
+for a ``<key>`` that names no ctrl at all) leaves the setpoints untouched.
+
 These tests use a tiny inline two-hinge MJCF with a ``<keyframe>`` so they run
 offline and GL-free in CI (no mesh download, no render).
 """
@@ -54,6 +63,66 @@ _ARM_MJCF = """
 """
 
 _HOME = [0.5, -1.2]
+
+
+def _servo_arm_mjcf(ctrl_attr: str) -> str:
+    """A gravity-loaded two-hinge arm whose ``home`` key carries ``ctrl_attr``.
+
+    The links are HORIZONTAL so gravity has full leverage on both joints: an
+    unheld pose collapses by radians, which is what makes "the servos hold the
+    keyed pose" a sharp assertion rather than a numerical squint. ``kp=200``
+    with joint damping settles on the setpoint instead of ringing, so a failure
+    means the setpoint is wrong -- not that the servo was too soft to arrive.
+    """
+    return f"""
+<mujoco model="kf_servo_arm">
+  <compiler angle="radian"/>
+  <option timestep="0.002" gravity="0 0 -9.81"/>
+  <worldbody>
+    <body name="l1" pos="0 0 0.4">
+      <joint name="shoulder" type="hinge" axis="0 1 0" damping="1.0"/>
+      <geom type="capsule" fromto="0 0 0 0.3 0 0" size="0.03" mass="1"/>
+      <body name="l2" pos="0.3 0 0">
+        <joint name="elbow" type="hinge" axis="0 1 0" damping="1.0"/>
+        <geom type="capsule" fromto="0 0 0 0.3 0 0" size="0.03" mass="1"/>
+      </body>
+    </body>
+  </worldbody>
+  <actuator>
+    <position name="s_act" joint="shoulder" kp="200"/>
+    <position name="e_act" joint="elbow" kp="200"/>
+  </actuator>
+  <keyframe><key name="home" qpos="0.6 -1.1"{ctrl_attr}/></keyframe>
+</mujoco>
+"""
+
+
+# The keyed pose, and the setpoints the same key pairs with it.
+_SERVO_HOME = [0.6, -1.1]
+
+
+@pytest.fixture
+def servo_arm_xml(tmp_path):
+    """Arm whose ``home`` key declares ctrl matched to its qpos."""
+    p = tmp_path / "kf_servo_arm.xml"
+    p.write_text(_servo_arm_mjcf(' ctrl="0.6 -1.1"'))
+    return str(p)
+
+
+@pytest.fixture
+def servo_arm_no_ctrl_xml(tmp_path):
+    """Same arm, but the ``home`` key declares no ctrl at all."""
+    p = tmp_path / "kf_servo_arm_no_ctrl.xml"
+    p.write_text(_servo_arm_mjcf(""))
+    return str(p)
+
+
+@pytest.fixture
+def servo_arm_zero_ctrl_xml(tmp_path):
+    """Same arm, but the ``home`` key spells its ctrl as an all-zero row."""
+    p = tmp_path / "kf_servo_arm_zero_ctrl.xml"
+    p.write_text(_servo_arm_mjcf(' ctrl="0 0"'))
+    return str(p)
 
 
 @pytest.fixture
@@ -359,7 +428,7 @@ class TestMultiRobotKeyframeSpawn:
 
 
 class TestApplyHomeQposWidthGuard:
-    """``_apply_home_qpos_to_robot`` must skip a home entry whose value width
+    """``_apply_home_state_to_robot`` must skip a home entry whose value width
     disagrees with the target joint's qpos width instead of writing a
     wrong-length slice.
 
@@ -387,7 +456,10 @@ class TestApplyHomeQposWidthGuard:
         # "shoulder" is a 1-wide hinge but the supplied home value has width 2;
         # "elbow" is correctly sized. Keys are the short (namespace-stripped)
         # joint names the method matches against.
-        sim._apply_home_qpos_to_robot(robot, {"shoulder": [0.1, 0.2], "elbow": [0.9]})
+        from strands_robots.simulation.mujoco.simulation import _KeyframeHome
+
+        home = _KeyframeHome(qpos={"shoulder": [0.1, 0.2], "elbow": [0.9]}, ctrl={})
+        sim._apply_home_state_to_robot(robot, home)
 
         # The mismatched shoulder entry is dropped: its qpos slice is untouched
         # (still the zero pose) and the extra value did NOT spill into the
@@ -396,3 +468,125 @@ class TestApplyHomeQposWidthGuard:
         assert data.qpos[el_adr] == 0.9
         # Only the correctly-sized joint is recorded for reset() to restore.
         assert robot.home_qpos == {"a/elbow": [0.9]}
+
+
+def _ctrl(sim):
+    return sim._world._data.ctrl.copy()
+
+
+def _step(sim, n):
+    for _ in range(n):
+        mj.mj_step(sim._world._model, sim._world._data)
+
+
+class TestKeyframeCtrlHoldsTheKeyedPose:
+    """A keyframe's ``ctrl`` travels with its ``qpos``, at spawn and on reset.
+
+    The keyed setpoints are the whole reason a ``<key>`` is a usable home pose:
+    they are what holds it up. Restoring the pose without them leaves the
+    servos commanded to the zero configuration, so the arm is placed at home
+    and then driven off it -- and for an eval loop that resets between
+    episodes, that happens before the policy's first observation of every
+    episode.
+    """
+
+    def test_spawn_applies_the_setpoints_paired_with_the_pose(self, sim, servo_arm_xml):
+        assert sim.add_robot(name="a", urdf_path=servo_arm_xml, keyframe="home")["status"] == "success"
+        assert np.allclose(_qpos(sim), _SERVO_HOME)
+        assert np.allclose(_ctrl(sim), _SERVO_HOME), (
+            f"spawn left ctrl at {_ctrl(sim).tolist()} while the keyframe pairs "
+            f"{_SERVO_HOME} with the pose it just applied"
+        )
+
+    def test_the_servos_hold_the_keyed_pose_after_spawn(self, sim, servo_arm_xml):
+        # The observable that matters: step and stay. With the setpoints dropped
+        # the servos drive toward zero and this gravity-loaded arm collapses.
+        sim.add_robot(name="a", urdf_path=servo_arm_xml, keyframe="home")
+        home = _qpos(sim)
+        assert np.allclose(home, _SERVO_HOME), "premise: spawn must be at the keyed pose"
+        _step(sim, 400)
+        drift = float(np.max(np.abs(_qpos(sim) - home)))
+        assert drift < 0.05, (
+            f"the arm moved {drift:.4f} rad off its keyed home pose "
+            f"(now {_qpos(sim).tolist()}, home {home.tolist()}) - the keyframe's "
+            f"setpoints are not holding it"
+        )
+
+    def test_reset_restores_the_setpoints_not_only_the_pose(self, sim, servo_arm_xml):
+        sim.add_robot(name="a", urdf_path=servo_arm_xml, keyframe="home")
+        # Command the arm somewhere else and let it get there, so the restore
+        # has something real to undo.
+        sim._world._data.ctrl[:] = [0.0, 0.0]
+        _step(sim, 400)
+        assert not np.allclose(_qpos(sim), _SERVO_HOME, atol=0.05), "premise: the arm must have left home"
+        assert sim.reset()["status"] == "success"
+        assert np.allclose(_qpos(sim), _SERVO_HOME)
+        assert np.allclose(_ctrl(sim), _SERVO_HOME), (
+            f"reset() restored the pose but left ctrl at {_ctrl(sim).tolist()}; "
+            f"reset() documents that the keyframe home state is restored"
+        )
+
+    def test_the_servos_hold_the_keyed_pose_after_reset(self, sim, servo_arm_xml):
+        sim.add_robot(name="a", urdf_path=servo_arm_xml, keyframe="home")
+        sim.reset()
+        home = _qpos(sim)
+        assert np.allclose(home, _SERVO_HOME), "premise: reset must land on the keyed pose"
+        _step(sim, 400)
+        drift = float(np.max(np.abs(_qpos(sim) - home)))
+        assert drift < 0.05, (
+            f"after reset() the arm moved {drift:.4f} rad off home - every episode "
+            f"of a reset-between-episodes eval loop starts already falling"
+        )
+
+    def test_setpoints_are_recorded_under_namespaced_actuator_names(self, sim, servo_arm_xml):
+        # Keyed by the merged scene's names, which is what reset() looks up.
+        sim.add_robot(name="a", urdf_path=servo_arm_xml, keyframe="home")
+        assert sim._world.robots["a"].home_ctrl == {"a/s_act": 0.6, "a/e_act": -1.1}
+
+    def test_a_second_robots_reset_does_not_disturb_the_first(self, sim, servo_arm_xml):
+        # Restoring is scoped to the actuators the robot's own keyframe named,
+        # so a keyframed arm and a plain one coexist without clobbering.
+        sim.add_robot(name="a", urdf_path=servo_arm_xml, keyframe="home")
+        sim.add_robot(name="b", urdf_path=servo_arm_xml, position=[1.0, 0.0, 0.0])
+        sim.reset()
+        model, data = sim._world._model, sim._world._data
+        by_name = {mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, i): float(data.ctrl[i]) for i in range(int(model.nu))}
+        assert by_name["a/s_act"] == pytest.approx(0.6)
+        assert by_name["a/e_act"] == pytest.approx(-1.1)
+        # b spawned without a keyframe: mj_resetData zeroed it and nothing
+        # re-asserted a setpoint it never asked for.
+        assert by_name["b/s_act"] == pytest.approx(0.0)
+        assert by_name["b/e_act"] == pytest.approx(0.0)
+
+
+class TestAKeyframeWithoutCtrlIsLeftAlone:
+    """A ``<key>`` that names no ctrl keeps the historical setpoint-free spawn.
+
+    These pass both before and after the setpoint restore: they are the bound
+    on it. Six of the registry's forty shipped keyframes carry an all-zero ctrl
+    row -- which is also exactly what MuJoCo materializes for a ``<key>`` that
+    names no ctrl at all -- so the two cases are indistinguishable in the model
+    and must behave the same.
+    """
+
+    def test_a_key_declaring_no_ctrl_leaves_the_setpoints_at_zero(self, sim, servo_arm_no_ctrl_xml):
+        sim.add_robot(name="a", urdf_path=servo_arm_no_ctrl_xml, keyframe="home")
+        assert np.allclose(_qpos(sim), _SERVO_HOME)
+        assert np.allclose(_ctrl(sim), [0.0, 0.0])
+
+    def test_an_all_zero_ctrl_row_leaves_the_setpoints_at_zero(self, sim, servo_arm_zero_ctrl_xml):
+        sim.add_robot(name="a", urdf_path=servo_arm_zero_ctrl_xml, keyframe="home")
+        assert np.allclose(_qpos(sim), _SERVO_HOME)
+        assert np.allclose(_ctrl(sim), [0.0, 0.0])
+
+    def test_a_spawn_without_a_keyframe_leaves_the_setpoints_at_zero(self, sim, servo_arm_xml):
+        sim.add_robot(name="a", urdf_path=servo_arm_xml)
+        assert np.allclose(_ctrl(sim), [0.0, 0.0])
+
+    def test_reset_leaves_a_manually_commanded_unkeyed_robot_to_mj_reset_data(self, sim, servo_arm_xml):
+        # Without a keyframe there is no recorded setpoint to re-assert, so
+        # reset() must not invent one: mj_resetData's zero stands.
+        sim.add_robot(name="a", urdf_path=servo_arm_xml)
+        sim._world._data.ctrl[:] = [0.4, -0.4]
+        sim.reset()
+        assert np.allclose(_ctrl(sim), [0.0, 0.0])

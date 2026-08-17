@@ -52,6 +52,7 @@ import threading
 import time
 from collections.abc import AsyncGenerator, Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -315,6 +316,25 @@ _WORLD_PARAM_SETTERS: tuple[tuple[str, str], ...] = (
     ("timestep", "set_timestep"),
     ("gravity", "set_gravity"),
 )
+
+
+@dataclass(frozen=True)
+class _KeyframeHome:
+    """One ``<keyframe>``'s home state: a pose plus the setpoints holding it.
+
+    A MuJoCo ``<key>`` declares ``qpos`` and ``ctrl`` as a matched pair -- the
+    ctrl are the position-servo targets authored to HOLD that qpos against
+    gravity. They travel together here for the same reason: applying the pose
+    while leaving the servos commanded elsewhere puts the robot at the home
+    configuration and then immediately drives it off, which is not what
+    "spawn at the canonical home pose" means.
+
+    Both dicts are keyed by SHORT (source-model) name, because the caller
+    resolves them against the merged scene by name.
+    """
+
+    qpos: dict[str, list[float]]
+    ctrl: dict[str, float]
 
 
 _TOOL_SPEC_PATH = Path(__file__).parent / "tool_spec.json"
@@ -1521,8 +1541,13 @@ class MuJoCoSimEngine(
         ``keyframe`` (name ``str`` or index ``int``) spawns the robot in a
         canonical pose declared by a ``<keyframe>`` in its source model
         (e.g. panda ``"home"``) instead of the all-zero configuration, and the
-        pose is restored by ``reset()``. An unknown keyframe is a hard error
-        naming the available keyframes; ``None`` (default) keeps the zero pose.
+        pose is restored by ``reset()``. The keyframe's ``ctrl`` -- the servo
+        setpoints its author paired with that pose to HOLD it against gravity --
+        is applied and restored with it, so the spawn pose is one the robot
+        stays in rather than one it immediately sags out of. A keyframe that
+        declares no ``ctrl`` leaves the setpoints alone. An unknown keyframe is
+        a hard error naming the available keyframes; ``None`` (default) keeps
+        the zero pose.
 
         A ``name``/``data_config`` that resolves to no model is reported as an
         actionable error naming the requested robot, offering close-match
@@ -1696,9 +1721,9 @@ class MuJoCoSimEngine(
             # model BEFORE mutating the scene, so an unknown keyframe fails
             # cleanly (naming the available keyframes) without leaving a
             # half-added robot behind.
-            home_by_short: dict[str, list[float]] | None = None
+            home_state: _KeyframeHome | None = None
             if keyframe is not None:
-                home_by_short, kf_err = self._keyframe_home_qpos(resolved_path, keyframe)
+                home_state, kf_err = self._keyframe_home_state(resolved_path, keyframe)
                 if kf_err is not None:
                     return kf_err
 
@@ -1783,8 +1808,8 @@ class MuJoCoSimEngine(
             # reset is what forced the home-pose re-apply that used to follow it:
             # a partial repair that only covered robots spawned with a keyframe.
             self._reset_robot_to_reference(robot)
-            if home_by_short:
-                self._apply_home_qpos_to_robot(robot, home_by_short)
+            if home_state is not None:
+                self._apply_home_state_to_robot(robot, home_state)
             # Seat only the new base: the others are wherever the scene left
             # them, and re-seating a base that is not at its reference height
             # would stack the terrain offset onto it again.
@@ -1828,15 +1853,28 @@ class MuJoCoSimEngine(
             logger.error("Failed to add robot '%s': %s", name, e)
             return {"status": "error", "content": [{"text": f"Failed to load: {e}"}]}
 
-    def _keyframe_home_qpos(
+    def _keyframe_home_state(
         self, resolved_path: str, keyframe: str | int
-    ) -> tuple[dict[str, list[float]] | None, dict[str, Any] | None]:
-        """Read a robot's ``<keyframe>`` home pose from its SOURCE model.
+    ) -> tuple[_KeyframeHome | None, dict[str, Any] | None]:
+        """Read a robot's ``<keyframe>`` home state from its SOURCE model.
 
-        Returns ``(home_by_short_joint, None)`` mapping each source joint's
-        short name to its qpos slice, or ``(None, error_result)`` when the
-        source model cannot be compiled or the keyframe name/index is unknown
-        (the error names the available keyframes so the caller can fix it).
+        Returns ``(home, None)`` where ``home.qpos`` maps each source joint's
+        short name to its qpos slice and ``home.ctrl`` maps each source
+        actuator's short name to the setpoint the same keyframe pairs with that
+        pose, or ``(None, error_result)`` when the source model cannot be
+        compiled or the keyframe name/index is unknown (the error names the
+        available keyframes so the caller can fix it).
+
+        Both halves come from the one ``<key>`` element because MuJoCo authors
+        them as a pair -- ``mj_resetDataKeyframe``, the reference way to apply a
+        keyframe, sets ``ctrl`` from it as well as ``qpos``. Reading only the
+        pose would leave the servos on whatever they held before, which for a
+        gravity-loaded arm means it sags off the home pose on the first step.
+
+        A keyframe that declares no ``ctrl`` yields an empty ``home.ctrl`` (a
+        MuJoCo ``<key>`` defaults it to zeros only when actuators exist, and
+        an all-zero ctrl is indistinguishable from "not authored"), so such a
+        model keeps the historical setpoint-free behaviour.
         """
         mj = self._mj
         fname = os.path.basename(resolved_path)
@@ -1891,12 +1929,33 @@ class MuJoCoSimEngine(
             adr = int(src.jnt_qposadr[j])
             width = _jnt_qpos_width(mj, int(src.jnt_type[j]))
             home[jn] = [float(x) for x in kq[adr : adr + width]]
-        return home, None
+        # The setpoints authored to hold that pose. An all-zero ctrl row is
+        # what MuJoCo also produces for a <key> that names no ctrl at all, so
+        # treat it as "not authored" and record nothing: that keeps a model
+        # whose keyframe really is setpoint-free (cassie, koch, unitree_h1)
+        # byte-identical to the pose-only behaviour it has today.
+        kc = src.key_ctrl[idx]
+        home_ctrl: dict[str, float] = {}
+        if any(float(x) != 0.0 for x in kc):
+            for a in range(src.nu):
+                an = mj.mj_id2name(src, mj.mjtObj.mjOBJ_ACTUATOR, a)
+                if not an:
+                    # An unnamed actuator cannot be matched into the merged
+                    # scene by name, so skip it rather than guess at an index
+                    # the recompile is free to renumber.
+                    continue
+                home_ctrl[an] = float(kc[a])
+        return _KeyframeHome(qpos=home, ctrl=home_ctrl), None
 
-    def _apply_home_qpos_to_robot(self, robot: SimRobot, home_by_short: dict[str, list[float]]) -> None:
-        """Write ``home_by_short`` onto ``robot``'s joints in the live model and
-        record the applied pose (keyed by namespaced joint name) on the robot so
-        :meth:`reset` can restore it. The caller runs ``mj_forward`` afterwards.
+    def _apply_home_state_to_robot(self, robot: SimRobot, home: _KeyframeHome) -> None:
+        """Write ``home`` onto ``robot``'s joints and actuators in the live
+        model and record what was applied (keyed by namespaced name) on the
+        robot so :meth:`reset` can restore it. The caller runs ``mj_forward``
+        afterwards.
+
+        Both halves are matched into the merged scene by the SAME name rule, so
+        the pose and the setpoints holding it can never be resolved against
+        different sets of entities.
         """
         mj = self._mj
         assert self._world is not None and self._world._model is not None and self._world._data is not None
@@ -1909,7 +1968,7 @@ class MuJoCoSimEngine(
             if not jn:
                 continue
             short = jn[len(pfx) :] if pfx and jn.startswith(pfx) else jn
-            vals = home_by_short.get(short)
+            vals = home.qpos.get(short)
             if vals is None:
                 continue
             adr = int(model.jnt_qposadr[j])
@@ -1921,6 +1980,18 @@ class MuJoCoSimEngine(
             data.qpos[adr : adr + width] = vals
             stored[jn] = vals
         robot.home_qpos = stored
+        stored_ctrl: dict[str, float] = {}
+        for a in range(model.nu):
+            an = mj.mj_id2name(model, mj.mjtObj.mjOBJ_ACTUATOR, a)
+            if not an:
+                continue
+            short = an[len(pfx) :] if pfx and an.startswith(pfx) else an
+            setpoint = home.ctrl.get(short)
+            if setpoint is None:
+                continue
+            data.ctrl[a] = setpoint
+            stored_ctrl[an] = setpoint
+        robot.home_ctrl = stored_ctrl
 
     def _reset_robot_to_reference(self, robot: SimRobot) -> None:
         """Put one robot's joints and velocities at the model's reference
@@ -1983,9 +2054,18 @@ class MuJoCoSimEngine(
             data.qvel[dadr : dadr + _jnt_dof_width(mj, jnt_type)] = 0.0
 
     def _restore_home_poses(self) -> None:
-        """Re-apply every robot's captured keyframe home pose onto the live
-        ``qpos`` (a no-op for robots spawned without a keyframe). The caller
-        holds the model lock and runs ``mj_forward`` afterwards.
+        """Re-apply every robot's captured keyframe home state onto the live
+        ``qpos`` AND ``ctrl`` (a no-op for robots spawned without a keyframe).
+        The caller holds the model lock and runs ``mj_forward`` afterwards.
+
+        ``mj_resetData`` zeroes ``ctrl`` along with everything else, so
+        restoring only the pose hands the next step a robot that is AT its home
+        configuration with its servos commanded to the zero one -- the arm then
+        drives away from home on the first step of every episode. Restoring
+        both leaves the keyframe doing the job it was authored for: a
+        self-holding canonical start pose. Only the actuators the robot's own
+        keyframe named are written, so a multi-robot scene cannot have one
+        robot's restore disturb another's setpoints.
         """
         mj = self._mj
         assert self._world is not None and self._world._model is not None and self._world._data is not None
@@ -1993,14 +2073,20 @@ class MuJoCoSimEngine(
         data = self._world._data
         for robot in self._world.robots.values():
             hq = getattr(robot, "home_qpos", None)
-            if not hq:
-                continue
-            for jn, vals in hq.items():
-                jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jn)
-                if jid < 0:
-                    continue
-                adr = int(model.jnt_qposadr[jid])
-                data.qpos[adr : adr + len(vals)] = vals
+            if hq:
+                for jn, vals in hq.items():
+                    jid = mj_name_to_id(model, mj.mjtObj.mjOBJ_JOINT, jn)
+                    if jid < 0:
+                        continue
+                    adr = int(model.jnt_qposadr[jid])
+                    data.qpos[adr : adr + len(vals)] = vals
+            hc = getattr(robot, "home_ctrl", None)
+            if hc:
+                for an, setpoint in hc.items():
+                    aid = mj_name_to_id(model, mj.mjtObj.mjOBJ_ACTUATOR, an)
+                    if aid < 0:
+                        continue
+                    data.ctrl[aid] = setpoint
 
     def _describe_robot_placement(self, robot: SimRobot) -> str:
         """Describe where ``robot`` actually stands, and why it differs.
@@ -4016,10 +4102,15 @@ class MuJoCoSimEngine(
             # matching the mj_resetData -> mj_forward idiom used by
             # _compile_world and load_scene.
             #
-            # Re-apply any per-robot keyframe home pose captured at add_robot
+            # Re-apply any per-robot keyframe home state captured at add_robot
             # time (mj_resetData alone drops it back to the zero configuration),
             # so a keyframe spawn is sticky across resets -- mirroring how a
-            # benchmark restores its canonical start pose each episode.
+            # benchmark restores its canonical start pose each episode. That
+            # covers the keyframe's ctrl as well as its qpos: mj_resetData
+            # zeroes the setpoints too, and a pose-only restore would start
+            # every episode with the servos commanded to the zero configuration,
+            # so the robot is already driving away from home as the policy takes
+            # its FIRST observation of the episode.
             self._restore_home_poses()
             self._seat_floating_bases_on_terrain()
             mj.mj_forward(self._world._model, self._world._data)

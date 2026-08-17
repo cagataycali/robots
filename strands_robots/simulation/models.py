@@ -58,6 +58,15 @@ class SimRobot:
     # for robots spawned without a keyframe (the default zero pose), so reset()
     # stays byte-identical for those robots.
     home_qpos: dict[str, list[float]] = field(default_factory=dict)
+    # The actuator setpoints the SAME keyframe pairs with ``home_qpos``: the
+    # servo targets that HOLD that pose against gravity. A ``<key>`` declares
+    # ``qpos`` and ``ctrl`` together for exactly that reason, so restoring the
+    # pose without them leaves the servos commanded elsewhere and the robot
+    # drives off the pose it was just placed in. Maps each (namespaced)
+    # actuator name to its ctrl value. Empty for a robot spawned without a
+    # keyframe AND for a keyframe that declares no ctrl, so reset() stays
+    # byte-identical for those robots.
+    home_ctrl: dict[str, float] = field(default_factory=dict)
     policy_running: bool = False
     policy_steps: int = 0
     policy_instruction: str = ""
