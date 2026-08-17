@@ -111,6 +111,9 @@ Every hardware `Robot` and `Simulation` host exposes:
 - **`block`** - run inline until `duration` elapses / Ctrl+C (`True`) vs
   background thread (`False`, default).
 - **`duration`** - auto-stop after N seconds (`None` = until stopped).
+  Measured on a monotonic clock, so a wall-clock correction mid-session neither
+  ends it early nor keeps the follower driven past the budget, and the reported
+  `elapsed_s` is the time that actually elapsed.
 
 Each tick: poll every selected device's `get_action()` → apply its `map_fn` →
 **merge** (last-wins on key conflict, with a one-time warning) → check the
