@@ -308,6 +308,8 @@ class SessionManager:
                         if proc.is_running():
                             active_sessions[name] = info
                     except psutil.NoSuchProcess:
+                        # Reaped between pid_exists and this probe: the record
+                        # names nothing, so pruning it loses no live session.
                         pass
                     except psutil.AccessDenied:
                         # Exists but not inspectable: keep the record (see above)
