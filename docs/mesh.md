@@ -139,6 +139,17 @@ follower.stop_teleop("leader")
 
 `get_teleop_status()` on either side inspects current teleop state.
 
+Each published frame carries the operator's control signals from the
+teleoperator's `get_teleop_events()` - `terminate_episode`, `success`,
+`rerecord_episode`, `is_intervention` - alongside the joint action. Reading them
+is best-effort: a teleoperator whose event surface stops answering (a keyboard
+listener thread that died, a gamepad unplugged mid-session) never stops the joint
+stream the follower is tracking. Because that field is also `null` for a leader
+arm with no event surface at all, a failed read is reported on the publisher
+rather than only on the wire - it increments `event_read_errors` in
+`get_teleop_status()` and logs a warning naming the device and the cause, so an
+operator whose signals are being dropped can see it.
+
 `source_peer_id` and `device_name` are single segments of the mesh key
 expression `strands/{peer_id}/input/{device_name}`, so both must be plain
 identifiers (`[A-Za-z0-9_.-]+`, at most 128 chars). A Zenoh wildcard (`*`,
