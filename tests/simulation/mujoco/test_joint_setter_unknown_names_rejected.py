@@ -68,7 +68,7 @@ def test_positions_unknown_joint_rejected_and_qpos_untouched(sim):
     text = result["content"][0]["text"]
     assert "Joint 'shouldr' not found" in text  # consistent not-found prefix
     assert "shoulder" in text  # close match / available joints
-    assert "robot_joint_names" in text  # discovery pointer
+    assert "get_robot_state" in text  # discovery pointer, and a published action
     assert np.array_equal(sim._world._data.qpos, qpos)
 
 
