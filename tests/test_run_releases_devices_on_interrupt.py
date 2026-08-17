@@ -259,6 +259,41 @@ class TestCtrlCStillEndsTheProcess:
 
         assert "Shutting down sim-1" in out
 
+    def test_a_second_ctrl_c_during_the_release_still_reaches_the_exit(self, monkeypatch, capsys) -> None:
+        """The budget opened a window to interrupt; it must behave like the first.
+
+        Unlike the rest of this module this pins the fix rather than the defect:
+        before the budget existed there was no wait to interrupt, so there is no
+        pre-fix behaviour for it to contradict.
+
+        A ``KeyboardInterrupt`` that escaped the wait would skip ``os._exit``
+        and unwind into interpreter shutdown, where ``concurrent.futures``' own
+        exit hook joins the very executor drain the wait was covering -- so an
+        impatient operator would get the hang the budget exists to prevent.
+        """
+        interrupted = threading.Event()
+
+        class _InterruptedWait(threading.Event):
+            def wait(self, timeout: float | None = None) -> bool:  # noqa: ARG002 - stands in for the budget
+                interrupted.set()
+                raise KeyboardInterrupt
+
+        # Only the runner's view of ``threading`` is substituted; mutating the
+        # real ``threading.Event`` would reach every other user of it.
+        monkeypatch.setattr(
+            robot_mod,
+            "threading",
+            types.SimpleNamespace(Event=_InterruptedWait, Thread=threading.Thread),
+            raising=False,
+        )
+        sim = _Simulation()
+
+        out = _drive_foreground(monkeypatch, capsys, instance=sim)
+
+        assert interrupted.is_set(), "the release never reached the wait this test interrupts"
+        assert "sim-1 stopped." not in out
+        assert "interrupted again" in out
+
     def test_an_instance_without_a_cleanup_is_not_an_error(self, monkeypatch, capsys) -> None:
         """``_attach_device_connect`` binds ``.run()`` onto any instance."""
         instance = types.SimpleNamespace(_peer_id="bare-1", _peer_type="sim", mesh=None)

@@ -520,8 +520,9 @@ def _release_resources_on_interrupt(instance: Any, peer_id: str) -> str | None:
 
     Returns:
         ``None`` when the teardown ran to completion, so the caller may report
-        the robot stopped. Otherwise a sentence naming what stopped it, for a
-        caller that must not claim more than happened.
+        the robot stopped. Otherwise a sentence naming what stopped it -- the
+        budget expiring, the teardown raising, or a second Ctrl+C arriving
+        during the wait -- for a caller that must not claim more than happened.
     """
     cleanup = getattr(instance, "cleanup", None)
     if not callable(cleanup):
@@ -540,7 +541,20 @@ def _release_resources_on_interrupt(instance: Any, peer_id: str) -> str | None:
 
     threading.Thread(target=_teardown, name=f"{peer_id}-shutdown", daemon=True).start()
 
-    if not finished.wait(timeout=_SHUTDOWN_TIMEOUT_S):
+    try:
+        released = finished.wait(timeout=_SHUTDOWN_TIMEOUT_S)
+    except KeyboardInterrupt:
+        # An impatient operator interrupting again lands here rather than in the
+        # loop above, and it must not escape: the caller's ``os._exit`` is what
+        # guarantees the process ends, and letting this propagate would instead
+        # unwind into interpreter shutdown, where the executor drain this wait
+        # is covering gets joined a second time by ``concurrent.futures``' own
+        # exit hook. Before this budget existed there was no window to interrupt,
+        # so the second Ctrl+C has to keep behaving the way the first one did.
+        logger.warning("%s: shutdown interrupted again; exiting immediately.", peer_id)
+        return "the shutdown was interrupted again before it finished."
+
+    if not released:
         logger.warning(
             "%s: cleanup() did not finish within %gs; exiting anyway.",
             peer_id,
