@@ -1259,7 +1259,13 @@ class MuJoCoSimEngine(
             child_mesh = init_mesh(
                 robot,
                 peer_id=child_peer_id,
-                peer_type="robot",
+                # "sim", not "robot": presence publishes this as robot_type,
+                # and a simulated arm announcing itself as real hardware makes
+                # every consumer (dashboard badges, fleet-agent "is this real
+                # hardware?" checks, e-stop triage) treat a sim as actuating
+                # metal. Parent sim peers already announce "sim"; the child
+                # is the same MuJoCo world scoped to one robot.
+                peer_type="sim",
                 mesh=True,
             )
             if child_mesh is not None:
@@ -1270,6 +1276,12 @@ class MuJoCoSimEngine(
                 # from the MuJoCo world data (without this, the child mesh
                 # publishes only presence heartbeats - no state topic).
                 robot._world = self._world
+                # Parent-sim backref: the child peer's Mesh._dispatch
+                # delegates execute/start to this Simulation (with
+                # robot_name pre-bound) - a bare SimRobot has no run_policy
+                # of its own, so without this the addressable child peer
+                # answered "unknown action: execute".
+                robot._sim_parent = self
         except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
             logger.warning(
                 "Failed to attach robot %r to mesh (sim peer_id=%s): %s",
@@ -1300,12 +1312,28 @@ class MuJoCoSimEngine(
     def _unknown_model_msg(requested: str) -> str:
         """Build the 'model could not be resolved' error for a robot name.
 
-        Two conditions reach this message and they have different remedies, so
-        it diagnoses which one it is instead of reporting both as a bad name:
+        Three conditions reach this message and they have different remedies, so
+        it diagnoses which one it is instead of reporting them all as a bad name:
 
         * The registry does not know ``requested`` - a typo or an unknown robot.
-          Names the closest registry keys via :func:`close_match_hint` so the
-          caller can fix it in place without a discovery round-trip.
+          Names the closest sim-loadable registry keys via
+          :func:`close_match_hint` so the caller can fix it in place without a
+          discovery round-trip. The pool is deliberately the ``mode="sim"``
+          listing rather than the whole registry: a suggestion this engine
+          cannot spawn sends the caller straight back here, and the registry
+          holds hardware-only entries close enough to be suggested (the sole
+          suggestion offered for ``earthrover`` was ``hope_jr``, which is itself
+          hardware-only, so the one remedy on offer reproduced the same
+          refusal). ``close_match_hint`` already drops a suggestion identical to
+          ``requested`` for the same reason - it carries no information and
+          displaces a real one out of the three slots.
+        * The registry knows ``requested`` and the entry declares a hardware
+          backend and no simulation asset - a real robot strands drives over
+          LeRobot that has no model to load. The name is already correct, so
+          spelling suggestions are the wrong advice here too; names the hardware
+          entry point instead, the way
+          :func:`~strands_robots.robot.Robot` already answers a leader-arm name
+          with the teleoperator entry point rather than the registry listing.
         * The registry knows ``requested`` and its model XML is simply not on
           disk. Here the name is already correct, so spelling suggestions are
           the wrong advice - ``difflib`` ranks an exact match first, so this was
@@ -1327,13 +1355,18 @@ class MuJoCoSimEngine(
         try:
             from strands_robots.registry import list_robots as _list_robots
 
-            known = [r.get("name", "") for r in _list_robots() if r.get("name")]
+            # mode="sim" so a suggestion is a name this engine can actually
+            # spawn. A user model added through ``register_urdf`` is absent from
+            # every ``list_robots`` mode, so narrowing the pool drops nothing
+            # that was suggestable before.
+            known = [r.get("name", "") for r in _list_robots(mode="sim") if r.get("name")]
         except Exception:  # noqa: BLE001 - suggestions are best-effort
             known = []
 
         # Probed independently of the suggestion list so an unreadable registry
         # listing cannot mask the more specific diagnosis, and vice versa.
         asset_gap: tuple[str, str, str, bool, list[str]] | None = None
+        hardware_only: tuple[str, str] | None = None
         try:
             from strands_robots.assets.manager import get_search_paths, is_robot_asset_present
             from strands_robots.registry import get_robot as _get_robot
@@ -1344,7 +1377,8 @@ class MuJoCoSimEngine(
             # that cannot be a registry key raises and is caught, which keeps
             # the availability listing above ungated on the name's type.
             canonical = _resolve_name(requested)
-            asset = ((_get_robot(canonical) or {}) if canonical else {}).get("asset") or {}
+            entry = ((_get_robot(canonical) or {}) if canonical else {}) or {}
+            asset = entry.get("asset") or {}
             if asset and not is_robot_asset_present(canonical):
                 asset_gap = (
                     canonical,
@@ -1353,8 +1387,14 @@ class MuJoCoSimEngine(
                     asset.get("auto_download") is False,
                     [str(path) for path in get_search_paths()],
                 )
+            elif entry and not asset:
+                # Registered, correct, and simply not a simulation robot. The
+                # LeRobot type is what the hardware route is keyed on, so it is
+                # quoted when the entry declares one.
+                hardware_only = (canonical, str((entry.get("hardware") or {}).get("lerobot_type") or ""))
         except Exception:  # noqa: BLE001 - the diagnosis is best-effort
             asset_gap = None
+            hardware_only = None
 
         if asset_gap is not None:
             canonical, asset_dir, model_xml, never_downloads, search_paths = asset_gap
@@ -1377,6 +1417,17 @@ class MuJoCoSimEngine(
             else:
                 msg += f" Fetch it with the download_assets tool (robots='{canonical}')."
             return msg
+
+        if hardware_only is not None:
+            canonical, lerobot_type = hardware_only
+            typed = f" (LeRobot type '{lerobot_type}')" if lerobot_type else ""
+            return (
+                f"Robot '{requested}' is registered for real hardware only{typed}: its registry "
+                f"entry declares no simulation asset, so there is no model to load. The name is "
+                f"already correct, so there is no spelling to fix - drive it as hardware with "
+                f"Robot('{canonical}', mode='real'), or pass urdf_path= to supply a model of your "
+                f"own. Use list_robots(mode='sim') to see the robots this backend can spawn."
+            )
 
         msg = f"No model found for '{requested}'."
         msg += close_match_hint(requested, known)
@@ -1485,6 +1536,20 @@ class MuJoCoSimEngine(
         (nan/inf) vector returns an actionable ``{"status": "error"}`` and
         leaves the simulation unchanged, rather than baking a degenerate pose
         into the robot's base transform. NumPy scalar components are accepted.
+
+        ``position`` OFFSETS the model's own authored root pose rather than
+        replacing it: it is written as the attach frame's translation, which
+        MuJoCo composes with the ``pos`` the model's root body declares. A
+        ground-bolted arm declares ``pos="0 0 0"``, so for those the offset IS
+        the world position - but a locomotion model is authored standing, and
+        ``position=[0, 0, 0.4]`` on a Unitree Go2 (base ``pos`` ``z=0.445``)
+        compiles its base at ``z=0.845``. This differs from
+        :meth:`add_object`, whose ``position`` does place its body at exactly
+        that world point. The returned message reports the MEASURED world
+        position of the robot's root body, and names the request and the
+        model's own offset beside it whenever the two differ, so a spawn that
+        did not land where it was asked is visible in the result instead of
+        having to be measured with :meth:`get_body_state`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1746,7 +1811,7 @@ class MuJoCoSimEngine(
                         "text": (
                             f"Robot '{name}' added to simulation\n"
                             f"Source: {source} -> {os.path.basename(resolved_path)}\n"
-                            f"Position: {robot.position}\n"
+                            f"Position: {self._describe_robot_placement(robot)}\n"
                             f"Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
                             f"Actuators: {len(robot.actuator_ids)}\n"
                             f"Cameras: {list(self._world.cameras.keys())}"
@@ -1936,6 +2001,69 @@ class MuJoCoSimEngine(
                     continue
                 adr = int(model.jnt_qposadr[jid])
                 data.qpos[adr : adr + len(vals)] = vals
+
+    def _describe_robot_placement(self, robot: SimRobot) -> str:
+        """Describe where ``robot`` actually stands, and why it differs.
+
+        ``add_robot`` used to echo the requested ``position`` back as the
+        robot's placement. For a model whose root body declares a non-zero
+        ``pos`` that names a place the robot is not: ``position=[0, 0, 0.4]``
+        on a Unitree Go2 compiles its base at ``z=0.845``, and the reported
+        ``0.4`` is the one number the caller had to go on. The sibling call
+        ``add_object(position=...)`` does place its body at exactly that world
+        point, so one parameter name meant two different things depending on
+        which entity it addressed, with nothing in the result to say so.
+
+        Report the measured world position, and - only when it differs from
+        the request - name the request and the model's own root offset beside
+        it, so the caller can see both what it asked for and what the model
+        added. A robot whose root offset is zero (every ground-bolted arm) or
+        whose roots cannot be reduced to one pose keeps the original one-vector
+        form, so their messages are unchanged.
+        """
+        requested = list(robot.position or (0.0, 0.0, 0.0))
+        actual = self._robot_root_world_position(robot)
+        if actual is None:
+            return f"{requested}"
+        offset = [round(a - r, 4) for a, r in zip(actual, requested, strict=False)]
+        if not any(abs(component) > 1e-9 for component in offset):
+            return f"{actual}"
+        return f"{actual} (position={requested} + model root offset {offset})"
+
+    def _robot_root_world_position(self, robot: SimRobot) -> list[float] | None:
+        """Return the world position of ``robot``'s single root body, or ``None``.
+
+        ``position`` is written as the attach FRAME's translation, and MuJoCo
+        COMPOSES that frame with the model's own authored root pose - it does
+        not replace it. So for any model whose root body declares a non-zero
+        ``pos`` (30 of the 55 single-root robots in the built-in registry, e.g.
+        the Unitree Go2 base at ``z=0.445``, the JVRC pelvis at ``z=1.4``) the
+        robot does not stand where ``position`` names, and the requested vector
+        alone cannot tell the caller where it does stand. Read the compiled
+        placement back out of ``data.xpos`` so the answer is measured rather
+        than assumed - the same value :meth:`get_body_state` would report.
+
+        ``None`` when there is no compiled world yet, or when the robot has no
+        single root body: an ``aloha`` attaches two independent arm bases and an
+        ``rby1`` six, and a set of roots has no one base pose to name. Requires
+        a preceding ``mj_forward`` so ``data.xpos`` is current.
+        """
+        mj = self._mj
+        world = self._world
+        if world is None or world._model is None or world._data is None:
+            return None
+        model, data = world._model, world._data
+        prefix = robot.namespace or ""
+        roots = [
+            body
+            for body in range(1, model.nbody)
+            if int(model.body_parentid[body]) == 0
+            and (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body)) is not None
+            and name.startswith(prefix)
+        ]
+        if len(roots) != 1:
+            return None
+        return [round(float(v), 4) for v in data.xpos[roots[0]]]
 
     def _seat_floating_bases_on_terrain(self, only: SimRobot | None = None) -> None:
         """Raise each floating-base robot onto the local terrain surface.
@@ -4108,10 +4236,15 @@ class MuJoCoSimEngine(
     def list_urdfs(self) -> dict[str, Any]:
         """List every robot/URDF known to the registry (built-in + user-registered).
 
-        The names returned here are exactly the identifiers ``add_robot`` and
-        ``load_scene`` accept; ``register_urdf`` adds a new one. This is the
-        discovery entry point an agent uses to learn what it can spawn without
-        guessing a model name.
+        This is the discovery entry point an agent uses to learn what it can
+        spawn without guessing a model name; ``register_urdf`` adds a new one.
+
+        Read the ``Sim`` column: the registry also holds hardware-only entries -
+        robots strands drives over LeRobot that have no simulation model - and
+        those names are listed with ``Sim`` blank. ``add_robot`` and
+        ``load_scene`` accept the names marked ``Sim``; a hardware-only name is
+        refused with the hardware entry point instead. ``list_robots(mode="sim")``
+        returns just the spawnable subset.
         """
         return {"status": "success", "content": [{"text": list_available_models()}]}
 
@@ -4717,12 +4850,35 @@ class MuJoCoSimEngine(
                 action_key_cache[prefixed] = cached
             return cached
 
+        # N4: stream per-step telemetry on the mesh. publish_step existed with
+        # consumers (robot_mesh watch, dashboards) but ZERO producers - no
+        # rollout ever emitted it. Rate-limited to ~10 Hz to respect the
+        # transport caps. Prefer the robot's own child-peer mesh (per-robot
+        # topic), fall back to the parent sim's mesh.
+        _mesh = getattr(robot, "mesh", None) or getattr(self, "mesh", None)
+        _stream_state = {"last": 0.0}
+        from strands_robots.mesh.session import stream_min_period_from_env
+
+        # inf when step telemetry is off / misconfigured, so the throttle below
+        # simply never fires. A bare division here killed run_policy hook setup
+        # on STRANDS_MESH_STREAM_HZ=0.
+        _stream_min_period = stream_min_period_from_env()
+
         def _hook(step: int, observation: dict[str, Any], action: dict[str, Any]) -> None:
             # Cooperative cancellation: stop_policy flips this flag.
             if not robot.policy_running:
                 raise CooperativeStop(f"Policy stopped on '{robot_name}'")
 
             robot.policy_steps = step + 1
+
+            if _mesh is not None:
+                _now = time.time()
+                if _now - _stream_state["last"] >= _stream_min_period:
+                    _stream_state["last"] = _now
+                    try:
+                        _mesh.publish_step(step, observation, action, instruction=instruction)
+                    except Exception:  # noqa: BLE001 - telemetry must not kill the rollout
+                        pass
 
             with lock:
                 if world._backend_state.get("recording", False):

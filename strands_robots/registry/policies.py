@@ -49,6 +49,27 @@ def list_policy_providers() -> list[str]:
     return sorted(reg.get("providers", {}).keys())
 
 
+def list_policy_aliases() -> dict[str, str]:
+    """Return the full alias -> canonical provider mapping.
+
+    :func:`list_policy_providers` reports canonical names only, but
+    :func:`get_policy_provider`, :func:`resolve_policy` and
+    ``create_policy`` all accept a provider's declared aliases and
+    shorthands as well. This is the surface that enumerates them, so a
+    caller can discover every spelling the registry honours instead of
+    having to already know it.
+
+    A provider that redundantly lists its own canonical name among its
+    aliases contributes no entry: a name is not an alias of itself, and
+    such an entry would double-count the spelling
+    :func:`list_policy_providers` already reports.
+
+    Returns:
+        Mapping of alias to the canonical provider name it resolves to.
+    """
+    return {alias: canonical for alias, canonical in _build_alias_map().items() if alias != canonical}
+
+
 #: A leading URL scheme, e.g. the ``zmq`` in ``zmq://gpu-box:5555``. The scheme
 #: grammar is RFC 3986 section 3.1: an ALPHA followed by ALPHA / DIGIT / "+" /
 #: "-" / ".".
