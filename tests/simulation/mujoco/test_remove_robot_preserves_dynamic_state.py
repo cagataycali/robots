@@ -72,6 +72,26 @@ _FLOATING_BASE_XML = """
 </mujoco>
 """
 
+# A stateful actuator: ``dyntype="filter"`` gives it an internal activation in
+# ``act`` that charges toward the command, so ``act`` is a second piece of live
+# actuator state a rebuild has to carry - and unlike ``ctrl`` it is non-zero even
+# while the command is constant.
+_FILTERED_ARM_XML = """
+<mujoco model="filtered_arm">
+  <compiler angle="radian"/>
+  <worldbody>
+    <body name="link0" pos="0 0 0.1">
+      <joint name="pan" type="hinge" axis="0 0 1" damping="1.0"/>
+      <geom type="cylinder" size="0.05 0.05"/>
+    </body>
+  </worldbody>
+  <actuator>
+    <general name="pan_act" joint="pan" dyntype="filter" dynprm="0.4"
+             gaintype="fixed" gainprm="8" biastype="none"/>
+  </actuator>
+</mujoco>
+"""
+
 _HELD_SETPOINT = 0.9
 _SETTLE_STEPS = 400
 
@@ -335,4 +355,44 @@ class TestTheKeyNamespacesDoNotCollide:
         return (
             [float(v) for v in data.qpos[adr : adr + 7]],
             [float(v) for v in data.qvel[dof : dof + 6]],
+        )
+
+
+class TestAStatefulActuatorKeepsItsActivation:
+    """``act`` - a stateful actuator's internal activation - survives the rebuild.
+
+    A ``dyntype="filter"`` actuator's effective command lives in ``act``, not in
+    ``ctrl``, so restoring ``ctrl`` alone still discharges it to zero and the
+    actuator has to charge back up from nothing.
+    """
+
+    def _activation(self, sim: Simulation) -> float:
+        world = sim._world
+        assert world is not None and world._model is not None and world._data is not None
+        mj = sim._mj
+        model = world._model
+        aid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_ACTUATOR, "filt/pan_act")
+        assert aid >= 0, "actuator missing from the compiled model"
+        adr = int(model.actuator_actadr[aid])
+        assert adr >= 0, "premise: the actuator is stateful, so it has an activation slot"
+        return float(world._data.act[adr])
+
+    def test_the_activation_is_carried_across_the_rebuild(self, sim: Simulation, tmp_path) -> None:
+        sim.create_world()
+        filtered = _write_arm(tmp_path, "filtered_arm", _FILTERED_ARM_XML)
+        assert sim.add_robot(name="filt", urdf_path=filtered)["status"] == "success"
+        assert (
+            sim.add_robot(name="doomed", urdf_path=_write_arm(tmp_path, "servo_arm", _SERVO_ARM_XML))["status"]
+            == "success"
+        )
+        assert sim.send_action({"pan": 0.8}, robot_name="filt")["status"] == "success"
+        sim.step(150)
+
+        charged = self._activation(sim)
+        assert abs(charged) > 1e-6, "premise: the filter has charged up"
+
+        assert sim.remove_robot("doomed")["status"] == "success"
+        assert self._activation(sim) == pytest.approx(charged, abs=1e-9), (
+            f"the actuator's activation was {charged:.6f} and came back "
+            f"{self._activation(sim):.6f} after an unrelated robot was removed"
         )
