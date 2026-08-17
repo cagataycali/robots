@@ -944,8 +944,10 @@ frame = sim.render(camera_name="topdown")   # {status, content:[text, image]}
 
 **Self-healing:** unknown parameters are rejected with *"Unknown parameter X
 for action Y. Valid: [...]"*, missing required params produce *"Action X
-requires parameter Y."*, and vectors/dtypes are validated before MuJoCo sees
-them - so the agent learns the contract without crashing the process.
+requires parameter Y."*, a field the schema publishes as a string is refused
+unless it is one (*"Action X: 'Y' must be a string, got 7 (int)"*), and
+vectors/dtypes are validated before MuJoCo sees them - so the agent learns the
+contract without crashing the process.
 
 **Third-party backends.** `create_simulation(name)` discovers backends beyond
 the built-in `mujoco`/`newton`/`isaac` registry via Python
