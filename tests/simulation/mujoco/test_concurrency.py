@@ -528,11 +528,25 @@ class TestFrameDecodeReportsSkipRatherThanPassing:
     """
 
     def test_a_decode_failure_skips_instead_of_returning(self):
-        """A ``RuntimeError`` from frame access is reported as a skip."""
+        """A ``RuntimeError`` from frame access is reported as a skip.
+
+        The exception type is the substance of this double, not an arbitrary
+        choice: ``RuntimeError`` is what LeRobot's decode path raises when
+        torchcodec or the system FFmpeg libraries are missing, and it is the type
+        :func:`_read_first_frame_or_skip` catches. Raising a ``LookupError``
+        instead would leave the skip branch unexercised. The raise sits in a
+        helper rather than in ``__getitem__`` so the double is a stand-in for a
+        failing decode rather than a container whose subscript is always an
+        error.
+        """
 
         class _DecodeBroken:
-            def __getitem__(self, idx):
+            @staticmethod
+            def _decode(idx):
                 raise RuntimeError("Could not load libtorchcodec (video decode failed)")
+
+            def __getitem__(self, idx):
+                return self._decode(idx)
 
         with pytest.raises(pytest.skip.Exception, match="video decode unavailable"):
             _read_first_frame_or_skip(_DecodeBroken())
