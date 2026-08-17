@@ -44,6 +44,7 @@ from __future__ import annotations
 
 import ast
 import inspect
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -208,7 +209,7 @@ class TestNoDeclaredDefaultDrifts:
         """``{method: signature string}`` from the class's own ``describe``."""
         source = inspect.getsourcefile(cls)
         assert source is not None
-        tree = ast.parse(open(source, encoding="utf-8").read())
+        tree = ast.parse(Path(source).read_text(encoding="utf-8"))
         out: dict[str, str] = {}
         for klass in ast.walk(tree):
             if not (isinstance(klass, ast.ClassDef) and klass.name == cls.__name__):
