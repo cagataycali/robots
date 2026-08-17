@@ -112,6 +112,32 @@ cache["num_frames"], cache["control_dt"]
 `MotionPlayer` accepts that dict, an `.npz` written by
 `MotionPlayer.save_cache_npz`, or a raw ProtoMotions `.pt`.
 
+### The MJCF has to be the tracker's own embodiment
+
+`proto_mjcf_path` is not just any G1. The tracker reads a body out of the cache
+by **row index**, never by name: `anchor_body_index` and `root_body_index` are
+offsets into `GTP_G1_BODY_NAMES`, the 33-name list pinned from the checkpoint's
+sidecar. `qpos_to_motion_data` fills those rows by name from the model you hand
+it, so the model has to carry all 33 - plus a free root and the 29
+`GTP_G1_JOINT_NAMES` joints, for a `qpos` width of 36.
+
+The G1 family does not agree on that body set. The widely-shipped fingerless
+models omit `head` and both `rubber_hand` placeholders and expose 30 bodies;
+`g1_29dof_with_hand` and `g1_with_hands` expose 44 and a `qpos` width of 50.
+Passing one of those is refused, with a message that names what is missing:
+
+```text
+ValueError: ProtoMotions G1 MJCF .../g1_29dof.xml is missing 3 of the 33 bodies
+the tracker reads by row index: ['head', 'left_rubber_hand', 'right_rubber_hand'].
+```
+
+The refusal is the point. Read positionally, a 30-body model shifts every row
+after the gap by one, so the tracker asks for `torso_link` at row 16 and is
+handed `left_shoulder_pitch_link` - on a walking clip, an anchor orientation
+some 20 degrees out, with nothing in the cache to say so. A model whose `qpos`
+layout differs is refused separately and says so, so a model-side mismatch is
+not read as a bad `qpos` argument.
+
 ### Cache velocities are world-frame
 
 `body_pos` and `body_rot` are world poses, and `body_vel` and `body_ang_vel`
