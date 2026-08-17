@@ -21,7 +21,6 @@ covered the moment it is declared.
 """
 
 import ast
-import importlib
 import inspect
 import json
 from pathlib import Path
@@ -94,10 +93,8 @@ class TestTheConstructorHostDefaultIsReachable:
     def test_the_constructor_it_falls_back_to_does_define_a_host(self, provider):
         """Omitting the key is only safe because the constructor answers."""
         cfg = _registry()[provider]
-        try:
-            cls = getattr(importlib.import_module(cfg["module"]), cfg["class"])
-        except ImportError as exc:  # optional dependency absent
-            pytest.skip(f"{provider} needs an optional dependency: {exc}")
+        module = pytest.importorskip(cfg["module"], reason=f"{provider} needs an optional dependency")
+        cls = getattr(module, cfg["class"])
         param = inspect.signature(cls.__init__).parameters.get("host")
         assert param is not None and param.default is not inspect.Parameter.empty, (
             f"{cfg['class']} must default host= for an omitted key to be safe"
