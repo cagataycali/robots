@@ -176,6 +176,69 @@ def actuator_joint_id(model: Any, act_id: int, mj: Any) -> int:
     return int(model.actuator_trnid[act_id, 0])
 
 
+def actuator_driven_joint_ids(model: Any, act_id: int, mj: Any) -> frozenset[int]:
+    """Return every joint id actuator ``act_id`` drives.
+
+    :func:`actuator_joint_id` answers the narrower question "which single joint
+    is this actuator's transmission target", which is what a caller needs when
+    it has one ``ctrl`` slot to seed from one joint's position. It reports
+    ``-1`` for a tendon, because a tendon is not a joint.
+
+    A joint can still be driven *through* that tendon, though: a fixed tendon
+    that wraps joints couples them to one ``ctrl``, which is the standard MJCF
+    gripper idiom. So a caller asking "is this joint already driven" - rather
+    than "which joint is this actuator's target" - must resolve the tendon's
+    wrap list too, or it reads an actuated joint as free. That distinction is
+    the whole reason this is a second function and not a flag on the first: the
+    two questions have different answers for the same actuator, and collapsing
+    them would make one of the two call sites wrong.
+
+    Transmissions that drive a site, body or slider-crank contribute nothing:
+    they move a frame rather than command a joint coordinate, so a joint they
+    happen to move is still free for an actuator to claim.
+
+    Args:
+        model: The compiled ``MjModel``.
+        act_id: Actuator index in ``range(model.nu)``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        The driven joint ids, empty when the transmission commands no joint.
+    """
+    joint_id = actuator_joint_id(model, act_id, mj)
+    if joint_id >= 0:
+        return frozenset({joint_id})
+    if int(model.actuator_trntype[act_id]) != int(mj.mjtTrn.mjTRN_TENDON):
+        return frozenset()
+    return tendon_joint_ids(model, int(model.actuator_trnid[act_id, 0]), mj)
+
+
+def tendon_joint_ids(model: Any, tendon_id: int, mj: Any) -> frozenset[int]:
+    """Return the joint ids wired into tendon ``tendon_id`` by its wrap list.
+
+    A tendon's wrap entries live in one flat table shared by every tendon, so a
+    reader has to slice its own span (``tendon_adr`` / ``tendon_num``) and keep
+    only the ``mjWRAP_JOINT`` entries - site and pulley wraps carry ids from
+    other spaces. Walking that table is the part both "which actuator drives
+    this joint" and "which joints does this actuator drive" need, so it lives
+    here once rather than in each direction.
+
+    Args:
+        model: The compiled ``MjModel``.
+        tendon_id: Tendon index in ``range(model.ntendon)``.
+        mj: The ``mujoco`` module.
+
+    Returns:
+        The wrapped joint ids, empty when the tendon wraps no joint.
+    """
+    if tendon_id < 0 or tendon_id >= int(model.ntendon):
+        return frozenset()
+    wrap_joint = int(mj.mjtWrap.mjWRAP_JOINT)
+    adr = int(model.tendon_adr[tendon_id])
+    num = int(model.tendon_num[tendon_id])
+    return frozenset(int(model.wrap_objid[w]) for w in range(adr, adr + num) if int(model.wrap_type[w]) == wrap_joint)
+
+
 def robot_owned_actuator_ids(model: Any, robot: SimRobot, mj: Any) -> list[int]:
     """Return the actuator ids ``robot`` owns, in model order.
 
