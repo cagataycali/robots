@@ -174,12 +174,21 @@ def test_a_config_object_that_opts_in_is_left_alone(loader_kwargs):
 
 
 def test_an_unknown_knob_is_still_refused_rather_than_swallowed():
-    """Reachability must not arrive as a ``**kwargs`` that absorbs typos."""
+    """Reachability must not arrive as a ``**kwargs`` that absorbs typos.
+
+    The rejected name is derived from the live signature rather than hard-coded,
+    so this stays a statement about unknown keywords: it cannot rot into passing
+    a real parameter if one is later named after the string a literal happened
+    to hold.
+    """
     signature = inspect.signature(KimodoPolicy.__init__)
     assert not any(p.kind is p.VAR_KEYWORD for p in signature.parameters.values())
 
+    unknown = max(signature.parameters, key=len) + "_x"
+    assert unknown not in signature.parameters
+
     with pytest.raises(TypeError):
-        KimodoPolicy(trust_remote_cod=False)  # deliberate typo
+        KimodoPolicy(**dict.fromkeys([unknown], False))
 
 
 def test_the_provider_gate_still_requires_the_env_opt_in(monkeypatch):
