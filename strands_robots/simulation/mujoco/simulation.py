@@ -1485,6 +1485,20 @@ class MuJoCoSimEngine(
         (nan/inf) vector returns an actionable ``{"status": "error"}`` and
         leaves the simulation unchanged, rather than baking a degenerate pose
         into the robot's base transform. NumPy scalar components are accepted.
+
+        ``position`` OFFSETS the model's own authored root pose rather than
+        replacing it: it is written as the attach frame's translation, which
+        MuJoCo composes with the ``pos`` the model's root body declares. A
+        ground-bolted arm declares ``pos="0 0 0"``, so for those the offset IS
+        the world position - but a locomotion model is authored standing, and
+        ``position=[0, 0, 0.4]`` on a Unitree Go2 (base ``pos`` ``z=0.445``)
+        compiles its base at ``z=0.845``. This differs from
+        :meth:`add_object`, whose ``position`` does place its body at exactly
+        that world point. The returned message reports the MEASURED world
+        position of the robot's root body, and names the request and the
+        model's own offset beside it whenever the two differ, so a spawn that
+        did not land where it was asked is visible in the result instead of
+        having to be measured with :meth:`get_body_state`.
         """
         if self._world is None or self._world._model is None or self._world._data is None:
             return {"status": "error", "content": [{"text": _NO_WORLD_MSG}]}
@@ -1746,7 +1760,7 @@ class MuJoCoSimEngine(
                         "text": (
                             f"Robot '{name}' added to simulation\n"
                             f"Source: {source} -> {os.path.basename(resolved_path)}\n"
-                            f"Position: {robot.position}\n"
+                            f"Position: {self._describe_robot_placement(robot)}\n"
                             f"Joints: {len(robot.joint_names)} ({', '.join(robot.joint_names[:8])}{'...' if len(robot.joint_names) > 8 else ''})\n"
                             f"Actuators: {len(robot.actuator_ids)}\n"
                             f"Cameras: {list(self._world.cameras.keys())}"
@@ -1936,6 +1950,69 @@ class MuJoCoSimEngine(
                     continue
                 adr = int(model.jnt_qposadr[jid])
                 data.qpos[adr : adr + len(vals)] = vals
+
+    def _describe_robot_placement(self, robot: SimRobot) -> str:
+        """Describe where ``robot`` actually stands, and why it differs.
+
+        ``add_robot`` used to echo the requested ``position`` back as the
+        robot's placement. For a model whose root body declares a non-zero
+        ``pos`` that names a place the robot is not: ``position=[0, 0, 0.4]``
+        on a Unitree Go2 compiles its base at ``z=0.845``, and the reported
+        ``0.4`` is the one number the caller had to go on. The sibling call
+        ``add_object(position=...)`` does place its body at exactly that world
+        point, so one parameter name meant two different things depending on
+        which entity it addressed, with nothing in the result to say so.
+
+        Report the measured world position, and - only when it differs from
+        the request - name the request and the model's own root offset beside
+        it, so the caller can see both what it asked for and what the model
+        added. A robot whose root offset is zero (every ground-bolted arm) or
+        whose roots cannot be reduced to one pose keeps the original one-vector
+        form, so their messages are unchanged.
+        """
+        requested = list(robot.position or (0.0, 0.0, 0.0))
+        actual = self._robot_root_world_position(robot)
+        if actual is None:
+            return f"{requested}"
+        offset = [round(a - r, 4) for a, r in zip(actual, requested, strict=False)]
+        if not any(abs(component) > 1e-9 for component in offset):
+            return f"{actual}"
+        return f"{actual} (position={requested} + model root offset {offset})"
+
+    def _robot_root_world_position(self, robot: SimRobot) -> list[float] | None:
+        """Return the world position of ``robot``'s single root body, or ``None``.
+
+        ``position`` is written as the attach FRAME's translation, and MuJoCo
+        COMPOSES that frame with the model's own authored root pose - it does
+        not replace it. So for any model whose root body declares a non-zero
+        ``pos`` (30 of the 55 single-root robots in the built-in registry, e.g.
+        the Unitree Go2 base at ``z=0.445``, the JVRC pelvis at ``z=1.4``) the
+        robot does not stand where ``position`` names, and the requested vector
+        alone cannot tell the caller where it does stand. Read the compiled
+        placement back out of ``data.xpos`` so the answer is measured rather
+        than assumed - the same value :meth:`get_body_state` would report.
+
+        ``None`` when there is no compiled world yet, or when the robot has no
+        single root body: an ``aloha`` attaches two independent arm bases and an
+        ``rby1`` six, and a set of roots has no one base pose to name. Requires
+        a preceding ``mj_forward`` so ``data.xpos`` is current.
+        """
+        mj = self._mj
+        world = self._world
+        if world is None or world._model is None or world._data is None:
+            return None
+        model, data = world._model, world._data
+        prefix = robot.namespace or ""
+        roots = [
+            body
+            for body in range(1, model.nbody)
+            if int(model.body_parentid[body]) == 0
+            and (name := mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, body)) is not None
+            and name.startswith(prefix)
+        ]
+        if len(roots) != 1:
+            return None
+        return [round(float(v), 4) for v in data.xpos[roots[0]]]
 
     def _seat_floating_bases_on_terrain(self, only: SimRobot | None = None) -> None:
         """Raise each floating-base robot onto the local terrain surface.
