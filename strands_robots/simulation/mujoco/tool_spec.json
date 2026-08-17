@@ -458,6 +458,10 @@
       "type": "object",
       "description": "Joint name \u2192 position mapping for set_joint_positions"
     },
+    "hold": {
+      "type": "boolean",
+      "description": "set_joint_positions: also move the matching position-servo setpoints so the pose survives stepping, instead of being pulled back toward the setpoints the servos already hold (default false, which writes qpos only). A joint driven by a torque or velocity actuator is left alone - its ctrl is not a pose - and so is a joint a tendon couples to one ctrl (every stock gripper), whose ctrl is in tendon units and drives several joints at once. The success text names the joints it left alone."
+    },
     "velocities": {
       "type": "object",
       "description": "Joint name \u2192 velocity mapping for set_joint_velocities"
