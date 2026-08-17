@@ -645,9 +645,15 @@ def _attribute_or_skip(module: Any, name: str) -> Any:
 
     :func:`pytest.importorskip` gates on the module, not on what it contains,
     so a guarded attribute read needs its own skip. Returning the attribute
-    rather than leaving it optional at the call site also binds the caller's
-    name unconditionally: :func:`pytest.skip` raises, so the only way past this
-    call is with the attribute in hand.
+    rather than leaving it optional at the call site binds the caller's name
+    unconditionally: the only way past this call is with the attribute in hand.
+
+    The skip is raised rather than called so that every path out of this
+    function is explicit. :func:`pytest.skip` is annotated ``NoReturn``, but
+    reading it that way needs the annotation, and a checker that does not
+    reports the skip branch as falling off the end - which is the same "the
+    analysis cannot see the skip" problem this helper exists to remove, one
+    level up. ``pytest.skip.Exception`` is what :func:`pytest.skip` raises.
 
     Args:
         module: Module that imported successfully.
@@ -655,10 +661,14 @@ def _attribute_or_skip(module: Any, name: str) -> Any:
 
     Returns:
         The attribute.
+
+    Raises:
+        Skipped: When ``module`` does not expose ``name``.
     """
+    __tracebackhide__ = True
     attribute = getattr(module, name, None)
     if attribute is None:
-        pytest.skip(f"{module.__name__} does not expose {name}; skipping end-to-end test")
+        raise pytest.skip.Exception(f"{module.__name__} does not expose {name}; skipping end-to-end test")
     return attribute
 
 
@@ -666,11 +676,13 @@ def _load_upstream_policy_or_skip(policy_cls: Any, embodiment_tag: Any, checkpoi
     """Build the upstream Gr00t policy, or skip when this host cannot load it.
 
     Returning the policy rather than assigning into the caller's local keeps
-    that binding unconditional: :func:`pytest.skip` raises, so the only way
-    past the call is with a policy in hand. Assigning inside a ``try`` whose
-    handler skips leaves the name bound only on the success path as far as any
-    analysis of the enclosing function can tell, which is what
-    ``py/uninitialized-local-variable`` reports.
+    that binding unconditional: the only way past the call is with a policy in
+    hand. Assigning inside a ``try`` whose handler skips leaves the name bound
+    only on the success path as far as any analysis of the enclosing function
+    can tell, which is what ``py/uninitialized-local-variable`` reports. The
+    skip is raised rather than called for the same reason it is in
+    :func:`_attribute_or_skip`: it keeps every path out of this function
+    explicit.
 
     The guard stays broad on purpose. A checkpoint load reaches torch, the
     transformers stack and the Hub, any of which can fail for reasons that are
@@ -685,11 +697,15 @@ def _load_upstream_policy_or_skip(policy_cls: Any, embodiment_tag: Any, checkpoi
 
     Returns:
         The constructed upstream policy.
+
+    Raises:
+        Skipped: When this host cannot load the checkpoint.
     """
+    __tracebackhide__ = True
     try:
         return policy_cls(embodiment_tag=embodiment_tag, model_path=checkpoint, device=0)
     except Exception as e:  # noqa: BLE001 - model load failure is environmental
-        pytest.skip(f"failed to load Gr00tPolicy ({e}); skipping end-to-end test")
+        raise pytest.skip.Exception(f"failed to load Gr00tPolicy ({e}); skipping end-to-end test") from e
 
 
 @pytest.mark.timeout(900)

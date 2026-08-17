@@ -30,8 +30,10 @@ The remedy is the suite's own idiom, and it is shorter than what it replaces:
   rather than converting it into an ``AttributeError``;
 * a **value** that has to be built (a model load, a decode) -- a module-level
   ``*_or_skip`` helper that returns it, so the caller's binding is
-  unconditional. :func:`pytest.skip` is annotated ``NoReturn``, so a helper
-  needs no fallback return.
+  unconditional. Raise ``pytest.skip.Exception`` inside such a helper rather
+  than calling :func:`pytest.skip`, so that every path out of it is explicit;
+  calling it moves the same unanalyzable branch into the helper, where it is
+  reported as ``py/mixed-returns`` instead.
 
 Scope is deliberately the skip-handler shape and nothing wider. A handler
 that ends in ``return``, ``raise`` or :func:`pytest.fail` leaves the same
