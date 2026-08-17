@@ -73,6 +73,27 @@ is an error that lists the model's available keyframes. `keyframe=None` (the
 default) keeps the zero-pose spawn. (MuJoCo backend; the Newton backend rejects
 `keyframe=` as not-yet-supported.)
 
+### `position` offsets the model's own root pose
+
+`position` is written as the attach frame's translation, and MuJoCo *composes*
+that frame with the `pos` the model's root body declares - it does not replace
+it. A ground-bolted arm declares `pos="0 0 0"`, so for those the offset is the
+world position. A locomotion model is authored standing, so it is not:
+
+```python
+sim.add_robot(name="dog", data_config="unitree_go2", position=[0.0, 0.0, 0.4])
+# Position: [0.0, 0.0, 0.845] (position=[0.0, 0.0, 0.4] + model root offset [0.0, 0.0, 0.445])
+```
+
+30 of the 55 single-root robots in the built-in registry declare a non-zero root
+`pos` - the Unitree Go2 base at `z=0.445`, the JVRC pelvis at `z=1.4` - so for
+those `position=[0, 0, 0]` spawns the robot standing rather than sunk into the
+floor, which is the reason the compose is the useful default. `add_robot`
+reports the *measured* world position of the robot's root body and names the
+request and the model's offset beside it whenever they differ, so a spawn that
+did not land where it was asked is visible in the result. This differs from
+`add_object`, whose `position` places its body at exactly that world point.
+
 ### Adding a robot does not disturb the scene it joins
 
 Only the robot being added is placed at a defined configuration - its keyframe,

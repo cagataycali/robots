@@ -71,6 +71,11 @@ class SimRobot:
     # so the child Mesh's _read_state() can extract joint positions from
     # the MuJoCo world data. None for off-mesh or standalone robots.
     _world: Any = field(default=None, repr=False)
+    # Back-reference to the parent Simulation. Set by _attach_robot_to_mesh
+    # so the child peer's Mesh._dispatch can delegate execute/start to the
+    # parent Simulation (a bare SimRobot has no run_policy of its own).
+    # None for off-mesh or standalone robots.
+    _sim_parent: Any = field(default=None, repr=False)
 
 
 @dataclass

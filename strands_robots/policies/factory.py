@@ -5,7 +5,12 @@ import os
 from collections.abc import Callable, Mapping
 
 from strands_robots.policies.base import Policy
-from strands_robots.registry import import_policy_class, list_policy_providers, resolve_policy
+from strands_robots.registry import (
+    import_policy_class,
+    list_policy_aliases,
+    list_policy_providers,
+    resolve_policy,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +50,29 @@ def list_providers() -> list[str]:
     names.extend(_runtime_registry.keys())
     names.extend(_runtime_aliases.keys())
     return sorted(set(names))
+
+
+def list_aliases() -> dict[str, str]:
+    """Return every provider alias and the canonical name it resolves to.
+
+    :func:`create_policy` accepts a provider's declared aliases and
+    shorthands as readily as its canonical name, but
+    :func:`list_providers` reports the canonical names from the JSON
+    registry. Together the two surfaces enumerate every spelling
+    :func:`create_policy` accepts::
+
+        accepted = set(list_providers()) | set(list_aliases())
+
+    Covers both registries, matching the union :func:`list_providers`
+    reports: aliases declared in ``policies.json`` and aliases passed to
+    :func:`register_policy` at runtime. A runtime alias shadows a JSON
+    alias of the same name, which is the precedence
+    :func:`create_policy` applies.
+
+    Returns:
+        Mapping of alias to the canonical provider name it resolves to.
+    """
+    return {**list_policy_aliases(), **_runtime_aliases}
 
 
 class UntrustedRemoteCodeError(RuntimeError):
