@@ -1196,12 +1196,28 @@ class MuJoCoSimEngine(
     def _unknown_model_msg(requested: str) -> str:
         """Build the 'model could not be resolved' error for a robot name.
 
-        Two conditions reach this message and they have different remedies, so
-        it diagnoses which one it is instead of reporting both as a bad name:
+        Three conditions reach this message and they have different remedies, so
+        it diagnoses which one it is instead of reporting them all as a bad name:
 
         * The registry does not know ``requested`` - a typo or an unknown robot.
-          Names the closest registry keys via :func:`close_match_hint` so the
-          caller can fix it in place without a discovery round-trip.
+          Names the closest sim-loadable registry keys via
+          :func:`close_match_hint` so the caller can fix it in place without a
+          discovery round-trip. The pool is deliberately the ``mode="sim"``
+          listing rather than the whole registry: a suggestion this engine
+          cannot spawn sends the caller straight back here, and the registry
+          holds hardware-only entries close enough to be suggested (the sole
+          suggestion offered for ``earthrover`` was ``hope_jr``, which is itself
+          hardware-only, so the one remedy on offer reproduced the same
+          refusal). ``close_match_hint`` already drops a suggestion identical to
+          ``requested`` for the same reason - it carries no information and
+          displaces a real one out of the three slots.
+        * The registry knows ``requested`` and the entry declares a hardware
+          backend and no simulation asset - a real robot strands drives over
+          LeRobot that has no model to load. The name is already correct, so
+          spelling suggestions are the wrong advice here too; names the hardware
+          entry point instead, the way
+          :func:`~strands_robots.robot.Robot` already answers a leader-arm name
+          with the teleoperator entry point rather than the registry listing.
         * The registry knows ``requested`` and its model XML is simply not on
           disk. Here the name is already correct, so spelling suggestions are
           the wrong advice - ``difflib`` ranks an exact match first, so this was
@@ -1223,13 +1239,18 @@ class MuJoCoSimEngine(
         try:
             from strands_robots.registry import list_robots as _list_robots
 
-            known = [r.get("name", "") for r in _list_robots() if r.get("name")]
+            # mode="sim" so a suggestion is a name this engine can actually
+            # spawn. A user model added through ``register_urdf`` is absent from
+            # every ``list_robots`` mode, so narrowing the pool drops nothing
+            # that was suggestable before.
+            known = [r.get("name", "") for r in _list_robots(mode="sim") if r.get("name")]
         except Exception:  # noqa: BLE001 - suggestions are best-effort
             known = []
 
         # Probed independently of the suggestion list so an unreadable registry
         # listing cannot mask the more specific diagnosis, and vice versa.
         asset_gap: tuple[str, str, str, bool, list[str]] | None = None
+        hardware_only: tuple[str, str] | None = None
         try:
             from strands_robots.assets.manager import get_search_paths, is_robot_asset_present
             from strands_robots.registry import get_robot as _get_robot
@@ -1240,7 +1261,8 @@ class MuJoCoSimEngine(
             # that cannot be a registry key raises and is caught, which keeps
             # the availability listing above ungated on the name's type.
             canonical = _resolve_name(requested)
-            asset = ((_get_robot(canonical) or {}) if canonical else {}).get("asset") or {}
+            entry = ((_get_robot(canonical) or {}) if canonical else {}) or {}
+            asset = entry.get("asset") or {}
             if asset and not is_robot_asset_present(canonical):
                 asset_gap = (
                     canonical,
@@ -1249,8 +1271,14 @@ class MuJoCoSimEngine(
                     asset.get("auto_download") is False,
                     [str(path) for path in get_search_paths()],
                 )
+            elif entry and not asset:
+                # Registered, correct, and simply not a simulation robot. The
+                # LeRobot type is what the hardware route is keyed on, so it is
+                # quoted when the entry declares one.
+                hardware_only = (canonical, str((entry.get("hardware") or {}).get("lerobot_type") or ""))
         except Exception:  # noqa: BLE001 - the diagnosis is best-effort
             asset_gap = None
+            hardware_only = None
 
         if asset_gap is not None:
             canonical, asset_dir, model_xml, never_downloads, search_paths = asset_gap
@@ -1273,6 +1301,17 @@ class MuJoCoSimEngine(
             else:
                 msg += f" Fetch it with the download_assets tool (robots='{canonical}')."
             return msg
+
+        if hardware_only is not None:
+            canonical, lerobot_type = hardware_only
+            typed = f" (LeRobot type '{lerobot_type}')" if lerobot_type else ""
+            return (
+                f"Robot '{requested}' is registered for real hardware only{typed}: its registry "
+                f"entry declares no simulation asset, so there is no model to load. The name is "
+                f"already correct, so there is no spelling to fix - drive it as hardware with "
+                f"Robot('{canonical}', mode='real'), or pass urdf_path= to supply a model of your "
+                f"own. Use list_robots(mode='sim') to see the robots this backend can spawn."
+            )
 
         msg = f"No model found for '{requested}'."
         msg += close_match_hint(requested, known)
@@ -4004,10 +4043,15 @@ class MuJoCoSimEngine(
     def list_urdfs(self) -> dict[str, Any]:
         """List every robot/URDF known to the registry (built-in + user-registered).
 
-        The names returned here are exactly the identifiers ``add_robot`` and
-        ``load_scene`` accept; ``register_urdf`` adds a new one. This is the
-        discovery entry point an agent uses to learn what it can spawn without
-        guessing a model name.
+        This is the discovery entry point an agent uses to learn what it can
+        spawn without guessing a model name; ``register_urdf`` adds a new one.
+
+        Read the ``Sim`` column: the registry also holds hardware-only entries -
+        robots strands drives over LeRobot that have no simulation model - and
+        those names are listed with ``Sim`` blank. ``add_robot`` and
+        ``load_scene`` accept the names marked ``Sim``; a hardware-only name is
+        refused with the hardware entry point instead. ``list_robots(mode="sim")``
+        returns just the spawnable subset.
         """
         return {"status": "success", "content": [{"text": list_available_models()}]}
 
