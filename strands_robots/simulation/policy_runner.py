@@ -190,7 +190,9 @@ def _criterion_verdict(
     longer honor. The outcome criterion decides the evaluation's headline
     number, so a raise is fatal for the same reason: a ``success_rate``
     averaged over episodes whose outcome was never determined is not a
-    measurement, and reporting one would misreport the evaluation.
+    measurement, and reporting one would misreport the evaluation. What this
+    adds is the message - which criterion, which episode, which step - not a
+    change of posture.
 
     ``bool()`` mirrors ``stop_when``'s coercion, so a NumPy scalar verdict -
     what ``observation["x"] > 0.5`` returns, and not an instance of ``bool`` -
@@ -209,8 +211,13 @@ def _criterion_verdict(
 
     Raises:
         RuntimeError: If ``check`` raises. Chains the original and names the
-            criterion, the episode and the step. The eval loops convert it into
-            ``status="error"`` rather than letting it escape the tool result.
+            criterion, the episode and the step, so the failure is locatable
+            instead of arriving as a bare ``KeyError`` from inside the loop.
+            Whether that surfaces as a raise or an error envelope stays each
+            eval method's own posture: ``run`` converts it via its terminal
+            handler, while ``evaluate`` propagates rollout failures by design
+            (a raising ``get_actions`` and a lost recording frame reach the
+            caller the same way).
     """
     try:
         return bool(check(subject))
@@ -2953,32 +2960,6 @@ class PolicyRunner:
             if current_vwriter is not None:
                 current_vwriter.close()
                 current_vwriter = None
-        except Exception as e:
-            # Terminal handler, mirroring run()'s. This method backs the
-            # ``eval_policy`` agent action, whose contract is a structured
-            # result rather than a traceback, so nothing may escape it. The
-            # reachable case is a caller-supplied ``success_fn`` that raises -
-            # evaluated after every applied action - which previously left the
-            # method as e.g. a bare KeyError, discarding the episodes already
-            # completed along with any in-progress video. Report how far the
-            # evaluation got so the caller can see which episode broke it.
-            if current_vwriter is not None:
-                current_vwriter.close()
-            logger.exception("PolicyRunner.evaluate failed")
-            return {
-                "status": "error",
-                "content": [
-                    {"text": f"Evaluation failed: {e}"},
-                    {
-                        "json": {
-                            "episodes_completed": len(results),
-                            "n_episodes": n_episodes,
-                            "success_measured": success_measured,
-                            "stopped_reason": "error",
-                        }
-                    },
-                ],
-            }
         n_completed = len(results)
         n_success = sum(1 for r in results if r["success"])
         success_rate = n_success / max(n_completed, 1)
@@ -3426,28 +3407,6 @@ class PolicyRunner:
                 "on_frame requested a cooperative stop; ending benchmark after %d completed episode(s)",
                 len(results),
             )
-        except Exception as e:
-            # Terminal handler, mirroring run()'s - see the note on
-            # evaluate()'s. On this route the reachable case is a spec whose
-            # ``is_success`` / ``is_failure`` raises; ``on_step`` three lines
-            # above already reported its own failures this way.
-            if current_vwriter is not None:
-                current_vwriter.close()
-            logger.exception("PolicyRunner._evaluate_with_spec failed")
-            return {
-                "status": "error",
-                "content": [
-                    {"text": f"Benchmark evaluation failed in {spec_name}: {e}"},
-                    {
-                        "json": {
-                            "episodes_completed": len(results),
-                            "n_episodes": n_episodes,
-                            "benchmark_class": spec_name,
-                            "stopped_reason": "error",
-                        }
-                    },
-                ],
-            }
         n_completed = len(results)
         n_success = sum(1 for r in results if r["success"])
         n_failure = sum(1 for r in results if r["failure"])
