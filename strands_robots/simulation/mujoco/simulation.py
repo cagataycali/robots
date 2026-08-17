@@ -1429,6 +1429,34 @@ class MuJoCoSimEngine(
             msg += " No robots in the scene; add one with action='add_robot'."
         return msg
 
+    def _unknown_action_msg(self, requested: str) -> str:
+        """Actionable 'unknown action' message: name it, offer a close-match over
+        the published enum, and point at where that enum is written - consistent
+        with ``_unknown_model_msg`` / ``_unknown_object_msg`` /
+        ``_unknown_camera_msg`` / ``_unknown_robot_msg`` rather than a dead-end
+        "Unknown action: X." that forces an agent driving the tool blind to
+        re-read its own schema to recover from a one-character typo.
+
+        ``action`` is the parameter every call must supply and the only one with
+        no usable default, so it is where a typo is most likely to land - and it
+        was the one parameter whose refusal named neither a candidate nor a way
+        to find one, while a misspelled *robot* one frame away got both.
+
+        The suggestion is drawn from the published enum rather than from every
+        dispatchable method, because the enum is what an agent was handed: a
+        name outside it is refused at this boundary even when it resolves
+        (#2093), so offering one would send the caller to a second refusal. The
+        count travels with the pointer so a caller who gets no suggestion still
+        learns that the vocabulary is closed and enumerated, not open-ended.
+        """
+        msg = f"Unknown action: {requested}."
+        msg += close_match_hint(requested, sorted(_PUBLISHED_ACTIONS))
+        msg += (
+            f" This tool publishes {len(_PUBLISHED_ACTIONS)} actions in the 'action' enum "
+            "of its schema; see tool_spec for the actions you can use."
+        )
+        return msg
+
     def add_robot(
         self,
         name: str | None = None,
@@ -4295,7 +4323,7 @@ class MuJoCoSimEngine(
                     }
                 ],
             }
-        return {"status": "error", "content": [{"text": f"Unknown action: {action}"}]}
+        return {"status": "error", "content": [{"text": self._unknown_action_msg(action)}]}
 
     def __call__(self, action: str = "", **kwargs: Any) -> dict[str, Any]:
         """Dispatch an action directly: ``sim(action="render", camera_name="topdown")``.
