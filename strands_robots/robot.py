@@ -94,14 +94,23 @@ def _auto_detect_mode(canonical: str) -> str:
             import serial.tools.list_ports
 
             ports = list(serial.tools.list_ports.comports())
-            servo_keywords = ["feetech", "dynamixel", "sts3215", "xl430", "xl330"]
+            servo_keywords = ["feetech", "dynamixel", "sts3215", "xl430", "xl330", "ch340", "ch343"]
+            # Servo-bus USB bridge vendor IDs. Feetech/SO-10x controller boards
+            # carry WCH CH34x chips that enumerate with the generic description
+            # "USB Single Serial" (observed on macOS with SO-101, vid 0x1a86
+            # pid 0x55d3), so keyword matching alone misses them entirely and
+            # mode="auto" silently falls back to sim with hardware attached.
+            servo_vids = {0x1A86, 0x0403}  # WCH CH34x, FTDI
             exclude = ["bluetooth", "internal", "debug", "apple", "modem"]
             robot_ports = [
                 p
                 for p in ports
-                if any(
-                    kw in ((p.description or "") + (getattr(p, "manufacturer", None) or "")).lower()
-                    for kw in servo_keywords
+                if (
+                    any(
+                        kw in ((p.description or "") + (getattr(p, "manufacturer", None) or "")).lower()
+                        for kw in servo_keywords
+                    )
+                    or (getattr(p, "vid", None) in servo_vids)
                 )
                 and not any(s in (p.description or "").lower() for s in exclude)
             ]
@@ -418,6 +427,16 @@ def Robot(  # noqa: N802 - uppercase by design (factory mimicking a class constr
             if sim_mesh is not None:
                 sim.mesh = sim_mesh
                 sim.peer_id = sim_mesh.peer_id
+                # The robot was added BEFORE the mesh existed (create_world ->
+                # add_robot -> init_mesh), so _attach_robot_to_mesh was a no-op
+                # at add_robot time. Attach the already-added robots now so
+                # each SimRobot gets its own child peer (which is what
+                # publishes per-robot joint state on strands/<peer>/state).
+                if hasattr(sim, "_attach_robot_to_mesh"):
+                    world = getattr(sim, "_world", None)
+                    for _sim_robot in (getattr(world, "robots", None) or {}).values():
+                        if getattr(_sim_robot, "mesh", None) is None:
+                            sim._attach_robot_to_mesh(_sim_robot)
         except Exception as exc:  # noqa: BLE001 - mesh enrichment is best-effort
             logger.warning("Failed to initialise mesh for %r: %s", canonical, exc)
 
