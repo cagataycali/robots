@@ -80,17 +80,30 @@ def _reported_provider_or_skip(spelling: str) -> str:
     reports that the spelling went unchecked, where passing quietly would report
     a checked name the run never read.
 
+    The handler raises ``pytest.skip.Exception`` rather than calling
+    ``pytest.skip``, which is the same skip by a route a reader of this function
+    alone can follow. ``pytest.skip`` terminates by raising that class, but that
+    is a property of pytest rather than of this body, so a liveness analysis
+    scoped to one function reads the handler as falling through -- reporting
+    ``reported`` as possibly-uninitialized and this function as mixing an
+    explicit return with an implicit one. Both readings are wrong about the
+    control flow and right about what the body states, and an explicit ``raise``
+    is what makes the two agree.
+
     Args:
         spelling: Any spelling the registry accepts.
 
     Returns:
         The provider name ``_resolve_policy_class`` reports for ``spelling``.
+
+    Raises:
+        pytest.skip.Exception: If ``spelling`` cannot be resolved here.
     """
     try:
         reported, _cls, _kwargs = _resolve_policy_class(spelling)
-        return reported
     except (ImportError, ValueError) as exc:
-        pytest.skip(f"{spelling!r} is not resolvable in this environment: {exc}")
+        raise pytest.skip.Exception(f"{spelling!r} is not resolvable in this environment: {exc}") from exc
+    return reported
 
 
 def test_a_gated_provider_really_has_a_non_canonical_spelling() -> None:
