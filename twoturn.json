@@ -1,0 +1,34 @@
+{
+ "carried_wrist": {
+  "truth": "MOVED",
+  "one_turn": 0.043968082150843996,
+  "two_turn": 0.05019462238155267,
+  "own_cam_answer": "MOVING",
+  "delta": 0.006226540230708677,
+  "fixed": "NO"
+ },
+ "slide_wrist": {
+  "truth": "MOVED",
+  "one_turn": 0.07595640887417349,
+  "two_turn": 0.10843708911682548,
+  "own_cam_answer": "MOVING",
+  "delta": 0.032480680242651994,
+  "fixed": "NO"
+ },
+ "carried_static": {
+  "truth": "MOVED",
+  "one_turn": 0.9837993335921482,
+  "two_turn": 0.9939800639853758,
+  "own_cam_answer": "STILL",
+  "delta": 0.010180730393227533,
+  "fixed": "already-ok"
+ },
+ "fixed_wrist": {
+  "truth": "SAME",
+  "one_turn": 0.02774934291426756,
+  "two_turn": 0.016446592730739777,
+  "own_cam_answer": "MOVING",
+  "delta": -0.011302750183527784,
+  "fixed": "already-ok"
+ }
+}

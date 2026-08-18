@@ -1,0 +1,82 @@
+{
+ "carried_static": {
+  "cam_truth": "STILL",
+  "content": 0.012908540865775055,
+  "verdict": "STILL",
+  "ok": "CORRECT",
+  "obj_verdict": "MOVED",
+  "obj_ok": "CORRECT"
+ },
+ "carried_wrist": {
+  "cam_truth": "MOVING",
+  "content": 0.935445545462529,
+  "verdict": "MOVING",
+  "ok": "CORRECT",
+  "obj_verdict": "SAME",
+  "obj_ok": "WRONG"
+ },
+ "fixed_static": {
+  "cam_truth": "STILL",
+  "content": 0.0006982208891015253,
+  "verdict": "STILL",
+  "ok": "CORRECT",
+  "obj_verdict": "SAME",
+  "obj_ok": "CORRECT"
+ },
+ "fixed_wrist": {
+  "cam_truth": "MOVING",
+  "content": 0.9942994885351668,
+  "verdict": "MOVING",
+  "ok": "CORRECT",
+  "obj_verdict": "SAME",
+  "obj_ok": "CORRECT"
+ },
+ "liftaway_static": {
+  "cam_truth": "STILL",
+  "content": 0.002163004960154629,
+  "verdict": "STILL",
+  "ok": "CORRECT",
+  "obj_verdict": "MOVED",
+  "obj_ok": "CORRECT"
+ },
+ "liftaway_wrist": {
+  "cam_truth": "MOVING",
+  "content": 0.9942879311910061,
+  "verdict": "MOVING",
+  "ok": "CORRECT",
+  "obj_verdict": "MOVED",
+  "obj_ok": "CORRECT"
+ },
+ "slide_static": {
+  "cam_truth": "STILL",
+  "content": 0.028333027666844788,
+  "verdict": "STILL",
+  "ok": "CORRECT",
+  "obj_verdict": "MOVED",
+  "obj_ok": "CORRECT"
+ },
+ "slide_wrist": {
+  "cam_truth": "MOVING",
+  "content": 0.9813062924883142,
+  "verdict": "MOVING",
+  "ok": "CORRECT",
+  "obj_verdict": "SAME",
+  "obj_ok": "WRONG"
+ },
+ "counter_static": {
+  "cam_truth": "STILL",
+  "content": 0.004299106872898712,
+  "verdict": "STILL",
+  "ok": "CORRECT",
+  "obj_verdict": "MOVED",
+  "obj_ok": "CORRECT"
+ },
+ "counter_wrist": {
+  "cam_truth": "MOVING",
+  "content": 0.9981644120457467,
+  "verdict": "MOVING",
+  "ok": "CORRECT",
+  "obj_verdict": "MOVED",
+  "obj_ok": "CORRECT"
+ }
+}
