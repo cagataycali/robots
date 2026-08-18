@@ -166,6 +166,26 @@ hatch run format            # ruff check --fix, ruff format
     audit dir to `tmp_path`, so there the whole log *is* the record set it
     means. Pinned by tests/test_examples_attest_only_what_they_report.py.
 
+17. **A transport delegates to the raw backend path, never to the router that
+    resolves it** - `strands_robots.mesh.session` exposes every Zenoh operation
+    twice: a public, backend-aware entry point (`get_session`, `put`,
+    `release_session`, `session_alive`) that resolves whatever
+    `STRANDS_MESH_BACKEND` selects, and a private `_*_directly` helper that
+    always takes the raw Zenoh path. A `MeshTransport` implementation must use
+    the second kind for *every* delegation, because under
+    `STRANDS_MESH_BACKEND=bridge` the router resolves the `BridgeTransport` that
+    owns that very transport - so a backend-aware call routes straight back into
+    the caller. Both re-entries are silent, which is what makes the rule worth
+    stating rather than leaving to review: a re-entrant `put` raises
+    `RecursionError`, which is a `RuntimeError` subclass and so is absorbed by
+    the narrow `except (RuntimeError, ConnectionError, OSError)` that idempotent
+    transport paths are required to use, and a re-entrant `close` blocks on the
+    factory's non-reentrant lock from the thread already holding it. Neither
+    reports anything a caller can act on. Every fixture that injects a *fake*
+    leg into a composite transport hides this by construction, so the raw path
+    has to be pinned structurally. Pinned by
+    tests/mesh/test_zenoh_transport_bypasses_backend_routing.py.
+
 ## PR Workflow
 
 1. Create the feature branch **on your fork**. Branch creation in the base
