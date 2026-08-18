@@ -55,10 +55,10 @@ def _load_or_fail(path: Path):
     try:
         return _patch_and_load_mjcf(path)
     except ValueError as exc:
-        pytest.fail(
+        raise AssertionError(
             f"the bridge refused {path.name}, which MuJoCo loads on its own, "
             f"because it appended a floor the model already declares: {exc}"
-        )
+        ) from exc
 
 
 class TestAGroundTheNarrowReadMisses:
