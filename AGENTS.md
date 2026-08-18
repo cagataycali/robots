@@ -1421,6 +1421,39 @@ Corrections from code review that apply to all future contributions:
   `boolean_flag_error` itself rather than a copied spelling list, so a spelling added to
   the shared domain is covered without an edit.
 
+### A resolution knob is validated before the work it sizes
+- **Check the knob that sizes an expensive result before producing the result.** A
+  resolution is caller input like any other, and the numeric domains
+  (`positive_whole_number_error` for a pixel or frame count) are what it is checked
+  against. Checking it late is not merely a worse message: `render_environment_map`
+  paid six full background renders - GPU-bound for a `GsplatBackground` - before
+  returning a `(H, 0, 3)` map for `equi_w=0`, and `bake_environment_map` probed and
+  wrote its cache file before anything looked at the size it was baking.
+- **A zero-sized grid is a resolution mistake, and the consumer will misdiagnose it
+  as a property of the scene.** An empty map is not distinguishable from a dark one
+  by the code that reads it, so `derive_key_light` blamed the background - "the map
+  is black above the horizon" - and advised a search flag. Following that advice
+  fails identically, because a map with no texels has no hemisphere to search, so
+  the only remedy on offer was a dead end and the knob the caller actually got
+  wrong was named nowhere. Refuse at the entry point and the accurate diagnosis is
+  the first one the caller sees.
+- **Check the domain, not the quality.** A resolution the module cannot use is a
+  refusal; a resolution that merely buys a poor result is the caller's call, and
+  the two are worth keeping apart. `face_size` is the example: the equirect
+  reprojection scales by `face_size - 1`, so 1, 2 and 3 each resolve almost
+  nothing within a cube face, and the detail a map carries grows smoothly from
+  there with no boundary to pin a floor to. `0` cannot produce a map at all, so
+  that is refused; `1` can, so it is accepted.
+- **Normalize after checking.** The numeric domains deliberately accept an integral
+  float and a NumPy integer, so the value has to be put through `int()` before it
+  indexes anything - `HybridCompositor` does this for its own `default_width` /
+  `default_height`. Where the value is formatted into a cache key that is not
+  cosmetic: `2048` and `2048.0` spelled two different environment-map filenames for
+  one set of pixels, so a bake already on disk was missed and paid for again.
+- Pinned by `tests/rendering/test_environment_map_resolution_domain.py`, which
+  parametrizes over `positive_whole_number_error` itself rather than a copied value
+  list, so a value added to the shared domain is covered without an edit.
+
 ### One writer per log file
 - **A file two writers share needs one file object, not one path.** Two file objects over
   one path each track their own write offset, so a buffered writer flushes at its offset

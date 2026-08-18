@@ -37,10 +37,11 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
-from strands_robots.utils import boolean_flag_error
+from strands_robots.utils import boolean_flag_error, positive_whole_number_error
 
 from .camera import CameraParams
 from .color import relative_luminance, srgb_to_linear
@@ -93,6 +94,42 @@ def _face_camera(
     K = np.array([[f, 0.0, face_size / 2], [0.0, f, face_size / 2], [0.0, 0.0, 1.0]])
     cam = CameraParams(K=K, T_world_cam=Twc, width=face_size, height=face_size, znear=znear, zfar=zfar)
     return cam, right, u
+
+
+def _resolution_error(
+    context: str,
+    *,
+    face_size: Any,
+    equi_w: Any,
+    equi_h: Any,
+) -> str | None:
+    """Error text when a resolution knob cannot produce a usable map, else None.
+
+    The three knobs that size the pixel grid share one domain, checked in one
+    place so the render, the bake and the cache-path cannot disagree about which
+    resolutions this module can honor.
+
+    Only the domain is checked here, not the *quality* a resolution buys. A very
+    coarse cube face is still a cube face: the reprojection scales by
+    ``face_size - 1``, so 1, 2 and 3 each resolve almost nothing within a face
+    (measured on a background with a gradient inside every face: 4, 4 and 5
+    distinct colours in the whole map, growing smoothly from 4 upward). Where
+    "too coarse" begins is a judgement about acceptable quality rather than a
+    value the module cannot use, so it is left to the caller.
+
+    Args:
+        context: Calling function name, quoted in the message.
+        face_size: Cube-face resolution in pixels.
+        equi_w: Equirect width in pixels.
+        equi_h: Equirect height in pixels.
+
+    Returns:
+        The refusal text, or ``None`` when every knob is usable.
+    """
+    for value, param in ((face_size, "face_size"), (equi_w, "equi_w"), (equi_h, "equi_h")):
+        if text := positive_whole_number_error(value, param, context):
+            return text
+    return None
 
 
 def _equirect_directions(equi_w: int, equi_h: int, half_texel: bool = False) -> np.ndarray:
@@ -149,7 +186,18 @@ def render_environment_map(
 
     Returns:
         ``(equi_h, equi_w, 3) uint8`` equirectangular environment map.
+
+    Raises:
+        ValueError: if any resolution knob is not a positive whole number.
+            Checked before the six background renders,
+            which are GPU-bound for a
+            :class:`~strands_robots.rendering.backgrounds.GsplatBackground`.
     """
+    if text := _resolution_error("render_environment_map", face_size=face_size, equi_w=equi_w, equi_h=equi_h):
+        raise ValueError(text)
+    # Normalize to plain ints: the shared domain accepts an integral float and a
+    # NumPy integer, and both index the grid below.
+    face_size, equi_w, equi_h = int(face_size), int(equi_w), int(equi_h)
     origin = np.asarray(origin_world, dtype=np.float64).reshape(3)
     face_imgs: list[np.ndarray] = []
     face_bases: list[tuple[np.ndarray, np.ndarray, np.ndarray]] = []
@@ -210,7 +258,17 @@ def environment_map_cache_path(
     Returns:
         The cache path (a ``.png`` -- environment maps feed light sampling,
         so JPEG block artifacts are not welcome).
+
+    Raises:
+        ValueError: if any resolution knob is not a positive whole number. The name
+            encodes the resolutions, so a knob this module refuses to render must
+            not be named a cache entry.
     """
+    if text := _resolution_error("environment_map_cache_path", face_size=face_size, equi_w=equi_w, equi_h=equi_h):
+        raise ValueError(text)
+    # Normalize before formatting: this name IS the cache key, so an integral
+    # float must not spell a second file for pixels already baked.
+    face_size, equi_w, equi_h = int(face_size), int(equi_w), int(equi_h)
     scene_path = Path(scene_path)
     ox, oy, oz = (float(c) for c in origin_world)
     stem = f"{scene_path.stem}_env_{equi_w}x{equi_h}_f{face_size}_o{ox:+.3f}_{oy:+.3f}_{oz:+.3f}"
@@ -243,7 +301,16 @@ def bake_environment_map(
 
     Returns:
         The path to the written (or cached) environment map.
+
+    Raises:
+        ValueError: if any resolution knob is not a positive whole number.
+            Checked before the cache probe, so an
+            unusable resolution never writes a file the short-circuit would then
+            serve on every later call.
     """
+    if text := _resolution_error("bake_environment_map", face_size=face_size, equi_w=equi_w, equi_h=equi_h):
+        raise ValueError(text)
+    face_size, equi_w, equi_h = int(face_size), int(equi_w), int(equi_h)
     out = Path(out_path)
     if out.exists() and out.stat().st_size > 0:
         return out
