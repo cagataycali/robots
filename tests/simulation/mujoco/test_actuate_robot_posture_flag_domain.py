@@ -63,13 +63,22 @@ def arm_sim(tmp_path: Path):
     sim.create_world(gravity=[0, 0, -9.81])
     urdf = tmp_path / "mini_arm.urdf"
     urdf.write_text(MINI_ARM_URDF)
-    added = sim.add_robot(name="arm", urdf_path=str(urdf))
-    if added["status"] != "success":
-        raise AssertionError(f"premise: the URDF arm must load, got {added}")
+    _ok(sim.add_robot(name="arm", urdf_path=str(urdf)), "premise: the URDF arm must load")
     if int(_model(sim).nu) != 0:
         raise AssertionError("premise: a URDF arm must load actuator-less")
     yield sim
     sim.cleanup(policy_stop_timeout=0.5)
+
+
+def _ok(result: dict[str, Any], what: str) -> dict[str, Any]:
+    """Return *result*, raising when it is not a success.
+
+    A call that mutates the scene must not sit inside an ``assert``: ``python
+    -O`` strips the statement, and with it the setup the test is about.
+    """
+    if result["status"] != "success":
+        raise AssertionError(f"{what}: {result}")
+    return result
 
 
 def _model(sim: Simulation) -> Any:
@@ -195,15 +204,15 @@ class TestARealBooleanStillSelectsItsPosture:
 
     def test_true_disables_collision_and_false_keeps_it(self, arm_sim, tmp_path: Path) -> None:
         """Both branches still reachable, and they still differ."""
-        assert arm_sim.actuate_robot(robot_name="arm", disable_self_collision=False)["status"] == "success"
+        _ok(arm_sim.actuate_robot(robot_name="arm", disable_self_collision=False), "actuate with False")
         kept = _robot_collision(arm_sim)
 
         other = Simulation(tool_name="test_actuate_posture_flags_b", mesh=False)
         try:
             other.create_world(gravity=[0, 0, -9.81])
             urdf = tmp_path / "mini_arm.urdf"
-            assert other.add_robot(name="arm", urdf_path=str(urdf))["status"] == "success"
-            assert other.actuate_robot(robot_name="arm", disable_self_collision=True)["status"] == "success"
+            _ok(other.add_robot(name="arm", urdf_path=str(urdf)), "add_robot")
+            _ok(other.actuate_robot(robot_name="arm", disable_self_collision=True), "actuate with True")
             disabled = _robot_collision(other)
         finally:
             other.cleanup(policy_stop_timeout=0.5)
@@ -212,15 +221,15 @@ class TestARealBooleanStillSelectsItsPosture:
         assert all(pair == (0, 0) for pair in disabled), disabled
 
     def test_true_compensates_gravity_and_false_does_not(self, arm_sim, tmp_path: Path) -> None:
-        assert arm_sim.actuate_robot(robot_name="arm", gravity_compensation=False)["status"] == "success"
+        _ok(arm_sim.actuate_robot(robot_name="arm", gravity_compensation=False), "actuate with False")
         assert _robot_gravcomp(arm_sim) == pytest.approx([0.0] * len(_robot_gravcomp(arm_sim)))
 
         other = Simulation(tool_name="test_actuate_posture_flags_c", mesh=False)
         try:
             other.create_world(gravity=[0, 0, -9.81])
             urdf = tmp_path / "mini_arm.urdf"
-            assert other.add_robot(name="arm", urdf_path=str(urdf))["status"] == "success"
-            assert other.actuate_robot(robot_name="arm", gravity_compensation=True)["status"] == "success"
+            _ok(other.add_robot(name="arm", urdf_path=str(urdf)), "add_robot")
+            _ok(other.actuate_robot(robot_name="arm", gravity_compensation=True), "actuate with True")
             assert _robot_gravcomp(other) == pytest.approx([1.0] * len(_robot_gravcomp(other)))
         finally:
             other.cleanup(policy_stop_timeout=0.5)
