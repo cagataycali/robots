@@ -374,8 +374,12 @@ class ManipulationMixin:
     def _apply_kinematic_attachments(self) -> None:
         """Teleport every kinematically attached child to follow its parent.
 
-        Called after each ``mj_step`` (both the ``step()`` batch loop and the
-        policy-driven ``_apply_sim_action`` substep loop). Callers MUST hold
+        Called after EVERY ``mj_step`` the backend issues - the ``step()``
+        batch loop, the single-robot ``_apply_sim_action`` substep loop, the
+        motion-primitive tick, and the synchronized ``run_multi_policy`` loop -
+        because ``attach_bodies(mode="kinematic")`` promises the child follows
+        every physics step, and a stepping path that skips this leaves the
+        carried body behind while reporting success. Callers MUST hold
         ``self._lock``. Uses the parent's ``xpos``/``xquat`` from the step's
         forward pass (one integration step of latency at the physics timestep,
         matching the example's carry). Entries whose bodies or freejoint no
