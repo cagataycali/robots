@@ -652,3 +652,147 @@ def test_loop_reports_the_invariant_it_holds() -> None:
     """
     doc = zmq_node.__doc__ or ""
     assert "exactly one reply" in doc
+
+
+# ---------------------------------------------------------------------------
+# A payload that decodes to something other than a map.
+#
+# ``msgpack.unpackb`` decodes any valid msgpack value, so the undecodable-bytes
+# guard above it does not make ``request`` a mapping: the single byte ``0x2a``
+# is the integer 42, and a string, list, nil, bool or float decode just as
+# cleanly. Reading ``endpoint`` off one of those raises between the two guards,
+# where nothing answers - so it unwinds the REP loop, runs the ``finally`` that
+# closes the socket with the reply never sent, and ends the process. That is the
+# same one-bad-request-stops-every-client failure the dispatch guard exists to
+# close, reachable by any peer (the reference sidecar accepts any client).
+# ---------------------------------------------------------------------------
+def _serve_or_fail(
+    monkeypatch: pytest.MonkeyPatch, requests: list[bytes], *, plan_points: list[_FakePoint] | None = None
+) -> tuple[int, list[dict[str, Any]]]:
+    """Run the REP loop over ``requests``; fail naming the consequence if it escapes.
+
+    Returns the exit code and the decoded replies. An exception escaping
+    ``main`` is the failure under test, not an error in the test: it is
+    reported with the number of replies that made it out first.
+    """
+    socket = _FakeSocket(requests)
+    _install_fake_zmq_rclpy(monkeypatch, socket)
+    points = plan_points if plan_points is not None else [_FakePoint(sec=0, nanosec=0, positions=[0.1])]
+    component = _FakeComponent(plan_points=points)
+    monkeypatch.setattr(zmq_node, "_build_moveit_py", lambda args: _FakeMoveItPy(component=component))
+
+    try:
+        rc = zmq_node.main(["--port", "5599"])
+    except Exception as exc:
+        raise AssertionError(
+            f"main() raised {type(exc).__name__}: {exc} instead of answering the request. "
+            f"Only {len(socket.sent)} of {len(requests)} requests were answered: the exception "
+            "unwinds the REP loop, so the socket closes with the peer's reply never sent and the "
+            "sidecar stops serving every other client too."
+        ) from exc
+    return rc, [msgpack.unpackb(s, raw=False) for s in socket.sent]
+
+
+# (payload bytes, the type name the reply must name)
+_NON_MAP_PAYLOADS = [
+    pytest.param(b"\x2a", "int", id="single-byte-integer"),
+    pytest.param(msgpack.packb("plan", use_bin_type=True), "str", id="bare-string"),
+    pytest.param(msgpack.packb(["plan"], use_bin_type=True), "list", id="bare-list"),
+    pytest.param(msgpack.packb(None, use_bin_type=True), "NoneType", id="nil"),
+    pytest.param(msgpack.packb(True, use_bin_type=True), "bool", id="bare-bool"),
+    pytest.param(msgpack.packb(1.5, use_bin_type=True), "float", id="bare-float"),
+]
+
+
+@pytest.mark.parametrize(("payload", "type_name"), _NON_MAP_PAYLOADS)
+def test_loop_answers_a_payload_that_is_not_a_map(
+    monkeypatch: pytest.MonkeyPatch, payload: bytes, type_name: str
+) -> None:
+    """A decodable non-map payload is answered and the sidecar keeps serving.
+
+    The request either side of it is a ``ping``, so the reply count shows
+    whether the loop survived: without the guard the second request is
+    unanswered and the third is never read.
+    """
+    requests = [
+        msgpack.packb({"endpoint": "ping"}, use_bin_type=True),
+        payload,
+        msgpack.packb({"endpoint": "ping"}, use_bin_type=True),
+    ]
+
+    rc, responses = _serve_or_fail(monkeypatch, requests)
+
+    assert rc == 0, "the sidecar must survive a payload that is not a request"
+    assert len(responses) == len(requests), (
+        f"{len(requests)} requests received but {len(responses)} replies sent - a REQ peer is left waiting"
+    )
+    assert responses[0] == {"status": "ok"}
+    # The detail names what arrived, so a client author can see the payload was
+    # not a map rather than guessing at the sidecar's internals.
+    assert responses[1]["error"].startswith("malformed_request:"), responses[1]
+    assert type_name in responses[1]["error"], responses[1]
+    # The request after it is served normally: one bad payload is not terminal.
+    assert responses[2] == {"status": "ok"}
+
+
+def test_both_malformed_payload_kinds_share_one_error_class(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Undecodable bytes and a decodable non-map report the same error class.
+
+    Both are the same problem from the client's side - the bytes it sent are
+    not a request - so a client matching on ``malformed_request:`` catches both
+    without knowing which. Neither is ``internal_error:``, which would blame
+    the sidecar for the peer's payload.
+    """
+    requests = [
+        b"\xc1",  # not valid msgpack at all
+        b"\x2a",  # valid msgpack, decodes to the integer 42
+    ]
+
+    rc, responses = _serve_or_fail(monkeypatch, requests)
+
+    assert rc == 0
+    assert len(responses) == 2
+    for response in responses:
+        assert response["error"].startswith("malformed_request:"), response
+        assert "internal_error" not in response["error"], response
+
+
+def test_a_non_map_data_field_was_already_answered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-map ``data`` is answered by the dispatch guard, not by this check.
+
+    ``data`` is read inside the dispatch ``try``, so it is reported there. That
+    is what bounds the map check to ``request`` - the one read that happens
+    where no guard can answer it.
+    """
+    requests = [
+        msgpack.packb({"endpoint": "plan", "data": 42}, use_bin_type=True),
+        msgpack.packb({"endpoint": "ping"}, use_bin_type=True),
+    ]
+
+    rc, responses = _serve_or_fail(monkeypatch, requests)
+
+    assert rc == 0
+    assert len(responses) == 2
+    assert responses[0]["error"].startswith("internal_error:"), responses[0]
+    assert responses[1] == {"status": "ok"}
+
+
+def test_a_well_formed_request_is_unaffected_by_the_map_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every endpoint still dispatches: the check only rejects non-maps."""
+    requests = [
+        msgpack.packb({"endpoint": "ping"}, use_bin_type=True),
+        msgpack.packb({"endpoint": "reset", "data": {"options": {"seed": 7}}}, use_bin_type=True),
+        msgpack.packb(
+            {"endpoint": "plan", "data": {"planning_group": "arm", "target_joints": {"j0": 0.1}}},
+            use_bin_type=True,
+        ),
+        msgpack.packb({"endpoint": "bogus"}, use_bin_type=True),
+    ]
+
+    rc, responses = _serve_or_fail(monkeypatch, requests)
+
+    assert rc == 0
+    assert responses[0] == {"status": "ok"}
+    assert responses[1] == {"status": "ok"}
+    assert responses[2] == {"trajectory": [[0.0, 0.1]], "success": True, "status": "ok"}
+    assert responses[3] == {"error": "unknown_endpoint:bogus"}

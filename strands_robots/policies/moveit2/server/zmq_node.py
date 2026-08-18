@@ -46,7 +46,8 @@ Notes for forks:
   pushing to the planning scene.
 * ``api_token`` validation is left as an exercise - the reference
   implementation accepts any client. Enable it by checking
-  ``request.get("api_token")`` against an env-var / file secret.
+  ``request.get("api_token")`` against an env-var / file secret - by
+  then ``request`` is known to be a map.
 """
 
 from __future__ import annotations
@@ -265,6 +266,23 @@ def main(argv: list[str] | None = None) -> int:
                 request = msgpack.unpackb(raw, raw=False)
             except Exception as e:  # noqa: BLE001
                 socket.send(msgpack.packb({"error": f"malformed_request:{e}"}, use_bin_type=True))
+                continue
+
+            # ``unpackb`` decodes any valid msgpack value, not just a map: the
+            # single byte ``0x2a`` is the integer 42, and a string, list, nil or
+            # bool decode just as cleanly. Reading ``endpoint`` off one of those
+            # raises before the dispatch guard below exists to answer it, so it
+            # is rejected here in the same class as bytes that do not decode at
+            # all - either way the peer did not send a request. This is also
+            # what makes the ``api_token`` check the fork notes suggest safe to
+            # add: nothing reads a key off ``request`` until it is a map.
+            if not isinstance(request, dict):
+                socket.send(
+                    msgpack.packb(
+                        {"error": f"malformed_request:expected a msgpack map, got {type(request).__name__}"},
+                        use_bin_type=True,
+                    )
+                )
                 continue
 
             endpoint = request.get("endpoint", "")

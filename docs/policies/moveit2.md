@@ -156,9 +156,12 @@ reply and exiting. A planning failure is reported in the `plan` response as
 Client-side validation checks `target_joints` key *syntax*, not whether the
 group actually has those joints, so a joint-name typo is reported by the
 sidecar as `invalid_goal:` rather than rejected before the call. Anything
-outside the `plan` contract - an unknown endpoint, an undecodable request, an
-unexpected error in a forked handler - comes back as `{"error": ...}`, which
-the client raises as `RuntimeError`.
+outside the `plan` contract - an unknown endpoint, a request that does not
+decode or that decodes to something other than a map, an unexpected error in a
+forked handler - comes back as `{"error": ...}`, which the client raises as
+`RuntimeError`. Both malformed-payload cases share the `malformed_request:`
+prefix, so a client has one class to match whether the bytes were undecodable
+or decoded to an integer.
 
 ## In simulation
 
