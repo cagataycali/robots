@@ -58,8 +58,10 @@ is touched: ``render`` is faked on the instance, as in
 
 from __future__ import annotations
 
+import functools
 import io
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -189,11 +191,8 @@ def _achieved_intervals(stamps: list[float]) -> np.ndarray:
     return np.diff(np.asarray(stamps)) * 1000.0
 
 
-#: Set once the media stack has been imported with the real clock installed.
-_MEDIA_WARMED = False
-
-
-def _warm_media_stack(tmp_path: Path) -> None:
+@functools.cache
+def _warm_media_stack() -> None:
     """Import everything the recording path imports lazily, on the real clock.
 
     ``stop_cameras_recording`` encodes each buffer to an MP4, and that pulls in
@@ -205,20 +204,17 @@ def _warm_media_stack(tmp_path: Path) -> None:
     on unreadable metadata. Doing that first import here, before any double is
     installed, is what keeps the double confined to the loop under test.
     """
-    global _MEDIA_WARMED
-    if _MEDIA_WARMED:
-        return
     from strands_robots.rendering.video import encode_clip
 
     frames = [_gradient() for _ in range(3)]
-    clip = encode_clip(frames, tmp_path / "_warm.mp4", fps=RECORDER_FPS)
-    assert len(list(iio.imiter(clip))) == len(frames)
-    _MEDIA_WARMED = True
+    with tempfile.TemporaryDirectory() as scratch:
+        clip = encode_clip(frames, Path(scratch) / "warm.mp4", fps=RECORDER_FPS)
+        assert len(list(iio.imiter(clip))) == len(frames)
 
 
-def _install_time_double(monkeypatch: pytest.MonkeyPatch, clock: _SteppingClock, tmp_path: Path) -> None:
+def _install_time_double(monkeypatch: pytest.MonkeyPatch, clock: _SteppingClock) -> None:
     """Make ``clock`` the module a fresh ``import time`` resolves to."""
-    _warm_media_stack(tmp_path)
+    _warm_media_stack()
     monkeypatch.setitem(sys.modules, "time", clock)
 
 
@@ -363,7 +359,7 @@ def _capture(
     # ``start_cameras_recording`` binds its clock with a function-local
     # ``import time``, so the double is installed in ``sys.modules`` rather than
     # patched onto a module attribute. The recorder thread is the only reader.
-    _install_time_double(monkeypatch, clock, tmp_path)
+    _install_time_double(monkeypatch, clock)
     try:
         started = sim.start_cameras_recording(
             cameras=["cam_a", "cam_b"],
@@ -443,7 +439,7 @@ def _sync_recording(clock: _SteppingClock, tmp_path: Path, monkeypatch: pytest.M
     the pacing: the base is read once at start and subtracted once at stop.
     """
     sim = _sim_with_fake_render(clock, [])
-    _install_time_double(monkeypatch, clock, tmp_path)
+    _install_time_double(monkeypatch, clock)
     started = sim.start_cameras_recording_synchronous(
         cameras=["cam_a"],
         output_dir=str(tmp_path),
@@ -519,7 +515,7 @@ def test_both_recorders_name_the_clock_their_duration_base_holds(
     clock = _SteppingClock(0.0, step_after_reads=None)
     stamps: list[float] = []
     sim = _sim_with_fake_render(clock, stamps)
-    _install_time_double(monkeypatch, clock, tmp_path)
+    _install_time_double(monkeypatch, clock)
     try:
         sim.start_cameras_recording_synchronous(
             cameras=["cam_a"], output_dir=str(tmp_path), fps=RECORDER_FPS, width=32, height=24, name="sync"
